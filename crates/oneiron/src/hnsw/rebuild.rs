@@ -83,13 +83,10 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
                 )?;
                 if discipline == LinkDiscipline::Symmetric {
                     pruned = keep_sole_link_candidates(
+                        neighbor_id,
                         pruned,
                         &neighbor_neighbors,
-                        |candidate| {
-                            neighbors_by_id.get(candidate).is_some_and(|list| {
-                                list.as_slice() == std::slice::from_ref(neighbor_id)
-                            })
-                        },
+                        &neighbors_by_id,
                         config.hnsw.m_max_0,
                     );
                     for victim in neighbor_neighbors

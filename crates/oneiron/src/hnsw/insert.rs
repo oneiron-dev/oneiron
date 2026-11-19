@@ -1,5 +1,7 @@
 //! Insert, localized refresh, and backlink attachment.
 
+use std::collections::HashMap;
+
 use heed::{RoTxn, RwTxn};
 
 use crate::config::VaultConfig;
@@ -558,9 +560,11 @@ fn attach_backlinks_legacy(
 
 /// Symmetric backlink attachment (ONE-325): every link written here exists
 /// in both directions. When adding `id` to a neighbor's list overflows
-/// `m_max_0`, keep sole-link candidates in preference to unprotected entries.
-/// Pruned-out victims also lose their reverse link, except excess sole-link
-/// candidates keep their link one-way as the orphan-protection fallback.
+/// `m_max_0`, a candidate whose only link is that neighbor takes the place of
+/// a kept entry that stays joined to the neighbor through another kept entry
+/// (`keep_sole_link_candidates`). Pruned-out victims also lose their reverse
+/// link, except a sole-link victim keeps its link one-way as the
+/// orphan-protection fallback.
 fn attach_backlinks_symmetric(
     store: &impl VectorIndexDbs,
     config: &VaultConfig,
@@ -589,32 +593,29 @@ fn attach_backlinks_symmetric(
             )?;
             // The lists are read in this write transaction, including when the
             // neighbor selection came from an insert plan. Only a pruned-out
-            // candidate can be orphaned, so the kept entries' lists are read
-            // only when one of those is a sole-link candidate (an overflow
-            // usually prunes one entry, which usually has other links).
-            let mut sole_link_candidates = Vec::new();
+            // candidate can be orphaned, so the kept entries' lists (the swap
+            // and bridge checks) are read only when one of those is a
+            // sole-link candidate (an overflow usually prunes one entry, which
+            // usually has other links).
+            let mut lists = HashMap::new();
             for candidate in neighbors.iter().filter(|entry| !pruned.contains(entry)) {
                 *ops += 1;
-                if load_neighbors(store, &*wtxn, candidate)?.as_slice()
-                    == std::slice::from_ref(neighbor_id)
-                {
-                    sole_link_candidates.push(*candidate);
-                }
+                lists.insert(*candidate, load_neighbors(store, &*wtxn, candidate)?);
             }
-            if !sole_link_candidates.is_empty() {
+            if lists
+                .values()
+                .any(|list| list.as_slice() == std::slice::from_ref(neighbor_id))
+            {
                 for kept in &pruned {
                     *ops += 1;
-                    if load_neighbors(store, &*wtxn, kept)?.as_slice()
-                        == std::slice::from_ref(neighbor_id)
-                    {
-                        sole_link_candidates.push(*kept);
-                    }
+                    lists.insert(*kept, load_neighbors(store, &*wtxn, kept)?);
                 }
             }
             let pruned = keep_sole_link_candidates(
+                neighbor_id,
                 pruned,
                 &neighbors,
-                |candidate| sole_link_candidates.contains(candidate),
+                &lists,
                 config.hnsw.m_max_0,
             );
             let removed: Vec<EntityId> = neighbors

@@ -240,33 +240,60 @@ pub(super) fn prune_neighbors_for_node(
     Ok(scored.into_iter().map(|entry| entry.id).collect())
 }
 
-/// Keeps sole-link candidates reachable from the pruning node when there is
-/// room to replace an unprotected entry. `pruned` is nearest-first, so the last
-/// unprotected entry is the farthest; appended protected entries are never
-/// removed by a later swap. Excess sole-link candidates use the detach fallback.
+/// Keeps a candidate whose only link is the pruning `node` in `node`'s list,
+/// so an overflow prune does not leave it with a one-way link out and no link
+/// in. Such a candidate takes the place of a kept entry only when that entry
+/// stays joined to `node` both ways through another kept entry (`entry <->
+/// bridge <-> node`), so the swap never cuts the only path between two parts
+/// of the graph (review 9631 round 1). `pruned` is nearest-first and kept
+/// entries are tried farthest first; a sole-link entry is never swapped out.
+/// A sole-link candidate with no such swap falls to the one-way detach
+/// fallback. `lists` holds the current list of each candidate; a candidate
+/// missing from it counts as having no links.
 pub(super) fn keep_sole_link_candidates(
+    node: &EntityId,
     mut pruned: Vec<EntityId>,
     candidates: &[EntityId],
-    is_sole_link: impl Fn(&EntityId) -> bool,
+    lists: &HashMap<EntityId, Vec<EntityId>>,
     max_neighbors: usize,
 ) -> Vec<EntityId> {
+    let is_sole_link =
+        |entry: &EntityId| neighbor_list_in(lists, entry) == std::slice::from_ref(node);
     pruned.truncate(max_neighbors);
     let sole: Vec<EntityId> = candidates
         .iter()
-        .filter(|candidate| !pruned.contains(candidate) && is_sole_link(candidate))
+        .filter(|&candidate| !pruned.contains(candidate) && is_sole_link(candidate))
         .copied()
         .collect();
 
     for candidate in sole {
-        if pruned.len() == max_neighbors {
-            let Some(farthest) = pruned.iter().rposition(|entry| !is_sole_link(entry)) else {
-                break;
-            };
-            pruned.remove(farthest);
+        if pruned.len() < max_neighbors {
+            pruned.push(candidate);
+            continue;
         }
+        let swap = pruned.iter().rposition(|entry| {
+            !is_sole_link(entry)
+                && pruned.iter().any(|bridge| {
+                    bridge != entry
+                        && neighbor_list_in(lists, entry).contains(bridge)
+                        && neighbor_list_in(lists, bridge).contains(entry)
+                        && neighbor_list_in(lists, bridge).contains(node)
+                })
+        });
+        let Some(index) = swap else {
+            break;
+        };
+        pruned.remove(index);
         pruned.push(candidate);
     }
     pruned
+}
+
+fn neighbor_list_in<'a>(
+    lists: &'a HashMap<EntityId, Vec<EntityId>>,
+    entry: &EntityId,
+) -> &'a [EntityId] {
+    lists.get(entry).map(Vec::as_slice).unwrap_or_default()
 }
 
 /// Legacy-only delete-time full scan. Symmetric-marker vaults never call
