@@ -162,11 +162,6 @@ pub(super) fn fold_adopted_checkpoint_tail(
         )
         .filter(|entry| super::fold_resume::is_projected(&entry.op))
         .collect();
-    // An image that dropped its residence bodies cannot show the keys a
-    // covered forked directive rests on (row SEQ-FLOOR-S-WITHHELD-COSIGN).
-    if context::dropped_body_fork_may_expire(image, &fold) {
-        return Ok(whole());
-    }
     let mut view = super::install_fold::install_view(
         &read_whole,
         fold,
@@ -176,6 +171,11 @@ pub(super) fn fold_adopted_checkpoint_tail(
         log.pin,
     );
     if view.rests_on_counting() && !super::install_fold::stale_chains(&view).is_empty() {
+        return Ok(whole());
+    }
+    // An image that dropped its residence bodies cannot show the keys a
+    // covered forked directive rests on (row SEQ-FLOOR-S-WITHHELD-COSIGN).
+    if context::dropped_body_fork_may_expire(image, &view) {
         return Ok(whole());
     }
     // The whole install fold's fold with no vouch folds as this one does
