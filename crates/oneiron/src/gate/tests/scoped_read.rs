@@ -878,6 +878,37 @@ fn graph_read_receipts_clamp_nonclaim_types_and_include_unnarrowed_reads() -> Re
     Ok(())
 }
 
+/// Review #9577 round 2 P1: a withheld peer two edges reach is one withheld
+/// row to the edge receipt, not one per edge.
+#[test]
+fn edges_out_counts_a_withheld_peer_once_across_its_edges() -> Result<()> {
+    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_TURN};
+    let (_tmp, vault) = temp_vault();
+    let source = test_id(0x74);
+    let target = test_id(0x75);
+    vault.put_entity(&source, ENTITY_TYPE_TURN, test_time(1), 1, b"source")?;
+    vault.put_entity(&target, ENTITY_TYPE_ASSET, test_time(1), 1, b"target")?;
+    vault.put_edge(&source, EdgeKind::Supports, &target, 0.7)?;
+    vault.put_edge(&source, EdgeKind::Mentions, &target, 0.5)?;
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x76),
+        &encode_policy_manifest(vec![core_read_scoped_grant_entry(
+            "graph-reader",
+            Value::Map(vec![(
+                Value::from("entity_types"),
+                Value::Array(vec![Value::from(ENTITY_TYPE_TURN)]),
+            )]),
+        )]),
+    )?;
+    let edges = vault
+        .scoped_read(ScopedReadActorKey::new("graph-reader").unwrap())
+        .edges_out(&source)?;
+    assert!(edges.value.unwrap().is_empty());
+    assert_eq!(edges.receipt.suppressed_count, 1);
+    Ok(())
+}
+
 #[test]
 fn stored_six_axis_scope_gates_real_claim_reads_and_preserves_mask_relevance() -> Result<()> {
     use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
