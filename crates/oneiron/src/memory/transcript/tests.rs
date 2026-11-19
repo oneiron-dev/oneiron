@@ -4,7 +4,7 @@
 use super::*;
 use crate::edge::EdgeActorClass;
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
-use crate::registry::ENTITY_TYPE_PERSON;
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use crate::test_util::entity;
 use crate::{TimeRange, Vault, VaultConfig};
 
@@ -292,6 +292,17 @@ fn scoped_room() -> ScopedRoom {
         )
         .expect("put the scoped reader");
     let space = entity(0x68);
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &space,
+            ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let granted = |order, author, content| {
         let mut message = said(order, author, content);
         message.metadata = Some(serde_json::json!({"rel": space.to_hex()}));
