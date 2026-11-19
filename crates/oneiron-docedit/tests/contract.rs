@@ -16,7 +16,7 @@ use oneiron_docedit::contract::{
     self, CONTRACT_SCHEMA, Call, ContractError, Done, ErrorCode, MAX_DETAIL_BYTES, Ports,
     RecalcClockArgs, RecalcPort, Recalculated, Reply,
 };
-use oneiron_docedit::docx_body::DocxBlock;
+use oneiron_docedit::docx_body::{DocxBlock, DocxBlockKind};
 use oneiron_docedit::retained_opc::Limits;
 use oneiron_docedit::xlsx_body::{XlsxBook, XlsxValue};
 use serde_json::{Value, json};
@@ -249,8 +249,11 @@ fn contract_describe() {
 fn docx_read() {
     let bytes = document();
     let blocks = read_document(&bytes);
-    let texts: Vec<_> = blocks.iter().map(|block| block.text.as_str()).collect();
-    assert_eq!(texts, [PARAGRAPH]);
+    let read: Vec<_> = blocks
+        .iter()
+        .map(|block| (block.kind, block.text.as_str()))
+        .collect();
+    assert_eq!(read, [(DocxBlockKind::Paragraph, PARAGRAPH)]);
 }
 
 #[test]
@@ -689,13 +692,16 @@ fn deck_create() {
         .flat_map(|slide| &slide.shapes)
         .flat_map(|shape| &shape.paragraphs)
         .collect();
+    // Each block of the brief is one whole paragraph of the deck: a title cut short fails here.
     for block in [
-        "Fourth-quarter",
+        "Fourth-quarter spending stayed inside every limit",
         "Spending stayed within the approved limit.",
     ] {
-        assert!(
-            paragraphs.iter().any(|text| text.contains(block)),
-            "the deck lacks the brief's block {block:?}: {paragraphs:?}"
+        let whole = paragraphs.iter().filter(|text| text.as_str() == block);
+        assert_eq!(
+            whole.count(),
+            1,
+            "the deck does not hold the brief's block {block:?} as one whole paragraph: {paragraphs:?}"
         );
     }
 }
