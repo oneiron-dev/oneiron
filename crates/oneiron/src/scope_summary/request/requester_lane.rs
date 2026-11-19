@@ -7,23 +7,25 @@
 //! longer live. A lane that read as its requester's own adds nothing to the
 //! declaration, which stays the one every other door declares. A narrowed
 //! lane must read every source its summary plans, judged in the plan's own
-//! snapshot (FIX 11829): a requester summarizes only what it reads. NOTE
-//! planning also rebuilds this lane in the plan's own snapshot (FIX 6322).
+//! snapshot (FIX 11829): a requester summarizes only what it reads. Every
+//! plan also rebuilds this lane in its own snapshot, at declaration,
+//! composition and landing: a NOTE set's to read its NOTEs (FIX 6322), a
+//! conversation's or a sitting's to judge its sources (review P1 of #9583).
 
 use rmpv::Value;
 
 use super::super::codec::invalid;
 use super::super::derivation;
-use super::super::doors::RequesterReadBasis;
+use super::super::doors::{RequesterReadBasis, declared_requester_read_in};
 use super::{
     ScopeSummaryPlan, ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget,
     enqueue_with_lineage_in_txn, plan_in_txn,
 };
-use crate::Vault;
 use crate::claim::{FrozenReadLane, ScopedRead};
 use crate::error::Result;
 use crate::ports::ClaimReadStatus;
 use crate::store::conversation_record::{ScopePath, ScopeSelector};
+use crate::{EntityId, Vault, WriteActor};
 
 /// The declaration key a narrowed requester's frozen lane rides under.
 const REQUESTER_LANE_KEY: &str = "requester_lane";
@@ -122,6 +124,40 @@ fn require_sources_in_lane(
     let policy = lane.live_policy_manifest_in(txn)?;
     for source in &plan.sources {
         if !lane.is_ref_readable_with_policy_in(txn, &policy, source)? {
+            return Err(invalid("summary source outside the requester's read lane"));
+        }
+    }
+    Ok(())
+}
+
+/// Refuses a conversation's or a sitting's planned source that the lane its
+/// declaration froze, rebuilt in `txn` over its requester's base read, does
+/// not read (review P1 of #9583). Every plan judges it, at declaration,
+/// composition and landing alike, so a declaration whose credential ended
+/// after it was queued is neither composed nor landed, as a NOTE set's plan
+/// reads its NOTEs under the same rebuilt lane (FIX 6322). A principal
+/// declaration adds nothing.
+///
+/// # Errors
+/// A planned source the rebuilt lane does not read, a declaration whose
+/// frozen lane or read basis does not decode, and a store, fold or clock
+/// failure judging one.
+pub(super) fn require_sources_in_declared_lane(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    input: &Value,
+    requester: WriteActor,
+    sources: &[EntityId],
+) -> Result<()> {
+    let lane = declared_lane(input)?;
+    if lane.is_principal() {
+        return Ok(());
+    }
+    let basis = declared_read_basis(input, &lane)?;
+    let read = declared_requester_read_in(vault, txn, requester, &lane, basis)?;
+    let policy = read.live_policy_manifest_in(txn)?;
+    for source in sources {
+        if !read.is_ref_readable_with_policy_in(txn, &policy, source)? {
             return Err(invalid("summary source outside the requester's read lane"));
         }
     }
