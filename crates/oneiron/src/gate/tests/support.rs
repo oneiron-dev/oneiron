@@ -19,6 +19,7 @@ pub(super) fn temp_vault() -> (tempfile::TempDir, crate::Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault =
         crate::Vault::open(tmp.path(), crate::config::VaultConfig::default()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     clear_policy_manifests_for_test(&vault);
     (tmp, vault)
 }

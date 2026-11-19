@@ -5,6 +5,8 @@ use super::*;
 pub(super) fn open_raw_test_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), embedding_test_config()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
     (dir, vault)
 }
 

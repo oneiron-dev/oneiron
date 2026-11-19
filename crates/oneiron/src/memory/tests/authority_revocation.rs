@@ -969,6 +969,7 @@ fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault =
         Arc::new(crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let owner = put_owner(&vault);
     let subject = put_person(&vault, 0x95);
     let revoke = root_binding_with_pending_revocation(&vault, 0x96, owner);

@@ -342,6 +342,7 @@ fn an_owners_erasure_run_cut_short_is_retried_as_the_owners() {
     };
     {
         let vault = Vault::open(dir.path(), config()).expect("open vault");
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         // A persisted window, and no obligation left: an erasure the owner's
         // own sweep has already discharged.
         let erased = EntityId::now();
@@ -370,6 +371,7 @@ fn an_owners_erasure_run_cut_short_is_retried_as_the_owners() {
 
     clock.set(T0 + 3_600);
     let vault = Vault::open(dir.path(), config()).expect("reopen vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let report = pass(&vault);
 
     assert!(
@@ -410,6 +412,7 @@ fn a_window_held_through_the_owners_erasure_run_is_compacted_while_held() {
     let mut config = crate::test_util::embedding_test_config();
     config.store_clock = clock.bundle();
     let vault = Arc::new(Vault::open(dir.path(), config).expect("open vault"));
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     // A persisted window, and no obligation left.
     let erased = EntityId::now();
     vault

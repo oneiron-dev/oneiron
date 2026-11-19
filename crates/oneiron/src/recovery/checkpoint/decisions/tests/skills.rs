@@ -133,6 +133,7 @@ fn pack_vault() -> Result<(tempfile::TempDir, Vault, ForeignSkillPublisher, Enti
     config.embedding_model = None;
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), config)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let at = TimeRange { start: 1, end: 1 };
     let (owner, hub) = (
         vault.ensure_embedded_owner_actor().expect("embedded owner"),
@@ -321,6 +322,7 @@ pub(super) fn installed_script_packs() -> Result<Case> {
 #[test]
 fn a_restore_never_reselects_a_script_pack_replaced_since() -> Result<()> {
     let (_dir, vault, publisher, hub) = pack_vault()?;
+    vault.ensure_vault_key().expect("mint the vault data key");
     let script = fetch(&vault, hub, &publisher, script_source()?)?;
     let data = fetch(&vault, hub, &publisher, data_source()?)?;
     let backups = crate::test_support::restore_tempdir();

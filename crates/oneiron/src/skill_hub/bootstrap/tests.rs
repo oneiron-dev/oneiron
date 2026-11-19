@@ -309,12 +309,14 @@ fn restore_owner(vault: &Vault) -> Result<crate::consent::AuthenticatedOwner> {
 fn delete_then_restore_defaults_mints_candidate_with_pinned_hash() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let name = "judge";
     let old = stable_id(name)?;
     let hash = package(name, FILES[1].1)?.content_hash()?;
     assert!(vault.delete_entity(&old)?);
     drop(vault);
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     assert!(vault.get_skill_record(&old)?.is_none());
     let owner = restore_owner(&vault)?;
     let restored = vault.restore_default_skills(&owner, TimeRange { start: 2, end: 2 }, 2)?;
@@ -416,6 +418,7 @@ fn later_normal_import_keeps_the_fresh_restored_source_holder() -> Result<()> {
 fn restore_refuses_owner_who_is_no_longer_active() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let owner = restore_owner(&vault)?;
     let old = stable_id("judge")?;
     assert!(vault.delete_entity(&old)?);

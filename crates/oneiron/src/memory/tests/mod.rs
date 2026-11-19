@@ -52,6 +52,7 @@ use rmpv::Value;
 pub(super) fn open_vault() -> (tempfile::TempDir, crate::Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (dir, vault)
 }
 

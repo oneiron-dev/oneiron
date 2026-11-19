@@ -64,6 +64,7 @@ fn temp_vault() -> (tempfile::TempDir, TimedVault) {
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
     let vault = Vault::open(tmp.path(), config).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (tmp, TimedVault { vault, clock })
 }
 

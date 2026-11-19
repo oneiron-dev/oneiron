@@ -53,6 +53,7 @@ fn result(reference: ArtifactVersionRef) -> ActionResult {
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temporary vault");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (dir, vault)
 }
 
