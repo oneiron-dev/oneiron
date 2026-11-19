@@ -25,6 +25,15 @@
 //! * `a_held_link_with_no_history_of_its_own_takes_the_archived_annotation`:
 //!   the destination never annotated the link it took from the earlier
 //!   archive, so the later archive's annotation comes back on it, as before.
+//! * `a_held_link_keeps_its_own_retracted_stamp` (REVIEW-9652 P1): the
+//!   destination annotated the link and retracted its annotation, so the link
+//!   carries the retracted stamp while the archived link carries the source's
+//!   confirmed one; the import completes and the link keeps its own stamp.
+//! * `a_held_claim_with_the_archived_id_and_another_body_is_a_collision`
+//!   (REVIEW-9652 P1): the destination holds an active claim on the link with
+//!   an archived claim's id but another confidence, and a claim of its own on
+//!   the link beside it; the import refuses it as an ID collision and rolls
+//!   back.
 //!
 //! Red on main 584b44473513: the first test fails at the second import,
 //! refused with `ProvenancePrecedenceViolation`; the second test finds the
@@ -32,7 +41,12 @@
 //! fails at the second import, which compares the held row closed by the
 //! destination's own claim with the archived active row
 //! (`archive provenance ID collision`). The fourth test passes on main and
-//! on the fix. The omission reason is read by its debug name, as in
+//! on the fix. The fifth test is red on main, which restores the archived
+//! annotation onto the link, and red at the round-1 head 504a12878a78, whose
+//! last edge pass compared the stamps and refused the import (`import edge
+//! collides with different stored metadata`). The sixth test passes on main
+//! and is red at the round-1 head, which took any held claim on the link as
+//! unchanged. The omission reason is read by its debug name, as in
 //! `whole_vault_restore_same_as_links.rs`.
 //!
 //! Vaults in tempdirs, every step through public doors. Each destination
@@ -46,7 +60,7 @@
 use std::io::Cursor;
 
 use oneiron::batch::export::WholeVaultImportReceipt;
-use oneiron::edge::EdgeKind;
+use oneiron::edge::{EdgeConfirmationStatus, EdgeKind};
 use oneiron::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{ClaimLifecycleStatus, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
@@ -126,16 +140,41 @@ fn linked_source() -> Linked {
 /// door, learned at the vault's current second.
 fn annotate(vault: &Vault, source: EntityId, target: EntityId) -> EntityId {
     let id = EntityId::now();
+    annotate_as(vault, id, source, target, 1.0, vault.now_recorded_at());
+    id
+}
+
+/// The owner's provenance claim `id` on the link with `confidence`, learned
+/// at `learned_at`.
+fn annotate_as(
+    vault: &Vault,
+    id: EntityId,
+    source: EntityId,
+    target: EntityId,
+    confidence: f32,
+    learned_at: u64,
+) {
     vault
         .put_edge_provenance(
             &id,
             &EdgeRef::new(source, EdgeKind::Mentions, target),
-            &EdgeProvenanceClaimBody::new(source, 1.0, SupersessionStatus::Confirmed),
+            &EdgeProvenanceClaimBody::new(source, confidence, SupersessionStatus::Confirmed),
             EdgeActorClass::Human,
-            vault.now_recorded_at(),
+            learned_at,
         )
         .expect("the provenance claim on the link lands");
-    id
+}
+
+/// The confirmation flag the link's stored value carries.
+fn link_stamp(vault: &Vault, linked: &Linked) -> Option<EdgeConfirmationStatus> {
+    vault
+        .edges_out(&linked.source)
+        .expect("read the source's links")
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::Mentions && edge.target == linked.target)
+        .expect("the link is here")
+        .provenance
+        .map(|flags| flags.confirmation_status)
 }
 
 /// A destination that took the bare link from the source's earlier archive.
@@ -293,5 +332,90 @@ fn a_held_link_with_no_history_of_its_own_takes_the_archived_annotation() {
         None,
         "the receipt names no omission for it: {:?}",
         receipt.destination_omissions
+    );
+}
+
+#[test]
+fn a_held_link_keeps_its_own_retracted_stamp() {
+    let linked = linked_source();
+    let archived = annotate(&linked.vault, linked.source, linked.target);
+    let annotated_archive = export(&linked.vault);
+    let (_dir, dest) = destination_holding_the_link(&linked);
+    let own = annotate(&dest, linked.source, linked.target);
+    dest.retract_edge_provenance(&own, dest.now_recorded_at())
+        .expect("the destination retracts its own annotation");
+    assert_eq!(
+        link_stamp(&dest, &linked),
+        Some(EdgeConfirmationStatus::Retracted),
+        "precondition: the held link carries its own retracted stamp"
+    );
+    let receipt = dest
+        .import_whole_vault_archive_from(Cursor::new(&annotated_archive))
+        .expect("the archive with the confirmed link imports");
+    assert_eq!(
+        lifecycle(&dest, &own),
+        Some(ClaimLifecycleStatus::Retracted),
+        "the held link's own annotation stays retracted"
+    );
+    assert_eq!(
+        link_stamp(&dest, &linked),
+        Some(EdgeConfirmationStatus::Retracted),
+        "the held link keeps its own stamp"
+    );
+    assert!(
+        !dest
+            .entity_exists(&archived)
+            .expect("read the archived annotation"),
+        "the archived annotation stays archive data"
+    );
+    assert_eq!(
+        omission_reason(&receipt, archived).as_deref(),
+        Some("ClaimSubjectEdgeNotRestored"),
+        "the receipt names the archived annotation: {:?}",
+        receipt.destination_omissions
+    );
+}
+
+#[test]
+fn a_held_claim_with_the_archived_id_and_another_body_is_a_collision() {
+    let linked = linked_source();
+    let shared = EntityId::now();
+    annotate_as(
+        &linked.vault,
+        shared,
+        linked.source,
+        linked.target,
+        1.0,
+        linked.vault.now_recorded_at(),
+    );
+    let annotated_archive = export(&linked.vault);
+    let (_dir, dest) = destination_holding_the_link(&linked);
+    let learned_at = dest.now_recorded_at();
+    annotate_as(&dest, shared, linked.source, linked.target, 0.5, learned_at);
+    let own = EntityId::now();
+    annotate_as(&dest, own, linked.source, linked.target, 1.0, learned_at);
+    assert_eq!(
+        lifecycle(&dest, &shared),
+        Some(ClaimLifecycleStatus::Active),
+        "precondition: the destination's claim with the archived id is active"
+    );
+    let error = dest
+        .import_whole_vault_archive_from(Cursor::new(&annotated_archive))
+        .expect_err("a held claim with the archived id and another body is no unchanged row");
+    assert!(
+        error
+            .to_string()
+            .contains("archive provenance ID collision"),
+        "the import refuses the ID collision: {error}"
+    );
+    assert_eq!(
+        lifecycle(&dest, &shared),
+        Some(ClaimLifecycleStatus::Active),
+        "the import rolled back: the destination's claim is as it was"
+    );
+    assert_eq!(
+        lifecycle(&dest, &own),
+        Some(ClaimLifecycleStatus::Active),
+        "the import rolled back: the destination's own claim is as it was"
     );
 }
