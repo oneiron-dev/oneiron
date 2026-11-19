@@ -162066,7 +162066,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/billing_usage.rs",
@@ -162486,7 +162486,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/relay_widen.rs",
-     "purpose": "Route-level separation: proposal is inert, and only the human holder's host-bound slip lands it",
+     "purpose": "Route-level separation: proposal is inert, and only the holder lands it",
      "surface": {}
     },
     {

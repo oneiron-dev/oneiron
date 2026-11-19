@@ -918,7 +918,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/ai_chat_self_compaction.rs` | test | m | — | — | L10-33 (RULING L10-33-SCOPE = B): under a self row on the retained turns, a self agent's chat compacts as… |
 | `src/api/tests/asset_forms.rs` | test | s | — | — | OF-329's hydrate doors: a text-only agent that hydrates a generated image, on `/v1` core hydrate and on… |
 | `src/api/tests/auth_idempotency.rs` | test | m | — | — | OpenAPI route auth, v1/legacy auth plane + revocation + scopes, core idempotency middleware semantics |
-| `src/api/tests/billing_usage.rs` | test | s | — | — | Provider money facts, runtime metering boundaries, and removed wallet routes |
+| `src/api/tests/billing_usage.rs` | test | m | — | — | Provider money facts, runtime metering boundaries, and removed wallet routes |
 | `src/api/tests/board_host_events.rs` | test | XL | — | — | Router proofs for session observations and turn-local capability riders |
 | `src/api/tests/board_stream_publisher.rs` | test | L | — | — | Own-task events reach STREAM subscribers through serve's board publisher |
 | `src/api/tests/chat_retrieval_turn.rs` | test | m | 2 crate-vis | — | A live chat turn's board recall names, on its retrieval run, the TURN the user's words are witnessed in and… |
@@ -968,7 +968,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/reactive.rs` | test | L | — | — | Local-first reactive read sync/refresh/ignore/lag/origins plus engine-observer vault write path |
 | `src/api/tests/reader_optional_memory.rs` | test | s | — | — | A reader's optional-memory profile (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget): zero optional memory… |
 | `src/api/tests/recall_rerank.rs` | test | L | — | — | Recall at every declared effort through the MCP recall door (dogfood gate 1): high, xhigh and max rerank on… |
-| `src/api/tests/relay_widen.rs` | test | m | — | — | Route-level separation: proposal is inert, and only the human holder's host-bound slip lands it |
+| `src/api/tests/relay_widen.rs` | test | m | — | — | Route-level separation: proposal is inert, and only the holder lands it |
 | `src/api/tests/retrieval_bounds.rs` | test | m | 3 crate-vis | — | Retrieval doors bound one request's shape and never refuse its work for a count (F21(a): H46, H301, H27… |
 | `src/api/tests/retrieval_bounds_rows.rs` | test | s | — | — | The `[limits]` query row each retrieval door reads, and the OF-520 question a crossing raises (F21(a): H301… |
 | `src/api/tests/retrieval_depth_quality.rs` | test | s | — | — | Memory-reason route depths/spend/validation, raw-search depth tiers, retrieval-quality markers + snapshots |
