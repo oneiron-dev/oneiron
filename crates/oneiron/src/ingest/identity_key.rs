@@ -183,12 +183,16 @@ mod tests {
     }
 
     #[test]
-    fn refused_import_rolls_back_provisional_person_too() -> Result<()> {
+    fn secret_import_masks_claim_and_keeps_one_provisional_person() -> Result<()> {
         let (_dir, vault) =
             crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
         let actor = EntityId::now();
         let time = TimeRange { start: 1, end: 1 };
         vault.put_entity(&actor, ENTITY_TYPE_PERSON, time, 1, b"actor")?;
+        let people_before = vault.count_entities_by_type(ENTITY_TYPE_PERSON)?;
+        let custody_before =
+            vault.count_entities_by_type(crate::registry::ENTITY_TYPE_SECRET_CUSTODY)?;
+        let claim_id = EntityId::now();
         let claim = super::super::NormalizedIngestClaim {
             source_record_id: "record-1".into(),
             predicate: "profile.contact".into(),
@@ -196,7 +200,73 @@ mod tests {
         };
         let admission = super::super::ImportedEvidenceAdmission::proposed(
             "fixture",
-            EntityId::now(),
+            claim_id,
+            super::super::ImportedEvidenceEntityResolution::subject(actor),
+            crate::WriteActor::new(actor, crate::EdgeActorClass::Human),
+            time,
+            1,
+        );
+        let body = rmp_serde::to_vec_named(&serde_json::json!({"name":"New Person"})).unwrap();
+        let person = super::super::admit_imported_mention_claim(
+            &vault,
+            &claim,
+            admission,
+            ENTITY_TYPE_PERSON,
+            "New Person",
+            &body,
+            |_| Ok(vec![]),
+        )?;
+        assert_eq!(
+            vault.lookup_identity_key(ENTITY_TYPE_PERSON, "New Person")?,
+            vec![person]
+        );
+        assert_eq!(
+            vault.count_entities_by_type(ENTITY_TYPE_PERSON)?,
+            people_before + 1
+        );
+        assert_eq!(vault.get(&person)?, Some(body));
+        assert_eq!(
+            vault.count_entities_by_type(crate::registry::ENTITY_TYPE_SECRET_CUSTODY)?,
+            custody_before + 1
+        );
+        let public_body = vault.get(&claim_id)?.expect("stored public claim body");
+        assert!(
+            !public_body
+                .windows(b"fixture-super-secret".len())
+                .any(|bytes| bytes == b"fixture-super-secret")
+        );
+        let stored = vault.get_claim(&claim_id)?.expect("candidate claim stored");
+        assert_eq!(stored.subject, crate::claim::ClaimSubject::Entity(person));
+        assert_eq!(stored.predicate, "profile.contact");
+        assert_eq!(stored.approval, crate::claim::ClaimApprovalStatus::Proposed);
+        let fields = stored.value.as_map().expect("credential map");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, rmpv::Value::from("password"));
+        let handle = fields[0].1.as_str().expect("custody handle");
+        assert_eq!(
+            crate::secret_custody::parse_secret_handle(handle)?,
+            (handle, None)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn refused_import_rolls_back_provisional_person_too() -> Result<()> {
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let actor = EntityId::now();
+        let time = TimeRange { start: 1, end: 1 };
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, time, 1, b"actor")?;
+        let people_before = vault.count_entities_by_type(ENTITY_TYPE_PERSON)?;
+        let claim_id = EntityId::now();
+        let claim = super::super::NormalizedIngestClaim {
+            source_record_id: String::new(),
+            predicate: "profile.contact".into(),
+            value: serde_json::json!({"email":"person@example.test"}),
+        };
+        let admission = super::super::ImportedEvidenceAdmission::proposed(
+            "fixture",
+            claim_id,
             super::super::ImportedEvidenceEntityResolution::subject(actor),
             crate::WriteActor::new(actor, crate::EdgeActorClass::Human),
             time,
@@ -213,12 +283,19 @@ mod tests {
             |_| Ok(vec![]),
         )
         .unwrap_err();
-        crate::test_util::assert_secret_scan_rejected(error, "gate.secret_scan.sensitive_env");
-        assert!(
-            vault
-                .lookup_identity_key(ENTITY_TYPE_PERSON, "New Person")?
-                .is_empty()
+        assert!(matches!(
+            error,
+            Error::InvalidClaimBody("imported evidence missing source_record_id")
+        ));
+        assert_eq!(
+            vault.lookup_identity_key(ENTITY_TYPE_PERSON, "New Person")?,
+            Vec::<EntityId>::new()
         );
+        assert_eq!(
+            vault.count_entities_by_type(ENTITY_TYPE_PERSON)?,
+            people_before
+        );
+        assert_eq!(vault.get(&claim_id)?, None);
         Ok(())
     }
 }

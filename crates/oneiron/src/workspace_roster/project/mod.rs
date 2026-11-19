@@ -57,7 +57,8 @@ pub(crate) use capture::{
 pub(crate) use capture::{
     exportable_revisions_in_txn, forged_revision_in_txn, inadmissible_revision_carriers,
 };
-pub(crate) use deletion::deindex_project_room;
+pub(crate) use deletion::reject_project_with_live_children;
+pub(crate) use deletion::{deindex_project_room, reject_root_project_delete};
 pub(crate) use edges::{
     validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
 };
@@ -624,6 +625,24 @@ pub(super) fn record<T: for<'a> Deserialize<'a>>(
     #[cfg(feature = "sync")]
     let body = crate::entity_doc::resolve_record_body(store, txn, &id, body)?;
     decode(&body).map(Some)
+}
+/// Whether a stored row of `kind` with a body exists at `id`: the header
+/// check [`record`] makes, with no decode. A read path that must still see the
+/// body asks the read fold.
+pub(super) fn record_present(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+) -> Result<bool> {
+    let present = store.port_entity_with_raw(txn, &id, |raw| {
+        let header = EntityMetadataHeader::parse(raw).ok_or_else(invalid)?;
+        if header.entity_type != kind {
+            return Err(invalid());
+        }
+        Ok(raw.len() > ENTITY_METADATA_HEADER_LEN)
+    })?;
+    Ok(present == Some(true))
 }
 
 pub(crate) use crate::store::project_kind::is_project_type;

@@ -17,9 +17,11 @@ use super::*;
 /// custody): a cloud or custodial root, which the hosted posture lets
 /// consent, registers its own node at bootstrap and carries that bootstrap
 /// under a successor root, but never demotes or removes a machine (FIX 7920)
-/// nor vouches for one as the owner's. Neither can the host's own root
-/// on a hosted vault, whatever its role labels say (FIX 2222): an unproved
-/// host-root `Owned` answer refuses.
+/// nor vouches for one as the owner's. One owner's answer it carries on as
+/// unanswered: an act-free one whose signer the roster no longer holds, which
+/// goes stale either way ([`custodial_carry_drops_retired_answer`]). Neither
+/// can the host's own root on a hosted vault, whatever its role labels say
+/// (FIX 2222): an unproved host-root `Owned` answer refuses.
 pub(in crate::authority) fn apply_machine_profile(
     state: &mut FoldState,
     signer: &AuthorityKey,
@@ -54,7 +56,8 @@ pub(in crate::authority) fn apply_machine_profile(
             context.device_can_consent(device)
                 && (signer_class == SignerClass::OwnerHeld
                     || !CUSTODIAL_PROFILE_BOOTSTRAP_ONLY
-                    || custodial_bootstrap_or_carry(profile, head))
+                    || custodial_bootstrap_or_carry(profile, head)
+                    || custodial_carry_drops_retired_answer(state, profile, head))
         }
     };
     if !admitted {
@@ -221,8 +224,48 @@ fn custodial_bootstrap_or_carry(profile: &MachineProfile, head: Option<&MachineR
         && profile.act == carried.act
 }
 
+/// An act-free custodial revision that carries an owner's answer no act made
+/// (`Owned`, as a self-host root signs one on the bootstrap arm) on under a
+/// successor root as `Unanswered`, which answers nothing for the owner: every
+/// field its head's but a higher revision, the acknowledgments it saw and the
+/// role (review of #9474, round 2: a root move under the Hosted posture keeps
+/// the serving install a carrier). Only over a head whose signer the roster
+/// no longer holds live, as a re-root leaves every key: that standing goes
+/// stale with its approval either way, so a custodial key drops no answer a
+/// live key stands behind (FIX 7920), and the machine keeps only what a fresh
+/// bootstrap would give it. Judged on the entry's parents, never on arrival.
+fn custodial_carry_drops_retired_answer(
+    state: &FoldState,
+    profile: &MachineProfile,
+    head: Option<&MachineRevision>,
+) -> bool {
+    let Some(head) = head else {
+        return false;
+    };
+    let carried = &head.profile;
+    profile.role == MachineRole::Unanswered
+        && matches!(carried.role, MachineRole::Owned(_))
+        && !head.removed
+        && head.act.is_none()
+        && carried.act.is_none()
+        && state
+            .roster
+            .get(&head.signer)
+            .is_none_or(|device| device.revoked)
+        && profile.machine == carried.machine
+        && profile.owner == carried.owner
+        && profile.machine_key == carried.machine_key
+        && profile.device_class == carried.device_class
+        && profile.encryption_key == carried.encryption_key
+        && profile.machine_proof == carried.machine_proof
+        && profile.carrier == carried.carrier
+        && profile.act == carried.act
+}
+
 /// A revision no chain takes: a key that is authority, a row that is an
-/// actor's, a proof the machine did not sign, or no higher than its chain.
+/// actor's, a proof the machine did not sign, no higher than its chain, or
+/// naming another restore origin than its machine's (row
+/// RESTORED-COPIES-ENROL-EACH-OTHER: a machine born of a restore stays so).
 pub(super) fn refused_revision(
     state: &FoldState,
     profile: &MachineProfile,
@@ -232,6 +275,7 @@ pub(super) fn refused_revision(
         || machine_is_actor(state, profile.machine)
         || !profile.proof_verifies(&state.vault_id)
         || head.is_some_and(|folded| profile.revision <= folded.profile.revision)
+        || crate::authority::restored_join::origin_differs(state, profile)
 }
 
 /// A key in the host's custody on a hosted vault, where the host's root is

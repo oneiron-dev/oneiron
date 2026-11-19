@@ -30,7 +30,7 @@ mod link_proof;
 mod word_admission;
 pub(crate) use attendee_entry::{
     AttendeeEntryFact, admit_attendee_entry_in_txn, admit_unasked_attendee_entry_in_txn,
-    attendee_entry_id, read_attendee_entry_in,
+    attendee_entry_id, read_attendee_entry_in, speaker_entry_container,
 };
 pub(super) use consult_answer::record_answer;
 pub(super) use link_proof::{

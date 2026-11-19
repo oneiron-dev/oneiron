@@ -228,6 +228,7 @@ fn a_deleted_or_restored_project_keeps_its_history() -> Result<()> {
     let (id, leader) = (project.id, project.leader);
     let images = crate::test_support::restore_tempdir();
     let image = images.path().join("before-removal");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 5)?;
     let s1 = signed_over(&vault, id, &project.s0, project.board, without(x))?;
     // A vault from before this PR: S1 stored with no companion, and no
@@ -349,6 +350,7 @@ fn a_restore_keeps_history_learned_since_its_checkpoint() -> Result<()> {
     let project = board_signed_s0(&vault, &[x], &[], |_| {})?;
     let images = crate::test_support::restore_tempdir();
     let image = images.path().join("before-removal");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 5)?;
     let s1 = signed_over(&vault, project.id, &project.s0, project.board, without(x))?;
     let (_, removal) = super::super::revision::revisions_of_row(project.id, &s1)?

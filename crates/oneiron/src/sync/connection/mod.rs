@@ -738,6 +738,18 @@ impl SyncConnection {
         self.client()?.open_item(window, item).await
     }
 
+    /// [`Self::open_item`], with `finish` run in the transaction that stamps
+    /// or keeps the copy. An owner's open directive records its result there
+    /// ([`crate::sync::SyncClient::open_item_with`]).
+    pub(crate) async fn open_item_with(
+        &self,
+        window: &crate::sync::WindowKey,
+        item: crate::EntityId,
+        finish: impl FnOnce(&mut heed::RwTxn<'_>) -> crate::error::Result<()> + Send,
+    ) -> Result<crate::sync::OpenedItem, crate::sync::TransportError> {
+        self.client()?.open_item_with(window, item, finish).await
+    }
+
     /// Fetch the current windows' thin index again and return it.
     pub async fn refresh_residence_index(
         &self,

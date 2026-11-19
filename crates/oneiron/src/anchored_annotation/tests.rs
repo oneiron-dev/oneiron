@@ -832,6 +832,7 @@ fn anchored_thread_binds_verified_room_dag_node_without_copy_or_head_mutation() 
         &[0x80],
     )?;
     crate::conversation_dag::test_support::put_dag_test_policy(&vault, human, true)?;
+    crate::conversation_dag::fixtures::grant_reads(&vault, human);
     let record = |parent, advance| crate::conversation_dag::AppendRecord {
         conversation: room,
         parent,
@@ -1126,6 +1127,7 @@ fn a_held_conversation_node_binding_vetoes_rebinding_but_never_stands_in() -> Re
         &[0x80],
     )?;
     crate::conversation_dag::test_support::put_dag_test_policy(&vault, human, true)?;
+    crate::conversation_dag::fixtures::grant_reads(&vault, human);
     let record = |parent, advance| crate::conversation_dag::AppendRecord {
         conversation: room,
         parent,

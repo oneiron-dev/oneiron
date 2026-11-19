@@ -8,16 +8,19 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     ScopedReadActorKey,
 };
+use crate::federation::record_scope::MachineHistoryScope;
 use crate::llm::decision::{
     DecisionAnswer, DecisionReceipt, HostRuleRef, PairedReading, ProviderPin, TypedDecision,
 };
 use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::store::ManifestDbs;
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
     WriteProvenance,
 };
 use oneiron_contracts::fingerprint::ContentHash;
 use rmpv::Value;
+use std::collections::BTreeSet;
 
 mod public_admit;
 pub use public_admit::{admit_standing_answer, prepare_standing_answer};
@@ -74,21 +77,37 @@ pub struct StandingAnswer {
 pub(super) struct Source {
     kind: u8,
     claim: Option<ClaimBody>,
-    position: (EntityId, EntityId, EntityId),
+    /// The facets an answer resting on the row may sit in (never empty), its
+    /// project and its world.
+    position: (BTreeSet<EntityId>, EntityId, EntityId),
     sensitivity: u8,
 }
 
 impl Source {
-    /// The row `raw` of type `kind` under its record Scope `scope`: its one
-    /// facet, project and world, its sensitivity and, for a claim, its body.
-    /// A Scope with no single position bounds no answer.
-    pub(super) fn of_row(kind: u8, raw: &[u8], scope: &crate::federation::Scope) -> Result<Self> {
-        Self::fitted(kind, raw, scope)?.map_err(SourceConflict::error)
+    /// The row `id` of type `kind`, `raw`, under its record Scope `scope` as
+    /// `view` holds it in `txn`: the facets an answer on it may sit in
+    /// ([`answer_facets_in`]), its one project and world, its sensitivity
+    /// and, for a claim, its body. A Scope with no single position bounds no
+    /// answer.
+    pub(super) fn of_row(
+        vault: &Vault,
+        view: &(impl ManifestDbs + MachineHistoryScope),
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        kind: u8,
+        raw: &[u8],
+        scope: &crate::federation::Scope,
+    ) -> Result<Self> {
+        Self::fitted(vault, view, txn, id, kind, raw, scope)?.map_err(SourceConflict::error)
     }
 
     /// [`Self::of_row`], with a Scope no answer can rest on as its conflict
     /// rather than a refusal. A body that does not decode is still an error.
     pub(super) fn fitted(
+        vault: &Vault,
+        view: &(impl ManifestDbs + MachineHistoryScope),
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
         kind: u8,
         raw: &[u8],
         scope: &crate::federation::Scope,
@@ -100,7 +119,8 @@ impl Source {
         ) else {
             return Ok(Err(SourceConflict::Unrepresentable));
         };
-        let position = (facet, project, world);
+        let facets = answer_facets_in(vault, view, txn, id, kind, facet)?;
+        let position = (facets, project, world);
         let sensitivity = match scope.sensitivity {
             crate::federation::SensitivityCeiling::AtMost(level) => match level {
                 crate::federation::Sensitivity::Public => 0,
@@ -127,6 +147,41 @@ impl Source {
             sensitivity,
         }))
     }
+}
+
+/// The facets an answer resting on the row `id` of type `kind`, whose record
+/// Scope names `facet`, may sit in: `facet` when it is a stored FACET; else
+/// each stored FACET the row is read in
+/// ([`crate::federation::facet_read::placed_facets_in`]), so the answer reads
+/// no wider than the row and its asker reads it back; else the vault default
+/// facet. A non-PERSON row born under the default record stamp sits at its
+/// own derived substrate id, which no FACET row holds, and the CLAIM birth
+/// gate refuses an answer there (FIX STANDING-ANSWER-TAKES-UNSTORED-SUBSTRATE-FACET;
+/// STANDING-ANSWER-TWO-FACETLESS-SOURCES-CONFLICT; docs/ops/actor-claim-facets.md).
+fn answer_facets_in(
+    vault: &Vault,
+    view: &(impl ManifestDbs + MachineHistoryScope),
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    facet: EntityId,
+) -> Result<BTreeSet<EntityId>> {
+    let stored = |facet: &EntityId| -> Result<bool> {
+        Ok(vault.get_entity_type_in_txn(txn, facet)? == Some(crate::registry::ENTITY_TYPE_FACET))
+    };
+    if stored(&facet)? {
+        return Ok(BTreeSet::from([facet]));
+    }
+    let mut facets = BTreeSet::new();
+    for facet in crate::federation::facet_read::placed_facets_in(vault, view, txn, id, kind)? {
+        if stored(&facet)? {
+            facets.insert(facet);
+        }
+    }
+    if facets.is_empty() {
+        facets.insert(vault.default_facet_in_txn(txn)?);
+    }
+    Ok(facets)
 }
 
 fn singleton(axis: &crate::federation::ScopeAxis<crate::federation::ScopeId>) -> Option<EntityId> {
@@ -352,7 +407,15 @@ fn sources_with_caller_in_txn(
                 body.to_vec(),
             )?);
         }
-        sources.push(Source::of_row(header.entity_type, &raw, &scope)?);
+        sources.push(Source::of_row(
+            vault,
+            &vault.store,
+            txn,
+            *id,
+            header.entity_type,
+            &raw,
+            &scope,
+        )?);
     }
     Ok((frontier.finish(), sources, context))
 }
@@ -796,6 +859,10 @@ fn backfill_answer_with_caller(
         if frontier != input.source_frontier {
             return Err(Error::ConcurrentWrite("standing source changed"));
         }
+        // The fold reads where each source sits now; the frontier hashes rows,
+        // not placement, so it is taken before the dedup lookup below.
+        let fold = fold_sources(&sources, principal)?;
+        let landing = fold.facet();
         if let Measured::Admitted(decision) = &measurement {
             super::graph_ask::validate_decision(&record.definition.question, principal, decision)?;
             let ids: Vec<_> = context.iter().skip(1).map(|source| source.id).collect();
@@ -866,25 +933,31 @@ fn backfill_answer_with_caller(
             {
                 return Err(Error::EntityNotFound);
             }
-            // FIX 7461: the old gate first, unchanged; then the principal's
-            // own live authority under its bare key, never the writer's class.
-            let facets = crate::claim::facet_refs_in_port(&vault.store, txn, &id)?;
-            let own = Reader::bare(crate::authority::StandingHome::Vault(vault), principal)?;
-            if !crate::gate::scoped_read_claim_allowed(&policy, &reader, &body, &facets)
-                && !own.own_claim_allowed_in_txn(txn, &policy, &body, &facets)?
-            {
-                return Err(Error::EntityNotFound);
+            // The stored answer is this landing's only while it sits in the
+            // facet the sources fold to now. A room's facet set can change
+            // under unchanged rows; then a fresh answer lands where the fold
+            // puts it and takes the dedup key (review round 2 on #9582).
+            if landing == Some(body.scope_facet) {
+                // FIX 7461: the old gate first, unchanged; then the principal's
+                // own live authority under its bare key, never the writer's class.
+                let facets = crate::claim::facet_refs_in_port(&vault.store, txn, &id)?;
+                let own = Reader::bare(crate::authority::StandingHome::Vault(vault), principal)?;
+                if !crate::gate::scoped_read_claim_allowed(&policy, &reader, &body, &facets)
+                    && !own.own_claim_allowed_in_txn(txn, &policy, &body, &facets)?
+                {
+                    return Err(Error::EntityNotFound);
+                }
+                // Admit the already-recorded proposal under this caller's live
+                // bounds too; its principal's bare read is not the caller's grant.
+                if let Some(caller) = caller
+                    && !caller
+                        .recorded_lane()?
+                        .entities_readable_in_txn(txn, &[id])?[0]
+                {
+                    return Err(Error::EntityNotFound);
+                }
+                return Ok(answer);
             }
-            // Admit the already-recorded proposal under this caller's live
-            // bounds too; its principal's bare read is not the caller's grant.
-            if let Some(caller) = caller
-                && !caller
-                    .recorded_lane()?
-                    .entities_readable_in_txn(txn, &[id])?[0]
-            {
-                return Err(Error::EntityNotFound);
-            }
-            return Ok(answer);
         }
         let mut answer = AnswerRecord {
             claim: EntityId::now(),
@@ -964,7 +1037,7 @@ fn backfill_answer_with_caller(
             value.clone(),
             1.0,
         );
-        let taint = constrain_sources(&mut candidate, &sources, principal)?;
+        let taint = fold.bound(&mut candidate);
         let mut refs = vec![input.unit];
         for id in &answer.decision.evidence {
             if !refs.contains(id) {
@@ -1025,11 +1098,17 @@ pub(super) fn constrain_sources(
     sources: &[Source],
     principal: EntityId,
 ) -> Result<ClaimSource> {
+    Ok(fold_sources(sources, principal)?.bound(candidate))
+}
+
+/// Every source an answer rests on, folded by one law, or the conflict that
+/// refuses the answer.
+pub(super) fn fold_sources(sources: &[Source], principal: EntityId) -> Result<ScopeFold> {
     let mut fold = ScopeFold::new(principal);
     for source in sources {
         fold.fold(source).map_err(SourceConflict::error)?;
     }
-    Ok(fold.bound(candidate))
+    Ok(fold)
 }
 
 /// The one law an answer's sources share ([`constrain_sources`]), source by
@@ -1039,7 +1118,9 @@ pub(super) fn constrain_sources(
 pub(super) struct ScopeFold {
     principal: String,
     taint: ClaimSource,
-    position: Option<(EntityId, EntityId, EntityId)>,
+    /// The facets every source folded so far may sit in, their project and
+    /// their world.
+    position: Option<(BTreeSet<EntityId>, EntityId, EntityId)>,
     rel: crate::claim::RelationshipScope,
     scope: Vec<(Value, Value)>,
     sensitivity: u8,
@@ -1071,19 +1152,22 @@ impl ScopeFold {
     /// Fold `source` in; on a conflict the fold is left part-way.
     fn fold(&mut self, source: &Source) -> std::result::Result<(), SourceConflict> {
         self.sensitivity = self.sensitivity.max(source.sensitivity);
-        if let Some((facet, project, world)) = self.position {
-            let (f, p, w) = source.position;
-            if facet != f {
-                return Err(SourceConflict::Facet);
+        let (f, p, w) = &source.position;
+        match &mut self.position {
+            Some((facets, project, world)) => {
+                facets.retain(|facet| f.contains(facet));
+                if facets.is_empty() {
+                    return Err(SourceConflict::Facet);
+                }
+                if *project != *p {
+                    return Err(SourceConflict::Project);
+                }
+                if *world != *w {
+                    return Err(SourceConflict::World);
+                }
             }
-            if project != p {
-                return Err(SourceConflict::Project);
-            }
-            if world != w {
-                return Err(SourceConflict::World);
-            }
+            None => self.position = Some((f.clone(), *p, *w)),
         }
-        self.position = Some(source.position);
         let Some(body) = &source.claim else {
             self.taint =
                 crate::dreamer_consolidation::source_meet(self.taint, ClaimSource::Imported);
@@ -1145,17 +1229,28 @@ impl ScopeFold {
         Ok(())
     }
 
+    /// The facet an answer on the sources folded so far lands in: the lowest
+    /// every source may sit in.
+    fn facet(&self) -> Option<EntityId> {
+        self.position
+            .as_ref()
+            .and_then(|(facets, _, _)| facets.first().copied())
+    }
+
     /// Bounds `candidate` by every source folded in; returns their met taint.
     fn bound(self, candidate: &mut ClaimCandidate) -> ClaimSource {
+        let facet = self.facet();
         let mut scope = self.scope;
         if self.sensitivity != 2 {
             scope.push((Value::from("sensitivity"), Value::from(self.sensitivity)));
         }
-        if let Some((facet, project, world)) = self.position {
-            scope.push((
-                Value::from("facet"),
-                Value::Binary(facet.as_bytes().to_vec()),
-            ));
+        if let Some((_, project, world)) = self.position {
+            if let Some(facet) = facet {
+                scope.push((
+                    Value::from("facet"),
+                    Value::Binary(facet.as_bytes().to_vec()),
+                ));
+            }
             scope.push((
                 Value::from("scopeProjectId"),
                 Value::Binary(project.as_bytes().to_vec()),

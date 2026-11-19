@@ -59,6 +59,7 @@ pub fn enroll_mine_machine(
                 &encryption_key,
             ))
             .to_bytes(),
+        restored_from: None,
     };
     vault.enroll_machine(
         owner,

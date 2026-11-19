@@ -168,6 +168,8 @@ impl ScopedRead<'_> {
             ScanCount::start(&self.vault.store, txn, EngineScan::ScopedEdgeRows, &scope)?;
         let mut seen = HashSet::new();
         seen.insert(*center);
+        // A withheld peer counts once however many edges reach it.
+        let mut suppressed_peers = HashSet::new();
         for row in rows {
             count.row();
             let edge = row?;
@@ -186,7 +188,9 @@ impl ScopedRead<'_> {
                 || Ok(ReadAdmission::Visible(())),
                 || admit(&peer),
             )?;
-            result.suppressed += admitted.suppression();
+            if admitted.suppression() > 0 {
+                suppressed_peers.insert(peer);
+            }
             if let Some(edge) = admitted.into_option() {
                 if unique_targets && !seen.insert(peer) {
                     continue;
@@ -197,6 +201,7 @@ impl ScopedRead<'_> {
                 }
             }
         }
+        result.suppressed = suppressed_peers.len();
         count.defer(&self.vault.store);
         Ok(result)
     }

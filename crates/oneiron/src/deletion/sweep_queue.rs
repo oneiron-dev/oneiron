@@ -59,7 +59,7 @@ pub(crate) fn enqueue_withdrawn_generation_in_txn(
     let value = rmp_serde::to_vec_named(&job)
         .map_err(|_| Error::InvariantViolation("withdrawn generation sweep job encode"))?;
     store.sync_queue.put(wtxn, &key, &value)?;
-    Ok(())
+    crate::housekeeping::jobs::erase_obligation_queued_in_txn(store, wtxn)
 }
 
 /// The newest withdrawn generation of each artifact whose sweep finished and
@@ -144,6 +144,7 @@ impl Vault {
         let key = encode_hard_erase_sweep_key(seq);
         let value = encode_hard_erase_sweep_job(scope, extras, queued_at, requested_at)?;
         self.store.sync_queue.put(wtxn, &key, &value)?;
+        crate::housekeeping::jobs::erase_obligation_queued_in_txn(&self.store, wtxn)?;
         Ok(key.to_vec())
     }
 

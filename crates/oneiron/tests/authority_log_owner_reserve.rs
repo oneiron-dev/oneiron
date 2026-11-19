@@ -171,6 +171,7 @@ fn admit_flooder(rooted: &Rooted) -> Flooder {
         device_class: MachineDeviceClass::Computer,
         encryption_key,
         machine_proof,
+        restored_from: None,
     };
     let folded = rooted
         .vault

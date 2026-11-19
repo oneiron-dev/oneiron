@@ -88,8 +88,6 @@ pub(crate) enum ArchivedSideGroup {
     WebConnector,
     /// Dependent walk bounds.
     Ports,
-    /// Passive housekeeping wake notes.
-    HousekeepingWake,
     /// Protective grant withdrawal markers.
     WithdrawnGrant,
     /// Project history budgets.
@@ -193,7 +191,6 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         }
         name if name == side_table::WEB_CONNECTOR_SETTING.name => Some(Group::WebConnector),
         name if name == side_table::PORTS_DEPENDENT_WALK_POLICY.name => Some(Group::Ports),
-        name if name == side_table::HOUSEKEEPING_WAKE.name => Some(Group::HousekeepingWake),
         name if name == side_table::AUTHORITY_WITHDRAWN_GRANT.name => Some(Group::WithdrawnGrant),
         name if name == side_table::PROJECT_HISTORY_POLICY.name => Some(Group::ProjectHistory),
         name if name == side_table::MESSAGE_STREAM_POLICY.name
@@ -314,11 +311,6 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::Ports => {
             crate::ports::land_archived_ports_rows_in_txn(vault, txn, permit, rows)
-        }
-        ArchivedSideGroup::HousekeepingWake => {
-            crate::store::housekeeping_wake::land_archived_housekeeping_wake_rows_in_txn(
-                vault, txn, permit, rows,
-            )
         }
         ArchivedSideGroup::WithdrawnGrant => {
             crate::authority::land_archived_withdrawn_grant_rows_in_txn(vault, txn, permit, rows)

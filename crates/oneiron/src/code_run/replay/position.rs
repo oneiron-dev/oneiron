@@ -4,8 +4,6 @@
 //! index, as from the start, with its stamps as recorded, and nothing is
 //! sliced or numbered again.
 
-use std::cell::Cell;
-
 use super::super::support::invalid_code_run_replay;
 use super::{CodeRunReplayCursor, CodeRunReplayRecord};
 use crate::{Error, Result};
@@ -26,10 +24,9 @@ impl<'a> CodeRunReplayCursor<'a> {
                 "code-run replay position past the bridge log",
             ));
         }
-        Ok(Self {
-            record,
-            next: Cell::new(index),
-        })
+        let cursor = Self::new(record);
+        cursor.next.set(index);
+        Ok(cursor)
     }
 
     /// Moves the cursor on to `position`, past rows no call of the arm

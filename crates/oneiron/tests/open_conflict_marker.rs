@@ -185,6 +185,63 @@ fn native_parks_a_candidate_against_its_unequal_head() -> ExtractionVerdictTestR
     Ok(())
 }
 
+/// A parked marker stores its times as Unix seconds, as every claim row does: its occurred
+/// range, its learned_at and its birth carry the pass clock's second, not its milliseconds.
+#[test]
+fn native_marker_times_are_unix_seconds() -> ExtractionVerdictTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = open_vault(&dir)?;
+    let subject = EntityId::now();
+    seed_named_person(&vault, &subject, "owen", vault.now_recorded_at())?;
+    let head = land_head(&vault, subject, "green tea")?;
+    let witnessed = witness_extraction_turns(&vault, &["owen chooses black coffee"])?;
+    let (attempt_id, admitted) =
+        enqueue_admitted_extraction_attempt(&vault, &witnessed.turns, QUEUE_NOW)?;
+    let attempt = extraction_attempt_hex(attempt_id);
+    let binding = bind_extraction(&vault, &admitted)?;
+    let page = read_bound_extraction_page(&binding, &attempt)?;
+    let turns = page_turns_with_versions(&page);
+    assert_eq!(turns.len(), 1, "the page serves the one witnessed turn");
+    let operands = vec![extraction_candidate(
+        &subject.to_hex(),
+        FOOD,
+        json!("black coffee"),
+        &turns[0].0,
+        turns[0].1.clone(),
+    )];
+
+    let pass_ms = pass_clock_ms(&vault);
+    let parked = park_native_open_conflict(&vault, &attempt, pass_ms, &operands)?;
+    assert_eq!(parked["prior_head"], json!(head.to_hex()));
+    let open = vault
+        .memory(dreamer(&vault)?, EdgeActorClass::System)
+        .open_conflicts(None, Some(subject), usize::MAX)?;
+    let [conflict] = open.as_slice() else {
+        return Err(format!("the Dreamer reads {} open conflicts, not one", open.len()).into());
+    };
+    assert_eq!(json!(conflict.marker.to_hex()), parked["marker"]);
+
+    let at = pass_ms / 1_000;
+    assert_eq!(
+        vault.get_occurred(&conflict.marker)?,
+        TimeRange { start: at, end: at },
+        "the marker occurred at the pass clock's second"
+    );
+    assert_eq!(
+        vault.get_learned_at(&conflict.marker)?,
+        at,
+        "the marker was learned at the pass clock's second"
+    );
+    let birth = vault
+        .row_birth(&conflict.marker)?
+        .ok_or("the marker carries a birth")?;
+    assert_eq!(
+        birth.made_by.at, at,
+        "the marker's birth is stamped at the pass clock's second"
+    );
+    Ok(())
+}
+
 /// Two sibling candidates with unequal values are parked as one marker with no prior
 /// head: no member is a stored claim, and both candidates are retained on it.
 #[test]
