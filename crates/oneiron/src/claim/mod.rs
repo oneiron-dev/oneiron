@@ -52,6 +52,7 @@ pub(crate) use dispatch_input as widen_record;
 mod aging_profiles;
 mod authorship;
 mod candidate_write;
+pub(crate) use candidate_write::LandingGateAnswer;
 pub mod code_instruction;
 pub mod consult_payload_ref;
 pub mod retrieval_scope;
