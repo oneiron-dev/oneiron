@@ -3,6 +3,17 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v39 (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES, site S1,
+/// and FIX FOREIGN-ANCHOR-ADMIT-SIDE): stored authority-log rows keep their
+/// bytes and change meaning. Only the roster's chain admits or removes an
+/// owner act's carrier: an act whose carrier an anchor chain, and not the
+/// roster's, marked removed at the act's parents was refused and now
+/// stands, and an act whose carrier only an anchor chain admitted stood and
+/// is now refused. A stored checkpoint image written before it holds the
+/// old answers and no longer decodes (the authority fold schema moves
+/// 49 -> 50 with it). No old-meaning reader or migration is provided (the
+/// lead's M-1 stored-change rule, path "loud").
+///
 /// v37 (row OWNER-ANCHOR-ROOT-RECOVERY, FIX OWNER-ANCHOR-NO-ROOT-RECOVERY): the
 /// authority fold schema moves 44 -> 45, and a stored checkpoint image
 /// written before it no longer decodes. The fold names a roster with no live
@@ -212,7 +223,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 38;
+pub const STORAGE_ABI_VERSION: u16 = 39;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

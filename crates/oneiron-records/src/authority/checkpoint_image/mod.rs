@@ -95,7 +95,10 @@ use serde::Serialize;
 /// vouched for, draws the line too: an enrolment of its key outside that line is refused, and a
 /// revocation proved through one ends nothing; only a proving enrolment's line makes a row wait
 /// for the owner's proof (row PASSKEY-OWNER-KEY-DRAWS-NO-LINE).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 49;
+/// 50: only the roster's chain admits or removes an owner act's carrier, never an anchor's
+/// (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES, site S1, and FIX
+/// FOREIGN-ANCHOR-ADMIT-SIDE).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 50;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
