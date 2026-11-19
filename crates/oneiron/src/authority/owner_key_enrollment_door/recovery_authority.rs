@@ -652,26 +652,34 @@ impl Vault {
             // accepts, as the stale-roster window renews it, never a
             // custodial copy of its profile (`stale_roster.rs`).
             let accepted = fold.accepted_roster_marks.contains(hash);
-            let supports: Vec<&mut CarrySupport> = match &entry.op {
-                AuthorityOp::MachineProfile(profile) if !anchor => machines
+            // A kit restore's inline join is its R's roster revision of the
+            // machine, so a kit change carries it as a profile row
+            // (REVIEW-9539 round 2 P1).
+            let filed = crate::authority::stale_roster::filed_machine_profile(&entry.op)
+                .filter(|_| !anchor);
+            let supports: Vec<&mut CarrySupport> = match (filed, &entry.op) {
+                (Some(profile), _) => machines
                     .get_mut(&profile.machine)
                     .into_iter()
                     .flatten()
                     .filter(|(head, trusted, _)| *head == profile && (accepted || !*trusted))
                     .map(|(_, _, support)| support)
                     .collect(),
-                AuthorityOp::BindActor {
-                    authority_key,
-                    actor_ref,
-                    actor_class,
-                    epoch,
-                }
-                | AuthorityOp::RebindActor {
-                    authority_key,
-                    actor_ref,
-                    actor_class,
-                    epoch,
-                } => match bindings.get_mut(authority_key) {
+                (
+                    _,
+                    AuthorityOp::BindActor {
+                        authority_key,
+                        actor_ref,
+                        actor_class,
+                        epoch,
+                    }
+                    | AuthorityOp::RebindActor {
+                        authority_key,
+                        actor_ref,
+                        actor_class,
+                        epoch,
+                    },
+                ) => match bindings.get_mut(authority_key) {
                     Some((binding, support))
                         if binding.actor_ref == *actor_ref
                             && binding.actor_class == *actor_class

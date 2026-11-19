@@ -69,6 +69,24 @@ impl FirstSeenMap for BTreeMap<AuthorityEntryHash, u64> {
     }
 }
 
+/// The machine profile `op` files on its machine's chain: a profile row's,
+/// or the enrolment an owner's join of a machine born of a restore carries
+/// inline, which the fold files under the join's own entry
+/// (KIT-JOIN-ONE-R-ROW = A). A join of a held enrolment files none: the row
+/// it joins filed it. Every reader of a roster revision's row reads it here,
+/// so an inline join expires, renews and carries as a profile row does
+/// (REVIEW-9539 round 2 P1, stale_roster.rs:141).
+pub(super) fn filed_machine_profile(op: &AuthorityOp) -> Option<&MachineProfile> {
+    match op {
+        AuthorityOp::MachineProfile(profile)
+        | AuthorityOp::RestoredMachineJoin(RestoredMachineJoin {
+            enrolment: RestoredJoinEnrolment::Inline(profile),
+            ..
+        }) => Some(profile),
+        _ => None,
+    }
+}
+
 /// Whether `op` revokes a device, rotates a key, re-roots the vault or
 /// appoints a successor root: the rows the window reads revocations from.
 /// Over rows with none of these it expires no approval and finds no deadline.
@@ -144,10 +162,9 @@ fn stale_roster_approval_deadlines<E: LogRow>(
                 }
                 // An owner answer rests on its carrier's act, never on a
                 // roster key, so no roster revocation expires it (C3).
-                AuthorityOp::MachineProfile(profile) => {
+                op => filed_machine_profile(op).is_some_and(|profile| {
                     profile.role != MachineRole::Removed && profile.act.is_none()
-                }
-                _ => false,
+                }),
             };
             if !approval {
                 return None;
@@ -343,7 +360,7 @@ pub(super) fn apply_stale_roster_window<E: LogRow>(
     // anchor's own chain rests on no roster key, so it never goes stale.
     let renewed = |revision: &MachineRevision, trusted: bool| {
         entries.iter().any(|row| {
-            matches!(&row.entry().op, AuthorityOp::MachineProfile(profile) if *profile == revision.profile)
+            filed_machine_profile(&row.entry().op) == Some(&revision.profile)
                 && row.entry_hash().is_some_and(|hash| {
                     fold.valid_entries.contains(&hash)
                         && !expired.contains(&hash)
@@ -393,8 +410,9 @@ pub(super) fn accepted_roster_marks(
     valid
         .iter()
         .filter(|hash| {
-            let Some(AuthorityOp::MachineProfile(profile)) =
-                entries.get(*hash).map(|entry| &entry.op)
+            let Some(profile) = entries
+                .get(*hash)
+                .and_then(|entry| filed_machine_profile(&entry.op))
             else {
                 return false;
             };

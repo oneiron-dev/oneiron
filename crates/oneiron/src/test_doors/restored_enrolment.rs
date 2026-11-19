@@ -10,6 +10,8 @@ use crate::authority::{AuthorityEntryHash, HostSlipIssuer, MachineEnrolmentReque
 use crate::error::Result;
 use crate::{EntityId, Vault};
 
+pub mod forged_rows;
+
 /// Signs `request`'s enrolment under `issuer`, the vault's root, for
 /// `owner`, as an unanswered install, lands it on `vault` and returns its
 /// entry, which the fold holds.

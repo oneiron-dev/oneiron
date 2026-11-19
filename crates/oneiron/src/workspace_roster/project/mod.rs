@@ -626,6 +626,24 @@ pub(super) fn record<T: for<'a> Deserialize<'a>>(
     let body = crate::entity_doc::resolve_record_body(store, txn, &id, body)?;
     decode(&body).map(Some)
 }
+/// Whether a stored row of `kind` with a body exists at `id`: the header
+/// check [`record`] makes, with no decode. A read path that must still see the
+/// body asks the read fold.
+pub(super) fn record_present(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+) -> Result<bool> {
+    let present = store.port_entity_with_raw(txn, &id, |raw| {
+        let header = EntityMetadataHeader::parse(raw).ok_or_else(invalid)?;
+        if header.entity_type != kind {
+            return Err(invalid());
+        }
+        Ok(raw.len() > ENTITY_METADATA_HEADER_LEN)
+    })?;
+    Ok(present == Some(true))
+}
 
 pub(crate) use crate::store::project_kind::is_project_type;
 /// Check the dynamic compiled-pack kind through the persisted root binding.
