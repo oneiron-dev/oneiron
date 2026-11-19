@@ -305,7 +305,7 @@ pub(super) fn config_text(
 fn is_absent(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<io::Error>()
-        .is_some_and(|error| error.kind() == io::ErrorKind::NotFound)
+        .is_some_and(|io_error| io_error.kind() == io::ErrorKind::NotFound)
 }
 
 pub(super) fn stage_config(path: &Path, text: &str) -> anyhow::Result<PathBuf> {
@@ -380,13 +380,14 @@ mod tests {
     fn init_refuses_a_config_that_sets_the_issuer_key_where_others_can_read_it() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("oneiron.toml");
-        let text = format!("auth_secret = \"{}\"\n{EXISTING}", "ab".repeat(32));
+        let secret = "ab".repeat(32);
+        let text = format!("auth_secret = \"{secret}\"\n{EXISTING}");
         config_file(&path, &text, 0o644);
         let error = init_with_env(answers(dir.path(), &path), EnvConfig::default(), None)
             .expect_err("init kept an issuer key other users can read");
         let message = format!("{error:#}");
         assert!(message.contains("sets auth_secret at line 1"), "{message}");
-        assert!(!message.contains(&"ab".repeat(32)), "{message}");
+        assert!(!message.contains(&secret), "{message}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
         assert_eq!(mode(&path), 0o644);
     }
