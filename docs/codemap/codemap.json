@@ -77225,7 +77225,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "DisplacedJudgeReceipt"
@@ -80146,6 +80146,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/skill_reliability/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_reliability/tests/judge_displacement.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -90812,7 +90820,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities",
      "surface": {
       "const": 2,
-      "crate-vis": 23,
+      "crate-vis": 25,
       "enum": 1,
       "fn": 3,
       "re-export": 1,
@@ -92116,7 +92124,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 86,
+      "crate-vis": 87,
       "enum": 1,
       "fn": 2,
       "mod": 5,
@@ -92242,7 +92250,7 @@
      "path": "src/task_verb/query_facade.rs",
      "purpose": "Task descriptions, cancellation and proposals",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3
      }
     },
@@ -92693,13 +92701,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/task_continuation.rs",
      "purpose": "The same-TASK continuation of a failed agent run (FIX 3694, OF-568, ruling 3)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -115960,7 +115968,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
     },
     "skill_reliability": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116264,7 +116272,7 @@
    "over_bar": 306,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8204,
-   "test_files": 1953
+   "test_files": 1954
   },
   "oneiron-agent-runtime": {
    "files": [
