@@ -633,7 +633,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/tests/trusted_renewal.rs` | test | s | — | — | World privacy P6b: a stale trusted roster revision is renewed by exactly the copies the trusted chain itself… |
 | `src/authority/tests/weak_keys.rs` | test | s | — | — | A small-order Ed25519 key has no authority (engine-crates-04) |
 | `src/authority/tests/world_chain_races.rs` | test | s | — | — | World privacy P6b acceptance for the multi-chain race rule on a self-host vault (contract §4, check 7c): the… |
-| `src/authority/tests/world_chain_reads.rs` | test | m | 5 crate-vis | — | World privacy P6b acceptance for settings edits across admitters (contract §4, check 7c): validity is the… |
+| `src/authority/tests/world_chain_reads.rs` | test | L | 5 crate-vis | — | World privacy P6b acceptance for settings edits across admitters (contract §4, check 7c): validity is the… |
 | `src/authority/tests/world_floor.rs` | test | XL | 2 crate-vis | — | A restriction still lands past a sequence floor (Astra #1430) |
 | `src/authority/tests/world_foreign_heads.rs` | test | s | — | — | Owner doors never name another anchor's rows (Astra S2-R2 A2-F4; Engine ruling, 2026-10-15) |
 | `src/authority/tests/world_held_chains.rs` | test | s | — | — | World privacy P6b acceptance for held chains (the Engine's ruling on the P2 port, 2026-10-14): a chain whose… |
@@ -4037,7 +4037,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/hnsw/rebuild.rs` | src | s | 6 crate-vis | — | Snapshot graph build, persist, and SLIM rehydrate |
 | `src/hnsw/search.rs` | src | m | 8 crate-vis | — | Search, MRL rescore, and beam traversal |
 | `src/hnsw/slim_drop.rs` | src | s | 2 crate-vis | — | SLIM derived-shape drop producer |
-| `src/hnsw/storage.rs` | src | m | 16 crate-vis | — | Metadata/counter reads and neighbor/vector codec |
+| `src/hnsw/storage.rs` | src | m | 17 crate-vis | — | Metadata/counter reads and neighbor/vector codec |
 | `src/hnsw/tests.rs` | test | L | — | — | — |
 | `src/hnsw/types.rs` | src | s | 8 crate-vis | — | Shared graph, heap, and beam option types |
 | `src/host_memory.rs` | src | s | 1 re-export | — | The process-wide physical-memory admission line |
@@ -9849,6 +9849,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/resident_human_messages_wake.rs` | test | m | — | — | A resident set to wake on human messages (`ResidentWakeMode::HumanMessages`) wakes on a human's message… |
 | `tests/resident_nightly_reveal_register_names.rs` | test | s | — | — | The names of four crate-private name tables, one line per row, taken from… |
 | `tests/restore_over_live_compartment_rows.rs` | test | s | — | — | Live restores compare refused families with the image's opened compartments |
+| `tests/restored_held_restriction_join.rs` | test | m | — | — | Row RESTORED-HELD-RESTRICTION-SIBLING-JOIN: an owner's answer for a machine born of a restore, carried while… |
 | `tests/restored_kit_join_stale_roster.rs` | test | m | — | — | REVIEW-9539 round 2 P1 (stale_roster.rs:141): a kit restore's inline join of an install born of a restore is… |
 | `tests/restored_machine_forged_guards.rs` | test | m | — | — | Row RESTORED-COPIES-R2-TESTS, part 2: the fixes of stack #9512's review rounds that only a hand-signed row… |
 | `tests/restored_machine_join_guards.rs` | test | m | — | — | Row RESTORED-COPIES-ENROL-EACH-OTHER, round 1 of the blind review of stack #9512 (REVIEW-9509 and… |

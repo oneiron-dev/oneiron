@@ -7114,7 +7114,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/world_chain_reads.rs",
@@ -47240,7 +47240,7 @@
      "path": "src/hnsw/storage.rs",
      "purpose": "Metadata/counter reads and neighbor/vector codec",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -111986,6 +111986,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/restored_held_restriction_join.rs",
+     "purpose": "Row RESTORED-HELD-RESTRICTION-SIBLING-JOIN: an owner's answer for a machine born of a restore, carried while…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/restored_kit_join_stale_roster.rs",
      "purpose": "REVIEW-9539 round 2 P1 (stale_roster.rs:141): a kit restore's inline join of an install born of a restore is…",
      "surface": {}
@@ -116256,7 +116264,7 @@
    "over_bar": 306,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8204,
-   "test_files": 1952
+   "test_files": 1953
   },
   "oneiron-agent-runtime": {
    "files": [
