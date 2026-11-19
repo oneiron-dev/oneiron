@@ -22,7 +22,9 @@ use oneiron_contracts::fingerprint::ContentHash;
 use rmpv::Value;
 use std::collections::BTreeSet;
 
+mod left_facet;
 mod public_admit;
+pub(crate) use left_facet::mark_answers_stale_in_left_facets_in_txn;
 pub use public_admit::{admit_standing_answer, prepare_standing_answer};
 
 /// One backfill identity: question id + `backfill` family + version, unit and frontier.
