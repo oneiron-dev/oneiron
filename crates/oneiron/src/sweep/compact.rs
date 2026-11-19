@@ -1184,6 +1184,7 @@ mod scoped_update_tests {
             assigned_ref: None,
             actor_generation: None,
             assigned_generation: None,
+            answered_heads: None,
             occurred_at: learned_at,
         };
         let owner = EntityId::now();

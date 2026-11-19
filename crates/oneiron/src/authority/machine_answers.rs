@@ -11,6 +11,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::{EntityId, TimeRange, Vault};
 
+use super::machine_identity::SERVING_INSTALL_ROLE;
 use super::slip_vault::{next_entry, require_host};
 use super::*;
 
@@ -111,6 +112,32 @@ pub(super) fn no_carrier() -> Error {
     )
 }
 
+/// A machine born of a restore is not a machine of the vault until a joined
+/// machine joins it (row RESTORED-COPIES-ENROL-EACH-OTHER): the bootstrap arm
+/// never enrols it, and the fold holds a root-signed enrolment of it until an
+/// entry signed by a joined machine of the vault descends from it, or the
+/// owner's word that no other machine is left names it
+/// (`Vault::join_restored_install`).
+pub(crate) const RESTORED_NOT_JOINED: &str = "this install was restored from a checkpoint and has \
+     not joined the vault: a machine of the vault that has joined must pair it, or, when no other \
+     machine is left, the owner joins it here with an owner key";
+
+/// What the fold did with one landed machine revision: an owner's answer as
+/// it landed, or a restored machine's enrolment, held until it joins (row
+/// RESTORED-COPIES-ENROL-EACH-OTHER).
+enum Landed {
+    Answer(MachineAnswerLanding),
+    /// The held enrolment of a machine born of a restore: the entry just
+    /// written, which the fold holds.
+    Restored(AuthorityEntryHash),
+}
+
+/// The roster's chain holds the machine a roster key would put on it as
+/// removed, or names it with other keys: no roster key's revision replaces
+/// either. Nothing was written.
+const ROSTER_HOLDS_MACHINE_OTHERWISE: &str = "the vault's roster holds this machine as removed, \
+                                              or names it with other keys; nothing was written";
+
 /// The answer would name more rows than one authority entry may: the log's
 /// encoding bound (`MAX_PARENTS`), never a possession test. It refuses
 /// atomically (C5).
@@ -126,6 +153,14 @@ fn answer_parent_bound(named: usize) -> Error {
 /// chain once; a later answer changes its role through
 /// [`Vault::set_machine_role`] and its class through
 /// [`class_revision_profile`], and nothing that joins replaces its key.
+///
+/// A machine born of a restore whose enrolment the fold holds unjoined (row
+/// RESTORED-COPIES-ENROL-EACH-OTHER) joins on that held chain: the fold lays
+/// it under a carried answer, so the answer is numbered above every held
+/// revision, and it must name the same machine and encryption keys and
+/// origin, or it refuses and nothing is written (REVIEW-9509/9510 P1). Only
+/// the enrolments held under a scope this install counts are read: the
+/// roster's and its pinned anchor's (REVIEW-9509 round 2 P1).
 fn joining_profile(
     fold: &AuthorityFold,
     owner: EntityId,
@@ -140,6 +175,19 @@ fn joining_profile(
     {
         return Err(invalid_authority());
     }
+    let held = fold
+        .counted_waiting_enrolments(request.machine)
+        .map(|(_, held)| &held.profile);
+    let mut revision = 1;
+    for held in held {
+        if held.machine_key != request.machine_key
+            || held.encryption_key != request.encryption_key
+            || held.restored_from != request.restored_from
+        {
+            return Err(invalid_authority());
+        }
+        revision = revision.max(held.revision.saturating_add(1));
+    }
     Ok(MachineProfile {
         machine: request.machine,
         owner,
@@ -147,11 +195,12 @@ fn joining_profile(
         device_class: request.device_class,
         encryption_key: request.encryption_key.clone(),
         role,
-        revision: 1,
+        revision,
         machine_proof: request.machine_proof,
         seen_world_edits: std::collections::BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: request.restored_from,
     })
 }
 
@@ -194,6 +243,9 @@ fn class_revision_profile(
         owner,
         device_class: request.device_class,
         machine_proof: request.machine_proof,
+        // The proof signs the request's origin; the fold refuses one that is
+        // not the machine's (row RESTORED-COPIES-ENROL-EACH-OTHER).
+        restored_from: request.restored_from,
         revision: current
             .profile
             .revision
@@ -338,14 +390,37 @@ impl Vault {
         } else {
             joining_profile(&fold, answer.owner, request, role)?
         };
+        // A pairing answers a machine's revision 1 only
+        // (`MachineProfile::validate_act`): a restored machine that joins on
+        // its held chain is numbered above it, and the owner's pairing then
+        // stands as his answer for it (REVIEW-9509/9511 round 2 P1).
+        let mut answer = answer;
+        if profile.revision > 1 && matches!(answer.kind, OwnerActKind::Pairing) {
+            answer.kind = OwnerActKind::MachineAnswer;
+        }
         self.ensure_machine_row_in_txn(txn, request.machine)?;
         self.append_owner_answer_in_txn(txn, &fold, answer, profile)
+    }
+
+    /// Whether this install may sign a revision in `role` under a host root
+    /// with no owner act: the bootstrap arm (C4) and the re-root carry (C3).
+    /// Under the Hosted posture a host root never answers for the owner
+    /// (the writer rule of [`AuthorityFold::offers_owner_proof`]), so an
+    /// owner's answer (`Owned`) needs his act, carried by a machine. The
+    /// fold keeps such an answer a self-host root signed before its log was
+    /// folded as hosted; a hosted install never writes a new one (Engine
+    /// ANSWER HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A).
+    pub(super) fn host_root_may_sign_role(&self, role: MachineRole) -> bool {
+        !(matches!(role, MachineRole::Owned(_))
+            && self.privacy_posture() == crate::HostingPrivacyPosture::Hosted)
     }
 
     /// Enrols in the caller's transaction on the explicit bootstrap arm
     /// (C4): the host root signs, with no owner act. Only the host's own
     /// node and a fresh self-host first install take it; the fold judges the
-    /// root's custody, so a hosted root never answers "yours" here.
+    /// root's custody, so a hosted root never answers "yours" here, and a
+    /// hosted install signs no owner's answer with any host root it holds
+    /// ([`Self::host_root_may_sign_role`]): it refuses, writing nothing.
     pub(super) fn enroll_bootstrap_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -354,11 +429,77 @@ impl Vault {
         request: &MachineEnrolmentRequest,
         role: MachineRole,
     ) -> Result<FoldedMachine> {
+        if !self.host_root_may_sign_role(role) {
+            return Err(no_carrier());
+        }
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
+        // A machine born of a restore joins only through a joined machine
+        // (row RESTORED-COPIES-ENROL-EACH-OTHER); the fold would hold it.
+        if request.restored_from.is_some() {
+            return Err(authority_refused(RESTORED_NOT_JOINED));
+        }
         let profile = joining_profile(&fold, owner, request, role)?;
         self.ensure_machine_row_in_txn(txn, request.machine)?;
         self.append_machine_profile_in_txn(txn, issuer, &fold, profile)
+    }
+
+    /// A root-signed enrolment of an install born of a restore (row
+    /// RESTORED-COPIES-ENROL-EACH-OTHER): the fold holds it until an entry
+    /// signed by a joined machine descends from it, or the owner's word
+    /// names it. Returns that enrolment's entry for the caller to commit.
+    /// Refuses a request no restore made, and one the fold did not hold.
+    /// Only the owner's join door (`Vault::join_restored_install`) writes
+    /// one, beside that word, and the test door that proves the fold's hold
+    /// and join.
+    pub(crate) fn file_restored_enrolment_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        owner: EntityId,
+        request: &MachineEnrolmentRequest,
+        role: MachineRole,
+    ) -> Result<AuthorityEntryHash> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        require_host(&fold, issuer)?;
+        if request.restored_from.is_none() {
+            return Err(invalid_authority());
+        }
+        let profile = joining_profile(&fold, owner, request, role)?;
+        self.ensure_machine_row_in_txn(txn, request.machine)?;
+        // The entry just written, never another held enrolment of the
+        // machine, such as an unpinned anchor's mark that sorts first
+        // (REVIEW-9539 P1).
+        match self.append_root_signed_in_txn(txn, issuer, &fold, profile)? {
+            Landed::Restored(enrolment) => Ok(enrolment),
+            Landed::Answer(_) => Err(invalid_authority()),
+        }
+    }
+
+    /// The enrolment a kit restore files for an install born of a restore,
+    /// in its one row with the join (Engine ANSWERs
+    /// KIT-RESTORE-JOINS-RESTORED-COPY = A and KIT-JOIN-ONE-R-ROW = A): the
+    /// act-free `Owned(Yours)` revision the kit's R puts a machine on the
+    /// roster with ([`Self::put_machine_on_roster_in_txn`]), with the
+    /// request's keys, proof and origin, numbered above every enrolment of
+    /// the machine held under a scope this install counts. Creates the
+    /// MACHINE row when absent.
+    pub(crate) fn kit_restore_enrolment_profile_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        owner: EntityId,
+        request: &MachineEnrolmentRequest,
+    ) -> Result<MachineProfile> {
+        if request.restored_from.is_none() {
+            return Err(invalid_authority());
+        }
+        let role = MachineRole::Owned(MachineOwnership::Yours);
+        let mut profile = joining_profile(fold, owner, request, role)?;
+        profile.seen_world_edits =
+            super::act_standing::acknowledged_by_in_txn(&self.store, txn, fold, request.machine)?;
+        self.ensure_machine_row_in_txn(txn, request.machine)?;
+        Ok(profile)
     }
 
     /// This install as the carrier of the owner's act: its machine and its
@@ -375,7 +516,12 @@ impl Vault {
         let key =
             crate::identity::read_machine_signing_key_in_txn(self, txn)?.ok_or_else(no_carrier)?;
         let public_key = key.verifying_key().to_bytes();
-        if !owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+        if !owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(no_carrier());
         }
         Ok((machine, key))
@@ -400,7 +546,9 @@ impl Vault {
     ) -> Result<MachineAnswerLanding> {
         let (carrier, key) = self.carrier_in_txn(txn, fold)?;
         let target = fold.machine(profile.machine);
-        let current = target.map_or([0; 32], FoldedMachine::answer_revision);
+        let current = target.map_or([0; 32], |target| {
+            target.answer_revision(fold.pinned_root.as_ref())
+        });
         // Revision integrity (contract §4): the owner decided on what the
         // surface showed him.
         if answer.seen.is_some_and(|seen| seen != current) {
@@ -443,7 +591,7 @@ impl Vault {
             parents,
             AuthorityOp::MachineProfile(profile.clone()),
             now,
-            proof.as_deref(),
+            proof.as_ref(),
         )?;
         self.land_machine_profile_in_txn(txn, entry, &profile, now)
     }
@@ -454,22 +602,36 @@ impl Vault {
     /// goes stale. An owner's admitted answer rests on its carrier's act and
     /// no roster key, so it survives the re-root as it is; the new root never
     /// copies an act into a revision it signs. An anchor's chain rests on no
-    /// roster key and is not the roster's to carry.
+    /// roster key and is not the roster's to carry. Under the Hosted posture
+    /// `next` is stamped for the cloud and answers for nobody
+    /// ([`Self::host_root_may_sign_role`]): an owner's answer the old root
+    /// signed (`Owned`, as a self-host root does before its vault is moved
+    /// or reopened as hosted) is not signed again, which the fold would
+    /// refuse, rolling the whole move back. Another machine's such answer
+    /// goes stale with the old root until the owner answers again through a
+    /// machine that carries his act. This install's own is carried on as
+    /// [`SERVING_INSTALL_ROLE`], the role a hosted serving install takes,
+    /// so the vault keeps the carrier of those answers: stale, its profile
+    /// would refuse every start's bootstrap and every owner act here (review
+    /// of #9474, round 2).
     pub(super) fn carry_machine_standing_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         before: &AuthorityFold,
         next: &HostSlipIssuer,
     ) -> Result<usize> {
+        let serving = crate::identity::read_machine_id_in_txn(self, txn)?;
         let mut carried = 0;
         for machine in before
             .machines
             .iter()
-            .filter(|(_, folded)| {
-                folded
-                    .roster
-                    .as_ref()
-                    .is_some_and(|roster| roster.is_live() && roster.profile.act.is_none())
+            .filter(|(machine, folded)| {
+                folded.roster.as_ref().is_some_and(|roster| {
+                    roster.is_live()
+                        && roster.profile.act.is_none()
+                        && (self.host_root_may_sign_role(roster.profile.role)
+                            || serving == Some(**machine))
+                })
             })
             .map(|(machine, _)| *machine)
         {
@@ -478,12 +640,18 @@ impl Vault {
                 .machine(machine)
                 .and_then(|folded| folded.roster.as_ref())
                 .ok_or_else(invalid_authority)?;
+            let role = if self.host_root_may_sign_role(current.profile.role) {
+                current.profile.role
+            } else {
+                SERVING_INSTALL_ROLE
+            };
             let profile = MachineProfile {
                 revision: current
                     .profile
                     .revision
                     .checked_add(1)
                     .ok_or_else(invalid_authority)?,
+                role,
                 ..current.profile.clone()
             };
             self.append_machine_profile_in_txn(txn, next, &fold, profile)?;
@@ -493,14 +661,29 @@ impl Vault {
     }
 
     /// Signs one bootstrap revision under the host root (C3, C4), with no
-    /// owner act.
+    /// owner act. A restored machine's enrolment, which the fold holds,
+    /// refuses here ([`RESTORED_NOT_JOINED`]): it stands for nothing.
     fn append_machine_profile_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         fold: &AuthorityFold,
-        mut profile: MachineProfile,
+        profile: MachineProfile,
     ) -> Result<FoldedMachine> {
+        match self.append_root_signed_in_txn(txn, issuer, fold, profile)? {
+            Landed::Answer(landing) => landing.into_standing().ok_or_else(invalid_authority),
+            Landed::Restored(_) => Err(authority_refused(RESTORED_NOT_JOINED)),
+        }
+    }
+
+    /// [`Self::append_machine_profile_in_txn`]'s write, and what the fold did.
+    fn append_root_signed_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        fold: &AuthorityFold,
+        mut profile: MachineProfile,
+    ) -> Result<Landed> {
         profile.seen_world_edits =
             super::act_standing::acknowledged_by_in_txn(&self.store, txn, fold, profile.machine)?;
         profile.validate()?;
@@ -515,10 +698,183 @@ impl Vault {
             AuthorityOp::MachineProfile(profile.clone()),
             now,
         )?;
-        // A root-signed revision carries no act, so the fold never holds it.
+        // A root-signed revision carries no act, so the fold never holds it
+        // for the owner's proof; it holds a restored machine's enrolment.
+        self.land_revision_in_txn(txn, entry, &profile, now)
+    }
+
+    /// Puts `request`'s machine on the roster's chain in the caller's
+    /// transaction, signed by `signer`, a live owner key of the roster held
+    /// behind `sign`: the kit's root authority key R at the kit restore
+    /// (ANCHORS-1 = A: on every install the owner's roster keys decide, the
+    /// kit's R among them; FIX KIT-RESTORE-ANCHOR-ONLY-INSTALL-COUNTS-NO-WRAP).
+    /// Only the roster's chain admits an owner act's carrier and a world key
+    /// wrap's publisher, so a machine only an anchor marked does neither.
+    /// The row is one act-free `Owned(Yours)` revision with the request's
+    /// keys and proof, the next of the roster's chain: an owner-held
+    /// signer's approval, which no custodian's later revision reaches. An
+    /// accepted roster chain whose head already says this machine is the
+    /// owner's own with these keys needs no row (`None`); a live head in any
+    /// other role, such as the `Unanswered` profile a serving install's
+    /// startup writes, takes the row above it (REVIEW-9488 P1 4). A removed
+    /// machine, or a roster head with other keys, is refused. The fold is
+    /// the judge: the revision must stand.
+    pub(crate) fn put_machine_on_roster_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        (signer, sign): (&AuthorityKey, &dyn Fn(&[u8]) -> Result<Vec<u8>>),
+        owner: EntityId,
+        request: &MachineEnrolmentRequest,
+    ) -> Result<Option<AuthorityEntryHash>> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+        if vault_id != request.vault_id {
+            return Err(invalid_authority());
+        }
+        let folded = fold.machine(request.machine);
+        let same_keys = |revision: &MachineRevision| {
+            revision.profile.machine_key == request.machine_key
+                && revision.profile.encryption_key == request.encryption_key
+        };
+        let head = folded.and_then(|folded| folded.roster.as_ref());
+        if let Some(head) = head
+            && (head.removed || !same_keys(head))
+        {
+            return Err(authority_refused(ROSTER_HOLDS_MACHINE_OTHERWISE));
+        }
+        if folded
+            .and_then(|folded| folded.roster_trusted.as_ref())
+            .is_some_and(|trusted| trusted.says_yours() && same_keys(trusted))
+        {
+            return Ok(None);
+        }
+        let revision = match head {
+            Some(head) => head
+                .profile
+                .revision
+                .checked_add(1)
+                .ok_or_else(invalid_authority)?,
+            None => 1,
+        };
+        self.ensure_machine_row_in_txn(txn, request.machine)?;
+        let profile = MachineProfile {
+            machine: request.machine,
+            owner,
+            machine_key: request.machine_key,
+            device_class: request.device_class,
+            encryption_key: request.encryption_key.clone(),
+            role: MachineRole::Owned(MachineOwnership::Yours),
+            revision,
+            machine_proof: request.machine_proof,
+            seen_world_edits: super::act_standing::acknowledged_by_in_txn(
+                &self.store,
+                txn,
+                &fold,
+                request.machine,
+            )?,
+            // A roster key's own revision: no install carries it, and no
+            // owner act rides it (the bootstrap arm's shape, C4).
+            carrier: None,
+            act: None,
+            // The request's own origin, which its proof signs: an install
+            // born of a restore stays held until it joins (row
+            // RESTORED-COPIES-ENROL-EACH-OTHER).
+            restored_from: request.restored_from,
+        };
+        self.append_owner_signed_roster_revision_in_txn(txn, (signer, sign), &fold, profile)
+            .map(Some)
+    }
+
+    /// `standing`, a roster revision of its machine, again as the next
+    /// revision above that machine's roster head, signed by `signer`, a live
+    /// owner key of the roster held behind `sign`, in the caller's
+    /// transaction: a kit change's carry of a standing the R it revokes
+    /// signed ([`Self::carry_recovery_authority_approvals_in_txn`],
+    /// WAYBACK-R-REVOCATION-STALES-R-APPROVALS = A), as
+    /// [`Self::carry_machine_standing_in_txn`] carries a host re-root's. The
+    /// carry chose the standing while it was live, before the revocation: the
+    /// roster head, or the accepted chain's head below a custodial one
+    /// (REVIEW-9488 P1 5). An aged standing reads stale here, and the new
+    /// revision stands again.
+    ///
+    /// # Errors
+    /// A machine with no roster head, or a revision that does not stand.
+    pub(crate) fn carry_roster_standing_under_key_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        (signer, sign): (&AuthorityKey, &dyn Fn(&[u8]) -> Result<Vec<u8>>),
+        standing: &MachineProfile,
+    ) -> Result<AuthorityEntryHash> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let head = fold
+            .machine(standing.machine)
+            .and_then(|folded| folded.roster.as_ref())
+            .ok_or_else(invalid_authority)?;
+        let profile = MachineProfile {
+            revision: head
+                .profile
+                .revision
+                .checked_add(1)
+                .ok_or_else(invalid_authority)?,
+            seen_world_edits: super::act_standing::acknowledged_by_in_txn(
+                &self.store,
+                txn,
+                &fold,
+                standing.machine,
+            )?,
+            ..standing.clone()
+        };
+        self.append_owner_signed_roster_revision_in_txn(txn, (signer, sign), &fold, profile)
+    }
+
+    /// Signs `profile`, an act-free roster revision, by `signer`, a live
+    /// owner key of the roster held behind `sign`, and lands it in the
+    /// caller's transaction ([`Self::put_machine_on_roster_in_txn`],
+    /// [`Self::carry_roster_standing_under_key_in_txn`]). The fold is the
+    /// judge: the revision must stand.
+    fn append_owner_signed_roster_revision_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        (signer, sign): (&AuthorityKey, &dyn Fn(&[u8]) -> Result<Vec<u8>>),
+        fold: &AuthorityFold,
+        profile: MachineProfile,
+    ) -> Result<AuthorityEntryHash> {
+        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+        profile.validate()?;
+        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let joiner = FrontierSigner::Callback(signer, sign);
+        let joined = self.prepare_authority_frontier_in_txn(txn, fold, joiner, MAX_PARENTS)?;
+        let fold = joined.as_deref().unwrap_or(fold);
+        let parents = fold.append_heads.clone();
+        if parents.is_empty() {
+            return Err(invalid_authority());
+        }
+        if parents.len() > MAX_PARENTS {
+            return Err(answer_parent_bound(parents.len()));
+        }
+        let now = self.instant_in_txn(txn)?.secs();
+        let mut entry = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(vault_id),
+            seq: next_sequence(fold, signer)?,
+            parent_hashes: parents.into_iter().collect(),
+            op: AuthorityOp::MachineProfile(profile.clone()),
+            signer: AuthoritySignature {
+                suite: signer.suite(),
+                public_key: signer.clone(),
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: now,
+        };
+        entry.signer.signature = sign(&authority_transcript(&entry)?)?;
+        let hash = authority_entry_hash(&entry)?;
+        // An owner-held signer's revision carries no act, so the fold never
+        // holds it: it stands or the door refuses.
         self.land_machine_profile_in_txn(txn, entry, &profile, now)?
             .into_standing()
-            .ok_or_else(invalid_authority)
+            .ok_or_else(invalid_authority)?;
+        Ok(hash)
     }
 
     /// Lands one machine revision and reads the fold back. A removal keeps
@@ -538,6 +894,21 @@ impl Vault {
         profile: &MachineProfile,
         now: u64,
     ) -> Result<MachineAnswerLanding> {
+        match self.land_revision_in_txn(txn, entry, profile, now)? {
+            Landed::Answer(landing) => Ok(landing),
+            Landed::Restored(_) => Err(authority_refused(RESTORED_NOT_JOINED)),
+        }
+    }
+
+    /// [`Self::land_machine_profile_in_txn`], and its third verdict: a
+    /// restored machine's enrolment the fold holds until it joins.
+    fn land_revision_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        entry: AuthorityLogEntry,
+        profile: &MachineProfile,
+        now: u64,
+    ) -> Result<Landed> {
         let at = TimeRange {
             start: now,
             end: now,
@@ -554,17 +925,24 @@ impl Vault {
                 .as_ref()
                 .is_some_and(|roster| roster.profile == *profile && (roster.is_live() || removal))
         }) {
-            return Ok(MachineAnswerLanding::Stands(folded.clone()));
+            return Ok(Landed::Answer(MachineAnswerLanding::Stands(folded.clone())));
         }
         let held = after
             .held_machine_answers()
             .get(&profile.machine)
             .is_some_and(|held| held.contains_key(&answer));
         if held {
-            return Ok(MachineAnswerLanding::Held {
+            return Ok(Landed::Answer(MachineAnswerLanding::Held {
                 answer,
                 machine: machine.cloned(),
-            });
+            }));
+        }
+        if after
+            .restored_enrolments()
+            .get(&answer)
+            .is_some_and(|enrolment| enrolment.joined_by.is_none())
+        {
+            return Ok(Landed::Restored(answer));
         }
         Err(invalid_authority())
     }

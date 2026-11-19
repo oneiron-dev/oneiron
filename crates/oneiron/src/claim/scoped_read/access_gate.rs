@@ -746,7 +746,7 @@ where
 /// relationship nor a private scope is the vault's own and decides readable.
 /// `store` is the content the row is read on, where its position is looked
 /// up: base, or a room's union (WILL L11-01).
-fn relationship_read_keyed<S>(
+pub(super) fn relationship_read_keyed<S>(
     store: &S,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,

@@ -18,6 +18,10 @@ use crate::compaction::output::OutputRef;
 use crate::entity_id::EntityId;
 
 mod doors;
+#[cfg(oneiron_test_support)]
+pub(crate) use doors::{
+    eval_measurement_remeasure_digest_for_test, eval_measurement_request_digest_for_test,
+};
 mod finish;
 mod statistics;
 

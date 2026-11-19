@@ -2,6 +2,8 @@
 //! FIX 3678: the MODEL map and each provenance cohort live in the import's row
 //! index, keyed by subject edge and native order; one cohort, one edge's
 //! history, is read back whole only to restore it.
+mod source_close;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek};
 
@@ -9,7 +11,9 @@ use super::archive_index::{
     ArchiveIndex, FLAG_PROVENANCE, IndexedArchive, Loc, QUEUE_PROVENANCE, Tag, edge_key, id_at,
     id_list, ids_of, ready_key,
 };
-use super::document_import::{import_edge, matches_row, parse_id, stamp_archived_birth};
+use super::document_import::{
+    archived_edge_skipped, import_edge, matches_row, parse_id, stamp_archived_birth,
+};
 use super::{ArchiveRecordKind, ExportEdge, ExportEntity};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::ENTITY_ID_LEN;
@@ -20,6 +24,7 @@ use crate::{
     error::{Error, Result},
     serialize::{ExportBody, ExportSecrets},
 };
+use source_close::{SourceClose, closed_at_source};
 
 /// A cohort key's subject edge: source, kind and target.
 const EDGE_KEY_LEN: usize = 2 * ENTITY_ID_LEN + 1;
@@ -224,16 +229,28 @@ pub(super) fn mark_ready<R: Read + Seek>(archive: &mut IndexedArchive<'_, R>) ->
     }
     Ok(any)
 }
-/// Restores the cohort queued under `key`, its subject edge first; the ids
-/// it inserted and the rows already here. Comparisons re-serialize under the
-/// archive's `secrets`, so writer and reader agree.
+/// What one cohort restore did.
+pub(super) struct CohortRestore {
+    /// The ids it inserted.
+    pub(super) inserted: BTreeSet<EntityId>,
+    /// The rows already here, a held row the archive carries closed and this
+    /// restore closed through the writer among them.
+    pub(super) unchanged: usize,
+    /// The rows it kept as archive data, since their subject link did not
+    /// come back, or is a `same_as` this vault already held
+    /// (`ClaimSubjectEdgeNotRestored`).
+    pub(super) kept_out: Vec<EntityId>,
+}
+/// Restores the cohort queued under `key`, its subject edge first.
+/// Comparisons re-serialize under the archive's `secrets`, so writer and
+/// reader agree.
 pub(super) fn restore<R: Read + Seek>(
     key: EntityId,
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     archive: &mut IndexedArchive<'_, R>,
     secrets: ExportSecrets,
-) -> Result<(BTreeSet<EntityId>, usize)> {
+) -> Result<CohortRestore> {
     let subject = archive
         .index
         .get(Tag::CohortPending, key.as_bytes())?
@@ -266,7 +283,59 @@ pub(super) fn restore<R: Read + Seek>(
                 &archive.spool.parse::<ExportEdge>(Loc::decode(&loc)?)?,
                 &archive.index,
             )?;
-            stage_edge(vault, txn, &edge, &archive.index)?;
+            let kind = crate::edge::EdgeKind::try_from_u8(edge.kind)
+                .ok_or_else(|| invalid("archive edge kind"))?;
+            let (source, target) = (parse_id(&edge.source)?, parse_id(&edge.target)?);
+            // A link this vault already holds with provenance of its own
+            // (below) is kept out before staging, which compares a bare
+            // archived link's stamp with the held link's own and aborted the
+            // import (REVIEW-9652 round 2 P1). The last edge pass compares its
+            // base fields only.
+            if kind != crate::edge::EdgeKind::SameAs
+                && crate::ports::EdgeStoreRead::port_edge_get(
+                    &vault.store,
+                    txn,
+                    &source,
+                    kind,
+                    &target,
+                )?
+                .is_some()
+                && holds_own_history(vault, txn, &subject, &rows)?
+            {
+                archive.index.put(Tag::OwnHistoryLink, &subject, &[])?;
+                return keep_cohort_out(key, vault, txn, archive, &rows, secrets, true);
+            }
+            if !archived_edge_skipped(archive, &edge)? {
+                stage_edge(vault, txn, &edge, &archive.index)?;
+            }
+            // The provenance door writes onto a live link only, so a cohort
+            // whose link the edge passes skip or the edge import leaves out (a
+            // `same_as` it does not restore, a `merged_into`, a link its pair
+            // does not prove) stays archive data, as a claim about such a
+            // link does (REVIEW-9581 P1). The edge passes count the link.
+            // A `same_as` this vault held before the import, one with an end
+            // the import did not insert, is left as it is
+            // (`document_import::import_same_as_edge`), its provenance history
+            // with it: the cohort stays archive data, so an archived
+            // annotation older than the held link's own never reaches the
+            // provenance writer's precedence check and aborts the import
+            // (REVIEW-9581 round 2).
+            let held_same_as = kind == crate::edge::EdgeKind::SameAs
+                && !(archive.index.contains(Tag::Inserted, source.as_bytes())?
+                    && archive.index.contains(Tag::Inserted, target.as_bytes())?);
+            if held_same_as
+                || crate::ports::EdgeStoreRead::port_edge_get(
+                    &vault.store,
+                    txn,
+                    &source,
+                    kind,
+                    &target,
+                )?
+                .is_none()
+            {
+                let own_history = holds_own_history(vault, txn, &subject, &rows)?;
+                return keep_cohort_out(key, vault, txn, archive, &rows, secrets, own_history);
+            }
             false
         }
         None => {
@@ -278,6 +347,22 @@ pub(super) fn restore<R: Read + Seek>(
             true
         }
     };
+    // A link this vault holds with provenance of its own, a claim on it that
+    // this cohort does not carry, keeps that history as it is, as a held
+    // `same_as` does above (Engine ruling 19 Nov 13:46 on FIX
+    // WHOLE-VAULT-IMPORT-HELD-LINK-OLDER-PROVENANCE-ABORTS): the cohort stays
+    // archive data, so an archived annotation older than the vault's own
+    // never reaches the provenance writer's precedence check and aborts the
+    // import, and a newer one never closes the vault's own. The two histories
+    // never merge by learned-at. A link whose only history is this archive's
+    // own rows (an earlier import of the same source) takes the cohort, and
+    // follows the source's later close of a row it took (`closed_at_source`,
+    // REVIEW-9652 round 2 P1). The link keeps its own stamp too: the last
+    // edge pass compares its base fields only (REVIEW-9652 P1).
+    if holds_own_history(vault, txn, &subject, &rows)? {
+        archive.index.put(Tag::OwnHistoryLink, &subject, &[])?;
+        return keep_cohort_out(key, vault, txn, archive, &rows, secrets, true);
+    }
     let new_ids = rows
         .iter()
         .filter_map(|(_, id, _)| {
@@ -342,7 +427,144 @@ pub(super) fn restore<R: Read + Seek>(
     for (_, id, _) in &rows {
         archive.index.remove(Tag::Waiting, id.as_bytes())?;
     }
-    Ok((new_ids, unchanged))
+    Ok(CohortRestore {
+        inserted: new_ids,
+        unchanged,
+        kept_out: Vec::new(),
+    })
+}
+/// Whether this vault holds provenance on the cohort's subject link that the
+/// cohort does not carry: a claim on the link, of any lifecycle, that is none
+/// of `rows`. That is the vault's own history of a link it holds.
+fn holds_own_history(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: &[u8],
+    rows: &[(ExportEntity, EntityId, ClaimBody)],
+) -> Result<bool> {
+    if subject.len() != EDGE_KEY_LEN {
+        return Err(invalid("archive cohort subject is not an edge"));
+    }
+    let kind = crate::edge::EdgeKind::try_from_u8(subject[ENTITY_ID_LEN])
+        .ok_or_else(|| invalid("archive cohort subject is not an edge"))?;
+    let (source, target) = (id_at(subject, 0)?, id_at(subject, ENTITY_ID_LEN + 1)?);
+    Ok(vault
+        .edge_provenance_audit_in_txn(txn, &crate::provenance::EdgeRef::new(source, kind, target))?
+        .cohort
+        .iter()
+        .any(|(claim, _)| !rows.iter().any(|(_, id, _)| *id == claim.id)))
+}
+/// Whether the held claim `raw` is the archived claim `row` (`body`) as this
+/// vault's own history of its link closed it, and nothing else: an active
+/// archived claim that a later claim on the link superseded here, or that was
+/// retracted here. A close re-puts the claim with its closed record, that
+/// record's `valid_to` and the closed lifecycle, and moves the envelope's
+/// `occurred.end` to that `valid_to`
+/// (`provenance::lifecycle::closed_claim_put_payload`); every other byte stays
+/// the archive's (REVIEW-9652 P1).
+fn closed_here(
+    row: &ExportEntity,
+    body: &ClaimBody,
+    raw: &[u8],
+    secrets: ExportSecrets,
+) -> Result<bool> {
+    use crate::write_envelope::provenance::edge_lifecycle::{
+        close_record_for_supersession, retract_record,
+    };
+    if body.lifecycle != ClaimLifecycleStatus::Active {
+        return Ok(false);
+    }
+    let Some(stored) = raw
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .and_then(|bytes| decode_claim_body(bytes, true).ok())
+    else {
+        return Ok(false);
+    };
+    let Some(close_at) = stored.valid_to else {
+        return Ok(false);
+    };
+    let record = crate::provenance::decode_edge_provenance_body(&body.value)?;
+    let closed = match stored.lifecycle {
+        ClaimLifecycleStatus::Superseded => close_record_for_supersession(&record, close_at),
+        ClaimLifecycleStatus::Retracted => retract_record(&record, close_at),
+        _ => return Ok(false),
+    };
+    let Some((closed, valid_to)) = closed
+        .ok()
+        .and_then(|closed| closed.valid_to.map(|valid_to| (closed, valid_to)))
+    else {
+        return Ok(false);
+    };
+    let mut wrapper = body.clone();
+    wrapper.value = crate::provenance::encode_edge_provenance_value(&closed);
+    wrapper.valid_to = Some(valid_to);
+    wrapper.lifecycle = stored.lifecycle;
+    let closed_row = ExportEntity {
+        occurred_end: valid_to,
+        ..row.clone()
+    };
+    Ok(matches_row(
+        &closed_row,
+        raw,
+        &ExportBody::from_bytes_with(
+            &crate::write_envelope::claim_body::encode_claim_body(&wrapper)?,
+            row.entity_type,
+            secrets,
+        ),
+        secrets,
+    ))
+}
+/// Keeps the cohort queued under `key`, whose subject link is not here or
+/// keeps its own history, as archive data: a row this vault already holds
+/// stays as it is, compared as [`restore_cohort`] compares it, and every
+/// other row is marked omitted. With `own_history`, the link's own history
+/// may have closed a row this vault took from an earlier archive, so a held
+/// row is also left as it is when it is the archived row as such a close
+/// leaves it ([`closed_here`]).
+fn keep_cohort_out<R: Read + Seek>(
+    key: EntityId,
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    archive: &mut IndexedArchive<'_, R>,
+    rows: &[(ExportEntity, EntityId, ClaimBody)],
+    secrets: ExportSecrets,
+    own_history: bool,
+) -> Result<CohortRestore> {
+    let mut unchanged = 0;
+    let mut kept_out = Vec::new();
+    for (row, id, body) in rows {
+        match crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)? {
+            Some(existing) => {
+                let expected = ExportBody::from_bytes_with(
+                    &crate::write_envelope::claim_body::encode_claim_body(body)?,
+                    row.entity_type,
+                    secrets,
+                );
+                if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live() {
+                    return Err(invalid("archive provenance ID collision"));
+                }
+                let held = matches_row(row, &existing, &expected, secrets)
+                    || (own_history && closed_here(row, body, &existing, secrets)?);
+                if !held {
+                    return Err(invalid("archive provenance ID collision"));
+                }
+                unchanged += 1;
+            }
+            None => {
+                archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
+                kept_out.push(*id);
+            }
+        }
+    }
+    archive.index.remove(Tag::CohortPending, key.as_bytes())?;
+    for (_, id, _) in rows {
+        archive.index.remove(Tag::Waiting, id.as_bytes())?;
+    }
+    Ok(CohortRestore {
+        inserted: BTreeSet::new(),
+        unchanged,
+        kept_out,
+    })
 }
 fn restore_cohort(
     vault: &Vault,
@@ -381,11 +603,17 @@ fn restore_cohort(
         if let Some(existing) =
             crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
         {
-            if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live()
-                || !matches_row(row, &existing, &expected, secrets)
-            {
+            if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live() {
                 return Err(invalid("archive provenance ID collision"));
             }
+            let source_close = if matches_row(row, &existing, &expected, secrets) {
+                None
+            } else {
+                Some(
+                    closed_at_source(row, body, &existing, secrets)?
+                        .ok_or_else(|| invalid("archive provenance ID collision"))?,
+                )
+            };
             unchanged += 1;
             // Blind-review P1 (REVIEW-4378-kimi): an existing row breaks the
             // tied-prior chain when the tracked prior is already closed —
@@ -428,6 +656,22 @@ fn restore_cohort(
                 previous = None;
             } else if !prior_live {
                 previous = None;
+            }
+            // A held row the source closed after this vault took it (Engine
+            // ANSWER HELD-ROW-CLOSED-AT-SOURCE 20 Nov 05:23): the link adds no
+            // history of its own, so it follows the source through the
+            // writer's own close. A retraction lands at the archived close
+            // time; a supersession is closed by its archived successor's
+            // restore, which names it on a learned-at tie. The final
+            // comparison below holds the result to the archived row.
+            match source_close {
+                Some(SourceClose::Retracted(close_at)) => {
+                    vault.retract_edge_provenance_in_txn(txn, id, close_at, cut)?;
+                }
+                Some(SourceClose::Superseded) => {
+                    previous = Some((*id, row.learned_at, ClaimLifecycleStatus::Superseded));
+                }
+                None => {}
             }
             continue;
         }

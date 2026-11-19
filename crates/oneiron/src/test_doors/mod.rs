@@ -6,6 +6,7 @@
 
 pub mod access_request_seed;
 pub mod action_mode_pass;
+pub mod action_replay_custody;
 pub mod advisory_rate_window;
 pub mod agent_authoring;
 pub mod agent_definition_scans;
@@ -16,6 +17,7 @@ pub mod approval_target_round_trip;
 pub mod archive_import;
 pub mod archive_producers;
 pub mod archive_provenance;
+pub mod archive_side_binary_credential;
 pub mod archive_side_catalogue;
 #[cfg(feature = "sync")]
 pub mod artifact_publication_pump;
@@ -23,6 +25,8 @@ pub mod ask_answer_proof;
 pub mod ask_intent_pins;
 pub mod authority_adopted_fold;
 pub mod authority_ancestor_index;
+pub mod authority_floor_probe;
+pub mod authority_fold_encoding;
 pub mod authority_sequence_floor;
 pub mod authority_signed_branch;
 pub mod authority_stored_damage;
@@ -39,6 +43,8 @@ pub mod call_receipt_damage;
 pub mod callable_skill;
 pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
+#[cfg(feature = "sync")]
+pub mod carrier_proof;
 pub mod check_in;
 pub mod checker_masked_candidate;
 pub mod checkpoint_descriptor;
@@ -77,6 +83,7 @@ pub mod consolidation;
 pub mod contact_family_heads;
 pub mod conversation_membership_index;
 pub mod conversation_training_fold;
+pub mod coreference_pact;
 pub mod credit_decay_fit;
 pub mod curator_finding;
 pub mod custody_numbered_input;
@@ -85,11 +92,13 @@ pub mod data_key_custody_head;
 pub mod data_key_preset_switch;
 pub mod data_key_sealed_vault;
 pub mod data_key_stale_unlock;
+pub mod delete_guard_race;
 pub mod derivation_floor;
 pub mod derivation_position;
 pub mod derive;
 pub mod derive_person;
 pub mod derive_verbs;
+pub mod device_pin;
 pub mod device_succession_fold;
 pub mod disclosure_word_sources;
 pub mod do_not_contact_subject_reads;
@@ -97,6 +106,7 @@ pub mod dreamer_attempt_binding;
 pub mod dreamer_exclusion_forgets;
 pub mod dreamer_partition_window;
 pub mod dreamer_promotion_seconds;
+pub mod dreamer_signed_claim_recall;
 pub mod dreamer_stage_line;
 pub mod enum_name_rows;
 pub mod epoch_lineage_pointer;
@@ -118,6 +128,7 @@ pub mod feed_prune;
 pub mod feeds;
 pub mod file_custody_marks;
 pub mod fingerprint_keep_booking_dreamer_digests;
+pub mod fingerprint_keep_code_run_digests;
 pub mod fingerprint_keep_codec_digests;
 pub mod fingerprint_keep_custody_digests;
 pub mod fingerprint_keep_custody_policy_digest;
@@ -126,6 +137,7 @@ pub mod fingerprint_keep_dreamer_consolidation_digests;
 pub mod fingerprint_keep_dreamer_runner_digests;
 pub mod fingerprint_keep_dreamer_wake_digests;
 pub mod fingerprint_keep_executor_cohort_credit;
+pub mod fingerprint_keep_extraction_read_digests;
 pub mod fingerprint_keep_generic_helpers;
 pub mod fingerprint_keep_git_wire;
 pub mod fingerprint_keep_hook_digests;
@@ -133,7 +145,9 @@ pub mod fingerprint_keep_imap_plan_encoder_digests;
 pub mod fingerprint_keep_import_digests;
 pub mod fingerprint_keep_index_keys;
 pub mod fingerprint_keep_origin;
+pub mod fingerprint_keep_query_swap_piece_packet_repo_digests;
 pub mod fingerprint_keep_release_inquiry_digests;
+pub mod fingerprint_keep_request_digests;
 pub mod fingerprint_keep_saved_query;
 pub mod fingerprint_keep_self_heal_digests;
 pub mod fingerprint_keep_store_digests;
@@ -148,6 +162,7 @@ pub mod frontier_walk;
 #[cfg(feature = "sync")]
 pub mod full_copy_mark;
 pub mod gate_receipt_rows;
+pub mod gpu_job;
 pub mod grant_roles;
 pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
@@ -155,6 +170,7 @@ pub mod guest_turn_counterparty;
 pub mod held_answer_confirm;
 pub mod held_program;
 pub mod history_import_rows;
+pub mod holder_slip_revoke;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;
 pub mod home_pick_fold;
@@ -190,6 +206,7 @@ pub mod live_window_import;
 #[cfg(feature = "sync")]
 pub mod live_window_note_scrub;
 pub mod machine_history;
+pub mod machine_names;
 pub mod mail_counterparty;
 pub mod mail_landing;
 pub mod mail_pack_setting_keys;
@@ -214,6 +231,8 @@ pub mod msgpack_duplicate_key;
 pub mod msgpack_trailing;
 pub mod nightly;
 pub mod note_bm25f_repair;
+#[cfg(feature = "sync")]
+pub mod note_fork_upload;
 pub mod off_record_shell;
 pub mod off_record_side_row;
 pub mod open_conflict_marker;
@@ -223,7 +242,10 @@ pub mod own_device_grant;
 pub mod own_device_message_replay;
 pub mod owner_device_answer;
 pub mod owner_key_enrolment_read;
+pub mod owner_key_line;
 pub mod owner_key_release;
+pub mod owner_key_vouch_between;
+pub mod owner_key_vouch_holding_machine;
 pub mod owner_person_row_damage;
 pub mod pack_encode_work;
 pub mod pad_offer_invalidation;
@@ -239,6 +261,7 @@ pub mod pending_work_reports;
 pub mod pending_write_tray;
 #[cfg(feature = "sync")]
 pub mod predicted_residence;
+pub mod profiles_other_machine;
 pub mod provenance_body_checkpoint;
 pub mod question_saved_lane;
 pub mod question_teardown;
@@ -252,14 +275,17 @@ pub mod repo_base_manifest;
 pub mod repo_secret_marks;
 pub mod research_continuation;
 pub mod resident_wake_hold;
+pub mod restored_enrolment;
 pub mod retrieval_policy_default_floor;
 pub mod reveal_ask_window;
 pub mod room_facet_limit;
 pub mod room_facet_set;
 #[cfg(feature = "sync")]
 pub mod room_fact_marks;
+pub mod room_speaker_entries;
 pub mod room_turn_backfill;
 pub mod root_appointment;
+pub mod root_recovery;
 pub mod roster_slot_reservation;
 pub mod run_changes;
 pub mod run_hold;
@@ -310,6 +336,7 @@ pub mod sync_parted_row_binding;
 pub mod sync_whole_row_binding;
 pub mod task_ask_role_routing;
 pub mod task_refusal_output;
+pub mod tombstone_replay;
 #[cfg(feature = "sync")]
 pub mod training_corpus;
 pub mod tray_answered_removal;
@@ -333,6 +360,8 @@ pub mod world_follow;
 pub mod world_key_record_signature;
 #[cfg(feature = "sync")]
 pub use crate::sync::connection::sync_outbox;
+#[cfg(feature = "sync")]
+pub use crate::sync::queue::sync_queue_rows;
 
 /// Runs the identity-topology reconcile that a replica's sync ingest runs,
 /// over this vault's own ledger: shell edges, redirects and split assignment

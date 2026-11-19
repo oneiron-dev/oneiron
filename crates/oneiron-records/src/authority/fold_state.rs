@@ -22,7 +22,9 @@ pub enum AuthorityFoldIssue {
     SignerNotInAncestry(AuthorityEntryHash),
     /// Entry sequence did not exceed its ancestry or persisted first-observation high-water mark.
     NonMonotonicSeq(AuthorityEntryHash),
-    /// Approval outlived the local first-seen window after a participant was revoked.
+    /// Approval outlived the local first-seen window after a participant was
+    /// revoked, or, as a fork of its signer's sequence, rests on a participant
+    /// the final roster holds revoked (expired at once).
     StaleRosterApproval(AuthorityEntryHash),
     /// Entry binds the wrong vault id.
     WrongVault(AuthorityEntryHash),

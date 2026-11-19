@@ -5,7 +5,7 @@
 //! critical confirm, and nothing consolidates it before the owner clears it.
 use super::*;
 
-const FACADE_CLAIM_UPSERT: &str = "/v1/core/facade/claim_upsert";
+const FACADE_CLAIM_UPSERT: &str = "/v1/core/facade/vault.claims.upsert";
 
 /// One critical claim about the owner. Each leg names its own predicate: an
 /// upsert on a subject and predicate that already hold a head is a
@@ -219,6 +219,90 @@ async fn a_deleted_owners_credential_is_refused_not_downgraded() {
         ),
         "the live owner's credential binds an owner proof"
     );
+    // A co-owner's first owner key supplies the second live human binding
+    // needed to delete the original owner's PERSON (owner_enrol.rs:359-387).
+    let co_owner = oneiron::EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &co_owner,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )
+        .unwrap();
+    let owner_proof = server
+        .vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    server
+        .vault
+        .initialize_shared_vault(
+            &owner_proof,
+            44,
+            None,
+            &[oneiron::federation::InitialSharedMember {
+                member_ref: owner,
+                role: Some(oneiron::federation::FederationGrantRole::Owner),
+            }],
+            1,
+        )
+        .unwrap();
+    let owner_proof = server
+        .vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let act = server
+        .vault
+        .propose_add_owner(&owner_proof, 44, co_owner)
+        .unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
+    server
+        .vault
+        .execute_completed_shared_act(&owner_proof, &act.id, Some(&issuer))
+        .unwrap();
+    let key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+    let public_key = key.verifying_key().to_bytes();
+    let machine = server.vault.prepare_install_signing().unwrap();
+    let co_proof = server
+        .vault
+        .authenticate_owner(
+            co_owner,
+            &co_owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let authority = oneiron::authority::ActAuthority::Owner(
+        co_proof,
+        oneiron::authority::ActSurface::ThisInstall,
+    );
+    let challenge = server
+        .vault
+        .owner_key_enrollment_challenge_as(&authority, machine, &public_key)
+        .unwrap();
+    let input = oneiron::authority::OwnerKeyEnrollment {
+        machine,
+        public_key,
+        proof: ed25519_dalek::Signer::sign(&key, &challenge)
+            .to_bytes()
+            .to_vec(),
+    };
+    server
+        .vault
+        .enrol_owner_signing_key_as_host(&authority, input, &issuer)
+        .unwrap();
     assert!(server.vault.delete_entity(&owner).unwrap());
     assert!(
         crate::api::facade::owner_authorship(&auth, &server).is_err(),

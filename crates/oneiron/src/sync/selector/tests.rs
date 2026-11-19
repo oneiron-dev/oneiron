@@ -348,6 +348,7 @@ fn test_vault_with_grant_scope(
 ) -> (tempfile::TempDir, Vault, EntityId) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let grant_id = put_test_grant(&vault, member_ref, scope);
     (dir, vault, grant_id)
 }
@@ -366,6 +367,7 @@ fn test_client_with_grant(
 ) -> (tempfile::TempDir, Arc<Vault>, EntityId, SyncClient) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let grant_id = put_test_grant(&vault, member_ref, test_selector_scope());
     let manager = Arc::new(WindowManager::new(
         Arc::clone(&vault),

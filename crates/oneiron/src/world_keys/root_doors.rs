@@ -21,18 +21,21 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::repin::{RepinDoor, RepinReport, Withheld};
 use super::{
-    MachineSecret, NarrowedWorld, PreparedRoot, RecoveryRoot, RecoveryRootId, RecoveryRootSeed,
-    SeedOrigin, WorldKey, WorldKeyId, refused,
+    MachineSecret, NarrowedWorld, PreparedRoot, RecoveryAuthoritySeed, RecoveryAuthoritySigner,
+    RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin, WorldKey, WorldKeyId, refused,
 };
 use crate::authority::{
-    AuthorityEntryHash, AuthorityFold, FoldedMachine, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-    MachineEncryptionKey, MachineEnrolmentRequest, OwnerRootRecord, PinnedRoot, RequestCode,
-    anchor_mark_stands, invalid_authority, owner_root_records_in_txn, read_pin_row_in_txn,
+    ActAuthority, ActSurface, ActivationPredecessor, AuthorityEntryHash, AuthorityFold,
+    FoldedMachine, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey,
+    MachineEnrolmentRequest, OwnerRootRecord, PinnedRoot, RequestCode, anchor_mark_stands,
+    authority_refused, invalid_authority, owner_root_records_in_txn, read_pin_row_in_txn,
     write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, KitRecord, Result, SecretError};
 use crate::{EntityId, Vault};
+
+mod kit_restore;
 
 /// What the owner confirmed for a kit seed this install cannot authenticate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,11 +77,24 @@ impl KitConfirmation {
     }
 }
 
+/// A kit's activation is the owner's to confirm: no Grant action names it,
+/// so an agent's act never activates one. Authority; nothing was written.
+/// Shared by the activation's `_as` doors (`confirm_world_kit_as`,
+/// `run_root_request_as`).
+pub(super) const ACTIVATION_OWNER_ONLY: &str =
+    "a kit's activation is the owner's to confirm; no Grant action names it";
+
 /// A root activated on this install.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivatedRoot {
     pub root: RecoveryRootId,
     pub keys: RepinReport,
+    /// R's authority seed, handed out once for the box deposit
+    /// (WAYBACK-BOX-AUTHORITY-SEED = A). A field (not a value beside
+    /// `ActivatedRoot`) so every activation path carries it without changing
+    /// its return shape: one construction site, and readers of `root`/`keys`
+    /// need no change. Its `Debug` prints no bytes.
+    pub authority_seed: RecoveryAuthoritySeed,
 }
 
 /// A machine anchored with the kit's seed.
@@ -189,6 +205,7 @@ fn carried_marks(
             device_class: trusted.profile.device_class,
             encryption_key: trusted.profile.encryption_key.clone(),
             machine_proof: trusted.profile.machine_proof,
+            restored_from: trusted.profile.restored_from,
         });
     }
     Ok((root, marks))
@@ -226,7 +243,7 @@ impl Vault {
     /// The kit-restored seed rule in `txn`: the seed's root, and whether the
     /// door publishes it first. A locally pending root is refused unless a
     /// stored or carried record matches it ([`PENDING_KIT_ROOT_RULE`]).
-    pub(super) fn kit_seed_gate_in_txn(
+    pub(crate) fn kit_seed_gate_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         fold: &AuthorityFold,
@@ -351,55 +368,95 @@ impl Vault {
         prepared: PreparedRoot,
         carry: &BTreeSet<EntityId>,
     ) -> Result<ActivatedRoot> {
-        self.activate_owner_root_with(owner, prepared, carry, |_| Ok(()))
+        let authority = ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall);
+        self.activate_owner_root_with(&authority, prepared, carry, |_| Ok(()))
             .map(|(activated, ())| activated)
     }
 
     /// [`Self::activate_owner_root`], with `also` run in its transaction once
     /// the new root stands: a kit's inventory and its vault-key wrap commit
-    /// with the root or not at all.
+    /// with the root or not at all. `authority` carries the true act surface
+    /// for R's enrolment row. The predecessor loads in
+    /// [`Self::activation_prep`], before the write txn opens.
     pub(crate) fn activate_owner_root_with<T>(
         &self,
-        owner: &AuthenticatedOwner,
+        authority: &ActAuthority,
         prepared: PreparedRoot,
         carry: &BTreeSet<EntityId>,
         also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
     ) -> Result<(ActivatedRoot, T)> {
-        let (secret, request) = self.activation_prep(owner, &prepared, carry)?;
+        let owner = match authority {
+            ActAuthority::Owner(owner, _) => owner,
+            ActAuthority::Agent(_) => return Err(authority_refused(ACTIVATION_OWNER_ONLY)),
+        };
+        let (secret, request, predecessor) = self.activation_prep(owner, &prepared, carry)?;
         self.with_write_txn(|txn| {
-            let activated =
-                self.activate_owner_root_in_txn(txn, owner, &secret, &request, &prepared, carry)?;
+            let activated = self.activate_owner_root_in_txn(
+                txn,
+                authority,
+                &secret,
+                &request,
+                &prepared,
+                carry,
+                &predecessor,
+            )?;
             Ok((activated, also(txn)?))
         })
     }
 
-    /// An activation's checks in a read snapshot, before this install's
-    /// machine identity is minted, then its own request and secret.
+    /// An activation's checks in a read snapshot, then the predecessor of
+    /// R's enrolment ([`Vault::load_activation_predecessor`], read only),
+    /// both before this install's machine identity is minted, then its own
+    /// request and secret. A refusal for want of a predecessor therefore
+    /// writes nothing at all (WAYBACK-R4-NO-PREDECESSOR = A).
     pub(super) fn activation_prep(
         &self,
         owner: &AuthenticatedOwner,
         prepared: &PreparedRoot,
         carry: &BTreeSet<EntityId>,
-    ) -> Result<(MachineSecret, MachineEnrolmentRequest)> {
+    ) -> Result<(
+        MachineSecret,
+        MachineEnrolmentRequest,
+        ActivationPredecessor,
+    )> {
         self.precheck_root_door(owner, |txn, fold| {
             let me = crate::identity::read_machine_id_in_txn(self, txn)?;
-            carried_marks(fold, prepared, carry, me).map(drop)
+            carried_marks(fold, prepared, carry, me)?;
+            // Another owner's R refuses before any mint (REVIEW-9488 round 2 P1 3).
+            let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+            let key = RecoveryAuthoritySigner::from_seed(prepared.seed(), &vault_id)?;
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            self.recovery_authority_enrols_in_txn(txn, fold, actor, &key.authority_key())
+                .map(drop)
         })?;
-        self.own_request()
+        let predecessor = self.load_activation_predecessor(owner)?;
+        let (secret, request) = self.own_request()?;
+        Ok((secret, request, predecessor))
     }
 
     /// [`Self::activate_owner_root`]'s transaction, in the caller's: the
     /// root's record, the marks, the pin and the re-wraps, with `secret` and
-    /// `request` this install's own from [`Self::activation_prep`].
+    /// `request` this install's own from [`Self::activation_prep`], plus R's
+    /// enrolment after the marks and the pin move (WAYBACK-R4-FIRST-KEY = B),
+    /// with the owner's earlier R keys revoked just before it
+    /// (WAYBACK-SECOND-KIT-OLD-ROOT-KEY = A). `authority` carries the true
+    /// act surface for R's row; `predecessor` was loaded before the write
+    /// txn opened and signs both.
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn activate_owner_root_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        owner: &AuthenticatedOwner,
+        authority: &ActAuthority,
         secret: &MachineSecret,
         request: &MachineEnrolmentRequest,
         prepared: &PreparedRoot,
         carry: &BTreeSet<EntityId>,
+        predecessor: &ActivationPredecessor,
     ) -> Result<ActivatedRoot> {
+        let owner = match authority {
+            ActAuthority::Owner(owner, _) => owner,
+            ActAuthority::Agent(_) => return Err(authority_refused(ACTIVATION_OWNER_ONLY)),
+        };
         let seed = prepared.seed();
         let anchor = seed.anchor();
         let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
@@ -435,10 +492,51 @@ impl Vault {
         if !stands || mid.pinned_root != Some(pin) {
             return Err(refused("the new root's marks do not stand"));
         }
+        let vault_id = mid.vault_id.ok_or_else(invalid_authority)?;
+        let authority_signer = RecoveryAuthoritySigner::from_seed(seed, &vault_id)?;
+        let r_key = authority_signer.authority_key();
+        let enrol = self.recovery_authority_enrols_in_txn(txn, &mid, actor, &r_key)?;
+        // R enrols before the earlier R keys go: the enrolment's carrier,
+        // this install, may stand on an approval only an earlier R gave,
+        // which goes stale at that R's revocation once older than the
+        // stale-roster window (Sol carry F1).
+        if enrol {
+            self.enrol_recovery_authority_key_in_txn(
+                txn,
+                authority,
+                secret.machine,
+                seed,
+                predecessor,
+            )?;
+        } else {
+            // A live R only a passkey vouched for is confirmed (REVIEW-9488 P1 3).
+            self.confirm_recovery_authority_key_in_txn(
+                txn,
+                authority,
+                secret.machine,
+                seed,
+                predecessor,
+            )?;
+        }
+        // A new kit replaces the old one (WAYBACK-SECOND-KIT-OLD-ROOT-KEY =
+        // A), and R carries what the revoked ones approved, chosen before
+        // their revocation, so a kit change unpairs no machine
+        // (WAYBACK-R-REVOCATION-STALES-R-APPROVALS = A). Then R binds the
+        // owner on a self-hosted vault when a revoked R held their binding,
+        // as its enrolment would after the revocation, an R enrolled before
+        // this act too (REVIEW-9488 round 2 P1 4).
+        let carry =
+            self.revoke_earlier_recovery_authority_keys_in_txn(txn, actor, &r_key, predecessor)?;
+        self.carry_recovery_authority_approvals_in_txn(txn, carry, &authority_signer)?;
+        self.bind_owner_to_recovery_authority_key_in_txn(txn, actor, r_key, predecessor)?;
         let report = self.repin_finish_in_txn(txn, &door, start)?.report;
+        let authority_seed = RecoveryAuthoritySeed::from_guarded(
+            RecoveryAuthoritySigner::authority_seed(seed, &vault_id),
+        );
         Ok(ActivatedRoot {
             root: root.id,
             keys: report,
+            authority_seed,
         })
     }
 
@@ -612,99 +710,6 @@ impl Vault {
                 .ok_or_else(invalid_authority)?,
             repin: Some(finish.report),
         })
-    }
-
-    /// Kit restore: finds the stored root that matches the seed's id and both
-    /// its keys, or publishes it when the kit-restored seed rule allows;
-    /// anchors this install's own request under it unless this machine is
-    /// already mine there with its own keys; pins it; and opens each key
-    /// wrapped to it whose world is live here. Every root-wrapped key lands in
-    /// exactly one list. The caller's origin does not narrow it: the owner's
-    /// say-so counts from any surface the owner is authenticated on (owner,
-    /// 10-19), so a peer's request restores as this machine's does. The
-    /// revalidated owner proof and the kit's seed gate are what stand.
-    pub fn restore_world_keys(
-        &self,
-        owner: &AuthenticatedOwner,
-        seed: &RecoveryRootSeed,
-        confirm: Option<KitConfirmation>,
-    ) -> Result<RootRestore> {
-        let (secret, request) = self.seed_door_prep(owner, seed, confirm)?;
-        let (restore, usable) = self.with_write_txn(|txn| {
-            self.restore_world_keys_in_txn(txn, owner, &secret, &request, seed, confirm)
-        })?;
-        for key in usable {
-            self.ring_world_key(key);
-        }
-        Ok(restore)
-    }
-
-    /// [`Self::restore_world_keys`]'s transaction, with `secret` and
-    /// `request` from [`Self::seed_door_prep`]: the restore, and the keys
-    /// this machine may read, for the session ring once it commits.
-    pub(super) fn restore_world_keys_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        owner: &AuthenticatedOwner,
-        secret: &MachineSecret,
-        request: &MachineEnrolmentRequest,
-        seed: &RecoveryRootSeed,
-        confirm: Option<KitConfirmation>,
-    ) -> Result<(RootRestore, Vec<WorldKey>)> {
-        let anchor = seed.anchor();
-        let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-        let signing = self.door_signing_key_in_txn(txn, secret.machine)?;
-        let fold = self.authority_view_readonly_in_txn(txn)?;
-        let (root, publish) = self.kit_seed_gate_in_txn(txn, &fold, seed, confirm)?;
-        let pin = PinnedRoot {
-            id: root.id,
-            anchor_key: root.anchor_key,
-        };
-        let door = RepinDoor {
-            secret,
-            signing: &signing,
-            new_root: root.id,
-            seed: Some(seed),
-            restore: true,
-        };
-        let start = self.repin_start_in_txn(txn, &door)?;
-        self.pin_first_in_txn(txn, fold.pinned_root, pin, start.earlier_admitter)?;
-        if publish {
-            self.publish_owner_root_in_txn(txn, &anchor, root_record(&root, actor))?;
-        }
-        let now = self.authority_view_readonly_in_txn(txn)?;
-        let already = now
-            .machine(request.machine)
-            .and_then(|folded| {
-                folded.trusted_under(&crate::authority::MachineAdmitter::Anchor(root.anchor_key))
-            })
-            .is_some_and(|trusted| {
-                trusted.profile.machine_key == request.machine_key
-                    && trusted.profile.encryption_key == request.encryption_key
-            });
-        let mark = if already {
-            None
-        } else {
-            Some(self.append_anchor_mark_in_txn(txn, &anchor, actor, request)?)
-        };
-        self.move_pin_in_txn(txn, fold.pinned_root, pin, start.earlier_admitter)?;
-        self.end_wait_in_txn(txn, root.id, None, None)?;
-        let mid = self.authority_view_readonly_in_txn(txn)?;
-        let stands =
-            mark.is_none_or(|mark| anchor_mark_stands(&mid, root.anchor_key, mark, request));
-        if !stands || mid.pinned_root != Some(pin) {
-            return Err(refused("the kit's root does not stand on this install"));
-        }
-        let finish = self.repin_finish_in_txn(txn, &door, start)?;
-        Ok((
-            RootRestore {
-                usable: finish.usable.iter().map(|key| *key.id()).collect(),
-                needs_rehome: finish.needs_rehome,
-                withheld: finish.report.withheld,
-                narrowed: finish.report.narrowed,
-            },
-            finish.usable,
-        ))
     }
 
     /// Pins `root` on this install from a fingerprint the owner carried out

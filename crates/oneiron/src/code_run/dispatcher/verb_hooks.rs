@@ -20,6 +20,7 @@ use serde_json::{Value, json};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::claim::ScopedReadActorKey;
+use crate::code_run::CompareKnown;
 use crate::code_run::replay::CodeRunBridgeCall;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
@@ -300,13 +301,15 @@ impl HostSelfDispatcher<'_> {
     /// no note: the same call made again meets that note and reads the error.
     pub(super) fn observe_parked_hooks(&self, bridge_calls: &[CodeRunBridgeCall]) {
         let mut parked = self.parked_hooks.borrow_mut();
+        let base_known = || self.base_known_values();
+        let known = CompareKnown::new(Some(&base_known));
         for row in bridge_calls {
             let parks = ParkedHook::of(row);
             // With nothing parked, a row that parks nothing has nothing to clear.
             if parks.is_none() && parked.is_empty() {
                 continue;
             }
-            parked.retain(|held| !matches!(held.meets(ParkedOffer::Row(row)), Ok(true)));
+            parked.retain(|held| !matches!(held.meets(ParkedOffer::Row(row), &known), Ok(true)));
             parked.extend(parks);
         }
     }

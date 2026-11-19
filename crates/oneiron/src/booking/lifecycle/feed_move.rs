@@ -24,7 +24,8 @@ use super::emergency::emergency_current_revision_in;
 use super::occurrence::inclusive_occurrence;
 use super::passport::supersede_outbound_passport;
 use super::storage::{
-    booking_writer, calendar_wrap, engine_failure, refused, revision_receipt_key, write_receipt,
+    booking_writer, calendar_wrap, engine_failure, read_txn, refused, revision_receipt_key,
+    write_receipt,
 };
 use super::transition::booking_read_rows;
 use super::types::{BOOKING_PASSPORT_SYSTEM, BookingStatus, CalendarRevision};
@@ -171,6 +172,18 @@ pub(crate) fn move_booking_by_feed(
         enqueue_revision_invite_in(vault, wtxn, &revision, now_utc)?;
         Ok(FeedMoveOutcome::Moved(revision))
     })
+}
+
+/// Whether `event_ref` is a booking's EVENT ([`carries_outbound_passport`]),
+/// whatever the booking's status. Calendar ingest asks it before a feed's
+/// cancellation would rewrite the EVENT: a booking's EVENT keeps its booked
+/// slot.
+///
+/// # Errors
+///
+/// [`BookingError::SlotOracle`] on a store failure.
+pub(crate) fn is_booking_event(vault: &Vault, event_ref: &EntityId) -> Result<bool, BookingError> {
+    carries_outbound_passport(vault, &read_txn(vault)?, event_ref)
 }
 
 /// Whether the EVENT carries an admitted outbound booking passport: the one

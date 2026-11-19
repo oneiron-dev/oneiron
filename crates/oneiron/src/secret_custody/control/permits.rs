@@ -47,20 +47,24 @@ pub(crate) fn encryption_key_digest(suite: u16, key: &[u8]) -> [u8; 32] {
 }
 
 /// The live revisions that stand for `machine` here under the key its
-/// connection proves, linked in any role: none when no chain of it is live,
-/// or one of its chains removed it (only removal ends a linked install).
+/// connection proves, linked in any role: none when no head it stands under
+/// here ([`crate::authority::FoldedMachine::standing_heads`]) or accepted
+/// roster revision is live, or one of those heads removed it (only removal
+/// ends a linked install). Another anchor's chain neither removes it nor
+/// supplies its key (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES).
 fn live_revisions(fold: &AuthorityFold, machine: EntityId) -> Vec<&MachineRevision> {
     let (Some(proof), Some(folded)) = (fold.machine_proof_key(machine), fold.machine(machine))
     else {
         return Vec::new();
     };
-    if folded.chains().any(|(_, chain)| chain.removed) {
+    let heads = folded.standing_heads(fold.pinned_root.as_ref());
+    if heads.iter().any(|chain| chain.removed) {
         return Vec::new();
     }
     folded
         .roster_trusted
         .iter()
-        .chain(folded.chains().map(|(_, chain)| chain))
+        .chain(heads)
         .filter(|revision| revision.is_live() && revision.profile.machine_key == proof)
         .collect()
 }

@@ -45,6 +45,7 @@ use crate::registry::{
 use crate::settings::ReadDestination;
 use crate::write_envelope::ClaimCandidate;
 use crate::{Result, Vault};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_model::llm::{Scope, ScopeResource};
 
 mod evidence;
@@ -400,7 +401,7 @@ pub(crate) fn project_bound_branch(
                 entity_type,
                 learned_at,
                 project,
-                body_hash: *blake3::hash(&bodies[id]).as_bytes(),
+                body_hash: *ContentHash::of(&bodies[id]).as_bytes(),
                 #[cfg(test)]
                 trust_class,
             },
@@ -513,7 +514,7 @@ pub(crate) fn project_bound_branch(
                 entity_type: kind,
                 learned_at,
                 project: Some(prior.body.scope_project),
-                body_hash: *blake3::hash(&bytes).as_bytes(),
+                body_hash: *ContentHash::of(&bytes).as_bytes(),
                 #[cfg(test)]
                 trust_class: Some(crate::dreamer_consolidation::provenance::source_meet(
                     prior.body.source.unwrap_or(crate::ClaimSource::Imported),

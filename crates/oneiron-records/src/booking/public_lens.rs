@@ -19,6 +19,10 @@ pub struct EventTypeCard {
     pub deposit: Option<crate::booking::deposit::DepositTerms>,
     pub duration_min: u32,
     pub description: String,
+    /// The lengths a visitor may pick, as the event type's configuration
+    /// lists them (BK-VARIABLE-DURATION). Empty: `duration_min` alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_durations_min: Vec<u32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

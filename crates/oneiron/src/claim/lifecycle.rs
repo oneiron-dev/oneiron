@@ -461,7 +461,35 @@ impl Vault {
     /// predicate semantics stay above the engine (ARCH-0003 §G.1, D20) —
     /// this method is transition mechanics only.
     pub fn supersede_claim(&self, new_id: &EntityId, old_id: &EntityId, now: u64) -> Result<()> {
+        self.supersede_claim_checked(None, new_id, old_id, now)
+    }
+
+    /// [`Vault::supersede_claim`] as the vault owner's act: `owner` is
+    /// revalidated inside the write transaction that closes `old_id`, so a
+    /// request admitted on an owner credential that is revoked, or whose
+    /// person stops owning this vault, while it waits on the writer commits
+    /// nothing (FIX MEMORY-VERB-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
+    pub fn supersede_claim_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+    ) -> Result<()> {
+        self.supersede_claim_checked(Some(owner), new_id, old_id, now)
+    }
+
+    fn supersede_claim_checked(
+        &self,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+    ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(self, &wtxn)?;
+        }
         let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         self.supersede_claim_in_txn(&mut wtxn, new_id, old_id, now)?;
         rekeys.finish(&self.store, &mut wtxn)?;
@@ -567,6 +595,10 @@ impl Vault {
         // replacement staged earlier in the same txn rolls back with it.
         let (mut old_body, old_header) = self.guarded_claim_target_parts_in(&*wtxn, old_id)?;
         Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
+        // The close is not the owner's answer: a held old claim's ordinary
+        // tray row goes silently with its terminal receipt, as a retraction's
+        // does, before the close is judged (S17-1 = A).
+        super::held_question::close_superseded_owner_question_in_txn(&self.store, wtxn, old_id)?;
         let closed_end = lifecycle_close_end_in(&self.store, &*wtxn, &old_body, &old_header, now)?;
 
         let revisions = super::supersession_diff::capture_in_txn(self, &*wtxn, *old_id, *new_id)?;
@@ -632,6 +664,9 @@ impl Vault {
                 None
             }
         };
+        // A closer the Gate held parks the closed body's row again, and a
+        // closed claim is asked nothing: that row closes the same way.
+        super::held_question::close_superseded_owner_question_in_txn(&self.store, wtxn, old_id)?;
         super::supersession_diff::store_in_txn(self, wtxn, *old_id, *new_id, revisions)?;
         Ok(decision)
     }
@@ -721,7 +756,33 @@ impl Vault {
     /// mechanics. `companion.expression.*` joins that family for the same
     /// reason: its own door has a contract this one cannot honour.
     pub fn retract_claim(&self, id: &EntityId, now: u64) -> Result<()> {
+        self.retract_claim_checked(None, id, now)
+    }
+
+    /// [`Vault::retract_claim`] as the vault owner's act: `owner` is
+    /// revalidated inside the write transaction that closes `id`, so a
+    /// request admitted on an owner credential that is revoked, or whose
+    /// person stops owning this vault, while it waits on the writer commits
+    /// nothing (FIX MEMORY-VERB-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
+    pub fn retract_claim_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        id: &EntityId,
+        now: u64,
+    ) -> Result<()> {
+        self.retract_claim_checked(Some(owner), id, now)
+    }
+
+    fn retract_claim_checked(
+        &self,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
+        id: &EntityId,
+        now: u64,
+    ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(self, &wtxn)?;
+        }
         let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         // The typed door does not merely AUTHORIZE an expression-preference
         // retraction; it restores the direct predecessor as part of closing the

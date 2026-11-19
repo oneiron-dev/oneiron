@@ -579,12 +579,14 @@ async fn a_facade_witness_turn_wakes_the_dreamer() {
         &key,
         json_request("POST", "/v1/core/facade/vault.witness", later_turn(&server)),
     );
-    let response = crate::build_app(Arc::clone(&server))
-        .oneshot(request)
-        .await
-        .unwrap();
-    let status = response.status();
-    let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+    let app = crate::build_app(Arc::clone(&server));
+    let (status, body) = crate::test_engine_stack::on_engine_stack(async move {
+        let response = app.oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        (status, body)
+    })
+    .await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
     assert!(
         eventually(Duration::from_secs(30), || read_by_a_round(
@@ -808,11 +810,13 @@ async fn records_thread_and_canonical_share_the_typed_dag() {
     let canonical = get(&server, &format!("{path}/canonical")).await;
     assert_eq!(canonical["records"], json!([root["id"]]));
     for uri in [format!("{path}/dag"), format!("{path}/dag/records")] {
-        let response = api_routes(server.clone())
-            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        let app = api_routes(server.clone());
+        let status = crate::test_engine_stack::on_engine_stack(async move {
+            app.oneshot(request).await.unwrap().status()
+        })
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 }
 

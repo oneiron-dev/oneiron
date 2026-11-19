@@ -303,6 +303,7 @@ impl Chain<'_> {
             dependencies: run.dependencies.clone(),
             named_rows: store::rows_named_by_call(&run.input, run.landing_original.as_deref()),
             unattributed: run.unattributed,
+            unnamed_content: run.unnamed_content,
             grant: run.grant.clone(),
             preparation: run.preparation.clone(),
             reads: run.reads.clone(),

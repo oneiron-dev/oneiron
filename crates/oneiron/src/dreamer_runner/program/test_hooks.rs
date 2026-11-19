@@ -423,14 +423,6 @@ pub(crate) fn erase_actor_programs(vault: &Vault, actor: EntityId) -> Result<()>
     })
 }
 
-/// Each due row one of `actor`'s timers keeps: its due time and registration.
-pub(crate) fn timer_due_rows_for_actor(
-    vault: &Vault,
-    actor: EntityId,
-) -> Result<Vec<(u64, EntityId)>> {
-    super::trigger::timer_due_rows_for_actor(vault, actor)
-}
-
 /// Each idle or feed row one of `actor`'s programs keeps: its kind tag and registration.
 pub(crate) fn trigger_rows_for_actor(
     vault: &Vault,

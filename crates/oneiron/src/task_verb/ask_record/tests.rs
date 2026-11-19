@@ -178,6 +178,7 @@ fn forged_foreign_word_and_voided_digest_cannot_cross_batch_door()
     let owner = vault.ensure_embedded_owner_actor()?;
     let friend = EntityId::from_bytes([0x86; 16])?;
     super::super::tests::support::put_person(&vault, friend);
+    super::super::tests::support::grant_ask_read(&vault, &[friend])?;
     let reference = super::super::tests::support::consult_turn(&vault, 0x87);
     let mut what = TaskAskQuestion::new(reference);
     what.options
@@ -283,6 +284,7 @@ fn issuer_signed_foreign_word_for_non_person_is_refused_without_evidence()
             1,
             b"actor",
         )?;
+        super::super::tests::support::grant_ask_read(&vault, &[actor])?;
         let reference = super::super::tests::support::consult_turn(&vault, seed + 1);
         let mut what = TaskAskQuestion::new(reference);
         what.options
