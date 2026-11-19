@@ -1,5 +1,6 @@
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::GateDecisionRecord;
@@ -7,7 +8,8 @@ use crate::store::GateDecisionRecord;
 use super::super::erase::{ProvenanceCapture, stage_sweep_refs_in_txn};
 use super::super::gate::{
     GatedDeletion, journal_deletion_in_txn, reverify_deletion_authority_before_publication,
-    reverify_deletion_authority_when_unpublished, revoke_guest_grants_in_txn,
+    reverify_deletion_authority_when_unpublished, reverify_owner_proof_before_publication,
+    reverify_owner_proof_when_unpublished, revoke_guest_grants_in_txn,
 };
 use super::super::rendezvous::{
     DeleteRendezvous, maybe_fail_after_tombstone_before_purge, signal_delete_rendezvous,
@@ -28,6 +30,7 @@ impl Vault {
         gate: &Option<GatedDeletion<'_>>,
         allow_replay_test: bool,
         due: Option<&PendingConfirmedErase>,
+        owner: Option<&AuthenticatedOwner>,
         header: EntityMetadataHeader,
         tombstone: TombstoneValueV2,
         gate_decision: &Option<GateDecisionRecord>,
@@ -49,6 +52,7 @@ impl Vault {
         // arm publishes its tombstone after the scrub, so the re-fold below
         // in the publish txn is the decision that binds.
         reverify_deletion_authority_before_publication(gate.as_ref(), &wtxn)?;
+        reverify_owner_proof_before_publication(self, owner, &wtxn)?;
         // The last-bound-owner guard re-proven inside this transaction
         // (round-1 P1 of #7900): the guard phase read a snapshot it already
         // dropped, so a binding change committed since — a `RebindActor` of
@@ -185,6 +189,7 @@ impl Vault {
                 &tombstone,
                 None,
                 gate.as_ref(),
+                owner,
             )?;
             signal_delete_rendezvous(self, DeleteRendezvous::AfterTombstonePublish, id, None);
             if crdt_persisted {
@@ -208,6 +213,7 @@ impl Vault {
         gate: &Option<GatedDeletion<'_>>,
         allow_replay_test: bool,
         due: Option<&PendingConfirmedErase>,
+        owner: Option<&AuthenticatedOwner>,
         header: EntityMetadataHeader,
         tombstone: TombstoneValueV2,
         gate_decision: &Option<GateDecisionRecord>,
@@ -228,6 +234,7 @@ impl Vault {
             gate_decision.as_ref(),
             gate.as_ref(),
             due,
+            owner,
         )?;
         #[cfg(all(test, feature = "sync"))]
         maybe_fail_after_tombstone_before_purge()?;
@@ -280,6 +287,7 @@ impl Vault {
             // OWN view — the refusal is actionable (nothing is on the wire) and
             // true (nothing replays back).
             reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
+            reverify_owner_proof_when_unpublished(self, owner, authority_settled, &wtxn)?;
             // The last-bound-owner guard under the same conditional law
             // (round-1 P1 of #7900): with nothing published this scrub is the
             // first irreversible act, so it re-proves the guard against its

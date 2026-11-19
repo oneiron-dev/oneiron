@@ -1,4 +1,5 @@
 use crate::Vault;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 // Only the sync arm of `write_crdt_tombstone` inspects a typed error variant;
 // the no-feature arm returns `Ok(false)` and needs `Result` alone.
@@ -13,7 +14,8 @@ use super::gate::GatedDeletion;
 // publication; the no-feature arm publishes nothing.
 #[cfg(feature = "sync")]
 use super::gate::{
-    claim_in_txn, reverify_deletion_authority_before_publication, revoke_guest_grants_in_txn,
+    claim_in_txn, reverify_deletion_authority_before_publication,
+    reverify_owner_proof_before_publication, revoke_guest_grants_in_txn,
 };
 // Both cfg arms of this shim require the `sync` feature, and its only call
 // site below is sync-gated with it; the import carries the same gate so a
@@ -75,6 +77,7 @@ const PAD_TOMBSTONE_PUBLISH_FAILURE_POLICY: PadTombstonePublishFailure =
 impl Vault {
     /// [`Self::write_crdt_tombstone_due`] for a delete that is no due
     /// owner-confirmed erase.
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn write_crdt_tombstone(
         &self,
         id: &EntityId,
@@ -83,6 +86,7 @@ impl Vault {
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
+        owner: Option<&AuthenticatedOwner>,
     ) -> Result<bool> {
         self.write_crdt_tombstone_due(
             id,
@@ -92,12 +96,13 @@ impl Vault {
             gate_decision,
             gate,
             None,
+            owner,
         )
     }
 
     /// Publishes the tombstone of a delete; a due owner-confirmed erase
     /// (`due`) re-proves in the publish transaction that it still waits
-    /// (FIX 6337).
+    /// (FIX 6337), and the vault owner's own delete re-proves `owner` there.
     #[cfg(feature = "sync")]
     #[allow(clippy::too_many_arguments)]
     pub(super) fn write_crdt_tombstone_due(
@@ -109,6 +114,7 @@ impl Vault {
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
         due: Option<&PendingConfirmedErase>,
+        owner: Option<&AuthenticatedOwner>,
     ) -> Result<bool> {
         let mut doc_mutated = false;
         let outcome = self.write_crdt_tombstone_impl(
@@ -119,6 +125,7 @@ impl Vault {
             gate_decision,
             gate,
             due,
+            owner,
             &mut doc_mutated,
         );
         crate::sync::note::deleted_elsewhere(self, window_label, outcome.is_ok().then_some(*id));
@@ -198,6 +205,7 @@ impl Vault {
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
         due: Option<&PendingConfirmedErase>,
+        owner: Option<&AuthenticatedOwner>,
         doc_mutated: &mut bool,
     ) -> Result<bool> {
         use super::delete_bearing_update::export_tombstone_commit_delta;
@@ -284,6 +292,7 @@ impl Vault {
                     gate_decision,
                     gate,
                     due,
+                    owner,
                 )?;
                 let vv_before = window.doc.oplog_vv();
                 let (delete_update, (snapshot, owes_compaction), vv) =
@@ -383,6 +392,7 @@ impl Vault {
             gate_decision,
             gate,
             due,
+            owner,
         )?;
         let vv_before = doc.oplog_vv();
         self.store
@@ -570,12 +580,14 @@ impl Vault {
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
         due: Option<&PendingConfirmedErase>,
+        owner: Option<&AuthenticatedOwner>,
     ) -> Result<heed::RwTxn<'_>> {
         let mut wtxn = self.store.env.write_txn()?;
         if let Err(refusal) =
             crate::blob_artifact::esign::reject_event_delete(&self.store, &wtxn, id)
                 .and_then(|()| due.map_or(Ok(()), |due| due.prove_in(self, &wtxn, id).map(drop)))
                 .and_then(|()| reverify_deletion_authority_before_publication(gate, &wtxn))
+                .and_then(|()| reverify_owner_proof_before_publication(self, owner, &wtxn))
                 // The last-bound-owner guard at this delete's linearizing
                 // commit (round-1 P1 of #7900): a hard delete publishes before
                 // it purges, so the publish decides the guard and the later
@@ -1003,6 +1015,7 @@ impl Vault {
         _gate_decision: Option<&GateDecisionRecord>,
         _gate: Option<&GatedDeletion<'_>>,
         _due: Option<&PendingConfirmedErase>,
+        _owner: Option<&AuthenticatedOwner>,
     ) -> Result<bool> {
         // No CRDT in this build — nothing is published, so there is no publish
         // commit and therefore NO linearization point here. `false` is the
@@ -1093,6 +1106,7 @@ mod live_query_publication_tests {
                 1_772_000_000,
                 tee.window.as_str(),
                 &value,
+                None,
                 None,
                 None,
             );

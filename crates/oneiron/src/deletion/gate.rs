@@ -381,6 +381,40 @@ pub(super) fn reverify_deletion_authority_when_unpublished(
     reverify_deletion_authority_before_publication(gate, txn)
 }
 
+/// Re-proves `owner`, the proof the vault owner's own delete carries
+/// ([`crate::Vault::delete_entity_with_reason_as_owner`]), against `txn`'s
+/// view: the owner's credential is still live and its person still owns this
+/// vault, so a request admitted on an owner credential that is revoked, or
+/// whose person stops owning the vault, while it waits on a writer tears and
+/// publishes nothing (FIX MEMORY-DELETE-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
+/// It runs beside [`reverify_deletion_authority_before_publication`], at the
+/// same pre-publication call sites and under the same rule. `None`, every
+/// other delete, re-proves nothing here.
+pub(super) fn reverify_owner_proof_before_publication(
+    vault: &crate::Vault,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+    txn: &heed::RoTxn<'_>,
+) -> Result<()> {
+    owner.map_or(Ok(()), |owner| {
+        owner.revalidate_in_txn(vault, txn).map(drop)
+    })
+}
+
+/// [`reverify_owner_proof_before_publication`] IF AND ONLY IF this delete
+/// published nothing, as [`reverify_deletion_authority_when_unpublished`]
+/// re-runs a gate's check.
+pub(super) fn reverify_owner_proof_when_unpublished(
+    vault: &crate::Vault,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+    crdt_persisted: bool,
+    txn: &heed::RoTxn<'_>,
+) -> Result<()> {
+    if crdt_persisted {
+        return Ok(());
+    }
+    reverify_owner_proof_before_publication(vault, owner, txn)
+}
+
 impl DeletionGateContext {
     pub(crate) fn new(
         actor: EntityId,
