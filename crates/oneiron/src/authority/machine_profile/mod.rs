@@ -373,7 +373,8 @@ impl FoldedMachine {
     /// rows and the pinned anchor's are main-log rows on that install, so
     /// its view and an answer's parents name the same two head entries; what
     /// this install holds or counts stale are flags on them, not other heads.
-    pub(super) fn standing_heads(&self, pin: Option<&PinnedRoot>) -> Vec<&MachineRevision> {
+    #[must_use]
+    pub fn standing_heads(&self, pin: Option<&PinnedRoot>) -> Vec<&MachineRevision> {
         self.roster
             .iter()
             .chain(pin.and_then(|pin| self.anchored.get(&pin.anchor_key)))
@@ -491,6 +492,26 @@ impl FoldedMachine {
             .any(|chain| &chain.profile.machine_key == machine_key)
     }
 
+    /// The chains an install with `pin` reads of this machine: the accepted
+    /// roster revisions, then the heads it stands under there
+    /// ([`Self::standing_heads`]). Another anchor's chain is never among
+    /// them (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES).
+    pub(crate) fn install_chains(&self, pin: Option<&PinnedRoot>) -> Vec<&MachineRevision> {
+        self.roster_trusted
+            .iter()
+            .chain(self.standing_heads(pin))
+            .collect()
+    }
+
+    /// Whether a chain an install with `pin` reads ([`Self::install_chains`])
+    /// names `machine_key`, in any role and any standing: the doors'
+    /// [`Self::names_key`], which reads every anchor's chain.
+    pub(crate) fn names_key_under(&self, machine_key: &[u8; 32], pin: Option<&PinnedRoot>) -> bool {
+        self.install_chains(pin)
+            .iter()
+            .any(|chain| &chain.profile.machine_key == machine_key)
+    }
+
     /// The roster's chain names `machine_key`: its head or its accepted
     /// revision, live or not. A judge every install shares reads this: an
     /// install believes only the anchor it pins, so an anchor's chain, a
@@ -530,22 +551,23 @@ impl AuthorityFold {
         self.machines.get(&machine)
     }
 
-    /// Whether any admitter profiled a machine besides `own`, this install's
-    /// own MACHINE row (`None` before it has one), that no chain removed:
-    /// another device the vault may be held on, in any role and whatever
-    /// its standing here. A removal on any branch is terminal, so a removed
-    /// machine never counts again. The tick release of a vault with no
-    /// elected home reads it (`runtime_hooks::source::schedule`).
+    /// Whether this install reads a profile of a machine besides `own`, this
+    /// install's own MACHINE row (`None` before it has one), that none of
+    /// those chains removed: another device the vault may be held on, in any
+    /// role and whatever its standing here. The chains read are the heads it
+    /// stands under here ([`FoldedMachine::standing_heads`]) and the
+    /// accepted roster revisions; another anchor's chain neither profiles a
+    /// device nor removes one (FIX
+    /// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES). A removal on
+    /// any branch is terminal, so a removed machine never counts again. The
+    /// tick release of a vault with no elected home reads it
+    /// (`runtime_hooks::source::schedule`).
     #[must_use]
     pub(crate) fn profiles_other_machine(&self, own: Option<EntityId>) -> bool {
+        let pin = self.pinned_root.as_ref();
         self.machines.iter().any(|(machine, folded)| {
-            Some(*machine) != own
-                && !folded
-                    .roster
-                    .iter()
-                    .chain(&folded.roster_trusted)
-                    .chain(folded.anchored.values())
-                    .any(|chain| chain.removed)
+            let chains = folded.install_chains(pin);
+            Some(*machine) != own && !chains.is_empty() && !chains.iter().any(|chain| chain.removed)
         })
     }
 

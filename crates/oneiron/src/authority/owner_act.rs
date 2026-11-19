@@ -48,15 +48,30 @@ use super::*;
 /// It never admits a key the authority roster names (the host root, an owner
 /// or roster device key: FIX 2222, the unattended host root acts as nobody),
 /// nor an engine MACHINE writer, which no profile names.
+///
+/// `pin` only adds a veto: a head the reader believes
+/// ([`FoldedMachine::standing_heads`]) that says removed refuses. A shared
+/// judge, the fold's validity included, passes `None`, so it reads the
+/// roster's head alone; a door passes its install's pin (`fold.pinned_root`),
+/// so it signs nothing its own install would not count, and the fold's
+/// install view passes it too, so this install never reads an act at full
+/// strength that its pinned anchor's removal raced. Admission stays the roster's
+/// (Fable design pass 29, 3.2: "a chain is read only by a reader that
+/// believes its admitter"; FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES).
 pub(crate) fn owner_act_signer_admits(
     machine: Option<&FoldedMachine>,
     roster: &impl RosterKeyLookup,
     key: &[u8; 32],
+    pin: Option<&PinnedRoot>,
 ) -> bool {
     !roster.contains_roster_key(&AuthorityKey::Ed25519(*key))
-        && machine
-            .and_then(|folded| folded.roster.as_ref())
-            .is_some_and(|chain| chain.is_live() && chain.profile.machine_key == *key)
+        && machine.is_some_and(|folded| {
+            folded
+                .roster
+                .as_ref()
+                .is_some_and(|chain| chain.is_live() && chain.profile.machine_key == *key)
+                && folded.standing_heads(pin).iter().all(|head| !head.removed)
+        })
 }
 
 /// The one roster read [`owner_act_signer_admits`] makes: whether a roster
