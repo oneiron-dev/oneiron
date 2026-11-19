@@ -6,7 +6,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::super::gate::{
-    GatedDeletion, journal_deletion_in_txn, refuse_claim,
+    GatedDeletion, OwnerAtPublication, journal_deletion_in_txn, refuse_claim,
     reverify_deletion_authority_when_unpublished, reverify_owner_proof_when_unpublished,
     revoke_guest_grants_in_txn,
 };
@@ -108,7 +108,7 @@ impl Vault {
             gate_decision.as_ref(),
             gate,
             due,
-            owner,
+            owner.map(OwnerAtPublication::BeforeScrub),
         )?;
         #[cfg(all(test, feature = "sync"))]
         maybe_fail_after_tombstone_before_purge()?;

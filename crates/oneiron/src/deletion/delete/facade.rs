@@ -56,11 +56,16 @@ impl Vault {
     /// [`Self::delete_entity_with_reason`] as the vault owner's own act: the
     /// same delete, ungated as before, whose every writer before publication
     /// (and, when nothing publishes, the first destructive one) re-proves
-    /// `owner` against its own view, where a gated delete re-proves its gate.
+    /// `owner` against its own view, where a gated delete re-proves its gate;
+    /// a soft delete's publication re-proves it after its scrub, and the
+    /// owner's delete of their own PERSON there takes that PERSON as live.
     /// A request admitted on an owner credential that is revoked, or whose
-    /// person stops owning this vault, while it waits on a writer tears and
-    /// publishes nothing, and gets the owner door's refusal (FIX
-    /// MEMORY-DELETE-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
+    /// person stops owning this vault, before a writer re-proves it gets the
+    /// owner door's refusal from that writer, which tears and publishes
+    /// nothing (FIX MEMORY-DELETE-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT). The
+    /// carrier marks a sync publication commits before its publish
+    /// transaction re-prove nothing, for this delete as for a gated one (FIX
+    /// PUBLISH-REFUSAL-KEEPS-CARRIER-SUPPRESSION).
     pub fn delete_entity_with_reason_as_owner(
         &self,
         owner: &AuthenticatedOwner,

@@ -1,5 +1,4 @@
 use crate::Vault;
-use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 // Only the sync arm of `write_crdt_tombstone` inspects a typed error variant;
 // the no-feature arm returns `Ok(false)` and needs `Result` alone.
@@ -9,13 +8,13 @@ use crate::error::Result;
 use crate::store::GateDecisionRecord;
 
 use super::delete::PendingConfirmedErase;
-use super::gate::GatedDeletion;
+use super::gate::{GatedDeletion, OwnerAtPublication};
 // Publication-time authority re-verification only exists where there is a
 // publication; the no-feature arm publishes nothing.
 #[cfg(feature = "sync")]
 use super::gate::{
-    claim_in_txn, reverify_deletion_authority_before_publication,
-    reverify_owner_proof_before_publication, revoke_guest_grants_in_txn,
+    claim_in_txn, reverify_deletion_authority_before_publication, reverify_owner_at_publication,
+    revoke_guest_grants_in_txn,
 };
 // Both cfg arms of this shim require the `sync` feature, and its only call
 // site below is sync-gated with it; the import carries the same gate so a
@@ -86,7 +85,7 @@ impl Vault {
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
-        owner: Option<&AuthenticatedOwner>,
+        owner: Option<OwnerAtPublication<'_>>,
     ) -> Result<bool> {
         self.write_crdt_tombstone_due(
             id,
@@ -114,7 +113,7 @@ impl Vault {
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
         due: Option<&PendingConfirmedErase>,
-        owner: Option<&AuthenticatedOwner>,
+        owner: Option<OwnerAtPublication<'_>>,
     ) -> Result<bool> {
         let mut doc_mutated = false;
         let outcome = self.write_crdt_tombstone_impl(
@@ -205,7 +204,7 @@ impl Vault {
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
         due: Option<&PendingConfirmedErase>,
-        owner: Option<&AuthenticatedOwner>,
+        owner: Option<OwnerAtPublication<'_>>,
         doc_mutated: &mut bool,
     ) -> Result<bool> {
         use super::delete_bearing_update::export_tombstone_commit_delta;
@@ -580,14 +579,14 @@ impl Vault {
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
         due: Option<&PendingConfirmedErase>,
-        owner: Option<&AuthenticatedOwner>,
+        owner: Option<OwnerAtPublication<'_>>,
     ) -> Result<heed::RwTxn<'_>> {
         let mut wtxn = self.store.env.write_txn()?;
         if let Err(refusal) =
             crate::blob_artifact::esign::reject_event_delete(&self.store, &wtxn, id)
                 .and_then(|()| due.map_or(Ok(()), |due| due.prove_in(self, &wtxn, id).map(drop)))
                 .and_then(|()| reverify_deletion_authority_before_publication(gate, &wtxn))
-                .and_then(|()| reverify_owner_proof_before_publication(self, owner, &wtxn))
+                .and_then(|()| reverify_owner_at_publication(self, owner, id, &wtxn))
                 // The last-bound-owner guard at this delete's linearizing
                 // commit (round-1 P1 of #7900): a hard delete publishes before
                 // it purges, so the publish decides the guard and the later
@@ -1015,7 +1014,7 @@ impl Vault {
         _gate_decision: Option<&GateDecisionRecord>,
         _gate: Option<&GatedDeletion<'_>>,
         _due: Option<&PendingConfirmedErase>,
-        _owner: Option<&AuthenticatedOwner>,
+        _owner: Option<OwnerAtPublication<'_>>,
     ) -> Result<bool> {
         // No CRDT in this build — nothing is published, so there is no publish
         // commit and therefore NO linearization point here. `false` is the

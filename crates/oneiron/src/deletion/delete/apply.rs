@@ -7,9 +7,10 @@ use crate::store::GateDecisionRecord;
 
 use super::super::erase::{ProvenanceCapture, stage_sweep_refs_in_txn};
 use super::super::gate::{
-    GatedDeletion, journal_deletion_in_txn, reverify_deletion_authority_before_publication,
-    reverify_deletion_authority_when_unpublished, reverify_owner_proof_before_publication,
-    reverify_owner_proof_when_unpublished, revoke_guest_grants_in_txn,
+    GatedDeletion, OwnerAtPublication, journal_deletion_in_txn,
+    reverify_deletion_authority_before_publication, reverify_deletion_authority_when_unpublished,
+    reverify_owner_proof_before_publication, reverify_owner_proof_when_unpublished,
+    revoke_guest_grants_in_txn,
 };
 use super::super::rendezvous::{
     DeleteRendezvous, maybe_fail_after_tombstone_before_purge, signal_delete_rendezvous,
@@ -182,6 +183,10 @@ impl Vault {
             // the publication the refusal denied. Nothing replayable may
             // survive a refusal — `begin_tombstone_publish_txn` withdraws
             // it in the refusing txn itself.
+            //
+            // The owner's proof re-proves there too, after this scrub: the
+            // owner's delete of their own PERSON finds that PERSON the shell
+            // this scrub left, and re-proves with it taken as live.
             let crdt_persisted = self.write_crdt_tombstone(
                 id,
                 header.learned_at,
@@ -189,7 +194,7 @@ impl Vault {
                 &tombstone,
                 None,
                 gate.as_ref(),
-                owner,
+                owner.map(OwnerAtPublication::AfterOwnScrub),
             )?;
             signal_delete_rendezvous(self, DeleteRendezvous::AfterTombstonePublish, id, None);
             if crdt_persisted {
@@ -234,7 +239,7 @@ impl Vault {
             gate_decision.as_ref(),
             gate.as_ref(),
             due,
-            owner,
+            owner.map(OwnerAtPublication::BeforeScrub),
         )?;
         #[cfg(all(test, feature = "sync"))]
         maybe_fail_after_tombstone_before_purge()?;

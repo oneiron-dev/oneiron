@@ -45,11 +45,13 @@ pub(super) fn core_memory_retract_by_facade(
     Ok((id, receipt))
 }
 
-/// The core delete of `id` by a token that is not owner-grade (DEL-2,
-/// ARCH-0043; Engine ruling 13 Nov 02:51 = A). Its actor is resolved as the
-/// facade resolves a writer, and the facade row `vault.delete` runs on
-/// that actor's handle, the credential's proof bound: its verb hooks and
-/// its `/entity_ref` reference admission first (FIX-LIST 25699), then
+/// The core delete of `id` by a caller that holds no proof of the vault
+/// owner, a full-vault slip someone else holds included (DEL-2, ARCH-0043;
+/// Engine ruling 13 Nov 02:51 = A; OWNER-GRADE-IS-NOT-OWNERSHIP). Its actor
+/// is resolved as the facade resolves a writer, and the facade row
+/// `vault.delete` runs on that actor's handle, the credential's proof
+/// bound: its verb hooks and its `/entity_ref` reference admission first
+/// (FIX-LIST 25699), then
 /// `Memory::safe_delete`'s judge: the owner path when the
 /// actor is the vault's owner, else the role table (a Member's own item, an
 /// Admin's in-scope item, an agent under a Grant that names `delete`), each
