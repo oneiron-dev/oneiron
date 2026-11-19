@@ -188,8 +188,8 @@ fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
 }
 
 /// An enabled agent the owner creates, with a live owner Grant naming
-/// `vault.settings.set` and the quota key's own line, so it may ask to set
-/// the key.
+/// `read` (a Grant without it confers nothing), `vault.settings.set` and the
+/// quota key's own line, so it may ask to set the key.
 fn quota_asker(vault: &Vault, owner: &AuthenticatedOwner) -> EntityId {
     let agent = EntityId::now();
     create_agent_definition_as(
@@ -210,6 +210,7 @@ fn quota_asker(vault: &Vault, owner: &AuthenticatedOwner) -> EntityId {
     .expect("the owner creates an enabled agent");
     let mut authority_scope = Scope::top();
     authority_scope.verbs = ScopeAxis::Some(BTreeSet::from([
+        "read".to_owned(),
         "vault.settings.set".to_owned(),
         set_line(QUOTA_KEY),
     ]));
