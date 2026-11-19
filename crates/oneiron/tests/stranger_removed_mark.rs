@@ -21,10 +21,11 @@
 //! carrier makes its key own: red at c6faec2e, where the removal stayed a
 //! stranger's; green once the structure files it again as own. T4
 //! (REVIEW-9555 round 2) is the owner's removal a carrier known only under a
-//! stranger's anchor carries beside an owner key's proof, which the fold
-//! takes from any live carrier: red at bbd92a09, where a stranger-carried
-//! removal never counted; green once a proven one counts, filed before or
-//! after the owner key's enrolment.
+//! stranger's anchor carries beside an owner key's proof. The fold admits a
+//! carrier only from its machine's live roster chain (#8673, RULING
+//! FOREIGN-ANCHOR-ADMIT-SIDE-P1 = B), so it refuses that removal, and the
+//! structure must count none: red on main with stack #8714, where the
+//! structure took any carried removal; green with the fix.
 //!
 //! Run: `cargo test --locked -p oneiron --all-features --test
 //! stranger_removed_mark`.
@@ -763,16 +764,17 @@ fn a_carriers_removal_counts_once_its_key_is_taken_as_own() {
 /// H. Carrier C is known only under a stranger's anchor, whose mark of C
 /// rests on its root; the owner never enrols C. C carries the owner's
 /// removal of M beside K's proof, the mark and K's enrolment in its
-/// ancestry. The fold judges a carrier pin-free (any live chain) and takes
-/// the proven removal: M's roster head is removed. The store gate's
-/// structure files rows by stored id; `removal_first` puts the removal
-/// before K's enrolment there, so it is filed before K is a slip issuer.
-/// The removal must count either way: M's install join J over its withheld
-/// candidacy P is a stranger's row, and the believed history leaves out P.
-/// RED at bbd92a09 (a stranger-carried removal never counted, so J was
-/// believed and P stalled the peer route); GREEN once a removal beside a
-/// slip issuer's proof counts.
-fn a_proven_removal_a_strangers_carrier_carries_counts(removal_first: bool) {
+/// ancestry. The fold admits a carrier only from its machine's live roster
+/// chain (#8673, RULING FOREIGN-ANCHOR-ADMIT-SIDE-P1 = B) and C has none, so
+/// it refuses the removal, the owner's proof notwithstanding, and M stays
+/// live. The store gate's structure must count no removal either: M's
+/// install join J over its withheld candidacy P is M's own row, so the
+/// believed history names P and the peer route stays unsettled. RED on main
+/// with stack #8714 (the structure took any carried removal, so J was a
+/// stranger's row and the believed history left out P), GREEN with the fix
+/// (a removal a stranger's carrier key carries files nothing).
+#[test]
+fn a_proven_removal_a_strangers_carrier_carries_removes_nothing() {
     let (served, request) = enrolled_self_host();
     let machine = request.machine;
     let vault_id = served.vault_id();
@@ -793,106 +795,64 @@ fn a_proven_removal_a_strangers_carrier_carries_counts(removal_first: bool) {
         .expect("the owner's enrolment of holder H lands");
     let owner_key = signing(OWNER_KEY_SEED);
     let enrolment = served.enrol_owner_key(holder.machine, &owner_key);
-    let enrolment_order = stored_order(&enrolment);
     let head = served.roster_head(machine);
     let carrier = served.machine_request(0x77, CARRIER_SEED);
 
-    // A stranger's root, and its anchor's mark of C as its own, both below
-    // K's enrolment in stored order, the root first.
-    let seed = RecoveryRootSeed::generate().expect("a fresh stranger root seed");
-    let root = seed
-        .public(&vault_id)
-        .expect("the stranger root's public half");
-    let anchor = seed.anchor();
-    let record = OwnerRootRecord {
+    // A stranger's root, and its anchor's mark of C as its own on it.
+    let (anchor, root_hash) = publish_stranger_root(&served);
+    let mark_profile = MachineProfile {
+        machine: carrier.machine,
         owner: stranger_owner(),
-        root: root.id,
-        recovery_key: MachineEncryptionKey {
-            suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-            key: root.recovery_key.to_bytes(),
-        },
-        anchor_key: root.anchor_key,
+        machine_key: carrier.machine_key,
+        device_class: carrier.device_class,
+        encryption_key: carrier.encryption_key.clone(),
+        role: MachineRole::Owned(MachineOwnership::Yours),
+        revision: 1,
+        machine_proof: carrier.machine_proof,
+        seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
     };
-    let root_row = row_in_order(
-        |ts| {
-            signed_at(
-                vault_id,
-                1,
-                vec![head],
-                AuthorityOp::OwnerRoot(record.clone()),
-                &anchor,
-                ts,
-            )
-        },
-        |order| order < enrolment_order / 4,
+    let mark = signed(
+        vault_id,
+        2,
+        vec![root_hash],
+        AuthorityOp::MachineProfile(mark_profile),
+        &anchor,
     );
-    let root_order = stored_order(&hash(&root_row));
-    let mark = row_in_order(
-        |ts| {
-            let profile = MachineProfile {
-                machine: carrier.machine,
-                owner: stranger_owner(),
-                machine_key: carrier.machine_key,
-                device_class: carrier.device_class,
-                encryption_key: carrier.encryption_key.clone(),
-                role: MachineRole::Owned(MachineOwnership::Yours),
-                revision: 1,
-                machine_proof: carrier.machine_proof,
-                seen_world_edits: BTreeSet::new(),
-                carrier: None,
-                act: None,
-            };
-            signed_at(
-                vault_id,
-                2,
-                vec![hash(&root_row)],
-                AuthorityOp::MachineProfile(profile),
-                &anchor,
-                ts,
-            )
-        },
-        |order| root_order < order && order < enrolment_order / 2,
-    );
-    let mark_order = stored_order(&hash(&mark));
 
     // C's install key signs the owner's removal of M, carried, beside K's
-    // proof: above the mark in stored order, and below or above K's
-    // enrolment as the case asks.
+    // proof.
     let mut removal_parents = vec![head, enrolment, hash(&mark)];
     removal_parents.sort_unstable();
-    let removal = row_in_order(
-        |ts| {
-            let profile = MachineProfile {
-                machine,
-                owner: person,
-                machine_key: request.machine_key,
-                device_class: request.device_class,
-                encryption_key: request.encryption_key.clone(),
-                role: MachineRole::Removed,
-                revision: 2,
-                machine_proof: request.machine_proof,
-                seen_world_edits: BTreeSet::new(),
-                carrier: Some(carrier.machine),
-                act: Some(OwnerAct::by_owner(
-                    person,
-                    OwnerActKind::MachineRemoval,
-                    machine,
-                    ActSurface::ThisInstall,
-                    [0; 32],
-                )),
-            };
-            cosigned_at(
-                vault_id,
-                1,
-                removal_parents.clone(),
-                AuthorityOp::MachineProfile(profile),
-                (&signing(CARRIER_SEED), &owner_key),
-                ts,
-            )
-        },
-        |order| mark_order < order && (order < enrolment_order) == removal_first,
+    let removal_profile = MachineProfile {
+        machine,
+        owner: person,
+        machine_key: request.machine_key,
+        device_class: request.device_class,
+        encryption_key: request.encryption_key.clone(),
+        role: MachineRole::Removed,
+        revision: 2,
+        machine_proof: request.machine_proof,
+        seen_world_edits: BTreeSet::new(),
+        carrier: Some(carrier.machine),
+        act: Some(OwnerAct::by_owner(
+            person,
+            OwnerActKind::MachineRemoval,
+            machine,
+            ActSurface::ThisInstall,
+            [0; 32],
+        )),
+    };
+    let removal = cosigned_at(
+        vault_id,
+        1,
+        removal_parents,
+        AuthorityOp::MachineProfile(removal_profile),
+        (&signing(CARRIER_SEED), &owner_key),
+        1,
     );
-    for row in [&root_row, &mark, &removal] {
+    for row in [&mark, &removal] {
         served
             .vault
             .put_authority_log_entry(row, AT, 2)
@@ -908,53 +868,40 @@ fn a_proven_removal_a_strangers_carrier_carries_counts(removal_first: bool) {
     }
     let fold = served.vault.authority_fold().expect("authority fold reads");
     assert!(
-        fold.valid_entries.contains(&hash(&root_row)),
-        "FIXTURE: the stranger's root counts, so its anchor marks as a stranger's"
+        fold.valid_entries.contains(&hash(&mark)),
+        "FIXTURE: the stranger's mark of C counts, so C's key stands as a stranger's"
     );
     assert!(
-        fold.valid_entries.contains(&hash(&removal)),
-        "FIXTURE: the fold takes the removal C carried beside K's proof"
+        !fold.valid_entries.contains(&hash(&removal)),
+        "FIXTURE: the fold refuses a carrier known only under a stranger's anchor, even beside \
+         K's proof"
     );
     let roster = fold
         .machine(machine)
         .and_then(|folded| folded.roster.as_ref())
         .expect("FIXTURE: M has a roster chain");
-    assert_eq!(
-        roster.profile.role,
-        MachineRole::Removed,
-        "FIXTURE: the fold judges C pin-free, so the proven removal removes M"
+    assert!(
+        roster.is_live(),
+        "FIXTURE: the refused removal leaves M's roster chain live"
     );
     assert!(
         authority_fold_settled(&served.vault).expect("the settled read"),
         "FIXTURE: the stored rows alone stall no peer route"
     );
 
-    let withheld = deliver_join_over_withheld_candidacy(&served, machine, head, hash(&root_row));
+    let withheld = deliver_join_over_withheld_candidacy(&served, machine, head, root_hash);
     assert!(
-        !served
+        served
             .vault
             .authority_missing_believed_history()
             .expect("the believed history read")
             .missing
             .contains(&withheld),
-        "the owner's removal a stranger's carrier carried beside K's proof counts, as the fold \
-         takes it: M's join is a stranger's row, so the history this install believes it lacks \
-         leaves out P"
+        "a removal the fold refuses removes nothing here: M's join is M's own row, so the history \
+         this install believes it lacks names P"
     );
     assert!(
-        authority_fold_settled(&served.vault).expect("the settled read"),
-        "a removed machine's withheld parent must stall no peer route"
+        !authority_fold_settled(&served.vault).expect("the settled read"),
+        "M's believed join over its withheld candidacy must keep peer serving unsettled"
     );
-}
-
-/// T4, the removal filed after K's enrolment makes K a slip issuer.
-#[test]
-fn a_proven_removal_a_strangers_carrier_carries_counts_after_the_owner_key() {
-    a_proven_removal_a_strangers_carrier_carries_counts(false);
-}
-
-/// T4, the removal filed before K's enrolment makes K a slip issuer.
-#[test]
-fn a_proven_removal_a_strangers_carrier_carries_counts_before_the_owner_key() {
-    a_proven_removal_a_strangers_carrier_carries_counts(true);
 }
