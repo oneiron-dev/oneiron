@@ -1638,9 +1638,10 @@ fn selector_request_builder_refuses_an_unbound_client_and_records_nothing() {
         .expect("a bound client retries the deferred selector");
     assert_eq!(retry.len(), 1);
 
-    let response = transport::encode_window_sync(key, window_sub_tags::UPDATE, &update)
-        .into_result()
-        .expect("full-window update encodes");
+    let response =
+        transport::encode_window_sync(key, window_sub_tags::UPDATE, &pad_update(&update))
+            .into_result()
+            .expect("full-window update encodes");
 
     client
         .handle_server_message(&response)
