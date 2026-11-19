@@ -18,7 +18,7 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::memory::MemoryError;
 
 use super::highway_accept::{Lane, lane_of};
@@ -147,16 +147,45 @@ pub(crate) fn continue_failed_task_in_txn(
 /// owner's acknowledgement of that failure answers it alone, never the
 /// successor's later settlement.
 ///
+/// A typed terminal is the settlement when one stands. Otherwise the
+/// current head failed-state projection the dismissal eligibility reads
+/// decides: the newest failed head realizing this TASK, queue-only when
+/// the TASK body carries no terminal, a malformed body included. Live
+/// work and non-failed heads settle nothing.
+///
 /// # Errors
 ///
-/// A malformed TASK body; storage errors.
+/// Storage errors; a TASK body that fails to read for a reason other
+/// than a malformed body (a malformed body falls back to its jobs, as
+/// the dismissal projection does).
 pub(crate) fn task_settled_at_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     task: EntityId,
 ) -> Result<Option<u64>> {
-    Ok(task_verb_body_in(vault, rtxn, task)?
-        .and_then(|body| body.terminal().map(|terminal| terminal.finished_at)))
+    let body = match task_verb_body_in(vault, rtxn, task) {
+        Ok(body) => body,
+        Err(Error::Record(RecordError::InvalidTaskBody(_))) => None,
+        Err(error) => return Err(error),
+    };
+    if let Some(terminal) = body.as_ref().and_then(|body| body.terminal()) {
+        return Ok(Some(terminal.finished_at));
+    }
+    // No typed terminal: the queue-only settlement, when a current head
+    // failed. Same heads the board folds (a retry successor supersedes
+    // its source), newest failure wins so an older ack never dismisses a
+    // later continuation's failure.
+    let task_hex = task.to_hex();
+    let records =
+        crate::attempt_queue::AttemptQueue::new(vault).task_subtree_in_txn(rtxn, &task_hex)?;
+    let superseded = crate::task_verb::superseded_attempt_ids(&records);
+    Ok(records
+        .iter()
+        .filter(|record| record.task_ref.as_deref() == Some(task_hex.as_str()))
+        .filter(|record| !superseded.contains(&record.id))
+        .filter(|record| record.state == crate::attempt_queue::AttemptState::Failed)
+        .map(|record| record.settled_at.unwrap_or(record.updated_at))
+        .max())
 }
 
 /// A TASK writer's refusal, as the engine's error.
