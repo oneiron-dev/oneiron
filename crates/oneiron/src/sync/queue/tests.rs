@@ -263,6 +263,7 @@ fn clear_all_preserves_hard_erase_sweeps_and_metadata_counters() {
             .get(&rtxn, &embed_key)
             .unwrap()
             .expect("embed job row exists before clear")
+            .to_vec()
     };
 
     queue.clear_all().unwrap();
