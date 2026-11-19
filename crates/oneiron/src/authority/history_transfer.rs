@@ -105,6 +105,7 @@ fn retired_standing(
                 Some((_, row)) => Ok(Some(row.clone())),
                 None => evidence.map_or(Ok(None), |evidence| evidence.ancestor(parent)),
             },
+            &mut super::retired_signers::import_row_held(arriving, evidence),
         )? {
             return Ok(Some(*hash));
         }

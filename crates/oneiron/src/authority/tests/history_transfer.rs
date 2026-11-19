@@ -597,6 +597,38 @@ fn every_door_refuses_a_row_the_retired_root_signs() {
     );
 }
 
+/// Review of #9572 (OF-166): an import that carries two siblings the retired
+/// root signed is refused at the first, and its evidence names only the
+/// handoff the vault held before the import. The other sibling rolls back
+/// with the import, so it is no handoff this vault holds.
+#[test]
+fn a_refused_import_names_no_sibling_it_brings_as_a_held_handoff() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let old = ed_key(179);
+    let genesis = genesis_entry(179, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    store(&vault, &genesis);
+    let handoff = re_root_entry(id, &genesis, &old, 1, &ed_key(180));
+    vault.apply_signed_re_root(&handoff).unwrap();
+    let first = re_root_entry(id, &genesis, &old, 2, &ed_key(181));
+    let second = re_root_entry(id, &genesis, &old, 3, &ed_key(182));
+    let before = vault.export_signed_authority_history().unwrap();
+
+    let bodies = [&first, &second].map(|entry| encode_authority_log_entry_body(entry).unwrap());
+    assert!(vault.import_signed_authority_history(&bodies).is_err());
+    assert_eq!(vault.export_signed_authority_history().unwrap(), before);
+    let records = vault.authority_handoff_equivocations();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].signer, authority_key_from_ed(&old));
+    assert_eq!(
+        records[0].handoffs,
+        BTreeSet::from([authority_entry_hash(&handoff).unwrap()])
+    );
+    let siblings = [&first, &second].map(|entry| authority_entry_hash(entry).unwrap());
+    assert!(siblings.contains(&records[0].refused));
+}
+
 fn re_root_to_host(
     id: AuthorityVaultId,
     parent: &AuthorityLogEntry,

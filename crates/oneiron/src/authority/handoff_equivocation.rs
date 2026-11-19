@@ -230,13 +230,16 @@ impl HandoffEquivocations {
 /// enrolled in a second vault signs that vault's rows rightly, so they are no
 /// evidence of a fork here. Doors that compare the vault first never reach
 /// that case; the append door does, and so does any door added later. `row`
-/// reads a row by hash, stored or arriving beside it.
+/// reads a row by hash, stored or arriving beside it. `held` says whether
+/// this vault held the row at a hash before the write: it stores it, or the
+/// checkpoint image it adopted covers it.
 pub(crate) fn door_refuses_retired_standing(
     store: &Store,
     fold: &AuthorityFold,
     hash: &AuthorityEntryHash,
     entry: &AuthorityLogEntry,
     row: &mut dyn FnMut(&AuthorityEntryHash) -> Result<Option<AuthorityLogEntry>>,
+    held: &mut dyn FnMut(&AuthorityEntryHash) -> Result<bool>,
 ) -> Result<bool> {
     if !fold.stands_on_retired_key(hash, entry, row)? {
         return Ok(false);
@@ -248,16 +251,18 @@ pub(crate) fn door_refuses_retired_standing(
         return Ok(true);
     }
     for signer in entry_signer_keys(entry).filter(|key| fold.retired_keys.contains(*key)) {
-        // A door whose fold already counts the arriving row (a batch's or an
-        // import's preflight) holds it as a closed handoff in conflict with
-        // the real one. The refused row is never one of the handoffs this
-        // vault holds.
+        // A door whose fold already counts the arriving rows (a batch's or an
+        // import's preflight) holds each as a closed handoff in conflict with
+        // the real one. The evidence names only the handoffs this vault held
+        // before the write: never the refused row, and never a sibling the
+        // same refused write brings, which rolls back with it.
         let mut handoffs = BTreeSet::new();
-        for held in fold.closed_handoffs.iter().filter(|held| *held != hash) {
-            if row(held)?
-                .is_some_and(|handoff| entry_signer_keys(&handoff).any(|key| key == signer))
+        for candidate in fold.closed_handoffs.iter().filter(|closed| *closed != hash) {
+            if held(candidate)?
+                && row(candidate)?
+                    .is_some_and(|handoff| entry_signer_keys(&handoff).any(|key| key == signer))
             {
-                handoffs.insert(*held);
+                handoffs.insert(*candidate);
             }
         }
         let evidence = AuthorityHandoffEquivocation {

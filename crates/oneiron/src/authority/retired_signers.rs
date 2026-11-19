@@ -553,6 +553,34 @@ pub(crate) fn door_ancestor_row(
     }
 }
 
+/// Whether this vault held the row at `hash` before a write: it stores it,
+/// or the checkpoint image it adopted (`evidence`) covers it. A row only the
+/// write brings is not held, so a refused write's sibling rows never stand in
+/// its equivocation evidence as handoffs this vault holds (OF-166).
+pub(crate) fn authority_row_held(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    evidence: Option<&super::adopted_evidence::AdoptedEvidence>,
+    hash: &AuthorityEntryHash,
+) -> crate::error::Result<bool> {
+    Ok(stored_authority_row(store, txn, hash)?.is_some()
+        || evidence.is_some_and(|evidence| evidence.rows().contains_key(hash)))
+}
+
+/// What an import held before it staged, as [`authority_row_held`] reads a
+/// vault: whether the row at a hash is resident, which `arriving` (the rows
+/// this import brings) does not name, or covered by the adopted image
+/// (`evidence`).
+pub(super) fn import_row_held<'a>(
+    arriving: &'a [AuthorityEntryHash],
+    evidence: Option<&'a super::adopted_evidence::AdoptedEvidence>,
+) -> impl FnMut(&AuthorityEntryHash) -> crate::error::Result<bool> + 'a {
+    move |hash| {
+        Ok(!arriving.contains(hash)
+            || evidence.is_some_and(|evidence| evidence.rows().contains_key(hash)))
+    }
+}
+
 /// Whether `entry` is already in the log at its own id, stored as an
 /// authority row. A resident row is history, not a new signature: replaying
 /// it adds no authority, so no door refuses it for its signer, whatever a
