@@ -560,11 +560,13 @@ impl ScopedRead<'_> {
         // channel or records caveat does not reach. A room's row or turn the
         // room keeps from this reader is a missing row at every door (L9-52),
         // and so is one whose room's say does not resolve here. A private
-        // thread's row counts only to a reader standing in that thread, and a
-        // guest's only inside its grant's current scope in this snapshot.
+        // thread's row counts only to a reader standing in that thread, a
+        // private CLAIM never to a relationship-gated reader, and a guest's
+        // only inside its grant's current scope in this snapshot.
         if self.actor_key.room_turn.is_none()
             && self.credential_allows_row_in(txn, id)
             && self.private_threads_readable_in(txn, id, &raw)?
+            && !self.relationship_private_claim_in(txn, id, &raw)?
             && self.guest_bound_admits_in(txn, id, &raw)
             && !self.stretch_staged_in(txn, id, &row)?
             && !self.outside_asked_worlds_in(txn, id, &row)?
@@ -588,6 +590,37 @@ impl ScopedRead<'_> {
         } else {
             Ok(ReadAdmission::OpaqueAbsent)
         }
+    }
+
+    /// Whether the stored row `raw` of `id` is a private CLAIM this reader's
+    /// relationship gate refuses. No membership, grant or support slip ever
+    /// reads a private CLAIM (`allows_at_snapshot`), so to a relationship-gated
+    /// reader it is a missing row and adds no count, as a private thread's row
+    /// does for a reader outside the thread (review round 2 of #9637).
+    fn relationship_private_claim_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        if !self.relationship_gated_in(txn)? {
+            return Ok(false);
+        }
+        let read = super::access_gate::relationship_read_keyed(
+            &self.store_read(),
+            txn,
+            id,
+            raw,
+            self.actor_key.unscoped_rows_open,
+        )?;
+        Ok(matches!(
+            read,
+            super::access_gate::RelationshipRead::Gated {
+                kind: crate::registry::ENTITY_TYPE_CLAIM,
+                private: true,
+                ..
+            }
+        ))
     }
 
     /// Whether `row` is one this member's read over a room stretch finds
