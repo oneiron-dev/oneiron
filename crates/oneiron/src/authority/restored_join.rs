@@ -215,11 +215,29 @@ pub(super) fn origins_disagree(
 /// Nor do they speak for whether the answer needs the owner's proof: `fold`
 /// gets the parents as they were, before anything was laid under, and judges
 /// that on them (REVIEW-9509 round 2 P1); `None` when nothing was.
+///
+/// A carried revision that lands `restriction_only` joins nothing (its entry
+/// witnesses nothing), so the held chains are laid under it only to judge
+/// it: what it folds to is then held as an act-free revision is, and an
+/// answer the owner's proof holds back leaves only its held answer. Nothing
+/// of the machine stands from it (REVIEW-9524 P1), also when it is the
+/// machine's first revision and nothing was held before it: the roster view
+/// reads no floor, so a first pairing that stood there would make the copy a
+/// carrier that joins the enrolments its own entries name (REVIEW-9524
+/// round 2 P1 :236).
+///
+/// A revision that folds to a removal is the exception to holding: a removal
+/// is terminal and grants nothing, so its chain stands, removed, where a
+/// branch merge and the restriction pass (`revoke_proof`) read a machine's
+/// chains. A sibling that joins the held enrolment so meets the removal on
+/// merge, and the target never stands live past it (REVIEW-9524 round 2 P1
+/// :277). Its key claims stay out, and the enrolment it revised stays held.
 pub(super) fn fold_revision(
     state: &mut FoldState,
     profile: &MachineProfile,
     hash: AuthorityEntryHash,
     carried: bool,
+    restriction_only: bool,
     fold: impl FnOnce(&mut FoldState, Option<&FoldState>) -> std::result::Result<(), AuthorityFoldIssue>,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let machine = profile.machine;
@@ -230,7 +248,7 @@ pub(super) fn fold_revision(
         return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     let waiting = waiting(state, machine);
-    if waiting.is_empty() && (carried || profile.restored_from.is_none()) {
+    if waiting.is_empty() && ((carried && !restriction_only) || profile.restored_from.is_none()) {
         return fold(state, None);
     }
     let parents = carried.then(|| state.clone());
@@ -242,10 +260,10 @@ pub(super) fn fold_revision(
             &enrolment.chain,
         );
     }
-    if carried {
+    if carried && !restriction_only {
         return fold(state, parents.as_ref());
     }
-    let result = fold(state, None);
+    let result = fold(state, parents.as_ref());
     let chains = state.machines.remove(&machine).unwrap_or_default();
     let mut claims = BTreeSet::new();
     if let Some(named) = state.machine_keys.get_mut(&profile.machine_key) {
@@ -259,10 +277,26 @@ pub(super) fn fold_revision(
         }
     }
     result?;
-    let (admitter, chain) = chains
+    let Some((admitter, chain)) = chains
         .into_iter()
         .find(|(_, chain)| chain.head.entry == hash)
-        .ok_or(AuthorityFoldIssue::InvalidEntry(hash))?;
+    else {
+        // A carried answer the owner's proof holds back folds to no chain:
+        // its held answer is all it leaves.
+        return if carried {
+            Ok(())
+        } else {
+            Err(AuthorityFoldIssue::InvalidEntry(hash))
+        };
+    };
+    if chain.head.removed {
+        state
+            .machines
+            .entry(machine)
+            .or_default()
+            .insert(admitter, chain);
+        return Ok(());
+    }
     state.restored_enrolments.insert(
         hash,
         RestoredEnrolment {
