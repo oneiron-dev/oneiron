@@ -32,6 +32,7 @@
 use std::sync::Arc;
 
 use oneiron::off_record::OffRecordBackendClass;
+use oneiron::store::GateDecisionId;
 use oneiron::test_doors::erased_request_identity::{
     custody_handle, room_stored_call_erased, room_stored_call_is, store_note_body, store_note_call,
     store_note_call_in_room, stored_body_call_is, stored_call_erased, stored_call_is,
@@ -52,21 +53,44 @@ const PROBE_PASSPHRASE: &str = "harbor compass lighthouse ribbon";
 const FIRST_SHAPED_KEY: &str = "AKIA1234567890123456";
 const SECOND_SHAPED_KEY: &str = "AKIA1234567890123457";
 const UNHELD_SHAPED_KEY: &str = "AKIA1234567890123458";
+/// A value the first shaped key's record rotates to: the key and the words
+/// before it in [`words`].
+const SHAPED_KEY_WITH_WORDS: &str = "archive with AKIA1234567890123456";
+/// A short value, and a text holding it as written and inside a base64 run
+/// longer than that value's reach (its length times six), where `Zm94`
+/// spells it.
+const SHORT_VALUE: &str = "fox";
+const SHORT_VALUE_AND_RUN: &str = "fox ! AAAAAAAAZm94AAAAAAAA";
+/// A longer value an unrelated record takes: its reach spans that run.
+const UNRELATED_VALUE: &str = "violet ledger";
 
 fn vault() -> TestResult<(tempfile::TempDir, Vault)> {
-    let directory = tempfile::tempdir()?;
-    let vault = Vault::open(directory.path(), VaultConfig::device())?;
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
-    vault.prepare_install_signing()?;
-    for (name, value) in [
+    vault_holding(&[
         ("orchard passphrase", HELD_PASSPHRASE),
         ("meadow passphrase", OTHER_HELD_PASSPHRASE),
         ("first key", FIRST_SHAPED_KEY),
         ("second key", SECOND_SHAPED_KEY),
-    ] {
+    ])
+}
+
+/// A vault whose custody holds each named value in its own record.
+fn vault_holding(values: &[(&str, &str)]) -> TestResult<(tempfile::TempDir, Vault)> {
+    let directory = tempfile::tempdir()?;
+    let vault = Vault::open(directory.path(), VaultConfig::device())?;
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing()?;
+    for &(name, value) in values {
         vault.register_test_secret(name, value.as_bytes(), Vec::new(), 1)?;
     }
     Ok((directory, vault))
+}
+
+/// The owner rotates the custody record named `name` to `value`.
+fn rotate(vault: &Vault, name: &str, value: &str) -> TestResult {
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+    vault.rotate_secret_as_owner(&owner, name, value.as_bytes(), 5)?;
+    Ok(())
 }
 
 fn words(value: &str) -> String {
@@ -416,5 +440,53 @@ fn a_rooms_call_put_after_its_agent_is_gone_keeps_its_records_when_custody_holds
         !room_stored_call_is(&vault, &session, call, &words(SECOND_SHAPED_KEY), true)?,
         "another key of the same shape is another call"
     );
+    Ok(())
+}
+
+/// Custody holds a key of a shape a rule reads, and an erased row held it
+/// after other words. The owner then rotates its record to a value that
+/// spans the key and the words before it. The call made again still meets
+/// its row: the record's shorter generation reads it as the erase did. Red
+/// at 2cf8949a021 (blind review round 2 of #9528): the read took the longer
+/// generation whole, `unlock the [secret scN]`, and drifted from the row
+/// the base still met by its stand-in identity.
+#[test]
+fn an_erased_call_meets_its_call_after_its_record_rotates_to_a_value_spanning_its_words()
+-> TestResult {
+    let (_directory, vault) = vault()?;
+    let call = erased_call(&vault, &words(FIRST_SHAPED_KEY), |_| Ok(()))?;
+    rotate(&vault, "first key", SHAPED_KEY_WITH_WORDS)?;
+    assert!(stored_call_is(
+        &vault,
+        call,
+        &words(FIRST_SHAPED_KEY),
+        true
+    )?);
+    assert!(
+        !stored_call_is(&vault, call, &words(SECOND_SHAPED_KEY), true)?,
+        "another key custody holds is another call"
+    );
+    Ok(())
+}
+
+/// Custody holds a short value alone; an erased row held it as written and
+/// spelled in a base64 run longer than that value's reach, so the erase
+/// read the run as text. An unrelated record then takes a longer value,
+/// whose reach spans the run. The call made again still meets its row: a
+/// read for the records the erase named reaches as far as their values
+/// alone. Red at 2cf8949a021 (blind review round 2 of #9528): the read
+/// reached as far as every value custody holds, took `Zm94` for the short
+/// value, and drifted.
+#[test]
+fn an_erased_call_meets_its_call_after_an_unrelated_record_takes_a_longer_value() -> TestResult {
+    let (_directory, vault) = vault_holding(&[("short value", SHORT_VALUE)])?;
+    let call = erased_call(&vault, &words(SHORT_VALUE_AND_RUN), |_| Ok(()))?;
+    vault.register_test_secret("unrelated value", UNRELATED_VALUE.as_bytes(), Vec::new(), 2)?;
+    assert!(stored_call_is(
+        &vault,
+        call,
+        &words(SHORT_VALUE_AND_RUN),
+        true
+    )?);
     Ok(())
 }
