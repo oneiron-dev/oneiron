@@ -138,7 +138,7 @@ fn recovered_from(snapshot: &crate::recovery::CanonicalSnapshot) -> (tempfile::T
 /// before, and its task reads as a refusal, as after window ingest.
 #[test]
 fn an_explicit_tier_replay_of_a_fact_deleted_here_marks_its_task() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
     let (task, other) = (tasks[0].0, tasks[1].0);
     let fact = EntityId::now();
@@ -179,11 +179,12 @@ fn an_explicit_tier_replay_of_a_fact_deleted_here_marks_its_task() {
 /// restore's authority comparison never asks about.
 #[test]
 fn a_restore_keeps_the_refusal_of_a_task_deleted_since() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
     let (task, other) = (tasks[0].0, tasks[1].0);
     let backups = tempfile::tempdir().unwrap();
     let image = backups.path().join("backup");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100).unwrap();
 
     suppress_a_cancellation(&vault, EntityId::now(), task, owner);
@@ -215,7 +216,7 @@ fn a_restore_keeps_the_refusal_of_a_task_deleted_since() {
 /// reads the task as a refusal, not as never cancelled.
 #[test]
 fn a_recovered_window_keeps_the_refusal_of_a_suppressed_fact() {
-    let source = test_vault();
+    let (_dir_source, source) = test_vault();
     let (owner, tasks) = owned_tasks_for_fact_replay(&source, LEARNED_AT, 2);
     let (task, other) = (tasks[0].0, tasks[1].0);
     let fact = EntityId::now();
@@ -247,7 +248,7 @@ fn a_recovered_window_keeps_the_refusal_of_a_suppressed_fact() {
 /// artifact, so it marks the task first, and the artifact carries the refusal.
 #[test]
 fn a_captured_window_carries_the_refusal_of_a_deleted_fact_never_admitted() {
-    let source = test_vault();
+    let (_dir_source, source) = test_vault();
     let (owner, tasks) = owned_tasks_for_fact_replay(&source, LEARNED_AT, 2);
     let (task, other) = (tasks[0].0, tasks[1].0);
     let fact = EntityId::now();
@@ -293,7 +294,7 @@ fn a_captured_window_carries_the_refusal_of_a_deleted_fact_never_admitted() {
 /// recovers.
 #[test]
 fn a_forged_fact_naming_a_row_that_is_no_task_never_blocks_a_capture() {
-    let source = test_vault();
+    let (_dir_source, source) = test_vault();
     let (owner, tasks) = owned_tasks_for_fact_replay(&source, LEARNED_AT, 2);
     observe_a_deleted_cancellation(&source, EntityId::now(), owner, owner);
     {
@@ -319,7 +320,7 @@ fn a_forged_fact_naming_a_row_that_is_no_task_never_blocks_a_capture() {
 /// refusal again in the transaction that would erase it.
 #[test]
 fn a_fact_that_arrives_after_a_delete_precheck_is_never_erased() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 1);
     let task = tasks[0].0;
     let fact = EntityId::now();
@@ -438,7 +439,7 @@ mod removed_carriers {
 
     #[test]
     fn a_replayed_pending_tombstone_marks_an_unadmitted_fact() {
-        let vault = test_vault();
+        let (_dir_vault, vault) = test_vault();
         let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
         let fact = EntityId::now();
         let doc = window_carrying("2026-03", fact, tasks[0].0, owner);
@@ -468,7 +469,7 @@ mod removed_carriers {
 
     #[test]
     fn a_reasserted_tombstone_marks_an_unadmitted_fact() {
-        let vault = test_vault();
+        let (_dir_vault, vault) = test_vault();
         let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
         let fact = EntityId::now();
         persist(
@@ -505,7 +506,7 @@ mod removed_carriers {
 
     #[test]
     fn the_withdrawn_delete_scrub_marks_an_unadmitted_fact() {
-        let vault = test_vault();
+        let (_dir_vault, vault) = test_vault();
         let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
         let fact = EntityId::now();
         vault
@@ -535,7 +536,7 @@ mod removed_carriers {
     /// the fact's task first, and the refusal outlives the scrubbed persist.
     #[test]
     fn the_local_claim_scrub_marks_an_unadmitted_fact_at_a_deleted_claim_id() {
-        let vault = test_vault();
+        let (_dir_vault, vault) = test_vault();
         let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
         let fact = EntityId::now();
         deleted_claim_shell(&vault, fact, owner);
@@ -556,7 +557,7 @@ mod removed_carriers {
 
     #[test]
     fn a_local_delete_publication_marks_an_unadmitted_fact() {
-        let vault = test_vault();
+        let (_dir_vault, vault) = test_vault();
         let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
         let fact = EntityId::now();
         headerless_residue(&vault, fact);
@@ -572,7 +573,7 @@ mod removed_carriers {
         assert_marked_and_control(&vault, owner, &tasks);
     }
 
-    /// A CLAIM at `fact` about `subject`, soft-deleted here: its 25-byte
+    /// A CLAIM at `fact` about `subject`, soft-deleted here: its 33-byte
     /// shell and deletion fence are the stored row at that id.
     fn deleted_claim_shell(vault: &Vault, fact: EntityId, subject: EntityId) {
         let mut body = crate::claim::ClaimBody::new(
@@ -659,7 +660,7 @@ mod removed_carriers {
     /// removal durable leaves the task reading as a refusal.
     #[test]
     fn a_failed_live_publication_keeps_its_mark_through_a_later_persist() {
-        let vault = test_vault();
+        let (_dir_vault, vault) = test_vault();
         let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
         let fact = EntityId::now();
         let key = WindowKey::new(crate::deletion::window_label_from_timestamp(
@@ -859,7 +860,7 @@ mod removed_carriers {
                 | CarrierRemoval::CanonicalCapture => &[false],
             };
             for &live in branches {
-                let vault = test_vault();
+                let (_dir_vault, vault) = test_vault();
                 let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
                 let (failed, carried) =
                     fail_after_the_mark(&vault, path, live, EntityId::now(), tasks[0].0, owner);

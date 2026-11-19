@@ -15,6 +15,7 @@ mod embedder_space;
 mod embedding;
 mod failure_signals;
 mod feedback;
+pub mod gpu_jobs;
 pub mod import;
 mod keystore;
 mod limits;
@@ -61,6 +62,7 @@ pub(crate) use feedback::github_issue_source;
 pub use feedback::{
     CLOUD_FEEDBACK_ENDPOINT, FeedbackConfig, FeedbackInboxConfig, FeedbackTriageConfig,
 };
+pub use gpu_jobs::{GpuJobsSettings, GpuOfferSettings};
 pub use import::ImportConfig;
 pub use keystore::{DEFAULT_KEYCHAIN_SERVICE, KeystoreBackend, KeystoreConfig, KeystoreInstall};
 pub use limits::LimitsConfig;

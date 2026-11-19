@@ -16,8 +16,10 @@
 use super::metadata::{compiled_stack, exact_u32, host_stack_id};
 use crate::edit_distance::attribution::{ArtifactPublisher, TriagePacket, TriageSubject};
 use crate::edit_distance::publisher::{CountKey, IssueCategory, IssueSignature};
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use oneiron_model::llm::ModelId;
 
 impl Vault {
@@ -95,9 +97,7 @@ impl Vault {
             (CountKey::Amended, judged.saturating_sub(rejected)),
             (CountKey::Rejected, rejected),
         ];
-        let canonical = oneiron_model::llm::canonical_json_bytes(packet)
-            .map_err(|_| Error::InvariantViolation("triage packet encode"))?;
-        let content_hash = blake3::hash(&canonical).to_hex().to_string();
+        let content_hash = packet_content_hash(packet)?;
         Ok(IssueSignature::new(
             category,
             artifact,
@@ -109,4 +109,24 @@ impl Vault {
         )
         .ok())
     }
+}
+
+/// The content hash of `packet`: plain BLAKE3 of its canonical JSON bytes,
+/// lowercase hex. The issue signature row stores it, so it keeps its bytes (K,
+/// PLAN-UC-04 stage 6.4).
+fn packet_content_hash(packet: &TriagePacket) -> Result<String> {
+    let canonical = oneiron_model::llm::canonical_json_bytes(packet)
+        .map_err(|_| Error::InvariantViolation("triage packet encode"))?;
+    Ok(bytes_to_hex_lower(
+        &LegacyDigest::new(purposes::feedback::TRIAGE_PACKET)
+            .raw(&canonical)
+            .finish(),
+    ))
+}
+
+/// [`packet_content_hash`], or `None` when the packet does not encode. For the
+/// K-proof (`tests/fingerprint_keep_query_swap_piece_packet_repo_digests.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn packet_content_hash_for_test(packet: &TriagePacket) -> Option<String> {
+    packet_content_hash(packet).ok()
 }

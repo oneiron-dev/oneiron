@@ -279,6 +279,7 @@ fn oracle_config() -> EventTypeConfig {
         hosts: vec![host(HOST_A_SEED, vec![window(0, 9, 14)])],
         flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 
@@ -288,6 +289,7 @@ fn request(constraint: Option<ConstraintObject>) -> SolveRequest {
         window: monday(),
         constraint,
         visitor_tz: "UTC".to_owned(),
+        duration_min: None,
     }
 }
 

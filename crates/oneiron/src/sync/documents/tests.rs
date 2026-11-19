@@ -615,9 +615,9 @@ fn a_selector_peer_receives_a_state_only_copy_of_the_note_head_document() {
         .unwrap();
     let frame = decode_document(&reply[1..]).unwrap();
     let shallow = LoroDoc::new();
-    shallow
-        .import(&frame.payload[crate::entity_id::ENTITY_ID_LEN + 8..])
-        .unwrap();
+    let envelope =
+        crate::note::frame_envelope::NoteStateEnvelope::decode(note, frame.payload).unwrap();
+    shallow.import(envelope.document).unwrap();
 
     assert!(
         shallow.is_shallow()

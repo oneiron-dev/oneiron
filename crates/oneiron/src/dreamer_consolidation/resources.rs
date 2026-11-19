@@ -557,7 +557,7 @@ impl<'a> BranchResources<'a> {
             super::gap::ReflectionGap,
             super::evidence::VerifiedEvidenceSet,
         )>,
-        now: u64,
+        now_ms: u64,
     ) -> Result<super::gap::GapQueueDelta> {
         self.check_axes(scope)?;
         let mut persisted = Vec::new();
@@ -583,7 +583,7 @@ impl<'a> BranchResources<'a> {
             self.origin.axes(),
             &self.write_fence(),
             persisted,
-            now,
+            now_ms,
         )
     }
 
@@ -592,7 +592,7 @@ impl<'a> BranchResources<'a> {
         &self,
         scope: &Scope,
         gaps: Vec<super::gap::ReflectionGap>,
-        now: u64,
+        now_ms: u64,
     ) -> Result<super::gap::GapQueueDelta> {
         self.check_axes(scope)?;
         for gap in &gaps {
@@ -629,7 +629,7 @@ impl<'a> BranchResources<'a> {
             self.origin.axes(),
             &self.write_fence(),
             gaps,
-            now,
+            now_ms,
         )
     }
 

@@ -24,8 +24,10 @@ and never a drop (canon ARCH-0069 S9). Raise that ceiling to let names print.
 
 The worker runs on the existing `generative_reasoner` model role. Each attempt
 uses `[models.chat].turn_budget_units` through the native budget policy, and
-`[models.workflows].retry_backoff_secs` between tries. There is no separate
-role, budget, retry cap or feature flag.
+`[models.workflows].retry_backoff_secs` between tries: a failed try's next try
+waits that setting times the tries so far, at most one hour, or the setting
+itself when it is longer (as the commitment reminder wording's retries do).
+There is no separate role, budget, retry cap or feature flag.
 
 The host starts the worker once, for attached and standalone hosts. Without a
 configured generative seat, attempts stay queued. It needs no running Dreamer
@@ -71,10 +73,10 @@ again would spend the budget on the same refusal. Each item of a reply in the
 contract is judged alone, so one refused draft leaves its siblings filed.
 
 A model, source, configuration, budget or filing error schedules a new try
-through the native retry door, with no cutoff. A destination that holds the
-transcript, or may list none of its recipients (a world it may not reach),
-retries the same way, until a model that may see them is configured or the
-hold clears.
+through the native retry door, with no cutoff, after the growing wait above. A
+destination that holds the transcript, or may list none of its recipients (a
+world it may not reach), retries the same way, until a model that may see them
+is configured or the hold clears.
 
 The size-cap check runs at the widest destination only. A transcript within a
 few names' bytes of the cap there completes with no draft, though a narrower

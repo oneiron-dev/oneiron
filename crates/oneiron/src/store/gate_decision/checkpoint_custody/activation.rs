@@ -227,6 +227,14 @@ impl Store {
                 fences.put_in_txn(self, &mut wtxn)
             })
             .and_then(|()| crate::identity::drop_machine_identity_in_txn(self, &mut wtxn))
+            // It joins as a new machine born of a restore (row
+            // RESTORED-COPIES-ENROL-EACH-OTHER): it lands no image, so its
+            // mark is a fresh id, and its replacement must join it.
+            .and_then(|()| {
+                let mut activation = [0_u8; 32];
+                rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut activation);
+                crate::identity::put_restored_from_image_in_txn(self, &mut wtxn, &activation)
+            })
             // The orders standing on its source now, not the ones it had.
             .and_then(|()| replace_host_holds_in_txn(self, &mut wtxn, source.host_holds()))
             // Its source's pad objects, before the archive lifts.

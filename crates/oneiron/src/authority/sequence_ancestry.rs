@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 /// ancestry (`entry_folds_on_available_ancestry`). The branch that reached
 /// its signer's highest sequence so counts whole, on every install alike.
 pub(super) fn causal_sequence_floors(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &JudgedRows,
     ancestors: &AncestorIndex,
     original: &BTreeMap<AuthorityEntryHash, u64>,
     context: FoldContext<'_>,
@@ -32,7 +32,7 @@ pub(super) fn causal_sequence_floors(
                     .push(*hash);
             }
         }
-        for (tip_hash, tip) in by_hash {
+        for (tip_hash, tip) in by_hash.iter() {
             let Some(signer_floored) = floored_rows.get(tip.signer_key()) else {
                 continue;
             };
@@ -115,9 +115,19 @@ pub(super) fn causal_sequence_floors(
 /// the admitted peer consent roots — because those define what "folds" MEANS.
 /// A probe answering under different consent semantics than the fold it serves
 /// would quietly disagree with it about which history can vouch a sequence floor.
+///
+/// It folds each row once, ancestors first (the index's id order), and
+/// reads each row's signature verdict from the fold that judged it
+/// (`fold_judged_entry_state`): one transition a row, where rounds in hash
+/// order took one a row a round (row [ROSTER-KEY-LOG-FLOOD], PR 3). The
+/// answer is the rounds' (`floor_probe_door` keeps them): a transition
+/// reads only its row, the context and its parents' states, and a genesis
+/// claims no parent, so the target folds exactly when every row of its
+/// ancestry folds, in any order. A row whose parent has not folded in id
+/// order waits on a parent in its own cycle of claims, which never folds.
 pub(super) fn entry_folds_on_available_ancestry(
     target_hash: AuthorityEntryHash,
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &JudgedRows,
     ancestors: &AncestorIndex,
     context: FoldContext<'_>,
 ) -> bool {
@@ -130,41 +140,22 @@ pub(super) fn entry_folds_on_available_ancestry(
     {
         return false;
     }
+    let context = FoldContext {
+        entry_ancestors: Some(ancestors),
+        ..context
+    };
     let mut states = BTreeMap::<AuthorityEntryHash, FoldState>::new();
-    let mut pending = target_ancestors.to_set();
-    pending.insert(target_hash);
-
-    for _ in 0..=pending.len() {
-        if states.contains_key(&target_hash) {
-            return true;
-        }
-        let hashes: Vec<_> = pending.iter().copied().collect();
-        let mut progressed = false;
-        for hash in hashes {
-            let Some(entry) = by_hash.get(&hash) else {
-                return false;
-            };
-            match fold_entry_state(
-                entry,
-                hash,
-                &states,
-                FoldContext {
-                    entry_ancestors: Some(ancestors),
-                    ..context
-                },
-            ) {
-                EntryFold::Ready(state) => {
-                    states.insert(hash, state);
-                    pending.remove(&hash);
-                    progressed = true;
-                }
-                EntryFold::Waiting => {}
-                EntryFold::Invalid(_) => return false,
+    let rows = target_ancestors
+        .iter_unordered()
+        .copied()
+        .chain(std::iter::once(target_hash));
+    for hash in rows {
+        match fold_judged_entry_state(by_hash, hash, &states, context) {
+            Some(EntryFold::Ready(state)) => {
+                states.insert(hash, state);
             }
-        }
-        if !progressed {
-            return false;
+            Some(EntryFold::Waiting | EntryFold::Invalid(_)) | None => return false,
         }
     }
-    false
+    true
 }

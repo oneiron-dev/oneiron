@@ -23,7 +23,7 @@ fn passport(vault: &Vault, seed: u8, event_ref: EntityId, approval: ClaimApprova
         presence: CalendarPassportPresence::Live,
         cancelled_since: None,
     };
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         PREDICATE_CALENDAR_PASSPORT,
         ClaimSubject::Entity(event_ref),
         encode_passport_value(&value),
@@ -32,6 +32,7 @@ fn passport(vault: &Vault, seed: u8, event_ref: EntityId, approval: ClaimApprova
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(vault, &mut body);
     vault
         .put_claim(
             &crate::test_util::entity(seed),

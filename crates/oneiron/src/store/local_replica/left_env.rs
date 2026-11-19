@@ -96,6 +96,7 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::IDENTITY_MACHINE_ID,
     &side_table::IDENTITY_MACHINE_PK,
     &side_table::IDENTITY_PINNED_ROOT,
+    &side_table::IDENTITY_RESTORED_FROM,
     &side_table::MANAGED_ACCOUNT_KEY_LEASE,
     &side_table::MANAGED_CANARY_MARKER,
     &side_table::MANAGED_DEK_MAC,

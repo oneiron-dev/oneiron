@@ -24,6 +24,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/check_in.rs` | src | s | — | — | Purposes of a person's check-in effects (`oneiron` `check_in::effect`; ARCH-0082 #composing) |
 | `src/purposes/claim.rs` | src | s | — | — | Purposes of claims (`crates/oneiron/src/claim`) |
 | `src/purposes/cluster.rs` | src | s | — | — | Purposes of claim clustering (`oneiron::cluster`, `crates/oneiron/src/memory/claim_cluster.rs`) |
+| `src/purposes/code_run.rs` | src | s | — | — | Legacy code-run digests that existing rows, ids and keys hold |
+| `src/purposes/connector.rs` | src | s | — | — | Purposes of connectors (`crates/oneiron/src/connector_key`, `ingest::connector_*`, `outbound_consent`… |
 | `src/purposes/dreamer.rs` | src | s | — | — | Purposes of the Dreamer (`crates/oneiron/src/dreamer_consolidation`, `crates/oneiron/src/dreamer_promotion`… |
 | `src/purposes/dreamer_consolidation.rs` | src | s | — | — | Legacy dreamer-consolidation digests stored or compared by existing records |
 | `src/purposes/dreamer_runner.rs` | src | s | — | — | Legacy dreamer-runner digests stored or compared by existing records |
@@ -38,11 +40,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/mail_pack.rs` | src | s | — | — | Purposes of the mail pack (`crates/oneiron/src/mail_pack`) |
 | `src/purposes/memory.rs` | src | s | — | — | Purposes of memory (`crates/oneiron/src/memory`) |
 | `src/purposes/mod.rs` | src | s | 1 fn · 2 const | — | The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area |
-| `src/purposes/note.rs` | src | s | — | — | Purposes of notes |
+| `src/purposes/note.rs` | src | s | — | — | Purposes of notes (`crates/oneiron/src/note`) |
 | `src/purposes/origin.rs` | src | s | — | — | Purposes of the git origin (`crates/oneiron/src/origin`) |
 | `src/purposes/outbound_intent_ledger.rs` | src | s | — | — | Purposes of the outbound intent ledger (`crates/oneiron/src/outbound_intent_ledger`) |
+| `src/purposes/phone_line.rs` | src | s | — | — | Purposes of the phone line (`crates/oneiron/src/phone_line`) |
 | `src/purposes/plugin.rs` | src | s | — | — | Purposes of plugin sections (`crates/oneiron/src/context_board/plugin`) and the Dreamer's plugin suggestions… |
 | `src/purposes/policy_model.rs` | src | s | — | — | Purposes of the policy model (`oneiron-records`' `policy_model` and `crates/oneiron/src/policy_model`) |
+| `src/purposes/repo_mutation.rs` | src | s | — | — | Purposes of repository mutations (`crates/oneiron/src/repo_mutation`) |
 | `src/purposes/restore.rs` | src | s | — | — | Purposes of the managed restore contract (`oneiron-vault-contract` `restore`) |
 | `src/purposes/retrieval.rs` | src | s | — | — | Purposes of the retrieval crate (`oneiron-retrieval`) |
 | `src/purposes/runtime_hooks.rs` | src | s | — | — | Purposes of runtime hooks (`crates/oneiron/src/runtime_hooks`) |
@@ -58,6 +62,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/sync.rs` | src | s | — | — | Legacy sync digests stored, sent or compared by existing records and peers |
 | `src/purposes/task.rs` | src | s | — | — | Purposes of tasks (`crates/oneiron/src/task_verb`, `task_type`, `campaign`) |
 | `src/purposes/testing.rs` | src | s | — | — | Purposes for tests only |
+| `src/purposes/training_pack.rs` | src | s | — | — | Purposes of training runs (`crates/oneiron/src/training_pack`; OF-382) |
 | `src/purposes/vault_import.rs` | src | s | — | — | Purposes of a staged foreign vault import (`oneiron-store` `batch::export::foreign_stage`, sync builds) |
 | `src/purposes/vault_shape.rs` | src | s | — | — | Purposes of the vault shape (`crates/oneiron/src/vault_shape`) |
 | `src/purposes/web_fetch.rs` | src | s | — | — | Purposes of web acquisition (`oneiron-web-fetch`; OF-444) |

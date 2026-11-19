@@ -978,7 +978,9 @@ fn rejected_marketplace_candidate_cannot_be_activated_by_reimport_from_another_h
 #[test]
 fn code_policy_revalidates_owner_and_can_toggle_across_reopen() -> Result<()> {
     let temp = tempfile::tempdir()?;
+    let keys = std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new());
     let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(keys.clone());
     let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let survivor = EntityId::now();
     let at = crate::TimeRange { start: 1, end: 1 };
@@ -1000,6 +1002,8 @@ fn code_policy_revalidates_owner_and_can_toggle_across_reopen() -> Result<()> {
     }
     drop(vault);
     let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(keys.clone());
+    vault.prepare_install_signing().expect("install signing");
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:owner",

@@ -241,6 +241,11 @@ pub(super) struct MachineEnrolment {
     encryption_suite: u16,
     encryption_key: String,
     machine_proof: String,
+    /// The checkpoint image the joining install was restored from, 64 hex,
+    /// when a restore made it (row RESTORED-COPIES-ENROL-EACH-OTHER): its
+    /// `machine_proof` then signs the restored transcript. Absent otherwise.
+    #[serde(default)]
+    restored_from: Option<String>,
 }
 impl MachineEnrolment {
     /// The request this wire names. The target's anchoring material reads an
@@ -262,6 +267,11 @@ impl MachineEnrolment {
                     .map_err(|_| ApiError::unauthorized())?,
             },
             machine_proof,
+            restored_from: self
+                .restored_from
+                .as_deref()
+                .map(parse_slip_id)
+                .transpose()?,
         })
     }
 }
