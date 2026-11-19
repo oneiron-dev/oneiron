@@ -449,7 +449,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/history_coverage.rs` | src | m | 3 struct · 5 fn · 6 crate-vis | AuthorityArchiveCoverage, AuthorityHistoryCoverage, AuthorityHistoryRequest | What authority history this vault holds, and exactly what it lacks (OF-469) |
 | `src/authority/history_fetch.rs` | src | m | 3 struct · 1 enum · 7 fn · 3 const | AuthorityHistoryFetch, AuthorityHistoryPage, AuthorityHistorySelection, AuthorityHistoryVerificationCoverage | Authority history fetch, by exact hash or by checkpoint coverage, and the coverage an asker verifies itself… |
 | `src/authority/history_repair.rs` | src | s | 1 enum · 2 fn · 2 crate-vis | AuthorityRepairOutcome | Staged repair of missing authority history (OF-469) |
-| `src/authority/history_transfer.rs` | src | m | 1 struct · 7 fn · 8 crate-vis | VaultRecoveryRequest | Signed-history migration and independently authorized per-vault re-root doors |
+| `src/authority/history_transfer.rs` | src | L | 1 struct · 7 fn · 8 crate-vis | VaultRecoveryRequest | Signed-history migration and independently authorized per-vault re-root doors |
 | `src/authority/history_transfer/page.rs` | src | s | 1 fn · 5 crate-vis | — | One delivery page of a history this vault holds in part (OF-469): the page door, its root check and its… |
 | `src/authority/history_transfer/re_root_staging.rs` | src | s | 1 crate-vis | — | Staging authority rows with each arriving ReRoot judged against the fold before it (pass 27 R4) |
 | `src/authority/home_candidacy.rs` | src | m | 1 fn · 10 crate-vis | — | Folds each machine's signed MACRO home candidacy (FIX 4898; Engine 10-19 rulings on ARCH-0026: "Election… |
@@ -544,7 +544,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/recovery.rs` | src | s | 1 fn · 4 crate-vis | — | Lost-owner authority recovery from material explicitly enrolled before loss |
 | `src/authority/restored_join.rs` | src | m | 1 struct · 3 fn · 9 crate-vis | RestoredEnrolmentStanding | A machine born of a restore joins the vault (row RESTORED-COPIES-ENROL-EACH-OTHER; Setting DESIGN pass 15e… |
 | `src/authority/restored_join_door.rs` | src | m | 2 fn · 2 crate-vis | — | The owner's door into the vault for an install born of a restore when no machine of the vault that has… |
-| `src/authority/retired_signers.rs` | src | m | 13 crate-vis | — | A handoff retires its predecessor for good (engine-crates-03) |
+| `src/authority/retired_signers.rs` | src | m | 15 crate-vis | — | A handoff retires its predecessor for good (engine-crates-03) |
 | `src/authority/revocation_notice.rs` | src | s | 2 fn · 1 crate-vis | — | The credential revocation notice (FIX 10381): content-free, per open vault, bumped after a capability-slip… |
 | `src/authority/revoke_proof.rs` | src | m | 12 crate-vis | — | Log-derived, typed restrictive facts (actor and device revocations, slip withdrawals, a Grant's slip… |
 | `src/authority/root_appointment_door.rs` | src | m | 1 struct · 2 crate-vis | RootAppointmentReceipt | The root appointment door's writer half (row OWNER-ANCHOR-ROOT-RECOVERY, PLAN v3 section 7; Engine RULINGs… |
@@ -8253,7 +8253,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/repo_secret_marks.rs` | src | s | 1 struct · 1 fn | MarkedHit | Doors for `tests/git_smart_http.rs` (SMART-HTTP-SECRET-PUSH-EXPECTATIONS): the hits a marked push's intent… |
 | `src/test_doors/research_continuation.rs` | src | s | 2 fn | — | Doors for `tests/verb_vault_research_advance.rs` (LEARNING-09): seed one research continuation at a chosen… |
 | `src/test_doors/resident_wake_hold.rs` | src | s | 4 fn | — | Doors for `tests/agent_wake_hold.rs` (AGM-4 wake hold), `tests/agent_message_classes.rs` and… |
-| `src/test_doors/restored_enrolment.rs` | src | s | 1 fn | — | A root-signed enrolment of an install born of a restore, for the integration tests of the fold's hold and… |
+| `src/test_doors/restored_enrolment.rs` | src | s | 3 fn | — | A root-signed enrolment of an install born of a restore, for the integration tests of the fold's hold and… |
 | `src/test_doors/retrieval_policy_default_floor.rs` | src | s | 1 fn | — | The finalized-run writer needed by `tests/retrieval_policy_default_floor.rs` |
 | `src/test_doors/reveal_ask_window.rs` | src | s | 1 struct · 2 fn | RevealWindowRun | Drives one secret reveal ask with a set window and the owner's answer |
 | `src/test_doors/room_facet_limit.rs` | src | s | 1 fn | — | Door for `tests/room_of_unheld_project_reads_bottom.rs` (L7-39 guard): the facets a room limits its reads… |
@@ -9835,6 +9835,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/restored_machine_join_standing.rs` | test | s | — | — | Row RESTORED-COPIES-ENROL-EACH-OTHER (P1; Setting DESIGN pass 15e "Joined", RULING SETTING-UNTANGLE = A… |
 | `tests/restored_machine_owner_join.rs` | test | s | — | — | Row RESTORED-COPIES-ENROL-EACH-OTHER, PR 2 (P1; Setting DESIGN pass 15e "Joined", the second way; RULING… |
 | `tests/restored_machine_owner_join_guards.rs` | test | s | — | — | Row RESTORED-COPIES-ENROL-EACH-OTHER, PR 2, round 1 of the blind review of stack #9512 (REVIEW-9510 and… |
+| `tests/restored_machine_round2_guards.rs` | test | m | — | — | Row RESTORED-COPIES-R2-TESTS: the round 2 fixes of the blind review of stack #9512 (row… |
 | `tests/restriction_lift_system_grant.rs` | test | s | — | — | FIX [RESTRICTION-CLOSE-BY-SYSTEM-GRANT]: lifting a restriction is a live owner's act alone, whoever wrote… |
 | `tests/restriction_native_demotion.rs` | test | m | — | — | FIX [RESTRICTION-CLOSE-BY-NATIVE-DEMOTION] (Astra census-l2-derive-recheck F4 on #8238) |
 | `tests/restriction_page_keys.rs` | test | m | — | — | The owner's raised page maxima, served (restriction wave 19) |
