@@ -45,7 +45,12 @@ fn scheduled_connector_send() -> (tempfile::TempDir, TimedVault, EntityId, Entit
     sender
         .schedule_outbound(&OutboundDraftInput {
             verb: "send".to_owned(),
-            channel: "discord".to_owned(),
+            // A non-idempotent channel: a definite failure settles the
+            // TASK Failed. An idempotent one (discord) retries a timeout by
+            // design and settles nothing (the 20 Nov night, FIX
+            // [NIGHTLY20-OWN-PR-TEST-REDS]), as connector_schedule's
+            // failed-send test settles its email draft.
+            channel: "email".to_owned(),
             target: "owen@example.com".to_owned(),
             on_behalf_of: None,
             content_ref: None,
