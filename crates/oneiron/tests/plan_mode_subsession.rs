@@ -14,7 +14,9 @@
 //! When the run settles, its result is filed into the sub-session
 //! (PLAN-RUN-TRACE-INTO-SUB-SESSION = B, Engine 17 Nov 00:11): one record
 //! naming the result TURN, under the approving turn, HEAD unmoved, and only
-//! in a room the owner alone reads. A shared room keeps the result out.
+//! in a room the owner alone reads. A shared room keeps the result out. The
+//! filed record keeps no room row: the owner's trunk and history read as
+//! before, and the open's room-row backfill leaves it with none.
 //!
 //! Every verdict request is built from JSON and every new settlement field
 //! is read back through JSON, so this file compiles on a tree without the
@@ -44,7 +46,9 @@ use oneiron::note::{
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::derive_verbs::define_agent;
+use oneiron::test_doors::room_turn_backfill::run_room_turn_backfill;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
+use oneiron::workspace_roster::RoomTrunkItem;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use serde_json::{Value, json};
 
@@ -307,6 +311,28 @@ fn filed_results(fixture: &Fixture, room: EntityId, session: EntityId, result: E
                 && body.get("result_ref") == Some(&json!(result.to_hex()))
         })
         .count()
+}
+
+/// The TURN ids the owner reads on `room`: its trunk page's turns, then its
+/// history's.
+fn room_reads(fixture: &Fixture, room: EntityId) -> (Vec<String>, Vec<String>) {
+    let reader = owner(fixture);
+    let trunk = reader
+        .room_trunk(room)
+        .expect("the room's trunk reads")
+        .into_iter()
+        .filter_map(|item| match item {
+            RoomTrunkItem::Turn(turn) => Some(turn.turn_id),
+            _ => None,
+        })
+        .collect();
+    let history = reader
+        .rooms_messages(room)
+        .expect("the room's history reads")
+        .into_iter()
+        .map(|turn| turn.turn_id)
+        .collect();
+    (trunk, history)
 }
 
 /// The owner opens an anchored thread on the plan's second step.
@@ -632,6 +658,7 @@ fn an_owner_only_room_files_the_runs_result_under_the_approving_turn() {
         .expect("the approval lands the plan's run");
     let session = sub_session_of(&settled).expect("the approval hangs the run off the turn");
     let head = fixture.vault.head(&room).expect("the room's head reads");
+    let before = room_reads(&fixture, room);
     let result = settle_run(&fixture, run);
     assert_eq!(
         filed_results(&fixture, room, session, result),
@@ -642,6 +669,17 @@ fn an_owner_only_room_files_the_runs_result_under_the_approving_turn() {
         fixture.vault.head(&room).expect("the room's head reads"),
         head,
         "filing the run's result leaves the room's HEAD where it was"
+    );
+    assert_eq!(
+        room_reads(&fixture, room),
+        before,
+        "the filed record adds no turn to the room's trunk or history"
+    );
+    run_room_turn_backfill(&fixture.vault).expect("the open's room-row backfill runs");
+    assert_eq!(
+        room_reads(&fixture, room),
+        before,
+        "the open's room-row backfill gives the filed record no row either"
     );
 }
 
