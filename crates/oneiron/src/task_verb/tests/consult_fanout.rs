@@ -712,7 +712,7 @@ mod foreign_owner_proof {
                 &foreign,
             )
             .expect_err("another vault's proof releases nothing");
-        assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+        assert_eq!(refused.code, crate::memory::MEMORY_CODE_FORBIDDEN);
         assert_eq!(task_entity_census(&vault), 0);
         let released = facade
             .resume_fan_out_consults(

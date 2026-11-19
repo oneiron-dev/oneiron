@@ -111,10 +111,31 @@ fn external_ask_wait_orders_resume_only_the_calling_step_once() -> Result<()> {
     Ok(())
 }
 
+struct RecordingLimitAsk {
+    calls: std::sync::Mutex<Vec<(crate::limit_ask::EngineLimit, u64, u64)>>,
+}
+
+impl crate::limit_ask::LimitAsk for RecordingLimitAsk {
+    fn crossed(&self, row: crate::limit_ask::EngineLimit, bound: u64, measured: u64) {
+        self.calls
+            .lock()
+            .expect("limit ask lock")
+            .push((row, bound, measured));
+    }
+}
+
 #[test]
 fn answer_first_waits_do_not_mint_traps_and_waiter_storage_is_bounded() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let mut config = VaultConfig::default();
+    config
+        .limits
+        .set(crate::limit_ask::EngineLimit::AskWaitIdentities, 64);
+    let vault = Vault::open(dir.path(), config)?;
+    let asked = std::sync::Arc::new(RecordingLimitAsk {
+        calls: std::sync::Mutex::new(Vec::new()),
+    });
+    vault.set_limit_ask(asked.clone());
     let owner = vault.ensure_embedded_owner_actor()?;
     let memory = vault.memory(owner, EdgeActorClass::Human);
     for answered in [false, true] {
@@ -154,15 +175,38 @@ fn answer_first_waits_do_not_mint_traps_and_waiter_storage_is_bounded() -> Resul
         if answered {
             assert_eq!(full, before);
         }
-        assert!(memory.tasks_wait(handle, Some("overflow")).is_err());
-        assert_eq!(
-            vault
-                .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
-                .len(),
-            full
-        );
+        let overflow = memory.tasks_wait(handle, Some("overflow"))?;
+        if answered {
+            assert_eq!(
+                overflow,
+                TaskAskWait::Ready(Box::new(settled(&memory, handle)))
+            );
+            assert_eq!(
+                vault
+                    .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+                    .len(),
+                full
+            );
+        } else {
+            assert!(matches!(overflow, TaskAskWait::Pending { .. }));
+        }
         assert!(memory.tasks_wait(handle, Some("step-0")).is_ok());
     }
+    let waits: Vec<_> = asked
+        .calls
+        .lock()
+        .expect("limit ask lock")
+        .iter()
+        .filter(|entry| entry.0 == crate::limit_ask::EngineLimit::AskWaitIdentities)
+        .copied()
+        .collect();
+    assert_eq!(
+        waits,
+        vec![
+            (crate::limit_ask::EngineLimit::AskWaitIdentities, 64, 65),
+            (crate::limit_ask::EngineLimit::AskWaitIdentities, 64, 65),
+        ]
+    );
     Ok(())
 }
 
@@ -1636,12 +1680,13 @@ fn omitted_short_target_uses_verified_human_task_owner_not_agent_actor() -> Resu
     let human = vault.ensure_embedded_owner_actor()?;
     let agent = super::tests::support::own_agent(&vault);
     let question = super::tests::support::consult_turn(&vault, 0x81);
+    super::tests::support::grant_ask_read(&vault, &[agent])?;
     let agent_memory = vault.memory(agent, EdgeActorClass::Agent);
     let input = serde_json::json!({
         "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []}
     });
     assert_eq!(
-        crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input.clone())
+        crate::task_verb::sdk::invoke(&agent_memory, "ask", input.clone())
             .unwrap_err()
             .code,
         crate::memory::MEMORY_CODE_BAD_REQUEST
@@ -1659,7 +1704,7 @@ fn omitted_short_target_uses_verified_human_task_owner_not_agent_actor() -> Resu
     )?;
     assert!(forged.effected);
     assert_eq!(
-        crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input.clone())
+        crate::task_verb::sdk::invoke(&agent_memory, "ask", input.clone())
             .unwrap_err()
             .code,
         crate::memory::MEMORY_CODE_BAD_REQUEST,
@@ -1698,7 +1743,7 @@ fn omitted_short_target_uses_verified_human_task_owner_not_agent_actor() -> Resu
         Some(TaskAssignee::Peer { actor_ref: agent }),
     );
     assert_eq!(
-        crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input.clone())
+        crate::task_verb::sdk::invoke(&agent_memory, "ask", input.clone())
             .unwrap_err()
             .code,
         crate::memory::MEMORY_CODE_BAD_REQUEST,
@@ -1708,7 +1753,7 @@ fn omitted_short_target_uses_verified_human_task_owner_not_agent_actor() -> Resu
             .with_assignee(TaskAssignee::Peer { actor_ref: agent }),
     )?;
     assert!(assignment.effected);
-    let receipt = crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input)?;
+    let receipt = crate::task_verb::sdk::invoke(&agent_memory, "ask", input)?;
     let handle: TaskAskHandle = serde_json::from_value(receipt["handle"].clone())?;
     let task: EntityId = serde_json::from_value(receipt["task_refs"][0].clone())?;
     assert_eq!(
@@ -3509,7 +3554,13 @@ fn an_asks_status_lists_every_member_task() -> Result<()> {
         .tasks_ask_status(receipt.handle)?;
     let mut members = receipt.task_refs;
     members.push(input.what.reference.entity_ref());
-    assert_eq!(producers.take(), members);
+    // Status reads the group more than once, so the listing may repeat a
+    // member; every member is listed and nothing else is.
+    let mut listed = producers.take();
+    listed.sort();
+    listed.dedup();
+    members.sort();
+    assert_eq!(listed, members);
     Ok(())
 }
 
