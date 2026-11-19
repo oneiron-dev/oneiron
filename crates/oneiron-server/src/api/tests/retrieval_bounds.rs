@@ -184,10 +184,13 @@ async fn an_over_large_limit_is_served_at_the_ceiling_through_mcp() {
 }
 
 /// Bug repro (H301): a query one byte past the shipped
-/// `[limits].retrieval_query_bytes` row is refused at every POST query door
-/// with the typed 413 naming the field, the bound and the bytes received.
-/// On main only semantic search had a check (a fixed 8 KiB one) and the rest
-/// ran the query.
+/// `[limits].retrieval_query_bytes` row is refused at the typed-refusal POST
+/// query doors with the typed 413 naming the field, the bound and the bytes
+/// received. The context board asks and runs the query whole (Rule 5,
+/// FIX 6923), and semantic search asks at its own separate
+/// `[limits].semantic_query_bytes` row, so both answer 200 here. On main only
+/// semantic search had a check (a fixed 8 KiB one) and the rest ran the
+/// query.
 #[tokio::test]
 async fn a_query_past_the_shipped_row_is_refused_typed_at_every_query_door() {
     let (_dir, server) = auth_test_server();
@@ -212,12 +215,25 @@ async fn a_query_past_the_shipped_row_is_refused_typed_at_every_query_door() {
             core_request_with_authz("POST", uri, owner_bearer(), Some(&body)),
         )
         .await;
-        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{uri}");
-        let details = too_large(&reply);
-        assert_eq!(details["field"], field, "{uri}");
-        assert_eq!(details["maxBytes"], SHIPPED_QUERY_ROW, "{uri}");
-        assert_eq!(details["receivedBytes"], SHIPPED_QUERY_ROW + 1, "{uri}");
+        if uri == "/v1/core/context-board" || uri == "/api/search/semantic" {
+            assert_eq!(status, StatusCode::OK, "{uri}: {reply}");
+        } else {
+            assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{uri}");
+            let details = too_large(&reply);
+            assert_eq!(details["field"], field, "{uri}");
+            assert_eq!(details["maxBytes"], SHIPPED_QUERY_ROW, "{uri}");
+            assert_eq!(details["receivedBytes"], SHIPPED_QUERY_ROW + 1, "{uri}");
+        }
     }
+    let checks = server.retrieval_query_checks();
+    let board = checks
+        .iter()
+        .find(|check| check.door == "context_board")
+        .unwrap();
+    assert_eq!(board.field, "retrieval.query");
+    assert_eq!(board.bound, SHIPPED_QUERY_ROW);
+    assert_eq!(board.bytes, SHIPPED_QUERY_ROW + 1);
+    assert!(!checks.iter().any(|check| check.door == "search_semantic"));
 
     // The native MCP doors answer the same shape with the MCP typed tool
     // error, never an HTTP 413 (A3).

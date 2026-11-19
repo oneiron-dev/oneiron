@@ -98,8 +98,10 @@ fn rest_doors(
 /// Done-means (H301, A1, OF-520): the shipped rows are the ruled 1 MiB and
 /// 4 MiB. With the query row configured, every query door, GET ones
 /// included, serves a query at the bound (bytes as sent: a multibyte
-/// character and trailing padding count) and refuses one byte past it with
-/// the typed 413. Each crossing raises one question per (principal, door,
+/// character and trailing padding count). One byte past it the refusing doors
+/// answer the typed 413, while the board asks and runs the query whole
+/// (Rule 5, FIX 6923) and semantic asks at its own separate row, so both
+/// answer 200. Each crossing raises one question per (principal, door,
 /// field, bound), which keeps its latest crossing's size; a query at the
 /// bound raises none, and the question holds no query text.
 #[tokio::test]
@@ -132,16 +134,30 @@ async fn a_query_crossing_its_row_asks_once_per_door_and_field() {
                 core_request_with_authz(method, &uri, owner_bearer(), body.as_ref()),
             )
             .await;
-            assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{uri}: {reply}");
-            let details = too_large(&reply);
-            assert_eq!(details["field"], field, "{uri}");
-            assert_eq!(details["maxBytes"], ROW, "{uri}");
-            assert_eq!(details["receivedBytes"], query.len(), "{uri}");
+            if uri == "/v1/core/context-board" || uri == "/api/search/semantic" {
+                assert_eq!(status, StatusCode::OK, "{uri}: {reply}");
+            } else {
+                assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{uri}: {reply}");
+                let details = too_large(&reply);
+                assert_eq!(details["field"], field, "{uri}");
+                assert_eq!(details["maxBytes"], ROW, "{uri}");
+                assert_eq!(details["receivedBytes"], query.len(), "{uri}");
+            }
         }
         let checks = server.retrieval_query_checks();
         let doors = rest_doors(query);
-        assert_eq!(checks.len(), doors.len(), "{checks:?}");
+        // Semantic asks at its own 8 MiB row, which this query does not
+        // cross, so it records no question; the board asks at ROW and records
+        // one, and every other door refuses at ROW and records one.
+        assert_eq!(checks.len(), doors.len() - 1, "{checks:?}");
         for (_, uri, _, door, field) in doors {
+            if door == "search_semantic" {
+                assert!(
+                    !checks.iter().any(|check| check.door == door),
+                    "{uri}: {checks:?}"
+                );
+                continue;
+            }
             let check = checks
                 .iter()
                 .find(|check| check.door == door)
