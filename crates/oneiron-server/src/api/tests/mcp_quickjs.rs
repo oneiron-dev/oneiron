@@ -1260,7 +1260,11 @@ async fn quickjs_code_mode_cannot_witness_a_users_words() {
 
 /// `[models]` filling the generative seat as `seat` says, on the local fake
 /// model at `base_url`, and serving code mode from the workspace's test
-/// prompt package on a meter of `budget_units`.
+/// prompt package on a meter of `budget_units`. The run's window and the
+/// model's context are sized past the step-zero request (about 284K tokens:
+/// the taught verb catalog dominates it, as in
+/// `tests/it/code_mode_compaction.rs`); at the 128K default context a run
+/// parks `window_full` before its first model call.
 fn code_mode_models(
     base_url: &str,
     seat: &str,
@@ -1270,7 +1274,9 @@ fn code_mode_models(
     crate::ai_host::test_support::models_toml(&format!(
         "{seat}\n[dreamer]\nenabled = false\n[workflows]\nenabled = false\n\
          [code_mode]\nprompt_package = {:?}\nbudget_units = {budget_units}\n\
-         [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n",
+         [code_mode.compaction]\nwindow_tokens = 350000\n\
+         [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n\
+         context_tokens = 500000\n",
         prompts.display().to_string(),
     ))
 }
