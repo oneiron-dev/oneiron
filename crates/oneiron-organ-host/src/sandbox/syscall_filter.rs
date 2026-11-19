@@ -152,12 +152,13 @@ fn jump(code: u16, k: u32, jt: u8, jf: u8) -> libc::sock_filter {
 
 impl SyscallFilter {
     /// `spec`'s allow-list as a seccomp program for this build's syscall
-    /// table: a first-party image or seal organ, or the probe, under its own
-    /// list; every other organ under the fixed tier list. A call under
-    /// another audit arch, an x32 call, a `clone` that starts no thread
-    /// (save the probe's), a call whose arguments [`argument_rows`]
-    /// refuses, or a call its list does not name kills the process;
-    /// `clone3` answers ENOSYS, and a `prlimit64` that sets a limit EPERM.
+    /// table: a first-party image or seal organ, or the probe's diagnostics
+    /// install, under its own list; every other organ under the fixed tier
+    /// list. A call under another audit arch, an x32 call, a `clone` that
+    /// starts no thread (save the probe's), a call whose arguments
+    /// [`argument_rows`] refuses, or a call its list does not name kills
+    /// the process; `clone3` answers ENOSYS, and a `prlimit64` that sets a
+    /// limit EPERM.
     ///
     /// # Errors
     /// This build's architecture has no audit arch here, so no program can
@@ -165,12 +166,18 @@ impl SyscallFilter {
     /// unfiltered.
     pub(super) fn for_organ(spec: &OrganSpec) -> io::Result<Self> {
         let first_party = spec.tier == OrganTier::FirstParty;
-        let (own, own_x86_64, forks): (&[libc::c_long], &[libc::c_long], bool) =
+        // The probe's list forks with any clone flags, and the host reaps
+        // only the organ's own pid: it is for the diagnostics install alone,
+        // first party and unpinned, which only tests make. A pinned build
+        // named `probe` (a pack's, whose blake3 the operator trusts) runs
+        // under the fixed tier list.
+        let diagnostics = first_party && spec.program_hash.is_none();
+        let (own, own_legacy, forks): (&[libc::c_long], &[libc::c_long], bool) =
             match spec.name.as_str() {
-                PROBE_ORGAN if first_party => (lists::PROBE, lists::PROBE_X86_64, true),
+                PROBE_ORGAN if diagnostics => (lists::PROBE, lists::PROBE_LEGACY, true),
                 crate::image::IMAGE_ORGAN if first_party => (lists::IMAGE, &[], false),
                 crate::seal::SEAL_ORGAN if first_party => (lists::SEAL, &[], false),
-                _ => (lists::FENCED_FILES, lists::FENCED_FILES_X86_64, false),
+                _ => (lists::FENCED_FILES, lists::FENCED_FILES_LEGACY, false),
             };
         let mut program = native_table_only()?;
         program.extend(clone_rows(forks));
@@ -179,7 +186,7 @@ impl SyscallFilter {
         program.extend(rows);
         let allow = statement(RETURN, libc::SECCOMP_RET_ALLOW);
         let mut allowed: Vec<libc::c_long> = Vec::new();
-        for &number in [lists::RUNTIME, lists::RUNTIME_X86_64, own, own_x86_64]
+        for &number in [lists::RUNTIME, lists::RUNTIME_LEGACY, own, own_legacy]
             .into_iter()
             .flatten()
         {
@@ -430,13 +437,13 @@ const fn names_any(list: &[libc::c_long], calls: &[libc::c_long]) -> bool {
 const _: () = {
     let all = [
         lists::RUNTIME,
-        lists::RUNTIME_X86_64,
+        lists::RUNTIME_LEGACY,
         lists::PROBE,
-        lists::PROBE_X86_64,
+        lists::PROBE_LEGACY,
         lists::IMAGE,
         lists::SEAL,
         lists::FENCED_FILES,
-        lists::FENCED_FILES_X86_64,
+        lists::FENCED_FILES_LEGACY,
     ];
     let mut i = 0;
     while i < all.len() {

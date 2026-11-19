@@ -9,8 +9,9 @@
 //! `clone`, `clone3`, `tgkill`, `prlimit64`, `fcntl` and `prctl` are not on
 //! any list: the program checks them, and the arguments of the last four,
 //! before the list (`super::SyscallFilter::for_organ`). The legacy spellings
-//! x86_64 keeps (`open`, `stat`, `poll`, ...) are in the `*_X86_64` lists;
-//! aarch64's table has only the modern ones.
+//! a table keeps beside the modern calls (x86_64's `open`, `stat`, `poll`,
+//! ...; aarch64's `renameat`) are in the `*_LEGACY` lists, one per
+//! architecture.
 
 use libc::c_long;
 
@@ -78,9 +79,9 @@ pub(super) const RUNTIME: &[c_long] = &[
     libc::SYS_getrandom,
 ];
 
-/// [`RUNTIME`]'s legacy x86_64 spellings.
+/// [`RUNTIME`]'s legacy spellings: x86_64's; aarch64 keeps none of them.
 #[cfg(target_arch = "x86_64")]
-pub(super) const RUNTIME_X86_64: &[c_long] = &[
+pub(super) const RUNTIME_LEGACY: &[c_long] = &[
     libc::SYS_poll,
     libc::SYS_dup2,
     libc::SYS_arch_prctl,
@@ -92,7 +93,7 @@ pub(super) const RUNTIME_X86_64: &[c_long] = &[
     libc::SYS_time,
 ];
 #[cfg(not(target_arch = "x86_64"))]
-pub(super) const RUNTIME_X86_64: &[c_long] = &[];
+pub(super) const RUNTIME_LEGACY: &[c_long] = &[];
 
 /// The probe's own calls (the host's diagnostics organ, tests only):
 /// `probe.fork` and `probe.ptrace {in_child}` fork (with `clone`, which
@@ -100,11 +101,11 @@ pub(super) const RUNTIME_X86_64: &[c_long] = &[];
 /// hostile modes poll for and write signal files.
 pub(super) const PROBE: &[c_long] = &[libc::SYS_wait4, libc::SYS_rt_sigsuspend, libc::SYS_unlinkat];
 
-/// [`PROBE`]'s legacy x86_64 spellings.
+/// [`PROBE`]'s legacy spellings: x86_64's; aarch64 keeps none of them.
 #[cfg(target_arch = "x86_64")]
-pub(super) const PROBE_X86_64: &[c_long] = &[libc::SYS_fork, libc::SYS_pause, libc::SYS_unlink];
+pub(super) const PROBE_LEGACY: &[c_long] = &[libc::SYS_fork, libc::SYS_pause, libc::SYS_unlink];
 #[cfg(not(target_arch = "x86_64"))]
-pub(super) const PROBE_X86_64: &[c_long] = &[];
+pub(super) const PROBE_LEGACY: &[c_long] = &[];
 
 /// The image organ's own calls: none past [`RUNTIME`]. It decodes, edits
 /// and encodes bytes the host lends it and opens no file.
@@ -143,9 +144,11 @@ pub(super) const FENCED_FILES: &[c_long] = &[
     libc::SYS_uname,
 ];
 
-/// [`FENCED_FILES`]'s legacy x86_64 spellings.
+/// [`FENCED_FILES`]'s legacy spellings: x86_64's path calls, and the
+/// `renameat` that x86_64 and aarch64 both keep beside `renameat2`
+/// (aarch64's glibc `rename` makes it, so Rust's `fs::rename` does).
 #[cfg(target_arch = "x86_64")]
-pub(super) const FENCED_FILES_X86_64: &[c_long] = &[
+pub(super) const FENCED_FILES_LEGACY: &[c_long] = &[
     libc::SYS_getdents,
     libc::SYS_mkdir,
     libc::SYS_unlink,
@@ -153,8 +156,10 @@ pub(super) const FENCED_FILES_X86_64: &[c_long] = &[
     libc::SYS_renameat,
     libc::SYS_rmdir,
 ];
-#[cfg(not(target_arch = "x86_64"))]
-pub(super) const FENCED_FILES_X86_64: &[c_long] = &[];
+#[cfg(target_arch = "aarch64")]
+pub(super) const FENCED_FILES_LEGACY: &[c_long] = &[libc::SYS_renameat];
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub(super) const FENCED_FILES_LEGACY: &[c_long] = &[];
 
 /// Calls no list may name: the deny-list's (`super::DENIED`) and these, an
 /// organ's way to a network or to another process (a signal, a priority,
