@@ -34,6 +34,8 @@ mod sealed_updates;
 mod search;
 mod secret_same_value;
 mod window_index;
+// FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS: a followed window's tombstone id set.
+mod window_tombstones;
 mod world_base_rows;
 mod world_eviction;
 pub(crate) use admission::admit_promoted_window_destination_in_txn;
@@ -164,6 +166,7 @@ pub use window_index::{
     IndexPage, WindowIndexEntry, index_selection_revision, window_index_page,
     window_index_projection, window_index_projection_with,
 };
+pub use window_tombstones::{WindowTombstoneEntry, window_tombstone_projection_with};
 pub(crate) use world_base_rows::{discarded_rows_in, discarded_world_in, forget_discarded_in_txn};
 pub use world_eviction::{WorldEviction, discard_world_copy_as, evict_worlds_placed_elsewhere};
 pub(crate) use world_eviction::{
