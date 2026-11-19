@@ -7,6 +7,12 @@
 //! Roster-changing ops are not approvals here: Bind/RebindActor, federation
 //! confirms, critical-write confirms and every machine standing short of a
 //! removal carry the reusable approval facts.
+//!
+//! A forked granting row (its `SequenceFork` recorded) whose signer or a
+//! cosigner the final roster holds revoked expires at once, with no window
+//! and no clock; owner handovers and residence directives join the approvals
+//! there ([`revoked_fork_approvals`]). The same rule holds: no transition
+//! changes and no descendant goes.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -181,6 +187,68 @@ fn expired_stale_roster_approvals<E: LogRow>(
         .collect()
 }
 
+/// Whether a forked row of `op` expires at once when the final roster holds
+/// its signer or a cosigner revoked: the approvals the window weighs, short
+/// of a machine standing (a restriction, which never forks), and the owner
+/// handovers and residence directives, whose readers take only valid rows.
+fn expires_as_revoked_fork(op: &AuthorityOp) -> bool {
+    match op {
+        AuthorityOp::BindActor { .. }
+        | AuthorityOp::RebindActor { .. }
+        | AuthorityOp::OwnerHandover(_)
+        | AuthorityOp::ResidenceDirective(_) => true,
+        AuthorityOp::FederationConfirm(action) => action.kind != AuthorityConfirmKind::Revoke,
+        AuthorityOp::CriticalWriteConfirm(action) => {
+            action.disposition == CriticalWriteConfirmDisposition::Clear
+        }
+        _ => false,
+    }
+}
+
+/// The valid granting rows the fold counted as forks of their signer's
+/// sequence (`SequenceFork`) whose signer or any cosigner the final roster
+/// holds revoked. Each expires at once, with no window: a revocation
+/// projects onto the history concurrent with it, and a grant authorizes only
+/// its causal descendants (ONE-REVOKE-DURABILITY), so a row its signer
+/// withheld below its floor keeps nothing a revoked key consented to (case
+/// C6, Engine RULING SEQ-FLOOR-S-WITHHELD-COSIGN-SHAPE = A). The set reads
+/// rows only, no first-seen time and no clock, so every install and every
+/// fold path, an image's adopter too, finds the same set.
+fn revoked_fork_approvals<E: LogRow>(
+    entries: &[E],
+    fold: &AuthorityFold,
+) -> BTreeSet<AuthorityEntryHash> {
+    let forks: BTreeSet<AuthorityEntryHash> = fold
+        .issues
+        .iter()
+        .filter_map(|issue| match issue {
+            AuthorityFoldIssue::SequenceFork(hash) => Some(*hash),
+            _ => None,
+        })
+        .collect();
+    if forks.is_empty() {
+        return BTreeSet::new();
+    }
+    let revoked = |key: &AuthorityKey| fold.roster.get(key).is_some_and(|device| device.revoked);
+    entries
+        .iter()
+        .filter_map(|row| {
+            let entry = row.entry();
+            if !expires_as_revoked_fork(&entry.op) {
+                return None;
+            }
+            let hash = row.entry_hash()?;
+            (forks.contains(&hash)
+                && fold.valid_entries.contains(&hash)
+                && !fold.anchor_entries.contains(&hash)
+                && std::iter::once(&entry.signer)
+                    .chain(&entry.cosigns)
+                    .any(|signature| revoked(&signature.public_key)))
+            .then_some(hash)
+        })
+        .collect()
+}
+
 /// The valid approvals the stale-roster window could expire: each rests on a
 /// key revoked since. Whether one has expired turns on an install's own
 /// first-seen clock, so a portable checkpoint image declares them unresolved
@@ -215,7 +283,9 @@ pub(super) fn next_stale_roster_deadline<E: LogRow>(
 
 /// Project after the structural DAG fold has reached its fixed point. All
 /// authorization consumers use this projection, including the readonly fold.
-/// The approvals it expired come back beside: the valid entries it took out.
+/// The approvals it expired come back beside: the valid entries it took out,
+/// the window's on this install's clock and the revoked forks' at once
+/// ([`revoked_fork_approvals`], with or without a clock).
 pub(super) fn apply_stale_roster_window<E: LogRow>(
     entries: &[E],
     mut fold: AuthorityFold,
@@ -223,7 +293,9 @@ pub(super) fn apply_stale_roster_window<E: LogRow>(
     now_secs: Option<u64>,
     window_secs: u64,
 ) -> (AuthorityFold, BTreeSet<AuthorityEntryHash>) {
-    let expired = expired_stale_roster_approvals(entries, &fold, first_seen, now_secs, window_secs);
+    let mut expired =
+        expired_stale_roster_approvals(entries, &fold, first_seen, now_secs, window_secs);
+    expired.extend(revoked_fork_approvals(entries, &fold));
     if expired.is_empty() {
         return (fold, expired);
     }
