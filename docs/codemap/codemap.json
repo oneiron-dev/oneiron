@@ -5819,6 +5819,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/owner_key_enrollment_door/owner_authority_closure.rs",
+     "purpose": "The owner authority a person's removal ends (row OWNER-REVOKE-BY-NAMED-ATTRIBUTION; ruled…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -111000,6 +111010,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_revoke_named_attribution.rs",
+     "purpose": "An Owner's removal ends the owner authority their keys signed in (row OWNER-REVOKE-BY-NAMED-ATTRIBUTION…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -114500,7 +114518,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 315,
+     "files": 316,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116154,8 +116172,8 @@
    },
    "over_bar": 307,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8199,
-   "test_files": 1946
+   "source_files": 8200,
+   "test_files": 1947
   },
   "oneiron-agent-runtime": {
    "files": [
