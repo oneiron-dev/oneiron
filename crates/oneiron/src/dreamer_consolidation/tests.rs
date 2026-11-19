@@ -2045,7 +2045,14 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             inner: ScriptedBackend::new(vec![
                 Ok(extraction),
                 Ok(text_response(
-                    "{\"resolution\":\"merge\",\"value\":\"Merged\"}".to_owned(),
+                    serde_json::json!({
+                        "Q1": {"merge": 1.0, "supersede": 0.0, "accumulate": 0.0, "escalate": 0.0},
+                        "Q2": {"none": 1.0, "C1": 0.0, "C2": 0.0},
+                    })
+                    .to_string(),
+                )),
+                Ok(text_response(
+                    serde_json::json!({"value": "Merged"}).to_string(),
                 )),
             ]),
             clock: std::sync::Arc::new(AtomicU64::new(0)),
@@ -2109,7 +2116,7 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             "each terminal response remains replayable"
         );
 
-        // A new wake consumes the terminal memo(s) without another call.
+        // A new wake replays terminal reads; a late conflict decision still needs its value.
         // Neither the conflict-free extraction nor the merge is lost.
         backend.clock.store(0, Ordering::SeqCst);
         let mut resumed = ConsolidationExecutor {
@@ -2129,7 +2136,11 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             DreamerAttemptExecution::Completed { .. }
         ));
         drop(resumed);
-        assert_eq!(backend.calls.load(Ordering::SeqCst), expire_on_call);
+        // The late decision checkpoints before merged_value; only that value calls on resume.
+        assert_eq!(
+            backend.calls.load(Ordering::SeqCst),
+            if expire_on_call == 1 { 1 } else { 3 }
+        );
         assert_eq!(sink.accepted.len(), 1, "output lands on the later wake");
     }
     Ok(())
@@ -2927,7 +2938,14 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
     let backend = ScriptedBackend::new(vec![
         Ok(two_candidate_extraction(&subject, &turns[0], &turns[1])),
         Ok(text_response(
-            "{\"resolution\": \"merge\", \"value\": \"Owen (Alex)\"}".to_owned(),
+            serde_json::json!({
+                "Q1": {"merge": 1.0, "supersede": 0.0, "accumulate": 0.0, "escalate": 0.0},
+                "Q2": {"none": 1.0, "C1": 0.0, "C2": 0.0},
+            })
+            .to_string(),
+        )),
+        Ok(text_response(
+            serde_json::json!({"value": "Owen (Alex)"}).to_string(),
         )),
     ]);
     let guard = crate::BudgetGuard::with_reserve_units(
@@ -2972,16 +2990,16 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
     };
 
     let ids_first = run(21_000)?;
-    // Both the extraction and the merge memo-hit on the re-run; the MERGED
-    // candidate id is content-addressed, so it is stable across re-execution
+    // Extraction, the conflict decision and merged value all memo-hit on the re-run;
+    // the MERGED candidate id is content-addressed, so it is stable across re-execution
     // and independent of `now` (#485-3).
     let ids_second = run(987_000)?;
 
     assert_eq!(ids_first.len(), 1, "one merged candidate");
     assert_eq!(
         backend.calls.load(Ordering::SeqCst),
-        2,
-        "the re-run memo-hit both steps; no new generate"
+        3,
+        "the re-run memo-hit extraction, decision and value; no new generate"
     );
     assert_eq!(
         ids_first, ids_second,

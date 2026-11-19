@@ -694,7 +694,8 @@ fn exact_persisted_head_attaches_evidence_without_judge_or_duplicate_and_survive
         execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?,
         DreamerAttemptExecution::Completed { .. }
     ));
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 1); // extraction only
+    // T1-only evidence asks the correction pack before exact-head attachment.
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
     assert_eq!(sink.outcome.landed, vec![fx.head]);
     assert_eq!(vault.get_raw(&fx.head)?.as_ref(), Some(&before));
     assert_eq!(names(&vault, fx.subject)?, vec![fx.head]);
@@ -723,7 +724,7 @@ fn exact_persisted_head_attaches_evidence_without_judge_or_duplicate_and_survive
         execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?,
         DreamerAttemptExecution::Completed { .. }
     ));
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
     drop(sink);
     drop(vault);
     let vault = Vault::open(dir.path(), VaultConfig::device())?;
@@ -1563,12 +1564,22 @@ fn a_verdict_that_names_no_value_parks_and_writes_nothing() -> Result<()> {
             Ok(extract(&fx, "Alex")),
             Ok(pack_none()),
             Ok(text_response(
-                serde_json::json!({"resolution": resolution}).to_string(),
+                serde_json::json!({
+                    "Q1": {
+                        "merge": if resolution == "merge" { 1.0 } else { 0.0 },
+                        "supersede": if resolution == "supersede" { 1.0 } else { 0.0 },
+                        "accumulate": 0.0, "escalate": 0.0,
+                    },
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
             )),
+            Ok(text_response("{}".into())),
         ]);
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
         execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
-        assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
+        // Extraction, correction, conflict decision, then the missing merge value.
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 4);
         assert_eq!(names(&vault, fx.subject)?, vec![fx.head], "{resolution}");
         let bodies = vault
             .claims_for_subject(&fx.subject)?
@@ -1986,7 +1997,11 @@ fn a_head_an_earlier_branch_closed_is_counted_and_the_next_branch_still_runs() -
             matches!(done, DreamerAttemptExecution::Completed { .. }),
             "corrects {corrects}: {done:?}"
         );
-        assert_eq!(backend.inner.calls.load(Ordering::SeqCst), 1);
+        // Only the branch that still shows the head asks the correction pack.
+        assert_eq!(
+            backend.inner.calls.load(Ordering::SeqCst),
+            if corrects { 2 } else { 1 }
+        );
         assert_eq!(
             sink.outcome.landed.len(),
             1,
@@ -2371,16 +2386,19 @@ fn wrapper_first_wake_consumes_explicit_host_claim_scope() -> Result<()> {
         evidence_minimum: 2,
         ..Default::default()
     })?;
-    let backend = ScriptedBackend::new(vec![Ok(text_response(
-        serde_json::json!({"candidates":[{
-            "subject":fx.subject.to_hex(), "predicate":"profile.nickname", "value":"Lex",
-            "confidence": 0.5, "evidence_refs":[
-                {"source_id":fx.turn.to_hex(),"byte_range":[0,1]},
-                {"source_id":fx.head.to_hex(),"claim_id":fx.head.to_hex()}
-            ]
-        }]})
-        .to_string(),
-    ))]);
+    let backend = ScriptedBackend::new(vec![
+        Ok(text_response(
+            serde_json::json!({"candidates":[{
+                "subject":"P1", "predicate":"profile.nickname", "value":"Lex",
+                "confidence": 0.5, "evidence_refs":[
+                    {"source": "T1", "quote": "Owen"},
+                    {"claim": "C1"}
+                ]
+            }]})
+            .to_string(),
+        )),
+        Ok(pack_none()),
+    ]);
     let guard = crate::BudgetGuard::with_reserve_units(
         "wake",
         10_000,
@@ -2440,7 +2458,8 @@ fn wrapper_first_wake_consumes_explicit_host_claim_scope() -> Result<()> {
     };
     drop(wrapper);
     assert_eq!(report.completed, 1);
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    // The nickname does not reinforce the listed name, so correction is a separate read.
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
     let [written] = sink.outcome.landed.as_slice() else {
         panic!("one host-scoped claim")
     };
@@ -2875,7 +2894,13 @@ fn different_value_consults_one_prior_and_outage_leaves_original_and_open_confli
         let judge = if outage {
             Err(crate::LlmError::Fatal(crate::FatalLlmError::InvalidRequest))
         } else {
-            Ok(text_response("{\"resolution\":\"accumulate\"}".into()))
+            Ok(text_response(
+                serde_json::json!({
+                    "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 1.0, "escalate": 0.0},
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
+            ))
         };
         let backend = JudgeBackend {
             inner: ScriptedBackend::new(vec![Ok(extract(&fx, "Alex")), Ok(pack_none()), judge]),
@@ -2883,9 +2908,10 @@ fn different_value_consults_one_prior_and_outage_leaves_original_and_open_confli
         };
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
         let result = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
-        assert_eq!(backend.inner.calls.load(Ordering::SeqCst), 2);
+        // The conflict read follows extraction and the correction pack.
+        assert_eq!(backend.inner.calls.load(Ordering::SeqCst), 3);
         let requests = backend.requests.lock().unwrap();
-        let user_text: String = requests[1]
+        let user_text: String = requests[2]
             .messages
             .iter()
             .flat_map(|message| &message.content)
@@ -2894,7 +2920,8 @@ fn different_value_consults_one_prior_and_outage_leaves_original_and_open_confli
                 _ => None,
             })
             .collect();
-        assert!(user_text.contains(&fx.head.to_hex()));
+        // The conflict pack labels the candidate C1, then the prior head C2.
+        assert!(user_text.contains("\"prior_heads\":[{\"claim\":\"C2\""));
         assert!(user_text.contains("Owen"));
         assert_eq!(vault.get_raw(&fx.head)?.as_ref(), Some(&before));
         if outage {
@@ -3557,7 +3584,13 @@ fn a_reply_one_brace_short_is_mended_and_one_two_short_is_refused_and_asked_agai
             Ok(text_response(two_short)),
             Ok(text_response(open.to_owned())),
             Ok(pack_none()),
-            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+            Ok(text_response(
+                serde_json::json!({
+                    "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 1.0, "escalate": 0.0},
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
+            )),
         ]),
         requests: Mutex::new(Vec::new()),
     };
@@ -3575,8 +3608,12 @@ fn a_reply_one_brace_short_is_mended_and_one_two_short_is_refused_and_asked_agai
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
     let requests = backend.requests.lock().unwrap();
-    assert_eq!(requests.len(), 3, "the refused reply was asked again");
-    let verdict: String = requests[2].messages.iter().map(message_text).collect();
+    // Refusal, retried extraction, correction pack, then conflict pack.
+    assert_eq!(requests.len(), 4, "the refused reply was asked again");
+    let correction: String = requests[2].messages.iter().map(message_text).collect();
+    assert!(correction.contains("correct or update"));
+    let verdict: String = requests[3].messages.iter().map(message_text).collect();
+    assert!(verdict.contains("How do they resolve"));
     assert!(
         verdict.contains("\"Alex\""),
         "the mended reply's candidate reaches the verdict: {verdict}"
@@ -3605,7 +3642,13 @@ fn a_mended_reply_whose_candidate_lacks_a_field_is_refused_and_asked_again() -> 
             Ok(text_response(lacking)),
             Ok(extract(&fx, "Alex")),
             Ok(pack_none()),
-            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+            Ok(text_response(
+                serde_json::json!({
+                    "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 1.0, "escalate": 0.0},
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
+            )),
         ]),
         requests: Mutex::new(Vec::new()),
     };
@@ -3623,11 +3666,13 @@ fn a_mended_reply_whose_candidate_lacks_a_field_is_refused_and_asked_again() -> 
         matches!(done, DreamerAttemptExecution::Completed { .. }),
         "{done:?}"
     );
-    assert_eq!(
-        backend.requests.lock().unwrap().len(),
-        3,
-        "the refused reply was asked again"
-    );
+    let requests = backend.requests.lock().unwrap();
+    // Refusal, retried extraction, correction pack, then conflict pack.
+    assert_eq!(requests.len(), 4, "the refused reply was asked again");
+    let correction: String = requests[2].messages.iter().map(message_text).collect();
+    assert!(correction.contains("correct or update"));
+    let verdict: String = requests[3].messages.iter().map(message_text).collect();
+    assert!(verdict.contains("How do they resolve"));
     assert_eq!(names(&vault, fx.subject)?.len(), 2);
     Ok(())
 }
