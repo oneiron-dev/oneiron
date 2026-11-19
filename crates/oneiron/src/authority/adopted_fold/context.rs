@@ -304,7 +304,7 @@ pub(super) fn seeds_late_fork(image: &AuthorityCheckpointV2, hash: &AuthorityEnt
     true
 }
 
-/// Whether `fold`, the once fold past `image`, counts a covered fork
+/// Whether `fold`, a fold past `image`, counts a covered fork
 /// (`SequenceFork`) whose body the image dropped for
 /// [`super::super::checkpoint_image::AUTHORITY_RESIDENCE_BODY_OVERFLOW`] while its
 /// roster holds some key revoked. A fork expires at once when its signer or a
