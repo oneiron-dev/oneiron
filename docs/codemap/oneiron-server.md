@@ -1295,10 +1295,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/decision_verdict/hook.rs` | src | s | 3 crate-vis | — | `ai.verdict` for a generative fact hook (FIX 10068, 10075): the same ladder and the same clock as any… |
 | `src/decision_verdict/model_calls.rs` | src | s | 4 crate-vis | — | The capture caller a model-call capture attributes (FIX 12516/12742) |
 | `src/device_local.rs` | src | s | 12 crate-vis | — | Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… |
-| `src/device_sync.rs` | src | m | 10 crate-vis | — | The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in… |
+| `src/device_sync.rs` | src | m | 11 crate-vis | — | The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in… |
 | `src/device_sync/batch_admission.rs` | src | s | 1 crate-vis | — | The reap freeze's admission for each batch the device sync connection applies or sends (FIX 12036) |
 | `src/device_sync/catalog.rs` | src | s | 3 crate-vis | — | The device's view of the models the owner's other nodes offer (OF-575), learned while its home connection is… |
 | `src/device_sync/dial.rs` | src | s | 3 crate-vis | — | What a device dials ([`Dial`]): the home its `[device_sync]` section names by hand, else the one `oneiron… |
+| `src/device_sync/dial_gate.rs` | src | s | 1 crate-vis | — | The dial gate ([`standing`]): whether this install may dial its home, read from the heads each machine… |
 | `src/device_sync/enrolment.rs` | src | m | 11 crate-vis | — | A device's enrolment with its home (ARCH-0023b: "a device connects the moment it is enrolled") |
 | `src/device_sync/enrolment/home_bind.rs` | src | s | 10 crate-vis | — | The home's half of a device's mesh enrolment (FIX 3374, L02 04:5x) |
 | `src/device_sync/enrolment/join.rs` | src | s | 7 crate-vis | — | Joining the home from an empty vault (FIX 3375) |
@@ -2087,6 +2088,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/compaction_pass.rs` | src | s | 1 re-export | — | Doors for `tests/compaction_seat_exact_model.rs` (FIX-LIST SELF-WRITER-HOUSE-FALLBACK-SEAT-EXACT-REFUSED)… |
 | `src/test_doors/connector_issuer_watch.rs` | src | s | 4 fn | — | Door for `tests/connector_issuer_prm_refusal.rs` (L5-11): the issuer watch a connector send runs at a… |
 | `src/test_doors/connector_sends.rs` | src | s | 1 fn | — | Door for `tests/inquiry_federation.rs`: one pass of the served connector-send drain… |
+| `src/test_doors/device_sync_dial_gate.rs` | src | s | 1 fn | — | The device sync dial gate (`crate::device_sync::standing`), as the sync host asks it before it opens the… |
 | `src/test_doors/embedded_peer_fixture.rs` | src | s | 2 fn | — | An enrolled device vault for the L7-47 mesh peer path tests |
 | `src/test_doors/embedded_peer_path.rs` | src | s | 2 struct · 18 fn | RootNotices, ServedDeviceLink | Doors for the Mac app's peer path test (L7-47): starting `EmbeddedDeviceSync` on a mesh bind without the… |
 | `src/test_doors/embedding_line.rs` | src | s | 2 fn | — | Doors for `tests/embedder_host_line_notice.rs` (0053-EMB, on census L1-27): a server holding an endpoint… |
@@ -2111,7 +2113,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/media_job_spend.rs` | src | s | 2 struct · 11 fn | ScopedJobSpend, ScopedMediaJob | Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a scoped… |
 | `src/test_doors/memory_owner_commit.rs` | src | s | 1 fn · 1 crate-vis | — | Door for `tests/memory_verb_owner_proof_at_commit.rs` (FIX… |
 | `src/test_doors/merge_queue_checker_pressure.rs` | src | s | 1 fn | — | Doors for `tests/merge_queue_checker_pressure.rs` ([GUEST-PIDS-PRESSURE-MERGE-QUEUE-CHECKER], FIX 8013… |
-| `src/test_doors/mod.rs` | src | s | 66 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
+| `src/test_doors/mod.rs` | src | s | 67 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
 | `src/test_doors/model_licence.rs` | src | s | 1 fn | — | The model licence admission under the owner's choice (`models.install.allow_noncommercial_licences`), read… |
 | `src/test_doors/native_board.rs` | src | s | 2 fn | — | Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self… |
 | `src/test_doors/off_router_wire_counts.rs` | src | s | 2 fn | — | Doors for `tests/wire_counts_off_runtime.rs`: the wire counts an e-sign QR capability refusal and an MCP… |
@@ -2142,6 +2144,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/wire_health_sweep.rs` | src | s | 8 fn | — | Door for the health-check tests (`tests/own_rate_health_ask.rs`, `tests/wire_health_actor_erase.rs`): one… |
 | `src/test_doors/wire_thresholds.rs` | src | s | 1 fn | — | Door for `tests/esign_qr_refusals.rs` and the signing wire test in `tests/it_esign_public.rs`: the… |
 | `src/test_doors/workflow_park.rs` | src | s | 1 re-export | — | Doors for `tests/workflow_park_save_retry.rs` ([WORKFLOW-PARK-FAIL-RETRYABLE]): a workflow step's leaf… |
+| `src/test_engine_stack.rs` | src | s | 2 crate-vis | — | Drives facade-touching lib tests on the engine's stack |
 | `src/usage/codec.rs` | src | s | 1 enum · 1 fn · 4 crate-vis | UsageError | Msgpack codec for durable meter facts |
 | `src/usage/export.rs` | src | s | 1 crate-vis | — | Generic original-usage export over ctl (LC191311): one stored event's original JSON in framed chunks |
 | `src/usage/keys.rs` | src | s | 20 crate-vis | — | Owner/vault keys and validation for the durable meter queue |
@@ -2268,6 +2271,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/decision_bands_restart_doors.rs` | test | s | — | — | The `vault.decisions.bands.*` rows across a server restart, at the public door: arch-0076:275… |
 | `tests/decision_read_think_start.rs` | test | s | — | — | L2-33 (FIX 22360; lead ruling THINK-START = C, 13 Nov 2026): a served host's ThinkThreshold row starts at… |
 | `tests/delete_authority_served_door.rs` | test | m | — | — | DEL-2 at the core HTTP delete (ARCH-0043, owner DEL-2 = A; Engine ruling 13 Nov 02:51 = A) |
+| `tests/device_sync_dial_gate_pinned_heads.rs` | test | m | — | — | Red/green test for #8722 review round 2, P1 2 (FIX [DOOR-HEADS-REVIEW2-P1-TESTS]): device sync's dial gate… |
 | `tests/direct_answer_proof_store_error.rs` | test | s | — | — | DIRECT-ANSWER-PROOF-STORE-ERROR: a store fault met while binding a direct request's proof fails the call… |
 | `tests/display_edit_doors.rs` | test | L | — | — | Display-edit proposals at their served doors (FIX [SECRETS-LABEL-PURPOSE-VERBS], [DEVICE-DISPLAY-NAME]… |
 | `tests/doctor_off_record_dump_suppression.rs` | test | s | — | — | Census row L6-18: `oneiron doctor` reports the operator's core-dump switch for a process that holds an… |

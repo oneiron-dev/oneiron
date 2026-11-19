@@ -2,6 +2,7 @@
 
 use super::support::*;
 use super::*;
+use crate::registry::ENTITY_TYPE_RELATIONSHIP;
 
 /// T9: on a ROOTED vault the three owner verbs demand a folded ACTIVE
 /// human-class binding. This is the ESB-C fix: asserting `human` at the
@@ -14,6 +15,7 @@ fn owner_verbs_require_active_owner_binding_when_rooted() {
     let subject = put_person(&vault, 0x60);
     let owner_facade = facade_for(&vault, owner);
     let agent_facade = vault.memory(agent, EdgeActorClass::Agent);
+    grant_reads(&vault, agent);
     let agent_claim = agent_facade
         .claim_upsert(&claim_input(
             "profile.mood",
@@ -117,6 +119,7 @@ fn owner_verbs(facade: &Memory<'_>, claim: &str, subject: EntityId) -> [MemoryRe
 
 /// An agent's claim about `subject`, for an owner to retract.
 fn agent_claim(vault: &crate::Vault, agent: EntityId, subject: EntityId, seed: u8) -> String {
+    grant_reads(vault, agent);
     vault
         .memory(agent, EdgeActorClass::Agent)
         .claim_upsert(&claim_input(
@@ -630,6 +633,17 @@ fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
     use crate::federation::ScopeAxis;
     let (_dir, vault) = open_vault();
     let owner = put_owner(&vault);
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &EntityId::from_bytes([0x6E; 16]).unwrap(),
+            ENTITY_TYPE_RELATIONSHIP,
+            test_time(1),
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let (spaced, unscoped) = (EntityId::now(), EntityId::now());
     let mut messages = Vec::new();
     for (order, (id, content, rel)) in [
@@ -748,6 +762,17 @@ fn narrower_embedded_owner_reads_past(reason: crate::deletion::DeleteReason) {
         .ensure_embedded_owner_actor()
         .expect("the embedded owner");
     let author = put_person(&vault, 0x6C);
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &EntityId::from_bytes([0x6B; 16]).unwrap(),
+            ENTITY_TYPE_RELATIONSHIP,
+            test_time(1),
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let (spaced, unscoped) = (EntityId::now(), EntityId::now());
     let mut messages = Vec::new();
     for (order, (id, content, rel)) in [
@@ -944,6 +969,7 @@ fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault =
         Arc::new(crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let owner = put_owner(&vault);
     let subject = put_person(&vault, 0x95);
     let revoke = root_binding_with_pending_revocation(&vault, 0x96, owner);
@@ -1507,6 +1533,7 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
     let facade = facade_for(&vault, owner);
 
     let agent = put_person(&vault, 0x6D);
+    grant_reads(&vault, agent);
     let claim = vault
         .memory(agent, EdgeActorClass::Agent)
         .claim_upsert(&claim_input(
@@ -1602,6 +1629,7 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
     let facade = facade_for(&vault, attacker);
 
     let agent = put_person(&vault, 0x7A);
+    grant_reads(&vault, agent);
     let claim = vault
         .memory(agent, EdgeActorClass::Agent)
         .claim_upsert(&claim_input(

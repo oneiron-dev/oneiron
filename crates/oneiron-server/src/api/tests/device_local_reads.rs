@@ -73,16 +73,17 @@ impl Caller {
             request,
         );
         request.extensions_mut().insert(ConnectInfo(from.peer));
-        let response = crate::build_app(Arc::clone(&self.server))
-            .oneshot(request)
-            .await
-            .unwrap();
-        let status = response.status();
-        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        (
-            status,
-            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-        )
+        let app = crate::build_app(Arc::clone(&self.server));
+        crate::test_engine_stack::on_engine_stack(async move {
+            let response = app.oneshot(request).await.unwrap();
+            let status = response.status();
+            let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            (
+                status,
+                serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+            )
+        })
+        .await
     }
 
     /// A query or pack's whole answer, so an id anywhere in it (a result, an

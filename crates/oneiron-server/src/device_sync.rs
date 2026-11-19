@@ -68,6 +68,8 @@ mod batch_admission;
 #[cfg(feature = "mesh")]
 mod catalog;
 mod dial;
+#[cfg(feature = "mesh")]
+mod dial_gate;
 mod enrolment;
 mod freeze;
 mod host;
@@ -81,6 +83,8 @@ mod selector;
 #[cfg(feature = "mesh")]
 mod url;
 use dial::Dial;
+#[cfg(feature = "mesh")]
+pub(crate) use dial_gate::standing;
 use enrolment::EnrolmentSource;
 pub(crate) use enrolment::{Enrolled, EnrolmentFiles, enrol, enrolment_vault_id, home_bind, join};
 pub(crate) use freeze::ReapFreeze;
@@ -733,55 +737,4 @@ fn declare_candidacy(
         );
     }
     Ok(())
-}
-
-/// This install's MACHINE, when it may dial `home`, and whether `home` has a
-/// paired mesh address. It may when it is enrolled and live, and `home` is a
-/// live machine; an elected MACRO home dials its home as any device does. A
-/// machine `oneiron device enrol` added (`enrolled`) is enrolled at the home:
-/// its own profile, and the home's, reach this vault on the first authority
-/// catch-up. A profile the owner has not answered yet (an unanswered serving
-/// install's own) counts here as no profile, so it dials and is dialled as
-/// before it had one (selfprofile).
-#[cfg(feature = "mesh")]
-fn standing(
-    vault: &oneiron::Vault,
-    home: oneiron::EntityId,
-    enrolled: bool,
-) -> anyhow::Result<(oneiron::EntityId, bool)> {
-    let live = |machine: &oneiron::authority::FoldedMachine| {
-        machine.chains().any(|(_, chain)| chain.is_live())
-    };
-    let answered = |machine: &&oneiron::authority::FoldedMachine| {
-        machine
-            .chains()
-            .any(|(_, chain)| chain.profile.role.answered())
-    };
-    let local = vault
-        .local_machine()?
-        .ok_or_else(|| anyhow::anyhow!("this install is not a machine yet"))?;
-    match local.profile.as_ref().filter(answered) {
-        Some(profile) => anyhow::ensure!(
-            live(profile),
-            "this machine is not enrolled live in the vault"
-        ),
-        None => anyhow::ensure!(
-            enrolled,
-            "this machine is not enrolled in the vault; `oneiron device enrol` enrols it"
-        ),
-    }
-    anyhow::ensure!(local.id != home, "home_machine names this machine");
-    match vault.authority_fold()?.machine(home).filter(answered) {
-        Some(machine) => anyhow::ensure!(
-            live(machine),
-            "home_machine {} is not a live machine",
-            home.to_hex()
-        ),
-        None => anyhow::ensure!(
-            enrolled,
-            "home_machine {} is not a machine of this vault",
-            home.to_hex()
-        ),
-    }
-    Ok((local.id, vault.mesh_machine(home)?.is_some()))
 }

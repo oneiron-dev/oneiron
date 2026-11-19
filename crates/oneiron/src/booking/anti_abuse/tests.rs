@@ -24,6 +24,7 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");
     let vault =
         Vault::open(dir.path(), crate::VaultConfig::default()).expect("open anti-abuse vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (dir, vault)
 }
 

@@ -256,7 +256,7 @@ impl Fixture {
         DreamerRunnerStore::new(&vault)
             .elect_home_node(&[candidate], 1)
             .expect("elect home node");
-        let body = ClaimBody::new(
+        let mut body = ClaimBody::new(
             BOOKING_EVENT_TYPE_PREDICATE,
             ClaimSubject::Entity(page),
             encode_event_type_claim_value(&BookingEventTypeClaimValue {
@@ -270,6 +270,7 @@ impl Fixture {
             ClaimLifecycleStatus::Active,
         )
         .expect("event type claim");
+        body.scope_facet = vault.default_facet().expect("the vault default facet");
         vault
             .put_claim(&EntityId::now(), &body, at(1), 1)
             .expect("put event type");
