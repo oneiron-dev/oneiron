@@ -9,6 +9,7 @@ mod linkedin_send;
 mod owner_declined_resend_ack;
 mod pipeline_contract;
 mod quiet_window;
+mod refailed_send_settlement;
 mod retry_audit;
 mod sender_selection;
 mod space_posting;
