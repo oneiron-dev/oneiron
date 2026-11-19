@@ -388,3 +388,78 @@ fn a_wake_carried_with_no_home_elected_is_decided_where_it_was_recorded() {
     );
     assert!(!recorder.owes(turn, registration));
 }
+
+/// A historical restore brings the home's undecided copy back as content
+/// while the release the home kept stands, and the home's window is not open
+/// yet, so no carried row reaches it. The home decides no wake it released:
+/// its pass drops the copy, and the wake keeps its one decision, on the
+/// recorder.
+#[test]
+fn a_released_wake_a_restore_brings_back_is_decided_only_by_its_recorder() {
+    let home = Machine::open("machine-home");
+    let recorder = Machine::open("machine-recorder");
+    let Carried {
+        turn,
+        registration,
+        doc_home,
+        doc_recorder,
+    } = carry_wake_to_the_home(&home, &recorder);
+
+    // The home takes the carried wake and has not decided it. An image of
+    // the home taken now holds that copy.
+    forward_rematerialize(
+        &home.vault,
+        &doc_home,
+        &Materializer::new(),
+        &WindowKey::new(WINDOW),
+    )
+    .unwrap();
+    let image = doors::imported_wake_image(&home.vault, turn, registration)
+        .unwrap()
+        .expect("fixture: the home did not take the carried wake");
+
+    // The recorder withholds the TURN and retracts the wake; the home
+    // releases it; the recorder decides it.
+    assert!(doors::withhold_turn(&recorder.vault, turn).unwrap());
+    recorder.housekeeping();
+    exchange(&doc_home, &doc_recorder);
+    home.housekeeping();
+    assert!(
+        !home.owes(turn, registration),
+        "fixture: the home kept its copy of a wake its recorder retracted"
+    );
+    exchange(&doc_home, &doc_recorder);
+    recorder.housekeeping();
+    assert_eq!(
+        recorder.decisions(turn, registration),
+        1,
+        "fixture: the recorder did not decide the wake the home released"
+    );
+
+    // The image is restored over the home before its window opens: the copy
+    // returns, the release stands, and the recorder's decision has not
+    // reached the home.
+    drop(doc_home);
+    assert!(
+        home.manager.unload_window(&WindowKey::new(WINDOW)).unwrap(),
+        "fixture: the home's window was not loaded"
+    );
+    doors::restore_imported_wake_image(&home.vault, &image).unwrap();
+    assert!(
+        home.owes(turn, registration),
+        "fixture: the restore did not bring the home's copy back"
+    );
+
+    // The home's pass decides nothing and drops the copy.
+    home.housekeeping();
+    assert_eq!(
+        home.decisions(turn, registration),
+        0,
+        "the home decided a wake it had released to its recorder"
+    );
+    assert!(
+        !home.owes(turn, registration),
+        "the home kept a copy of a wake it had released"
+    );
+    assert_eq!(recorder.decisions(turn, registration), 1);
+}
