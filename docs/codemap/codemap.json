@@ -91121,7 +91121,7 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 33
      }
     },
     {
@@ -91152,6 +91152,16 @@
      "purpose": "A consult answer's word on the ask its consult belongs to",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_record/evidence.rs",
+     "purpose": "An ask group's admitted words read as evidence: every word in order, and each member's projected word",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -116066,7 +116076,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 188,
+     "files": 189,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116271,7 +116281,7 @@
    },
    "over_bar": 306,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8204,
+   "source_files": 8205,
    "test_files": 1954
   },
   "oneiron-agent-runtime": {
