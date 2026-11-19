@@ -926,6 +926,12 @@ fn seed_claim_in_world(
 /// Seeds an agent-bound, active email identity the surface-event routes can
 /// address, and returns the address plus its agent ref.
 pub(super) fn seed_surface_identity(server: &SyncServer, counter: u128, address: &str) -> String {
+    // OF-519: a seeded vault refuses an "email" submit until the oneiron.email
+    // built-in pack is installed Active with a checked setup; these tests cover
+    // the routes, not the pack, so the fixture drops the seed marker (same door
+    // as tests/vault_trusted_contacts_doors.rs).
+    oneiron::test_doors::builtin_pack_seed::remove_builtin_pack_seed_marker(&server.vault)
+        .expect("remove the built-in pack seed marker");
     let identity_ref = seeded_test_entity_id(counter);
     let agent_ref = seeded_test_entity_id(counter + 1);
     let identity = oneiron::channel_identity::ChannelIdentity::requested(
