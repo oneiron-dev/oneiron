@@ -1123,6 +1123,210 @@ fn scoped_birth_control_follows_restrictive_current_demotion() {
     );
 }
 
+/// A vault whose MACHINE holds signed Proposed claims the default policy
+/// parks for the owner (actor ceiling): held claims with ordinary tray rows.
+struct HeldMachineClaims {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    issuer: HostSlipIssuer,
+    machine: EntityId,
+    signing: SigningKey,
+}
+
+impl HeldMachineClaims {
+    fn open(secret: &[u8], key_seed: u8) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+        let issuer = HostSlipIssuer::from_secret(secret).unwrap();
+        vault.ensure_host_root_slip(&issuer).unwrap();
+        let machine = EntityId::now();
+        vault
+            .put_entity(
+                &machine,
+                crate::registry::ENTITY_TYPE_MACHINE,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"machine",
+            )
+            .unwrap();
+        let signing = ed_key(key_seed);
+        vault
+            .enroll_machine_identity(
+                &issuer,
+                machine,
+                signing.verifying_key().to_bytes(),
+                [key_seed; 32],
+                |transcript| Ok(signing.sign(transcript).to_bytes()),
+            )
+            .unwrap();
+        Self {
+            _dir: dir,
+            vault,
+            issuer,
+            machine,
+            signing,
+        }
+    }
+
+    /// The MACHINE's signed Proposed `profile.color` claim `value`, parked
+    /// for the owner.
+    fn propose(&self, value: &str) -> EntityId {
+        let id = EntityId::now();
+        let candidate = ClaimCandidate::new(
+            "profile.color",
+            ClaimSubject::Entity(self.machine),
+            Value::from(value),
+            1.0,
+        )
+        .with_scope(Value::Map(vec![(
+            Value::from("sensitivity"),
+            Value::from("public"),
+        )]));
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(self.machine, EdgeActorClass::System),
+            ClaimSource::Observed,
+            WriteProvenance::new(Value::from("held")).unwrap(),
+            ClaimApprovalStatus::Proposed,
+        );
+        let transcript = self
+            .vault
+            .machine_claim_transcript(&id, &candidate, &envelope)
+            .unwrap();
+        let signed = envelope.with_machine_signature(MachineWriteSignature {
+            public_key: self.signing.verifying_key().to_bytes(),
+            signature: self.signing.sign(&transcript).to_bytes(),
+        });
+        self.vault
+            .batch()
+            .claim_candidate(&id, candidate, &signed, TimeRange { start: 1, end: 1 }, 1)
+            .commit()
+            .unwrap();
+        assert!(
+            self.tray_row(&id).is_some(),
+            "the default policy parks the MACHINE's proposal for the owner"
+        );
+        id
+    }
+
+    fn tray_row(&self, id: &EntityId) -> Option<crate::store::PendingGateConsentRecord> {
+        let txn = self.vault.store.env.read_txn().unwrap();
+        self.vault
+            .store
+            .pending_gate_consent_in_txn(&txn, id)
+            .unwrap()
+    }
+
+    fn approve_as_owner(&self, id: EntityId) -> crate::Result<()> {
+        let owner = crate::vault::embedded_owner_actor_id().unwrap();
+        self.vault
+            .approve_machine_claim_as(id, WriteActor::new(owner, EdgeActorClass::Human))
+    }
+
+    fn claim(&self, id: &EntityId) -> crate::claim::ClaimBody {
+        self.vault.get_claim(id).unwrap().unwrap()
+    }
+}
+
+// S17-1 = A (Engine 19 Nov 20:31): a decay rewrites the held claim in place,
+// and the owner's question follows the body it now stores.
+#[test]
+fn owner_approval_after_a_decay_settles_the_held_claim() {
+    use crate::claim::ClaimDemotionAction;
+    let held = HeldMachineClaims::open(b"held-claim-decay-root", 232);
+    let id = held.propose("decayed proposal");
+    let later = held.vault.now_recorded_at() + 1;
+    held.vault
+        .apply_claim_demotion(
+            &id,
+            ClaimDemotionAction::Decay {
+                new_claim_of_weight: 0.5,
+            },
+            later,
+        )
+        .unwrap();
+    assert!(
+        held.tray_row(&id).is_some(),
+        "the decayed claim is still asked"
+    );
+    held.approve_as_owner(id).unwrap();
+    assert_eq!(held.claim(&id).approval, ClaimApprovalStatus::Approved);
+    assert!(held.tray_row(&id).is_none());
+}
+
+// S17-1 = A: the Dreamer's weakening supersedes a held claim; the old row
+// goes silently and the owner answers the weakened successor instead.
+#[test]
+fn dreamer_weakening_of_a_held_claim_moves_the_owner_question_to_its_successor() {
+    use crate::claim::{ClaimDemotionAction, ClaimDemotionRung, ClaimLifecycleStatus};
+    let held = HeldMachineClaims::open(b"held-claim-weaken-root", 233);
+    let id = held.propose("weakened proposal");
+    let later = held.vault.now_recorded_at() + 1;
+    held.vault
+        .apply_claim_demotion(
+            &id,
+            ClaimDemotionAction::Decay {
+                new_claim_of_weight: 0.5,
+            },
+            later,
+        )
+        .unwrap();
+    held.vault
+        .provision_engine_machine_identities(&held.issuer)
+        .unwrap();
+    let weakened = held
+        .vault
+        .apply_claim_demotion(
+            &id,
+            ClaimDemotionAction::Weaken {
+                new_confidence: 0.5,
+            },
+            later + 1,
+        )
+        .unwrap();
+    assert_eq!(weakened.rung, ClaimDemotionRung::Weakened);
+    let successor = weakened.claim;
+    assert_eq!(held.claim(&id).lifecycle, ClaimLifecycleStatus::Superseded);
+    assert!(
+        held.tray_row(&id).is_none(),
+        "the superseded claim keeps no question"
+    );
+    let row = held
+        .tray_row(&successor)
+        .expect("the owner is asked about the weakened successor");
+    assert_eq!(row.predicate.as_deref(), Some("profile.color"));
+    assert_eq!(
+        held.claim(&successor).approval,
+        ClaimApprovalStatus::Proposed
+    );
+    held.approve_as_owner(successor).unwrap();
+    assert_eq!(
+        held.claim(&successor).approval,
+        ClaimApprovalStatus::Approved
+    );
+    assert!(held.tray_row(&successor).is_none());
+}
+
+// S17-1 = A: a plain supersession of a held claim closes its row silently;
+// the owner keeps one answerable item, the superseding proposal's own.
+#[test]
+fn plain_supersession_of_a_held_claim_leaves_one_answerable_item() {
+    use crate::claim::ClaimLifecycleStatus;
+    let held = HeldMachineClaims::open(b"held-claim-supersede-root", 234);
+    let old = held.propose("first proposal");
+    let new = held.propose("second proposal");
+    let later = held.vault.now_recorded_at() + 1;
+    held.vault.supersede_claim(&new, &old, later).unwrap();
+    assert_eq!(held.claim(&old).lifecycle, ClaimLifecycleStatus::Superseded);
+    assert!(
+        held.tray_row(&old).is_none(),
+        "the closed claim keeps no question"
+    );
+    assert!(held.tray_row(&new).is_some());
+    held.approve_as_owner(new).unwrap();
+    assert_eq!(held.claim(&new).approval, ClaimApprovalStatus::Approved);
+    assert!(held.tray_row(&new).is_none());
+}
+
 #[test]
 fn signing_and_materialization_share_birth_facet_across_default_change() {
     let dir = tempfile::tempdir().unwrap();
