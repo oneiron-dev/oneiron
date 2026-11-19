@@ -6961,6 +6961,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "src/authority/tests/import_prelude_image_evidence.rs",
+     "purpose": "REVIEW-9572 round 2 (FIX KIT-RESTORE-CHECKPOINT-EVIDENCE-TEST-ABSENT): a signed-history import whose prelude…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "src/authority/tests/instant_widen.rs",
      "purpose": "Widening lands at once: no pending state, no seen-time delay, no freeze",
      "surface": {}
@@ -56727,7 +56735,7 @@
      "path": "src/memory/reads.rs",
      "purpose": "Entity/claim read surface plus BM25 and neighbor queries",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 9,
       "re-export": 2,
       "struct": 3
@@ -68901,7 +68909,7 @@
      "path": "src/receipt/off_device.rs",
      "purpose": "A caller off this device and the receipt family (FIX 1119, FIX 1120): the rows each receipt names, by its…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -72246,7 +72254,7 @@
      "path": "src/runtime_hooks/store.rs",
      "purpose": "The runner's durable rows: cursors ([`cursor`](mod@cursor)), the run memo, saved intents, the Hook receipts…",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -114107,7 +114115,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/verb_hook_receipt_credential_screen.rs",
@@ -114627,7 +114635,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 316,
+     "files": 317,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116282,7 +116290,7 @@
    "over_bar": 306,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8205,
-   "test_files": 1954
+   "test_files": 1955
   },
   "oneiron-agent-runtime": {
    "files": [
