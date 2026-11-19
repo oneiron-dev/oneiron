@@ -141,8 +141,8 @@ pub(crate) use prune::checkpoint_read_cache_keys;
 pub(crate) use prune::demote_resident_window;
 pub(crate) use prune::erase_item_caches_in_txn;
 pub(crate) use prune::prune_thin_items_in_txn;
-pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
+pub(crate) use prune::{record_item_touch_in_txn, record_item_touch_with};
 pub use publication_access::{
     PendingPublicationGrant, invalidate_publication_grant, offer_publication_grant,
     pending_publication_grants, publication_grant,
