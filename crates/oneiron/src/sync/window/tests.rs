@@ -588,17 +588,21 @@ fn deleted_recipient_recovery_keeps_conversation_readable_without_resurrecting_h
     Ok(())
 }
 
-/// Pinned 25-byte entity envelope: type u8 + occurred_start/end u64 BE +
-/// learned_at u64 BE + body (`occurred == learned` so CRDT-vs-LMDB
-/// byte-equality is exact).
+/// Pinned 33-byte entity envelope: type u8 + occurred_start/end u64 BE +
+/// learned_at u64 BE + row_version u64 BE + body (`occurred == learned` so
+/// CRDT-vs-LMDB byte-equality is exact).
 fn make_entity_blob(entity_type: u8, learned_at: u64, data: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + data.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(data);
-    blob
+    // Fresh test carrier: row_version 0, the value base writes for a new row.
+    crate::test_util::entity_record(
+        entity_type,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        0,
+        data,
+    )
 }
 
 /// THE EGRESS REGRESSION (ARCH-0052 P6, ONE-1731 / R-20260807-06).
@@ -2581,7 +2585,7 @@ fn authority_revoke_fixture_for_window(
     entry
 }
 
-/// Wraps `data` in the pinned 25-byte envelope with an explicitly chosen
+/// Wraps `data` in the pinned 33-byte envelope with an explicitly chosen
 /// occurred range, so a test can mint the INVERTED range a hostile peer parks
 /// on a CRDT carrier (`put_replicated` rejects `start > end` with
 /// `InvalidTimeRange` before the authority validator ever runs).
@@ -2593,13 +2597,17 @@ fn make_entity_blob_with_range(
     learned_at: u64,
     data: &[u8],
 ) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + data.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&occurred_start.to_be_bytes());
-    blob.extend_from_slice(&occurred_end.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(data);
-    blob
+    // Fresh test carrier: row_version 0, the value base writes for a new row.
+    crate::test_util::entity_record(
+        entity_type,
+        TimeRange {
+            start: occurred_start,
+            end: occurred_end,
+        },
+        learned_at,
+        0,
+        data,
+    )
 }
 
 /// ONE-1604-D1/D5 T9 (fix-leg 1, P2-b): the window-path twin of the bridge
@@ -3165,7 +3173,7 @@ fn forward_remat_defers_facet_of_with_absent_endpoints_instead_of_quarantining()
 /// writes is PERMANENT false evidence blaming the peer for a forgery it never
 /// sent.
 ///
-/// Fixture: an endpoint row whose stored bytes are shorter than the 25-byte
+/// Fixture: an endpoint row whose stored bytes are shorter than the 33-byte
 /// entity envelope. The endpoint EXISTS (so the pass clears the
 /// endpoint-existence check and reaches the table), but its header cannot be
 /// read — exactly the local-defect shape.

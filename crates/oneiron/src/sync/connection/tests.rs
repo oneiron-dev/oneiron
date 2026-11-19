@@ -3,15 +3,16 @@ use crate::config::VaultConfig;
 use crate::sync::bridge::Materializer;
 use core::assert_matches;
 
-fn test_manager() -> Arc<WindowManager> {
+fn test_manager() -> (tempfile::TempDir, Arc<WindowManager>) {
     let config = VaultConfig::device();
-    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    let (dir, vault) = crate::test_util::open_test_vault_with(config);
     let vault = Arc::new(vault);
-    Arc::new(WindowManager::new(
+    let manager = Arc::new(WindowManager::new(
         vault,
         Arc::new(Materializer::new()),
         "test-user",
-    ))
+    ));
+    (dir, manager)
 }
 
 fn full_client_config() -> SyncClientConfig {
@@ -23,7 +24,7 @@ fn full_client_config() -> SyncClientConfig {
 
 #[test]
 fn residence_ack_clears_only_contiguous_durable_queue_prefix() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let conn = SyncConnection::new(manager.clone(), ConnectionConfig::default()).unwrap();
     let (mut client, _events) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
     let first = b"first";
@@ -47,7 +48,7 @@ fn residence_ack_clears_only_contiguous_durable_queue_prefix() {
 
 #[test]
 fn residence_ack_for_different_bytes_never_confirms_a_queued_write() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let conn = SyncConnection::new(manager.clone(), ConnectionConfig::default()).unwrap();
     let (mut client, _events) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
     let seq = conn.queue().push("2026-03", b"delete-worthy").unwrap();
@@ -63,7 +64,7 @@ fn residence_ack_for_different_bytes_never_confirms_a_queued_write() {
 
 #[test]
 fn queue_inspection_error_does_not_clear_queue() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let conn = SyncConnection::new(Arc::clone(&manager), ConnectionConfig::default()).unwrap();
     let (mut client, _client_rx) = SyncClient::new(manager, full_client_config()).unwrap();
     conn.queue().push("2026-03", &[1, 2, 3]).unwrap();
@@ -329,7 +330,7 @@ fn replay(queued: &[QueuedUpdate], client: &mut SyncClient, server: &mut FakeSer
 /// is cleared before confirmation (the old stub cleared unconditionally).
 #[test]
 fn convergence_clears_queue_only_after_all_windows_vv_confirm() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let conn = SyncConnection::new(Arc::clone(&manager), ConnectionConfig::default()).unwrap();
     let (mut client, _rx) = SyncClient::new(Arc::clone(&manager), full_client_config()).unwrap();
     let mut server = FakeServer::new();
@@ -383,7 +384,7 @@ fn convergence_clears_queue_only_after_all_windows_vv_confirm() {
 
 #[test]
 fn full_resync_marker_is_never_dropped_by_vv_equality() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let (mut client, _rx) = SyncClient::new(Arc::clone(&manager), full_client_config()).unwrap();
     let mut server = FakeServer::new();
     let mut force_resync = BTreeSet::new();
@@ -415,7 +416,7 @@ fn full_resync_marker_is_never_dropped_by_vv_equality() {
 
 #[tokio::test]
 async fn full_resync_marker_recovers_deferred_post_delete_op() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let marker_key = format!("fr:w:{FULL_RESYNC_TEST_WINDOW}");
     vault.sync_state_put(&marker_key, &[1u8]).unwrap();
@@ -473,7 +474,7 @@ async fn full_resync_marker_recovers_deferred_post_delete_op() {
 
 #[tokio::test]
 async fn full_resync_marker_retained_when_rebootstrap_errors() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let marker_key = format!("fr:w:{FULL_RESYNC_TEST_WINDOW}");
     vault.sync_state_put(&marker_key, &[1u8]).unwrap();
@@ -558,7 +559,7 @@ async fn connect_to_fake(
 /// so the re-bootstrap returned Ok and the marker cleared unsynced.
 #[tokio::test]
 async fn full_resync_marker_retained_when_rebootstrap_reply_is_malformed() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let marker_key = format!("fr:w:{FULL_RESYNC_TEST_WINDOW}");
     vault.sync_state_put(&marker_key, &[1u8]).unwrap();
@@ -584,7 +585,7 @@ async fn full_resync_marker_retained_when_rebootstrap_reply_is_malformed() {
 /// Ok on any reply, so the delete's window was never proven.
 #[tokio::test]
 async fn unconfirmed_delete_fails_the_rebootstrap_connect_and_reaches_the_next_server() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let seeder = SyncConnection::new(Arc::clone(&manager), ConnectionConfig::default()).unwrap();
     let writer = window_doc();
@@ -643,7 +644,7 @@ async fn unconfirmed_delete_fails_the_rebootstrap_connect_and_reaches_the_next_s
 /// This test FAILS against the old stub, which cleared unconditionally.
 #[test]
 fn forgetful_server_blocks_clear_and_round_six_forces_re_bootstrap() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let conn = SyncConnection::new(Arc::clone(&manager), ConnectionConfig::default()).unwrap();
     let (mut client, _rx) = SyncClient::new(Arc::clone(&manager), full_client_config()).unwrap();
@@ -783,7 +784,7 @@ fn forgetful_server_blocks_clear_and_round_six_forces_re_bootstrap() {
 /// re-runs naturally on the next connect.
 #[test]
 fn opened_item_queue_overflow_retains_unconfirmed_writes() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let conn = SyncConnection::new(manager.clone(), ConnectionConfig::default()).unwrap();
     let (mut client, _events) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
     conn.queue().push("2026-03", b"unconfirmed").unwrap();
@@ -824,7 +825,7 @@ async fn out_of_order_window_delta_disconnects_instead_of_losing_the_update() {
     let (ws, _) = crate::sync::carrier::connect_sync_socket(format!("ws://{addr}"), None)
         .await
         .unwrap();
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let conn = SyncConnection::new(
         manager.clone(),
         ConnectionConfig {
@@ -879,7 +880,7 @@ async fn out_of_order_window_delta_disconnects_instead_of_losing_the_update() {
 /// the acknowledged rows behind it.
 #[test]
 fn residence_ack_clears_past_a_row_a_device_only_world_keeps() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let world = crate::EntityId::from_bytes([0x61; 16]).unwrap();
     vault
