@@ -164,6 +164,11 @@ async function startEndpointEngine(id: string, data: Scenarios, endpoint: string
   } catch (error) { await close(); throw error }
 }
 
+/** Provider transcript sink: close() writes provider-<id>.json on every path, a failed case included. */
+function providerArtifacts(id: string): Artifacts | undefined {
+  const dir = process.env.E2E_ARTIFACTS_DIR;
+  return dir ? new Artifacts(resolve(dir, `${id}-providers`)) : undefined;
+}
 function listing(origin: string, id: string, data: Scenarios): ProviderStep {
   return { id, origin, role: "embedder", purpose: "model identity metadata",
     request: { method: "GET", path: "/v1/models" },
@@ -226,7 +231,7 @@ suite.test(test, "EMBEDDINGS-01", "First-run embedder choice should work", async
   expect((await none.client.request<OwnerStatus>("GET", "/v1/owner/status")).body.embedder.configured).toBeNull();
   await none.close();
 
-  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-01", steps: [
+  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-01", artifacts: providerArtifacts("EMBEDDINGS-01"), steps: [
     ...startup("primary", "init", data, false), ...startup("primary", "serve", data, true),
     documentStep("primary", "first-run-document", data, data.firstRun.text, data.firstRun.vector),
     ...startup("primary", "restart", data, true),
@@ -263,7 +268,7 @@ suite.test(test, "EMBEDDINGS-02", "Async embedding durability should work", asyn
   const data = await fixtures();
   const row = data.durability;
   const query = (id: string) => documentStep("primary", id, data, row.query, row.vector);
-  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-02", steps: [
+  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-02", artifacts: providerArtifacts("EMBEDDINGS-02"), steps: [
     ...startup("primary", "init", data, false), ...startup("primary", "serve", data, true),
     documentStep("primary", "interrupted-fill", data, row.text, row.vector, "before-fill"),
     ...startup("primary", "recovery", data, true),
@@ -323,7 +328,7 @@ suite.test(test, "EMBEDDINGS-03", "Exact embedding identity and checked swap sho
     request: { method: "POST", path: "/v1/embeddings", model: "model", fields: { input: [text] } },
     response: embeddingReply("model", [vector], 8),
   });
-  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-03", steps: [
+  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-03", artifacts: providerArtifacts("EMBEDDINGS-03"), steps: [
     ...startup("primary", "init", data, false), ...startup("primary", "serve", data, true),
     documentStep("primary", "target", data, swap.targetText, vectors.target),
     documentStep("primary", "distractor", data, swap.distractorText, vectors.distractor),
@@ -472,7 +477,7 @@ suite.test(test, "EMBEDDINGS-05", "Remote egress deny falls back locally should 
     ...documentStep("remote", "remote-failure", data, failure.text, failure.vector),
     response: { kind: "json", status: 503, body: { error: { type: "unavailable", message: "fixture provider unavailable" } } },
   };
-  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-05", steps: [
+  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-05", artifacts: providerArtifacts("EMBEDDINGS-05"), steps: [
     ...startup("primary", "local-init", data, false), ...startup("primary", "local-serve", data, true),
     documentStep("primary", "denied-local", data, denied.text, denied.vector),
     documentStep("primary", "undecided-local", data, undecided.text, undecided.vector),

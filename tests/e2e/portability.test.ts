@@ -97,11 +97,17 @@ function sourceId(item: MemoryItem): string {
 async function expectDiary(
   engine: EngineFixture, query: string, entryId: string, content: string,
 ): Promise<void> {
+  // Diagnostic scratch (E20): read the entry back and probe the lexical lane before recall, keeping each answer.
+  const read = await engine.client.call("vault.get", { entity_ref: entryId });
+  await engine.artifacts.json("diag-diary-get.json", read);
+  const lexicalHits = await engine.client.call("vault.search.bm25", { query, limit: 100 });
+  await engine.artifacts.json("diag-diary-bm25.json", lexicalHits);
+  const firstRecall = await engine.client.call("vault.recall", { query, effort: "light", limit: 20 });
+  await engine.artifacts.json("diag-diary-recall-first.json", firstRecall);
+  expect(read.value?.body).toMatchObject({ markdown: content });
   const item = await recallItem(engine, query);
   expect(item.provenance.source_revision_ids).toContain(entryId);
   expect(item.value_text).toContain(query);
-  const read = await engine.client.call("vault.get", { entity_ref: entryId });
-  expect(read.value?.body).toMatchObject({ markdown: content });
 }
 
 async function expectBlob(engine: EngineFixture, artifact: string, expected: Uint8Array): Promise<void> {
