@@ -567,17 +567,19 @@ pub(crate) fn authority_row_held(
         || evidence.is_some_and(|evidence| evidence.rows().contains_key(hash)))
 }
 
-/// What an import held before it staged, as [`authority_row_held`] reads a
-/// vault: whether the row at a hash is resident, which `arriving` (the rows
-/// this import brings) does not name, or covered by the adopted image
-/// (`evidence`).
+/// What an import held before its write, as [`authority_row_held`] reads a
+/// vault: whether the row at a hash was resident (`resident`), or covered by
+/// the image the vault had adopted before the import's transaction staged
+/// anything (`held_evidence`). An image the import's own prelude adopts (a
+/// sealed kit restore's) rolls back with a refused import, so a row only it
+/// covers is no handoff this vault holds (REVIEW-9572 round 2).
 pub(super) fn import_row_held<'a>(
-    arriving: &'a [AuthorityEntryHash],
-    evidence: Option<&'a super::adopted_evidence::AdoptedEvidence>,
+    resident: &'a BTreeSet<AuthorityEntryHash>,
+    held_evidence: Option<&'a super::adopted_evidence::AdoptedEvidence>,
 ) -> impl FnMut(&AuthorityEntryHash) -> crate::error::Result<bool> + 'a {
     move |hash| {
-        Ok(!arriving.contains(hash)
-            || evidence.is_some_and(|evidence| evidence.rows().contains_key(hash)))
+        Ok(resident.contains(hash)
+            || held_evidence.is_some_and(|evidence| evidence.rows().contains_key(hash)))
     }
 }
 

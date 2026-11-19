@@ -39,8 +39,9 @@ fn refuse_retired_standing(
     merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
     evidence: Option<&AdoptedEvidence>,
     arriving: &[AuthorityEntryHash],
+    held: &mut dyn FnMut(&AuthorityEntryHash) -> Result<bool>,
 ) -> Result<()> {
-    match retired_standing(store, fold, merged, evidence, arriving)? {
+    match retired_standing(store, fold, merged, evidence, arriving, held)? {
         Some(_) => Err(retired_standing_refusal()),
         None => Ok(()),
     }
@@ -84,13 +85,17 @@ fn retired_standing_refusal() -> Error {
 /// vault that adopted a checkpoint image (`evidence`), an ancestor `merged`
 /// lacks is what the image holds of it
 /// ([`super::adopted_evidence::AdoptedEvidence::ancestor`]), its refusal
-/// for history the image does not carry included.
+/// for history the image does not carry included. `held` says whether this
+/// vault held a row before the import
+/// ([`super::retired_signers::import_row_held`]): only such a handoff stands
+/// in the refusal's equivocation evidence.
 fn retired_standing(
     store: &crate::store::Store,
     fold: &AuthorityFold,
     merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
     evidence: Option<&AdoptedEvidence>,
     arriving: &[AuthorityEntryHash],
+    held: &mut dyn FnMut(&AuthorityEntryHash) -> Result<bool>,
 ) -> Result<Option<AuthorityEntryHash>> {
     for hash in arriving {
         let Some((_, entry)) = merged.get(hash) else {
@@ -105,7 +110,7 @@ fn retired_standing(
                 Some((_, row)) => Ok(Some(row.clone())),
                 None => evidence.map_or(Ok(None), |evidence| evidence.ancestor(parent)),
             },
-            &mut super::retired_signers::import_row_held(arriving, evidence),
+            held,
         )? {
             return Ok(Some(*hash));
         }
@@ -310,6 +315,12 @@ impl Vault {
         }
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
+        // The image this vault had adopted before the write. A prelude may
+        // adopt one in this transaction (a sealed kit restore), which rolls
+        // back with a refused import: a handoff only that image covers is
+        // none this vault holds, so a refusal's evidence never names it
+        // (REVIEW-9572 round 2). The fold and ancestry read the staged image.
+        let (_, held_evidence) = adopted_context_in_txn(&self.store, &txn)?;
         prelude(&mut txn)?;
         let carried: BTreeMap<_, _> = decoded
             .iter()
@@ -388,7 +399,14 @@ impl Vault {
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         if judge_merged {
-            refuse_retired_standing(&self.store, &fold, &merged, evidence.as_deref(), &arriving)?;
+            refuse_retired_standing(
+                &self.store,
+                &fold,
+                &merged,
+                evidence.as_deref(),
+                &arriving,
+                &mut super::retired_signers::import_row_held(&resident, held_evidence.as_deref()),
+            )?;
         }
         if fold.vault_root_is_conflicted() {
             return Err(invalid_authority());
