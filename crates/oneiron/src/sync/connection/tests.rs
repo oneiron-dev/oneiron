@@ -30,17 +30,12 @@ fn residence_ack_clears_only_contiguous_durable_queue_prefix() {
     let second = b"second";
     let seq1 = conn.queue().push("2026-03", first).unwrap();
     let seq2 = conn.queue().push("2026-03", second).unwrap();
-    let ack = |seq: u64, bytes: &[u8]| {
-        let mut payload = seq.to_be_bytes().to_vec();
-        payload.extend_from_slice(blake3::hash(bytes).as_bytes());
-        transport::encode_window_sync("2026-03", window_sub_tags::RESIDENCE_ACK, &payload)
-            .into_result()
-            .unwrap()
-    };
-    client.handle_server_message(&ack(seq2, second)).unwrap();
+    let frame2 = residence_ack(&client, "2026-03", seq2, second);
+    client.handle_server_message(&frame2).unwrap();
     conn.clear_residence_acks(&mut client).unwrap();
     assert_eq!(conn.queue().drain_updates().unwrap().len(), 2);
-    client.handle_server_message(&ack(seq1, first)).unwrap();
+    let frame1 = residence_ack(&client, "2026-03", seq1, first);
+    client.handle_server_message(&frame1).unwrap();
     conn.clear_residence_acks(&mut client).unwrap();
     assert!(conn.queue().drain_updates().unwrap().is_empty());
 }
@@ -51,11 +46,9 @@ fn residence_ack_for_different_bytes_never_confirms_a_queued_write() {
     let conn = SyncConnection::new(manager.clone(), ConnectionConfig::default()).unwrap();
     let (mut client, _events) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
     let seq = conn.queue().push("2026-03", b"delete-worthy").unwrap();
-    let mut payload = seq.to_be_bytes().to_vec();
-    payload.extend_from_slice(blake3::hash(b"other").as_bytes());
-    let frame = transport::encode_window_sync("2026-03", window_sub_tags::RESIDENCE_ACK, &payload)
-        .into_result()
-        .unwrap();
+    // Well-formed but non-matching: the home answered other bytes, so the
+    // queued row never confirms (digest mismatch at the clear).
+    let frame = residence_ack(&client, "2026-03", seq, b"other");
     client.handle_server_message(&frame).unwrap();
     assert!(conn.clear_residence_acks(&mut client).is_err());
     assert_eq!(conn.queue().drain_updates().unwrap().len(), 1);
@@ -110,6 +103,73 @@ fn window_doc() -> LoroDoc {
     doc
 }
 
+/// Wraps window bytes in the pad-free envelope (FIX 7107).
+fn pad_update(payload: &[u8]) -> Vec<u8> {
+    transport::WindowPadEnvelope {
+        kind: transport::WindowPadKind::Update,
+        form: transport::WindowPadForm::PadFree,
+        queue_seq: None,
+        payload: payload.to_vec(),
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode()
+    .unwrap()
+}
+
+fn pad_replacement(payload: &[u8]) -> Vec<u8> {
+    transport::WindowPadEnvelope {
+        kind: transport::WindowPadKind::Replacement,
+        form: transport::WindowPadForm::PadFree,
+        queue_seq: None,
+        payload: payload.to_vec(),
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode()
+    .unwrap()
+}
+
+fn unpad_update(enveloped: &[u8]) -> Vec<u8> {
+    transport::decode_window_pad_envelope(enveloped)
+        .unwrap()
+        .payload
+}
+
+/// The home's durable receipt for a queued residence row, recording the
+/// residence send the receipt answers (as Phase 3 replay does).
+fn residence_ack(client: &SyncClient, window_key: &str, seq: u64, bytes: &[u8]) -> Vec<u8> {
+    client
+        .window_pad_frames(
+            window_key,
+            window_sub_tags::RESIDENCE_UPDATE,
+            Some(seq),
+            bytes,
+            None,
+        )
+        .unwrap();
+    let binding = transport::WindowPadBinding {
+        kind: transport::WindowPadKind::ResidenceUpdate,
+        queue_seq: Some(seq),
+        payload_digest: *blake3::hash(bytes).as_bytes(),
+        refs_digest: transport::window_pad_refs_digest(&[]),
+        recipient: None,
+        source_position: None,
+        sidecar_digest: None,
+    };
+    let receipt = transport::WindowPadReceipt {
+        binding,
+        readiness: transport::WindowPadReadiness::PadFree,
+    };
+    transport::encode_window_sync(
+        window_key,
+        window_sub_tags::RESIDENCE_ACK,
+        &receipt.encode(),
+    )
+    .into_result()
+    .unwrap()
+}
+
 /// Server test double for socket-free convergence tests: one Loro doc
 /// per window, answering SyncStep1/SyncStep2 the same way the production
 /// peer does. `forget_window` simulates the lost-confirmation failure
@@ -153,47 +213,68 @@ impl FakeServer {
                 match sub_tag {
                     window_sub_tags::UPDATE => {
                         if !forgets {
-                            doc.import(payload).unwrap();
+                            let inner = unpad_update(payload);
+                            doc.import(&inner).unwrap();
                         }
                         Vec::new()
                     }
-                    window_sub_tags::VV_REQUEST => vec![
-                        transport::encode_window_sync(
-                            &key,
-                            window_sub_tags::UPDATE,
-                            &export_updates_since(doc, payload).unwrap(),
-                        )
-                        .into_result()
-                        .unwrap(),
-                        transport::encode_window_sync(
-                            &key,
-                            window_sub_tags::VV_RESPONSE,
-                            &doc.oplog_vv().encode(),
-                        )
-                        .into_result()
-                        .unwrap(),
-                    ],
-                    window_sub_tags::VV_RESPONSE => vec![
-                        transport::encode_window_sync(
-                            &key,
-                            window_sub_tags::UPDATE,
-                            &export_updates_since(doc, payload).unwrap(),
-                        )
-                        .into_result()
-                        .unwrap(),
-                    ],
+                    window_sub_tags::VV_REQUEST => {
+                        let delta = export_updates_since(doc, payload).unwrap();
+                        let enveloped = pad_update(&delta);
+                        vec![
+                            transport::encode_window_sync(
+                                &key,
+                                window_sub_tags::UPDATE,
+                                &enveloped,
+                            )
+                            .into_result()
+                            .unwrap(),
+                            transport::encode_window_sync(
+                                &key,
+                                window_sub_tags::VV_RESPONSE,
+                                &doc.oplog_vv().encode(),
+                            )
+                            .into_result()
+                            .unwrap(),
+                        ]
+                    }
+                    window_sub_tags::VV_RESPONSE => {
+                        let delta = export_updates_since(doc, payload).unwrap();
+                        let enveloped = pad_update(&delta);
+                        vec![
+                            transport::encode_window_sync(
+                                &key,
+                                window_sub_tags::UPDATE,
+                                &enveloped,
+                            )
+                            .into_result()
+                            .unwrap(),
+                        ]
+                    }
                     // An unpinned home answers with its whole window, history included.
-                    window_sub_tags::REPLACEMENT_REQUEST => vec![
-                        transport::encode_window_sync(
-                            &key,
-                            window_sub_tags::REPLACEMENT,
-                            &doc.export(ExportMode::Snapshot).unwrap(),
-                        )
-                        .into_result()
-                        .unwrap(),
-                    ],
+                    window_sub_tags::REPLACEMENT_REQUEST => {
+                        let snapshot = doc.export(ExportMode::Snapshot).unwrap();
+                        let enveloped = pad_replacement(&snapshot);
+                        vec![
+                            transport::encode_window_sync(
+                                &key,
+                                window_sub_tags::REPLACEMENT,
+                                &enveloped,
+                            )
+                            .into_result()
+                            .unwrap(),
+                        ]
+                    }
                     other => panic!("unexpected sub tag {other}"),
                 }
+            }
+            transport::TAG_BATCH => {
+                let members = transport::decode_node_batch(&frame[1..]).unwrap();
+                let mut out = Vec::new();
+                for member in members {
+                    out.extend(self.handle(member));
+                }
+                out
             }
             other => panic!("unexpected tag {other}"),
         }
@@ -244,6 +325,14 @@ async fn spawn_fake_sync_server(
                         }
                     }
                     server.handle(&data)
+                }
+                transport::TAG_BATCH => {
+                    let members = transport::decode_node_batch(&data[1..]).unwrap();
+                    let mut out = Vec::new();
+                    for member in members {
+                        out.extend(server.handle(member));
+                    }
+                    out
                 }
                 other => panic!("unexpected client tag {other}"),
             };
@@ -308,17 +397,15 @@ fn seed_offline_queue(conn: &SyncConnection) -> Vec<QueuedUpdate> {
 }
 
 /// Replays the queue the way `connect_and_sync` does: import into the
-/// local doc, then ship the raw update to the (fake) server.
+/// local doc, then ship the enveloped update to the (fake) server.
 fn replay(queued: &[QueuedUpdate], client: &mut SyncClient, server: &mut FakeServer) {
     for update in queued {
         client
             .import_queued_update(&update.window_key, &update.encoded)
             .unwrap();
-        let frame = transport::encode_window_sync(
-            &update.window_key,
-            window_sub_tags::UPDATE,
-            &update.encoded,
-        );
+        let enveloped = pad_update(&update.encoded);
+        let frame =
+            transport::encode_window_sync(&update.window_key, window_sub_tags::UPDATE, &enveloped);
         assert!(server.handle(&frame).is_empty());
     }
 }
@@ -900,11 +987,7 @@ fn residence_ack_clears_past_a_row_a_device_only_world_keeps() {
     vault
         .keep_world_on_this_machine_for_test(world, true)
         .unwrap();
-    let mut payload = sent.to_be_bytes().to_vec();
-    payload.extend_from_slice(blake3::hash(b"portable").as_bytes());
-    let ack = transport::encode_window_sync("2026-03", window_sub_tags::RESIDENCE_ACK, &payload)
-        .into_result()
-        .unwrap();
+    let ack = residence_ack(&client, "2026-03", sent, b"portable");
     client.handle_server_message(&ack).unwrap();
     conn.clear_residence_acks(&mut client).unwrap();
     assert!(conn.queue().drain_updates().unwrap().is_empty());
