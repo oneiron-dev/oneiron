@@ -687,10 +687,24 @@ fn a_cancelled_task_leaves_the_board_even_when_also_acked() {
 
     vault
         .with_write_txn(|wtxn| {
-            ack_task_in_txn(&vault, wtxn, ack_first, own, 121)?;
+            ack_task_in_txn(
+                &vault,
+                wtxn,
+                ack_first,
+                own,
+                121,
+                std::collections::BTreeSet::new(),
+            )?;
             cancel_task_in_txn(&vault, wtxn, ack_first, own, 122)?;
             cancel_task_in_txn(&vault, wtxn, cancel_first, own, 121)?;
-            ack_task_in_txn(&vault, wtxn, cancel_first, own, 122)
+            ack_task_in_txn(
+                &vault,
+                wtxn,
+                cancel_first,
+                own,
+                122,
+                std::collections::BTreeSet::new(),
+            )
         })
         .expect("append authority facts");
 
@@ -995,6 +1009,7 @@ fn a_forked_owner_companion_does_not_poison_the_board() {
                     assigned_ref: None,
                     actor_generation: None,
                     assigned_generation: None,
+                    answered_heads: None,
                     occurred_at: 121,
                 },
             )
@@ -1962,4 +1977,304 @@ fn an_excluded_dispatch_failure_does_not_resurrect_an_ack() {
             .len(),
         0
     );
+}
+
+#[test]
+fn a_second_job_failing_in_the_acks_own_second_stays_listed() {
+    const PINNED_NOW: u64 = 200;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut config = VaultConfig::default();
+    config.store_clock = crate::test_util::pinned_store_clock(PINNED_NOW);
+    let vault = Vault::open(dir.path(), config).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
+    let own = own_agent(&vault);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
+    let created = facade.tasks_create(&spec(120)).expect("create task");
+    let task_ref = created.task_ref.expect("task ref");
+    let task_hex = task_ref.to_hex();
+    let queue = AttemptQueue::new(&vault);
+    let first = match queue
+        .claim_kind(
+            TASK_REALIZE_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: "worker".to_owned(),
+                now: 120,
+            },
+        )
+        .expect("claim first realization")
+    {
+        ClaimOutcome::Claimed(first) => first,
+        ClaimOutcome::Empty => panic!("created task must be claimable"),
+    };
+    // The public fail door stamps the recorded clock, not this input's now.
+    queue
+        .fail(FailAttempt {
+            id: first.id,
+            lease_owner: "worker".to_owned(),
+            attempt_count: first.attempt_count,
+            reason: "first realization failed".to_owned(),
+            now: 121,
+        })
+        .expect("fail first realization");
+    assert_eq!(
+        queue
+            .get(first.id)
+            .expect("read first realization")
+            .expect("first realization exists")
+            .settled_at,
+        Some(PINNED_NOW)
+    );
+    let before = facade.describe_section().expect("check before ack");
+    assert_eq!(before.rows.len(), 1);
+    assert_eq!(before.rows[0].id, task_hex);
+    assert_eq!(before.rows[0].status, TaskBoardStatus::Failed);
+    assert!(!task_is_acked(&vault, task_ref).expect("first failure is not acknowledged"));
+    let ack = facade.tasks_update(task_ref).expect("ack first failure");
+    assert!(ack.acked);
+    assert!(task_is_acked(&vault, task_ref).expect("first failure is acknowledged"));
+    assert_eq!(
+        facade
+            .describe_section()
+            .expect("check after ack")
+            .rows
+            .len(),
+        0
+    );
+
+    // An independent realizing job is another head, not a retry of the first.
+    let second = match queue
+        .enqueue_with_task_ref(
+            EnqueueAttempt {
+                kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
+                payload: Vec::new(),
+                dedupe_key: None,
+                run_id: None,
+                now: PINNED_NOW,
+            },
+            Some(task_hex),
+        )
+        .expect("enqueue second realization")
+    {
+        EnqueueOutcome::Enqueued(second) => second,
+        EnqueueOutcome::Existing(_) => panic!("second realization must be fresh"),
+    };
+    let lease = match queue
+        .claim_kind(
+            TASK_REALIZE_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: "worker".to_owned(),
+                now: PINNED_NOW,
+            },
+        )
+        .expect("claim second realization")
+    {
+        ClaimOutcome::Claimed(lease) => lease,
+        ClaimOutcome::Empty => panic!("second realization must be claimable"),
+    };
+    assert_eq!(lease.id, second.id);
+    assert_ne!(lease.id, first.id);
+    queue
+        .fail(FailAttempt {
+            id: lease.id,
+            lease_owner: "worker".to_owned(),
+            attempt_count: lease.attempt_count,
+            reason: "second realization failed".to_owned(),
+            now: PINNED_NOW,
+        })
+        .expect("fail second realization in the acknowledgement's second");
+    assert_eq!(
+        queue
+            .get(lease.id)
+            .expect("read second realization")
+            .expect("second realization exists")
+            .settled_at,
+        Some(PINNED_NOW)
+    );
+    assert!(!task_is_acked(&vault, task_ref).expect("second failure is not acknowledged"));
+    let after = facade
+        .describe_section()
+        .expect("check after second failure");
+    assert_eq!(after.rows.len(), 1);
+    assert_eq!(after.rows[0].id, task_ref.to_hex());
+    assert_eq!(after.rows[0].status, TaskBoardStatus::Failed);
+}
+
+/// A vault whose store clock is pinned at `pinned_now`, holding a task of its
+/// own agent whose first realizing job failed at that instant: listed Failed,
+/// not acknowledged. Returns the vault's directory, the vault, the agent, the
+/// task and that first job.
+fn task_with_a_failed_realization(
+    pinned_now: u64,
+) -> (
+    tempfile::TempDir,
+    Vault,
+    EntityId,
+    EntityId,
+    crate::attempt_queue::AttemptId,
+) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut config = VaultConfig::default();
+    config.store_clock = crate::test_util::pinned_store_clock(pinned_now);
+    let vault = Vault::open(dir.path(), config).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
+    let own = own_agent(&vault);
+    let task_ref = {
+        let facade = vault.memory(own, EdgeActorClass::Agent);
+        let created = facade.tasks_create(&spec(120)).expect("create task");
+        created.task_ref.expect("task ref")
+    };
+    let first = {
+        let queue = AttemptQueue::new(&vault);
+        let first = match queue
+            .claim_kind(
+                TASK_REALIZE_ATTEMPT_KIND,
+                ClaimAttempt {
+                    lease_owner: "worker".to_owned(),
+                    now: 120,
+                },
+            )
+            .expect("claim first realization")
+        {
+            ClaimOutcome::Claimed(first) => first,
+            ClaimOutcome::Empty => panic!("created task must be claimable"),
+        };
+        // The public fail door stamps the recorded clock, not this input's now.
+        queue
+            .fail(FailAttempt {
+                id: first.id,
+                lease_owner: "worker".to_owned(),
+                attempt_count: first.attempt_count,
+                reason: "first realization failed".to_owned(),
+                now: 121,
+            })
+            .expect("fail first realization");
+        assert_eq!(
+            queue
+                .get(first.id)
+                .expect("read first realization")
+                .expect("first realization exists")
+                .settled_at,
+            Some(pinned_now)
+        );
+        first.id
+    };
+    {
+        let facade = vault.memory(own, EdgeActorClass::Agent);
+        let before = facade.describe_section().expect("check before ack");
+        assert_eq!(before.rows.len(), 1);
+        assert_eq!(before.rows[0].id, task_ref.to_hex());
+        assert_eq!(before.rows[0].status, TaskBoardStatus::Failed);
+    }
+    assert!(!task_is_acked(&vault, task_ref).expect("first failure is not acknowledged"));
+    (dir, vault, own, task_ref, first)
+}
+
+/// Enqueues, leases and fails a second realizing job of the task at
+/// `pinned_now`, in the second its first job failed.
+fn fail_second_realization(
+    vault: &Vault,
+    task_hex: String,
+    first: crate::attempt_queue::AttemptId,
+    pinned_now: u64,
+) {
+    let queue = AttemptQueue::new(vault);
+    let second = match queue
+        .enqueue_with_task_ref(
+            EnqueueAttempt {
+                kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
+                payload: Vec::new(),
+                dedupe_key: None,
+                run_id: None,
+                now: pinned_now,
+            },
+            Some(task_hex),
+        )
+        .expect("enqueue second realization")
+    {
+        EnqueueOutcome::Enqueued(second) => second,
+        EnqueueOutcome::Existing(_) => panic!("second realization must be fresh"),
+    };
+    let lease = match queue
+        .claim_kind(
+            TASK_REALIZE_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: "worker".to_owned(),
+                now: pinned_now,
+            },
+        )
+        .expect("claim second realization")
+    {
+        ClaimOutcome::Claimed(lease) => lease,
+        ClaimOutcome::Empty => panic!("second realization must be claimable"),
+    };
+    assert_eq!(lease.id, second.id);
+    assert_ne!(lease.id, first);
+    queue
+        .fail(FailAttempt {
+            id: lease.id,
+            lease_owner: "worker".to_owned(),
+            attempt_count: lease.attempt_count,
+            reason: "second realization failed".to_owned(),
+            now: pinned_now,
+        })
+        .expect("fail second realization in the acknowledgement's second");
+    assert_eq!(
+        queue
+            .get(lease.id)
+            .expect("read second realization")
+            .expect("second realization exists")
+            .settled_at,
+        Some(pinned_now)
+    );
+}
+
+/// The owner's acknowledgement of the task is refused with INVALID_STATE,
+/// writes no ack fact, and leaves the row listed Failed.
+fn assert_ack_refused_and_task_listed(vault: &Vault, own: EntityId, task_ref: EntityId) {
+    let facade = vault.memory(own, EdgeActorClass::Agent);
+    let result = facade.tasks_update(task_ref);
+    assert!(
+        matches!(
+            &result,
+            Err(error) if error.code == crate::memory::MEMORY_CODE_INVALID_STATE
+        ),
+        "an acknowledgement must refuse an unseen same-second failure with INVALID_STATE: {result:?}"
+    );
+    assert!(!task_is_acked(vault, task_ref).expect("refused acknowledgement wrote no ack fact"));
+    let after = facade.describe_section().expect("check after refused ack");
+    assert_eq!(after.rows.len(), 1);
+    assert_eq!(after.rows[0].id, task_ref.to_hex());
+    assert_eq!(after.rows[0].status, TaskBoardStatus::Failed);
+}
+
+#[test]
+fn an_ack_refuses_a_head_that_failed_in_its_second_between_its_read_and_its_write() {
+    const PINNED_NOW: u64 = 200;
+    let (_dir, vault, own, task_ref, first) = task_with_a_failed_realization(PINNED_NOW);
+    let task_hex = task_ref.to_hex();
+    crate::task_verb::set_before_ack_writer_hook(move |vault: &Vault| {
+        fail_second_realization(vault, task_hex, first, PINNED_NOW);
+    });
+    assert_ack_refused_and_task_listed(&vault, own, task_ref);
+}
+
+/// The ack reads the task twice before its writer: the settlement it answers
+/// and the dismissal status. A head failing in the same second between those
+/// two reads was not seen by the read that found the task Failed, so the ack
+/// must not record it as answered (review round 1 of #9635).
+#[test]
+fn an_ack_refuses_a_head_that_failed_in_its_second_between_its_two_reads() {
+    const PINNED_NOW: u64 = 200;
+    let (_dir, vault, own, task_ref, first) = task_with_a_failed_realization(PINNED_NOW);
+    let task_hex = task_ref.to_hex();
+    crate::task_verb::set_between_ack_reads_hook(move |vault: &Vault| {
+        fail_second_realization(vault, task_hex, first, PINNED_NOW);
+    });
+    assert_ack_refused_and_task_listed(&vault, own, task_ref);
 }

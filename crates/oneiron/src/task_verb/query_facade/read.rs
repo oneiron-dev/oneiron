@@ -229,6 +229,21 @@ impl Memory<'_> {
         if self.credential_withholds(task_ref)? {
             return Err(MemoryError::from(Error::EntityNotFound));
         }
+        // The settlement this request answers: the instant the board fence
+        // compares the acknowledgement with, and the failed heads that
+        // settled at it. It is read before the dismissal status below, so
+        // every head it names was already committed when that read found the
+        // task Failed; a head failing after it moves the settlement, and the
+        // writer refuses. Its error waits behind the status read's refusals.
+        let observed = self
+            .vault()
+            .store
+            .env
+            .read_txn()
+            .map_err(Error::from)
+            .and_then(|rtxn| crate::task_verb::task_settlement_in(self.vault(), &rtxn, task_ref));
+        #[cfg(test)]
+        run_between_ack_reads_hook(self.vault());
         // The acknowledgement applies only to a currently-FAILED task: failed
         // rows stay surfaced until acknowledged (08b §3). Acknowledging a
         // queued/running task would pre-set the bit so the later failure is
@@ -252,13 +267,7 @@ impl Memory<'_> {
                 report: None,
             });
         }
-        // The settlement this request answers: the instant the board fence
-        // compares the acknowledgement with.
-        let observed = {
-            let rtxn = self.vault().store.env.read_txn().map_err(Error::from)?;
-            crate::task_verb::task_settled_at_in(self.vault(), &rtxn, task_ref)
-                .map_err(MemoryError::from)?
-        };
+        let observed = observed.map_err(MemoryError::from)?;
         #[cfg(test)]
         run_before_ack_writer_hook(self.vault());
         // The acknowledgement is a FACT about a real failed row, stamped with
@@ -279,16 +288,30 @@ impl Memory<'_> {
             // on a clock ahead of this device's stays answered, as the board
             // fence compares the two instants. A settlement that moved since
             // the read (a synced refailure, whose instant may even sit behind
-            // `now` on a peer's slower clock) was never seen: refused, and the
-            // row stays listed Failed.
-            let settled = crate::task_verb::task_settled_at_in(self.vault(), &*wtxn, task_ref)
+            // `now` on a peer's slower clock), or one that gained a failed
+            // head in its own second, was never seen: refused, and the row
+            // stays listed Failed.
+            let settled = crate::task_verb::task_settlement_in(self.vault(), &*wtxn, task_ref)
                 .map_err(MemoryError::from)?;
             if settled != observed {
                 return Err(failure_changed_since_read());
             }
-            let acked_at = settled.map_or(now, |settled| settled.max(now));
-            ack_task_in_txn(self.vault(), wtxn, task_ref, self.actor(), acked_at)
-                .map_err(MemoryError::from)?;
+            // The fact names the failed heads it saw in its own second, so a
+            // head failing later in that second stays listed. Stamped at
+            // `now` past the settlement, it saw no head of its second.
+            let (acked_at, answered_heads) = match settled {
+                Some(settled) if settled.at >= now => (settled.at, settled.failed_heads),
+                Some(_) | None => (now, std::collections::BTreeSet::new()),
+            };
+            ack_task_in_txn(
+                self.vault(),
+                wtxn,
+                task_ref,
+                self.actor(),
+                acked_at,
+                answered_heads,
+            )
+            .map_err(MemoryError::from)?;
             witness(wtxn)
         })?;
         Ok(TaskUpdateReceipt {

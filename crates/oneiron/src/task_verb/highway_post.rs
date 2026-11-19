@@ -395,6 +395,7 @@ pub(super) fn put_assignment_fact_in_txn(
                 assigned_ref: Some(assigned),
                 actor_generation: None,
                 assigned_generation: None,
+                answered_heads: None,
                 occurred_at: now,
             },
         )?;
