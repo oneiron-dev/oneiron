@@ -24,6 +24,8 @@ mod rpc;
 mod search;
 mod search_client;
 pub(crate) mod secret_same_value;
+// FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS: a followed world's tombstone id set.
+mod tombstones;
 mod windows;
 pub(crate) use self::search_client::search_resident;
 use self::windows::PromotionReply;
