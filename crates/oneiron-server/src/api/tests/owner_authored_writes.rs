@@ -5,7 +5,7 @@
 //! critical confirm, and nothing consolidates it before the owner clears it.
 use super::*;
 
-const FACADE_CLAIM_UPSERT: &str = "/v1/core/facade/claim_upsert";
+const FACADE_CLAIM_UPSERT: &str = "/v1/core/facade/vault.claims.upsert";
 
 /// One critical claim about the owner. Each leg names its own predicate: an
 /// upsert on a subject and predicate that already hold a head is a
