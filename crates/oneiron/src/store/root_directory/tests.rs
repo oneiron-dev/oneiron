@@ -53,3 +53,49 @@ fn a_held_tree_is_removed_with_every_directory_in_it() {
         "the removal followed a link out of the tree"
     );
 }
+
+/// The mode bits group or other users hold on `path`, as a restore's
+/// shared-path guard reads them.
+fn group_or_other_bits(path: &std::path::Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(path).unwrap().permissions().mode() & 0o077
+}
+
+/// FIX [LIB-RESTORE-INNER-DIRS-UMASK-DEPENDENT]: a vault opened at a new
+/// path makes its root, and each directory missing above it, owner-only
+/// whatever the umask, so the vault's own restore never refuses its root as
+/// shared. Red on main 71fffbfb0699 under any umask that leaves group or
+/// other bits (the fleet runs at 000, a login at 022): the root was made by
+/// `create_dir_all`.
+#[test]
+fn a_vault_opened_at_a_new_path_makes_its_root_owner_only() {
+    let base = crate::test_support::restore_tempdir();
+    let root = base.path().join("above").join("vault");
+    let _vault = crate::Vault::open(&root, crate::VaultConfig::device()).unwrap();
+    for made in [base.path().join("above"), root.clone()] {
+        assert_eq!(
+            group_or_other_bits(&made),
+            0,
+            "{} is not owner-only",
+            made.display()
+        );
+    }
+    assert!(
+        crate::store::refuse_shared_path(&root).is_ok(),
+        "a restore refuses the vault's own new root"
+    );
+}
+
+/// The process-owned open makes its root by its own call: owner-only too.
+#[test]
+fn an_owned_open_at_a_new_path_makes_its_root_owner_only() {
+    let base = crate::test_support::restore_tempdir();
+    let root = base.path().join("owned");
+    let _vault = crate::Vault::open_owned(&root, crate::VaultConfig::device()).unwrap();
+    assert_eq!(
+        group_or_other_bits(&root),
+        0,
+        "{} is not owner-only",
+        root.display()
+    );
+}
