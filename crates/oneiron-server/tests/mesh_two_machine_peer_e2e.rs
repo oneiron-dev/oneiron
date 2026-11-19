@@ -18,12 +18,14 @@
 //! binds its endpoint and grants it sync in that one redemption. Each device
 //! then takes H's signed authority history, so every replica folds every
 //! machine and every slip. Each device's server runs as a device of H (no
-//! models, so no Dreamer) with its real mesh listener on a loopback port, no
-//! relay; each vault binds and grants the machines it serves or dials. H
-//! itself never runs: its URL is a loopback port nobody listens on. The
-//! asking device runs its real `SyncConnection` on its server's windows,
-//! with the peer dialer on its listener's endpoint, as device sync wires a
-//! served host's link.
+//! models, so no Dreamer) with its real mesh listener on a loopback port the
+//! system assigns, no relay; then each vault binds, at the address that
+//! listener bound, and grants the machines it serves or dials. H itself
+//! never runs: its URL is a loopback listener that closes every connection
+//! before the upgrade and notes when each arrived. The asking device runs its
+//! real `SyncConnection` on its server's windows, with the peer dialer on its
+//! listener's endpoint, as device sync wires a served host's link; a
+//! recorder around that dialer notes each peer dial as it starts.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --test mesh_two_machine_peer_e2e`.
@@ -100,20 +102,54 @@ where
     }
 }
 
-/// A loopback UDP port for a mesh listener, held bound until the listener
-/// binds it: each vault's roster row names the address before the listener
-/// starts, and a port released at once could go to another test's bind in
-/// the meantime (the tests of this binary run in parallel).
-fn reserve_loopback_udp() -> TestResult<std::net::UdpSocket> {
-    Ok(std::net::UdpSocket::bind("127.0.0.1:0")?)
+/// The home that is down, at a loopback sync URL: a listener that closes
+/// each connection before the upgrade and notes when it arrived. Every home
+/// session fails unserved, the far end's fault as for a home nobody answers
+/// (FIX 22217), and the first arrival comes before the first failure the
+/// asker counts: the home-down window is measured from it.
+struct DownHome {
+    url: String,
+    arrivals: Arc<Mutex<Vec<Instant>>>,
+    accepting: tokio::task::JoinHandle<()>,
 }
 
-/// A loopback sync URL nobody listens on: the home that is down.
-fn dead_home_url() -> TestResult<String> {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-    let port = listener.local_addr()?.port();
-    drop(listener);
-    Ok(format!("ws://127.0.0.1:{port}/ws"))
+impl DownHome {
+    async fn start() -> TestResult<Self> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let url = format!("ws://{}/ws", listener.local_addr()?);
+        let arrivals = Arc::new(Mutex::new(Vec::new()));
+        let noted = Arc::clone(&arrivals);
+        let accepting = tokio::spawn(async move {
+            while let Ok((connection, _)) = listener.accept().await {
+                noted
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(Instant::now());
+                drop(connection);
+            }
+        });
+        Ok(Self {
+            url,
+            arrivals,
+            accepting,
+        })
+    }
+
+    /// When the asker's first home session reached the home: before that
+    /// session failed, and so before the asker began to count the home down.
+    fn first_arrival(&self) -> Option<Instant> {
+        self.arrivals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .first()
+            .copied()
+    }
+}
+
+impl Drop for DownHome {
+    fn drop(&mut self) {
+        self.accepting.abort();
+    }
 }
 
 /// The owner's home H: a rooted carrier install the owner answered as his
@@ -162,10 +198,6 @@ struct Device {
     /// The pairing slip H minted for the device's mesh binding.
     mesh_pairing: [u8; 32],
     credential: SyncTransportCredential,
-    /// Where its mesh listener binds.
-    address: SocketAddr,
-    /// Holds `address` bound until [`Device::serve`] starts the listener.
-    reservation: Mutex<Option<std::net::UdpSocket>>,
 }
 
 impl Home {
@@ -256,8 +288,6 @@ impl Home {
             .slip
             .to_token()
             .map_err(at("the credential's slip"))?;
-        let reservation = reserve_loopback_udp()?;
-        let address = reservation.local_addr()?;
         Ok(Device {
             _dir: dir,
             vault: Arc::new(vault),
@@ -265,8 +295,6 @@ impl Home {
             identity,
             mesh_pairing: pairing_slip_id,
             credential: SyncTransportCredential::new(token, holder),
-            address,
-            reservation: Mutex::new(Some(reservation)),
         })
     }
 
@@ -288,10 +316,12 @@ impl Home {
 }
 
 impl Device {
-    /// This vault binds `peer`'s endpoint at its loopback address on the
-    /// pairing H minted for it, and grants it sync, as the owner does for a
-    /// machine whose mesh calls this one takes or makes.
-    fn bind(&self, peer: &Device) -> TestResult {
+    /// This vault binds `peer`'s endpoint at the loopback addresses its
+    /// running listener bound (`listening`), on the pairing H minted for it,
+    /// and grants it sync, as the owner does for a machine whose mesh calls
+    /// this one takes or makes. The listeners and dialers read the roster and
+    /// the grants live, so a bind after the listener started counts.
+    fn bind(&self, peer: &Device, listening: &Served) -> TestResult {
         let issuer = test_host_issuer();
         self.vault
             .bind_mesh_machine(
@@ -299,7 +329,7 @@ impl Device {
                 peer.machine,
                 MeshMachineAddress {
                     endpoint_key: peer.identity.endpoint_key,
-                    direct_addrs: vec![peer.address],
+                    direct_addrs: listening.addresses.clone(),
                     relay_url: None,
                 },
                 peer.identity.device_key,
@@ -323,27 +353,32 @@ impl Device {
     }
 
     /// Starts this device's server as a device of H, with no models, and its
-    /// mesh listener on its address.
+    /// mesh listener on a loopback port the system assigns as it binds: no
+    /// other test of this binary (they run in parallel) can take that port
+    /// between the choice and the bind. The vaults learn the address it bound
+    /// afterwards ([`Device::bind`]).
     async fn serve(&self) -> TestResult<Served> {
         let server = SyncServer::new(Arc::clone(&self.vault), SyncServerConfig::default())
             .map_err(at("the device's server"))?;
         let (server, host) = AiHost::attach_device(server, None, true).await;
         let server = Arc::new(server);
         let app = oneiron_server::build_app(Arc::clone(&server));
-        // The held port goes free only now, as the listener binds it.
-        let released = self
-            .reservation
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        drop(released);
-        let listener = start_mesh_listener(Arc::clone(&server), self.address, &app)
-            .await
-            .map_err(at("the device's mesh listener"))?;
+        let listener = start_mesh_listener(
+            Arc::clone(&server),
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            &app,
+        )
+        .await
+        .map_err(at("the device's mesh listener"))?;
+        let addresses = listener.direct_addrs();
+        if addresses.is_empty() {
+            return Err("fixture: the device's mesh listener bound no direct address".into());
+        }
         Ok(Served {
             server,
             _host: host,
             listener,
+            addresses,
         })
     }
 }
@@ -353,6 +388,8 @@ struct Served {
     server: Arc<SyncServer>,
     _host: AiHost,
     listener: MeshListener,
+    /// The loopback addresses the listener bound.
+    addresses: Vec<SocketAddr>,
 }
 
 /// The asking device's real peer dialer, recording each dial as it starts:
@@ -380,20 +417,18 @@ impl SyncPeerDialer for RecordingPeerDialer {
     }
 }
 
-/// The asking device's link, running: its home is `home` at a URL nobody
-/// answers, and its peer dialer rides its listener's endpoint.
+/// The asking device's link, running: its home is `home`, down at
+/// `home_url`, and its peer dialer rides its listener's endpoint.
 struct Asking {
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     run: tokio::task::JoinHandle<oneiron::Result<()>>,
     events: Arc<Mutex<Vec<SyncEvent>>>,
     /// Every peer dial the link made, with when it started.
     dials: Arc<Mutex<Vec<(EntityId, Instant)>>>,
-    /// When the link started.
-    started: Instant,
 }
 
 impl Asking {
-    fn start(device: &Device, served: &Served, home: EntityId) -> TestResult<Self> {
+    fn start(device: &Device, served: &Served, home: EntityId, home_url: &str) -> TestResult<Self> {
         let dials = Arc::new(Mutex::new(Vec::new()));
         let peer_dialer = Arc::new(RecordingPeerDialer {
             dialer: MeshPeerDialer::new(
@@ -406,7 +441,7 @@ impl Asking {
         }) as Arc<dyn SyncPeerDialer>;
         let config = ConnectionConfig {
             client_config: SyncClientConfig {
-                server_url: dead_home_url()?,
+                server_url: home_url.to_owned(),
                 transport_credential: Some(device.credential.clone()),
                 residence_mode: SyncResidenceMode::All,
                 reconnect_initial_ms: 100,
@@ -421,7 +456,6 @@ impl Asking {
         let events = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::clone(&events);
         let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
-        let started = Instant::now();
         let run = tokio::spawn(async move {
             connection
                 .run_observed(shutdown_rx, move |event| {
@@ -436,18 +470,17 @@ impl Asking {
             run,
             events,
             dials,
-            started,
         })
     }
 
     /// The peer dials the link has made, oldest first: the peer each named
-    /// and how long after the link started it began.
-    fn dials(&self) -> Vec<(EntityId, Duration)> {
+    /// and how long after `since` it began (zero for one before it).
+    fn dials_since(&self, since: Instant) -> Vec<(EntityId, Duration)> {
         self.dials
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
-            .map(|&(peer, at)| (peer, at.saturating_duration_since(self.started)))
+            .map(|&(peer, at)| (peer, at.saturating_duration_since(since)))
             .collect()
     }
 
@@ -579,8 +612,6 @@ async fn peer_marked_mine_serves() -> TestResult {
     let asker = home.enrol(MachineOwnership::Yours, 0xA1)?;
     let peer = home.enrol(MachineOwnership::Yours, 0xB1)?;
     home.share_history(&[&asker, &peer])?;
-    asker.bind(&peer)?;
-    peer.bind(&asker)?;
     let entity = put_peer_entity(&peer)?;
     assert!(
         !holds(&asker.vault, entity),
@@ -588,7 +619,10 @@ async fn peer_marked_mine_serves() -> TestResult {
     );
     let serving = peer.serve().await?;
     let asking_served = asker.serve().await?;
-    let asking = Asking::start(&asker, &asking_served, home.machine)?;
+    asker.bind(&peer, &serving)?;
+    peer.bind(&asker, &asking_served)?;
+    let down_home = DownHome::start().await?;
+    let asking = Asking::start(&asker, &asking_served, home.machine, &down_home.url)?;
 
     let asker_hex = asker.machine.to_hex();
     let peer_hex = peer.machine.to_hex();
@@ -617,16 +651,21 @@ async fn peer_marked_mine_serves() -> TestResult {
          receipts {served:?}, asker errors {:?}",
         asking.errors()
     );
-    // The earliest peer dial the asker made, whatever became of it: a dial
-    // before the window breaks the promise even when it failed before the
-    // peer answered, or the peer admitted it only after the window.
-    let dials = asking.dials();
+    // The earliest peer dial the asker made, whatever became of it, timed
+    // from its first home session's arrival at the down home, which comes
+    // before the failure the asker counts the home down from: a dial before
+    // the window breaks the promise even when it failed before the peer
+    // answered, or the peer admitted it only after the window.
+    let unserved_from = down_home
+        .first_arrival()
+        .ok_or("the asker's home sessions never reached the home")?;
+    let dials = asking.dials_since(unserved_from);
     let &(_, first_dial_after) = dials.first().ok_or("the asker made no peer dial")?;
     assert!(
         first_dial_after >= Duration::from_secs(HOME_DOWN_AFTER_SECS),
         "the asker dials a peer only once its home has served it nothing for \
-         {HOME_DOWN_AFTER_SECS} s: first peer dial {first_dial_after:?} after the link started: \
-         {dials:?}"
+         {HOME_DOWN_AFTER_SECS} s: first peer dial {first_dial_after:?} after its first home \
+         session reached the home: {dials:?}"
     );
     assert!(
         eventually(PEER_SESSION_GRACE, || holds(&asker.vault, entity)).await,
@@ -651,12 +690,13 @@ async fn machine_not_marked_mine_is_refused() -> TestResult {
     let asker = home.enrol(MachineOwnership::WorkSchool, 0xC1)?;
     let peer = home.enrol(MachineOwnership::Yours, 0xD1)?;
     home.share_history(&[&asker, &peer])?;
-    asker.bind(&peer)?;
-    peer.bind(&asker)?;
     let entity = put_peer_entity(&peer)?;
     let serving = peer.serve().await?;
     let asking_served = asker.serve().await?;
-    let asking = Asking::start(&asker, &asking_served, home.machine)?;
+    asker.bind(&peer, &serving)?;
+    peer.bind(&asker, &asking_served)?;
+    let down_home = DownHome::start().await?;
+    let asking = Asking::start(&asker, &asking_served, home.machine, &down_home.url)?;
 
     let asker_hex = asker.machine.to_hex();
     let peer_hex = peer.machine.to_hex();
@@ -721,9 +761,12 @@ async fn full_copy_holder_first() -> TestResult {
     let one = home.enrol(MachineOwnership::Yours, 0xE2)?;
     let two = home.enrol(MachineOwnership::Yours, 0xE3)?;
     home.share_history(&[&asker, &one, &two])?;
-    for peer in [&one, &two] {
-        asker.bind(peer)?;
-        peer.bind(&asker)?;
+    let serving_one = one.serve().await?;
+    let serving_two = two.serve().await?;
+    let asking_served = asker.serve().await?;
+    for (peer, serving) in [(&one, &serving_one), (&two, &serving_two)] {
+        asker.bind(peer, serving)?;
+        peer.bind(&asker, &asking_served)?;
     }
     // The peer that ranks second with no mark declares a full copy, signed by
     // its own install key, and the asker folds the mark.
@@ -762,10 +805,8 @@ async fn full_copy_holder_first() -> TestResult {
         vec![second.machine, first.machine],
         "the full-copy holder ranks first once its mark lands"
     );
-    let serving_first = first.serve().await?;
-    let serving_second = second.serve().await?;
-    let asking_served = asker.serve().await?;
-    let asking = Asking::start(&asker, &asking_served, home.machine)?;
+    let down_home = DownHome::start().await?;
+    let asking = Asking::start(&asker, &asking_served, home.machine, &down_home.url)?;
 
     let asked_any = eventually(peer_session_within(), || {
         peer_receipts(&asker.vault)
@@ -781,9 +822,13 @@ async fn full_copy_holder_first() -> TestResult {
         asking.errors()
     );
     // The asker's first peer dial, whatever became of it, goes to the
-    // full-copy holder once the window has passed: a dial to the peer without
-    // the mark that failed before reaching it would leave no receipt.
-    let dials = asking.dials();
+    // full-copy holder once the window has passed, timed from its first home
+    // session's arrival at the down home: a dial to the peer without the mark
+    // that failed before reaching it would leave no receipt.
+    let unserved_from = down_home
+        .first_arrival()
+        .ok_or("the asker's home sessions never reached the home")?;
+    let dials = asking.dials_since(unserved_from);
     let &(first_dialled, first_dial_after) = dials.first().ok_or("the asker made no peer dial")?;
     assert_eq!(
         first_dialled, second.machine,
@@ -793,7 +838,7 @@ async fn full_copy_holder_first() -> TestResult {
     assert!(
         first_dial_after >= Duration::from_secs(HOME_DOWN_AFTER_SECS),
         "no peer is dialled before the home has been down {HOME_DOWN_AFTER_SECS} s: first peer \
-         dial {first_dial_after:?} after the link started: {dials:?}"
+         dial {first_dial_after:?} after its first home session reached the home: {dials:?}"
     );
     // The full-copy holder admits that first session: the asker's first
     // peer receipt is an admitted one naming it.
@@ -813,8 +858,8 @@ async fn full_copy_holder_first() -> TestResult {
     );
 
     asking.stop().await;
-    serving_first.listener.stop().await;
-    serving_second.listener.stop().await;
+    serving_one.listener.stop().await;
+    serving_two.listener.stop().await;
     asking_served.listener.stop().await;
     Ok(())
 }

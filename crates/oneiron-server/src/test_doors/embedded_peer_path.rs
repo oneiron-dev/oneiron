@@ -267,24 +267,36 @@ fn windows_of(doc: &loro::LoroDoc) -> Vec<String> {
 }
 
 /// One served host's running mesh listener ([`start_mesh_listener`]).
-pub struct MeshListener(crate::handler::mesh::MeshHost);
+pub struct MeshListener {
+    host: crate::handler::mesh::MeshHost,
+    direct_addrs: Vec<SocketAddr>,
+}
 
 impl MeshListener {
     /// The listener's endpoint, which this machine's own dials ride.
     #[must_use]
     pub fn transport(&self) -> Arc<dyn oneiron_mesh_transport::MeshTransport> {
-        self.0.transport()
+        self.host.transport()
+    }
+
+    /// The direct addresses the listener's endpoint bound, as a served home
+    /// reports its own (`home_mesh_address`): on a bind to port 0, the port
+    /// the system assigned.
+    #[must_use]
+    pub fn direct_addrs(&self) -> Vec<SocketAddr> {
+        self.direct_addrs.clone()
     }
 
     /// Stops the listener and closes its endpoint.
     pub async fn stop(self) {
-        self.0.stop().await;
+        self.host.stop().await;
     }
 }
 
 /// Starts `server`'s mesh listener on `bind` with no relay, offering serve's
 /// full route set (`MeshRouteSet::Full`) with sync on `app`, under the default
-/// connection limits.
+/// connection limits. With port 0 in `bind`, [`MeshListener::direct_addrs`]
+/// names the port it took.
 ///
 /// # Errors
 ///
@@ -297,16 +309,21 @@ pub async fn start_mesh_listener(
 ) -> anyhow::Result<MeshListener> {
     let limits = crate::config::LimitsConfig::default().connections();
     let config = crate::handler::mesh::MeshConfig::from_parts(Some(bind), Vec::new());
-    crate::handler::mesh::start(
-        server,
+    let host = crate::handler::mesh::start(
+        Arc::clone(&server),
         &config,
         app,
         limits,
         crate::handler::mesh::MeshRouteSet::Full,
     )
     .await?
-    .map(MeshListener)
-    .ok_or_else(|| anyhow::anyhow!("a mesh listener with a bind address did not start"))
+    .ok_or_else(|| anyhow::anyhow!("a mesh listener with a bind address did not start"))?;
+    let direct_addrs = server
+        .mesh_transport
+        .get()
+        .map(|transport| transport.addr().ip_addrs().copied().collect())
+        .unwrap_or_default();
+    Ok(MeshListener { host, direct_addrs })
 }
 
 /// The window manager a served host's device link runs on, as device sync
