@@ -5350,7 +5350,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "MachineAnswerLanding"
@@ -5358,7 +5358,7 @@
      "path": "src/authority/machine_answers.rs",
      "purpose": "The owner's machine answers as one install writes them (mesh PR1b): he enrols, re-marks and removes a…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 5
      }
@@ -5385,7 +5385,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "LocalMachine",
@@ -5395,7 +5395,7 @@
      "path": "src/authority/machine_identity.rs",
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
-      "const": 1,
+      "const": 2,
       "crate-vis": 10,
       "fn": 12,
       "re-export": 1,
@@ -5599,7 +5599,7 @@
      "surface": {
       "crate-vis": 83,
       "mod": 2,
-      "re-export": 89
+      "re-export": 91
      }
     },
     {
@@ -6166,6 +6166,31 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RestoredEnrolmentStanding"
+     ],
+     "path": "src/authority/restored_join.rs",
+     "purpose": "A machine born of a restore joins the vault (row RESTORED-COPIES-ENROL-EACH-OTHER; Setting DESIGN pass 15e…",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/restored_join_door.rs",
+     "purpose": "The owner's door into the vault for an install born of a restore when no machine of the vault that has…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
      }
     },
     {
@@ -57945,7 +57970,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/same_bytes_erase.rs",
@@ -69777,7 +69802,7 @@
      "path": "src/recovery/checkpoint/image.rs",
      "purpose": "A checkpoint image and its structural read (moved out of the checkpoint module whole)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -82676,7 +82701,7 @@
      "path": "src/store/install_identity.rs",
      "purpose": "Install identity rows, attestation values, and transaction-bound signing accessors",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 23
      }
     },
     {
@@ -92651,7 +92676,9 @@
      "notable": [],
      "path": "src/task_verb/tests/consult_fanout.rs",
      "purpose": "OF-393 facade oracles: paused plans create no TASKs; rulings bind exact work",
-     "surface": {}
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "L",
@@ -95488,7 +95515,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 325,
+      "mod": 326,
       "re-export": 1
      }
     },
@@ -96003,6 +96030,16 @@
      "purpose": "Doors for `tests/agent_wake_hold.rs` (AGM-4 wake hold), `tests/agent_message_classes.rs` and…",
      "surface": {
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/restored_enrolment.rs",
+     "purpose": "A root-signed enrolment of an install born of a restore, for the integration tests of the fold's hold and…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -96920,7 +96957,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 38
      }
     },
     {
@@ -96931,6 +96968,16 @@
      "purpose": "Byte dump of every named LMDB database a vault holds, and the rows a write changed between two dumps",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_util/shared_invitation.rs",
+     "purpose": "Founding-member acceptance for shared-vault fixtures: creating a shared vault grants only its creator and…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -110118,6 +110165,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/kit_restore_restored_copies_one_r_row.rs",
+     "purpose": "REVIEW-9534 round 2 P1 (restored_join_door.rs:281; Engine ANSWER KIT-JOIN-ONE-R-ROW = A): a kit restore…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/learning_claim_value.rs",
      "purpose": "FIX LEARNING-CELL-POSITIONAL-DECODE: a learning claim value is written with named fields, so a cell with…",
      "surface": {}
@@ -111746,6 +111801,38 @@
      "notable": [],
      "path": "tests/restore_over_live_compartment_rows.rs",
      "purpose": "Live restores compare refused families with the image's opened compartments",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/restored_machine_join_guards.rs",
+     "purpose": "Row RESTORED-COPIES-ENROL-EACH-OTHER, round 1 of the blind review of stack #9512 (REVIEW-9509 and…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/restored_machine_join_standing.rs",
+     "purpose": "Row RESTORED-COPIES-ENROL-EACH-OTHER (P1; Setting DESIGN pass 15e \"Joined\", RULING SETTING-UNTANGLE = A…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/restored_machine_owner_join.rs",
+     "purpose": "Row RESTORED-COPIES-ENROL-EACH-OTHER, PR 2 (P1; Setting DESIGN pass 15e \"Joined\", the second way; RULING…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/restored_machine_owner_join_guards.rs",
+     "purpose": "Row RESTORED-COPIES-ENROL-EACH-OTHER, PR 2, round 1 of the blind review of stack #9512 (REVIEW-9510 and…",
      "surface": {}
     },
     {
@@ -114279,7 +114366,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 312,
+     "files": 314,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -115756,7 +115843,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 332,
+     "files": 333,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -115777,7 +115864,7 @@
      "purpose": "Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which…"
     },
     "test_util": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -115931,10 +116018,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 302,
+   "over_bar": 304,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8189,
-   "test_files": 1933
+   "source_files": 8193,
+   "test_files": 1938
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -116759,7 +116846,7 @@
       "const": 4,
       "crate-vis": 5,
       "enum": 3,
-      "fn": 9,
+      "fn": 11,
       "struct": 2
      }
     },
@@ -116788,7 +116875,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 44
+      "re-export": 45
      }
     },
     {
@@ -117058,6 +117145,23 @@
       "enum": 2,
       "fn": 10,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RestoredJoinEnrolment",
+      "RestoredMachineJoin"
+     ],
+     "path": "src/authority/restored_machine_join.rs",
+     "purpose": "The owner's word that no other machine of the vault is left, which joins one machine born of a restore (row…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -117578,7 +117682,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 54,
+     "files": 55,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -117643,7 +117747,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 73,
+   "source_files": 74,
    "test_files": 7
   },
   "oneiron-base": {
@@ -163050,7 +163154,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "ArchiveSpeakers",
@@ -163875,7 +163979,7 @@
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 2,
       "re-export": 9
      }
@@ -163924,7 +164028,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner/recovery_commands.rs",
@@ -176964,7 +177068,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/owner_backup.rs",
@@ -178602,7 +178706,7 @@
     "cli": {
      "files": 19,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "file+dir",
      "purpose": "—"
     },

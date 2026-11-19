@@ -273,6 +273,7 @@ pub(super) fn settle_tail(
     );
     if rows.missed.get()
         || fold.machines != image_fold.machines
+        || fold.restored_enrolments != image_fold.restored_enrolments
         || !crate::authority::world_privacy::worlds_unmoved_past(
             &fold,
             image_fold,

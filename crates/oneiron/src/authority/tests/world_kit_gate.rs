@@ -96,6 +96,7 @@ fn publish_with_machine(host: &Host, seed: &RecoveryRootSeed, key: u8) -> Recove
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     });
     let fold = host.vault.authority_fold().unwrap();
     let entry = anchor_signed_entry(&fold, &seed.anchor(), mark, 2).unwrap();
