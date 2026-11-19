@@ -21,6 +21,7 @@ fn fact(task_ref: EntityId, kind: TaskAuthorityFactKind, actor_ref: EntityId) ->
         assigned_ref: (kind == TaskAuthorityFactKind::HumanAssigned).then(|| id(0xA8)),
         actor_generation: None,
         assigned_generation: None,
+        answered_heads: None,
         occurred_at: 100,
     }
 }
@@ -65,6 +66,7 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
         assigned_ref: None,
         actor_generation: None,
         assigned_generation: None,
+        answered_heads: None,
         occurred_at: 1_700_000_000,
     };
     let encoded = encode_task_authority_fact_body(&original);

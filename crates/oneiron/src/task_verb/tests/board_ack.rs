@@ -687,10 +687,24 @@ fn a_cancelled_task_leaves_the_board_even_when_also_acked() {
 
     vault
         .with_write_txn(|wtxn| {
-            ack_task_in_txn(&vault, wtxn, ack_first, own, 121)?;
+            ack_task_in_txn(
+                &vault,
+                wtxn,
+                ack_first,
+                own,
+                121,
+                std::collections::BTreeSet::new(),
+            )?;
             cancel_task_in_txn(&vault, wtxn, ack_first, own, 122)?;
             cancel_task_in_txn(&vault, wtxn, cancel_first, own, 121)?;
-            ack_task_in_txn(&vault, wtxn, cancel_first, own, 122)
+            ack_task_in_txn(
+                &vault,
+                wtxn,
+                cancel_first,
+                own,
+                122,
+                std::collections::BTreeSet::new(),
+            )
         })
         .expect("append authority facts");
 
@@ -995,6 +1009,7 @@ fn a_forked_owner_companion_does_not_poison_the_board() {
                     assigned_ref: None,
                     actor_generation: None,
                     assigned_generation: None,
+                    answered_heads: None,
                     occurred_at: 121,
                 },
             )

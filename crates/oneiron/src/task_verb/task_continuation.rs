@@ -14,7 +14,7 @@
 //! rewrites; the move keeps a receipt of its own beside them, naming the
 //! failed attempt, when it failed and the approval that continued it.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
@@ -144,7 +144,28 @@ pub(crate) fn continue_failed_task_in_txn(
     Ok(TaskContinuationOutcome::Reactivated)
 }
 
-/// When `task` settled as it stands now, or `None` while it is live or
+/// How a TASK stands settled: when, and which failed heads settled then.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TaskSettlement {
+    /// When the TASK settled, a recorded second.
+    pub(crate) at: u64,
+    /// The projected failed heads realizing the TASK (attempt ids, lowercase
+    /// hex) that settled at `at`: an acknowledgement in that same second
+    /// answers only the heads it saw. Empty when a typed terminal, an expiry
+    /// or a connector outcome set after every failed head settles the TASK.
+    pub(crate) failed_heads: BTreeSet<String>,
+}
+
+impl TaskSettlement {
+    fn without_failed_heads(at: u64) -> Self {
+        Self {
+            at,
+            failed_heads: BTreeSet::new(),
+        }
+    }
+}
+
+/// How `task` settled as it stands now, or `None` while it is live or
 /// unknown. A continuation puts a failed TASK back on its lane, so the
 /// owner's acknowledgement of that failure answers it alone, never the
 /// successor's later settlement.
@@ -164,17 +185,20 @@ pub(crate) fn continue_failed_task_in_txn(
 /// node-local attempts; the later of that instant and its newest failed head
 /// stands. Live work and non-failed heads settle nothing, and a connector
 /// body written before the outcome stamp settles by its failed heads alone.
+/// A settlement by failed heads names every head that settled at its
+/// instant, so a second job failing later in an acknowledgement's own second
+/// is told apart from the heads that acknowledgement saw.
 ///
 /// # Errors
 ///
 /// Storage errors; a TASK body that fails to read for a reason other
 /// than a malformed body (a malformed body falls back to its jobs, as
 /// the dismissal projection does).
-pub(crate) fn task_settled_at_in(
+pub(crate) fn task_settlement_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     task: EntityId,
-) -> Result<Option<u64>> {
+) -> Result<Option<TaskSettlement>> {
     let body = match task_verb_body_in(vault, rtxn, task) {
         Ok(body) => body,
         Err(Error::Record(RecordError::InvalidTaskBody(_))) => None,
@@ -186,9 +210,13 @@ pub(crate) fn task_settled_at_in(
                 .as_ref()
                 .and_then(|body| body.ttl.as_ref().map(|ttl| ttl.deadline_at))
         {
-            return Ok(Some(terminal.finished_at.min(deadline)));
+            return Ok(Some(TaskSettlement::without_failed_heads(
+                terminal.finished_at.min(deadline),
+            )));
         }
-        return Ok(Some(terminal.finished_at));
+        return Ok(Some(TaskSettlement::without_failed_heads(
+            terminal.finished_at,
+        )));
     }
     // No typed terminal. A row that derives expired shows that expiry
     // whatever its jobs do (the board's derived arm reads the deadline before
@@ -201,8 +229,8 @@ pub(crate) fn task_settled_at_in(
         }
         (deadline <= vault.store.clock.now_recorded_at()).then_some(deadline)
     });
-    if expired.is_some() {
-        return Ok(expired);
+    if let Some(deadline) = expired {
+        return Ok(Some(TaskSettlement::without_failed_heads(deadline)));
     }
     // A connector-send TASK has no typed body: the outcome the board shows
     // over its jobs settles it when that outcome was set.
@@ -219,7 +247,15 @@ pub(crate) fn task_settled_at_in(
     let task_hex = task.to_hex();
     let records =
         crate::attempt_queue::AttemptQueue::new(vault).task_subtree_in_txn(rtxn, &task_hex)?;
-    Ok(projected_failed_head_settled_at(records, &task_hex)?.max(outcome_at))
+    Ok(
+        match (projected_failed_heads(records, &task_hex)?, outcome_at) {
+            (Some(heads), Some(outcome_at)) if outcome_at > heads.at => {
+                Some(TaskSettlement::without_failed_heads(outcome_at))
+            }
+            (Some(heads), _) => Some(heads),
+            (None, outcome_at) => outcome_at.map(TaskSettlement::without_failed_heads),
+        },
+    )
 }
 
 /// When a connector-send TASK's synced outcome was set, read through the
@@ -242,15 +278,16 @@ fn connector_outcome_at_in(
 }
 
 /// The newest failure instant over the failed heads the board folds for one
-/// TASK, each stamped with its backing row's terminal instant; `None` when no
-/// head failed. The heads come from the scan's own walk
+/// TASK, each stamped with its backing row's terminal instant, with every
+/// head that failed at that instant; `None` when no head failed. The heads
+/// come from the scan's own walk
 /// ([`super::presence_jobs::for_each_head_job`]: retry-chain heads only, each
 /// judged by the board's accept rule), so a job kind the board excludes never
 /// moves the settlement the fence reads, and the newest failure wins.
-fn projected_failed_head_settled_at(
+fn projected_failed_heads(
     records: Vec<AttemptRecord>,
     task_hex: &str,
-) -> Result<Option<u64>> {
+) -> Result<Option<TaskSettlement>> {
     let members: HashSet<String> = records
         .iter()
         .filter(|record| record.task_ref.as_deref() == Some(task_hex))
@@ -265,15 +302,26 @@ fn projected_failed_head_settled_at(
             )
         })
         .collect();
-    let mut max_settled = None;
+    let mut newest: Option<TaskSettlement> = None;
     super::presence_jobs::for_each_head_job(records, |node, job, _| {
-        if members.contains(&node.attempt_id)
-            && job.status == crate::context_board::TaskBoardStatus::Failed
+        if !members.contains(&node.attempt_id)
+            || job.status != crate::context_board::TaskBoardStatus::Failed
         {
-            max_settled = max_settled.max(settled_by_attempt.get(&node.attempt_id).copied());
+            return;
+        }
+        let Some(settled) = settled_by_attempt.get(&node.attempt_id).copied() else {
+            return;
+        };
+        if newest.as_ref().is_none_or(|held| settled > held.at) {
+            newest = Some(TaskSettlement::without_failed_heads(settled));
+        }
+        if let Some(held) = newest.as_mut()
+            && held.at == settled
+        {
+            held.failed_heads.insert(node.attempt_id.clone());
         }
     })?;
-    Ok(max_settled)
+    Ok(newest)
 }
 
 /// A TASK writer's refusal, as the engine's error.
