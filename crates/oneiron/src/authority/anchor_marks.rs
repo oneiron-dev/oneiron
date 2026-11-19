@@ -132,6 +132,7 @@ impl Vault {
             // held, each replica reading that from the parents (FIX 4610).
             carrier: None,
             act: None,
+            restored_from: request.restored_from,
         };
         profile.validate()?;
         // FIX 8498: the mark's basis is the one read above; a join moves none.

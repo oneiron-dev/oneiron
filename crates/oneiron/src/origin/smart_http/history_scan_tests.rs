@@ -6,7 +6,8 @@ use std::process::{Command, Stdio};
 
 use super::exchange_idle::Progress;
 use super::tests::{
-    CapturingSink, commit_file, git, hooks_dir, seeded_repo, served_repo, temp_vault,
+    CapturingSink, commit_file, git, hooks_dir, owner_admission_stamp, owner_principal,
+    seeded_repo, served_repo, temp_vault,
 };
 use super::*;
 
@@ -95,7 +96,7 @@ fn receive_pack_carrying(
         content_length: Some(bytes.len() as u64),
         content_encoding: None,
         git_protocol: None,
-        remote_user: Some(EntityId::now().to_hex()),
+        remote_user: Some(owner_principal(vault).to_hex()),
         remote_addr: Some("127.0.0.1".into()),
     };
     let mut sink = CapturingSink::default();
@@ -358,6 +359,10 @@ fn a_window_past_the_blob_bound_publishes_a_refusal_naming_its_key() {
     let repo = unpinned_repo_ref(&root);
     let window = |blobs: &[u8], history: &[u8], blob_bytes: u64| {
         let (_hook_root, hooks) = hooks_dir();
+        let stamp = owner_admission_stamp(&vault, &root);
+        vault
+            .record_receive_pack_admission(&root, &stamp, DoorSeam::Landed)
+            .expect("admission");
         let update = format!("ref {} {} refs/heads/bulk\n", "0".repeat(40), oid.as_str());
         fs::write(hooks.request_path(), update).expect("request");
         fs::write(hooks.blobs_path(), blobs).expect("blob stream");
@@ -372,7 +377,7 @@ fn a_window_past_the_blob_bound_publishes_a_refusal_naming_its_key() {
             &clock,
             DoorWindowContext {
                 seam: DoorSeam::Landed,
-                admission: None,
+                admission: Some(&stamp),
                 scan: ScanBounds::new(blob_bytes, 1).expect("bounds"),
                 spill_floor: None,
                 protected_ref: None,
@@ -422,6 +427,14 @@ fn a_window_past_the_blob_bound_publishes_a_refusal_naming_its_key() {
     let unreadable = record('8', "logo.png", b"\x89PNG\0\x01", false);
     let clean_history = record('7', "old.txt", b"an old note\n", true);
     let (report, _) = window(&unreadable, &clean_history, 1 << 20);
+    // Binary bytes are scanned like any other (G7-BINARY): a clean binary
+    // blob admits.
+    assert_eq!(report.verdict, DoorWindowVerdict::Clean);
+    // A blob the scanner cannot use still refuses the window: an oid past
+    // the seam's length bound passes the header parse but fails seam
+    // validation, so the scan cannot complete.
+    let unusable_oid = format!("blob {} 12 notes.txt\nclean bytes\n", "f".repeat(65));
+    let (report, _) = window(unusable_oid.as_bytes(), b"", 1 << 20);
     assert_eq!(
         report.verdict,
         DoorWindowVerdict::Rejected {

@@ -119,6 +119,16 @@ fn embedding_migration_invalidates_inflight_async_fill_token() -> Result<()> {
     let mut cfg = test_config();
     cfg.embedding_model = Some("test/old@v1".to_owned());
     let mut vault = Vault::open_unseeded_for_test(temp_dir.path(), cfg)?;
+    let facet = crate::claim::substrate_facet_id(seeded_entity_id(0xC1A1)).expect("subject facet");
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            test_time_range(1, 1),
+            1,
+            b"facet",
+        )
+        .expect("seed subject facet");
     let id = EntityId::now();
     let policy_id = crate::gate::default_policy_manifest_id()?;
     vault.with_write_txn(|wtxn| crate::batch::deindex_entity_for_test(&vault, wtxn, &policy_id))?;
@@ -186,14 +196,16 @@ fn legacy_v1_marker_cannot_fill_after_embedding_epoch_change() -> Result<()> {
     let id = EntityId::now();
     let policy_id = crate::gate::default_policy_manifest_id()?;
     vault.with_write_txn(|wtxn| crate::batch::deindex_entity_for_test(&vault, wtxn, &policy_id))?;
-    let body = crate::claim::encode_claim_body(&public_stamped(crate::claim::ClaimBody::new(
+    let mut raw = crate::claim::ClaimBody::new(
         "test.legacy_marker",
         crate::claim::ClaimSubject::Entity(seeded_entity_id(0xC1A1)),
         rmpv::Value::from("legacy marker body"),
         0.9,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    )?))?;
+    )?;
+    crate::test_util::stamp_vault_default_facet(&vault, &mut raw);
+    let body = crate::claim::encode_claim_body(&public_stamped(raw))?;
     vault
         .batch()
         .put(
@@ -284,6 +296,16 @@ fn embedding_migration_degrades_to_lexical_then_refills_without_mixing() -> Resu
     let mut cfg = test_config();
     cfg.embedding_model = Some("test/old@v1".to_owned());
     let mut vault = Vault::open_unseeded_for_test(temp_dir.path(), cfg)?;
+    let facet = crate::claim::substrate_facet_id(seeded_entity_id(0xC1A1)).expect("subject facet");
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            test_time_range(1, 1),
+            1,
+            b"facet",
+        )
+        .expect("seed subject facet");
     let id = EntityId::now();
     let policy_id = crate::gate::default_policy_manifest_id()?;
     vault.with_write_txn(|wtxn| {
@@ -386,6 +408,16 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
     let mut cfg = test_config();
     cfg.embedding_model = Some("test/old@v1".to_owned());
     let vault = Vault::open_unseeded_for_test(temp_dir.path(), cfg.clone())?;
+    let facet = crate::claim::substrate_facet_id(seeded_entity_id(0xC1A1)).expect("subject facet");
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            test_time_range(1, 1),
+            1,
+            b"facet",
+        )
+        .expect("seed subject facet");
     let policy_id = crate::gate::default_policy_manifest_id()?;
     vault.with_write_txn(|wtxn| {
         crate::batch::deindex_entity_for_test(&vault, wtxn, &policy_id)?;
@@ -575,6 +607,16 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
     let mut old_cfg = test_config();
     old_cfg.embedding_model = Some("test/old@v1".to_owned());
     let mut rollback = Vault::open_unseeded_for_test(rollback_dir.path(), old_cfg)?;
+    let facet = crate::claim::substrate_facet_id(seeded_entity_id(0xC1A1)).expect("subject facet");
+    rollback
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            test_time_range(1, 1),
+            1,
+            b"facet",
+        )
+        .expect("seed subject facet");
     let policy_id = crate::gate::default_policy_manifest_id()?;
     rollback.with_write_txn(|wtxn| {
         crate::batch::deindex_entity_for_test(&rollback, wtxn, &policy_id)
@@ -884,6 +926,16 @@ fn a_migration_that_cannot_queue_leaves_the_backfill_to_the_next_serving_open() 
     let mut cfg = test_config();
     cfg.embedding_model = Some("test/old@v1".to_owned());
     let mut vault = Vault::open_unseeded_for_test(temp_dir.path(), cfg.clone())?;
+    let facet = crate::claim::substrate_facet_id(seeded_entity_id(0xBAC1)).expect("subject facet");
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            test_time_range(1, 1),
+            1,
+            b"facet",
+        )
+        .expect("seed subject facet");
     let claim = EntityId::now();
     vault
         .batch()

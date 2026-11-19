@@ -313,7 +313,7 @@ fn scoped_read_hydrate_preserves_dangling_short_id_result() -> Result<()> {
 
 #[test]
 fn scoped_read_context_pack_scrubs_edges_to_denied_claims() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let (_tmp, vault) = super::support::temp_vault_with_manifest();
     let allowed_world = test_id(0xCC);
     let denied_world = test_id(0xCD);
     put_policy_manifest_bytes(
@@ -535,7 +535,7 @@ fn a_session_tombstoned_facet_edge_stops_authorizing() -> Result<()> {
 
 #[test]
 fn scoped_read_context_pack_drops_neighbors_reached_only_from_filtered_results() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let (_tmp, vault) = super::support::temp_vault_with_manifest();
     let facet = test_id(0x6E);
     put_policy_manifest_bytes(
         &vault,
@@ -727,7 +727,7 @@ fn scoped_read_edges_out_scrubs_denied_sources_and_targets() -> Result<()> {
 
 #[test]
 fn l2_prefix_uses_the_scoped_reader_before_cache_lookup() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let (_tmp, vault) = super::support::temp_vault_with_manifest();
     let subject = test_id(0x21);
     let claim_id = test_id(0x33);
     put_text_entity(
@@ -770,7 +770,7 @@ fn l2_prefix_uses_the_scoped_reader_before_cache_lookup() -> Result<()> {
 
 #[test]
 fn scoped_receipts_count_no_row_the_grant_refuses_and_refresh_point_authority() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let (_tmp, vault) = super::support::temp_vault_with_manifest();
     let weak_id = test_id(0x51);
     let strong_id = test_id(0x52);
     let mut weak = source_trust_claim(ClaimSource::UserStated);
@@ -875,6 +875,37 @@ fn graph_read_receipts_clamp_nonclaim_types_and_include_unnarrowed_reads() -> Re
     assert_eq!(complete.value.unwrap()[0].target, target);
     assert_eq!(complete.receipt.suppressed_count, 0);
     assert!(complete.receipt.replan_hint.is_empty());
+    Ok(())
+}
+
+/// Review #9577 round 2 P1: a withheld peer two edges reach is one withheld
+/// row to the edge receipt, not one per edge.
+#[test]
+fn edges_out_counts_a_withheld_peer_once_across_its_edges() -> Result<()> {
+    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_TURN};
+    let (_tmp, vault) = temp_vault();
+    let source = test_id(0x74);
+    let target = test_id(0x75);
+    vault.put_entity(&source, ENTITY_TYPE_TURN, test_time(1), 1, b"source")?;
+    vault.put_entity(&target, ENTITY_TYPE_ASSET, test_time(1), 1, b"target")?;
+    vault.put_edge(&source, EdgeKind::Supports, &target, 0.7)?;
+    vault.put_edge(&source, EdgeKind::Mentions, &target, 0.5)?;
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x76),
+        &encode_policy_manifest(vec![core_read_scoped_grant_entry(
+            "graph-reader",
+            Value::Map(vec![(
+                Value::from("entity_types"),
+                Value::Array(vec![Value::from(ENTITY_TYPE_TURN)]),
+            )]),
+        )]),
+    )?;
+    let edges = vault
+        .scoped_read(ScopedReadActorKey::new("graph-reader").unwrap())
+        .edges_out(&source)?;
+    assert!(edges.value.unwrap().is_empty());
+    assert_eq!(edges.receipt.suppressed_count, 1);
     Ok(())
 }
 

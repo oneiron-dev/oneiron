@@ -68,6 +68,8 @@ mod highway;
 mod highway_accept;
 mod highway_block;
 mod highway_post;
+#[cfg(oneiron_test_support)]
+pub(crate) use highway_post::post_request_digest_for_test;
 mod highway_redo;
 mod highway_report;
 pub(crate) mod highway_runner;
@@ -99,6 +101,10 @@ mod project_ask;
 mod project_tradeoff;
 mod proposal_create;
 mod query_facade;
+#[cfg(test)]
+pub(crate) use query_facade::set_before_ack_writer_hook;
+#[cfg(test)]
+pub(crate) use query_facade::set_between_ack_reads_hook;
 mod rate_limit;
 mod reconciliation;
 pub(crate) use reconciliation::REPO_RECONCILIATION_TASK_HELD;
@@ -120,6 +126,7 @@ mod runner_done;
 mod scheduling;
 pub(crate) mod setting_keys;
 pub(crate) mod settlement_anchor;
+pub(crate) mod speaker_entry_index;
 mod subproject;
 mod symbol_lease;
 mod task_actor;
@@ -130,6 +137,8 @@ mod task_continuation;
 mod terminal_state;
 mod training_offer_ask;
 mod training_swap_ask;
+#[cfg(oneiron_test_support)]
+pub(crate) use training_swap_ask::swap_question_digest_for_test;
 mod verb_kind;
 mod watch_task;
 pub(crate) use watch_task::{settle_watch_task_in_txn, tick_due_at_in_txn};
@@ -236,7 +245,7 @@ pub(crate) use create_validation::{
 pub(crate) use rate_limit::task_create_owner;
 pub(crate) use task_continuation::{
     FailedTaskContinuation, TaskContinuationOutcome, continue_failed_task_in_txn,
-    task_settled_at_in,
+    task_settlement_in,
 };
 
 /// The objectives a run realizing `task` confesses against (OF-544): its

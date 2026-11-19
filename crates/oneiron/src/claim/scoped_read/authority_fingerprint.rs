@@ -401,6 +401,15 @@ impl ScopedReadActorKey {
             hasher.update(KEY_FINGERPRINT_HOME_UNNAMED);
             key_fold_id(&mut hasher, self.standing_room);
         }
+        // Then a key a saved lane's basis took the owner's floor from, which
+        // proves that owner's binding at each read (FIX
+        // SAVED-LANE-MEET-DROPS-OWNER-LIVENESS).
+        if self.vault_owner_ref().is_none()
+            && let Some(owner) = self.owner_binding_ref()
+        {
+            hasher.update(b"withdrawn_floor_owner");
+            key_fold_id(&mut hasher, Some(owner));
+        }
         *hasher.finalize().as_bytes()
     }
 }

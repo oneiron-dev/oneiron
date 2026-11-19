@@ -158,6 +158,7 @@ fn enroll(
                 &encryption_key,
             ))
             .to_bytes(),
+        restored_from: None,
     };
     vault.enroll_machine(owner, ActSurface::ThisInstall, &request, role, None)?;
     Ok((machine, key))

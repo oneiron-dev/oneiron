@@ -61,6 +61,8 @@ fn test_vault() -> (tempfile::TempDir, Vault) {
     cfg.embedding_model = None;
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), cfg).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
     (dir, vault)
 }
 

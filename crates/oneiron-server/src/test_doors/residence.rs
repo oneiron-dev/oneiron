@@ -54,7 +54,10 @@ pub fn media_vectors_reply(
         method: "residence.media_vectors".to_owned(),
         params,
     };
-    let reply = crate::livequery::residence_rpc(
+    // The release basis is the socket loop's recheck before a queued selector
+    // answer leaves; this door answers the reply at once, as the wire would
+    // with the basis still standing.
+    let (reply, _release_basis) = crate::livequery::residence_rpc(
         server, &auth, peer, request, &mut None, &mut None, &mut None,
     )
     .map_err(|error| anyhow::anyhow!("rpc refused: {error:?}"))?;

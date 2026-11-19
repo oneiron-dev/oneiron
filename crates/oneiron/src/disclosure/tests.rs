@@ -379,7 +379,7 @@ fn mirror_write_door_refuses_predicates_outside_the_disclosure_family() -> Resul
     let claim_id = disclosure_tier_claim_id(&subject)?;
 
     for predicate in ["profile.hobby", "event.headcount", "voice_print.status"] {
-        let body = ClaimBody::new(
+        let mut body = ClaimBody::new(
             predicate,
             ClaimSubject::Entity(subject),
             Value::from("smuggled"),
@@ -387,6 +387,7 @@ fn mirror_write_door_refuses_predicates_outside_the_disclosure_family() -> Resul
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )?;
+        crate::test_util::stamp_vault_default_facet(&vault, &mut body);
         let mut wtxn = vault.store.env.write_txn()?;
         let err = vault
             .put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &body, 100)
@@ -396,7 +397,7 @@ fn mirror_write_door_refuses_predicates_outside_the_disclosure_family() -> Resul
     }
 
     // The family's own predicates still ride it (the door stays usable).
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         PREDICATE_DISCLOSURE_TIER,
         ClaimSubject::Entity(subject),
         Value::from(DISCLOSURE_TIER_VALUE_TIER_A),
@@ -404,6 +405,7 @@ fn mirror_write_door_refuses_predicates_outside_the_disclosure_family() -> Resul
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )?;
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     let mut wtxn = vault.store.env.write_txn()?;
     vault.put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &body, 100)?;
     wtxn.commit()?;
@@ -421,7 +423,7 @@ fn clear_tier_a_leaves_a_foreign_claim_squatting_the_mirror_id_untouched() -> Re
     // door. clear_disclosure_tier_a must never forward that body into the
     // gate-exempt door.
     let claim_id = disclosure_tier_claim_id(&marked)?;
-    let squatter = ClaimBody::new(
+    let mut squatter = ClaimBody::new(
         "profile.hobby",
         ClaimSubject::Entity(marked),
         Value::from("smuggled through the mirror id"),
@@ -429,6 +431,7 @@ fn clear_tier_a_leaves_a_foreign_claim_squatting_the_mirror_id_untouched() -> Re
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )?;
+    crate::test_util::stamp_vault_default_facet(&vault, &mut squatter);
     vault.put_claim(&claim_id, &squatter, TimeRange { start: 1, end: 1 }, 1)?;
 
     vault.clear_disclosure_tier_a(&marked, 200)?;

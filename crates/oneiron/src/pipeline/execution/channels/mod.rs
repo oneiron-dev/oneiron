@@ -434,6 +434,10 @@ impl PipelineBuilder<'_> {
                     // ARCH-0039 Layer 2: seed specificity applies ONLY to
                     // search_ppr — seeds are weighted 1/ln(1 + passage_count)
                     // instead of uniform 1/n.
+                    // The walk alone, for `oneiron-bench ppr-walk-share`
+                    // (UNBUILT3-06): a span no subscriber listens to costs a
+                    // level check and changes no output.
+                    let _walk = tracing::trace_span!("ppr_search_walk").entered();
                     match pipeline_ppr_visibility(self, filter_config, &claim_gate) {
                         Some(visibility) => {
                             crate::ppr::ppr_query_scoped_in_txn_with_diagnostics_and_deadline(

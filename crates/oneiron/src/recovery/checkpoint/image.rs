@@ -73,6 +73,24 @@ impl CheckpointImage {
             rows.retain(|(key, _)| !crate::identity::is_machine_identity_row(key));
         }
     }
+
+    /// [`Self::drop_machine_identity`] on a vault the owner roots, and the
+    /// mark that the install it lands on was born of a restore of the image
+    /// `checkpoint_id` names (row RESTORED-COPIES-ENROL-EACH-OTHER): its
+    /// enrolment names the image, and it is not a machine of the vault until
+    /// a joined machine joins it. A managed vault's host root enrols the
+    /// node its own restores, wakes and migrates land
+    /// ([`Self::drop_machine_identity`] alone; RESTORED-COPIES-JOIN-SCOPE =
+    /// A); a copy beside a live vault is marked whoever roots it.
+    pub(super) fn drop_machine_identity_restored(&mut self, checkpoint_id: &str) -> Result<()> {
+        let image = blake3::Hash::from_hex(checkpoint_id).map_err(|_| codec_error())?;
+        self.drop_machine_identity();
+        let rows = self.databases.entry("sync_state".to_owned()).or_default();
+        let key = crate::side_table::IDENTITY_RESTORED_FROM.prefix;
+        let at = rows.partition_point(|(row, _)| row.as_slice() < key);
+        rows.insert(at, (key.to_vec(), image.as_bytes().to_vec()));
+        Ok(())
+    }
 }
 
 /// Opens one sealed artifact with `key` and structurally checks its image;

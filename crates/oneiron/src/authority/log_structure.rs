@@ -45,8 +45,12 @@ pub(crate) struct AuthorityStructure {
     /// The install keys only other anchors' revisions named. Such a key
     /// signs as a machine key does, but as a stranger ([`Self::is_stranger`]).
     stranger_keys: BTreeSet<(crate::EntityId, AuthorityKey)>,
-    /// The machines a filed removal names: removal is terminal, so a
-    /// frontier join one of them carries is a stranger's (FIX 7908).
+    /// The machines a removal filed as this install's own names (a slip
+    /// issuer's or an own anchor's mark, or an answer an own carrier key
+    /// signed): removal is terminal, so a frontier join one of them carries
+    /// is a stranger's (FIX 7908). A stranger anchor's removal mark removes
+    /// nothing here, as the fold reads a foreign anchor's chains only under
+    /// the pin (FIX [STRANGER-REMOVED-MARK-GLOBAL]).
     removed: BTreeSet<crate::EntityId>,
     /// The owner anchors a root record named, each signed by its own anchor
     /// alone (world privacy P6b). An anchor signs only what the fold's anchor
@@ -281,6 +285,16 @@ pub(super) struct StructureBuilder<'a> {
     /// has not yet woken the answers they carry with: the fixed point that
     /// makes a carrier-approved key usable downstream in any batch order.
     woken: Vec<AuthorityKey>,
+    /// The owner answers [`Self::file_profile`] took while their carrier's
+    /// install key stood as a stranger's, under that key. Once a slip
+    /// issuer's or an own anchor's revision takes the key as own,
+    /// [`Self::settle`] files them again as own, so a removal one of them
+    /// carries counts in any row order (REVIEW-9555 P1).
+    stranger_answers: BTreeMap<AuthorityKey, Vec<&'a AuthorityLogEntry>>,
+    /// The install keys [`Self::file_profile`] took as own after they stood
+    /// as a stranger's, whose answers [`Self::settle`] has not yet filed
+    /// again.
+    promoted: Vec<AuthorityKey>,
     /// The grants [`Self::settle`] made since the caller last took them.
     pub(super) grown: Vec<Grant>,
 }
@@ -414,6 +428,10 @@ impl<'a> StructureBuilder<'a> {
                 for entry in self.profiles.remove(&key).unwrap_or_default() {
                     self.file_profile(entry);
                 }
+            } else if let Some(key) = self.promoted.pop() {
+                for entry in self.stranger_answers.remove(&key).unwrap_or_default() {
+                    self.file_profile(entry);
+                }
             } else {
                 break;
             }
@@ -457,7 +475,10 @@ impl<'a> StructureBuilder<'a> {
     /// install's own, or files it under its signer. An owner answer is
     /// taken when its carrier's install key signed it, alone or beside one
     /// owner key's proof that the fold judges (row CARRIER-OWNER-PROOF), as
-    /// its carrier's key stands: own, or a stranger's (mesh PR1b).
+    /// its carrier's key stands: own, or a stranger's (mesh PR1b). Only a
+    /// revision taken as own files its removal (FIX
+    /// [STRANGER-REMOVED-MARK-GLOBAL]). An answer taken as a stranger's is
+    /// filed again once its carrier's key is taken as own (REVIEW-9555 P1).
     fn file_profile(&mut self, entry: &'a AuthorityLogEntry) {
         let AuthorityOp::MachineProfile(profile) = &entry.op else {
             return;
@@ -485,13 +506,21 @@ impl<'a> StructureBuilder<'a> {
         if verify_entry_signatures(entry).is_err() {
             return;
         }
-        if profile.role == MachineRole::Removed {
+        if own && profile.role == MachineRole::Removed {
             self.structure.removed.insert(profile.machine);
+        }
+        if !own && profile.carrier.is_some() {
+            self.stranger_answers
+                .entry(signer.clone())
+                .or_default()
+                .push(entry);
         }
         let key = (profile.machine, AuthorityKey::Ed25519(profile.machine_key));
         let vouched = self.structure.vouching_key(&key);
         if own {
-            self.structure.stranger_keys.remove(&key);
+            if self.structure.stranger_keys.remove(&key) {
+                self.promoted.push(key.1.clone());
+            }
             self.structure.machine_keys.insert(key.clone());
         } else if !self.structure.machine_keys.contains(&key) {
             self.structure.stranger_keys.insert(key.clone());

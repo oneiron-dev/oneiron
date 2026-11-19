@@ -144,6 +144,17 @@ fn scoped_recall_never_renders_an_unreadable_edge_neighbor() {
             learned_at: None,
         })
         .unwrap();
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &EntityId::from_bytes([0x74; 16]).unwrap(),
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            test_time(1),
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let mut message = witness_message(0, WitnessAuthor::User, "private edge neighbor payload");
     message.metadata = Some(serde_json::json!({
         "rel": EntityId::from_bytes([0x74; 16]).unwrap().to_hex()
@@ -240,6 +251,18 @@ fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
     )
     .unwrap();
     let hidden_space = EntityId::from_bytes([0x7c; 16]).unwrap();
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A). The [0x68; 16] space above is already minted by
+    // the shared fixture in this vault.
+    vault
+        .put_entity(
+            &hidden_space,
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            test_time(1),
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let mut message = witness_message(0, WitnessAuthor::User, "denied provenance body");
     message.metadata = Some(serde_json::json!({"rel": hidden_space.to_hex()}));
     let receipt = facade_for(&vault, owner)
