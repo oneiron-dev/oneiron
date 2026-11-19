@@ -166,7 +166,21 @@ fn stamped_receipt_version_as(
     else {
         panic!("a leased attempt completes exactly once");
     };
-    attempt_pack_receipt_id(&attempt.id)
+    let receipt_id = attempt_pack_receipt_id(&attempt.id);
+    // The reliability projector mints numerical claims only for anchored outcomes
+    // (skill_reliability/projector.rs:535-548): stamp the harness's held-out score
+    // beside the executor revision, so a routed defect moves the whole-ledger
+    // posterior the dev-partition fixture reads below.
+    let mut receipt = crate::receipt::attempt_pack_receipt(&vault, &receipt_id)
+        .expect("read stamped pack receipt")
+        .expect("stamped pack receipt");
+    receipt.fields.insert(
+        crate::skill_reliability::FIELD_SKILL_LEARNING_ANCHOR.to_owned(),
+        serde_json::to_string(&crate::learning::Anchor::HeldOut).expect("anchor encodes"),
+    );
+    crate::receipt::overwrite_attempt_pack_receipt_for_test(&vault, &receipt)
+        .expect("stamp fixture performance anchor");
+    receipt_id
 }
 
 /// Attributes SK-04 skill DEFECTS until the DEV partition holds `count` more of

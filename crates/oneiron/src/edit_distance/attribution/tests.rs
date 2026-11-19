@@ -881,9 +881,12 @@ fn a_withdrawn_or_rejoined_amendment_leaves_no_stale_loss() -> Result<()> {
     )?;
     judge_amendment(&vault, receipt)?.expect("a preference routes");
     assert_eq!(project_amendment_reliability(&vault)?, vec![skill]);
-    assert_eq!(
-        arm_posterior(&vault, &skill)?,
-        (prior.alpha, prior.beta),
+    // Withdrawing the sole observation retracts its head
+    // (skill_reliability/projector.rs:609-616, learning/project.rs:409-412):
+    // no measured head remains, so the arm reads None.
+    assert!(
+        crate::skill_reliability::skill_reliability_posterior_for_executor(&vault, &skill, MODEL)?
+            .is_none(),
         "the withdrawn loss is gone, not kept as imported history"
     );
     Ok(())

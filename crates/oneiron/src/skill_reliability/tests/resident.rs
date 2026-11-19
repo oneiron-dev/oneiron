@@ -137,8 +137,13 @@ fn version_bandit_ranks_only_one_residents_forks_and_own_receipts() -> Result<()
         27,
     )?;
     assert_eq!(loaded.record.version, "1");
+    // The typed dispatch freezes one project/type cell for every receipt; the
+    // ranking must read that cell, not the vault query (see
+    // reliability_query_for_receipt).
+    let mut query_receipt = String::new();
     for at in 30..38 {
         let receipt = stamped_resident_receipt(&vault, &a, &a_old)?;
+        query_receipt.clone_from(&receipt);
         assert!(
             record_attribution_evidence(
                 &vault,
@@ -163,7 +168,7 @@ fn version_bandit_ranks_only_one_residents_forks_and_own_receipts() -> Result<()
         &a,
         &[a_old, a_new],
         "fixture/model@1",
-        &reliability_query(),
+        &reliability_query_for_receipt(&vault, &query_receipt),
     )?;
     assert_eq!(ranked[0].0, a_new);
     assert!(ranked[0].1 > ranked[1].1);
@@ -215,7 +220,7 @@ fn version_bandit_ranks_only_one_residents_forks_and_own_receipts() -> Result<()
             "resident-selected",
             leased.attempt_count,
             "fixture/model@1",
-            &reliability_query(),
+            &reliability_query_for_receipt(&vault, &query_receipt),
             40,
         )?
         .expect("candidate");
