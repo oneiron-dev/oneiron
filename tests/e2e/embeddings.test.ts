@@ -262,7 +262,7 @@ suite.test(test, "EMBEDDINGS-01", "First-run embedder choice should work", async
     documentStep("primary", "first-run-document", data, data.firstRun.text, data.firstRun.vector),
     ...startup("primary", "restart", data, true),
   ];
-  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-01", steps: [
+  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-01", origins: ["refused"], steps: [
     ...steps, ...backgroundFills("primary", data.space.modelKey, [0, 0, 0, 1], steps),
   ] });
   const engine = await startEndpointEngine("EMBEDDINGS-01-endpoint", data, `${providers.urls.primary!}/v1`);
@@ -283,13 +283,15 @@ suite.test(test, "EMBEDDINGS-01", "First-run embedder choice should work", async
   const denied = await engine.cli.run(["init", deniedVault, "--config", deniedConfig,
     "--oneironer", "none", "--embedder", "endpoint",
     "--embedder-endpoint", "https://no-egress.example.invalid/v1",
-    "--embedder-fallback-endpoint", `${providers.urls.primary!}/v1`,
+    // The refused init's fallback is an origin with no step: any call there is a provider violation.
+    "--embedder-fallback-endpoint", `${providers.urls.refused!}/v1`,
     "--embedder-model-key", data.space.modelKey, "--embedder-model-id", data.space.modelId,
     "--dimensions", String(data.space.dimensions)]);
   expect(denied.exitCode).not.toBe(0);
   expect(await Bun.file(deniedConfig).exists()).toBe(false);
-  // The serving engine may go on filling its own rows; the refused init sends nothing.
-  expect(providers.seenFixtureCalls.slice(sent).every(call => call.fixtureId === `primary-${BACKGROUND_FILL}`)).toBe(true);
+  // The serving engine goes on with its standing calls (fills of its own rows, a model listing on every idle
+  // pass); the refused init sends nothing, so every later call is a standing one on the serving origin.
+  expect(providers.seenFixtureCalls.slice(sent).every(call => call.origin === "primary" && call.standing === true)).toBe(true);
   await engine.artifacts.json("providers.json", providers.seenFixtureCalls);
   // No local model is required or downloaded: this flow selects none/endpoint.
 });
@@ -414,6 +416,14 @@ inputs = ["text"]
   expect(providers.seenFixtureCalls.slice(beforeWrongRevision).every(call => call.fixtureId === `primary-${BACKGROUND_FILL}`)).toBe(true);
   await engine.restart();
   await filled(engine.client, vectors.incumbentQuery, swap.targetTurn);
+  // A probe put by hand names as its family the live row its query was written from (SpaceProbe::family, FIX 9831):
+  // the put refuses a family that is no stored row (400), and the check reads one paired difference per family and
+  // needs SPACE_PROBE_MIN_FAMILIES of them. So each family id is witnessed as its own source turn. Its text shares no
+  // word with any query, and its fills take the standing vector [0, 0, 0, 1], which no query vector scores, so the
+  // target turn stays each probe's first hit in every space that ranks it first.
+  for (const [index, probe] of swap.probes.entries()) {
+    await witness(engine.client, data, `Owner probe source note ${String.fromCharCode(65 + index)}.`, { turn: probe.family });
+  }
 
   for (const id of [swap.bad, swap.good]) await engine.client.call("vault.embedding_spaces.declare", {
     id, dimensions: data.space.dimensions, accepts: ["text"], query_towers: ["text"], evidence: { floor: 0.7, strong: 0.9 },
