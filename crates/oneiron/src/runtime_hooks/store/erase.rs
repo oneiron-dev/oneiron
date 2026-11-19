@@ -220,14 +220,6 @@ pub(in crate::runtime_hooks) fn rows_named_by_fact(input: &str) -> Vec<EntityId>
     rows.into_iter().collect()
 }
 
-/// The rows `value` names in any string or key ([`named_ids`]): what a
-/// verb hook's projection asks of a read result before it shows it whole.
-pub(in crate::runtime_hooks) fn rows_named_in(value: &Value) -> BTreeSet<EntityId> {
-    let mut rows = BTreeSet::new();
-    named_ids(value, &mut rows);
-    rows
-}
-
 /// Adds to `ids` each id the JSON `text` can spell in a string or key once
 /// decoded ([`hex_ids_in`]): a run of 32 lowercase hex digits, or the last
 /// 32 of a longer run, as an escape such as `\b` or `\u001f` lengthens a

@@ -13,6 +13,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::claim::{PointRead, ScopedRead};
+use crate::receipt::ReceiptKind;
 use crate::runtime_hooks::read::grant_view::shows_row;
 use crate::runtime_hooks::{HookGrant, filter, grant, store};
 use crate::skill_hub::pack_catalog::PackHookBinding;
@@ -20,6 +21,11 @@ use crate::{EntityId, Error, Result};
 
 use super::super::{VerbCallScope, VerbDomain, served};
 use super::{Chain, phase_token, session};
+
+/// The field a read result gives its narrowing receipt
+/// ([`crate::claim::ScopedReadResult`]): the read's own metadata, no row's
+/// content.
+const NARROWING_FIELD: &str = "narrowing";
 
 /// What a value withheld from a hook's input reads as there (CALLS, FIX
 /// 10084): an object naming why, in the place the value had, so paths stay
@@ -141,10 +147,11 @@ struct Unattributed {
     /// It showed some.
     shown: bool,
     /// Some of it names no row this vault holds either: a host verb's free
-    /// text, a pack item whose refs did not resolve, or a read result that
-    /// holds a value and names no held row by its id. Nothing tells which
-    /// rows a body could copy from it into its receipt, so no screened
-    /// reader reads that receipt (VERB-HOOK-RECEIPT-UNNAMED-SOURCE-PROVENANCE).
+    /// text, a pack item whose refs did not resolve, or a read result with a
+    /// value outside a row object that names its held rows
+    /// ([`Chain::result_rows`]). Nothing tells which rows a body could copy
+    /// from it into its receipt, so no screened reader reads that receipt
+    /// (VERB-HOOK-RECEIPT-UNNAMED-SOURCE-PROVENANCE).
     unnamed: bool,
 }
 
@@ -287,10 +294,13 @@ impl Chain<'_> {
             if narrows {
                 return Ok(withheld());
             }
-            if holds_a_value(&shown) && !self.names_a_held_row(&shown)? {
+            unattributed.shown = true;
+            let mut rows = Vec::new();
+            if self.result_rows(&shown, &mut rows)? {
+                dependencies.extend(rows);
+            } else {
                 unattributed.show_unnamed();
             }
-            unattributed.shown = true;
             return Ok(shown);
         }
         let mut every = true;
@@ -317,17 +327,62 @@ impl Chain<'_> {
         Ok(shown)
     }
 
-    /// Whether `value` names a row this vault holds by its 32-hex id, as
-    /// the receipt screen counts the rows a call named
-    /// ([`store::rows_named_in`]).
-    fn names_a_held_row(&self, value: &Value) -> Result<bool> {
+    /// Whether every value in a read's `result` lies in a row object, as a
+    /// read's row views name their own row (a claim view's `claim_ref`); the
+    /// rows they name go to `rows` (review round 1 of #9643). A row object
+    /// is an object whose `id`, `*_id` or `*_ref` fields hold the 32-hex id
+    /// of a row this vault holds; its whole value counts as those rows'. Any
+    /// other string, number or boolean names no row: a count, a bare list of
+    /// names, an id-shaped string alone. A `narrowing` field is the read's
+    /// own receipt ([`crate::claim::ScopedReadResult`]).
+    fn result_rows(&self, result: &Value, rows: &mut Vec<EntityId>) -> Result<bool> {
         let rtxn = self.vault.store.env.read_txn()?;
-        for id in store::rows_named_in(value) {
-            if self.vault.entity_header_in_txn(&rtxn, &id)?.is_some() {
-                return Ok(true);
+        self.rows_in(&rtxn, result, rows)
+    }
+
+    /// [`Self::result_rows`] for `value`, read in `rtxn`.
+    fn rows_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        value: &Value,
+        rows: &mut Vec<EntityId>,
+    ) -> Result<bool> {
+        match value {
+            Value::Null => Ok(true),
+            Value::Bool(_) | Value::Number(_) | Value::String(_) => Ok(false),
+            Value::Array(items) => {
+                for item in items {
+                    if !self.rows_in(rtxn, item, rows)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            Value::Object(fields) => {
+                let mut held = Vec::new();
+                let named = fields
+                    .iter()
+                    .filter(|(key, _)| is_row_ref_key(key))
+                    .filter_map(|(_, field)| field.as_str())
+                    .filter(|text| text.len() == 32)
+                    .filter_map(|text| EntityId::from_hex(text).ok());
+                for id in named {
+                    if self.vault.entity_header_in_txn(rtxn, &id)?.is_some() {
+                        held.push(id);
+                    }
+                }
+                if !held.is_empty() {
+                    rows.extend(held);
+                    return Ok(true);
+                }
+                for (key, field) in fields {
+                    if key != NARROWING_FIELD && !self.rows_in(rtxn, field, rows)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
             }
         }
-        Ok(false)
     }
 
     /// The rows a pack item's content comes from: its own and each message
@@ -349,8 +404,12 @@ impl Chain<'_> {
 
     /// The receipts the caller's tail holds, as the hook sees them: a room
     /// Hook receipt only while every one of its source rows is shown (FIX
-    /// 5429); a receipt about a claim only while that claim is shown, read
-    /// under the caller's own key; one about no claim as it is.
+    /// 5429); a Hook receipt of base's family only while every row its run
+    /// stood on is shown, and never when those rows are unknown, so no hook
+    /// copies a note the receipt screen withholds into a receipt of its own
+    /// (review round 1 of #9643); a receipt about a claim only while that
+    /// claim is shown, read under the caller's own key; one about no claim
+    /// as it is.
     fn project_tail(&self, seen: &HookView<'_>, dependencies: &mut Vec<EntityId>) -> Result<Value> {
         let mut tail = self.tail.clone();
         if let Some(receipts) = tail.as_array_mut() {
@@ -361,6 +420,18 @@ impl Chain<'_> {
                         continue;
                     }
                     dependencies.extend_from_slice(sources);
+                } else if receipt.get("kind").and_then(Value::as_str)
+                    == Some(ReceiptKind::Hook.as_str())
+                {
+                    match self.hook_receipt_sources(receipt)? {
+                        Some(sources) if seen.shows_all(Some(sources.as_slice()))? => {
+                            dependencies.extend(sources);
+                        }
+                        _ => {
+                            *receipt = withheld();
+                            continue;
+                        }
+                    }
                 }
                 let Some(claim) = receipt.get("claim_ref").and_then(Value::as_str) else {
                     continue;
@@ -372,6 +443,16 @@ impl Chain<'_> {
             }
         }
         Ok(tail)
+    }
+
+    /// The rows a Hook receipt of base's family stands on, as the receipt
+    /// screen reads them ([`store::hook_run_read_rows`]); `None` when they
+    /// are unknown or it names no run.
+    fn hook_receipt_sources(&self, receipt: &Value) -> Result<Option<Vec<EntityId>>> {
+        let Some(run) = receipt.pointer("/fields/run_key").and_then(Value::as_str) else {
+            return Ok(None);
+        };
+        store::hook_run_read_rows(self.vault, run)
     }
 
     /// The source rows of `receipt` when it is one of the room's own Hook
@@ -475,14 +556,8 @@ fn withhold_at(node: &mut Value, path: &[&str]) {
     }
 }
 
-/// Whether `value` holds a string, number or boolean anywhere: content, as
-/// a count or a text is. Keys, nulls and empty arrays or objects alone hold
-/// none (a read that found nothing).
-fn holds_a_value(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(_) | Value::Number(_) | Value::String(_) => true,
-        Value::Array(items) => items.iter().any(holds_a_value),
-        Value::Object(fields) => fields.values().any(holds_a_value),
-    }
+/// Whether a read result's field `key` names a row by its id, as a row view
+/// names its own: `id`, `*_id` or `*_ref` ([`Chain::result_rows`]).
+fn is_row_ref_key(key: &str) -> bool {
+    key == "id" || key.ends_with("_id") || key.ends_with("_ref")
 }

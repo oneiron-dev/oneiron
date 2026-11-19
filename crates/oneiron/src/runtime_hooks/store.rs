@@ -29,9 +29,9 @@ pub(super) use cursor::{
 };
 pub(super) use erase::{
     ErasedIds, args_erased, dependencies_erased_in_txn, erased_by_args_in_txn,
-    retire_kept_runs_in_txn, rows_named_by_call, rows_named_by_fact, rows_named_in,
-    scrub_erased_memo_in_txn, scrub_erased_verb_run_in_txn, scrub_intent_payload,
-    scrub_memo_payload, scrub_receipt_payload, scrub_verb_payload, source_erased_in_txn,
+    retire_kept_runs_in_txn, rows_named_by_call, rows_named_by_fact, scrub_erased_memo_in_txn,
+    scrub_erased_verb_run_in_txn, scrub_intent_payload, scrub_memo_payload, scrub_receipt_payload,
+    scrub_verb_payload, source_erased_in_txn,
 };
 pub(crate) use erase::{
     forget_scrubbed_source_in_txn, scrub_erased_hook_sources, scrub_erased_in_session_stores,
@@ -552,11 +552,12 @@ pub(super) fn receipt_id(key: &RunKey) -> String {
 /// `reason`. `None` when the key names no kept run, a fact run heard a
 /// verdict without its evidence rows, or a verb run's input showed content
 /// that names no row this vault holds: a host verb's free text, a pack item
-/// whose refs did not resolve, or a read result with a value and no held
-/// row id (VERB-HOOK-RECEIPT-UNNAMED-SOURCE-PROVENANCE; a run saved before
-/// that field, only the host's free text). The receipt family screens a
-/// Hook receipt on them for a caller off this device (FIX 1119) and for a
-/// credential-bound reader (HOOKS-04).
+/// whose refs did not resolve, or a read result with a value outside a row
+/// object that names its held rows (VERB-HOOK-RECEIPT-UNNAMED-SOURCE-PROVENANCE;
+/// a run saved before that field, only the host's free text). The receipt
+/// family screens a Hook receipt on them for a caller off this device (FIX
+/// 1119) and for a credential-bound reader (HOOKS-04); a verb hook's input
+/// tail on them too (review round 1 of #9643).
 pub(crate) fn hook_run_read_rows(vault: &Vault, run_key: &str) -> Result<Option<Vec<EntityId>>> {
     let rtxn = vault.store.env.read_txn()?;
     let holds =
