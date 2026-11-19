@@ -6,7 +6,9 @@
 //! and the answer sits there; one read in no facet stands at the vault
 //! default facet. Two such rows fold; two rows whose stored facets differ
 //! still refuse. Rows read in several facets meet at the lowest facet id
-//! (Engine ANSWER STANDING-ANSWER-FACET-PLACEMENT = A, 19 Nov 12:57).
+//! (Engine ANSWER STANDING-ANSWER-FACET-PLACEMENT = A, 19 Nov 12:57). When a
+//! room's facet set changes under an unchanged row, the next answer lands
+//! where the row is read now (review round 2 on #9582).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test graph_answer_source_facets`.
@@ -372,6 +374,50 @@ fn an_answer_on_rows_read_in_several_facets_lands_at_the_lowest() -> TestResult 
         fixture.answer_facet(&both)?,
         work.min(health),
         "an answer on rows read in two facets lands at the lower facet id"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_answer_lands_again_where_its_unchanged_row_is_read_now() -> TestResult {
+    let fixture = open()?;
+    let work = fixture.put_row(ENTITY_TYPE_FACET, "work")?;
+    let health = fixture.put_row(ENTITY_TYPE_FACET, "health")?;
+    // The project's slice facet sorts last, so the set's lowest facet is not
+    // the one the room keeps once the set is dropped.
+    let (slice, other) = (work.max(health), work.min(health));
+    let (project, room) = fixture.project_room(slice)?;
+    let signer = fixture.vault.owner_project_signer(&fixture.issuer)?;
+    set_room_facets(
+        &fixture.vault,
+        &fixture.owner_proof,
+        &signer,
+        project,
+        Some(BTreeSet::from([slice, other])),
+    )?;
+    let message = fixture.message_in_room(room, "The ward rota changes on Monday.")?;
+    let question = fixture.question(vec![message])?;
+
+    let shared = fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| format!("an answer on a room MESSAGE lands; it refused: {error}"))?;
+    assert_eq!(
+        fixture.answer_facet(&shared)?,
+        other,
+        "precondition: an answer on a row read in two facets lands at the lower"
+    );
+
+    set_room_facets(&fixture.vault, &fixture.owner_proof, &signer, project, None)?;
+    let narrowed = fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| {
+            format!("an answer on the unchanged MESSAGE lands again; it refused: {error}")
+        })?;
+    assert_eq!(
+        fixture.answer_facet(&narrowed)?,
+        slice,
+        "once the room reads only its slice facet, the answer on the unchanged MESSAGE lands \
+         there, not in the facet the earlier answer took"
     );
     Ok(())
 }
