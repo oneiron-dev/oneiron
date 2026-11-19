@@ -20,7 +20,7 @@ use crate::memory::{
 };
 use crate::setting::{
     SetSetting, SetSettingOutcome, SettingCaller, SettingCatalogueEntry, SettingListFilter,
-    SettingMode, SettingReader, SettingScope, SettingView,
+    SettingMode, SettingReadCaller, SettingScope, SettingView,
 };
 
 const GET: &str = "vault.settings.get";
@@ -151,8 +151,8 @@ fn no_request_owner() -> Option<AuthenticatedOwner> {
 /// (`request_owner`, as the host's owner doors prove one: a co-owner on their own full slip
 /// included) when that proof belongs to this vault and names the handle's own actor. `None` for
 /// any other caller, who then acts as its verified agent or is refused, as before. Each door
-/// still revalidates the proof it is given (a read with [`AuthenticatedOwner::revalidate`], a
-/// change inside its own transaction).
+/// still revalidates the proof it is given inside its own transaction: a read in the snapshot it
+/// reads ([`SettingReadCaller::Owner`]), a change in its write.
 fn owner_of(
     memory: &Memory<'_>,
     verb: &str,
@@ -168,18 +168,17 @@ fn owner_of(
         .filter(|owner| owner.actor_for_read(memory.vault()).ok() == Some(memory.actor()))
 }
 
-/// Who reads, through `memory`: the owner when its proof holds ([`owner_of`]), else its verified
-/// agent.
+/// Who reads, through `memory`: the owner ([`owner_of`]), whose proof the read revalidates in
+/// the snapshot it reads, else its verified agent.
 fn reader_of(
     memory: &Memory<'_>,
     verb: &str,
     request_owner: impl FnOnce() -> Option<AuthenticatedOwner>,
-) -> MemoryResult<SettingReader> {
+) -> MemoryResult<SettingReadCaller> {
     if let Some(owner) = owner_of(memory, verb, request_owner) {
-        owner.revalidate(memory.vault())?;
-        return Ok(SettingReader::Owner);
+        return Ok(SettingReadCaller::Owner(owner));
     }
-    agent_of(memory, verb).map(SettingReader::Actor)
+    agent_of(memory, verb).map(SettingReadCaller::Agent)
 }
 
 /// `vault.settings.get`: the value in force for one key, which row decided it, and its revision.
@@ -209,7 +208,7 @@ pub fn setting_get_with_request_owner(
     let reader = reader_of(memory, GET, request_owner)?;
     Ok(memory
         .vault()
-        .setting_view_for(reader, &input.key, input.item.as_deref(), &input.at)?)
+        .setting_view_for(&reader, &input.key, input.item.as_deref(), &input.at)?)
 }
 
 /// `vault.settings.list`: every catalogue key the caller may read, with its schema, default,
@@ -243,7 +242,7 @@ pub fn setting_list_with_request_owner(
         at: input.at,
     };
     Ok(SettingCatalogue {
-        keys: memory.vault().setting_catalogue_for(reader, &filter)?,
+        keys: memory.vault().setting_catalogue_for(&reader, &filter)?,
     })
 }
 
