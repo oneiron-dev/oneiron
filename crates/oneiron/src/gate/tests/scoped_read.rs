@@ -909,6 +909,87 @@ fn edges_out_counts_a_withheld_peer_once_across_its_edges() -> Result<()> {
     Ok(())
 }
 
+/// The TURN-only scoped grant the tree and neighborhood receipt tests read under.
+fn put_turn_only_reader_policy(vault: &crate::Vault, actor: &str) -> Result<()> {
+    put_policy_manifest_bytes(
+        vault,
+        test_id(0x7F),
+        &encode_policy_manifest(vec![core_read_scoped_grant_entry(
+            actor,
+            Value::Map(vec![(
+                Value::from("entity_types"),
+                Value::Array(vec![Value::from(crate::registry::ENTITY_TYPE_TURN)]),
+            )]),
+        )]),
+    )
+}
+
+/// FIX [SCOPED-READ-CHILD-TREE-RECEIPT-UNCOUNTED]: a child the `ChildOf` tree
+/// read withholds counts once in its receipt, and the row below it is never
+/// reached, so it does not count.
+#[test]
+fn child_of_tree_counts_a_withheld_child_once_and_nothing_below_it() -> Result<()> {
+    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_TURN};
+    let (_tmp, vault) = temp_vault();
+    let root = test_id(0x77);
+    let shown = test_id(0x78);
+    let withheld = test_id(0x79);
+    let below_withheld = test_id(0x7A);
+    vault.put_entity(&root, ENTITY_TYPE_TURN, test_time(1), 1, b"root")?;
+    vault.put_entity(&shown, ENTITY_TYPE_TURN, test_time(1), 1, b"shown")?;
+    vault.put_entity(&withheld, ENTITY_TYPE_ASSET, test_time(1), 1, b"withheld")?;
+    vault.put_entity(&below_withheld, ENTITY_TYPE_TURN, test_time(1), 1, b"below")?;
+    vault.put_edge(&shown, EdgeKind::ChildOf, &root, 1.0)?;
+    vault.put_edge(&withheld, EdgeKind::ChildOf, &root, 1.0)?;
+    vault.put_edge(&below_withheld, EdgeKind::ChildOf, &withheld, 1.0)?;
+    put_turn_only_reader_policy(&vault, "tree-reader")?;
+    let tree = vault
+        .scoped_read(ScopedReadActorKey::new("tree-reader").unwrap())
+        .child_of_tree_projected(
+            &root,
+            4,
+            |_| Ok::<_, crate::Error>(Some(())),
+            |_, nodes| {
+                Ok::<_, crate::Error>(
+                    nodes.map(|nodes| nodes.into_iter().map(|node| node.id).collect::<Vec<_>>()),
+                )
+            },
+        )?;
+    assert_eq!(tree.value, Some(vec![root, shown]));
+    assert_eq!(tree.receipt.suppressed_count, 1);
+    Ok(())
+}
+
+/// FIX [SCOPED-READ-CHILD-TREE-RECEIPT-UNCOUNTED], the same gap in the
+/// weighted neighborhood: a withheld peer two edges reach counts once.
+#[test]
+fn neighborhood_counts_a_withheld_peer_once_across_its_edges() -> Result<()> {
+    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_TURN};
+    let (_tmp, vault) = temp_vault();
+    let anchor = test_id(0x7B);
+    let shown = test_id(0x7C);
+    let withheld = test_id(0x7D);
+    vault.put_entity(&anchor, ENTITY_TYPE_TURN, test_time(1), 1, b"anchor")?;
+    vault.put_entity(&shown, ENTITY_TYPE_TURN, test_time(1), 1, b"shown")?;
+    vault.put_entity(&withheld, ENTITY_TYPE_ASSET, test_time(1), 1, b"withheld")?;
+    vault.put_edge(&anchor, EdgeKind::Supports, &shown, 0.7)?;
+    vault.put_edge(&anchor, EdgeKind::Supports, &withheld, 0.7)?;
+    vault.put_edge(&anchor, EdgeKind::Mentions, &withheld, 0.5)?;
+    put_turn_only_reader_policy(&vault, "graph-reader")?;
+    let neighborhood = vault
+        .scoped_read(ScopedReadActorKey::new("graph-reader").unwrap())
+        .neighborhood_projected(&anchor, None, None, 10, |_, neighbors| {
+            Ok::<_, crate::Error>(neighbors.map(|rows| {
+                rows.into_iter()
+                    .map(|row| row.edge.target)
+                    .collect::<Vec<_>>()
+            }))
+        })?;
+    assert_eq!(neighborhood.value, Some(vec![shown]));
+    assert_eq!(neighborhood.receipt.suppressed_count, 1);
+    Ok(())
+}
+
 #[test]
 fn stored_six_axis_scope_gates_real_claim_reads_and_preserves_mask_relevance() -> Result<()> {
     use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
