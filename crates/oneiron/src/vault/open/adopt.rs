@@ -18,6 +18,9 @@ impl Vault {
         options: OpenOptions,
     ) -> Result<Self> {
         validate_open_config(&config)?;
+        #[cfg(unix)]
+        crate::store::make_vault_root_all(path.as_ref())?;
+        #[cfg(not(unix))]
         std::fs::create_dir_all(path.as_ref())?;
         let canonical = path.as_ref().canonicalize()?;
         let lease = VaultWriterLease::acquire_after_owner_act(&canonical)?;
