@@ -36,7 +36,8 @@
 //!   back.
 //!
 //! Fix list row WHOLE-VAULT-IMPORT-HELD-ROW-CLOSED-AT-SOURCE-ABORTS (Engine
-//! ANSWER HELD-ROW-CLOSED-AT-SOURCE 20 Nov 05:23): the destination took the
+//! ANSWER HELD-ROW-CLOSED-AT-SOURCE 20 Nov 05:23; REVIEW-9652 round 2 P1 for
+//! the supersession): the destination took the
 //! link with the source's annotation and added nothing of its own; the
 //! source later closed that annotation. The later archive's cohort compared
 //! the held active row with the archived closed one and refused the whole
@@ -55,6 +56,11 @@
 //!   destination holds an active claim with the closed archived claim's id
 //!   and learned-at but another confidence; the import still refuses it as an
 //!   ID collision and rolls back.
+//! * `a_bare_archived_link_never_aborts_the_held_links_own_history`
+//!   (REVIEW-9652 round 2 P1): the source superseded its annotation and
+//!   purged the newer one, so its link is bare again with the superseded row
+//!   beside it; the destination annotated the link it holds. The import
+//!   completes, the link keeps its own stamp, and the archived row stays out.
 //!
 //! Red on main 584b44473513: the first test fails at the second import,
 //! refused with `ProvenancePrecedenceViolation`; the second test finds the
@@ -67,9 +73,12 @@
 //! last edge pass compared the stamps and refused the import (`import edge
 //! collides with different stored metadata`). The sixth test passes on main
 //! and is red at the round-1 head, which took any held claim on the link as
-//! unchanged. The seventh and eighth tests are red on main and at #9652's
+//! unchanged. The seventh and eighth tests are red on main and at the round-1
 //! head 51cd3e455f73, which refuse the later import as `archive provenance ID
-//! collision`; the ninth passes on both. The omission reason is read by its
+//! collision`; the ninth passes on both. The tenth is red on main and at
+//! the round-1 head 51cd3e455f73, which stage the bare archived link first
+//! and refuse it against the held link's stamp (`import edge collides with
+//! different stored metadata`). The omission reason is read by its
 //! debug name, as in
 //! `whole_vault_restore_same_as_links.rs`.
 //!
@@ -602,5 +611,42 @@ fn a_held_claim_the_source_closed_with_another_body_is_a_collision() {
         lifecycle(&dest, &shared),
         Some(ClaimLifecycleStatus::Active),
         "the import rolled back: the destination's claim is as it was"
+    );
+}
+
+#[test]
+fn a_bare_archived_link_never_aborts_the_held_links_own_history() {
+    let linked = linked_source();
+    let (_dir, dest) = destination_holding_the_link(&linked);
+    let own = annotate(&dest, linked.source, linked.target);
+    let archived = annotate(&linked.vault, linked.source, linked.target);
+    next_second();
+    let successor = annotate(&linked.vault, linked.source, linked.target);
+    linked
+        .vault
+        .delete_entity_with_options(
+            &successor,
+            oneiron::deletion::DeleteEntityOptions { purge: true },
+        )
+        .expect("the source purges its newer annotation");
+    assert_eq!(
+        lifecycle(&linked.vault, &archived),
+        Some(ClaimLifecycleStatus::Superseded),
+        "precondition: the source's older annotation stays superseded"
+    );
+    assert_eq!(
+        link_stamp(&linked.vault, &linked),
+        None,
+        "precondition: the source's link is bare again"
+    );
+    let bare_link_archive = export(&linked.vault);
+    let receipt = dest
+        .import_whole_vault_archive_from(Cursor::new(&bare_link_archive))
+        .expect("the archive with the bare link and its cohort imports");
+    assert_own_history_kept(&dest, &linked, &receipt, own, archived);
+    assert_eq!(
+        link_stamp(&dest, &linked),
+        Some(EdgeConfirmationStatus::Confirmed),
+        "the held link keeps its own stamp"
     );
 }
