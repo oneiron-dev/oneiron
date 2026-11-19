@@ -9,8 +9,8 @@
 use super::authority::TurnProgramAuthority;
 use super::resume::ProgramHold;
 use super::types::{
-    LandedTurnRef, OwedWakeHold, ProgramRecipePin, ProgramTrigger, TurnProgramArming,
-    TurnProgramAttemptStamp,
+    LandedTurnRef, OwedWakeHold, ProgramRecipePin, ProgramTrigger, TurnProgramAdmissionRecord,
+    TurnProgramArming, TurnProgramAttemptStamp, TurnProgramWake,
 };
 use super::{ADMISSION, ARM, ATTEMPT, DECIDED, DISARMED, WAKE};
 use crate::authority::{InvocationSlipBinding, VerifiedSlip};
@@ -327,15 +327,28 @@ pub(crate) fn disarm_kept_here(
     DISARMED.contains(vault, &txn, &(actor, registration))
 }
 
+/// The admission row a planted held program try names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HeldProgramAdmission {
+    /// The admission that queued the try as its program's root try, its wake
+    /// sealed for the stamp's actor, as an admitted wake leaves it.
+    Bound,
+    /// None: the stamp names an admission no row holds.
+    Absent,
+}
+
 /// Plants a Diverged-held turn-program attempt for release tests: a Dreamer
 /// attempt stamped as `actor`'s program try (class `actor_class`), held by
-/// the program runtime. Answers the attempt's hex, the hold's exact reason
-/// and its park time, as a release request names them. The planted try has
-/// no admission row, run or checkpoint: only what a Stop reads.
+/// the program runtime, naming the `admission` row. A bound admission's wake
+/// is sealed for `actor` as the in-process host's own caller. Answers the
+/// attempt's hex, the hold's exact reason and its park time, as a release
+/// request names them. The planted try has no run or checkpoint: only what
+/// a Stop reads.
 pub(crate) fn plant_held_program_attempt(
     vault: &Vault,
     actor: EntityId,
     actor_class: EdgeActorClass,
+    admission: HeldProgramAdmission,
 ) -> Result<(String, String, u64)> {
     let now = vault.now_recorded_at();
     let store = DreamerRunnerStore::new(vault);
@@ -352,13 +365,46 @@ pub(crate) fn plant_held_program_attempt(
     };
     let attempt = status.attempt.id;
     vault.with_write_txn_grouped(|txn| {
+        let admission = match admission {
+            HeldProgramAdmission::Bound => {
+                let wake = TurnProgramWake {
+                    registration: EntityId::now(),
+                    revision: [0; 32],
+                    authority: TurnProgramAuthority::native(actor, actor_class),
+                    turn: LandedTurnRef {
+                        turn: EntityId::now(),
+                        conversation: EntityId::now(),
+                        landed_at: now,
+                    },
+                    occurrence: None,
+                    held: None,
+                };
+                let id = wake.admission_id();
+                ADMISSION.put(
+                    vault,
+                    txn,
+                    &id,
+                    &TurnProgramAdmissionRecord {
+                        admission: id,
+                        wake,
+                        definition: None,
+                        receipt_id: [0; 16],
+                        attempt: Some(attempt),
+                        refused: None,
+                        decided_at: now,
+                    },
+                )?;
+                id
+            }
+            HeldProgramAdmission::Absent => [0; 32],
+        };
         ATTEMPT.put(
             vault,
             txn,
             &attempt,
             &TurnProgramAttemptStamp {
                 attempt_id: *attempt.as_bytes(),
-                admission: [0; 32],
+                admission,
                 actor,
                 actor_class: actor_class as u8,
                 receipt_id: [0; 16],
