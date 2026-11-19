@@ -35,6 +35,27 @@
 //!   the link beside it; the import refuses it as an ID collision and rolls
 //!   back.
 //!
+//! Fix list row WHOLE-VAULT-IMPORT-HELD-ROW-CLOSED-AT-SOURCE-ABORTS (Engine
+//! ANSWER HELD-ROW-CLOSED-AT-SOURCE 20 Nov 05:23): the destination took the
+//! link with the source's annotation and added nothing of its own; the
+//! source later closed that annotation. The later archive's cohort compared
+//! the held active row with the archived closed one and refused the whole
+//! import as an ID collision. Now the link follows the source, as it takes a
+//! newer annotation: the held row is closed through the writer's own close
+//! when it is exactly the archived row before the archive's close.
+//!
+//! * `a_held_annotation_the_source_superseded_follows_the_source`: the source
+//!   annotated the link again; the import completes, the held annotation is
+//!   superseded at the source's close time and the newer one is live.
+//! * `a_held_annotation_the_source_retracted_follows_the_source`: the source
+//!   retracted its annotation; the import completes, the held annotation is
+//!   retracted at the source's close time, and the link carries the
+//!   retracted stamp.
+//! * `a_held_claim_the_source_closed_with_another_body_is_a_collision`: the
+//!   destination holds an active claim with the closed archived claim's id
+//!   and learned-at but another confidence; the import still refuses it as an
+//!   ID collision and rolls back.
+//!
 //! Red on main 584b44473513: the first test fails at the second import,
 //! refused with `ProvenancePrecedenceViolation`; the second test finds the
 //! destination's annotation superseded by the archived one; the third test
@@ -46,7 +67,10 @@
 //! last edge pass compared the stamps and refused the import (`import edge
 //! collides with different stored metadata`). The sixth test passes on main
 //! and is red at the round-1 head, which took any held claim on the link as
-//! unchanged. The omission reason is read by its debug name, as in
+//! unchanged. The seventh and eighth tests are red on main and at #9652's
+//! head 51cd3e455f73, which refuse the later import as `archive provenance ID
+//! collision`; the ninth passes on both. The omission reason is read by its
+//! debug name, as in
 //! `whole_vault_restore_same_as_links.rs`.
 //!
 //! Vaults in tempdirs, every step through public doors. Each destination
@@ -417,5 +441,166 @@ fn a_held_claim_with_the_archived_id_and_another_body_is_a_collision() {
         lifecycle(&dest, &own),
         Some(ClaimLifecycleStatus::Active),
         "the import rolled back: the destination's own claim is as it was"
+    );
+}
+
+/// A destination that took the link with the source's annotation `archived`
+/// from the source's `annotated_archive`.
+fn destination_holding_the_annotation(
+    annotated_archive: &[u8],
+    archived: EntityId,
+) -> (tempfile::TempDir, Vault) {
+    let (dir, dest) = open_later_vault();
+    dest.import_whole_vault_archive_from(Cursor::new(annotated_archive))
+        .expect("the archive with the annotated link imports");
+    assert_eq!(
+        lifecycle(&dest, &archived),
+        Some(ClaimLifecycleStatus::Active),
+        "precondition: the destination holds the source's annotation"
+    );
+    (dir, dest)
+}
+
+/// The held annotation `closed` after the source's later archive imported:
+/// closed as the source closed it, at the same time, and the link stamped as
+/// the source's.
+fn assert_follows_the_source(
+    dest: &Vault,
+    linked: &Linked,
+    receipt: &WholeVaultImportReceipt,
+    closed: EntityId,
+    lifecycle_at_source: ClaimLifecycleStatus,
+) {
+    assert_eq!(
+        lifecycle(dest, &closed),
+        Some(lifecycle_at_source),
+        "the held annotation is closed as the source closed it"
+    );
+    let valid_to = |vault: &Vault| {
+        vault
+            .get_claim(&closed)
+            .expect("read the closed annotation")
+            .expect("the closed annotation is here")
+            .valid_to
+    };
+    assert_eq!(
+        valid_to(dest),
+        valid_to(&linked.vault),
+        "the held annotation closes at the source's close time"
+    );
+    assert_eq!(
+        link_stamp(dest, linked),
+        link_stamp(&linked.vault, linked),
+        "the link carries the source's stamp"
+    );
+    assert_eq!(
+        omission_reason(receipt, closed),
+        None,
+        "the held annotation is no omission: {:?}",
+        receipt.destination_omissions
+    );
+}
+
+#[test]
+fn a_held_annotation_the_source_superseded_follows_the_source() {
+    let linked = linked_source();
+    let archived = annotate(&linked.vault, linked.source, linked.target);
+    let annotated_archive = export(&linked.vault);
+    let (_dir, dest) = destination_holding_the_annotation(&annotated_archive, archived);
+    next_second();
+    let successor = annotate(&linked.vault, linked.source, linked.target);
+    assert_eq!(
+        lifecycle(&linked.vault, &archived),
+        Some(ClaimLifecycleStatus::Superseded),
+        "precondition: the source superseded its annotation"
+    );
+    let later_archive = export(&linked.vault);
+    let receipt = dest
+        .import_whole_vault_archive_from(Cursor::new(&later_archive))
+        .expect("the later archive imports");
+    assert_follows_the_source(
+        &dest,
+        &linked,
+        &receipt,
+        archived,
+        ClaimLifecycleStatus::Superseded,
+    );
+    assert_eq!(
+        lifecycle(&dest, &successor),
+        Some(ClaimLifecycleStatus::Active),
+        "the source's newer annotation is the link's live provenance"
+    );
+    assert_eq!(
+        omission_reason(&receipt, successor),
+        None,
+        "the receipt names no omission for the newer annotation: {:?}",
+        receipt.destination_omissions
+    );
+}
+
+#[test]
+fn a_held_annotation_the_source_retracted_follows_the_source() {
+    let linked = linked_source();
+    let archived = annotate(&linked.vault, linked.source, linked.target);
+    let annotated_archive = export(&linked.vault);
+    let (_dir, dest) = destination_holding_the_annotation(&annotated_archive, archived);
+    linked
+        .vault
+        .retract_edge_provenance(&archived, linked.vault.now_recorded_at())
+        .expect("the source retracts its annotation");
+    assert_eq!(
+        link_stamp(&linked.vault, &linked),
+        Some(EdgeConfirmationStatus::Retracted),
+        "precondition: the source's link carries the retracted stamp"
+    );
+    let later_archive = export(&linked.vault);
+    let receipt = dest
+        .import_whole_vault_archive_from(Cursor::new(&later_archive))
+        .expect("the later archive imports");
+    assert_follows_the_source(
+        &dest,
+        &linked,
+        &receipt,
+        archived,
+        ClaimLifecycleStatus::Retracted,
+    );
+}
+
+#[test]
+fn a_held_claim_the_source_closed_with_another_body_is_a_collision() {
+    let linked = linked_source();
+    let (_dir, dest) = destination_holding_the_link(&linked);
+    let shared = EntityId::now();
+    let learned_at = dest.now_recorded_at();
+    annotate_as(
+        &linked.vault,
+        shared,
+        linked.source,
+        linked.target,
+        1.0,
+        learned_at,
+    );
+    annotate_as(&dest, shared, linked.source, linked.target, 0.5, learned_at);
+    next_second();
+    annotate(&linked.vault, linked.source, linked.target);
+    assert_eq!(
+        lifecycle(&linked.vault, &shared),
+        Some(ClaimLifecycleStatus::Superseded),
+        "precondition: the source superseded the claim with the shared id"
+    );
+    let later_archive = export(&linked.vault);
+    let error = dest
+        .import_whole_vault_archive_from(Cursor::new(&later_archive))
+        .expect_err("a held claim with another body is not the archived row before its close");
+    assert!(
+        error
+            .to_string()
+            .contains("archive provenance ID collision"),
+        "the import refuses the ID collision: {error}"
+    );
+    assert_eq!(
+        lifecycle(&dest, &shared),
+        Some(ClaimLifecycleStatus::Active),
+        "the import rolled back: the destination's claim is as it was"
     );
 }
