@@ -5,6 +5,7 @@
 //! removed carrier widens a world.
 use super::super::slip_vault::next_entry;
 use super::machine_identity::{Host, host, own_encryption_key, request_for};
+use super::support::RosterHead;
 use super::support::{
     authority_key_from_ed, device, ed_key, genesis_entry, owner_act, sign_ed, unsigned_entry,
 };
