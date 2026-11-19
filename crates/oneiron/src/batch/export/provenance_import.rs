@@ -2,6 +2,8 @@
 //! FIX 3678: the MODEL map and each provenance cohort live in the import's row
 //! index, keyed by subject edge and native order; one cohort, one edge's
 //! history, is read back whole only to restore it.
+mod source_close;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek};
 
@@ -22,6 +24,7 @@ use crate::{
     error::{Error, Result},
     serialize::{ExportBody, ExportSecrets},
 };
+use source_close::{SourceClose, closed_at_source};
 
 /// A cohort key's subject edge: source, kind and target.
 const EDGE_KEY_LEN: usize = 2 * ENTITY_ID_LEN + 1;
@@ -230,7 +233,8 @@ pub(super) fn mark_ready<R: Read + Seek>(archive: &mut IndexedArchive<'_, R>) ->
 pub(super) struct CohortRestore {
     /// The ids it inserted.
     pub(super) inserted: BTreeSet<EntityId>,
-    /// The rows already here.
+    /// The rows already here, a held row the archive carries closed and this
+    /// restore closed through the writer among them.
     pub(super) unchanged: usize,
     /// The rows it kept as archive data, since their subject link did not
     /// come back, or is a `same_as` this vault already held
@@ -332,8 +336,9 @@ pub(super) fn restore<R: Read + Seek>(
     // never reaches the provenance writer's precedence check and aborts the
     // import, and a newer one never closes the vault's own. The two histories
     // never merge by learned-at. A link whose only history is this archive's
-    // own rows (an earlier import of the same source) takes the cohort. The
-    // link keeps its own stamp too: the last edge pass compares its base
+    // own rows (an earlier import of the same source) takes the cohort, and
+    // follows the source's later close of a row it took
+    // (`closed_at_source`). The link keeps its own stamp too: the last edge pass compares its base
     // fields only (REVIEW-9652 P1).
     if holds_own_history(vault, txn, &subject, &rows)? {
         archive.index.put(Tag::OwnHistoryLink, &subject, &[])?;
@@ -579,11 +584,17 @@ fn restore_cohort(
         if let Some(existing) =
             crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
         {
-            if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live()
-                || !matches_row(row, &existing, &expected, secrets)
-            {
+            if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live() {
                 return Err(invalid("archive provenance ID collision"));
             }
+            let source_close = if matches_row(row, &existing, &expected, secrets) {
+                None
+            } else {
+                Some(
+                    closed_at_source(row, body, &existing, secrets)?
+                        .ok_or_else(|| invalid("archive provenance ID collision"))?,
+                )
+            };
             unchanged += 1;
             // Blind-review P1 (REVIEW-4378-kimi): an existing row breaks the
             // tied-prior chain when the tracked prior is already closed —
@@ -626,6 +637,22 @@ fn restore_cohort(
                 previous = None;
             } else if !prior_live {
                 previous = None;
+            }
+            // A held row the source closed after this vault took it (Engine
+            // ANSWER HELD-ROW-CLOSED-AT-SOURCE 20 Nov 05:23): the link adds no
+            // history of its own, so it follows the source through the
+            // writer's own close. A retraction lands at the archived close
+            // time; a supersession is closed by its archived successor's
+            // restore, which names it on a learned-at tie. The final
+            // comparison below holds the result to the archived row.
+            match source_close {
+                Some(SourceClose::Retracted(close_at)) => {
+                    vault.retract_edge_provenance_in_txn(txn, id, close_at, cut)?;
+                }
+                Some(SourceClose::Superseded) => {
+                    previous = Some((*id, row.learned_at, ClaimLifecycleStatus::Superseded));
+                }
+                None => {}
             }
             continue;
         }
