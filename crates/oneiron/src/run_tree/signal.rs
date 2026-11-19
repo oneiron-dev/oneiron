@@ -232,29 +232,29 @@ impl RunTreeAdapter<'_> {
             kind,
         } = &input.kind
         {
-            let ask = record
+            let at_ask = record
                 .asks
-                .iter_mut()
-                .find(|a| &a.handle == handle)
+                .iter()
+                .position(|a| &a.handle == handle)
                 .ok_or_else(|| Error::InvalidConfig("unknown ask handle".into()))?;
+            let ask = &record.asks[at_ask];
             if !ask.questions.iter().any(|q| &q.who == who) {
                 return Err(Error::InvalidConfig("unaddressed ask answer".into()));
             }
             if let Some(prior) = ask.answers.iter().find(|a| &a.who == who) {
                 // The held answer is as the side-row wall stored it: a value
                 // base custody holds reads as its record's handle there, and
-                // the keyed intent (FIX 10066) names the signal's key, so the
-                // answer given again under a new key is planned with the
-                // values this writer reads, as `open_ask` plans its questions
-                // (FIX SIGNAL-NEW-KEY-MASKED-ANSWER). A value another record
-                // holds reads as another handle and still refuses.
+                // the keyed intent (FIX 10066) names the signal's key. An
+                // answer given again under a new key is the same answer only
+                // when it is the first answer exactly as given: the
+                // fingerprint kept beside that answer's signal meets it
+                // restated under that signal's key and actor (FIX
+                // SIGNAL-NEW-KEY-MASKED-ANSWER; blind review round 2 of
+                // #9531: the held form alone cannot tell two values custody
+                // holds apart, nor meet a mask widened to a character).
                 if prior.kind != *kind
                     || (&prior.answer != answer
-                        && !admitted_from_known(
-                            &named_tree(&prior.answer)?,
-                            &named_tree(answer)?,
-                            || KnownValues::shared_in_writer(&self.vault.store, txn),
-                        )?)
+                        && !intent::answer_repeats(self.vault, txn, &record, &input))
                 {
                     return Err(Error::InvalidConfig("ask already answered".into()));
                 }
@@ -268,7 +268,7 @@ impl RunTreeAdapter<'_> {
                 }
             } else {
                 let at = crate::ports::recorded_at_in_txn(&self.vault.store, txn)?;
-                ask.answers.push(RunAskAnswer {
+                record.asks[at_ask].answers.push(RunAskAnswer {
                     who: who.clone(),
                     answer: answer.clone(),
                     kind: *kind,
