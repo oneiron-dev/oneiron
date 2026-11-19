@@ -42,14 +42,18 @@ impl EngineStackRuntime {
 }
 
 /// A runtime builder whose two workers have the engine's stack and take the
-/// building thread's wipe record when they start.
+/// building thread's wipe record and device-release flag when they start.
 fn engine_stack_builder() -> tokio::runtime::Builder {
     let record = crate::owner::secrets::wiped::current();
+    let armed = crate::api::release_hook::current();
     let mut builder = tokio::runtime::Builder::new_multi_thread();
     builder
         .worker_threads(2)
         .thread_stack_size(crate::ENGINE_THREAD_STACK_BYTES)
-        .on_thread_start(move || crate::owner::secrets::wiped::share(Arc::clone(&record)))
+        .on_thread_start(move || {
+            crate::owner::secrets::wiped::share(Arc::clone(&record));
+            crate::api::release_hook::share(Arc::clone(&armed));
+        })
         .enable_all();
     builder
 }
