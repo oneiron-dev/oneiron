@@ -195,11 +195,11 @@ impl<'a> ScopedRead<'a> {
                 .is_some_and(|channel| claims.channels.contains(channel))
     }
 
-    /// The owner key's binding, re-verified in this read's own snapshot, so a
-    /// key minted before a revocation resolves no plan after it. A host
-    /// action's key also proves its root and owner again (FIX 2222): the
-    /// embedded owner skips the binding below, and a live root alone does not
-    /// show it still binds that owner.
+    /// The owner binding a key proves (`owner_binding_ref`), re-verified in
+    /// this read's own snapshot, so a key minted before a revocation resolves
+    /// no plan after it. A host action's key also proves its root and owner
+    /// again (FIX 2222): the embedded owner skips the binding below, and a live
+    /// root alone does not show it still binds that owner.
     pub(super) fn owner_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
         if let Some(action) = self.actor_key.host_action_guard() {
             action.holds_in(self.vault, txn)?;
@@ -215,7 +215,7 @@ impl<'a> ScopedRead<'a> {
                 )))
             });
         }
-        let Some(owner) = self.actor_key.vault_owner_ref() else {
+        let Some(owner) = self.actor_key.owner_binding_ref() else {
             return Ok(());
         };
         // A due Owner schedule's key (FIX 1259) proves its owner by the
