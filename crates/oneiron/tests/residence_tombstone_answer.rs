@@ -13,7 +13,10 @@
 //! relationship R and no membership in it. The owner hard-deletes an open
 //! CLAIM and a CLAIM keyed to R. P's answer names the open CLAIM and never the
 //! R CLAIM; a co-Owner's names both. A world window kept off the machine
-//! gives no ids, and the same window kept on it gives its ids.
+//! gives no ids, and the same window kept on it gives its ids. A world
+//! window's tombstone the home never placed in that window gives no id, an
+//! erase alias outranks a plain hard delete, and a selector narrowed to one
+//! world answers that world's hard deletes (blind review 2 of #9592/#9593).
 //!
 //! Each `FIXTURE:` assertion checks the setup, never the answer.
 //!
@@ -27,10 +30,11 @@ use std::collections::BTreeSet;
 use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
 use oneiron::deletion::{TombstoneReason, decode_tombstone_value};
 use oneiron::edge::EdgeActorClass;
+use oneiron::entity_id::LocalWorldId;
 use oneiron::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
 };
-use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_WORLD};
 use oneiron::sync::residence::window_tombstone_projection_with;
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::window::{Withhold, load_window_from_state, reverse_rematerialize};
@@ -61,6 +65,17 @@ fn at(time: u64) -> TimeRange {
 /// A stated CLAIM about `subject` learned at `now`, keyed to `relationship`
 /// when one is named.
 fn record(vault: &Vault, subject: EntityId, relationship: Option<EntityId>, now: u64) -> EntityId {
+    record_in(vault, subject, relationship, None, now)
+}
+
+/// [`record`], scoped to `world` when one is named.
+fn record_in(
+    vault: &Vault,
+    subject: EntityId,
+    relationship: Option<EntityId>,
+    world: Option<EntityId>,
+    now: u64,
+) -> EntityId {
     let id = EntityId::now();
     let mut body = ClaimBody::new(
         "profile.name",
@@ -73,6 +88,7 @@ fn record(vault: &Vault, subject: EntityId, relationship: Option<EntityId>, now:
     .expect("claim body");
     body.source = Some(ClaimSource::UserStated);
     body.rel = relationship_scope_of(relationship);
+    body.world = world;
     vault.put_claim(&id, &body, at(now), now).expect("a record");
     id
 }
@@ -271,6 +287,13 @@ fn a_withheld_world_window_answers_no_ids() {
         .insert(&open, value.as_slice())
         .expect("FIXTURE: the world window holds the tombstone");
     window.commit();
+    // The window address a delete of the row in this window keeps, as the
+    // home's own delete or replay writes it: the residence the answer
+    // judges by.
+    purged
+        .vault
+        .sync_state_put(&format!("m:dw:{open}"), key.as_str().as_bytes())
+        .expect("FIXTURE: the delete's window address");
     assert_eq!(
         purged.answered(&window, &key, Withhold::Worlds(&BTreeSet::new())),
         vec![purged.open_claim],
@@ -331,5 +354,189 @@ fn a_hard_alias_outranks_a_soft_canonical_value() {
     assert_eq!(
         entry.value, hard,
         "DOWNGRADE: the answer carries the soft value of a row a hard alias deleted"
+    );
+}
+
+/// A world window's tombstone the home never placed in that window gives no
+/// id (blind review 2 of #9593). A world window's ingress keeps a tombstone
+/// of an id it cannot place, and the window's replay never applies it here,
+/// so the home does not vouch for it: a device that holds the row elsewhere
+/// would purge it. Only once the home's own window address for the delete
+/// names this window does the id leave. Before, the answer named every
+/// tombstone the window map held.
+#[test]
+fn a_world_tombstone_the_home_never_placed_gives_no_id() {
+    let purged = Purged::new(FederationGrantRole::Owner, FederationGrantPreset::Owner);
+    let at = purged.key.start_timestamp().expect("the window's month");
+    let key = WindowKey::for_world(at, EntityId::now());
+    let window = create_window_doc("selector", &key);
+    let open = purged.open_claim.to_hex();
+    let value = window_bytes(&purged.window, "tombstones", &open);
+    window
+        .get_map("tombstones")
+        .insert(&open, value.as_slice())
+        .expect("FIXTURE: the world window holds the tombstone");
+    window.commit();
+    let readable = BTreeSet::new();
+    assert_eq!(
+        purged.answered(&window, &key, Withhold::Worlds(&readable)),
+        Vec::<EntityId>::new(),
+        "FORGED DELETE: the home vouches for a world tombstone it never placed in the window"
+    );
+    let elsewhere = WindowKey::for_world(at, EntityId::now());
+    purged
+        .vault
+        .sync_state_put(&format!("m:dw:{open}"), elsewhere.as_str().as_bytes())
+        .expect("FIXTURE: the delete's window address names another window");
+    assert_eq!(
+        purged.answered(&window, &key, Withhold::Worlds(&readable)),
+        Vec::<EntityId>::new(),
+        "FORGED DELETE: a delete the home placed in another window leaves from this one"
+    );
+    purged
+        .vault
+        .sync_state_put(&format!("m:dw:{open}"), key.as_str().as_bytes())
+        .expect("FIXTURE: the delete's window address names this window");
+    assert_eq!(
+        purged.answered(&window, &key, Withhold::Worlds(&readable)),
+        vec![purged.open_claim],
+        "OVER-REFUSAL: a delete the home placed in this window leaves"
+    );
+}
+
+/// Among hard values, an erase outranks a plain hard delete (blind review 2
+/// of #9592). Where the window keeps a plain hard delete under the row's
+/// canonical key and an owner erase under a case-shifted alias, the answer
+/// carries the erase, whose replay erases the row's checkpoint payloads.
+/// Before, the canonical key's plain delete was answered, and a device that
+/// held the row kept its payloads.
+#[test]
+fn an_erase_alias_outranks_a_plain_hard_canonical_value() {
+    let purged = Purged::new(FederationGrantRole::Owner, FederationGrantPreset::Owner);
+    let open = purged.open_claim.to_hex();
+    let hard = window_bytes(&purged.window, "tombstones", &open);
+    assert_eq!(
+        hard.first(),
+        Some(&(TombstoneReason::UserHardDelete as u8)),
+        "FIXTURE: the owner's delete is a plain hard delete"
+    );
+    let mut erase = hard.clone();
+    erase[0] = TombstoneReason::OwnerErase as u8;
+    assert!(
+        decode_tombstone_value(&erase).is_hard(),
+        "FIXTURE: the alias's erase is hard"
+    );
+    let window = create_window_doc("selector", &purged.key);
+    let tombstones = window.get_map("tombstones");
+    tombstones
+        .insert(&open, hard.as_slice())
+        .expect("FIXTURE: the window holds the plain delete under the canonical key");
+    tombstones
+        .insert(&open.to_uppercase(), erase.as_slice())
+        .expect("FIXTURE: the window holds the erase under the alias");
+    window.commit();
+    let answer = window_tombstone_projection_with(
+        &purged.vault,
+        &window,
+        &purged.key,
+        purged.scope,
+        &purged.selector,
+        Withhold::Unknown,
+    )
+    .expect("the tombstone answer");
+    let entry = answer
+        .iter()
+        .find(|entry| entry.entity_id == purged.open_claim)
+        .unwrap_or_else(|| panic!("the answer names the open CLAIM: {answer:?}"));
+    assert_eq!(
+        entry.value, erase,
+        "ERASE LOST: the answer carries a plain hard delete of a row an alias erased"
+    );
+}
+
+/// A selector narrowed to one world answers that world's hard deletes (blind
+/// review 2 of #9592/#9593). A member follows world W under an authorized
+/// `World(W)` selector; the owner hard-deletes a CLAIM of W the member
+/// reads. Its carrier left the window with the delete, so the selector keeps
+/// no row of it, and the delete's captured position in W is what lets its
+/// tombstone travel. Before, a selector other than All carried no tombstone
+/// of a row it did not keep, and the device never learned of the delete.
+#[test]
+fn a_world_selector_answers_its_worlds_hard_deletes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let member = EntityId::now();
+    let vault = open_member_vault(dir.path(), VaultConfig::device(), &[member.to_hex()])
+        .expect("fixture vault");
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    let now = vault.now_recorded_at();
+    let world = EntityId::now();
+    vault
+        .put_entity(&world, ENTITY_TYPE_WORLD, at(now), now, b"world")
+        .expect("a world");
+    vault
+        .put_entity(
+            &member,
+            ENTITY_TYPE_PERSON,
+            at(now),
+            now,
+            &rmp_serde::to_vec_named(&serde_json::json!({ "name": "member" })).expect("body"),
+        )
+        .expect("a member");
+    let scope = FederationGrantScope::vault(SHARED_VAULT_ID);
+    let grant_id = EntityId::now();
+    let mut grant = FederationGrant::new(
+        scope,
+        member,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    grant.authority_scope = read_preset();
+    put_selector_test_federation_grant(&vault, &grant_id, &grant, now)
+        .expect("the member's federation grant");
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::World(LocalWorldId::from_entity_id(world).expect("a local world")),
+        vec![],
+        vec![],
+    );
+    authorize_sync_selector(&vault, scope, &selector)
+        .expect("FIXTURE: the member's world selector is authorized");
+
+    let claim = record_in(&vault, member, None, Some(world), now);
+    let key = WindowKey::for_world(now, world);
+    let packed = create_window_doc("selector", &key);
+    reverse_rematerialize(&vault, &packed, &key).expect("the window pack");
+    persist_window(&vault, &packed, &key);
+    assert!(
+        vault
+            .delete_entity_with_reason(&claim, DeleteReason::UserHardDelete)
+            .expect("FIXTURE: the owner's delete")
+            .existed,
+        "FIXTURE: the world's CLAIM existed"
+    );
+    let window = load_window_from_state(&vault, "local", &key).expect("the vault's window");
+    assert!(
+        window.get_map("tombstones").get(&claim.to_hex()).is_some(),
+        "FIXTURE: the world's window holds the CLAIM's tombstone"
+    );
+    let ids: Vec<EntityId> = window_tombstone_projection_with(
+        &vault,
+        &window,
+        &key,
+        scope,
+        &selector,
+        Withhold::Worlds(&BTreeSet::new()),
+    )
+    .expect("the tombstone answer")
+    .into_iter()
+    .map(|entry| entry.entity_id)
+    .collect();
+    assert_eq!(
+        ids,
+        vec![claim],
+        "MISSED DELETE: a world selector's answer omits its world's hard delete"
     );
 }
