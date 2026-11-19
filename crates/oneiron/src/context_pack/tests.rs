@@ -1620,6 +1620,7 @@ fn put_disclosure_claim_in_world(
         crate::claim::ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(vault, &mut body);
     body.world = world;
     if let Some(band) = band {
         body.scope = Some(rmpv::Value::Map(vec![(

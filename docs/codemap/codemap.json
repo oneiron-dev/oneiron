@@ -63240,7 +63240,7 @@
      "path": "src/origin/smart_http/tests.rs",
      "purpose": "Shared test harness: fixtures, temp vault, seeded repos, the capturing sink, and the stock-git test origin",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
@@ -66035,7 +66035,7 @@
      "path": "src/pipeline/tests/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -67051,7 +67051,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/ports/dependent_walk/tests.rs",
@@ -96914,13 +96914,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 38
+      "crate-vis": 37
      }
     },
     {
@@ -96941,6 +96941,16 @@
      "purpose": "Test-only-file classification shared by every source-scanning fence",
      "surface": {
       "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_util/vault_open.rs",
+     "purpose": "Temporary test vault openers and the configs and clocks they share",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -113189,6 +113199,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/stranger_removed_mark.rs",
+     "purpose": "FIX [STRANGER-REMOVED-MARK-GLOBAL]: a stranger anchor's removal mark removes no machine from what this…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -115759,9 +115777,9 @@
      "purpose": "Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which…"
     },
     "test_util": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Shared test helpers"
     },
@@ -115913,10 +115931,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 303,
+   "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8188,
-   "test_files": 1932
+   "source_files": 8189,
+   "test_files": 1933
   },
   "oneiron-agent-runtime": {
    "files": [

@@ -5,6 +5,7 @@ use super::*;
 fn owner_vault() -> (tempfile::TempDir, crate::Vault, EntityId) {
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open_owned(dir.path(), VaultConfig::default()).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     (dir, vault, owner)
 }

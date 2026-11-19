@@ -723,9 +723,9 @@ mod tests {
         capped.daily_cap = Some(1);
         let narrow = id(0x61);
         for (claim, config) in [(narrow, capped), (id(0x62), intro_config())] {
-            vault
-                .put_claim(&claim, &claim_body(&claim_value(config)), at, 1)
-                .expect("config claim");
+            let mut body = claim_body(&claim_value(config));
+            crate::test_util::stamp_vault_default_facet(&vault, &mut body);
+            vault.put_claim(&claim, &body, at, 1).expect("config claim");
         }
         let key = EventTypeKey("intro-call".to_owned());
         let settled = load_event_type_config(&vault, id(PAGE), &key).expect("settled config");
