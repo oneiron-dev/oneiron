@@ -8,6 +8,7 @@
 //! init keeps are keys serve would trust (FIX INIT-ADOPTS-UNADMITTED-CONFIG).
 
 use crate::cli::InitArgs;
+use crate::config::merge::FileRefused;
 use crate::config::{
     EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider, EnvConfig, OneironerConfig,
     OneironerMode, OneironerProvider, ServeArgs, ServeConfig,
@@ -331,6 +332,11 @@ pub(super) fn stage_config(path: &Path, text: &str) -> anyhow::Result<PathBuf> {
 /// model setup: the startup layers replayed onto the file at `path`, so a
 /// server started with a settings file or holder overrides compares its live
 /// source, not the bare file, and an unchanged server never reads as Changed.
+/// A file refused for who else can reach it (a config any user can write
+/// since startup) is the owner's to mend, as a refusal of
+/// [`super::prepare_model_setup`] is: an invalid request, in the refusal's
+/// own words, which say how and repeat no value. Any other failure stays a
+/// host failure.
 pub(super) fn replay_startup_config(
     startup_args: &ServeArgs,
     path: &Path,
@@ -343,7 +349,10 @@ pub(super) fn replay_startup_config(
         env,
         crate::config::default_config_path(),
     )
-    .map_err(OwnerError::Host)
+    .map_err(|error| match FileRefused::of(&error) {
+        Some(refused) => OwnerError::Invalid(refused.to_string()),
+        None => OwnerError::Host(error),
+    })
 }
 
 #[cfg(all(test, unix))]
