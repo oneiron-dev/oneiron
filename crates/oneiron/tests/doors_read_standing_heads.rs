@@ -108,8 +108,9 @@ fn stranger_owner() -> EntityId {
 }
 
 /// A self-host vault as its own server starts one: this install serving and
-/// profiled under the host root, and the owner bound and authenticated. It
-/// pins no root, so a machine stands under the roster's head alone.
+/// profiled under the host root, the handle holding that root, and the owner
+/// bound and authenticated. It pins no root, so a machine stands under the
+/// roster's head alone.
 struct ServedVault {
     vault: Vault,
     owner: AuthenticatedOwner,
@@ -170,6 +171,11 @@ impl ServedVault {
         let person = vault.ensure_embedded_owner_actor().expect("the owner");
         oneiron::test_support::bind_host_owner(&vault, &issuer, person)
             .expect("the owner's binding");
+        // The handle holds the host's root as a serving host does, so the
+        // owner's machine answers this install carries are proven (row
+        // CARRIER-OWNER-PROOF) and stand instead of being held for an owner
+        // device. `test_host_issuer` is the same root `issuer` is.
+        vault.hold_checkpoint_root_signer(Arc::new(oneiron::test_support::test_host_issuer()));
         let owner = vault
             .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
             .expect("the owner's proof");
@@ -233,7 +239,9 @@ impl ServedVault {
         }
     }
 
-    /// The owner enrols `request` as his own, carried by this install.
+    /// The owner enrols `request` as his own, carried by this install. An
+    /// answer held for an owner device is a fixture fault, not a refusal,
+    /// so it fails here rather than at a later guard.
     fn enrol(&self, request: &MachineEnrolmentRequest) -> oneiron::Result<()> {
         self.vault
             .enroll_machine(
@@ -243,7 +251,12 @@ impl ServedVault {
                 MachineRole::Owned(MachineOwnership::Yours),
                 None,
             )
-            .map(drop)
+            .map(|landing| {
+                assert!(
+                    landing.held().is_none(),
+                    "guard: the owner's answer stands, not held: {landing:?}"
+                );
+            })
     }
 }
 
