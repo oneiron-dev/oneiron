@@ -141,15 +141,16 @@ pub(crate) fn consult_turn(vault: &Vault, seed: u8) -> ConsultPayloadRef {
         &Value::Map(vec![(Value::from("role"), Value::from("question"))]),
     )
     .expect("encode turn body");
+    let now = vault.now_recorded_at();
     vault
         .put_entity(
             &turn_ref,
             ENTITY_TYPE_TURN,
             TimeRange {
-                start: CONSULT_NOW,
-                end: CONSULT_NOW,
+                start: now,
+                end: now,
             },
-            CONSULT_NOW,
+            now,
             &body,
         )
         .expect("store durable turn");
