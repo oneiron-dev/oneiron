@@ -565,6 +565,33 @@ pub(crate) fn hook_run_read_rows(vault: &Vault, run_key: &str) -> Result<Option<
     hook_run_read_rows_in(&vault.store, &rtxn, run_key, holds)
 }
 
+/// The Hook receipt the run `run_key` keeps and every row it names
+/// ([`crate::receipt::referenced_rows`]: its record's binding and CODE, and
+/// the rows its run stood on), read in one snapshot, as a verb hook's
+/// receipt tail shows it (review round 2 of #9643): a payload read before an
+/// erase scrubbed it still names the erased row. `None` when the run keeps
+/// no receipt; its rows `None` when they cannot be known.
+pub(super) fn hook_receipt_with_rows(
+    vault: &Vault,
+    run_key: &str,
+) -> Result<Option<(ReceiptRecord, Option<Vec<EntityId>>)>> {
+    let Some(key) = crate::deletion::parse_hex::<32>(run_key) else {
+        return Ok(None);
+    };
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(receipt) = RECEIPTS.get(&vault.store, &rtxn, &key)? else {
+        return Ok(None);
+    };
+    let holds =
+        |row: &EntityId| -> Result<bool> { Ok(vault.entity_header_in_txn(&rtxn, row)?.is_some()) };
+    let rows = hook_run_read_rows_in(&vault.store, &rtxn, run_key, holds)?.map(|read| {
+        let mut rows = crate::receipt::record_rows(&receipt);
+        rows.extend(read);
+        rows
+    });
+    Ok(Some((receipt, rows)))
+}
+
 /// [`hook_run_read_rows`] read in `dbs` within `rtxn`, an explicit read
 /// target: the vault's store here, and a room's composed view for a reader of
 /// the Hook receipts a room keeps (WILL L11-01 S01-2c). A row a verb run's

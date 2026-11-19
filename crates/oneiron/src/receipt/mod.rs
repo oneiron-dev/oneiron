@@ -27,7 +27,7 @@ mod ledgers;
 mod lens;
 mod off_device;
 pub(crate) use off_device::served_form_rows;
-pub(crate) use off_device::{is_verb_hook_receipt, referenced_rows};
+pub(crate) use off_device::{is_verb_hook_receipt, record_rows, referenced_rows};
 mod pack_attribution;
 mod projection;
 pub mod prompt_stamp;

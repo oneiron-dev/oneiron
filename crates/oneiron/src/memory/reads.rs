@@ -815,6 +815,13 @@ impl Memory<'_> {
     ) -> Vec<MemoryReceipt> {
         records.into_iter().map(family_receipt).collect()
     }
+
+    /// One Hook `record` of base's family in the `vault.receipts` shape
+    /// ([`family_receipt`]), as a verb hook chain's receipt tail shows it
+    /// once read again beside the rows it names (review round 2 of #9643).
+    pub(crate) fn tail_receipt(record: crate::receipt::ReceiptRecord) -> MemoryReceipt {
+        family_receipt(record)
+    }
 }
 
 /// One unified-family receipt in the `vault.receipts` shape: the gate

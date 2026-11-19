@@ -273,7 +273,10 @@ impl Chain<'_> {
     /// caller's own; a host verb's is its metadata, its free text withheld;
     /// a read's pack keeps each item whose rows are all shown and withholds
     /// the rest, its rendering too unless every item is shown; any other
-    /// read's result names no rows, so it is withheld whole.
+    /// read's result names no rows, so it is withheld whole. Rows are named
+    /// from the result its producer gave ([`Chain::origin`]): a Redact that
+    /// took a row's own ref leaves the content it drew from that row
+    /// (review round 2 of #9643).
     fn project_result(
         &self,
         result: &Value,
@@ -282,6 +285,7 @@ impl Chain<'_> {
         unattributed: &mut Unattributed,
     ) -> Result<Value> {
         let narrows = seen.narrows();
+        let origin = self.origin.as_ref().unwrap_or(result);
         let mut shown = result.clone();
         if self.call.verb.starts_with("host.") {
             self.host_text(&mut shown, seen, unattributed);
@@ -296,26 +300,33 @@ impl Chain<'_> {
             }
             unattributed.shown = true;
             let mut rows = Vec::new();
-            if self.result_rows(&shown, &mut rows)? {
+            if self.result_rows(&shown, origin, &mut rows)? {
                 dependencies.extend(rows);
             } else {
                 unattributed.show_unnamed();
             }
             return Ok(shown);
         }
+        // Each item the producer gave, by its place: a Redact nulls an item
+        // in place or takes `items` whole, and the rendering still carries
+        // what it hid.
         let mut every = true;
-        if let Some(items) = shown.get_mut("items").and_then(Value::as_array_mut) {
-            for item in items {
-                let rows = self.item_rows(item);
-                if !narrows || seen.shows_all(rows.as_deref())? {
-                    match rows {
-                        Some(rows) => dependencies.extend(rows),
-                        None => unattributed.show_unnamed(),
-                    }
-                } else {
-                    *item = withheld();
-                    every = false;
+        let given = origin.get("items").and_then(Value::as_array);
+        let mut items = shown.get_mut("items").and_then(Value::as_array_mut);
+        for at in 0..given.map_or(0, Vec::len) {
+            let rows = given
+                .and_then(|given| given.get(at))
+                .and_then(|item| self.item_rows(item));
+            if !narrows || seen.shows_all(rows.as_deref())? {
+                match rows {
+                    Some(rows) => dependencies.extend(rows),
+                    None => unattributed.show_unnamed(),
                 }
+            } else {
+                if let Some(item) = items.as_mut().and_then(|items| items.get_mut(at)) {
+                    *item = withheld();
+                }
+                every = false;
             }
         }
         if !every
@@ -334,33 +345,50 @@ impl Chain<'_> {
     /// of a row this vault holds; its whole value counts as those rows'. Any
     /// other string, number or boolean names no row: a count, a bare list of
     /// names, an id-shaped string alone. A `narrowing` field is the read's
-    /// own receipt ([`crate::claim::ScopedReadResult`]).
-    fn result_rows(&self, result: &Value, rows: &mut Vec<EntityId>) -> Result<bool> {
+    /// own receipt ([`crate::claim::ScopedReadResult`]). Each object's rows
+    /// are read at its place in `origin`, the result its producer gave,
+    /// which a Redact only narrowed (review round 2 of #9643); a place
+    /// `origin` lacks names no row.
+    fn result_rows(
+        &self,
+        result: &Value,
+        origin: &Value,
+        rows: &mut Vec<EntityId>,
+    ) -> Result<bool> {
         let rtxn = self.vault.store.env.read_txn()?;
-        self.rows_in(&rtxn, result, rows)
+        self.rows_in(&rtxn, result, origin, rows)
     }
 
-    /// [`Self::result_rows`] for `value`, read in `rtxn`.
+    /// [`Self::result_rows`] for `value`, whose producer gave `origin` at its
+    /// place, read in `rtxn`.
     fn rows_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         value: &Value,
+        origin: &Value,
         rows: &mut Vec<EntityId>,
     ) -> Result<bool> {
         match value {
             Value::Null => Ok(true),
             Value::Bool(_) | Value::Number(_) | Value::String(_) => Ok(false),
             Value::Array(items) => {
-                for item in items {
-                    if !self.rows_in(rtxn, item, rows)? {
+                let Some(given) = origin.as_array().filter(|given| given.len() == items.len())
+                else {
+                    return Ok(false);
+                };
+                for (item, origin) in items.iter().zip(given) {
+                    if !self.rows_in(rtxn, item, origin, rows)? {
                         return Ok(false);
                     }
                 }
                 Ok(true)
             }
             Value::Object(fields) => {
+                let Some(given) = origin.as_object() else {
+                    return Ok(false);
+                };
                 let mut held = Vec::new();
-                let named = fields
+                let named = given
                     .iter()
                     .filter(|(key, _)| is_row_ref_key(key))
                     .filter_map(|(_, field)| field.as_str())
@@ -376,7 +404,13 @@ impl Chain<'_> {
                     return Ok(true);
                 }
                 for (key, field) in fields {
-                    if key != NARROWING_FIELD && !self.rows_in(rtxn, field, rows)? {
+                    if key == NARROWING_FIELD {
+                        continue;
+                    }
+                    let Some(origin) = given.get(key) else {
+                        return Ok(false);
+                    };
+                    if !self.rows_in(rtxn, field, origin, rows)? {
                         return Ok(false);
                     }
                 }
@@ -404,12 +438,11 @@ impl Chain<'_> {
 
     /// The receipts the caller's tail holds, as the hook sees them: a room
     /// Hook receipt only while every one of its source rows is shown (FIX
-    /// 5429); a Hook receipt of base's family only while every row its run
-    /// stood on is shown, and never when those rows are unknown, so no hook
-    /// copies a note the receipt screen withholds into a receipt of its own
-    /// (review round 1 of #9643); a receipt about a claim only while that
-    /// claim is shown, read under the caller's own key; one about no claim
-    /// as it is.
+    /// 5429); a Hook receipt of base's family as [`Self::tail_hook_receipt`]
+    /// reads it, only while every row it names is shown, so no hook copies a
+    /// note the receipt screen withholds into a receipt of its own (reviews
+    /// of #9643); a receipt about a claim only while that claim is shown,
+    /// read under the caller's own key; one about no claim as it is.
     fn project_tail(&self, seen: &HookView<'_>, dependencies: &mut Vec<EntityId>) -> Result<Value> {
         let mut tail = self.tail.clone();
         if let Some(receipts) = tail.as_array_mut() {
@@ -423,9 +456,10 @@ impl Chain<'_> {
                 } else if receipt.get("kind").and_then(Value::as_str)
                     == Some(ReceiptKind::Hook.as_str())
                 {
-                    match self.hook_receipt_sources(receipt)? {
-                        Some(sources) if seen.shows_all(Some(sources.as_slice()))? => {
-                            dependencies.extend(sources);
+                    match self.tail_hook_receipt(receipt)? {
+                        Some((stored, rows)) if seen.shows_all(Some(rows.as_slice()))? => {
+                            dependencies.extend(rows);
+                            *receipt = stored;
                         }
                         _ => {
                             *receipt = withheld();
@@ -445,14 +479,30 @@ impl Chain<'_> {
         Ok(tail)
     }
 
-    /// The rows a Hook receipt of base's family stands on, as the receipt
-    /// screen reads them ([`store::hook_run_read_rows`]); `None` when they
-    /// are unknown or it names no run.
-    fn hook_receipt_sources(&self, receipt: &Value) -> Result<Option<Vec<EntityId>>> {
+    /// A Hook receipt of base's family as the tail shows it, with every row
+    /// it names (its binding and CODE, and the rows its run stood on): read
+    /// again from its store with those rows in one snapshot, so a payload an
+    /// erase scrubbed after the tail was read never shows without the rows
+    /// it drew on ([`store::hook_receipt_with_rows`]). `None` when those rows
+    /// are unknown, it names no kept run, or it is a verb hook's receipt of
+    /// another actor's call, as the receipt screen keeps one to the actor
+    /// that made the call (review round 2 of #9643).
+    fn tail_hook_receipt(&self, receipt: &Value) -> Result<Option<(Value, Vec<EntityId>)>> {
         let Some(run) = receipt.pointer("/fields/run_key").and_then(Value::as_str) else {
             return Ok(None);
         };
-        store::hook_run_read_rows(self.vault, run)
+        let Some((stored, Some(rows))) = store::hook_receipt_with_rows(self.vault, run)? else {
+            return Ok(None);
+        };
+        let caller = self.call.actor.to_hex();
+        if crate::receipt::is_verb_hook_receipt(&stored)
+            && stored.on_behalf_of.as_deref() != Some(caller.as_str())
+        {
+            return Ok(None);
+        }
+        let shown = serde_json::to_value(crate::memory::Memory::tail_receipt(stored))
+            .map_err(|_| Error::InvariantViolation("hook tail receipt encode"))?;
+        Ok(Some((shown, rows)))
     }
 
     /// The source rows of `receipt` when it is one of the room's own Hook
