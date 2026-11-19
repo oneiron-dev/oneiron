@@ -53,13 +53,17 @@ impl HookContractText {
 
 /// A line's leading identifier: `name` of `name: {`, `name(`, `declare const
 /// name:`, `declare namespace name {`, `declare function name(` or a
-/// namespace member's `const name:`.
+/// namespace member's `const name:`, `function name(` or `namespace name {`
+/// (a `self` member the code-run host also declares, such as
+/// `self.report_blocked` and `self.think`).
 fn leading_name(line: &str) -> Option<&str> {
     let line = line
         .strip_prefix("declare const ")
         .or_else(|| line.strip_prefix("declare namespace "))
         .or_else(|| line.strip_prefix("declare function "))
         .or_else(|| line.strip_prefix("const "))
+        .or_else(|| line.strip_prefix("function "))
+        .or_else(|| line.strip_prefix("namespace "))
         .unwrap_or(line);
     let end = line
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))

@@ -60,6 +60,13 @@ const POSITIONAL: &[(&str, &[&str])] = &[(
 )];
 /// Names no reached type may take.
 const TAKEN: &[&str] = &["StoredResult", VAULT_HOST];
+/// The `self` members the code-run host declares in its own `declare namespace self` (a function, or the `json`
+/// namespace), in `crates/oneiron/wit/generated/code-run.d.ts`, which `scripts/code-sandbox/generate.py` writes from
+/// `code-run.wit`. A program is checked against that file and this fragment together, so a `const` at one of these
+/// names redeclares the host's (TS2451). A row here is declared as function overloads and a branch as a namespace
+/// instead, the two forms that merge with the host's declaration; the runtime installs the rows on the host's own
+/// function (`components/code-run-quickjs/bootstrap.js`).
+const SELF_HOST_MEMBERS: &[&str] = &["express", "json", "report_blocked", "speak", "think"];
 
 /// `POSITIONAL.get(name)` (and `name in POSITIONAL`): a dict lookup, so the name is hashed first.
 fn positional(name: &Value) -> Result<Option<&'static [&'static str]>, GenerateError> {
@@ -367,7 +374,11 @@ impl<'r> Fragment<'r> {
                 for name in sorted(&node.children) {
                     let child = &node.children[name];
                     out.push_str(&Self::doc(child, "  "));
-                    out.push_str(&format!("  const {name}: {};\n", self.kind(child, 1)?));
+                    if SELF_HOST_MEMBERS.contains(&name.as_str()) {
+                        out.push_str(&self.self_host_member(name, child)?);
+                    } else {
+                        out.push_str(&format!("  const {name}: {};\n", self.kind(child, 1)?));
+                    }
                 }
                 out.push_str("}\n");
             } else if let Some(row) = node.row().filter(|_| node.children.is_empty()) {
@@ -381,6 +392,28 @@ impl<'r> Fragment<'r> {
                 let kind = self.kind(node, 0)?;
                 out.push_str(&format!("declare const {root}: {extends}{kind};\n"));
             }
+        }
+        Ok(out)
+    }
+
+    /// A `self` member the code-run host also declares ([`SELF_HOST_MEMBERS`]), in the forms that merge with the
+    /// host's: its row as `function` overloads, its members as a `namespace` of constants. A member's name must then
+    /// be an identifier a `const` may take (no reserved word).
+    fn self_host_member(&mut self, name: &str, node: &Node<'r>) -> Result<String, GenerateError> {
+        let mut out = String::new();
+        if let Some(row) = node.row() {
+            for (params, result) in self.signatures(row)? {
+                out.push_str(&format!("  function {name}{params}: {result};\n"));
+            }
+        }
+        if !node.children.is_empty() {
+            out.push_str(&format!("  namespace {name} {{\n"));
+            for member in sorted(&node.children) {
+                let child = &node.children[member];
+                out.push_str(&Self::doc(child, "    "));
+                out.push_str(&format!("    const {member}: {};\n", self.kind(child, 2)?));
+            }
+            out.push_str("  }\n");
         }
         Ok(out)
     }
@@ -522,10 +555,11 @@ pub(crate) fn revision(text: &str) -> String {
 }
 
 /// For `re.match`: a line of the verb layout opens a root or a namespace, declares a verb, or both. Python's pattern:
-/// `(?:declare (?:namespace|const|function) |const )?(\w+)(\(|: | \{$)`. `re.match` anchors at the start (`\A`); the
-/// line is stripped, so Python's `$` (the end, or before a final newline) is the end (`\z`); `\w` is Python's
-/// (`py::re::translate`).
-const LAYOUT_LINE: &str = r"\A(?:declare (?:namespace|const|function) |const )?(\w+)(\(|: | \{\z)";
+/// `(?:declare (?:namespace|const|function) |const )?(\w+)(\(|: | \{$)`, plus the bare `function ` and `namespace `
+/// a [`SELF_HOST_MEMBERS`] member takes inside `self`. `re.match` anchors at the start (`\A`); the line is stripped, so
+/// Python's `$` (the end, or before a final newline) is the end (`\z`); `\w` is Python's (`py::re::translate`).
+const LAYOUT_LINE: &str =
+    r"\A(?:declare (?:namespace|const|function) |const |function |namespace )?(\w+)(\(|: | \{\z)";
 
 /// `LAYOUT_LINE.match(line)`: the verb name, the form after it, and the line past the match (`line[head.end():]`).
 fn layout_match<'l>(layout: &regex::Regex, line: &'l str) -> Option<(&'l str, &'l str, &'l str)> {
@@ -831,6 +865,35 @@ declare const ünï: {
             assert_eq!(got, expected);
         }
         fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn self_host_members_are_the_code_run_self_members() {
+        // The functions and namespaces directly inside code-run.d.ts's `declare namespace self`.
+        let host = fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../oneiron/wit/generated/code-run.d.ts"
+        ))
+        .expect("the checked-in code-run declarations");
+        let open = host
+            .find("declare namespace self {\n")
+            .expect("a self namespace");
+        let body = &host[open..];
+        let body = &body[..body.find("\n}\n").expect("its close")];
+        let mut members: Vec<&str> = body
+            .lines()
+            .filter_map(|line| {
+                let member = line
+                    .strip_prefix("  function ")
+                    .or_else(|| line.strip_prefix("  namespace "))?;
+                member
+                    .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .next()
+            })
+            .collect();
+        members.sort_unstable();
+        members.dedup();
+        assert_eq!(members, SELF_HOST_MEMBERS);
     }
 
     #[test]
