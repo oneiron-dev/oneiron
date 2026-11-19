@@ -87,7 +87,13 @@ fn a_re_rooted_vault_keeps_engine_claims_and_writers_under_the_new_secret_only()
     let next = HostSlipIssuer::from_secret(b"successor self-host root").unwrap();
     let moved = vault.re_root_host(&old, &next).unwrap();
     assert_eq!(moved.vault_id, vault_id);
-    assert_eq!(moved.writers_enrolled, 6, "every engine writer was live");
+    // 12 writers by design: 9b69816d69d, d0086e9dd31, 50a22f9ed8c, 6e2dbad8cc4, 9eb3bfbf2c7,
+    // e122ec96912 each enrolled one more engine writer since OF-455 pinned 6.
+    assert_eq!(
+        moved.writers_enrolled,
+        vault.engine_machine_actors().unwrap().len(),
+        "every engine writer was live"
+    );
     assert_eq!((moved.histories_carried, moved.histories_left), (2, 0));
     assert_eq!(vault.authority_fold().unwrap().vault_id, Some(vault_id));
 

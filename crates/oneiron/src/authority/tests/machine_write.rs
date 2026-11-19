@@ -877,7 +877,12 @@ fn successor_root_carries_exact_machine_history_and_refuses_retired_backdating()
         crate::claim::history_projection::trusted_machine_handoff(&vault.store, &txn, id).unwrap();
     let after = vault.authority_fold_readonly_in_txn(&txn).unwrap();
     assert!(after.valid_entries.contains(&packet.authority_head));
-    assert_eq!(rows.events.len(), packet.transitions.len());
+    // FIX 3710 (8981b537ef2, #2795): the carry is an empty delta that
+    // re-signs the exact prior chain under the new head, pinned by its
+    // previous hash and heads.
+    assert!(packet.transitions.is_empty());
+    assert_eq!(packet.previous_handoff_hash, Some(prior_handoff));
+    assert_eq!(packet.heads.as_slice(), rows.previous_heads());
     assert!(
         after
             .roster
