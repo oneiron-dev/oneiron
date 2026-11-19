@@ -764,9 +764,11 @@ fn restore_goes_ahead_past_a_moved_jurisdiction_of_a_non_person() {
     .unwrap();
     enroll(&live, org);
     let observe = |jurisdiction: &str, observed_at: u64| {
+        let mut observation = jurisdiction_observation(org, jurisdiction, observed_at);
+        crate::test_util::stamp_vault_default_facet(&live, &mut observation);
         live.put_claim(
             &EntityId::now(),
-            &jurisdiction_observation(org, jurisdiction, observed_at),
+            &observation,
             TimeRange {
                 start: observed_at,
                 end: observed_at,

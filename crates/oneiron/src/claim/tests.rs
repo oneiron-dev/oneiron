@@ -1600,7 +1600,7 @@ fn write_door_validates_calendar_claim_structure() -> Result<()> {
 
     // An unknown `calendar.*` predicate is NOT interpreted as a family member:
     // the matcher is exact-table membership, so it stores as an ordinary claim.
-    let unknown = ClaimBody::new(
+    let mut unknown = ClaimBody::new(
         "calendar.unknown",
         ClaimSubject::Entity(subject),
         Value::from("free-form"),
@@ -1608,6 +1608,7 @@ fn write_door_validates_calendar_claim_structure() -> Result<()> {
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
     )?;
+    crate::test_util::stamp_vault_default_facet(&vault, &mut unknown);
     vault.put_claim(
         &EntityId::now(),
         &unknown,
