@@ -111,7 +111,9 @@ pub(crate) fn open_owner_question_in_txn(
 /// reads as the opener of a Dreamer bundle member (an Engine receipt names
 /// no writer and that door refuses the whole bundle), and the receipt
 /// reasons, which carry the checker's explanation the owner reads in the
-/// tray. Both come from the engine's own ledger row, never from a caller.
+/// tray. Both come from the engine's own ledger row, never from a caller. It
+/// also keeps the asked decision's loop links, and drops the drift tripwire's
+/// normal-baseline token: a restatement is no second write by the agent.
 pub(crate) fn restate_owner_question_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -143,7 +145,19 @@ pub(crate) fn restate_owner_question_in_txn(
     );
     receipt.about = Some(*to);
     if let Some(record) = asked {
-        receipt.receipt_reasons = record.receipt_reasons;
+        // The same question inside the same loop: its loop links, based on
+        // the asked decision, so a job-filtered receipt read and the owner's
+        // answer still name the attempt that wrote the claim.
+        receipt.context = crate::store::GateDecisionContext::answering(&record);
+        // No new write by the agent: the drift tripwire's normal-baseline
+        // token marks the asked write only.
+        receipt.receipt_reasons = record
+            .receipt_reasons
+            .into_iter()
+            .filter(|reason| {
+                crate::self_heal::tripwires::normal_baseline_predicate(reason).is_none()
+            })
+            .collect();
     }
     let decision = store.record_gate_receipt_in_txn(wtxn, receipt)?;
     store.stamp_claim_gate_retention_context_in_txn(
