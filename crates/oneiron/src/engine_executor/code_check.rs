@@ -196,7 +196,7 @@ impl Service {
             Err(diagnostics) => Landed::settled(diagnostics),
         };
         if let Some(row) = cell.land(landed, self.publishes(job)) {
-            self.publish(job, &row);
+            self.publish(job, cell.check_id, &row);
         }
     }
 }
@@ -418,6 +418,10 @@ impl Landed {
 /// thread. Neither ever waits on the other.
 pub(super) struct StepCell {
     key: StepKey,
+    /// The check's own id, minted as it starts: a later check at the same
+    /// key, the re-entry's program at a step its failed program never
+    /// committed, holds a greater one.
+    check_id: EntityId,
     note: Option<ProgramPreparationNote>,
     actor: Option<EntityId>,
     source: Option<CodeRunRawOutput>,
@@ -439,6 +443,7 @@ impl StepCell {
     fn new(job: &CheckJob, facts: TypeCheckFacts) -> Self {
         Self {
             key: job.key,
+            check_id: EntityId::now(),
             note: job.note.clone(),
             actor: job.actor,
             source: job.source.clone(),
@@ -508,7 +513,7 @@ impl StepCell {
             .landed
             .as_ref()
             .and_then(|landed| landed.body.clone());
-        StoredStepFeedback::of(self.actor, &self.feedback(), body)
+        StoredStepFeedback::of(self.actor, self.check_id, &self.feedback(), body)
     }
 
     /// Keeps a landed collection past one reply in a body on `storage`, the

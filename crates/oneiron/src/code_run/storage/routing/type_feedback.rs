@@ -187,8 +187,9 @@ impl ExecutorStorage<'_> {
             .unwrap_or_default()
     }
 
-    /// Writes a step's feedback on the run's route: a pending row never
-    /// takes the place of a check that has already landed. A stretch that
+    /// Writes a step's feedback on the run's route: an earlier check's row
+    /// never takes the place of a later check's, and a pending row never
+    /// takes the place of its own check's landed result. A stretch that
     /// records nothing keeps none.
     ///
     /// # Errors

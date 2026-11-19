@@ -7,6 +7,7 @@
 //! not kept in its pending row's place, never a check pending for good.
 
 use super::{CheckJob, Service, keep_collection};
+use crate::EntityId;
 use crate::code_run::{
     CodeRunRawOutput, ExecutorStorage, ProgramStepFeedback, ProgramStepIdentity,
     StoredStepFeedback, TYPE_FEEDBACK_NOT_KEPT, TypeDiagnostics,
@@ -51,10 +52,10 @@ impl Service {
             .is_some_and(|vault| job.route.reaches(vault))
     }
 
-    /// Writes `row`, the landed check, on its run's own route. A row that
-    /// cannot be written leaves the typed fact that it was not kept; a
-    /// stretch that has closed keeps nothing.
-    pub(super) fn publish(&self, job: &CheckJob, row: &StoredStepFeedback) {
+    /// Writes `row`, the landed check `check_id`, on its run's own route. A
+    /// row that cannot be written leaves the typed fact that it was not
+    /// kept; a stretch that has closed keeps nothing.
+    pub(super) fn publish(&self, job: &CheckJob, check_id: EntityId, row: &StoredStepFeedback) {
         let Some(vault) = self.vault.as_deref() else {
             return;
         };
@@ -63,7 +64,8 @@ impl Service {
                 return;
             };
             tracing::warn!(target: "oneiron::code_check", %error, "late type feedback not kept");
-            if let Err(error) = storage.put_type_diagnostics(job.key, &not_kept_row(job, &error)) {
+            let not_kept = not_kept_row(job, check_id, &error);
+            if let Err(error) = storage.put_type_diagnostics(job.key, &not_kept) {
                 tracing::warn!(
                     target: "oneiron::code_check",
                     %error,
@@ -74,14 +76,14 @@ impl Service {
     }
 }
 
-/// The row stating that `job`'s landed check could not be kept, for
-/// `error`: in the place of its pending row.
-fn not_kept_row(job: &CheckJob, error: &crate::Error) -> StoredStepFeedback {
+/// The row stating that `job`'s landed check `check_id` could not be kept,
+/// for `error`: in the place of its pending row.
+fn not_kept_row(job: &CheckJob, check_id: EntityId, error: &crate::Error) -> StoredStepFeedback {
     let (run, seq, invocation) = job.key;
     let feedback = ProgramStepFeedback::new(
         ProgramStepIdentity::of(run, seq, invocation),
         job.note.clone(),
         TypeDiagnostics::unavailable(TYPE_FEEDBACK_NOT_KEPT, Some(error.to_string())),
     );
-    StoredStepFeedback::of(job.actor, &feedback, None)
+    StoredStepFeedback::of(job.actor, check_id, &feedback, None)
 }
