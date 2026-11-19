@@ -221,16 +221,19 @@ pub(super) async fn route_bytes(
 ) -> (StatusCode, HeaderMap, Bytes) {
     let request = bind_mcp_request(&server, request);
     let request = slip_credentials::bind_request(&server, request);
-    let response = api_routes(server)
-        .oneshot(request)
-        .await
-        .expect("route response");
-    let status = response.status();
-    let headers = response.headers().clone();
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("response body");
-    (status, headers, body)
+    crate::test_engine_stack::on_engine_stack(async move {
+        let response = api_routes(server)
+            .oneshot(request)
+            .await
+            .expect("route response");
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        (status, headers, body)
+    })
+    .await
 }
 
 pub(super) fn assert_default_policy_manifest_fixture(vault: &oneiron::Vault) {
@@ -475,16 +478,19 @@ pub(super) async fn route_json(
 ) -> (StatusCode, Value) {
     let request = bind_mcp_request(&server, request);
     let request = slip_credentials::bind_request(&server, request);
-    let response = api_routes(server)
-        .oneshot(request)
-        .await
-        .expect("route response");
-    let status = response.status();
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("JSON response body");
-    let body: Value = serde_json::from_slice(&body).expect("JSON response");
-    (status, body)
+    crate::test_engine_stack::on_engine_stack(async move {
+        let response = api_routes(server)
+            .oneshot(request)
+            .await
+            .expect("route response");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("JSON response body");
+        let body: Value = serde_json::from_slice(&body).expect("JSON response");
+        (status, body)
+    })
+    .await
 }
 
 /// Authenticated-test server: the host secret is configured (so the vault is

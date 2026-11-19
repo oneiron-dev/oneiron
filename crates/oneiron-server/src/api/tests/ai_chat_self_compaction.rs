@@ -162,18 +162,22 @@ async fn send(server: &Arc<SyncServer>, mut request: Request<Body>) -> (StatusCo
             40_000,
         ))));
     let request = slip_credentials::bind_request(server, request);
-    let response = api_routes(Arc::clone(server))
-        .oneshot(request)
-        .await
-        .expect("route response");
-    let status = response.status();
-    (
-        status,
-        to_bytes(response.into_body(), usize::MAX)
+    let server = Arc::clone(server);
+    crate::test_engine_stack::on_engine_stack(async move {
+        let response = api_routes(server)
+            .oneshot(request)
             .await
-            .unwrap()
-            .to_vec(),
-    )
+            .expect("route response");
+        let status = response.status();
+        (
+            status,
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+    })
+    .await
 }
 
 async fn chat_turn(server: &Arc<SyncServer>, conversation: &str, turn: usize) {
