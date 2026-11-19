@@ -61,6 +61,13 @@
 //! rebuilt over the device's own unattenuated proof of the same slip, and
 //! saved again from a rebuilt key, it reads nothing from then on. Red on
 //! #8105 (e59c71b9d44): each reads the owner's open claim past the end.
+//!
+//! The transferred credential's key is homed in no conversation of this
+//! vault (RULING SECREAD-HOME-READ-DOORS = B), and its lane still saves,
+//! keeping that home: the refusal of a narrowed guest credential's lane is
+//! for a bound only the grant's proof binds (FIX
+//! HOMED-GRANT-CREDENTIAL-LANE-NOT-SAVED). Red on main f8ebe0a0d6b: each
+//! transferred lane's freeze is refused as a narrowed guest credential's.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test saved_lane_owner_basis`.
 #![cfg(oneiron_test_support)]
@@ -569,6 +576,12 @@ fn a_transferred_own_device_lane_freezes_with_its_scope() {
     assert!(
         !frozen.reads_as_principal(),
         "actor=a key the owner's device handed its credential to; expected its saved lane to keep its Scope, not to read as its holder's principal lane"
+    );
+    let stored = serde_json::to_value(&frozen).expect("frozen lane serializes");
+    assert_eq!(
+        stored["home_unnamed"],
+        json!(true),
+        "actor=a key the owner's device handed its credential to, homed in no conversation of this vault; expected its saved lane to keep that home; stored {stored}"
     );
 }
 
