@@ -1443,6 +1443,21 @@ fn the_owner_dismisses_and_cancels_a_task_whose_body_no_longer_decodes() {
             "{subkind}"
         );
         assert!(task_is_acked(&vault, failed).expect("ack state"));
+        // The board cannot render the row, so its realizing job re-emits
+        // bare; the ack folds that failed job there too.
+        let failed_jobs: Vec<String> = attempts_for(&vault, failed)
+            .iter()
+            .map(|attempt| attempt_hex(attempt.id))
+            .collect();
+        assert!(
+            !owner
+                .describe_section()
+                .expect("board after the ack")
+                .rows
+                .iter()
+                .any(|row| failed_jobs.contains(&row.id)),
+            "{subkind}: a dismissed failure stays off the board"
+        );
 
         let queued = create();
         put_task_body(&vault, queued, &undecodable_task_body(subkind));
@@ -1734,6 +1749,101 @@ fn an_expired_consult_without_failed_jobs_is_dismissed_at_its_deadline() {
             .iter()
             .any(|row| row.id == task_ref.to_hex()),
         "a dismissed expiry stays off the surface"
+    );
+}
+
+/// Round 2: a row that derives expired settles at its deadline whatever its
+/// jobs do after it. A job leased before the deadline that fails after the
+/// owner dismissed the expiry leaves the row the same expiry, so the ack
+/// still answers it.
+#[test]
+fn a_job_failing_after_a_dismissed_expiry_keeps_the_ack() {
+    let (_dir, vault) = open_consult_vault();
+    let (task_ref, _peer, _question) = open_consult(&vault);
+    let asker = own_agent(&vault);
+    let facade = vault.memory(asker, EdgeActorClass::Agent);
+    let queue = AttemptQueue::new(&vault);
+    let job = match queue
+        .enqueue_with_task_ref(
+            EnqueueAttempt {
+                kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
+                payload: Vec::new(),
+                dedupe_key: None,
+                run_id: None,
+                now: CONSULT_NOW + 5,
+            },
+            Some(task_ref.to_hex()),
+        )
+        .expect("enqueue a linked job")
+    {
+        EnqueueOutcome::Enqueued(job) => job,
+        EnqueueOutcome::Existing(_) => panic!("the linked job must be fresh"),
+    };
+    let lease = match queue
+        .claim_kind(
+            TASK_REALIZE_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: "worker".to_owned(),
+                now: CONSULT_NOW + 5,
+            },
+        )
+        .expect("lease the linked job")
+    {
+        ClaimOutcome::Claimed(lease) => lease,
+        ClaimOutcome::Empty => panic!("the linked job must be claimable"),
+    };
+    assert_eq!(lease.id, job.id);
+    // The deadline lapses (as in the expiry test above) while the job holds
+    // its lease; the pinned clock reads CONSULT_NOW + 30.
+    let lapsed = CONSULT_NOW + 10;
+    vault
+        .with_write_txn(|wtxn| {
+            let mut body = task_verb_body_in(&vault, &*wtxn, task_ref)?.expect("consult is typed");
+            body.ttl = Some(TaskTtl::at(lapsed));
+            vault
+                .batch_in()
+                .put_internal(
+                    &task_ref,
+                    ENTITY_TYPE_TASK,
+                    TimeRange {
+                        start: CONSULT_NOW + 30,
+                        end: CONSULT_NOW + 30,
+                    },
+                    CONSULT_NOW + 30,
+                    &encode_task_verb_body(body),
+                )
+                .apply(wtxn)
+        })
+        .expect("lapse the consult deadline below the facade");
+    let ack = facade.tasks_update(task_ref).expect("ack the expiry");
+    assert!(ack.acked);
+    // The leased job fails after the ack, at an instant the transaction door
+    // stamps as given.
+    vault
+        .with_write_txn(|wtxn| {
+            queue
+                .fail_storage_in_txn(
+                    wtxn,
+                    FailAttempt {
+                        id: lease.id,
+                        lease_owner: "worker".to_owned(),
+                        attempt_count: lease.attempt_count,
+                        reason: "failed after the ack".to_owned(),
+                        now: CONSULT_NOW + 40,
+                    },
+                )
+                .map(|_| ())
+        })
+        .expect("fail the linked job after the ack");
+    assert!(task_is_acked(&vault, task_ref).expect("ack survives the job failure"));
+    assert!(
+        !facade
+            .describe_section()
+            .expect("check after the job failure")
+            .rows
+            .iter()
+            .any(|row| row.id == task_ref.to_hex()),
+        "the dismissed expiry stays off the surface"
     );
 }
 

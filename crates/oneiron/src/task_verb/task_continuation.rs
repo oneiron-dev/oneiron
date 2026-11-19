@@ -152,11 +152,12 @@ pub(crate) fn continue_failed_task_in_txn(
 /// A typed terminal is the settlement when one stands; a persisted `Expired`
 /// settles at the deadline the sweep expired, not at the sweep's own write,
 /// so an acknowledgement between the two still answers the expiry it read.
-/// Otherwise the failures the board actually folds decide: the newest
-/// projected failed head realizing this TASK (queue-only when the TASK body
-/// carries no terminal, a malformed body included), or the passed deadline
-/// when the row derives expired with no failed head. Live work and
-/// non-failed heads settle nothing. A connector-send outcome carries no
+/// Otherwise a row that derives expired settles at its passed deadline,
+/// whatever its jobs did since, as the board shows that expiry; failing
+/// that, the failures the board actually folds decide: the newest projected
+/// failed head realizing this TASK (queue-only when the TASK body carries no
+/// terminal, a malformed body included, whose bare failed jobs the board
+/// folds by the same ack). Live work and non-failed heads settle nothing. A connector-send outcome carries no
 /// settlement instant, so a Failed outcome without a failed head settles
 /// nothing yet.
 ///
@@ -185,16 +186,10 @@ pub(crate) fn task_settled_at_in(
         }
         return Ok(Some(terminal.finished_at));
     }
-    // No typed terminal: the newest failure the board folds for this TASK —
-    // the same projected failed heads, so a job kind the board excludes
-    // never moves the settlement — or the passed deadline when the row
-    // derives expired. A retry successor supersedes its source, and the
-    // newest failure wins, so an older ack never dismisses a later
-    // continuation's failure.
-    let task_hex = task.to_hex();
-    let records =
-        crate::attempt_queue::AttemptQueue::new(vault).task_subtree_in_txn(rtxn, &task_hex)?;
-    let failed = projected_failed_head_settled_at(records, &task_hex)?;
+    // No typed terminal. A row that derives expired shows that expiry
+    // whatever its jobs do (the board's derived arm reads the deadline before
+    // any job), so the deadline settles it and a job failing after it never
+    // moves the settlement.
     let expired = body.as_ref().and_then(|body| {
         let deadline = body.ttl.as_ref().map(|ttl| ttl.deadline_at)?;
         if body.settled_ladder_disposition().is_some() {
@@ -202,7 +197,18 @@ pub(crate) fn task_settled_at_in(
         }
         (deadline <= vault.store.clock.now_recorded_at()).then_some(deadline)
     });
-    Ok(failed.into_iter().chain(expired).max())
+    if expired.is_some() {
+        return Ok(expired);
+    }
+    // Otherwise the newest failure the board folds for this TASK: the same
+    // projected failed heads, so a job kind the board excludes never moves
+    // the settlement. A retry successor supersedes its source, and the
+    // newest failure wins, so an older ack never dismisses a later
+    // continuation's failure.
+    let task_hex = task.to_hex();
+    let records =
+        crate::attempt_queue::AttemptQueue::new(vault).task_subtree_in_txn(rtxn, &task_hex)?;
+    projected_failed_head_settled_at(records, &task_hex)
 }
 
 /// The newest failure instant over the failed heads the board folds for one
