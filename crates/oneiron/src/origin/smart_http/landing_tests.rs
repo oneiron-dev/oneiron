@@ -4,7 +4,7 @@
 
 use super::tests::{
     CapturingSink, fixture_attribution, git, landed_repo_id, landing_outcome, landing_time,
-    narrow_door_effectors, seeded_repo, served_repo, temp_vault,
+    narrow_door_effectors, owner_principal, seeded_repo, served_repo, temp_vault,
 };
 use super::*;
 use crate::config::VaultConfig;
@@ -33,6 +33,9 @@ fn sync_plane_rows(vault: &Vault) -> BTreeMap<String, Vec<u8>> {
             let (key, value) = row.expect("sync state row");
             (key.into_owned(), value.to_vec())
         })
+        // Every local write leaves a pending-mirror marker (FIX 7957); the
+        // law below is about repo payload, not that engine-global marker.
+        .filter(|(key, _)| !key.starts_with("lm:w:"))
         .collect()
 }
 
@@ -70,7 +73,7 @@ fn smart_http_production_push_rejects_before_git_without_admission() {
         )
         .is_err()
     );
-    request.remote_user = Some(EntityId::now().to_hex());
+    request.remote_user = Some(owner_principal(&vault).to_hex());
     for supplied in [
         EntityId::now(),
         fixture_attribution(
@@ -550,6 +553,9 @@ fn conflicting_push_receipt_refuses_before_document_ingress() {
     let before_frontier = before.frontier().unwrap();
     // Simulate a conflicting aggregate row from persisted state. The public
     // observer still authenticates the real outcome; no malformed claim bypass.
+    // The row is a `ReceivedRefIngress` whose source matches the fresh
+    // landing's but whose operations differ, so the receipt check refuses
+    // before document ingress.
     let receipt_key = [
         b"origin:code_operations:v1:".as_slice(),
         attribution.provenance_claim_id.as_bytes(),
@@ -557,15 +563,40 @@ fn conflicting_push_receipt_refuses_before_document_ingress() {
         blake3::hash(ref_name.as_bytes()).as_bytes(),
     ]
     .concat();
+    let conflicting = crate::origin::ReceivedRefIngress {
+        source: crate::origin::ReceivedRefSource {
+            object_store: repo.identity().as_hex(),
+            ref_name: (*ref_name).to_owned(),
+            old_oid: outcome.ref_updates[0]
+                .old_oid
+                .as_ref()
+                .map(|oid| oid.as_str().to_owned()),
+            new_oid: outcome.ref_updates[0]
+                .new_oid
+                .as_ref()
+                .map(|oid| oid.as_str().to_owned()),
+        },
+        received_at: landing_time().start,
+        operations: vec![crate::origin::document_ingress::ReceivedFileOperation {
+            operation_id: EntityId::now().to_hex(),
+            actor_id: attribution.actor_id.to_hex(),
+            session_id: session.to_hex(),
+            ref_name: (*ref_name).to_owned(),
+            path: "CONFLICTING.md".to_owned(),
+            before_hash: [0_u8; 32],
+            after_hash: [1_u8; 32],
+            old_mode: None,
+            new_mode: Some(0o100_644),
+            document_edit: false,
+        }],
+        candidate: None,
+    };
     vault
         .with_write_txn(|txn| {
             vault.store.vault_meta.put(
                 txn,
                 &receipt_key,
-                &rmp_serde::to_vec(
-                    &Vec::<crate::origin::document_ingress::ReceivedFileOperation>::new(),
-                )
-                .unwrap(),
+                &rmp_serde::to_vec(&conflicting).unwrap(),
             )?;
             Ok(())
         })

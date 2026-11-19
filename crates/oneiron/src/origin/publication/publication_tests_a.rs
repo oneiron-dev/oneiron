@@ -734,7 +734,7 @@ pub(crate) mod tests {
             vault
                 .origin_keep_owner_count(&repo_id, &base)
                 .expect("count"),
-            5
+            OriginKeepRefKind::ALL.len() as u64
         );
         for (index, kind) in OriginKeepRefKind::ALL.into_iter().enumerate() {
             vault
@@ -742,8 +742,8 @@ pub(crate) mod tests {
                 .expect("unpin each owner kind");
             assert_eq!(
                 wire.read_ref(&repo, &name).expect("root"),
-                (index < 4).then(|| base.clone()),
-                "all five kinds participate in zero-owner retirement"
+                (index < 7).then(|| base.clone()),
+                "all eight kinds participate in zero-owner retirement"
             );
         }
     }

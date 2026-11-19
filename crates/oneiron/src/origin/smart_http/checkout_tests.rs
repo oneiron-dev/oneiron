@@ -1,5 +1,5 @@
 //! Stock Git checkout-to-door round trip with a live epoch-fenced lease.
-use super::tests::{PublicationTestOrigin, git, served_repo};
+use super::tests::{PublicationTestOrigin, git, owner_principal, served_repo};
 use super::*;
 use crate::checkout::lease::*;
 
@@ -25,6 +25,39 @@ impl CheckoutLiveness for Liveness {
     }
 }
 
+/// A live TASK with standing for a checkout lease's `task_ref`: a lease
+/// push's liveness fence and BYOA execute both require the TASK to be a live
+/// entity row with uncancelled standing.
+fn checkout_task(vault: &Vault, now: u64) -> EntityId {
+    let holder = EntityId::now();
+    vault
+        .put_entity(
+            &holder,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+            b"checkout-task-holder",
+        )
+        .expect("task holder");
+    vault
+        .memory(holder, crate::edge::EdgeActorClass::Human)
+        .tasks_create(
+            &crate::task_verb::TaskCreateSpec::new(
+                rmpv::Value::from("checkout-task"),
+                None,
+                None,
+                Some(now),
+            )
+            .with_assignee(crate::task_verb::TaskAssignee::Peer { actor_ref: holder }),
+        )
+        .expect("checkout task")
+        .task_ref
+        .expect("task ref")
+}
+
 #[test]
 fn real_checkout_remote_push_redeems_a_lease_and_never_copies_upstream_secret() {
     // A caller-supplied wall second can lead the vault's monotone authority
@@ -41,13 +74,14 @@ fn real_checkout_remote_push_redeems_a_lease_and_never_copies_upstream_secret() 
     // inherit it. The fixture source is copied as a bare repo, so remove the
     // clone's local-origin URL before it enters door custody.
     git(&repo_dir, &["remote", "remove", "origin"]);
-    let principal = EntityId::now();
+    let principal = owner_principal(&vault);
     let origin = PublicationTestOrigin::start(&vault, principal);
+    let task_ref = checkout_task(&vault, now);
     let mut leases = CheckoutLeaseService::new(&vault, Facts, Liveness::default());
     let grant = leases
         .claim(CheckoutClaimRequest {
             checkout_id: CheckoutId::from_bytes(*EntityId::now().as_bytes()).unwrap(),
-            task_ref: EntityId::now(),
+            task_ref,
             repo_ref: RepoRef::LocalFolder {
                 path: repo_dir.to_string_lossy().into_owned(),
                 commit: head.as_str().to_owned(),
@@ -257,14 +291,14 @@ fn leased_door_checkout_build_captures_exhaust_and_reclaims_fail_closed() {
     let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
     let (_source, repo_dir, _, head) = served_repo(&vault);
     git(&repo_dir, &["remote", "remove", "origin"]);
-    let principal = EntityId::now();
+    let principal = owner_principal(&vault);
     let origin = PublicationTestOrigin::start(&vault, principal);
     let wire = GitWire::new(&vault)
         .unwrap()
         .with_checkout_door(&origin.door_base_url())
         .unwrap();
     let checkout_id = CheckoutId::from_bytes(*EntityId::now().as_bytes()).unwrap();
-    let task_ref = EntityId::now();
+    let task_ref = checkout_task(&vault, now);
     let repo_ref = RepoRef::LocalFolder {
         path: repo_dir.to_string_lossy().into_owned(),
         commit: head.as_str().to_owned(),
