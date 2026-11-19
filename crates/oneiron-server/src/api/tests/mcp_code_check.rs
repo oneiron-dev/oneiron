@@ -8,7 +8,8 @@
 //! config hash derived from it. The two providers give a fixed run the same
 //! config, and the runs are compared on everything else: the replies, host
 //! calls, steps with their clock, outputs and the prompt fingerprint, with
-//! the run id and the config hash masked.
+//! the run id and the config hash masked, and the refs each vault mints per
+//! call (a reply's receipt ref and its delivered occurrence ref).
 use super::mcp_quickjs::{CodeMode, code_mode_server_with};
 use super::*;
 use oneiron::code_run::CodeRunReplayRecord;
@@ -129,9 +130,9 @@ impl Run {
         Some(String::from_utf8(raw).unwrap())
     }
 
-    /// What the run did, with its id masked: both replies without their
-    /// type feedback, each host call, each step, and each output other than
-    /// the checks'.
+    /// What the run did, with its id and its minted refs masked: both
+    /// replies without their type feedback, each host call, each step, and
+    /// each output other than the checks'.
     fn view(&self) -> Value {
         let record = &self.record;
         let view = json!({
@@ -161,7 +162,10 @@ impl Run {
                 }).collect::<Vec<_>>(),
         });
         let run_id = record.run_id.to_hex();
-        serde_json::from_str(&view.to_string().replace(&run_id, "<run>")).unwrap()
+        serde_json::from_str(&mask_minted_refs(
+            &view.to_string().replace(&run_id, "<run>"),
+        ))
+        .unwrap()
     }
 
     /// The check's own outputs: a step's diagnostics past one reply, kept
@@ -173,6 +177,36 @@ impl Run {
             .filter(|output| output.path.ends_with(".type-diagnostics.json"))
             .count()
     }
+}
+
+/// The prefixes of the refs a vault mints for each call, each followed by 32
+/// hex digits: a reply's receipt ref and its delivered occurrence ref. Each
+/// server's vault mints its own, so they differ between the two modes as the
+/// run id does.
+const MINTED_REF_PREFIXES: [&str; 2] = ["call:", "occurrence:"];
+
+/// `text` with the 32 hex digits after each minted-ref prefix replaced by
+/// `<minted>`.
+fn mask_minted_refs(text: &str) -> String {
+    let mut masked = text.to_owned();
+    for prefix in MINTED_REF_PREFIXES {
+        let mut out = String::with_capacity(masked.len());
+        let mut rest = masked.as_str();
+        while let Some(at) = rest.find(prefix) {
+            let after = at + prefix.len();
+            out.push_str(&rest[..after]);
+            let tail = &rest[after..];
+            if tail.bytes().take_while(u8::is_ascii_hexdigit).count() == 32 {
+                out.push_str("<minted>");
+                rest = &tail[32..];
+            } else {
+                rest = tail;
+            }
+        }
+        out.push_str(rest);
+        masked = out;
+    }
+    masked
 }
 
 /// `reply` as its program's run gave it, without the type feedback the reply
