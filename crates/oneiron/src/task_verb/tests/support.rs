@@ -976,22 +976,10 @@ pub(in crate::task_verb) fn permit_outcome_fixture_predicates(
             .expect("policy map")
             .insert("scoped_grants".into(), serde_json::Value::Array(Vec::new()));
     }
-    let principal_hex = principal.to_hex();
     let grants = manifest["scoped_grants"]
         .as_array_mut()
         .expect("scoped grants");
-    if !grants.iter().any(|row| {
-        row.get("actor_ref").and_then(|v| v.as_str()) == Some(principal_hex.as_str())
-            && row.get("effector").and_then(|v| v.as_str()) == Some("core:read")
-    }) {
-        grants.push(serde_json::json!({
-            "actor_ref": principal_hex,
-            "effector": "core:read",
-            "scope": serde_json::to_value(crate::federation::scope_codec::read_preset())
-                .expect("read preset"),
-            "receipt_required": false,
-        }));
-    }
+    push_unrestricted_read(grants, principal);
     let rules = manifest["rules"].as_array_mut().expect("policy rules");
     for predicate in [
         "outcome.earned",
@@ -1008,13 +996,31 @@ pub(in crate::task_verb) fn permit_outcome_fixture_predicates(
     )
 }
 
+/// Adds the fixture's unrestricted read row for `actor` (`core:read` over
+/// `read_preset()`, no receipt) unless that identical row is already there.
+/// A narrower `core:read` row for the same actor, such as the shipped
+/// MESSAGE-only house grant of `sys.team_lead`, does not count and is kept.
+fn push_unrestricted_read(grants: &mut Vec<serde_json::Value>, actor: EntityId) {
+    let row = serde_json::json!({
+        "actor_ref": actor.to_hex(),
+        "effector": "core:read",
+        "scope": serde_json::to_value(crate::federation::scope_codec::read_preset())
+            .expect("read preset"),
+        "receipt_required": false,
+    });
+    if !grants.contains(&row) {
+        grants.push(row);
+    }
+}
+
 /// Give each `holders` a live read position on every record (Cause A): an
 /// unrestricted `core:read` grant in the vault's default policy, the same
 /// row shape `permit_outcome_fixture_predicates` gives its principal. Ask
 /// admission requires every holder (and the asker) to read the question unit
 /// (`validate_task_answer_unit` -> `record_allowed_in_txn`); a bare PERSON
 /// with no grant reads as absent. Existing grants, ceilings and rules are
-/// kept; only missing holder rows are added.
+/// kept; a holder's unrestricted row is added unless that identical row is
+/// already there (see [`push_unrestricted_read`]).
 pub(crate) fn grant_ask_read(vault: &Vault, holders: &[EntityId]) -> crate::Result<()> {
     let id = crate::gate::default_policy_manifest_id()?;
     let bytes = match vault.get(&id)? {
@@ -1032,20 +1038,7 @@ pub(crate) fn grant_ask_read(vault: &Vault, holders: &[EntityId]) -> crate::Resu
         .as_array_mut()
         .expect("scoped grants");
     for holder in holders {
-        let hex = holder.to_hex();
-        if grants.iter().any(|row| {
-            row.get("actor_ref").and_then(|v| v.as_str()) == Some(hex.as_str())
-                && row.get("effector").and_then(|v| v.as_str()) == Some("core:read")
-        }) {
-            continue;
-        }
-        grants.push(serde_json::json!({
-            "actor_ref": hex,
-            "effector": "core:read",
-            "scope": serde_json::to_value(crate::federation::scope_codec::read_preset())
-                .expect("read preset"),
-            "receipt_required": false,
-        }));
+        push_unrestricted_read(grants, *holder);
     }
     crate::test_util::put_policy_manifest_bytes(
         vault,
