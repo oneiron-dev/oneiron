@@ -37,7 +37,7 @@ pub(crate) fn custody_records_named(
     value: &Value,
     known: &Arc<KnownValues>,
 ) -> Result<BTreeSet<String>> {
-    let read = records_read(value, known, None)?;
+    let read = records_read(value, known, None, None)?;
     let mut records = BTreeSet::new();
     records_in(&read.0, &mut records);
     records.retain(|handle| known.holds_handle(handle));
@@ -81,7 +81,8 @@ fn body_records(bytes: &[u8], records: &mut BTreeSet<String>) {
 /// spelling the known-value matcher reads, as its record's handle; each
 /// secret a shape rule places as the plan's one stand-in; each handle and
 /// every other byte as written. A value another record holds is read as any
-/// other text is. A body a member carries as bytes is read as a body.
+/// other text is. A body a member carries as bytes is read as a body. With
+/// `longest`, only their values at most that many bytes long are read.
 ///
 /// # Errors
 ///
@@ -90,23 +91,26 @@ pub(crate) fn custody_record_form(
     value: &Value,
     known: &Arc<KnownValues>,
     records: &BTreeSet<String>,
+    longest: Option<usize>,
 ) -> Result<Value> {
-    let mut read = records_read(value, known, Some(records.clone()))?;
+    let mut read = records_read(value, known, Some(records.clone()), longest)?;
     Ok(std::mem::replace(&mut read.0, Value::Nil))
 }
 
 /// `value` as the side-row wall's plan reads a row's value with `known`
 /// (each body a member carries as bytes too), for the values of `records`
-/// alone when given. Nothing is minted.
+/// alone when given, as far as `longest`. Nothing is minted.
 fn records_read(
     value: &Value,
     known: &Arc<KnownValues>,
     records: Option<BTreeSet<String>>,
+    longest: Option<usize>,
 ) -> Result<PlanTree> {
     let mut read = PlanTree(value.clone());
     let mut plan = Masker {
         mints: true,
         records,
+        records_longest: longest,
         at: Some((origin("replay", &[])?, "replay".to_owned())),
         known: Some(Arc::clone(known)),
         ..Masker::default()

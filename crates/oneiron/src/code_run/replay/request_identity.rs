@@ -149,7 +149,10 @@ impl<'a> ErasedRequest<'a> {
     /// A row whose erase kept a custody identity meets `offered` by it
     /// alone while base custody, read through `known`, knows every record
     /// it names (FIX ERASED-IDENTITY-ONE-STAND-IN): `offered` read for those
-    /// records' values, each as its record's handle, digests the same. So a
+    /// records' values, each as its record's handle, digests the same, read
+    /// with all their values or with those at most each shorter length they
+    /// hold (blind review round 2 of #9528: a record rotated to a longer
+    /// value since the erase still reads as the erase read it). So a
     /// value another record holds, or a key of the same shape no named
     /// record holds, is another call; a value held as written beside the
     /// handle of another, which custody knew by the erase, meets (FIX-LIST
@@ -178,7 +181,7 @@ impl<'a> ErasedRequest<'a> {
             if let Some(custody) = self.custody
                 && let Some((custody_known, records)) = custody.known_records(known)?
             {
-                return Ok(custody_digest(request, &custody_known, &records)? == custody.identity);
+                return custody.meets(request, &custody_known, &records);
             }
             if canonical_digest(request, None)? == self.identity {
                 return Ok(true);
@@ -223,6 +226,32 @@ impl<'a> CustodyIdentity<'a> {
             identity: <[u8; 32]>::try_from(identity.as_slice()).ok()?,
             records,
         })
+    }
+
+    /// Whether `request`, read for the values of `records` through
+    /// `custody_known`, digests as this identity: read with every value
+    /// those records hold, then, past a miss, with only those at most each
+    /// shorter length they hold, longest first. A record that took a longer
+    /// value since the erase, one spanning the erased value and the words
+    /// beside it, so reads the request as the erase read it. Each read
+    /// takes only those records' values as their handles, so a value
+    /// another record holds meets no read.
+    fn meets(
+        &self,
+        request: &Value,
+        custody_known: &Arc<KnownValues>,
+        records: &BTreeSet<String>,
+    ) -> Result<bool> {
+        if custody_digest(request, custody_known, records, None)? == self.identity {
+            return Ok(true);
+        }
+        let lengths = custody_known.held_lengths(|handle| records.contains(handle));
+        for longest in lengths.into_iter().rev().skip(1) {
+            if custody_digest(request, custody_known, records, Some(longest))? == self.identity {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// The values base custody holds, read through `known`, and the records
@@ -493,7 +522,7 @@ fn custody_identity(
     if records.is_empty() {
         return Ok(None);
     }
-    let identity = custody_digest(&part, &known, &records)?;
+    let identity = custody_digest(&part, &known, &records, None)?;
     Ok(Some(
         std::iter::once(Value::Binary(identity.to_vec()))
             .chain(records.into_iter().map(Value::from))
@@ -510,15 +539,17 @@ fn canonical_digest(request: &Value, known: Option<Arc<KnownValues>>) -> Result<
 
 /// The BLAKE3 digest of `request`'s canonical MessagePack, read for the
 /// values of `records` alone, through `known`, each as its record's handle
-/// ([`custody_record_form`]): a custody identity.
+/// ([`custody_record_form`]), only those at most `longest` bytes long when
+/// given: a custody identity.
 fn custody_digest(
     request: &Value,
     known: &Arc<KnownValues>,
     records: &BTreeSet<String>,
+    longest: Option<usize>,
 ) -> Result<[u8; 32]> {
     digest(
         CUSTODY_IDENTITY_DOMAIN,
-        &custody_record_form(request, known, records)?,
+        &custody_record_form(request, known, records, longest)?,
     )
 }
 
