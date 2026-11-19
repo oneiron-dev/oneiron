@@ -3,6 +3,8 @@
 //! queue's own key codec. Reached as `oneiron::test_doors::sync_queue_rows`
 //! (re-exported there); compiled only under `oneiron_test_support`.
 
+use std::borrow::Cow;
+
 use super::SyncQueue;
 use super::codec::encode_update_key;
 
@@ -34,6 +36,6 @@ pub fn raw_update_row(queue: &SyncQueue, seq: u64) -> Result<Option<Vec<u8>>, St
     store
         .sync_queue
         .get(&rtxn, &encode_update_key(seq))
-        .map(|row| row.map(<[u8]>::to_vec))
+        .map(|row| row.map(Cow::into_owned))
         .map_err(|err| err.to_string())
 }
