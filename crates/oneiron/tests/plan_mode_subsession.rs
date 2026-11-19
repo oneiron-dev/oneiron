@@ -14,9 +14,7 @@
 //! When the run settles, its result is filed into the sub-session
 //! (PLAN-RUN-TRACE-INTO-SUB-SESSION = B, Engine 17 Nov 00:11): one record
 //! naming the result TURN, under the approving turn, HEAD unmoved, and only
-//! in a room the owner alone reads. A shared room keeps the result out. The
-//! filed record keeps no room row: the owner's trunk and history read as
-//! before, and the open's room-row backfill leaves it with none.
+//! in a room the owner alone reads. A shared room keeps the result out.
 //!
 //! Every verdict request is built from JSON and every new settlement field
 //! is read back through JSON, so this file compiles on a tree without the
@@ -314,7 +312,8 @@ fn filed_results(fixture: &Fixture, room: EntityId, session: EntityId, result: E
 }
 
 /// The TURN ids the owner reads on `room`: its trunk page's turns, then its
-/// history's.
+/// history's. A filed result record keeps no room row, so neither read
+/// lists it, and the open's room-row backfill gives it none.
 fn room_reads(fixture: &Fixture, room: EntityId) -> (Vec<String>, Vec<String>) {
     let reader = owner(fixture);
     let trunk = reader
