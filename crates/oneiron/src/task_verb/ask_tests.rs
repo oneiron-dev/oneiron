@@ -1680,6 +1680,7 @@ fn omitted_short_target_uses_verified_human_task_owner_not_agent_actor() -> Resu
     let human = vault.ensure_embedded_owner_actor()?;
     let agent = super::tests::support::own_agent(&vault);
     let question = super::tests::support::consult_turn(&vault, 0x81);
+    super::tests::support::grant_ask_read(&vault, &[agent])?;
     let agent_memory = vault.memory(agent, EdgeActorClass::Agent);
     let input = serde_json::json!({
         "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []}
