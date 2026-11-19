@@ -129,13 +129,14 @@ impl Run {
         Some(String::from_utf8(raw).unwrap())
     }
 
-    /// What the run did, with its id masked: both replies, each host call,
-    /// each step, and each output other than the checks'.
+    /// What the run did, with its id masked: both replies without their
+    /// type feedback, each host call, each step, and each output other than
+    /// the checks'.
     fn view(&self) -> Value {
         let record = &self.record;
         let view = json!({
-            "first": self.first,
-            "second": self.second,
+            "first": without_feedback(&self.first),
+            "second": without_feedback(&self.second),
             "bridge_calls": record.bridge_calls.iter().map(|call| json!({
                 "seq": call.seq,
                 "effect": call.effect.as_str(),
@@ -172,6 +173,42 @@ impl Run {
             .filter(|output| output.path.ends_with(".type-diagnostics.json"))
             .count()
     }
+}
+
+/// `reply` as its program's run gave it, without the type feedback the reply
+/// carries beside it: a success's `program_steps` (and the text copy that
+/// restates its structured content), a refusal's `program_steps` or
+/// `program_steps_unavailable`. The feedback is all the check changes in a
+/// reply: off, each step's check is unavailable at once; in feedback mode it
+/// is pending or complete. What it holds is read from the run's kept steps.
+fn without_feedback(reply: &Value) -> Value {
+    let mut reply = reply.clone();
+    let copies = reply
+        .pointer_mut("/result/structuredContent")
+        .and_then(|structured| {
+            let before = crate::mcp::mcp_canonical_json(structured);
+            structured.as_object_mut()?.shift_remove("program_steps")?;
+            Some((before, crate::mcp::mcp_canonical_json(structured)))
+        });
+    if let Some((before, after)) = copies
+        && let Some(content) = reply
+            .pointer_mut("/result/content")
+            .and_then(Value::as_array_mut)
+    {
+        for item in content {
+            if item.get("text").and_then(Value::as_str) == Some(before.as_str()) {
+                item["text"] = Value::String(after.clone());
+            }
+        }
+    }
+    if let Some(data) = reply
+        .pointer_mut("/error/data")
+        .and_then(Value::as_object_mut)
+    {
+        data.shift_remove("program_steps");
+        data.shift_remove("program_steps_unavailable");
+    }
+    reply
 }
 
 /// The executor's config marker.
