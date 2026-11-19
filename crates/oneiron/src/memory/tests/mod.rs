@@ -587,8 +587,13 @@ pub(super) fn opinion_claim(vault: &crate::Vault, actor: EntityId, subject: Enti
 
 pub(super) fn note_body_of(vault: &crate::Vault, note_id: &EntityId) -> crate::note::NoteBody {
     let raw = vault.get_raw(note_id).expect("raw").expect("note exists");
-    crate::note::decode_note_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
-        .expect("note body decodes under the pinned ABI")
+    let core = crate::note::decode_note_core(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+        .expect("note body decodes under the pinned ABI");
+    let markdown = vault
+        .note_document(*note_id)
+        .expect("note document")
+        .markdown;
+    core.with_markdown(markdown)
 }
 
 // ── ONE-1936: write-verb validity guard at the facade doors ──────────
