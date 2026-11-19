@@ -490,6 +490,70 @@ fn assert_symmetric_links(store: &Store, txn: &RoTxn<'_>) -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn an_overflow_prune_keeps_the_only_link_into_a_lone_vector() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), small_graph_config(4, 2, 8))?;
+    let b = id_from_u64(1);
+    let a = id_from_u64(2);
+    let c = id_from_u64(3);
+    let d = id_from_u64(4);
+    let x = [1.0, 0.0, 0.0, 0.0];
+    let z = [0.0, 0.0, 0.0, 1.0];
+    for id in [b, a, c, d] {
+        vault.put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
+    }
+    for (id, vector) in [(b, z), (a, x), (c, z), (d, z)] {
+        vault.put_vector(&id, &vector)?;
+    }
+    for (id, vector) in [(b, z), (a, x), (c, z), (d, z)] {
+        assert_eq!(vault.get_vector(&id)?, Some(vector.to_vec()));
+    }
+
+    let rtxn = vault.store.env.read_txn()?;
+    let hits = hnsw_search(&vault.store, &vault.config, &rtxn, &x, 4, false, None)?;
+    assert_eq!(hits.first().map(|hit| hit.id), Some(a));
+    assert!((hits[0].score - 1.0).abs() < 1e-3);
+    assert_symmetric_links(&vault.store, &rtxn)?;
+    assert!(read_one_way_exception_holders(&vault.store, &rtxn, &c)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_lone_vector_stays_reachable_after_many_identical_fills_at_default_width() -> Result<()> {
+    let mut config = VaultConfig::device();
+    config.dimensions = 4;
+    config.embedding_model = Some("test/model@v1".to_owned());
+    config.map_size = 64 * 1024 * 1024;
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), config)?;
+    let a = id_from_u64(42);
+    let x = [1.0, 0.0, 0.0, 0.0];
+    let z = [0.0, 0.0, 0.0, 1.0];
+    for value in 1..=66 {
+        vault.put_entity(
+            &id_from_u64(value),
+            1,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"node",
+        )?;
+    }
+    // 41 identical rows, the lone vector, then 24 more identical rows.
+    for value in 1..=66 {
+        let id = id_from_u64(value);
+        vault.put_vector(&id, if id == a { &x } else { &z })?;
+    }
+    assert_eq!(vault.get_vector(&a)?, Some(x.to_vec()));
+
+    let rtxn = vault.store.env.read_txn()?;
+    let hits = hnsw_search(&vault.store, &vault.config, &rtxn, &x, 4, false, None)?;
+    assert_eq!(hits.first().map(|hit| hit.id), Some(a));
+    assert!((hits[0].score - 1.0).abs() < 1e-3);
+    assert_symmetric_links(&vault.store, &rtxn)?;
+    Ok(())
+}
+
 /// ONE-325 regression: orphan protection keeps a victim's last link
 /// (`victim -> from`) one-way, but the symmetric delete of `from` derives
 /// its backlinks from `from`'s OWN forward list — which never contains the
