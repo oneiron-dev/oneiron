@@ -194,6 +194,11 @@ impl Vault {
                 }
                 let successor = EntityId::now();
                 let writer = self.dreamer_successor_writer_in_txn(wtxn, now)?;
+                // The owner's open question follows the claim (S17-1 = A):
+                // the weakened successor is the item they answer now, and the
+                // supersession below closes the old claim's row silently.
+                let question =
+                    super::held_question::open_owner_question_in_txn(&self.store, wtxn, claim_id)?;
                 crate::batch::ClaimMaterialization::apply_successor(
                     self,
                     wtxn,
@@ -205,6 +210,14 @@ impl Vault {
                     writer,
                     now,
                 )?;
+                if let Some(question) = &question {
+                    super::held_question::restate_owner_question_in_txn(
+                        &self.store,
+                        wtxn,
+                        question,
+                        &successor,
+                    )?;
+                }
                 self.supersede_claim_in_txn_as(wtxn, &successor, claim_id, now, writer.actor())?;
                 return Ok(ClaimDemotion {
                     rung: ClaimDemotionRung::Weakened,
