@@ -66,6 +66,7 @@ pub(crate) mod enforcement_read;
 mod evidence_support;
 mod expression_archive;
 mod expression_preference;
+pub(crate) mod held_question;
 use oneiron_authority::claim_history_handoff as history_handoff;
 mod history_pin_exchange;
 pub use oneiron_base::learning_estimate;

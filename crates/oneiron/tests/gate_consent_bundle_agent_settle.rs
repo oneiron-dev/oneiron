@@ -32,6 +32,7 @@ use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::derive_verbs::define_agent;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
+use oneiron::write_envelope::claim_body::ClaimDemotionAction;
 use oneiron::{
     ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     EdgeActorClass, EntityId, GateConsentBundleAction, TimeRange, Vault, VaultConfig, WriteActor,
@@ -741,6 +742,60 @@ fn a_proposed_ceiling_agent_never_approves_a_bundle() {
             claim_status(&fixture, &id).0,
             ClaimApprovalStatus::Approved,
             "the owner's approval lands"
+        );
+    }
+}
+
+// S17-1 = A (Engine 19 Nov 20:31): the engine's decay of a held member restates
+// the owner's question on the decayed body. The restated question keeps the
+// writer the asked decision named, so the opener's lineage is still refused
+// and an agent outside it still settles the whole bundle.
+#[test]
+fn a_decayed_member_keeps_its_opener_so_an_outsider_still_settles_the_bundle() {
+    let fixture = rooted_vault();
+    let run = "consent-bundle-decayed-member";
+    let opener = granted_agent(&fixture, "bundle-opener", BUNDLE_VERBS);
+    let outsider = granted_auto_agent(&fixture, "bundle-outsider", BUNDLE_VERBS);
+    let (first, second) = park_two_in_run(&fixture, opener, run);
+    let later = fixture.vault.now_recorded_at() + 1;
+    fixture
+        .vault
+        .apply_claim_demotion(
+            &first,
+            ClaimDemotionAction::Decay {
+                new_claim_of_weight: 0.5,
+            },
+            later,
+        )
+        .unwrap_or_else(|error| panic!("the engine decays a held member: {error:?}"));
+    owner_turns_on(&fixture, DELEGATE_KEY, None);
+    let (owner_hex, owner_members) = owner_bundle_hex(&fixture, run);
+    let mut expected = vec![first.to_hex(), second.to_hex()];
+    expected.sort();
+    assert_eq!(
+        owner_members, expected,
+        "the decayed member is still asked in its run's bundle"
+    );
+
+    let own = invoke(
+        &agent_memory(&fixture, opener),
+        RESOLVE_AS,
+        json!({
+            "bundle_id": owner_hex,
+            "dreamer_run_id": run,
+            "action": "approve",
+        }),
+    )
+    .expect_err("the opener never settles its own bundle after a decay");
+    assert_lineage_refused(&own);
+
+    let settled = agent_resolve(&fixture, outsider, &owner_hex, run, "approve");
+    assert_eq!(settled_members(&settled), expected, "{settled}");
+    for id in [first, second] {
+        assert_eq!(
+            claim_status(&fixture, &id).0,
+            ClaimApprovalStatus::Approved,
+            "an agent outside the opener's lineage settles the decayed bundle"
         );
     }
 }
