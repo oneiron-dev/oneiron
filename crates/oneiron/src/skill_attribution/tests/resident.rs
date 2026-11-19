@@ -1,4 +1,6 @@
 use super::*;
+use crate::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
+use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::skill_reliability::{
     project_skill_reliability, record_resident_skill_contributing_win,
     record_skill_contributing_win, skill_reliability_posterior,
@@ -11,27 +13,26 @@ fn resident_receipt(
     failed: bool,
 ) -> Result<String> {
     let queue = AttemptQueue::new(vault);
-    let EnqueueOutcome::Enqueued(row) = queue.enqueue(EnqueueAttempt {
-        kind: "resident.skill.test".into(),
-        payload: Vec::new(),
-        dedupe_key: None,
-        run_id: None,
-        now: 10,
-    })?
+    let dispatcher = AgentDispatcher::new(vault);
+    let now = vault.now_recorded_at();
+    let AgentDispatchOutcome::Dispatched(dispatched) =
+        dispatcher.dispatch_default_base(None, None, None, now)?
     else {
         panic!("new attempt")
     };
+    let row = dispatched.attempt;
 
     let ClaimOutcome::Claimed(leased) = queue.claim_kind(
-        "resident.skill.test",
+        DREAMER_RUNNER_ATTEMPT_KIND,
         ClaimAttempt {
             lease_owner: "resident-test".into(),
-            now: 12,
+            now: vault.now_recorded_at(),
         },
     )?
     else {
         panic!("claim")
     };
+    assert_eq!(leased.id, row.id);
     vault.load_resident_skill_pack(
         row.id,
         resident,
@@ -39,7 +40,7 @@ fn resident_receipt(
         "resident-test",
         leased.attempt_count,
         "fixture/model@1",
-        11,
+        now,
     )?;
     if failed {
         queue.fail(crate::attempt_queue::FailAttempt {
@@ -47,14 +48,14 @@ fn resident_receipt(
             lease_owner: "resident-test".into(),
             attempt_count: leased.attempt_count,
             reason: "failed".into(),
-            now: 13,
+            now: vault.now_recorded_at(),
         })?;
     } else {
         queue.complete(CompleteAttempt {
             id: row.id,
             lease_owner: "resident-test".into(),
             attempt_count: leased.attempt_count,
-            now: 13,
+            now: vault.now_recorded_at(),
         })?;
     }
     Ok(attempt_pack_receipt_id(&row.id))
