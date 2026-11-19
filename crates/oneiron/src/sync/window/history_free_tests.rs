@@ -724,14 +724,20 @@ fn a_pinned_window_with_no_clean_root_still_persists() {
     let reloaded = LoroDoc::from_snapshot(&persisted).unwrap();
     assert_eq!(reloaded.oplog_vv(), doc.oplog_vv());
     assert!(map_get_bytes(&reloaded.get_map("entities"), &prefix_row).is_some());
-    assert!(matches!(
-        export_window_since(&vault, &key, &doc, &peer.oplog_vv().encode(), None),
-        Err(crate::error::Error::Sync(
-            crate::error::SyncError::SyncProtocolError {
-                context: crate::error::SyncProtocolValidation::HistoryFreeRootUnavailable,
-            }
-        ))
-    ));
+    match export_window_since(&vault, &key, &doc, &peer.oplog_vv().encode(), None) {
+        Ok(WindowExport::Replacement(snapshot)) => {
+            let installed = LoroDoc::from_snapshot(&snapshot).unwrap();
+            assert!(
+                !holds_bytes(&installed, b"placeholder private explainer"),
+                "clean replacement must not carry the withheld explainer"
+            );
+        }
+        Ok(WindowExport::Update(update)) => panic!(
+            "expected a clean Replacement after the strict-cut persist, got Update with {} bytes",
+            update.len()
+        ),
+        Err(err) => panic!("expected a clean Replacement, got {err:?}"),
+    }
 }
 
 /// S1 at the floor itself (Bugbot, #1463): a pinned window persists rooted at its newest

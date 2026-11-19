@@ -397,8 +397,8 @@ mod tests {
     #[test]
     fn persist_imported_window_update_writes_contract_key_literals() {
         // ARCH-0023b "sync_state key layout" literals:
-        //   u:w:2026-02:{seq:08x}  Loro update (pending window update)
-        //   m:u_seq:w:2026-02      u32 LE (4 bytes) monotonic counter
+        //   u:w:2026-02:{seq:016x}  Loro update (pending window update)
+        //   m:u_seq:w:2026-02      u64 LE (8 bytes) monotonic counter
         //   svf:w:2026-02          1 byte (1 = fresh, 0 = stale)
         let (_dir, vault) = test_vault();
         let key = WindowKey::new("2026-02");
@@ -408,14 +408,14 @@ mod tests {
         assert_eq!(seq, 1);
         assert_eq!(
             vault
-                .sync_state_get("u:w:2026-02:00000001")
+                .sync_state_get("u:w:2026-02:0000000000000001")
                 .unwrap()
                 .unwrap(),
             b"update-one"
         );
         assert_eq!(
             vault.sync_state_get("m:u_seq:w:2026-02").unwrap().unwrap(),
-            1u32.to_le_bytes()
+            1u64.to_le_bytes()
         );
         assert_eq!(
             vault.sync_state_get("svf:w:2026-02").unwrap().unwrap(),
@@ -428,14 +428,14 @@ mod tests {
         assert_eq!(seq, 2);
         assert_eq!(
             vault
-                .sync_state_get("u:w:2026-02:00000002")
+                .sync_state_get("u:w:2026-02:0000000000000002")
                 .unwrap()
                 .unwrap(),
             b"update-two"
         );
         assert_eq!(
             vault.sync_state_get("m:u_seq:w:2026-02").unwrap().unwrap(),
-            2u32.to_le_bytes()
+            2u64.to_le_bytes()
         );
     }
 
@@ -443,7 +443,7 @@ mod tests {
     fn persist_imported_window_update_rejects_corrupt_seq_row() {
         // A malformed seq row must NOT silently reset to 0 — next_seq = 1
         // would overwrite whatever was already persisted at
-        // u:w:{key}:00000001. Same policy as Observer A.
+        // u:w:{key}:0000000000000001. Same policy as Observer A.
         let (_dir, vault) = test_vault();
         let key = WindowKey::new("2026-02");
 
@@ -457,7 +457,7 @@ mod tests {
         assert_matches!(err, Error::CorruptedIndex(_), "got {err:?}");
         assert_eq!(
             vault
-                .sync_state_get("u:w:2026-02:00000001")
+                .sync_state_get("u:w:2026-02:0000000000000001")
                 .unwrap()
                 .unwrap(),
             b"first",
