@@ -42,6 +42,7 @@ fn commit_auto_request_downgrades_to_proposed_when_gate_pends() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x61);
     let subject = put_person(&vault, 0x62);
+    grant_reads(&vault, actor);
 
     // A Person-backed agent has a valid actor binding, but this explicit
     // ceiling still prevents the Auto request from attaching.
@@ -164,6 +165,7 @@ fn auto_eligible_upsert_stages_before_closing_prior() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x73);
     let subject = put_person(&vault, 0x74);
+    grant_reads(&vault, actor);
     let facade = facade_for(&vault, actor);
     let first = facade
         .claim_upsert(&claim_input(
@@ -285,6 +287,7 @@ fn a_correction_on_an_unregistered_predicate_takes_its_grant() {
         }
         let actor = put_person(&vault, 0x75);
         let subject = put_person(&vault, 0x76);
+        grant_reads(&vault, actor);
         let facade = facade_for(&vault, actor);
         let first = facade
             .claim_upsert(&claim_input(
@@ -720,6 +723,7 @@ fn admit_imported_claim_rides_the_ingest_trust_ceiling() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0xF1);
     let subject = put_person(&vault, 0xF2);
+    grant_reads(&vault, actor);
     let facade = facade_for(&vault, actor);
 
     // The only registered source at base has permits_auto == false, so the
@@ -767,6 +771,7 @@ fn blob_door_round_trips_bytes_and_dedupes_head() {
     // a manifest rule for blob.version.
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
     let actor = put_person(&vault, 0x12);
+    grant_reads(&vault, actor);
     let facade = facade_for(&vault, actor);
 
     let artifact = facade
@@ -1009,6 +1014,8 @@ fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
     let first_agent = put_person(&vault, 0x19);
     let replacement_agent = put_person(&vault, 0x1A);
     let subject = put_person(&vault, 0x1B);
+    grant_reads(&vault, first_agent);
+    grant_reads(&vault, replacement_agent);
     let first_facade = vault.memory(first_agent, EdgeActorClass::Agent);
     let claim_id = EntityId::from_bytes([0x1C; 16]).expect("claim id");
     let mut first = claim_input(
@@ -1093,6 +1100,7 @@ fn signed_machine_keyed_create_replace_and_delete() {
         &vault,
         vec![("system".into(), machine.to_hex(), "auto".into())],
     );
+    grant_reads_as(&vault, machine, EdgeActorClass::System);
     let machine_sign = |transcript: &[u8]| Ok(machine_key.sign(transcript).to_bytes());
     let facade = vault.memory_signed_machine(
         machine,

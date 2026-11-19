@@ -313,6 +313,10 @@ fn note_citations_and_authorship_cross_peer_state_reopen_and_guard_reviewed_edit
     let a = Arc::new(Vault::open(a_dir.path(), VaultConfig::device()).unwrap());
     let b = Arc::new(Vault::open(b_dir.path(), VaultConfig::device()).unwrap());
     let author = actor(&a);
+    crate::conversation_dag::fixtures::grant_reads(
+        &a,
+        crate::WriteActor::new(author, EdgeActorClass::Human),
+    );
     let memory = a.memory(author, EdgeActorClass::Human);
     let claim = EntityId::now();
     memory
