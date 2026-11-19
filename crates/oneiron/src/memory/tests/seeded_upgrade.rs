@@ -88,9 +88,7 @@ fn correction(
     first: &str,
     second: &str,
 ) -> (EntityId, EntityId) {
-    let writer = put_person(vault, 0x81);
-    grant_reads(vault, writer);
-    let facade = facade_for(vault, writer);
+    let facade = facade_for(vault, seeded_writer(vault, 0x81));
     let subject = put_person(vault, 0x82);
     let first = facade
         .claim_upsert(&claim_input(
@@ -114,11 +112,22 @@ fn residence_correction(vault: &crate::Vault) -> (EntityId, EntityId) {
     correction(vault, "residence.city", "Lisbon", "Porto")
 }
 
+/// Claim writer `seed`: a PERSON with the read its reference checks need,
+/// put and granted on first use only. Each grant stores a policy manifest and
+/// so moves the policy frontier: a test that stages consents from several
+/// writers seeds them all before the first one is staged, or the earlier
+/// consents wait under an older frontier than the later ones.
+fn seeded_writer(vault: &crate::Vault, seed: u8) -> EntityId {
+    let id = EntityId::from_bytes([seed; 16]).expect("writer id");
+    if vault.get(&id).expect("read writer").is_none() {
+        grant_reads(vault, put_person(vault, seed));
+    }
+    id
+}
+
 /// Proposes `value` on `predicate` through the facade as an inference.
 fn inferred(vault: &crate::Vault, seed: u8, predicate: &str, value: &str) -> EntityId {
-    let writer = put_person(vault, seed);
-    grant_reads(vault, writer);
-    let facade = facade_for(vault, writer);
+    let facade = facade_for(vault, seeded_writer(vault, seed));
     let receipt = facade
         .claim_upsert(&claim_input(
             predicate,
@@ -275,6 +284,10 @@ fn waiting_consents_re_bind_and_stay_approvable() {
     let (_dir, vault) = open_vault();
     let old = crate::Vault::policy_manifest_before_critical_classes_for_test().unwrap();
     vault.install_seeded_policy_manifest_for_test(old).unwrap();
+    // Both writers hold their read grants before either claim is staged, so
+    // every consent below waits under the same frontier.
+    seeded_writer(&vault, 0x81);
+    seeded_writer(&vault, 0x83);
     let (lisbon, porto) = residence_correction(&vault);
     // No rule names `pet.*`, so its critical default pends a proposal for
     // the owner under either manifest; the raw door's proposal has no
