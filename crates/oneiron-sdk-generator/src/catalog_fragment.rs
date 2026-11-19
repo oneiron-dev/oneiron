@@ -832,4 +832,65 @@ declare const ünï: {
         }
         fs::remove_dir_all(&root).expect("cleanup");
     }
+
+    #[test]
+    fn a_self_host_member_merges_with_the_host_declaration() {
+        // A `const` at a host member redeclares the host's function (TS2451); a row is a function and a branch a
+        // namespace, and the census still reads every row back.
+        let root = tree("self-host");
+        let rows = r#"[{"name": "self.report_blocked", "input": "ZzIn", "output": "String"},
+            {"name": "self.think.aloud", "input": "ZzIn", "output": "String"},
+            {"name": "self.zz", "input": "ZzIn", "output": "String"}]"#;
+        let Value::List(rows) = loads(rows).expect("rows") else {
+            panic!("a list of rows");
+        };
+        let rows: Vec<&Dict> = rows.iter().filter_map(Value::as_dict).collect();
+        let outputs = catalog_fragment(
+            &root,
+            &rows,
+            "// h\n",
+            &Value::Dict(Dict::new()),
+            &mut BTreeSet::new(),
+        )
+        .expect("a fragment");
+        fs::remove_dir_all(&root).expect("cleanup");
+        let text = &outputs[0].1;
+        let lines: Vec<&str> = text.lines().collect();
+        let at = |prefix: &str| {
+            lines
+                .iter()
+                .position(|line| line.starts_with(prefix))
+                .unwrap_or_else(|| panic!("no line {prefix:?} in\n{text}"))
+        };
+        at("  function report_blocked(input: Sdk.");
+        let think = at("  namespace think {");
+        assert!(
+            lines[think + 1].starts_with("    const aloud: (input: Sdk."),
+            "{text}"
+        );
+        assert_eq!(lines[think + 2], "  }", "{text}");
+        at("  const zz: (input: Sdk.");
+        assert!(
+            !text.contains("const report_blocked") && !text.contains("const think"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn declared_reads_the_self_host_member_forms() {
+        let text = "declare namespace Sdk {
+  type A = { a: number };
+}
+declare namespace self {
+  function report_blocked(input: Sdk.A): Promise<unknown>;
+  namespace think {
+    const aloud: (input: Sdk.A) => Promise<unknown>;
+  }
+  const zz: (input: Sdk.A) => Promise<unknown>;
+}
+";
+        let mut got: Vec<String> = declared(text).expect("a layout").into_iter().collect();
+        got.sort();
+        assert_eq!(got, ["self.report_blocked", "self.think.aloud", "self.zz"]);
+    }
 }
