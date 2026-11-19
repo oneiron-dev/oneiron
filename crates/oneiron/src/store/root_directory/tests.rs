@@ -61,6 +61,12 @@ fn group_or_other_bits(path: &std::path::Path) -> u32 {
     fs::metadata(path).unwrap().permissions().mode() & 0o077
 }
 
+/// The owner's mode bits on `path`.
+fn owner_bits(path: &std::path::Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(path).unwrap().permissions().mode() & 0o700
+}
+
 /// FIX [LIB-RESTORE-INNER-DIRS-UMASK-DEPENDENT]: a vault opened at a new
 /// path makes its root, and each directory missing above it, owner-only
 /// whatever the umask, so the vault's own restore never refuses its root as
@@ -77,6 +83,12 @@ fn a_vault_opened_at_a_new_path_makes_its_root_owner_only() {
             group_or_other_bits(&made),
             0,
             "{} is not owner-only",
+            made.display()
+        );
+        assert_eq!(
+            owner_bits(&made),
+            0o700,
+            "{} is not open to its owner",
             made.display()
         );
     }
