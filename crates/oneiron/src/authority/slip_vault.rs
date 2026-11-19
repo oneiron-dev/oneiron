@@ -794,14 +794,20 @@ impl Vault {
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(txn)?.secs();
         // An end or a re-pact of a pact the expiry holds suspended names the
-        // pact's expired rows beside the heads (row SEQ-FLOOR-S-WITHHELD-COSIGN).
+        // pact's expired rows the heads leave out beside them (row
+        // SEQ-FLOOR-S-WITHHELD-COSIGN); a narrowing or a Promote of it is
+        // refused here.
         let beside = super::stale_roster::suspended_pact_rows_in_txn(&self.store, txn, &fold, &op)?;
-        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        // FIX 7908: join a frontier wider than one entry names, else today's
+        // path. The rows named beside the heads join with them, so no count
+        // of expired rows takes the act past MAX_PARENTS (REVIEW-9609 round 2).
         let joiner = FrontierSigner::Host(issuer);
-        let room = MAX_PARENTS.saturating_sub(beside.len());
-        let fold = self
-            .prepare_authority_frontier_in_txn(txn, &fold, joiner, room)?
-            .unwrap_or(fold);
+        let frontier = fold.append_heads.union(&beside).copied().collect();
+        let (fold, beside) =
+            match self.join_authority_heads_in_txn(txn, &fold, &frontier, joiner, MAX_PARENTS)? {
+                Some(joined) => (joined, std::collections::BTreeSet::new()),
+                None => (fold, beside),
+            };
         let entry = next_entry_naming(issuer, &fold, &beside, op, now)?;
         let entry = match proof {
             Some(proof) => with_owner_proof(issuer, &fold, entry, proof)?,
