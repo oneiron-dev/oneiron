@@ -2095,7 +2095,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/connector_sends.rs` | src | s | 1 fn | — | Door for `tests/inquiry_federation.rs`: one pass of the served connector-send drain… |
 | `src/test_doors/device_sync_dial_gate.rs` | src | s | 1 fn | — | The device sync dial gate (`crate::device_sync::standing`), as the sync host asks it before it opens the… |
 | `src/test_doors/embedded_peer_fixture.rs` | src | s | 2 fn | — | An enrolled device vault for the L7-47 mesh peer path tests |
-| `src/test_doors/embedded_peer_path.rs` | src | s | 2 struct · 18 fn | RootNotices, ServedDeviceLink | Doors for the Mac app's peer path test (L7-47): starting `EmbeddedDeviceSync` on a mesh bind without the… |
+| `src/test_doors/embedded_peer_path.rs` | src | m | 3 struct · 23 fn | MeshListener, RootNotices, ServedDeviceLink | Doors for the Mac app's peer path test (L7-47): starting `EmbeddedDeviceSync` on a mesh bind without the… |
 | `src/test_doors/embedding_line.rs` | src | s | 2 fn | — | Doors for `tests/embedder_host_line_notice.rs` (0053-EMB, on census L1-27): a server holding an endpoint… |
 | `src/test_doors/fingerprint_keep_lens_callback.rs` | src | s | 1 fn | — | Door for `tests/fingerprint_keep_lens_callback.rs` (PLAN-UC-04 stage 5): the dedupe key of a lens card… |
 | `src/test_doors/gpu_backend.rs` | src | s | 5 fn | — | Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31): the `[gpu_jobs]` section as `serve` resolves it… |
@@ -2393,6 +2393,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/merge_queue_checker_pressure.rs` | test | s | — | — | A merge-queue checker guest's pids-limit hits reach the completed run's session manifest… |
 | `tests/mesh_door_refusal_status.rs` | test | s | — | — | [MESH-DOOR-REFUSAL-STATUS-500]: a mesh door the host cannot sign for answers the refusal's own status, not a… |
 | `tests/mesh_listener_bind_gate.rs` | test | s | — | — | The shipped server's default features carry `mesh`, and its paired-machine mesh listener still starts only… |
+| `tests/mesh_two_machine_peer_e2e.rs` | test | L | — | — | FIX 4748 on the mesh with several engine machines of one vault (FIX-LIST [MESH-TWO-MACHINE-PEER-E2E], census… |
 | `tests/model_binding_proposer_grant.rs` | test | m | — | — | An agent whose Grant names `vault.models.bindings.propose` may propose a binding; the owner still decides… |
 | `tests/model_licence_owner_key.rs` | test | s | — | — | The owner's opt-out for the model licence refusal (`models.install.allow_noncommercial_licences`; owner… |
 | `tests/model_rung_hours.rs` | test | m | — | — | A role's rung may keep daily hours, such as a GPU box the owner runs batch models on at night (UNBUILT-14… |

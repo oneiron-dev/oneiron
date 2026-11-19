@@ -8861,6 +8861,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/provenance_import/source_close.rs",
+     "purpose": "A held provenance row the source closed after this vault took it (FIX…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -114363,6 +114373,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/whole_vault_restore_held_link_provenance.rs",
+     "purpose": "Fix list row WHOLE-VAULT-IMPORT-HELD-LINK-OLDER-PROVENANCE-ABORTS, the plain-link twin of REVIEW-9581 round…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -114649,7 +114667,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 203,
+     "files": 204,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116289,8 +116307,8 @@
    },
    "over_bar": 306,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8205,
-   "test_files": 1955
+   "source_files": 8206,
+   "test_files": 1956
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -174921,17 +174939,18 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "MeshListener",
       "RootNotices",
       "ServedDeviceLink"
      ],
      "path": "src/test_doors/embedded_peer_path.rs",
      "purpose": "Doors for the Mac app's peer path test (L7-47): starting `EmbeddedDeviceSync` on a mesh bind without the…",
      "surface": {
-      "fn": 18,
-      "struct": 2
+      "fn": 23,
+      "struct": 3
      }
     },
     {
@@ -177716,6 +177735,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/mesh_two_machine_peer_e2e.rs",
+     "purpose": "FIX 4748 on the mesh with several engine machines of one vault (FIX-LIST [MESH-TWO-MACHINE-PEER-E2E], census…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -179597,7 +179624,7 @@
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2037,
-   "test_files": 499
+   "test_files": 500
   },
   "oneiron-setting-contract": {
    "files": [
