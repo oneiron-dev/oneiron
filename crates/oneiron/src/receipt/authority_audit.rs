@@ -392,7 +392,16 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
             },
         ),
         AuthorityOp::FrontierJoin(_) => (Other, "frontier_join", OpFields::default()),
-        AuthorityOp::RevokeDevice { .. } => (Other, "revoke_device", OpFields::default()),
+        // The key the revocation ends (the owner's ruling AUTH-5): the row's
+        // signer and cosigners name the proof that vouched for it.
+        AuthorityOp::RevokeDevice { revoked_key } => (
+            Other,
+            "revoke_device",
+            OpFields {
+                subject_ref: Some(key_hex(revoked_key)),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::RotateKey { .. } => (Other, "rotate_key", OpFields::default()),
         AuthorityOp::ReRoot { .. } => (Other, "re_root", OpFields::default()),
         AuthorityOp::BindActor { .. } => (Other, "bind_actor", OpFields::default()),

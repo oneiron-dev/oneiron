@@ -143,10 +143,12 @@ mod origin_cut;
 mod owner_act;
 mod owner_choice;
 mod owner_delegate;
+mod owner_key_changes;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
 mod owner_key_line;
 mod owner_key_move_confirm;
+mod owner_key_removal_door;
 mod owner_key_vouch;
 mod owner_project_slip;
 mod owner_proof;
@@ -449,6 +451,7 @@ pub(crate) use owner_delegate::{
     OwnerDelegate, delegate_reads_in_txn, is_owner_delegate_verb, owner_delegate_in_txn,
 };
 pub use owner_delegate::{OwnerOrDelegate, owner_delegate_admits};
+pub use owner_key_changes::{OwnerKeyChange, OwnerKeyChangeKind};
 pub(crate) use owner_key_enrollment_door::ActivationPredecessor;
 pub use owner_key_enrollment_door::{
     EnrolledOwnerKey, EnrolledOwnerKeyKind, EnrolledOwnerPasskey, OwnerKeyEnrollment,
@@ -459,6 +462,10 @@ pub use owner_key_move_confirm::{
     OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED,
     OWNER_KEY_MOVE_NOT_SYNCED, OWNER_KEY_MOVE_PLAN_STALE, OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS,
     OwnerKeyMovePlan, OwnerKeyMoveSigner, sign_owner_key_move,
+};
+pub use owner_key_removal_door::{
+    EndedOwnerKey, LastDeviceKeyConfirmation, MachineRemoval, MachineRemovalReceipt,
+    OwnerKeyRemoval, RemainingOwnerKeys,
 };
 #[cfg(oneiron_test_support)]
 pub(crate) use owner_key_vouch::require_holding_machine;

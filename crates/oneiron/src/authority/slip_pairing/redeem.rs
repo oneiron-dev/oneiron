@@ -484,6 +484,7 @@ impl Vault {
                 surface: answer.surface,
                 kind: answer.kind,
                 seen: None,
+                last_device_key: crate::authority::LastDeviceKeyConfirmation::NotGiven,
             };
             return self
                 .enroll_machine_in_txn(txn, act, request, role)
