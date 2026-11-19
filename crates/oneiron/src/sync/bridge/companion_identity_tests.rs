@@ -48,6 +48,9 @@ fn host() -> Host {
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
         .unwrap();
     let vault_id = vault.authority_fold().unwrap().vault_id.unwrap();
+    // The handle holds the host's root as a serving host does, so the owner
+    // acts it carries are proven (row CARRIER-OWNER-PROOF).
+    vault.hold_checkpoint_root_signer(std::sync::Arc::new(issuer.duplicate().unwrap()));
     vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     vault.prepare_install_signing().expect("install signing");
     vault
@@ -70,13 +73,11 @@ fn install() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
-/// `install`'s request to join `vault_id`, with its own encryption key from a
-/// keystore of its own (world privacy P6b).
+/// `install`'s request to join `vault_id`, with its own encryption key from
+/// the keystore `install()` gave it (world privacy P6b). The keystore is not
+/// replaced here: a new one would change the install's signing identity after
+/// it signed its merge.
 fn own_request(vault_id: [u8; 32], install: &Vault) -> MachineEnrolmentRequest {
-    install.install_device_keystore(std::sync::Arc::new(
-        oneiron_keystore::MemoryKeystore::default(),
-    ));
-    install.prepare_install_signing().expect("install signing");
     let own = install.machine_encryption_key(vault_id).unwrap();
     install.machine_enrolment_request(vault_id, own).unwrap()
 }

@@ -1692,6 +1692,7 @@ fn checkpoint_refuses_unreconstructable_explicit_vectors_before_creating_image()
             .unwrap();
         let vector = vec![1.0, 0.0, 0.0, 0.0];
         source.put_vector(&id, &vector).unwrap();
+        source.ensure_vault_key().expect("mint the vault data key");
         let checkpoint = dir.path().join("checkpoint");
         assert!(matches!(
             source.snapshot_checkpoint(&checkpoint, 100),
