@@ -57,10 +57,13 @@ use oneiron::federation::{
 };
 use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
+use oneiron::settings::ReadDestination;
 use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
-use oneiron::sync::selector::{GuestDocumentShareRequest, export_guest_document_for_guest};
+use oneiron::sync::selector::{
+    GuestDocumentShareRequest, export_guest_document_for_guest, guest_document_rows_still_readable,
+};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::{
     ConnectExportRequest, SyncClient, SyncSelector, SyncSelectorWorld, filtered_window_doc_for_peer,
@@ -858,6 +861,59 @@ fn a_connect_guest_credential_reads_no_stamped_claim_on_another_door() -> TestRe
                 "LEAK: the guest's credential reads a private stamped claim outside its fetch"
             );
             connect_window_update(pact)
+        },
+    )?;
+    Ok(())
+}
+
+/// Pins the replay of the guest fetch (#9657 review round 1): an HTTP
+/// invocation replay reads the rows its first answer listed again through
+/// the fetch's own grant-bound check, so the private stamped claim the fetch
+/// carried still reads. Before, the replay judged each row with the
+/// credential's ordinary key, which withholds that claim
+/// (`a_connect_guest_credential_reads_no_stamped_claim_on_another_door`),
+/// and answered with no envelope. The grant's ceiling still holds: a
+/// sensitive claim above it reads to no replay.
+#[test]
+fn a_replayed_connect_guest_fetch_reads_its_rows_through_the_grant_ceiling() -> TestResult {
+    let (_, _, ()) = pact_window_from(
+        VaultConfig::default(),
+        Sensitivity::Private,
+        |_, _, _, _, _| Ok(()),
+        |pact| {
+            let proof = guest_proof(pact)?;
+            let (envelope, rows) = export_guest_document_for_guest(
+                pact.manager,
+                &proof,
+                CallerLocality::OffDevice,
+                pact.issuer,
+                &GuestDocumentShareRequest {
+                    grant_ref: pact.grant,
+                    world_ref: pact.world,
+                    window_key: WINDOW.to_owned(),
+                    facets: vec![],
+                    bands: vec![],
+                },
+            )?;
+            assert!(
+                rows.contains(&pact.claims.private),
+                "FIXTURE: the guest's fetch lists the private stamped claim"
+            );
+            let off_device = ReadDestination::from(CallerLocality::OffDevice);
+            assert!(
+                guest_document_rows_still_readable(pact.vault, &proof, &off_device, &rows),
+                "the replay reads every row the guest's fetch listed"
+            );
+            assert!(
+                !guest_document_rows_still_readable(
+                    pact.vault,
+                    &proof,
+                    &off_device,
+                    &[pact.claims.sensitive]
+                ),
+                "LEAK: a replay reads a sensitive stamped claim above the grant's ceiling"
+            );
+            Ok(envelope.envelope.body.update)
         },
     )?;
     Ok(())
