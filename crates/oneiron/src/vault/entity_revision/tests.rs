@@ -45,7 +45,7 @@ impl IndexedRevisionEmbedder for Embed {
 #[test]
 fn live_indexed_pinned_and_pack_switch_only_at_manifest_debounced_idle() {
     let (_dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        crate::test_util::open_test_vault_with_manifest(crate::test_util::embedding_test_config());
     assert!(matches!(
         vault.refresh_staged_indexed_at_idle(0),
         Err(crate::error::Error::InvalidConfig(_))
@@ -384,7 +384,7 @@ fn phonetic_codes_advance_with_the_idle_indexed_revision() {
     }
 
     let (_dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        crate::test_util::open_test_vault_with_manifest(crate::test_util::embedding_test_config());
     let id = EntityId::now();
     put(&vault, &id, "first name");
     vault.batch().phonetic(&id, &["OLD"]).commit().unwrap();
@@ -410,7 +410,8 @@ fn phonetic_codes_advance_with_the_idle_indexed_revision() {
 
 #[test]
 fn habit_derived_rewrite_retains_the_indexed_body_for_default_pack() {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with_manifest(crate::VaultConfig::default());
     let habit = EntityId::now();
     let raw = rmp_serde::to_vec_named(&serde_json::json!({
         "title": "habitreading", "role": crate::habit::TaskRole::Habit.role_byte()
@@ -650,7 +651,7 @@ fn invalid_deferred_vector_is_refused_before_durable_staging() {
 #[test]
 fn pack_level_pin_selects_its_entity_from_multiple_hits_and_neighbors() {
     let (_dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        crate::test_util::open_test_vault_with_manifest(crate::test_util::embedding_test_config());
     let a = EntityId::now();
     let b = EntityId::now();
     put(&vault, &a, "shared alpha");
@@ -752,7 +753,7 @@ fn metadata_only_put_advances_indexed_without_embedding_and_preserves_pins() {
 #[test]
 fn metadata_only_put_keeps_pending_content_and_staged_inputs_together() {
     let (_dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        crate::test_util::open_test_vault_with_manifest(crate::test_util::embedding_test_config());
     crate::test_util::publish_seeded_revisions(&vault);
     let id = EntityId::now();
     put(&vault, &id, "original body");

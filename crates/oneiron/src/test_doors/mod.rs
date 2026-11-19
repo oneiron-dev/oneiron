@@ -42,6 +42,8 @@ pub mod call_receipt_damage;
 pub mod callable_skill;
 pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
+#[cfg(feature = "sync")]
+pub mod carrier_proof;
 pub mod check_in;
 pub mod checker_masked_candidate;
 pub mod checkpoint_descriptor;
@@ -257,6 +259,7 @@ pub mod pending_work_reports;
 pub mod pending_write_tray;
 #[cfg(feature = "sync")]
 pub mod predicted_residence;
+pub mod profiles_other_machine;
 pub mod provenance_body_checkpoint;
 pub mod question_saved_lane;
 pub mod question_teardown;

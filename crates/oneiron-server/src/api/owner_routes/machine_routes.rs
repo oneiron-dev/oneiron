@@ -35,7 +35,7 @@ use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{
-    ActSurface, AuthorityFold, FoldedMachine, HeldAnswerListing, MachineOwnership, MachineRole,
+    ActSurface, AuthorityFold, HeldAnswerListing, MachineOwnership, MachineRole,
     OwnerDeviceRenewalProof, PeerMachine,
 };
 use oneiron::task_verb::sdk::{self, EmptyRequest, MachineNameSetRequest};
@@ -319,7 +319,9 @@ fn answer_of(machine: oneiron::EntityId, fold: &AuthorityFold) -> MachineAnswer 
     MachineAnswer {
         machine: machine.to_hex(),
         role: roster.map(|roster| role_name(roster.profile.role)),
-        revision: revision_hex(&folded.map_or([0; 32], FoldedMachine::answer_revision)),
+        revision: revision_hex(&folded.map_or([0; 32], |folded| {
+            folded.answer_revision(fold.pinned_root.as_ref())
+        })),
         carrier: roster
             .and_then(oneiron::authority::MachineRevision::carrier)
             .map(|carrier| carrier.to_hex()),

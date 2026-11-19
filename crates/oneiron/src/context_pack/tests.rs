@@ -31,7 +31,7 @@ use super::*;
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
     let mut config = embedding_test_config();
     config.retrieval_telemetry_capture = true;
-    crate::test_util::open_test_vault_with(config)
+    crate::test_util::open_test_vault_with_manifest(config)
 }
 
 fn msgpack_entity(fields: serde_json::Value) -> Vec<u8> {

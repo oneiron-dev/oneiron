@@ -352,6 +352,18 @@ async fn batch_outcomes(
 async fn a_relationship_grantee_reads_the_room() {
     let room = room();
     let space = seeded_test_entity_id(0x2401_0056);
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    room.server
+        .vault
+        .put_entity(
+            &space,
+            oneiron::registry::ENTITY_TYPE_RELATIONSHIP,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let opened = relationship_room(&room, space);
     let grantee = seeded_test_entity_id(0x2401_0057);
     super::context_board_history::restrict_principal_read_types(
