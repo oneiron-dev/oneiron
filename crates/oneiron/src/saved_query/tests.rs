@@ -657,3 +657,132 @@ fn a_withheld_outbound_claim_of_peer_leaves_claim_terms_decided() {
         "no claim names the candidate: its outbound ClaimOf peer is not one"
     );
 }
+
+/// Review round 2 P1 of #9637: only a stored CLAIM behind an inbound
+/// `ClaimOf` is a claim about the candidate. A withheld ASSET whose `ClaimOf`
+/// points at the candidate is no hidden claim, so `NOT claim exists` stays
+/// decided.
+#[test]
+fn a_withheld_inbound_non_claim_peer_leaves_claim_terms_decided() {
+    use crate::{TimeRange, VaultConfig};
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = crate::Vault::open_unseeded_for_test(dir.path(), VaultConfig::device())
+        .expect("open vault");
+    let candidate = id(0xC1);
+    let withheld = id(0xC2);
+    vault
+        .put_entity(
+            &candidate,
+            crate::registry::ENTITY_TYPE_TURN,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"candidate",
+        )
+        .expect("candidate");
+    vault
+        .put_entity(
+            &withheld,
+            crate::registry::ENTITY_TYPE_ASSET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"withheld",
+        )
+        .expect("withheld asset");
+    vault
+        .put_edge(&withheld, crate::edge::EdgeKind::ClaimOf, &candidate, 1.0)
+        .expect("inbound claim_of from a non-claim");
+    // The reader reads TURN rows only, so the ASSET is withheld and counted.
+    let scope = crate::federation::scope_codec::encode_scope_value(
+        &crate::federation::scope_codec::read_preset(),
+    )
+    .expect("read preset encodes");
+    let grant = rmpv::Value::Map(vec![
+        (
+            rmpv::Value::from("actor_ref"),
+            rmpv::Value::from("claim-reader"),
+        ),
+        (
+            rmpv::Value::from("effector"),
+            rmpv::Value::from("core:read"),
+        ),
+        (rmpv::Value::from("scope"), scope),
+        (
+            rmpv::Value::from("selectors"),
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("entity_types"),
+                rmpv::Value::Array(vec![rmpv::Value::from(crate::registry::ENTITY_TYPE_TURN)]),
+            )]),
+        ),
+        (
+            rmpv::Value::from("receipt_required"),
+            rmpv::Value::from(false),
+        ),
+    ]);
+    let policy = rmpv::Value::Map(vec![
+        (
+            rmpv::Value::from("schema_version"),
+            rmpv::Value::from("1.2"),
+        ),
+        (
+            rmpv::Value::from("pack_id"),
+            rmpv::Value::from("saved-query-inbound-non-claim-test"),
+        ),
+        (rmpv::Value::from("pack_version"), rmpv::Value::from("1")),
+        (
+            rmpv::Value::from("min_engine_version"),
+            rmpv::Value::from("0.0.0"),
+        ),
+        (rmpv::Value::from("defaults"), rmpv::Value::Map(vec![])),
+        (rmpv::Value::from("rules"), rmpv::Value::Array(vec![])),
+        (
+            rmpv::Value::from("actor_ceilings"),
+            rmpv::Value::Array(vec![]),
+        ),
+        (
+            rmpv::Value::from("scoped_grants"),
+            rmpv::Value::Array(vec![grant]),
+        ),
+    ]);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &policy).expect("encode reader manifest");
+    crate::test_util::put_policy_manifest_bytes(&vault, id(0xC3), &data)
+        .expect("install reader manifest");
+    let owner_read = crate::claim::ScopedReadActorKey::new("claim-reader").expect("reader key");
+    let owner_grants = QueryScope::default();
+    let evaluator = SavedQueryEvaluator {
+        vault: &vault,
+        owner_grants: &owner_grants,
+        owner_read: &owner_read,
+        judge: None,
+    };
+    let definition = SavedQueryDefinition {
+        filter: FilterAst::Not {
+            term: Box::new(FilterAst::Claim {
+                predicate: "profile.opted_out".to_owned(),
+                cmp: ClaimComparison::Exists,
+                value: Value::Null,
+            }),
+        },
+        ..sample_definition()
+    };
+    let request = EvaluationRequest {
+        query_ref: id(0xC4),
+        campaign_ref: id(0xC4),
+        entity_ref: candidate,
+        definition: &definition,
+        cause: MembershipCause::DataChange,
+        valid_at: 10,
+        detected_at: 10,
+    };
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    let evaluation = std::pin::pin!(evaluator.evaluate_entity(&request));
+    let verdict = match evaluation.poll(&mut cx) {
+        std::task::Poll::Ready(outcome) => outcome.expect("evaluate").decision.verdict,
+        std::task::Poll::Pending => panic!("a hard matcher never waits"),
+    };
+    assert_eq!(
+        verdict,
+        MatchVerdict::Match,
+        "no claim names the candidate: a non-claim behind an inbound ClaimOf is not one"
+    );
+}
