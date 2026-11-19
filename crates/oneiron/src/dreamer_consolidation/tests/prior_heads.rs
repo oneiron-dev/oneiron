@@ -8,7 +8,6 @@ use std::future::Future;
 struct Fixture {
     attempt: crate::dreamer_runner::DreamerAdmittedAttempt,
     turn: EntityId,
-    turns: Vec<EntityId>,
     subject: EntityId,
     head: EntityId,
     scope: Scope,
@@ -307,7 +306,6 @@ fn fixture_with(
     Ok(Fixture {
         attempt,
         turn: turns[0],
-        turns,
         subject,
         head,
         scope,
@@ -2083,7 +2081,7 @@ fn a_replay_after_writing_about_a_listed_person_never_calls_again() -> Result<()
     let actor = vault.dreamer_authority()?;
     policy(&vault, actor.entity_ref(), true)?;
     let store = DreamerRunnerStore::new(&vault);
-    let (admitted, turns, _) = admitted_attempt_fixture(
+    let (admitted, _, _) = admitted_attempt_fixture(
         &vault,
         &store,
         0x5A,
