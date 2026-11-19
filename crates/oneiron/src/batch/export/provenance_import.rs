@@ -283,6 +283,28 @@ pub(super) fn restore<R: Read + Seek>(
                 &archive.spool.parse::<ExportEdge>(Loc::decode(&loc)?)?,
                 &archive.index,
             )?;
+            let kind = crate::edge::EdgeKind::try_from_u8(edge.kind)
+                .ok_or_else(|| invalid("archive edge kind"))?;
+            let (source, target) = (parse_id(&edge.source)?, parse_id(&edge.target)?);
+            // A link this vault already holds with provenance of its own
+            // (below) is kept out before staging, which compares a bare
+            // archived link's stamp with the held link's own and aborted the
+            // import (REVIEW-9652 round 2 P1). The last edge pass compares its
+            // base fields only.
+            if kind != crate::edge::EdgeKind::SameAs
+                && crate::ports::EdgeStoreRead::port_edge_get(
+                    &vault.store,
+                    txn,
+                    &source,
+                    kind,
+                    &target,
+                )?
+                .is_some()
+                && holds_own_history(vault, txn, &subject, &rows)?
+            {
+                archive.index.put(Tag::OwnHistoryLink, &subject, &[])?;
+                return keep_cohort_out(key, vault, txn, archive, &rows, secrets, true);
+            }
             if !archived_edge_skipped(archive, &edge)? {
                 stage_edge(vault, txn, &edge, &archive.index)?;
             }
@@ -291,9 +313,6 @@ pub(super) fn restore<R: Read + Seek>(
             // `same_as` it does not restore, a `merged_into`, a link its pair
             // does not prove) stays archive data, as a claim about such a
             // link does (REVIEW-9581 P1). The edge passes count the link.
-            let kind = crate::edge::EdgeKind::try_from_u8(edge.kind)
-                .ok_or_else(|| invalid("archive edge kind"))?;
-            let (source, target) = (parse_id(&edge.source)?, parse_id(&edge.target)?);
             // A `same_as` this vault held before the import, one with an end
             // the import did not insert, is left as it is
             // (`document_import::import_same_as_edge`), its provenance history
@@ -337,9 +356,9 @@ pub(super) fn restore<R: Read + Seek>(
     // import, and a newer one never closes the vault's own. The two histories
     // never merge by learned-at. A link whose only history is this archive's
     // own rows (an earlier import of the same source) takes the cohort, and
-    // follows the source's later close of a row it took
-    // (`closed_at_source`). The link keeps its own stamp too: the last edge pass compares its base
-    // fields only (REVIEW-9652 P1).
+    // follows the source's later close of a row it took (`closed_at_source`,
+    // REVIEW-9652 round 2 P1). The link keeps its own stamp too: the last
+    // edge pass compares its base fields only (REVIEW-9652 P1).
     if holds_own_history(vault, txn, &subject, &rows)? {
         archive.index.put(Tag::OwnHistoryLink, &subject, &[])?;
         return keep_cohort_out(key, vault, txn, archive, &rows, secrets, true);
