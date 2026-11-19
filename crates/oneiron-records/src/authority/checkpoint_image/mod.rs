@@ -97,7 +97,10 @@ use serde::Serialize;
 /// for the owner's proof (row PASSKEY-OWNER-KEY-DRAWS-NO-LINE).
 /// 50: only the roster's chain admits or removes an owner act's carrier, never an anchor's
 /// (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES, site S1, and FIX
-/// FOREIGN-ANCHOR-ADMIT-SIDE).
+/// FOREIGN-ANCHOR-ADMIT-SIDE); every other shared judge reads the roster's chain alone too (an
+/// owner key's enrolled machine, a residence result's signer, a one-machine pick, the
+/// names-the-key gates; Fable pass 29 K3), and a one-machine pick needs a live roster head in
+/// any role, not "yours".
 pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 50;
 
 /// The domain every encoded image starts with.

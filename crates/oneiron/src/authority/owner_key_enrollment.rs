@@ -313,9 +313,13 @@ pub(super) fn remember_passkey_context(state: &mut FoldState, enroll: &OwnerKeyE
     }
 }
 
-/// A live machine of the vault, in any role: no chain removed it, and some
-/// chain of it is live (the carrier rule's liveness, without its key).
+/// A live machine of the vault, in any role: the roster's head of it is
+/// live (the carrier rule's liveness, without its key). Every install
+/// judges this row, so an anchor's chain neither links nor removes the
+/// machine here (Fable pass 29).
 pub(super) fn machine_is_live(machine: &FoldedMachine) -> bool {
-    machine.chains().all(|(_, chain)| !chain.removed)
-        && machine.chains().any(|(_, chain)| chain.is_live())
+    machine
+        .roster
+        .as_ref()
+        .is_some_and(MachineRevision::is_live)
 }
