@@ -877,7 +877,10 @@ fn successor_root_carries_exact_machine_history_and_refuses_retired_backdating()
         crate::claim::history_projection::trusted_machine_handoff(&vault.store, &txn, id).unwrap();
     let after = vault.authority_fold_readonly_in_txn(&txn).unwrap();
     assert!(after.valid_entries.contains(&packet.authority_head));
-    assert_eq!(rows.events.len(), packet.transitions.len());
+    assert!(packet.transitions.is_empty());
+    assert_eq!(packet.previous_handoff_hash, Some(prior_handoff));
+    assert_eq!(rows.events.len(), rows.transitions.len());
+    assert_eq!(rows.events.len(), 1);
     assert!(
         after
             .roster
