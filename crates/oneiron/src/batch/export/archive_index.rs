@@ -139,6 +139,11 @@ pub(crate) enum Tag {
     /// target, claim id → (): the status claims the archive carries for a
     /// `same_as` link.
     CoreferenceStatus,
+    /// Mapped subject edge source, kind, target → (): a link this vault held
+    /// with provenance of its own, whose archived cohort stayed archive data
+    /// (`provenance_import::restore`). The last edge pass keeps the link's
+    /// own provenance stamp and compares its base fields only.
+    OwnHistoryLink,
 }
 
 /// The import's disk index: one LMDB database in the scratch environment,
