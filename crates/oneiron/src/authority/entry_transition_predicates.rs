@@ -1,6 +1,8 @@
 //! The per-entry consent and retired-op predicates; `entry_transition` re-exports them.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+
+use oneiron_persistent_collections::PersistentMap;
 
 use super::*;
 
@@ -149,7 +151,7 @@ pub(super) fn entry_is_retired(
 /// C). The host's own move, signed by a stamped key, still counts, and a
 /// self-hosted vault's root carries no stamp, so its rows never meet this.
 pub(super) fn re_root_passes_over_a_serving_host(
-    roster: &BTreeMap<AuthorityKey, FoldedDevice>,
+    roster: &PersistentMap<AuthorityKey, FoldedDevice>,
     signer: &AuthorityKey,
 ) -> bool {
     let host_stamped = |device: &FoldedDevice| {

@@ -17,12 +17,22 @@ use crate::authority::slip_vault::{random_slip_id, require_host};
 /// device exactly as a never-profiled install does (Engine, CALLS
 /// "selfprofile serving-install role", amendment (c)). A profiled install
 /// that cannot carry (removed, poisoned) never falls back to the root.
+/// "Profiled" is the roster's word (Fable design pass 29, 3.4; Engine
+/// 06:15): an install the roster holds no head of is unprofiled whatever an
+/// anchor's chain says of it, unless the chain of the anchor it pins removed
+/// it or is conflicted.
 fn unprofiled_install(fold: &AuthorityFold, machine: Option<crate::EntityId>) -> bool {
     machine.is_none_or(|machine| {
         fold.machine(machine).is_none_or(|folded| {
-            folded.chains().all(|(_, chain)| {
-                !chain.profile.role.answered() && !chain.removed && !chain.conflicted
-            })
+            let roster = folded.roster.as_ref().is_none_or(|head| {
+                !head.profile.role.answered() && !head.removed && !head.conflicted
+            });
+            let pinned = fold
+                .pinned_root
+                .as_ref()
+                .and_then(|pin| folded.anchored.get(&pin.anchor_key))
+                .is_none_or(|chain| !chain.removed && !chain.conflicted);
+            roster && pinned
         })
     })
 }
@@ -446,6 +456,16 @@ impl Vault {
     ) -> Result<(MachineAnswerLanding, bool)> {
         let role = answer.role();
         let fold = self.authority_view_readonly_in_txn(txn)?;
+        let carries = self.carrier_in_txn(txn, &fold).is_ok();
+        // An install born of a restore that has not joined pairs nothing
+        // (row RESTORED-COPIES-ENROL-EACH-OTHER; REVIEW-9509 P1): it is not
+        // the fresh first install the bootstrap arm serves, and it carries
+        // nothing, so every arm below refuses for it, and nothing is written.
+        if !carries && crate::identity::read_restored_from_image_in_txn(self, txn)?.is_some() {
+            return Err(authority_refused(
+                crate::authority::machine_answers::RESTORED_NOT_JOINED,
+            ));
+        }
         // A credential-only re-pairing writes no revision, so it needs no
         // carrier, and no arm below enrols the machine again.
         if let Some((proof, transcript)) = possession
@@ -457,17 +477,24 @@ impl Vault {
         // redemption too (FIX 11715): its logged enrolment proof is no fresh
         // evidence, so without it the redemption refuses and writes nothing.
         held_machine_possession(&fold, request, possession)?;
+        // A machine born of a restore joins only through a machine that has
+        // joined (row RESTORED-COPIES-ENROL-EACH-OTHER): when this install
+        // can carry, it carries the owner's act for it, never the root's
+        // bootstrap, which the fold would hold. One no live machine here
+        // carries for is refused, and nothing is written.
+        let restored_and_carried = request.restored_from.is_some() && carries;
         // The never-profiled path first: an unanswered serving install also
         // carries, and it keeps pairing exactly as it did before its profile.
         // A hosted install's owner answer goes to the carrier instead.
-        if self.host_root_may_sign_role(role)
+        if !restored_and_carried
+            && self.host_root_may_sign_role(role)
             && unprofiled_install(&fold, crate::identity::read_machine_id_in_txn(self, txn)?)
         {
             return self
                 .enroll_bootstrap_in_txn(txn, issuer, answer.owner, request, role)
                 .map(|machine| (MachineAnswerLanding::Stands(machine), false));
         }
-        if self.carrier_in_txn(txn, &fold).is_ok() {
+        if carries {
             let act = AnswerAct {
                 owner: answer.owner,
                 by: answer.by,

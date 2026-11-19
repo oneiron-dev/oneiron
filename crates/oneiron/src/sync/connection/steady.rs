@@ -566,6 +566,18 @@ impl SyncConnection {
                                     )));
                                 }
                             }
+                            // Each followed window this device holds no rows of
+                            // takes its tombstone id set again (FOLLOWED-WORLD-
+                            // TIER1-TOMBSTONE-IDS): a delete the home made during
+                            // this session reaches a window it refuses to us.
+                            match crate::sync::client::refresh_followed_tombstones(&manager, &config).await {
+                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Followed tombstone refresh failed: {error}"
+                                    )));
+                                }
+                            }
                             // The checkpoint roots of the owner's policy, once the
                             // history is in (FIX 4882): a root held here attests the
                             // home's image, and the home's root this machine's.

@@ -130,6 +130,7 @@ fn seeded_booking_vault() -> (tempfile::TempDir, Arc<Vault>, EntityId) {
             }],
             flex_with_ordinary: false,
             flex_windows: Vec::new(),
+            allowed_durations_min: Vec::new(),
         },
     };
     let mut body = ClaimBody::new(

@@ -855,13 +855,15 @@ fn a_losing_create_is_terminated_until_its_provider_confirms() {
 }
 
 /// A restarted host's step takes a reserved chunk up on a new permit, and a
-/// cancel that saw no permit ends the job unpaid before the step's create
+/// cancel on a host that holds no permit lands before the step's create
 /// answers (here: a cancel on its own permits; on one host, a cancel between
-/// the step's read and its take-up). The step's write then loses, and its new
-/// permit is settled for nothing, not left holding the reservation (review of
-/// #8059, round 2).
+/// the step's read and its take-up). The step's write then loses and it
+/// terminates the resource its create made, but the cancel left the chunk
+/// ending (review round 2 of #8063), so the step's host keeps the permit it
+/// took up: its next step ends the chunk and that permit pays the end, never
+/// left holding the reservation (review of #8059, round 2).
 #[test]
-fn a_permit_taken_up_by_a_losing_step_is_settled() {
+fn a_permit_taken_up_by_a_losing_step_pays_the_end_the_cancel_left() {
     let rig = rig();
     let quote = rig.quote(100, None, NOW);
     let (first, _first_receipts) = admission(&quote.job, quote.units);
@@ -901,20 +903,41 @@ fn a_permit_taken_up_by_a_losing_step_is_settled() {
 
     assert_eq!(
         report.state,
+        GpuJobState::Ending {
+            reason: GpuEndReason::Cancelled
+        },
+        "the cancel's host held no permit, so it left the chunk to the step's host"
+    );
+    assert!(
+        rig.permits.holds(&job.id),
+        "the chunk is still live: the step's host keeps the permit it took up"
+    );
+    assert!(
+        settled(&second_receipts).is_empty(),
+        "nothing is settled yet"
+    );
+
+    rig.step(&job.id, &second);
+    let ended = rig.job(&job.id);
+    assert_eq!(
+        ended.state,
         GpuJobState::Ended {
             reason: GpuEndReason::Cancelled
         }
+    );
+    assert_eq!(
+        settled(&second_receipts),
+        vec![40],
+        "(0 + 20) seconds at 2: the permit the step took up pays the end"
+    );
+    assert_eq!(
+        ended.chunk().and_then(|chunk| chunk.settled_units),
+        Some(40)
     );
     assert!(
         !rig.permits.holds(&job.id),
         "the permit the step took up is not left held"
     );
-    assert_eq!(
-        second.read().remaining_units,
-        quote.units,
-        "its reservation went back"
-    );
-    assert_eq!(settled(&second_receipts).iter().sum::<u64>(), 0);
 }
 
 /// An erase of the job's starter while a step waits on its provider: the

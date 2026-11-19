@@ -6,28 +6,27 @@ fn stamped_resident_receipt(
     skill: &EntityId,
     now: u64,
 ) -> Result<String> {
+    let now = vault.now_recorded_at().max(now);
     let queue = AttemptQueue::new(vault);
-    let EnqueueOutcome::Enqueued(row) = queue.enqueue(EnqueueAttempt {
-        kind: "resident.optimize".into(),
-        payload: Vec::new(),
-        dedupe_key: None,
-        run_id: None,
-        now,
-    })?
+    let dispatcher = AgentDispatcher::new(vault);
+    let AgentDispatchOutcome::Dispatched(dispatched) =
+        dispatcher.dispatch_default_base(None, None, None, now)?
     else {
         panic!("new attempt")
     };
+    let row = dispatched.attempt;
 
     let ClaimOutcome::Claimed(leased) = queue.claim_kind(
-        "resident.optimize",
+        DREAMER_RUNNER_ATTEMPT_KIND,
         ClaimAttempt {
             lease_owner: "resident-opt".into(),
-            now: now + 1,
+            now,
         },
     )?
     else {
         panic!("claim")
     };
+    assert_eq!(leased.id, row.id);
     vault.load_resident_skill_pack(
         row.id,
         resident,
@@ -42,7 +41,7 @@ fn stamped_resident_receipt(
         lease_owner: "resident-opt".into(),
         attempt_count: leased.attempt_count,
         reason: "failed".into(),
-        now: now + 2,
+        now,
     })?;
     Ok(attempt_pack_receipt_id(&row.id))
 }

@@ -129,6 +129,17 @@ fn recall_after_control_writes_fixture_in(
     let owner = vault.ensure_embedded_owner_actor().expect("owner person");
     let scoped = put_person(&vault, 0x67);
     let space = EntityId::from_bytes([0x68; 16]).unwrap();
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &space,
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            test_time(1),
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let mut message = witness_message(0, WitnessAuthor::User, "window seat control recall");
     message.metadata = Some(serde_json::json!({"rel": space.to_hex()}));
     facade_for(&vault, owner)

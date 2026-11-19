@@ -263,7 +263,9 @@ fn custodial_carry_drops_retired_answer(
 }
 
 /// A revision no chain takes: a key that is authority, a row that is an
-/// actor's, a proof the machine did not sign, or no higher than its chain.
+/// actor's, a proof the machine did not sign, no higher than its chain, or
+/// naming another restore origin than its machine's (row
+/// RESTORED-COPIES-ENROL-EACH-OTHER: a machine born of a restore stays so).
 pub(super) fn refused_revision(
     state: &FoldState,
     profile: &MachineProfile,
@@ -273,6 +275,7 @@ pub(super) fn refused_revision(
         || machine_is_actor(state, profile.machine)
         || !profile.proof_verifies(&state.vault_id)
         || head.is_some_and(|folded| profile.revision <= folded.profile.revision)
+        || crate::authority::restored_join::origin_differs(state, profile)
 }
 
 /// A key in the host's custody on a hosted vault, where the host's root is

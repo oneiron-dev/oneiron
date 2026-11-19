@@ -334,7 +334,7 @@ async fn mcp_cursor_refusal_precedes_mutating_and_subscription_dispatch() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "preflight-subscribe",
-            "board.subscribe",
+            "self.focus.subscribe",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor_ref, "read_board"),
                 json!({

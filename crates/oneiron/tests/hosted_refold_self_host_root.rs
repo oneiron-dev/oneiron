@@ -47,10 +47,11 @@ use oneiron::authority::{
     DeviceOwnerKeyVouch, GenesisRecoveryStep, HOST_ISSUER_SEED_BYTES, HostSlipIssuer,
     MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineAnswerLanding,
     MachineDeviceClass, MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership,
-    MachineProfile, MachineRole, OwnerAct, OwnerActKind, OwnerKeyVouchRequest, PairingLink,
-    PairingPrincipal, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, authority_entry_hash,
-    authority_transcript, decode_authority_log_entry_body, fold_authority_log_for_posture,
-    genesis_vault_id, machine_profile_proof_transcript, pairing_binding_transcript_pinned,
+    MachineProfile, MachineRevision, MachineRole, OwnerAct, OwnerActKind, OwnerKeyVouchRequest,
+    PairingLink, PairingPrincipal, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
+    authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
+    fold_authority_log_for_posture, genesis_vault_id, machine_profile_proof_transcript,
+    pairing_binding_transcript_pinned,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
@@ -201,6 +202,7 @@ fn node_profile(
         seen_world_edits: BTreeSet::new(),
         carrier: carried.as_ref().map(|(carrier, _)| *carrier),
         act: carried.map(|(_, act)| act),
+        restored_from: None,
     }
 }
 
@@ -1042,16 +1044,33 @@ fn vouch_request(device: &Vault) -> OwnerKeyVouchRequest {
 /// under the Hosted posture and holding the self-host root as its only root
 /// signer, the install vouches no key into the owner. The fold still trusts
 /// that root as the owner's, but a hosted install never offers a host root
-/// as his proof, so the vouch asks for an owner key and writes nothing.
+/// as his proof, so the vouch asks for an owner key and writes nothing. The
+/// install keeps its keystore across the reopen and loads its signing keys
+/// from it, so it carries the owner's acts and the refusal comes from the
+/// writer rule, not from a missing carrier (row
+/// HOSTED-VOUCH-TEST-DROPS-INSTALL-KEYSTORE).
 #[test]
 fn a_hosted_install_vouches_for_no_key_with_the_self_host_root_it_holds() {
-    let (dir, vault, issuer) = rooted_served(HostingPrivacyPosture::SelfHostLocal);
+    let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
+    let (dir, vault, issuer) = rooted_served_on(HostingPrivacyPosture::SelfHostLocal, &keystore);
     vault.hold_checkpoint_root_signer(Arc::new(issuer));
     let (_, owner) = embedded_owner(&vault).expect("authenticated embedded owner");
     let (_device_dir, device) = yours_device(&vault, &owner);
     let request = vouch_request(&device);
     drop(vault);
-    let hosted = open_served(dir.path(), HostingPrivacyPosture::Hosted);
+    let hosted = open_served_on(dir.path(), HostingPrivacyPosture::Hosted, &keystore);
+    let machine = hosted
+        .prepare_install_signing()
+        .expect("this install's signing keys load from the keystore it kept");
+    assert!(
+        hosted
+            .authority_fold()
+            .expect("the authority fold")
+            .machine(machine)
+            .and_then(|folded| folded.roster.as_ref())
+            .is_some_and(MachineRevision::is_live),
+        "guard: reopened under the Hosted posture, this install has a live profile to carry the owner's acts"
+    );
     hosted.hold_checkpoint_root_signer(Arc::new(oneiron::test_support::test_host_issuer()));
     let (_, owner) = embedded_owner(&hosted).expect("authenticated embedded owner");
     let rows = hosted

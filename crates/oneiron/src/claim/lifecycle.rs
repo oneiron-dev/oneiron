@@ -595,6 +595,10 @@ impl Vault {
         // replacement staged earlier in the same txn rolls back with it.
         let (mut old_body, old_header) = self.guarded_claim_target_parts_in(&*wtxn, old_id)?;
         Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
+        // The close is not the owner's answer: a held old claim's ordinary
+        // tray row goes silently with its terminal receipt, as a retraction's
+        // does, before the close is judged (S17-1 = A).
+        super::held_question::close_superseded_owner_question_in_txn(&self.store, wtxn, old_id)?;
         let closed_end = lifecycle_close_end_in(&self.store, &*wtxn, &old_body, &old_header, now)?;
 
         let revisions = super::supersession_diff::capture_in_txn(self, &*wtxn, *old_id, *new_id)?;
@@ -660,6 +664,9 @@ impl Vault {
                 None
             }
         };
+        // A closer the Gate held parks the closed body's row again, and a
+        // closed claim is asked nothing: that row closes the same way.
+        super::held_question::close_superseded_owner_question_in_txn(&self.store, wtxn, old_id)?;
         super::supersession_diff::store_in_txn(self, wtxn, *old_id, *new_id, revisions)?;
         Ok(decision)
     }

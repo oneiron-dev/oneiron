@@ -96,6 +96,7 @@ fn publish_with_machine(host: &Host, seed: &RecoveryRootSeed, key: u8) -> Recove
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     });
     let fold = host.vault.authority_fold().unwrap();
     let entry = anchor_signed_entry(&fold, &seed.anchor(), mark, 2).unwrap();
@@ -182,9 +183,22 @@ fn a_forged_kit_piece_never_pins() {
 #[test]
 fn a_withheld_owner_root_is_published_again_from_the_kit() {
     let host = host();
-    enrol_own(&host);
+    let me = enrol_own(&host);
     let owners_seed = RecoveryRootSeed::generate().unwrap();
     let owners = owners_seed.public(&host.vault_id).unwrap().id;
+    // WAYBACK-KIT-RESTORE-NO-LIVE-R = A (29240de17a6, #8798): the kit-restore
+    // door requires the kit's root authority key R live on the roster
+    // (kit_restore.rs:131-148). Enrol R on the host before install, without
+    // publishing its root record, so the checkpoint-carried fresh install holds
+    // R live while the root stays withheld.
+    host.vault
+        .enrol_recovery_authority_key_as_host(
+            &ActAuthority::Owner(host.owner.clone(), ActSurface::ThisInstall),
+            me,
+            &owners_seed,
+            &host.issuer,
+        )
+        .unwrap();
     let theirs = publish_with_machine(&host, &RecoveryRootSeed::generate().unwrap(), 62);
     let one = rebuilt(host.vault_id, &owners_seed, 1);
     let two = rebuilt(host.vault_id, &owners_seed, 2);
@@ -215,9 +229,22 @@ fn a_withheld_owner_root_is_published_again_from_the_kit() {
 #[test]
 fn with_no_root_stored_the_kit_is_never_a_lockout() {
     let host = host();
-    enrol_own(&host);
+    let me = enrol_own(&host);
     let seed = RecoveryRootSeed::generate().unwrap();
     let root = seed.public(&host.vault_id).unwrap().id;
+    // WAYBACK-KIT-RESTORE-NO-LIVE-R = A (29240de17a6, #8798): the kit-restore
+    // door requires the kit's root authority key R live on the roster
+    // (kit_restore.rs:131-148). Enrol R on the host before install. An R
+    // enrolment is a roster row, not an OwnerRoot record, so "no root stored"
+    // still holds.
+    host.vault
+        .enrol_recovery_authority_key_as_host(
+            &ActAuthority::Owner(host.owner.clone(), ActSurface::ThisInstall),
+            me,
+            &seed,
+            &host.issuer,
+        )
+        .unwrap();
     let one = rebuilt(host.vault_id, &seed, 1);
     let two = rebuilt(host.vault_id, &seed, 2);
     let Fresh { vault, owner, .. } = &fresh_install(&host);

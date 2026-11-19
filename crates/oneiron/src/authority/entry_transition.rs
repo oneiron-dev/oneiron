@@ -238,6 +238,7 @@ fn transition_entry(
             machines: PersistentMap::new(),
             machine_keys: PersistentMap::new(),
             held_machine_answers: PersistentMap::new(),
+            restored_enrolments: BTreeMap::new(),
             root_anchors: PersistentMap::new(),
             anchor_entries: PersistentSet::new(),
             host_custody_keys: PersistentSet::new(),
@@ -290,10 +291,38 @@ fn transition_entry(
             None => state.clone(),
         });
     }
-    let Some(mut state) = parent_state else {
+    let Some(state) = parent_state else {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidAncestry(hash));
     };
+    // A held enrolment of a machine born of a restore, among this entry's
+    // ancestors, joins when a live machine signs the entry (row
+    // RESTORED-COPIES-ENROL-EACH-OTHER): judged on the parents, applied only
+    // to an entry its own transition accepts. A row that lands as
+    // restriction only (past its signer's floor, or held back) grants
+    // nothing, so it joins nothing (REVIEW-9509 round 2 P1).
+    let witnessed = if restriction_only {
+        Vec::new()
+    } else {
+        super::restored_join::witnessed(&state, entry, (context.pin, context.machine_standing))
+    };
+    match fold_merged_entry(entry, hash, state, context, restriction_only) {
+        EntryFold::Ready(mut state) => {
+            super::restored_join::join(&mut state, &witnessed, hash);
+            EntryFold::Ready(state)
+        }
+        other => other,
+    }
+}
 
+/// [`fold_entry_state`] past the parent merge: the vault and passkey checks
+/// and each op's transition on its parents' merged `state`.
+fn fold_merged_entry(
+    entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
+    mut state: FoldState,
+    context: FoldContext<'_>,
+    restriction_only: bool,
+) -> EntryFold {
     if entry.vault_id != Some(state.vault_id) {
         return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
     }
@@ -520,14 +549,25 @@ fn transition_entry(
     if let AuthorityOp::MachineProfile(profile) = &entry.op
         && profile.act.is_some()
     {
-        if let Err(issue) = super::machine_profile::apply_owner_answer(
+        // Carried by a live machine, so it stands on a restored target's
+        // held enrolments, which its entry joins.
+        if let Err(issue) = super::restored_join::fold_revision(
             &mut state,
-            entry,
             profile,
             hash,
-            (context.pin, context.machine_standing),
+            true,
             restriction_only,
-            context.needs_owner_proof_off_the_line(&hash),
+            |state, parents| {
+                super::machine_profile::apply_owner_answer(
+                    state,
+                    entry,
+                    profile,
+                    hash,
+                    (context.pin, context.machine_standing),
+                    restriction_only,
+                    (context.needs_owner_proof_off_the_line(&hash), parents),
+                )
+            },
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -557,8 +597,9 @@ fn transition_entry(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
-    // A machine's residence result, signed by its own install key under a
-    // chain the owner marked "yours" (OF-534). It changes no state.
+    // A machine's residence result, signed by its own install key, which
+    // that machine's live, answered roster head names (OF-534). It changes
+    // no state.
     if let AuthorityOp::ResidenceResult(result) = &entry.op {
         if let Err(issue) = residence_result_stands(&state, entry, result, hash) {
             return EntryFold::Invalid(issue);
@@ -615,6 +656,26 @@ fn transition_entry(
                     .passkey_vouch_confirmations
                     .insert(enroll.device.key.clone());
             }
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // The owner's word that no other machine is left joins one held
+    // enrolment of a machine born of a restore; a key of the owner's signs
+    // it alone (row RESTORED-COPIES-ENROL-EACH-OTHER). An inline enrolment
+    // is that key's own act-free roster revision, filed under this entry as
+    // a roster row's is and held, then joined (KIT-JOIN-ONE-R-ROW = A).
+    if let AuthorityOp::RestoredMachineJoin(record) = &entry.op {
+        let signer = entry.signer_key().clone();
+        let file_inline = |state: &mut FoldState, profile: &MachineProfile| {
+            super::restored_join::fold_revision(state, profile, hash, false, false, |state, _| {
+                apply_machine_profile(state, &signer, profile, hash, context, false)
+            })
+        };
+        if let Err(issue) =
+            super::restored_join::apply_owner_join(&mut state, entry, record, hash, file_inline)
+        {
+            return EntryFold::Invalid(issue);
         }
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
@@ -737,13 +798,16 @@ fn transition_entry(
         return EntryFold::Ready(state);
     }
     if let AuthorityOp::MachineProfile(profile) = &entry.op {
-        if let Err(issue) = apply_machine_profile(
+        // A restored machine's root-signed enrolment is held until it joins.
+        if let Err(issue) = super::restored_join::fold_revision(
             &mut state,
-            &signer,
             profile,
             hash,
-            context,
-            restriction_only,
+            false,
+            false,
+            |state, _| {
+                apply_machine_profile(state, &signer, profile, hash, context, restriction_only)
+            },
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -797,9 +861,11 @@ fn transition_entry(
 }
 
 /// Whether a residence result's signer is the install key of the machine it
-/// names under a chain that says "yours" in the result's parent state, or
-/// under that machine's live, answered roster revision there, mine or not
-/// (FIX 8888), past that key's last sequence there. A result that names its
+/// names under that machine's live, answered roster revision in the
+/// result's parent state, mine or not (FIX 8888), past that key's last
+/// sequence there. Every install judges this row, so an anchor's chain,
+/// which only the installs pinning its root believe, names no signer here
+/// (Fable pass 29); a roster head saying "yours" is a live, answered one. A result that names its
 /// directive's row as a parent stands on that alone, as before; one whose
 /// directive is beneath its parents (FIX 5412, CALLS "FIX 5412 result
 /// parents") stands only where its parent state holds that row as a valid
@@ -819,16 +885,10 @@ fn residence_result_stands(
     {
         return Err(AuthorityFoldIssue::InvalidAncestry(hash));
     }
-    if !super::machine_claims::folded_machine_in(state, result.machine).is_some_and(|machine| {
-        machine
-            .chains()
-            .any(|(_, chain)| chain.says_yours() && chain.profile.machine_key == *signer)
-            || machine.roster.as_ref().is_some_and(|roster| {
-                roster.is_live()
-                    && roster.profile.role.answered()
-                    && roster.profile.machine_key == *signer
-            })
-    }) {
+    if super::machine_claims::folded_machine_in(state, result.machine)
+        .and_then(|machine| machine.residence_signer_key())
+        != Some(*signer)
+    {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }
     if state
@@ -898,7 +958,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::ExportSupplementImported(_)
         | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::FrontierJoin(_)
-        | AuthorityOp::MembershipExecution(_) => false,
+        | AuthorityOp::MembershipExecution(_)
+        | AuthorityOp::RestoredMachineJoin(_) => false,
         // An appointment's successor is judged fresh over its whole ancestry
         // (`root_appointment_judge`, V1).
         AuthorityOp::RootAppointment(_) => false,

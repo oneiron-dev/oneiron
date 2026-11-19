@@ -31,7 +31,7 @@ use super::*;
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
     let mut config = embedding_test_config();
     config.retrieval_telemetry_capture = true;
-    crate::test_util::open_test_vault_with(config)
+    crate::test_util::open_test_vault_with_manifest(config)
 }
 
 fn msgpack_entity(fields: serde_json::Value) -> Vec<u8> {
@@ -1620,6 +1620,7 @@ fn put_disclosure_claim_in_world(
         crate::claim::ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(vault, &mut body);
     body.world = world;
     if let Some(band) = band {
         body.scope = Some(rmpv::Value::Map(vec![(

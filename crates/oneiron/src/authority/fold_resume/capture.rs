@@ -264,9 +264,8 @@ impl Once {
         let marks = valid_entries
             .iter()
             .filter_map(|hash| {
-                let AuthorityOp::MachineProfile(profile) = &by_hash.get(hash)?.op else {
-                    return None;
-                };
+                let profile =
+                    super::super::stale_roster::filed_machine_profile(&by_hash.get(hash)?.op)?;
                 let chain = states
                     .get(hash)?
                     .machines

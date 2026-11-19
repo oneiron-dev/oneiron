@@ -233,3 +233,138 @@ fn doctor_opens_the_vault_with_the_configs_dimensions_and_map_size() {
         "the flag, not the config, is what opens the vault"
     );
 }
+
+/// The auth secret that admits a self-host install's host root.
+const SELF_HOST_SECRET: &str = "only-the-offline-issuer-key-not-a-bearer";
+
+/// Runs the binary as a self-host install: the auth secret admits its host
+/// root, and its keys live in the test's own key directory.
+fn self_host(config: &Path, keys: &Path, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_oneiron"))
+        .args(args)
+        .arg("--config")
+        .arg(config)
+        .env("TMPDIR", config.parent().expect("the test directory"))
+        .env("ONEIRON_AUTH_SECRET", SELF_HOST_SECRET)
+        .env("ONEIRON_KEYSTORE_DIR", keys)
+        .env_remove("ONEIRON_VAULT_PATH")
+        .env_remove("ONEIRON_BACKUP_DIR")
+        .output()
+        .expect("run oneiron")
+}
+
+/// Row RESTORED-COPIES-ENROL-EACH-OTHER: a self-host owner who lost the
+/// vault restores it where no vault is, and `restore --join` is the owner's
+/// word that no other machine is left. The restored install then stands as a
+/// machine of the vault, under the checkpoint image it came from. An install
+/// no restore made is refused by name, and joining twice changes nothing.
+#[test]
+fn restore_join_makes_a_restored_self_host_install_a_machine_of_the_vault() {
+    let dir = oneiron::test_support::restore_tempdir();
+    let vault_path = dir.path().join("vault");
+    let config = dir.path().join("oneiron.toml");
+    let keys = dir.path().join("keys");
+    let vault_arg = vault_path.to_str().unwrap();
+    let init = self_host(&config, &keys, &["init", vault_arg, "--embedder", "none"]);
+    assert!(
+        init.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    // The shipped `token bootstrap` roots the vault with this install's host
+    // root, the owner key of a self-host vault.
+    let bootstrap = self_host(
+        &config,
+        &keys,
+        &["token", "bootstrap", "--url", "http://127.0.0.1:3000"],
+    );
+    assert!(
+        bootstrap.status.success(),
+        "bootstrap: {}",
+        String::from_utf8_lossy(&bootstrap.stderr)
+    );
+    let never_restored = self_host(&config, &keys, &["restore", "--join"]);
+    assert!(!never_restored.status.success());
+    assert!(
+        String::from_utf8_lossy(&never_restored.stderr)
+            .contains("was not restored from a checkpoint"),
+        "stderr: {}",
+        String::from_utf8_lossy(&never_restored.stderr)
+    );
+
+    let taken = json(&self_host(&config, &keys, &["backup"]));
+    let backup = taken["backup"]["path"].as_str().unwrap().to_owned();
+    // Every machine of the vault is gone; this host keeps its keys.
+    std::fs::remove_dir_all(&vault_path).unwrap();
+    let restored = json(&self_host(&config, &keys, &["restore", &backup]));
+    assert_eq!(restored["checkpoint_id"], taken["checkpoint_id"]);
+
+    let joined = json(&self_host(&config, &keys, &["restore", "--join"]));
+    let machine = joined["machine"].as_str().unwrap().to_owned();
+    assert_eq!(machine.len(), 32, "{joined}");
+    let image = joined["restored_from"].as_str().unwrap();
+    assert_eq!(image.len(), 64, "{joined}");
+    assert_eq!(joined["role"], "unanswered", "{joined}");
+    // Joined, it stands: the word again names the same machine and image.
+    let again = json(&self_host(&config, &keys, &["restore", "--join"]));
+    assert_eq!(again["machine"], joined["machine"], "{again}");
+    assert_eq!(again["restored_from"], joined["restored_from"], "{again}");
+}
+
+/// REVIEW-9511 round 2 (row RESTORED-COPIES-R2-TESTS): `restore --join` on
+/// a vault no restore made refuses before it provisions this install, so
+/// the refusal mints no machine identity. Before, the command installed the
+/// keystore, which wrote the machine id, and only then refused.
+///
+/// `init` runs without the auth secret: with it, init loads the host root
+/// issuer, which installs the keystore and so mints the machine id before
+/// `--join` runs (row RESTORE-JOIN-REFUSAL-PROOF-FIXTURE). Rooting the vault
+/// through the binary mints it the same way, so the vault here has no root,
+/// and `--join` refuses for that. A handle with no keys loaded reads a
+/// minted id as `KeystoreUnavailable`, so any answer but `Ok(None)` is a
+/// minted identity.
+#[test]
+fn restore_join_refusal_mints_no_machine_identity() {
+    let dir = oneiron::test_support::restore_tempdir();
+    let vault_path = dir.path().join("vault");
+    let config = dir.path().join("oneiron.toml");
+    let keys = dir.path().join("keys");
+    let vault_arg = vault_path.to_str().unwrap();
+    let init = Command::new(env!("CARGO_BIN_EXE_oneiron"))
+        .args(["init", vault_arg, "--embedder", "none"])
+        .arg("--config")
+        .arg(&config)
+        .env("TMPDIR", dir.path())
+        .env("ONEIRON_KEYSTORE_DIR", &keys)
+        .env_remove("ONEIRON_AUTH_SECRET")
+        .env_remove("ONEIRON_VAULT_PATH")
+        .env_remove("ONEIRON_BACKUP_DIR")
+        .output()
+        .expect("run oneiron");
+    assert!(
+        init.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let before = open(&vault_path).local_machine();
+    assert!(
+        matches!(before, Ok(None)),
+        "FIXTURE: init without the auth secret mints no machine identity: {before:?}"
+    );
+
+    let refused = self_host(&config, &keys, &["restore", "--join"]);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        !refused.status.success(),
+        "a vault no restore made is refused"
+    );
+    let after = open(&vault_path).local_machine();
+    assert!(
+        matches!(after, Ok(None)),
+        "a refused --join mints no machine identity: {after:?}; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("no root roots this vault yet"),
+        "refused by the join's own preflight: {stderr}"
+    );
+}

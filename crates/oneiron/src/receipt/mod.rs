@@ -26,9 +26,8 @@ mod kernel;
 mod ledgers;
 mod lens;
 mod off_device;
-#[cfg(oneiron_test_support)]
-pub(crate) use off_device::referenced_rows;
 pub(crate) use off_device::served_form_rows;
+pub(crate) use off_device::{is_verb_hook_receipt, record_rows, referenced_rows};
 mod pack_attribution;
 mod projection;
 pub mod prompt_stamp;
@@ -159,8 +158,7 @@ pub(crate) use self::ledgers::{
 };
 #[cfg(test)]
 pub(crate) use self::ledgers::{
-    make_attempt_receipt_legacy_for_tests, overwrite_attempt_pack_receipt_for_test,
-    put_attempt_pack_receipt_for_test,
+    overwrite_attempt_pack_receipt_for_test, put_attempt_pack_receipt_for_test,
 };
 pub(crate) use self::projection::{COMMITMENT_TRIGGER_PREFIX, commitment_trigger_ref};
 pub(crate) use self::record::{
@@ -173,7 +171,8 @@ pub(crate) use self::record::{validate_receipt_record_body, validate_receipt_rec
 #[cfg(test)]
 pub(crate) use self::send_receipt_txn::persist_send_receipt_in_txn;
 pub(crate) use self::send_receipt_txn::{
-    delivered_send_exists_in_txn, persist_admitted_send_receipt_in_txn,
+    append_superseded_send_receipt_in_txn, delivered_send_exists_in_txn,
+    persist_admitted_send_receipt_in_txn,
 };
 
 /// One pre-write check for the two receipt carrier families. Both are judged

@@ -4,16 +4,23 @@
 //! "kept as text" answer puts the value back into the document, as the
 //! owner's own edit, so a NOTE read shows the value, not "[secret scN]".
 //!
+//! The NOTE's edit meets the laws every edit of it meets (REVIEW-9471 F1,
+//! F4): a sealed NOTE stays frozen and a cited span is not edited in place;
+//! either refuses the ruling whole, so the key stays open.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test found_key_note_restore`.
 
 use std::sync::Arc;
 
 use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::note::NoteActor;
+use oneiron::note::{NoteActor, NotePin, NoteSpanResolution};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
+use oneiron::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
+};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -219,6 +226,158 @@ fn a_value_in_a_note_body_and_title_reads_back_in_both() -> TestResult {
         document.title.as_deref(),
         Some(title.as_str()),
         "and in the title, where the same handle stands"
+    );
+    Ok(())
+}
+
+/// A Proposed CLAIM about `subject` for a citation to name: a pin's target
+/// is a CLAIM, and a Proposed one passes the gate on a raw put.
+fn citable_claim(vault: &Vault, subject: EntityId) -> Result<EntityId, Box<dyn std::error::Error>> {
+    let claim = EntityId::now();
+    let mut body = ClaimBody::new(
+        "profile.note",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("the release notes name the deploy step"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )?;
+    body.source = Some(ClaimSource::UserStated);
+    vault.put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)?;
+    Ok(claim)
+}
+
+/// A NOTE of `owner`'s that cites the span `quote` is in `note`'s markdown,
+/// for `claim`; returns the pin.
+fn cite_in_another_note(
+    vault: &Vault,
+    owner: EntityId,
+    note: EntityId,
+    quote: &str,
+    claim: EntityId,
+) -> Result<NotePin, Box<dyn std::error::Error>> {
+    let markdown = vault.note_document(note)?.markdown;
+    let at = markdown
+        .find(quote)
+        .ok_or("FIXTURE: the quote stands in the NOTE")?;
+    let start = markdown[..at].chars().count();
+    let pin = vault.pin_note_span(note, claim, start, start + quote.chars().count())?;
+    let citing = write_note(vault, owner, "Deploy steps, cited from the release notes.");
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .cite_note_span(citing, &pin)?;
+    assert!(
+        matches!(
+            vault.resolve_note_pin(&pin)?,
+            NoteSpanResolution::Mapped { .. }
+        ),
+        "FIXTURE: the citation maps its span"
+    );
+    Ok(pin)
+}
+
+#[test]
+fn a_sealed_note_refuses_the_ruling_and_its_key_stays_open() -> TestResult {
+    let (_dir, vault, owner, _) = open_vault()?;
+    let owner_proof = proof_of(&vault, owner)?;
+    let note = write_note(
+        &vault,
+        owner,
+        &format!("Release notes: deploy with token={TOKEN}."),
+    );
+    let handle = found_handle(&vault, &owner_proof, &note)?;
+    vault.seal_note(note, WriteActor::new(owner, EdgeActorClass::Human))?;
+    let sealed = markdown_reads(&vault, note)?;
+
+    let ruled = vault.keep_found_key_as_text(&owner_proof, ActSurface::ThisInstall, &handle);
+
+    assert!(
+        ruled.is_err(),
+        "a sealed NOTE's document is frozen, so the ruling is refused: {ruled:?}"
+    );
+    assert_eq!(
+        markdown_reads(&vault, note)?,
+        sealed,
+        "the sealed NOTE keeps the text its seal names"
+    );
+    assert_eq!(
+        found_handle(&vault, &owner_proof, &note)?,
+        handle,
+        "the refused ruling leaves the key open"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_citation_of_the_handle_refuses_the_ruling_and_stays_mapped() -> TestResult {
+    let (_dir, vault, owner, writer) = open_vault()?;
+    let owner_proof = proof_of(&vault, owner)?;
+    let note = write_note(
+        &vault,
+        owner,
+        &format!("Release notes: deploy with token={TOKEN}."),
+    );
+    let handle = found_handle(&vault, &owner_proof, &note)?;
+    let claim = citable_claim(&vault, writer)?;
+    let pin = cite_in_another_note(
+        &vault,
+        owner,
+        note,
+        &format!("{HANDLE_OPEN}{handle}]"),
+        claim,
+    )?;
+    let cited = markdown_reads(&vault, note)?;
+
+    let ruled = vault.rule_found_key_not_a_secret(&owner_proof, ActSurface::ThisInstall, &handle);
+
+    assert!(
+        ruled.is_err(),
+        "an edit of a cited span is not made in place, so the ruling is refused: {ruled:?}"
+    );
+    assert!(
+        matches!(
+            vault.resolve_note_pin(&pin)?,
+            NoteSpanResolution::Mapped { .. }
+        ),
+        "the other NOTE's citation still maps its span"
+    );
+    assert_eq!(
+        markdown_reads(&vault, note)?,
+        cited,
+        "the cited NOTE keeps its text"
+    );
+    assert_eq!(
+        found_handle(&vault, &owner_proof, &note)?,
+        handle,
+        "the refused ruling leaves the key open"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_citation_beside_the_handle_keeps_the_ruling_and_stays_mapped() -> TestResult {
+    let (_dir, vault, owner, writer) = open_vault()?;
+    let owner_proof = proof_of(&vault, owner)?;
+    let written = format!("Release notes: deploy with token={TOKEN}.");
+    let note = write_note(&vault, owner, &written);
+    let handle = found_handle(&vault, &owner_proof, &note)?;
+    let claim = citable_claim(&vault, writer)?;
+    let pin = cite_in_another_note(&vault, owner, note, "Release notes", claim)?;
+
+    vault.rule_found_key_not_a_secret(&owner_proof, ActSurface::ThisInstall, &handle)?;
+
+    for markdown in markdown_reads(&vault, note)? {
+        assert_eq!(
+            markdown, written,
+            "the edit takes the handle's own span, so a citation beside it does not hold it"
+        );
+    }
+    assert!(
+        matches!(
+            vault.resolve_note_pin(&pin)?,
+            NoteSpanResolution::Mapped { .. }
+        ),
+        "the citation beside the handle still maps its span"
     );
     Ok(())
 }

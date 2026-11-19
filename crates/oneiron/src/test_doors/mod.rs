@@ -42,6 +42,8 @@ pub mod call_receipt_damage;
 pub mod callable_skill;
 pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
+#[cfg(feature = "sync")]
+pub mod carrier_proof;
 pub mod check_in;
 pub mod checker_masked_candidate;
 pub mod checkpoint_descriptor;
@@ -103,6 +105,7 @@ pub mod dreamer_attempt_binding;
 pub mod dreamer_exclusion_forgets;
 pub mod dreamer_partition_window;
 pub mod dreamer_promotion_seconds;
+pub mod dreamer_signed_claim_recall;
 pub mod dreamer_stage_line;
 pub mod enum_name_rows;
 pub mod epoch_lineage_pointer;
@@ -257,6 +260,7 @@ pub mod pending_work_reports;
 pub mod pending_write_tray;
 #[cfg(feature = "sync")]
 pub mod predicted_residence;
+pub mod profiles_other_machine;
 pub mod provenance_body_checkpoint;
 pub mod question_saved_lane;
 pub mod question_teardown;
@@ -270,12 +274,14 @@ pub mod repo_base_manifest;
 pub mod repo_secret_marks;
 pub mod research_continuation;
 pub mod resident_wake_hold;
+pub mod restored_enrolment;
 pub mod retrieval_policy_default_floor;
 pub mod reveal_ask_window;
 pub mod room_facet_limit;
 pub mod room_facet_set;
 #[cfg(feature = "sync")]
 pub mod room_fact_marks;
+pub mod room_speaker_entries;
 pub mod room_turn_backfill;
 pub mod root_appointment;
 pub mod root_recovery;
@@ -353,6 +359,8 @@ pub mod world_follow;
 pub mod world_key_record_signature;
 #[cfg(feature = "sync")]
 pub use crate::sync::connection::sync_outbox;
+#[cfg(feature = "sync")]
+pub use crate::sync::queue::sync_queue_rows;
 
 /// Runs the identity-topology reconcile that a replica's sync ingest runs,
 /// over this vault's own ledger: shell edges, redirects and split assignment

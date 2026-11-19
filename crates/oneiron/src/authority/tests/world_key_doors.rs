@@ -59,6 +59,7 @@ pub(super) fn keyed_machine(host: &Host, seed: u8) -> Keyed {
         device_class,
         encryption_key,
         machine_proof,
+        restored_from: None,
     };
     host.vault
         .enroll_machine(
@@ -84,10 +85,10 @@ pub(super) fn enrol_own(host: &Host) -> EntityId {
         .machine_enrolment_request(host.vault_id, key)
         .unwrap();
     host.vault
-        .enroll_machine(
+        .set_machine_role(
             &host.owner,
             ActSurface::ThisInstall,
-            &request,
+            request.machine,
             MachineRole::Owned(MachineOwnership::Yours),
             None,
         )
@@ -125,6 +126,9 @@ pub(super) fn fresh_install(host: &Host) -> Fresh {
 pub(super) fn fresh_install_with(host: &Host, config: VaultConfig) -> Fresh {
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("image");
+    host.vault
+        .ensure_vault_key()
+        .expect("mint the vault data key");
     host.vault.snapshot_checkpoint(&image, 100).unwrap();
     let checkpoint_key = host.vault.checkpoint_key().unwrap();
     let (vault, _) = Vault::restore_checkpoint(
@@ -397,6 +401,9 @@ fn a_world_key_opens_only_where_its_world_reads_and_for_the_kit() {
 
     let backups = tempfile::tempdir().unwrap();
     let image = backups.path().join("image");
+    host.vault
+        .ensure_vault_key()
+        .expect("mint the vault data key");
     host.vault.snapshot_checkpoint(&image, 100).unwrap();
     for place in [host.vault.store.env.path(), image.as_path()] {
         assert!(!holds(place, key.expose()), "a world key reached the store");
@@ -434,6 +441,7 @@ fn a_record_naming_another_key_or_suite_is_refused_before_any_write() {
     let with = |key: WorldKeyId, bytes: Vec<u8>| WorldKeyWrapsRecord {
         key,
         wraps: vec![(to_b, bytes)],
+        permitted: vec![to_b],
         ..genuine.clone()
     };
     let blank = |suite, kem| {
@@ -518,6 +526,7 @@ fn a_second_key_under_one_id_conflicts_and_the_next_door_mints_afresh() {
             )
             .unwrap(),
         )],
+        permitted: vec![to_b],
         ..genuine
     };
     host.vault
@@ -547,6 +556,7 @@ fn a_second_key_under_one_id_conflicts_and_the_next_door_mints_afresh() {
         broken[last] ^= flip;
         let record = WorldKeyWrapsRecord {
             wraps: vec![(to_a, broken)],
+            permitted: vec![to_a],
             ..latest.clone()
         };
         host.vault

@@ -4,8 +4,8 @@
 use super::tests::{
     CapturingSink, LANDING_LEARNED_AT, PublicationTestOrigin, RecordingRoom, advertise,
     advertised_refs, advertisement_headers, commit_file, fixture_attribution, git, landed_repo_id,
-    landing_outcome, landing_time, pointer_file, pushed_outcome, ref_update, seeded_repo,
-    served_repo, temp_vault, try_advertise,
+    landing_outcome, landing_time, owner_principal, pointer_file, pushed_outcome, ref_update,
+    seeded_repo, served_repo, temp_vault, try_advertise,
 };
 use super::*;
 
@@ -192,7 +192,7 @@ fn pkt(text: &str) -> Vec<u8> {
 fn stock_git_publication_roundtrip() {
     let (_vault_dir, vault) = temp_vault();
     let (source, repo_dir, _first, second) = served_repo(&vault);
-    let principal = EntityId::now();
+    let principal = owner_principal(&vault);
     let origin = PublicationTestOrigin::start(&vault, principal);
     let url = origin.url();
     let client = tempfile::tempdir().expect("stock client");
@@ -622,7 +622,7 @@ fn branches_pushed_together_need_only_their_own_large_file_at_a_shared_path() {
     };
     let left = branch("left", left_oid, left_size);
     let right = branch("right", right_oid, right_size);
-    let origin = PublicationTestOrigin::start(&vault, EntityId::now());
+    let origin = PublicationTestOrigin::start(&vault, owner_principal(&vault));
     let url = origin.url();
     git(
         source.path(),

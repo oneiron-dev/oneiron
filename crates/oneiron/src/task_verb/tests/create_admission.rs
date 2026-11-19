@@ -302,6 +302,15 @@ fn a_proposed_create_parks_one_proposal_per_birth_position() {
     let world = EntityId::from_bytes([0x5A; 16]).expect("world id");
     let other_world = EntityId::from_bytes([0x5B; 16]).expect("world id");
     let facet = EntityId::from_bytes([0x5C; 16]).expect("facet id");
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .expect("the birth facet");
     let park = |world, facet| {
         vault
             .memory(own, EdgeActorClass::Agent)
