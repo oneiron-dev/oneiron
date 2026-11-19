@@ -501,8 +501,7 @@ fn land(
     );
     let mut taint = ClaimSource::Imported;
     if let Some(rows) = rows {
-        taint =
-            super::standing::constrain_sources(vault, txn, &mut candidate, rows, record.principal)?;
+        taint = super::standing::constrain_sources(&mut candidate, rows, record.principal)?;
     } else if answer.source_kind == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         taint = body.source.unwrap_or(ClaimSource::Imported);
