@@ -37,10 +37,12 @@ interface SignerPin { install: string; ed25519: string; slhdsa: string }
 interface FreshRestore {
   checkpoint_id: string; vault: string; unlocked_with: string;
 }
+// GET /v1/owner/status flattens its location section into the root
+// (HostStatus, crates/oneiron-server/src/api/owner_routes.rs).
 interface OwnerStatus {
-  location: { vault: string; backups: { restores: {
+  vault: string; backups: { restores: {
     checkpoint_id: string; restored_at: string; reason: string;
-  }[] } };
+  }[] };
 }
 interface FolderSource {
   folder: string; trust: string; last_rescan_at: number | null;
@@ -296,8 +298,8 @@ suite.test(test, "PORTABILITY-06", "Encrypted backup and wrong-key refusal shoul
   // returns the backed-up diary just above.
   expect((await engine.client.call("vault.get", { entity_ref: later.entry_id })).value).toBeNull();
   const status = (await engine.client.request<OwnerStatus>("GET", "/v1/owner/status")).body;
-  expect(status.location.vault).toBe(destination);
-  expect(status.location.backups.restores).toEqual(expect.arrayContaining([
+  expect(status.vault).toBe(destination);
+  expect(status.backups.restores).toEqual(expect.arrayContaining([
     expect.objectContaining({ checkpoint_id: backup.checkpoint_id, reason: "restore" }),
   ]));
   expect(createHash("sha256").update(await readFile(backup.backup.path)).digest("hex")).toBe(carrierDigest);
