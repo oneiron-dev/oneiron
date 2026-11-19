@@ -140,6 +140,15 @@ impl<'v> ResidenceAdmission<'v> {
         self.context.allows_item(txn, &id)
     }
 
+    /// Whether the credential's records and channel caveats leave the row
+    /// `id` in, judged by its id alone: the bound a hard-deleted row's
+    /// tombstone meets, since no row is left to read
+    /// ([`ResidenceReadContext::credential_allows_id`]).
+    #[must_use]
+    pub fn credential_allows_id(&self, id: EntityId) -> bool {
+        self.context.credential_allows_id(&id)
+    }
+
     /// Where the row of the admitted item `id` sits, for the copy the
     /// destination keeps of it (FIX 14534): a world kept off the destination
     /// is never named to it, and reads as unknown.

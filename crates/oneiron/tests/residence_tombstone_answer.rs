@@ -25,6 +25,7 @@
 use std::collections::BTreeSet;
 
 use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
+use oneiron::deletion::{TombstoneReason, decode_tombstone_value};
 use oneiron::edge::EdgeActorClass;
 use oneiron::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
@@ -280,5 +281,55 @@ fn a_withheld_world_window_answers_no_ids() {
         purged.answered(&window, &key, Withhold::Worlds(&kept_off)),
         Vec::<EntityId>::new(),
         "a world kept off the machine gives no ids"
+    );
+}
+
+/// A hard delete is never answered as a soft one. Where the window keeps a
+/// soft value under the row's canonical key and a hard one under a
+/// case-shifted alias, the answer carries the hard value, as the window's
+/// replay holds any hard alias dominant (blind review 1 of #9592). Before,
+/// the canonical key's soft value was answered, and the device kept a shell
+/// of a row the home had purged.
+#[test]
+fn a_hard_alias_outranks_a_soft_canonical_value() {
+    let purged = Purged::new(FederationGrantRole::Owner, FederationGrantPreset::Owner);
+    let open = purged.open_claim.to_hex();
+    let hard = window_bytes(&purged.window, "tombstones", &open);
+    assert_eq!(
+        hard.first(),
+        Some(&(TombstoneReason::UserHardDelete as u8)),
+        "FIXTURE: the owner's delete is hard"
+    );
+    let mut soft = hard.clone();
+    soft[0] = TombstoneReason::UserDelete as u8;
+    assert!(
+        !decode_tombstone_value(&soft).is_hard(),
+        "FIXTURE: the canonical key's value is soft"
+    );
+    let window = create_window_doc("selector", &purged.key);
+    let tombstones = window.get_map("tombstones");
+    tombstones
+        .insert(&open, soft.as_slice())
+        .expect("FIXTURE: the window holds the soft value under the canonical key");
+    tombstones
+        .insert(&open.to_uppercase(), hard.as_slice())
+        .expect("FIXTURE: the window holds the hard value under the alias");
+    window.commit();
+    let answer = window_tombstone_projection_with(
+        &purged.vault,
+        &window,
+        &purged.key,
+        purged.scope,
+        &purged.selector,
+        Withhold::Unknown,
+    )
+    .expect("the tombstone answer");
+    let entry = answer
+        .iter()
+        .find(|entry| entry.entity_id == purged.open_claim)
+        .unwrap_or_else(|| panic!("the answer names the open CLAIM: {answer:?}"));
+    assert_eq!(
+        entry.value, hard,
+        "DOWNGRADE: the answer carries the soft value of a row a hard alias deleted"
     );
 }

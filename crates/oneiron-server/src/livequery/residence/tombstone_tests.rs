@@ -187,3 +187,32 @@ async fn another_members_selector_gets_no_ids() {
     assert_eq!(answer["error"]["code"], "NOT_FOUND", "{answer:#}");
     assert!(!answer.to_string().contains(&first.to_hex()));
 }
+
+/// A credential whose records caveat names its rows learns of no other
+/// delete: the answer names only the deleted ids the caveat names, the bound
+/// an id judges with no row left to read (blind review 1 of #9592). Before,
+/// the answer named every deleted row the selector export carried.
+#[tokio::test]
+async fn a_records_bound_credential_learns_only_the_deletes_it_names() {
+    let (_dir, server) = production_tests::server();
+    let (_auth, window, encoded, [first, second], _) = window_with_deletes(&server).await;
+    let recipe = format!(
+        "scope=core:read;principal_ref={};actor_class=human;jti=tombstone-records;records={}",
+        production_tests::ACTOR,
+        first.to_hex()
+    );
+    let auth = crate::test_credentials::authenticate(&server, &recipe);
+    let answer = reply(
+        &server,
+        &auth,
+        json!({"window": window.as_str(), "selector": encoded, "limit": 256}),
+    );
+    let (ids, cursor) = page(&answer);
+    assert_eq!(
+        ids,
+        vec![first.to_hex()],
+        "LEAK: the answer names a deleted row the credential's records leave out: {answer:#}"
+    );
+    assert!(cursor.is_none());
+    assert!(!answer.to_string().contains(&second.to_hex()));
+}

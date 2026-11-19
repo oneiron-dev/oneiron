@@ -118,6 +118,16 @@ impl<'v> ResidenceReadContext<'v> {
             && self.row_may_leave(txn, id)?)
     }
 
+    /// Whether the credential's records and channel caveats leave the row
+    /// `id` in, judged by its id alone (`ScopedRead::credential_allows_id`):
+    /// the bound a hard-deleted row's tombstone meets, as a deletion shell
+    /// does, since no row is left to read (FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS,
+    /// blind review 1 of #9592).
+    #[must_use]
+    pub fn credential_allows_id(&self, id: &EntityId) -> bool {
+        self.read.credential_allows_id(id)
+    }
+
     /// Whether this credential's world ceiling covers the complete metadata
     /// set. World ids are scope facts, not entity ids to probe as records.
     pub(crate) fn covers_worlds_in(
