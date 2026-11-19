@@ -135,6 +135,8 @@ impl ScopedRead<'_> {
             usize::MAX,
             false,
         )?;
+        // A withheld centre or peer counts; an opaque one never does.
+        let suppressed = admitted.source.suppression() + admitted.suppressed;
         let value = admitted.source.visible().then(|| {
             admitted
                 .edges
@@ -144,7 +146,7 @@ impl ScopedRead<'_> {
         });
         Ok(ScopedReadResult {
             value,
-            receipt: self.receipt_for(None, &policy, &filter, 0),
+            receipt: self.receipt_for(None, &policy, &filter, suppressed),
         })
     }
 
@@ -171,7 +173,7 @@ impl ScopedRead<'_> {
                         anchor: *anchor,
                         records: Vec::new(),
                     },
-                    receipt: self.receipt_for(None, &policy, &filter, 0),
+                    receipt: self.receipt_for(None, &policy, &filter, admitted.suppression()),
                 });
             }
             (filter, policy)
@@ -186,6 +188,7 @@ impl ScopedRead<'_> {
                 .vault
                 .room_structure_admitted_held_in(self, &txn, anchor, &rooms)?;
         let mut kept = Vec::new();
+        let mut suppressed = 0;
         for record in timeline.records {
             let admitted = self.admit_in(&txn, &record.id, || {
                 Ok((anchor_allowed
@@ -201,6 +204,7 @@ impl ScopedRead<'_> {
                     )?)
                 .then_some(()))
             })?;
+            suppressed += admitted.suppression();
             if admitted.visible() {
                 kept.push(record);
             }
@@ -211,7 +215,8 @@ impl ScopedRead<'_> {
             record.superseded_by.retain(|id| ids.contains(id));
         }
         timeline.records = kept;
-        let mut receipt = self.receipt_for(None, &policy, &filter, 0);
+        // One count per withheld record: restrict_with adds the later count.
+        let mut receipt = self.receipt_for(None, &policy, &filter, suppressed);
         receipt.restrict_with(&self.receipt_for(None, &fresh_policy, &fresh_filter, 0));
         self.charge_served(timeline.records.iter().map(|record| record.id));
         Ok(ScopedReadResult {
