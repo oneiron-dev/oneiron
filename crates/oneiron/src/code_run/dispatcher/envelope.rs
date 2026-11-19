@@ -263,7 +263,7 @@ pub(crate) fn check_write_gate_against_vault(
 ) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
     landing(&wtxn)?;
-    let gate_result = check_write_gate_in_txn(
+    let (gate_result, _) = check_write_gate_in_txn(
         vault,
         &mut wtxn,
         id,
@@ -273,17 +273,19 @@ pub(crate) fn check_write_gate_against_vault(
         None,
     )?;
     wtxn.commit()?;
-    gate_result.map(drop)
+    gate_result
 }
 
 /// The gate check of [`check_write_gate_against_vault`] in the caller's write
 /// transaction, with the host's auto checker a live-run door lent (FIX
 /// LIVE-RUN-CHECKER-INJECT), which the gate consults as it consults one for a
 /// Dreamer write. `Err` is a fault: the caller drops the transaction. `Ok`
-/// holds the gate's answer, whose decision the transaction now holds: on an
-/// admission, that decision's id, which the write's landing in the same
-/// transaction reuses rather than judge the candidate again (FIX 8752); on a
-/// refusal, the refusal, which the caller commits with its decision.
+/// holds the gate's answer and the decision it recorded, which the
+/// transaction now holds: on an admission, the write's landing in the same
+/// transaction reuses that decision rather than judge the candidate again
+/// (FIX 8752); on a refusal, the caller commits it with its decision, or,
+/// for the checker's hold of an Auto request, lands the candidate Proposed
+/// with that hold replayed onto its pending review.
 pub(super) fn check_write_gate_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -292,7 +294,7 @@ pub(super) fn check_write_gate_in_txn(
     envelope: &WriteEnvelope,
     can_resolve_pending_consent: bool,
     checker: Option<&crate::llm::BoundedAutoChecker>,
-) -> Result<Result<Option<crate::store::GateDecisionId>>> {
+) -> Result<(Result<()>, Option<crate::gate::RecordedClaimGateDecision>)> {
     validate_write_actor_binding(vault, &*wtxn, envelope)?;
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &*wtxn)?;
     let mut recorded = None;
@@ -318,7 +320,7 @@ pub(super) fn check_write_gate_in_txn(
         },
         &mut recorded,
     );
-    Ok(gate_result.map(|()| recorded.map(|decision| decision.decision_id())))
+    Ok((gate_result, recorded))
 }
 
 fn validate_write_actor_binding(

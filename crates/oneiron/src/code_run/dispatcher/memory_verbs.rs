@@ -402,24 +402,14 @@ impl HostSelfDispatcher<'_> {
             }
             _ => None,
         };
-        // The write gate reads no facet. A put reviewed by a lent checker is
-        // judged as its landing stores it, at the facet the landing stamps,
-        // so the decision its gate records names the stored body (its diff
-        // handle) and the landing can reuse it. Any other put's gate body
-        // takes its writer's substrate facet, and the stored body the vault
-        // default when the write applies.
-        let gate_facet = match lent_checker {
-            Some((vault, _)) => {
-                let txn = vault.store.env.read_txn()?;
-                crate::batch::claim_candidate_apply::claim_candidate_birth_facet(
-                    &vault.store,
-                    &txn,
-                    &call.id,
-                )?
-            }
-            None => crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,
-        };
-        let gate_body = candidate.clone().into_claim_body(&envelope, gate_facet)?;
+        // The write gate reads no facet; the stored body takes the vault
+        // default when the write applies. A put a lent checker reviews is
+        // judged again in its landing's transaction, at the facet the landing
+        // stamps (below).
+        let gate_body = candidate.clone().into_claim_body(
+            &envelope,
+            crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,
+        )?;
         let authored_rules = crate::dreamer_consolidation::prepare_authored_claim(
             &gate_body.predicate,
             &gate_body.value,
@@ -457,6 +447,18 @@ impl HostSelfDispatcher<'_> {
         let actual_id = match lent_checker {
             Some((vault, checker)) => {
                 let checker = checker.admit_for_writes(&vault.store, self.actor.entity_ref())?;
+                // A hold of the Auto request lands it Proposed in this same
+                // transaction, the hold replayed onto its pending review: a
+                // resubmission would ask the checker again, and the hold this
+                // ask recorded would change that answer (review 9216 round 2
+                // P1).
+                let held_envelope =
+                    (approval == crate::claim::ClaimApprovalStatus::Auto).then(|| {
+                        envelope
+                            .clone()
+                            .with_approval(crate::claim::ClaimApprovalStatus::Proposed)
+                    });
+                let gate_candidate = candidate.clone();
                 vault.put_claim_candidate_with_gate_returning_actual(
                     &call.id,
                     candidate,
@@ -465,7 +467,19 @@ impl HostSelfDispatcher<'_> {
                     call.learned_at,
                     |_| Ok(()),
                     |txn| {
-                        super::envelope::check_write_gate_in_txn(
+                        // The gate judges the body the landing stores, at the
+                        // facet the landing stamps, read in this transaction,
+                        // so the decision it records names that body (its
+                        // diff handle) and the landing can reuse it (review
+                        // 9216 round 2 P1).
+                        let facet =
+                            crate::batch::claim_candidate_apply::claim_candidate_birth_facet(
+                                &vault.store,
+                                &*txn,
+                                &call.id,
+                            )?;
+                        let gate_body = gate_candidate.into_claim_body(&envelope, facet)?;
+                        let (verdict, recorded) = super::envelope::check_write_gate_in_txn(
                             vault,
                             txn,
                             call.id,
@@ -473,7 +487,8 @@ impl HostSelfDispatcher<'_> {
                             &envelope,
                             true,
                             Some(&checker),
-                        )
+                        )?;
+                        Ok(landing_gate_answer(verdict, recorded, held_envelope))
                     },
                 )?
             }
@@ -755,4 +770,32 @@ fn own_entry_kept(
         }
     }
     Ok(kept)
+}
+
+/// The landing's answer to the gate a lent checker reviewed in its
+/// transaction (FIX LIVE-RUN-CHECKER-INJECT): an admission's recorded
+/// decision is reused by the landing (FIX 8752); the checker's hold of an
+/// Auto request, alone, lands the candidate under `held_envelope`, which asks
+/// Proposed, with that hold replayed onto its pending review (review 9216
+/// round 2 P1); any other refusal commits only the decision it recorded.
+fn landing_gate_answer(
+    verdict: Result<()>,
+    recorded: Option<crate::gate::RecordedClaimGateDecision>,
+    held_envelope: Option<crate::write_envelope::WriteEnvelope>,
+) -> crate::claim::LandingGateAnswer {
+    use crate::claim::LandingGateAnswer;
+    match (verdict, recorded, held_envelope) {
+        (Ok(()), recorded, _) => {
+            LandingGateAnswer::Admitted(recorded.map(|decision| decision.decision_id()))
+        }
+        (Err(refusal), Some(recorded), Some(envelope))
+            if recorded.checker_hold() && crate::gate::gate_rejection_pends(&refusal) =>
+        {
+            LandingGateAnswer::CheckerHold {
+                decision: recorded.decision_id(),
+                envelope,
+            }
+        }
+        (Err(refusal), _, _) => LandingGateAnswer::Refused(refusal),
+    }
 }

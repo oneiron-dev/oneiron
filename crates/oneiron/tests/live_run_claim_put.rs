@@ -50,10 +50,12 @@ fn gate_rejection_parts(err: Error) -> (&'static str, Vec<&'static str>) {
     }
 }
 
-/// The host's decision head on the checker's Big rung: it answers every auto
-/// check with its one answer and counts each consult.
+/// The host's decision head on the checker's Big rung: it answers its first
+/// auto check with `answer` and every later one with `later`, and counts
+/// each consult.
 struct RecordingAutoChecker {
     answer: &'static str,
+    later: &'static str,
     calls: AtomicUsize,
 }
 
@@ -61,6 +63,7 @@ impl RecordingAutoChecker {
     fn hold() -> Self {
         Self {
             answer: "hold",
+            later: "hold",
             calls: AtomicUsize::new(0),
         }
     }
@@ -68,6 +71,18 @@ impl RecordingAutoChecker {
     fn allow() -> Self {
         Self {
             answer: "allow",
+            later: "allow",
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    /// Holds its first consult and allows every later one, as a checker
+    /// does whose next request the first hold changed (the failure streak
+    /// it raised).
+    fn hold_then_allow() -> Self {
+        Self {
+            answer: "hold",
+            later: "allow",
             calls: AtomicUsize::new(0),
         }
     }
@@ -87,9 +102,13 @@ impl DecisionProvider for RecordingAutoChecker {
     }
 
     fn decide(&self, _call: &DecisionCall<'_>) -> Result<ProviderDecision> {
-        let _ = self.calls.fetch_add(1, Ordering::Relaxed);
+        let answer = if self.calls.fetch_add(1, Ordering::Relaxed) == 0 {
+            self.answer
+        } else {
+            self.later
+        };
         Ok(ProviderDecision {
-            answer: DecisionAnswer::Choice(self.answer.to_owned()),
+            answer: DecisionAnswer::Choice(answer.to_owned()),
             probability: Some(0.99),
             paired: None,
             person: None,
@@ -391,6 +410,23 @@ mod lent_checker {
             run: &str,
             value: &str,
         ) -> TestResult<EntityId> {
+            let (id, put) = self.put_predicate(checker, run, PREDICATE, value)?;
+            put.map_err(at("the live run's claim put"))?;
+            Ok(id)
+        }
+
+        /// As [`Self::put`], of `predicate`: the claim's id and the put's
+        /// own answer.
+        fn put_predicate(
+            &self,
+            checker: &oneiron::llm::BoundedAutoChecker,
+            run: &str,
+            predicate: &str,
+            value: &str,
+        ) -> TestResult<(
+            EntityId,
+            oneiron::Result<oneiron::code_run::SelfDispatchOutcome>,
+        )> {
             let dispatcher = doors::live_run_dispatcher(
                 &self.vault,
                 WriteActor::new(self.agent, EdgeActorClass::Agent),
@@ -399,10 +435,11 @@ mod lent_checker {
             )
             .map_err(at("the live run's dispatcher"))?;
             let id = EntityId::now();
-            let call = claim_call(id, person(&self.vault)?, value);
-            doors::put_claim_as_live_run(&dispatcher, call, Some(&self.reader))
-                .map_err(at("the live run's claim put"))?;
-            Ok(id)
+            let call = claim_call(id, predicate, person(&self.vault)?, value);
+            Ok((
+                id,
+                doors::put_claim_as_live_run(&dispatcher, call, Some(&self.reader)),
+            ))
         }
     }
 
@@ -443,12 +480,29 @@ mod lent_checker {
             .ok_or_else(|| "the agent slip carries no read credential".into())
     }
 
-    /// The run's `vault.claims.put` of `value` about `subject`, at `id`.
-    fn claim_call(id: EntityId, subject: EntityId, value: &str) -> SelfMemoryPutClaimCall {
+    /// The predicate every put but the credential one asks.
+    const PREDICATE: &str = "profile.favorite_drink";
+
+    /// A GitHub personal token the write door's provider rule places
+    /// (`ghp_` and 36 token characters, lowercase letters and digits, so it
+    /// is also a valid predicate segment), spelled in parts so no scanner of
+    /// this source reads a token.
+    fn provider_token() -> String {
+        ["gh", "p_", "abcdefghijklmnopqrstuvwxyz0123456789"].concat()
+    }
+
+    /// The run's `vault.claims.put` of `predicate` with `value` about
+    /// `subject`, at `id`.
+    fn claim_call(
+        id: EntityId,
+        predicate: &str,
+        subject: EntityId,
+        value: &str,
+    ) -> SelfMemoryPutClaimCall {
         SelfMemoryPutClaimCall::new(
             id,
             ClaimCandidate::new(
-                "profile.favorite_drink",
+                predicate,
                 ClaimSubject::Entity(subject),
                 Value::from(value),
                 0.8,
@@ -547,6 +601,59 @@ mod lent_checker {
         );
         assert_eq!(f.approval(id)?, "proposed", "the held put lands Proposed");
         assert!(holding.calls() >= 1, "the lent checker was asked");
+        Ok(())
+    }
+
+    /// A checker that holds the Auto request once and would allow a second
+    /// ask is asked once: its hold lands the put Proposed in the same
+    /// transaction with the checker's own pending review, and no Proposed
+    /// resubmission asks it again (review 9216 round 2 P1). Red at the PR's
+    /// round-2 head: the hold commits alone, the resubmission asks again, is
+    /// allowed, and parks no review.
+    #[test]
+    fn a_live_run_claim_put_the_lent_checker_holds_once_parks_that_hold() -> TestResult {
+        let f = Fixture::open()?;
+        let head = Arc::new(RecordingAutoChecker::hold_then_allow());
+        let checker = bounded(head.clone());
+        let id = f.put(&checker, "run-checker-holds-once", "hojicha")?;
+        assert_eq!(
+            f.reviews(id)?,
+            vec![vec!["gate.pending.checker".to_owned()]],
+            "LEAK: the checker's hold of the Auto request was dropped (checker asked {} times)",
+            head.calls()
+        );
+        assert_eq!(f.approval(id)?, "proposed", "the held put lands Proposed");
+        assert_eq!(head.calls(), 1, "the lent checker is asked once per put");
+        Ok(())
+    }
+
+    /// A put whose predicate holds a credential the write door's rules
+    /// detect never reaches the checker, whose request carries the predicate
+    /// as written: no checker is asked, and the put never lands Auto (review
+    /// 9216 round 2 P1). Red at the PR's round-2 head: the checker is asked
+    /// with the raw token in the predicate.
+    #[test]
+    fn a_live_run_claim_put_whose_predicate_holds_a_credential_never_reaches_the_checker()
+    -> TestResult {
+        let f = Fixture::open()?;
+        let head = Arc::new(RecordingAutoChecker::allow());
+        let checker = bounded(head.clone());
+        let predicate = format!("profile.{}", provider_token());
+        let (id, put) =
+            f.put_predicate(&checker, "run-credential-predicate", &predicate, "sencha")?;
+        assert_eq!(
+            head.calls(),
+            0,
+            "LEAK: the checker was asked with a credential in the predicate (put {:?})",
+            put.as_ref().map(drop)
+        );
+        if put.is_ok() {
+            assert_ne!(
+                f.approval(id)?,
+                "auto",
+                "a put no checker reviewed never lands Auto"
+            );
+        }
         Ok(())
     }
 }
