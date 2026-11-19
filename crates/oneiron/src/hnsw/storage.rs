@@ -240,6 +240,35 @@ pub(super) fn prune_neighbors_for_node(
     Ok(scored.into_iter().map(|entry| entry.id).collect())
 }
 
+/// Keeps sole-link candidates reachable from the pruning node when there is
+/// room to replace an unprotected entry. `pruned` is nearest-first, so the last
+/// unprotected entry is the farthest; appended protected entries are never
+/// removed by a later swap. Excess sole-link candidates use the detach fallback.
+pub(super) fn keep_sole_link_candidates(
+    mut pruned: Vec<EntityId>,
+    candidates: &[EntityId],
+    is_sole_link: impl Fn(&EntityId) -> bool,
+    max_neighbors: usize,
+) -> Vec<EntityId> {
+    pruned.truncate(max_neighbors);
+    let sole: Vec<EntityId> = candidates
+        .iter()
+        .filter(|candidate| !pruned.contains(candidate) && is_sole_link(candidate))
+        .copied()
+        .collect();
+
+    for candidate in sole {
+        if pruned.len() == max_neighbors {
+            let Some(farthest) = pruned.iter().rposition(|entry| !is_sole_link(entry)) else {
+                break;
+            };
+            pruned.remove(farthest);
+        }
+        pruned.push(candidate);
+    }
+    pruned
+}
+
 /// Legacy-only delete-time full scan. Symmetric-marker vaults never call
 /// this: their backlinks are exactly the node's own forward neighbor list.
 pub(super) fn collect_backlink_targets(

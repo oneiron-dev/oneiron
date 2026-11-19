@@ -23,8 +23,8 @@ use super::rebuild::{
 use super::search::{beam_search, beam_search_logged, score_dims_for};
 use super::slim_drop::hnsw_is_dropped;
 use super::storage::{
-    decode_neighbors, load_neighbors, load_vector, prune_neighbors_for_node, read_count,
-    read_entry_point, write_neighbors,
+    decode_neighbors, keep_sole_link_candidates, load_neighbors, load_vector,
+    prune_neighbors_for_node, read_count, read_entry_point, write_neighbors,
 };
 use super::types::{BeamOptions, ExpandedLists, HeapEntry, InsertOutcome, neighbor_list_hash};
 
@@ -558,9 +558,9 @@ fn attach_backlinks_legacy(
 
 /// Symmetric backlink attachment (ONE-325): every link written here exists
 /// in both directions. When adding `id` to a neighbor's list overflows
-/// `m_max_0`, the pruned-out victims also lose their reverse link — except a
-/// victim whose list would become empty keeps its link one-way (orphan
-/// protection), so no prune ever disconnects a node's outgoing side.
+/// `m_max_0`, keep sole-link candidates in preference to unprotected entries.
+/// Pruned-out victims also lose their reverse link, except excess sole-link
+/// candidates keep their link one-way as the orphan-protection fallback.
 fn attach_backlinks_symmetric(
     store: &impl VectorIndexDbs,
     config: &VaultConfig,
@@ -587,6 +587,36 @@ fn attach_backlinks_symmetric(
                 config.dimensions,
                 ops,
             )?;
+            // The lists are read in this write transaction, including when the
+            // neighbor selection came from an insert plan. Only a pruned-out
+            // candidate can be orphaned, so the kept entries' lists are read
+            // only when one of those is a sole-link candidate (an overflow
+            // usually prunes one entry, which usually has other links).
+            let mut sole_link_candidates = Vec::new();
+            for candidate in neighbors.iter().filter(|entry| !pruned.contains(entry)) {
+                *ops += 1;
+                if load_neighbors(store, &*wtxn, candidate)?.as_slice()
+                    == std::slice::from_ref(neighbor_id)
+                {
+                    sole_link_candidates.push(*candidate);
+                }
+            }
+            if !sole_link_candidates.is_empty() {
+                for kept in &pruned {
+                    *ops += 1;
+                    if load_neighbors(store, &*wtxn, kept)?.as_slice()
+                        == std::slice::from_ref(neighbor_id)
+                    {
+                        sole_link_candidates.push(*kept);
+                    }
+                }
+            }
+            let pruned = keep_sole_link_candidates(
+                pruned,
+                &neighbors,
+                |candidate| sole_link_candidates.contains(candidate),
+                config.hnsw.m_max_0,
+            );
             let removed: Vec<EntityId> = neighbors
                 .iter()
                 .filter(|candidate| !pruned.contains(candidate))
