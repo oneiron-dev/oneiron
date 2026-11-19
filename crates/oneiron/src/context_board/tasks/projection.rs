@@ -742,7 +742,10 @@ impl TaskIntentPresence {
         // made (FIX 3694): a TASK a continuation put back on its lane, live
         // again or settled since, is not acknowledged by it. Both clocks are
         // recorded seconds; an ack in its failure's own second still counts.
+        // A cancelled row is off the board however it stands, so its ack
+        // bit keeps the fact's own answer and never gates on a settlement.
         let acked = match facts.acked_at {
+            Some(_) if facts.cancelled => true,
             Some(acked_at) => crate::task_verb::task_settled_at_in(vault, rtxn, task_ref)?
                 .is_some_and(|settled| settled <= acked_at),
             None => false,
