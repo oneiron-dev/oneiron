@@ -8,6 +8,8 @@
 //! threads but makes no other prctl. An organ
 //! under the filter still answers its ordinary calls, inputs read through
 //! regions included, and every verb of the probe answers under its list.
+//! A pinned first-party build named `probe` (an operator-trusted pack's)
+//! runs under the fixed tier list, not the probe's: its fork kills it.
 //! Linux only: macOS has no seccomp.
 #![cfg(target_os = "linux")]
 
@@ -18,9 +20,10 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::secret_custody::SecretSight;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use oneiron_organ_host::{
-    CallClass, HostConfig, HostError, OrganCall, OrganHost, OrganInput, OrganSpec, SightedInput,
+    CallClass, HostConfig, HostError, OrganCall, OrganHost, OrganInput, OrganSpec, OrganTier,
+    SightedInput, install_pinned_binary,
 };
-use oneiron_organ_protocol::{Value, touch_fold};
+use oneiron_organ_protocol::{Hash32, Value, touch_fold};
 
 const PROBE: &str = env!("CARGO_BIN_EXE_oneiron-organ-probe");
 const BIN: &str = "application/octet-stream";
@@ -228,9 +231,9 @@ fn an_organ_call_aimed_at_another_process_dies_by_the_syscall_filter() {
     let (_dir, vault) = vault();
     // At its own process a signal 0 and a read of its own limits answer:
     // the filter allows them by the organ's own pid (or 0 for itself).
-    let host = host();
+    let probe_host = host();
     for (which, pid) in [("signal", None), ("limits", None), ("limits", Some(0))] {
-        let own = host
+        let own = probe_host
             .call(
                 &vault,
                 call("probe.reach", reach(which, pid, 0), Vec::new()),
@@ -271,11 +274,11 @@ fn an_organ_call_aimed_at_another_process_dies_by_the_syscall_filter() {
 #[test]
 fn an_organ_sets_no_limit_and_makes_no_prctl_but_a_thread_name() {
     let (_dir, vault) = vault();
-    let host = host();
+    let probe_host = host();
     // Its open-file limit set again to what it reads answers EPERM: no
     // organ lifts the limits its grant set (a first-party organ's hard
     // limits are open), and the organ lives on.
-    let set = host
+    let set = probe_host
         .call(
             &vault,
             call("probe.reach", reach("set_limits", None, 0), Vec::new()),
@@ -291,7 +294,7 @@ fn an_organ_sets_no_limit_and_makes_no_prctl_but_a_thread_name() {
         set.report,
     );
     // Naming its own thread answers, as a thread pool's start does.
-    let named = host
+    let named = probe_host
         .call(
             &vault,
             call("probe.reach", reach("name", None, 0), Vec::new()),
@@ -358,4 +361,35 @@ fn every_probe_verb_answers_under_its_allow_list() {
         .call(&vault, call("organ.echo", "still here".into(), Vec::new()))
         .expect("echo after every verb");
     assert_eq!(echoed.report, Value::from("still here"));
+}
+
+#[test]
+fn a_pinned_first_party_build_named_probe_runs_under_the_fixed_tier_list() {
+    let (_dir, vault) = vault();
+    let builds = tempfile::tempdir().expect("tempdir");
+    // The probe's bytes as an operator-trusted pack build: pinned to their
+    // blake3 and first party, under the probe's name.
+    let bytes = std::fs::read(PROBE).expect("the probe binary");
+    let mut spec = install_pinned_binary(
+        builds.path(),
+        "probe",
+        &bytes,
+        Hash32::of(&bytes),
+        OrganTier::FirstParty,
+    )
+    .expect("the pinned build");
+    spec.verbs = ["organ.echo", "probe.fork"].map(String::from).into();
+    let host = OrganHost::new(HostConfig::default());
+    host.install(spec);
+    let echoed = host
+        .call(&vault, call("organ.echo", "pinned".into(), Vec::new()))
+        .expect("the pinned build answers under the fixed tier list");
+    assert_eq!(echoed.report, Value::from("pinned"));
+    // The diagnostics install's list forks; the fixed tier list kills a
+    // clone that starts no thread.
+    let forked = host.call(&vault, call("probe.fork", Value::Nil, Vec::new()));
+    assert!(
+        matches!(forked, Err(HostError::Crashed(_))),
+        "a pinned build named probe forks nothing: {forked:?}",
+    );
 }
