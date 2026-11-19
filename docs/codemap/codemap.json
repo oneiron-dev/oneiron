@@ -17238,13 +17238,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 28,
       "fn": 8
      }
     },
@@ -17266,6 +17266,16 @@
      "purpose": "A room turn's ceiling as each row's snapshot refreshes it, and the peer reads a room or audience conjoins…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/admission/world_scope.rs",
+     "purpose": "The world axes of a scoped read: the worlds the read asked for, the worlds its verified credential grants…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -17653,7 +17663,7 @@
      "purpose": "One residence read's admission for the machine at the other end of the connection",
      "surface": {
       "crate-vis": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -86275,7 +86285,7 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "re-export": 6
      }
     },
@@ -86664,6 +86674,16 @@
      "purpose": "This machine's same-value statement to its residence home, and the home's statements to it, once each steady…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/tombstones.rs",
+     "purpose": "A followed world's tombstone id set, taken from the home on each connect…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -88468,11 +88488,11 @@
       "const": 2,
       "crate-vis": 25,
       "fn": 10,
-      "re-export": 32
+      "re-export": 33
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ResidenceAdmission"
@@ -88481,7 +88501,7 @@
      "purpose": "One residence request's admission for the machine at the other end of the connection (OF-534 G6)",
      "surface": {
       "crate-vis": 2,
-      "fn": 11,
+      "fn": 12,
       "struct": 1
      }
     },
@@ -89105,6 +89125,19 @@
      "surface": {
       "fn": 4,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WindowTombstoneEntry"
+     ],
+     "path": "src/sync/residence/window_tombstones.rs",
+     "purpose": "A window's tombstone id set: what a residence read serves a device that follows the window's world, so the…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -109972,6 +110005,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it_sync/device_followed_tombstones.rs",
+     "purpose": "A device writes the delete marker of a followed world's item even for a window it never held…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -109998,13 +110039,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it_sync/device_world_follow_live.rs",
      "purpose": "A device's live socket follows the owner's pick as it changes (Engine ruling WORLDSET-1, Fri 13 Nov 03:02…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 11
      }
     },
     {
@@ -111873,6 +111914,14 @@
      "notable": [],
      "path": "tests/residence_switch_rechecks_home.rs",
      "purpose": "FIX RESIDENCE-SWITCH-STALE-HOME: an owner's residence switch reads the elected home once to plan, and a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/residence_tombstone_answer.rs",
+     "purpose": "A followed window's tombstone id set names only the rows its device reads…",
      "surface": {}
     },
     {
@@ -114658,7 +114707,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 154,
+     "files": 155,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -115939,7 +115988,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 431,
+     "files": 433,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116170,10 +116219,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 307,
+   "over_bar": 306,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8200,
-   "test_files": 1947
+   "source_files": 8203,
+   "test_files": 1949
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -168172,6 +168221,24 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/livequery/residence/tombstone_tests.rs",
+     "purpose": "The home's followed-world tombstone answer, `residence.tombstones` (FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/livequery/residence/tombstones.rs",
+     "purpose": "A followed window's tombstone id set, `residence.tombstones` (FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS; canon…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -179176,7 +179243,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 49,
+     "files": 51,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -179451,8 +179518,8 @@
    },
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2035,
-   "test_files": 498
+   "source_files": 2036,
+   "test_files": 499
   },
   "oneiron-setting-contract": {
    "files": [
