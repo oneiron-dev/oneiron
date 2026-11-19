@@ -3,8 +3,10 @@
 //! follows the window's world learns each delete it may read, even of a
 //! window the home refuses to it, and writes the delete marker. The ids are
 //! the selector export's own (`window_tombstone_projection_with`), held to
-//! the credential's records and channel caveats, so none names a row the
-//! device could not read, and a world kept off its machine gives none.
+//! the credential's own bounds (its records and channel caveats, and a
+//! narrowed credential's Scope and worlds over each delete's captured
+//! scope), so none names a row the device could not read, and a world kept
+//! off its machine gives none.
 //!
 //! Paged by an id cursor over a fresh projection, with no retained cache:
 //! tombstones only grow, so a page drops none, and a delete that lands behind
@@ -61,10 +63,13 @@ pub(super) fn tombstones(
         admission.withhold(),
     )
     .map_err(|_| AppError::internal_server_error("tombstones unavailable"))?;
-    // The credential's own records and channel caveats, the bounds an id
-    // judges with no row left to read: a slip that names its records names
-    // every id it learns of (blind review 1 of #9592).
-    entries.retain(|entry| admission.credential_allows_id(entry.entity_id));
+    // The credential's own bounds, judged with no row left to read: a slip
+    // that names its records names every id it learns of (blind review 1 of
+    // #9592), and a slip held to some worlds learns only of deletes whose
+    // captured scope it reads (blind review 2 of #9592).
+    admission
+        .retain_admitted_tombstones(&mut entries)
+        .map_err(|_| AppError::internal_server_error("tombstones unavailable"))?;
     let start = after.map_or(0, |cursor| {
         let after = cursor.to_hex();
         entries.partition_point(|entry| entry.entity_id.to_hex() <= after)

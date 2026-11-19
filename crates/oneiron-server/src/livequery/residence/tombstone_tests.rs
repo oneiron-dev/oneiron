@@ -47,11 +47,29 @@ fn page(answer: &Value) -> (Vec<String>, Option<String>) {
     (ids, cursor)
 }
 
+/// Which rows a fixture window deletes.
+#[derive(Clone, Copy)]
+enum Deleted {
+    /// Two PERSON rows.
+    People,
+    /// Two base-reality CLAIMs about the live PERSON, whose captured scope
+    /// names their world.
+    Claims,
+}
+
 /// A window of three PERSON rows, the first two hard-deleted, and the
 /// actor's credential and encoded selector under a member grant on it: the
 /// deleted ids in ascending order, and the live one.
 async fn window_with_deletes(
     server: &SyncServer,
+) -> (CoreAuth, WindowKey, String, [EntityId; 2], EntityId) {
+    window_with_deletes_of(server, Deleted::People).await
+}
+
+/// [`window_with_deletes`], its two deleted rows of the kind `deleted` names.
+async fn window_with_deletes_of(
+    server: &SyncServer,
+    deleted_rows: Deleted,
 ) -> (CoreAuth, WindowKey, String, [EntityId; 2], EntityId) {
     let actor = EntityId::from_hex(production_tests::ACTOR).unwrap();
     let grant_id = EntityId::now();
@@ -72,20 +90,43 @@ async fn window_with_deletes(
     let mut deleted = [EntityId::now(), EntityId::now()];
     deleted.sort_unstable_by_key(EntityId::to_hex);
     let live = EntityId::now();
-    for id in deleted.iter().chain([&live]) {
+    let at = TimeRange {
+        start: production_tests::AT,
+        end: production_tests::AT,
+    };
+    let people = match deleted_rows {
+        Deleted::People => vec![deleted[0], deleted[1], live],
+        Deleted::Claims => vec![live],
+    };
+    for id in &people {
         server
             .vault
             .put_entity(
                 id,
                 oneiron::registry::ENTITY_TYPE_PERSON,
-                TimeRange {
-                    start: production_tests::AT,
-                    end: production_tests::AT,
-                },
+                at,
                 production_tests::AT,
                 &body,
             )
             .unwrap();
+    }
+    if matches!(deleted_rows, Deleted::Claims) {
+        for id in &deleted {
+            let mut claim = oneiron::claim::ClaimBody::new(
+                "profile.name",
+                oneiron::claim::ClaimSubject::Entity(live),
+                rmpv::Value::from("a profile fact"),
+                1.0,
+                oneiron::claim::ClaimApprovalStatus::Auto,
+                oneiron::claim::ClaimLifecycleStatus::Active,
+            )
+            .unwrap();
+            claim.source = Some(oneiron::claim::ClaimSource::UserStated);
+            server
+                .vault
+                .put_claim(id, &claim, at, production_tests::AT)
+                .unwrap();
+        }
     }
     for id in &deleted {
         assert!(
@@ -215,4 +256,42 @@ async fn a_records_bound_credential_learns_only_the_deletes_it_names() {
     );
     assert!(cursor.is_none());
     assert!(!answer.to_string().contains(&second.to_hex()));
+}
+
+/// A slip held to some worlds learns of a delete only where the scope its
+/// row held, captured at the delete, lies in those worlds (blind review 2 of
+/// #9592). The home hard-deletes two base-reality CLAIMs: a slip held to
+/// another world learns of neither, and a slip held to base reality learns
+/// of both. Before, the world-bound slip learned of both, because the answer
+/// judged only its records and channel caveats.
+#[tokio::test]
+async fn a_world_bound_slip_learns_no_delete_outside_its_worlds() {
+    let (_dir, server) = production_tests::server();
+    let (_auth, window, encoded, deleted, _) =
+        window_with_deletes_of(&server, Deleted::Claims).await;
+    let answered = |jti: &str, world: EntityId| {
+        let recipe = format!(
+            "scope=core:read;principal_ref={};actor_class=human;jti={jti};worlds={}",
+            production_tests::ACTOR,
+            world.to_hex()
+        );
+        let auth = crate::test_credentials::authenticate(&server, &recipe);
+        reply(
+            &server,
+            &auth,
+            json!({"window": window.as_str(), "selector": encoded, "limit": 256}),
+        )
+    };
+    let base = answered("tombstone-world-base", oneiron::claim::base_world_id());
+    assert_eq!(
+        page(&base).0,
+        deleted.map(|id| id.to_hex()).to_vec(),
+        "OVER-REFUSAL: a slip held to base reality learns of its deleted CLAIMs: {base:#}"
+    );
+    let elsewhere = answered("tombstone-world-elsewhere", EntityId::now());
+    let (ids, cursor) = page(&elsewhere);
+    assert!(
+        ids.is_empty() && cursor.is_none(),
+        "LEAK: a slip held to another world learns of base-reality deletes: {elsewhere:#}"
+    );
 }
