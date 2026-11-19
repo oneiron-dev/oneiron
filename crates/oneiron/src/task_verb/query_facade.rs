@@ -388,3 +388,29 @@ fn not_the_task_owner() -> MemoryError {
         &["A failed task stays on the board until the actor that owns it dismisses it."],
     )
 }
+
+#[cfg(test)]
+type BeforeAckWriterHook = Box<dyn FnOnce(&crate::Vault)>;
+
+#[cfg(test)]
+std::thread_local! {
+    static BEFORE_ACK_WRITER: std::cell::RefCell<Option<BeforeAckWriterHook>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Runs `hook` once, on this thread, between an acknowledgement's read of a
+/// failed task and the writer that commits it: a test lands a synced
+/// refailure there.
+#[cfg(test)]
+pub(crate) fn set_before_ack_writer_hook(hook: impl FnOnce(&crate::Vault) + 'static) {
+    BEFORE_ACK_WRITER.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[cfg(test)]
+fn run_before_ack_writer_hook(vault: &crate::Vault) {
+    BEFORE_ACK_WRITER.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook(vault);
+        }
+    });
+}

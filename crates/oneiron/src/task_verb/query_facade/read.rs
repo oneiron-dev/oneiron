@@ -252,6 +252,8 @@ impl Memory<'_> {
                 report: None,
             });
         }
+        #[cfg(test)]
+        run_before_ack_writer_hook(self.vault());
         // The acknowledgement is a FACT about a real failed row, stamped with
         // who acknowledged it and when, and it commits inside the verified
         // actor's write transaction like every other engine-authored fact.
