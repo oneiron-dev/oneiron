@@ -313,7 +313,7 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
     let person_ref = seeded_test_entity_id(0x1266_0001);
     let persona_ref = seeded_test_entity_id(0x1266_0002);
     let turn_id = seeded_test_entity_id(0x1266_0004);
-    let principal_ref = seeded_test_entity_id(0x1266_0006);
+    let principal_ref = person_ref;
     let grant_id = seeded_test_entity_id(0x1266_0007);
 
     for id in [person_ref, persona_ref] {
@@ -394,12 +394,7 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
         "unauthorized context board must not leak companion relationship metadata"
     );
 
-    let grant = oneiron::AccessGrant::companion_profile_read(
-        principal_ref,
-        person_ref,
-        Some(persona_ref),
-        12,
-    );
+    let grant = oneiron::AccessGrant::companion_profile_read(principal_ref, persona_ref, None, 12);
     server
         .vault
         .create_access_grant(&grant_id, &grant)
@@ -579,7 +574,7 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
     let request = json!({
         "session":{"session_id":"l2-observed"},
         "retrieval": {"query":"l2route", "budget":{"max_field_chars":0,"max_item_tokens":0,"token_budget":0}},
-        "companion":{"person_ref":person.to_hex(),"persona_ref":persona.to_hex()}
+        "companion":{"person_ref":person.to_hex(),"counterpart_person_ref":persona.to_hex()}
     });
     let call = || {
         core_request_with_principal_ref(
@@ -655,7 +650,7 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
     let rows: Value =
         serde_json::from_str(third["pack"]["l2_base"]["body"].as_str().unwrap()).unwrap();
     assert_eq!(rows.as_array().unwrap().len(), 1);
-    assert_eq!(rows[0]["id"], persona_claim.to_hex());
+    assert_eq!(rows[0]["val"], "persona base fact");
     server.vault.retract_claim(&persona_claim, 3).unwrap();
     for (session, expected) in [
         (

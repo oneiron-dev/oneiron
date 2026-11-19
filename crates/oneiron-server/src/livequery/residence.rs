@@ -3,6 +3,9 @@
 
 #[cfg(test)]
 pub(super) mod tests;
+// FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS: the followed-window tombstone answer.
+#[cfg(test)]
+mod tombstone_tests;
 
 mod authority;
 mod bundle_access;
@@ -14,6 +17,7 @@ mod custody;
 mod home_handoff;
 mod index;
 mod machine_history;
+mod machine_names;
 mod media_vectors;
 mod pad_custody;
 mod pad_objects;
@@ -22,6 +26,7 @@ mod pages;
 mod predict;
 mod search;
 mod secret_same_value;
+mod tombstones;
 mod work;
 pub(crate) use work::{ResidenceWorkCall, ResidenceWorkState};
 
@@ -53,6 +58,7 @@ use self::index::*;
 use self::search::*;
 use super::{AppError, CoreAuth, CoreScope, RpcRequest};
 use crate::api::call_receipt::ForwardedAttribution;
+use crate::selector_release::SelectorReleaseBasis;
 use crate::wire_telemetry::LimitRow;
 
 /// A result and the rows it carries (DEC-0005).
@@ -96,6 +102,9 @@ pub(crate) struct ResidenceIndexCache {
     destination: Destination,
     selection_revision: ([u8; 32], u64, u64),
     items: Vec<WindowIndexEntry>,
+    /// The coreference links the projection's filter let `items` carry: each
+    /// page's answer stands only while they are still shared.
+    coreference: oneiron::sync::CoreferenceDisclosure,
     pages: usize,
     budgets: ResidenceOperationBudgets,
     /// The projection's charge on the server's retained-memory line.
@@ -452,13 +461,21 @@ pub(super) fn run(
     index_cache: &mut Option<ResidenceIndexCache>,
     append_stage: &mut Option<AuthorityAppendStage>,
     touch_stage: &mut Option<ResidenceTouchStage>,
-) -> Result<super::RpcReply, crate::protocol::ProtocolError> {
+) -> Result<(super::RpcReply, Option<SelectorReleaseBasis>), crate::protocol::ProtocolError> {
     let call = super::RpcCall::of(&request);
+    // An answer under a selector leaves only while the grant and the
+    // authority it is made under stand (SELECTOR-RELEASE-POINT = B): read
+    // before the call binds the selector.
+    let basis = crate::selector_release::residence_basis(&server.vault, &request.params);
     // A forwarded search's verified caller, whom its receipt names (FIX 3550),
     // and whether it sits off the carrying device (FIX 11991).
     let mut attribution = None;
     let mut off_carrier = false;
-    let result = (|| {
+    // A forwarded search's caller reach, taken before its read.
+    let mut reader = None;
+    // Each coreference link the call's selector filters let its answer
+    // carry, judged again where the answer leaves.
+    let (result, disclosure) = oneiron::sync::recording_coreference_disclosure(|| {
         auth.require(CoreScope::Read)?;
         if !auth.credential_is_live(server.vault.as_ref()) {
             return Err(AppError::unauthorized());
@@ -470,6 +487,9 @@ pub(super) fn run(
             "residence.touch.part" => touch_part(server, auth, peer, request.params, touch_stage),
             "residence.promote" => promote(server, auth, peer, request.params),
             "residence.window.vv" => window_vv(server, auth, peer, request.params),
+            "residence.tombstones" => {
+                tombstones::tombstones(server, auth, peer, request.params, budgets)
+            }
             "residence.predict" => predict::predict(server, auth, peer, request.params),
             "residence.predicted_set" => predict::predicted_set(server, auth, peer, request.params),
             "residence.search" => search(
@@ -480,6 +500,7 @@ pub(super) fn run(
                 budgets,
                 &mut attribution,
                 &mut off_carrier,
+                &mut reader,
             ),
             "residence.media_vectors" => {
                 media_vectors::media_vectors(server, auth, peer, request.params)
@@ -531,12 +552,15 @@ pub(super) fn run(
             "residence.machine-history.freshness" => {
                 machine_history::freshness(server, auth, peer, request.params)
             }
+            "residence.machine_names.exchange" => {
+                machine_names::exchange(server, auth, peer, request.params)
+            }
             method if method.starts_with("residence.home_handoff.") => {
                 home_handoff::run(server, auth, peer, method, request.params)
             }
             method => custody::run(server, auth, peer, method, request.params),
         }
-    })();
+    });
     super::RpcReply::answer_attributed(
         server,
         auth,
@@ -545,7 +569,12 @@ pub(super) fn run(
         request.request_id,
         result,
     )
-    .map(|reply| reply.released_off_carrier(off_carrier))
+    .map(|reply| {
+        (
+            reply.released_off_carrier(off_carrier),
+            basis.map(|basis| basis.reading_for(reader).disclosing(disclosure)),
+        )
+    })
 }
 
 fn operation_budgets(server: &SyncServer) -> Result<ResidenceOperationBudgets, AppError> {

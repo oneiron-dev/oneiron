@@ -1,4 +1,6 @@
-//! Route-level separation: proposal is inert, and only the human holder's host-bound slip lands it.
+//! Route-level separation: proposal is inert, and only the holder lands it.
+//! The human holder's host-bound slip, or a self-hosted root as the owner
+//! its host action names (FIX 8156).
 use super::*;
 use ed25519_dalek::Signer;
 use oneiron::{
@@ -73,13 +75,6 @@ async fn remote_proposal_cannot_land_widen_but_host_bound_holder_can_once() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    // A bare host root is not a human holder action either.
-    let (status, _) = route_json(
-        server.clone(),
-        core_request_with_authz("POST", path, owner_bearer(), Some(&payload)),
-    )
-    .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
     // A different human can hold core:auth, but cannot land this owner's
     // exact proposal or mint its grant.
     let other = oneiron::EntityId::now();
@@ -137,6 +132,51 @@ async fn remote_proposal_cannot_land_widen_but_host_bound_holder_can_once() {
         .insert("idempotency-key", "widen-once".parse().unwrap());
     let (status, _) = route_json(server.clone(), replay).await;
     assert_eq!(status, StatusCode::CONFLICT);
+    // A bare self-hosted host root answers as the owner its host action
+    // names (FIX 8156), on a fresh proposal so the holder flow above keeps
+    // its own proposal.
+    let bare_bound = GrantBound::action(
+        ActorBound::new(agent.to_hex()).unwrap(),
+        ActionClass::new("claim.put").unwrap(),
+        ActionEnvelope::new(["world:bare-root".to_owned()]).unwrap(),
+    )
+    .unwrap();
+    let bare_proposal = vault
+        .propose_action_widen(
+            &proof,
+            bare_bound.clone(),
+            &owner.to_hex(),
+            vault.now_recorded_at() + 300,
+        )
+        .unwrap();
+    let bare_delta = bare_proposal
+        .canonical_delta
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let bare_payload =
+        json!({"proposal_ref":bare_proposal.proposal_ref,"expected_delta":bare_delta});
+    assert!(
+        vault
+            .consent_grant(&bare_bound.digest().to_hex())
+            .unwrap()
+            .is_none()
+    );
+    let (status, body) = route_json(
+        server.clone(),
+        core_request_with_authz("POST", path, owner_bearer(), Some(&bare_payload)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["grant_ref"], bare_bound.digest().to_hex());
+    assert_eq!(body["decision_id"].as_str().unwrap().len(), 32);
+    assert!(
+        vault
+            .consent_grant(&bare_bound.digest().to_hex())
+            .unwrap()
+            .unwrap()
+            .is_active()
+    );
 
     // The encoder itself refuses out-of-model requests; the route accepts
     // every delta that this existing structural model can produce.

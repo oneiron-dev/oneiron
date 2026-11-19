@@ -35,6 +35,7 @@ fn at(seconds: u64) -> TimeRange {
 /// authenticated-owner handle every minting door requires.
 fn owner_vault() -> (tempfile::TempDir, Vault, AuthenticatedOwner) {
     let (dir, vault) = open_test_vault_with(embedding_test_config());
+    vault.prepare_install_signing().expect("install signing");
     let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault
         .authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())

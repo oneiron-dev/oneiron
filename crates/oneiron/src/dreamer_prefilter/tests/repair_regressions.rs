@@ -310,6 +310,7 @@ fn checkpoint_preserves_prefilter_receipts_and_rescan_membership() {
     use crate::recovery::checkpoint::RestoreReason;
 
     let (dir, vault) = open_vault();
+    vault.ensure_vault_key().expect("mint the vault data key");
     let copies = crate::test_support::restore_tempdir();
     let conversation = seed_conversation(&vault, 0x56);
     for second in 10..12 {

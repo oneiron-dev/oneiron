@@ -68,6 +68,9 @@ pub struct ScopedReadActorKey {
     pub(super) channel: Option<String>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
     owner: Option<EntityId>,
+    /// Set only on a key a saved lane's basis took the owner's floor from;
+    /// see [`Self::owner_binding_ref`].
+    withdrawn_floor_owner: Option<EntityId>,
     /// Set only on a narrower credential of the owner's; see
     /// [`Self::exempt_while_owner`].
     pub(super) owner_exemption: Option<EntityId>,
@@ -381,6 +384,13 @@ pub(crate) fn meet_clearance(
 }
 
 impl ScopedReadActorKey {
+    /// The principal whose access grants and relationship memberships a
+    /// read under this key loads: what a forwarded search's answer is judged
+    /// again under where it leaves (SELECTOR-RELEASE-POINT = B).
+    pub(crate) fn access_principal(&self) -> Option<EntityId> {
+        self.principal_ref
+    }
+
     #[must_use]
     pub fn new(actor_ref: impl Into<String>) -> Option<Self> {
         Self::from_parts(actor_ref.into(), None)
@@ -440,6 +450,7 @@ impl ScopedReadActorKey {
             rebuilt_under_floor_basis: false,
             channel: None,
             owner: None,
+            withdrawn_floor_owner: None,
             owner_exemption: None,
             room_turn: None,
             phone_lines: Vec::new(),
@@ -490,6 +501,7 @@ impl ScopedReadActorKey {
             rebuilt_under_floor_basis: false,
             channel: None,
             owner: Some(owner),
+            withdrawn_floor_owner: None,
             owner_exemption: None,
             room_turn: None,
             phone_lines: Vec::new(),
@@ -619,6 +631,17 @@ impl ScopedReadActorKey {
     /// The owner this key was minted for, when it is the vault owner's key.
     pub(crate) fn vault_owner_ref(&self) -> Option<EntityId> {
         self.owner
+    }
+
+    /// The owner whose binding every read under this key proves again in
+    /// its own snapshot: the vault owner's, on the owner's own key, and on a
+    /// key a saved lane's basis took that floor from
+    /// ([`Self::within_native_basis`]), which reads no more than the floor
+    /// key it was rebuilt over: nothing once that binding lapses (FIX
+    /// SAVED-LANE-MEET-DROPS-OWNER-LIVENESS). Only the liveness is kept;
+    /// the floor's reach and owner authority are not.
+    pub(super) fn owner_binding_ref(&self) -> Option<EntityId> {
+        self.owner.or(self.withdrawn_floor_owner)
     }
 
     /// Whether this key reads past every facet bound in `txn` (owner ruling
@@ -1070,7 +1093,10 @@ impl ScopedReadActorKey {
     /// read under (FIX 14344, Astra F2 on #8029): the meet of the two on
     /// each axis, so the rebuilt key reads no row either one refused (Sol
     /// R1/R2 on #8061).
-    /// - It keeps the owner's floor only under a floor's basis.
+    /// - It keeps the owner's floor only under a floor's basis. A floor it
+    ///   takes leaves its owner's binding to prove at every read
+    ///   ([`Self::owner_binding_ref`], FIX
+    ///   SAVED-LANE-MEET-DROPS-OWNER-LIVENESS).
     /// - It keeps an owner exemption, or turns a floor it loses into one,
     ///   only under a basis with an owner standing (Sol F1 on #8061), and
     ///   only where each key's gate let every row through while the owner
@@ -1111,6 +1137,7 @@ impl ScopedReadActorKey {
         } else {
             self.owner.take()
         };
+        self.withdrawn_floor_owner = self.withdrawn_floor_owner.or(lost_floor);
         let exemption_owner = match basis.owner_standing {
             NativeOwnerStanding::Absent => None,
             NativeOwnerStanding::Exemption | NativeOwnerStanding::Floor => {

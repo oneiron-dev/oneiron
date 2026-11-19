@@ -5,7 +5,8 @@
 
 use super::outbound::*;
 use super::tests::{
-    claim_input, facade_for, open_vault, put_owner, put_person, test_time, witness_message,
+    claim_input, facade_for, grant_reads, open_vault, put_owner, put_person, test_time,
+    witness_message,
 };
 use super::*;
 use crate::edge::{EdgeActorClass, EdgeKind};

@@ -9,7 +9,7 @@
 #![cfg(oneiron_test_support)]
 
 use oneiron::authority::{
-    ActSurface, HostSlipIssuer, MachineOwnership, MachineRole,
+    ActAuthority, ActSurface, HostSlipIssuer, MachineOwnership, MachineRole,
     RESIDENCE_PREDICTED_DOCUMENTS_DEFAULT, RESIDENCE_PREDICTED_WINDOWS_DEFAULT, ResidenceAct,
     ResidenceResultStatus,
 };
@@ -57,7 +57,15 @@ fn local_machine(vault: &Vault) -> EntityId {
 fn answered_device() -> Device {
     let device = Device::open();
     let machine = local_machine(&device.vault);
+    let issuer = HostSlipIssuer::from_secret(FIXTURE_HOST_SECRET).expect("fixture host issuer");
     device
+        .vault
+        .enrol_device_owner_signing_key(
+            &ActAuthority::Owner(device.owner.clone(), ActSurface::ThisInstall),
+            &issuer,
+        )
+        .expect("the owner enrols this install's owner signing key");
+    let landing = device
         .vault
         .set_machine_role(
             &device.owner,
@@ -67,6 +75,10 @@ fn answered_device() -> Device {
             None,
         )
         .expect("the owner answers the device's machine");
+    assert!(
+        landing.held().is_none(),
+        "FIXTURE: the owner key this install holds proves the work-or-school answer"
+    );
     device
 }
 

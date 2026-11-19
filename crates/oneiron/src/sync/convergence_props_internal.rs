@@ -44,13 +44,8 @@ fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
 }
 
 fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + data.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&occurred.start.to_be_bytes());
-    blob.extend_from_slice(&occurred.end.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(data);
-    blob
+    // Fresh test carrier: row_version 0, the value base writes for a new row.
+    crate::test_util::entity_record(entity_type, occurred, learned_at, 0, data)
 }
 
 /// Named-DB byte dump: db name → ordered `(key, value)` rows.

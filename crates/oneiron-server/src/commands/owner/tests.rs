@@ -30,7 +30,7 @@ fn doctor_reports_the_vault_beside_a_serve_setting_that_does_not_resolve() {
     let config = root.path().join("oneiron.toml");
     // A server setting doctor never reads fails validation; the backup
     // section is sound.
-    std::fs::write(
+    crate::owner_only_file::write_owner_only_file(
         &config,
         format!(
             "ephemeral_timeout_ms = 0\n[backup]\ndir = {:?}\nkeep = 3\n",
@@ -80,7 +80,7 @@ fn doctor_finds_the_configured_backups_beside_a_mistyped_serve_setting() {
         backup::take(&vault, &plan).unwrap();
     }
     let config = root.path().join("oneiron.toml");
-    std::fs::write(
+    crate::owner_only_file::write_owner_only_file(
         &config,
         format!(
             "ephemeral_timeout_ms = \"oops\"\n[backup]\ndir = {:?}\nkeep = 3\n",
@@ -150,7 +150,7 @@ fn doctor_counts_vectors_by_device_and_lists_one_devices_ids() {
     }
     // The default local embedder, whose model is not the vault's.
     let config = root.path().join("oneiron.toml");
-    std::fs::write(
+    crate::owner_only_file::write_owner_only_file(
         &config,
         "dimensions = 1024\n\n[embedder]\ndimensions = 1024\n",
     )
@@ -190,7 +190,7 @@ fn the_cli_registers_and_rotates_a_secret_on_a_stopped_vault() {
     let vault_path = root.path().join("vault");
     drop(oneiron::Vault::open_owned(&vault_path, oneiron::VaultConfig::server()).unwrap());
     let config = root.path().join("oneiron.toml");
-    std::fs::write(&config, "").unwrap();
+    crate::owner_only_file::write_owner_only_file(&config, "").unwrap();
     let serve = ServeArgs {
         config: Some(config),
         vault_path: Some(vault_path.clone()),

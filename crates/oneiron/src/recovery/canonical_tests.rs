@@ -364,6 +364,7 @@ fn world_month_canonical_snapshot_round_trips_and_rebuilds() -> Result<()> {
         crate::claim::ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     body.world = Some(world);
     vault.put_claim(&claim, &body, occurred, at)?;
     let window = format!("2026-02@{}", world.to_hex());
@@ -419,6 +420,7 @@ fn world_month_canonical_snapshot_round_trips_and_rebuilds() -> Result<()> {
 fn soft_deleted_world_claim_canonical_recovery_keeps_shell_edge_and_address() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let world = EntityId::now();
     let person = EntityId::now();
     let claim = EntityId::now();
@@ -484,6 +486,7 @@ fn soft_deleted_world_claim_canonical_recovery_keeps_shell_edge_and_address() ->
     {
         let peer_dir = tempfile::tempdir()?;
         let peer = Vault::open(peer_dir.path(), VaultConfig::device())?;
+        peer.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         peer.put_entity(
             &world,
             crate::registry::ENTITY_TYPE_WORLD,
@@ -1696,6 +1699,7 @@ fn a_capture_without_sync_carries_the_refusal_of_a_deleted_fact_never_admitted()
         assigned_ref: None,
         actor_generation: None,
         assigned_generation: None,
+        answered_heads: None,
         occurred_at: LEARNED_AT,
         maker: None,
     };

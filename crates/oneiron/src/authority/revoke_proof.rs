@@ -204,7 +204,7 @@ pub(super) fn derive_revoke_facts(
         let Some(state) = proved else {
             continue;
         };
-        let (vault_id, routed) = (state.vault_id, state.anchor_entries.clone());
+        let (vault_id, routed) = (state.vault_id, state.anchor_entries.to_btree_set());
         let kind = match &entry.op {
             AuthorityOp::RevokeActor {
                 authority_key,
@@ -308,7 +308,9 @@ impl RevokeFacts {
                 continue;
             };
             let kind = match restriction {
-                Restriction::SlipBurn(_) => Restriction::SlipBurn(state.slips.consumed),
+                Restriction::SlipBurn(_) => {
+                    Restriction::SlipBurn(state.slips.consumed.to_btree_set())
+                }
                 other => other,
             };
             self.by_hash.insert(
@@ -317,7 +319,7 @@ impl RevokeFacts {
                     vault_id: state.vault_id,
                     entry_hash: *hash,
                     kind,
-                    routed: state.anchor_entries,
+                    routed: state.anchor_entries.to_btree_set(),
                 },
             );
         }
@@ -360,7 +362,7 @@ impl RevokeFacts {
                         authority_key: authority_key.clone(),
                         epoch: *epoch,
                     },
-                    routed: state.anchor_entries.clone(),
+                    routed: state.anchor_entries.to_btree_set(),
                 },
             );
         }
@@ -383,32 +385,87 @@ impl RevokeFacts {
             .retain(|hash, fact| !retirements.excludes(hash, entries, ancestors, &fact.routed));
     }
 
+    /// Forgets the machine removal of every carried answer outside a proving
+    /// owner-key enrolment's line that the fold did not count (row
+    /// CARRIER-PROOF-OLD-PARENTS): one it held for the owner's proof, or one
+    /// that does not stand. Its own branch, which lacks the owner's key,
+    /// proves the removal, but the fold judged it where that key reaches, so
+    /// the removal would otherwise end the machine on every branch.
+    pub(super) fn forget_held_off_the_line(
+        &mut self,
+        lines: Option<&super::owner_key_line::OwnerKeyLines>,
+        settled: &BTreeMap<AuthorityEntryHash, FoldState>,
+    ) {
+        let Some(lines) = lines else {
+            return;
+        };
+        self.by_hash.retain(|_, fact| {
+            let Restriction::MachineRemoval { machine, .. } = &fact.kind else {
+                return true;
+            };
+            !lines.needs_proof(&fact.entry_hash)
+                || settled.get(&fact.entry_hash).is_some_and(|state| {
+                    !state
+                        .held_machine_answers
+                        .get(machine)
+                        .is_some_and(|held| held.contains_key(&fact.entry_hash))
+                })
+        });
+    }
+
+    /// Forgets every device revocation whose proven branch holds an
+    /// enrolment of the revoked key that a line refuses (row
+    /// CARRIER-PROOF-OLD-PARENTS; REVIEW2 #8502, 16 Nov). The custodial
+    /// root's agent enrolment of the owner's key on parents before the
+    /// owner's enrolment is an invalid entry, and a revoke of that key above
+    /// it waits with it. The revoke's own branch, proved with no line, holds
+    /// the key as that agent enrolment's, which the root alone may end, so
+    /// the fact would end the owner's key on every branch.
+    pub(super) fn forget_revokes_above_refused_enrolments(
+        &mut self,
+        lines: Option<&super::owner_key_line::OwnerKeyLines>,
+        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        ancestors: &AncestorIndex,
+    ) {
+        let Some(lines) = lines else {
+            return;
+        };
+        self.by_hash.retain(|hash, fact| {
+            let Restriction::DeviceRevoke(key) = &fact.kind else {
+                return true;
+            };
+            !ancestors
+                .get(hash)
+                .is_some_and(|branch| lines.refuses_an_enrolment_of(key, branch, entries))
+        });
+    }
+
     /// Forgets every restriction proved through a handoff that did not take
     /// effect. The heir a refused or pruned ReRoot names was never root, so
     /// it restricts nothing, however its own branch folds; a restriction the
     /// fold dropped counts only when every ReRoot in its ancestry `settled`.
+    /// One marked pass over the index finds the unsettled ReRoots and root
+    /// appointments below each restriction (row [ROSTER-KEY-LOG-FLOOD], PR 3).
     pub(super) fn forget_unsettled(
         &mut self,
         settled: &BTreeMap<AuthorityEntryHash, FoldState>,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
         ancestors: &AncestorIndex,
     ) {
+        let below_unsettled = ancestors.marks(|row| {
+            // A root appointment hands the vault over as a handoff does: one
+            // this install does not count proves nothing beneath it.
+            !settled.contains_key(row)
+                && entries.get(row).is_some_and(|entry| {
+                    matches!(
+                        entry.op,
+                        AuthorityOp::ReRoot { .. } | AuthorityOp::RootAppointment(_)
+                    )
+                })
+        });
         self.by_hash.retain(|hash, _| {
             settled.contains_key(hash)
-                || ancestors.get(hash).is_some_and(|line| {
-                    line.iter_unordered().all(|ancestor| {
-                        settled.contains_key(ancestor)
-                            || !entries.get(ancestor).is_some_and(|row| {
-                                // A root appointment hands the vault over as a
-                                // handoff does: one this install does not count
-                                // proves nothing beneath it.
-                                matches!(
-                                    row.op,
-                                    AuthorityOp::ReRoot { .. } | AuthorityOp::RootAppointment(_)
-                                )
-                            })
-                    })
-                })
+                || (ancestors.get(hash).is_some() && !below_unsettled.in_ancestry(hash))
         });
     }
 }

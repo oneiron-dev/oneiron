@@ -5,14 +5,22 @@
 //! The trusted Core extraction writer opts in through the mint-only door below.
 //! Its local evidence is bound to the exact stored revision. A replacement,
 //! an absent marker, or unreadable evidence leaves the PERSON off the list.
+//!
+//! An attempt mints its people before the claims about them land, in a
+//! separate write, and a try that stops in between is tried again. So a mint
+//! an attempt makes also records the first try of that attempt's retry
+//! lineage, and the PERSON stays off the list while a try of that lineage is
+//! pending (FIX CLEANUP-ARCHIVES-MINTED-PERSON-BETWEEN-TRIES). A mint with no
+//! such record is judged on its evidence and its claims alone.
 
 use super::claim_source_is_machine_minted;
 use crate::Vault;
+use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_PERSON;
-use crate::side_table::{self, Raw, SideTable};
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::temporal::TimeRange;
 use oneiron_contracts::claim::ClaimSource;
 
@@ -21,6 +29,11 @@ use oneiron_contracts::claim::ClaimSource;
 pub(super) const EXTRACTION_PERSON: SideTable<EntityId, Vec<u8>, Raw> =
     SideTable::new(&side_table::VAULT_CLEANUP_EXTRACTION_PERSON);
 const REVISION_HASH_LEN: usize = 32;
+
+/// The first try of the retry lineage whose attempt minted the PERSON,
+/// recorded with the mint. Key: id16 (PERSON id).
+pub(super) const EXTRACTION_LINEAGE: SideTable<EntityId, AttemptId, Named> =
+    SideTable::new(&side_table::VAULT_CLEANUP_EXTRACTION_LINEAGE);
 
 impl Vault {
     /// Mints an extraction-produced PERSON and records its source atomically.
@@ -84,15 +97,74 @@ impl Vault {
         EXTRACTION_PERSON.put(&self.store, wtxn, id, &evidence)?;
         Ok(true)
     }
+
+    /// Mints the PERSON `id` that an attempt's extraction found, as
+    /// [`Self::put_extraction_minted_person_in_txn`] does: `Generated`,
+    /// occurred and learned at `at`. With the mint it records `lineage`, the
+    /// first try of that attempt's retry lineage, so the cleanup spares the
+    /// PERSON while a try of that lineage is pending.
+    ///
+    /// Returns `false` without writing where that door does.
+    ///
+    /// # Errors
+    ///
+    /// That door's.
+    pub(crate) fn put_attempt_minted_person_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        at: u64,
+        data: &[u8],
+        lineage: AttemptId,
+    ) -> Result<bool> {
+        let occurred = TimeRange { start: at, end: at };
+        if !self.put_extraction_minted_person_in_txn(
+            wtxn,
+            id,
+            ClaimSource::Generated,
+            occurred,
+            at,
+            data,
+        )? {
+            return Ok(false);
+        }
+        EXTRACTION_LINEAGE.put(&self.store, wtxn, id, &lineage)?;
+        Ok(true)
+    }
 }
 
+/// Drops what the mint recorded for `id`: its evidence, and the lineage of
+/// the attempt that minted it.
 pub(super) fn clear_mint_evidence_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
     EXTRACTION_PERSON.delete(&vault.store, txn, id)?;
+    EXTRACTION_LINEAGE.delete(&vault.store, txn, id)?;
     Ok(())
+}
+
+/// Whether the attempt that minted `person` may still land a claim about it:
+/// a try of the retry lineage its mint recorded is pending. `false` for a
+/// mint that recorded no lineage. A record that does not decode reads as
+/// pending, so the PERSON stays off the list.
+///
+/// # Errors
+///
+/// Storage errors, and the queue's read errors.
+pub(super) fn minting_lineage_pending_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    person: &EntityId,
+) -> Result<bool> {
+    let Some(stored) = EXTRACTION_LINEAGE.get_bytes(&vault.store, rtxn, person)? else {
+        return Ok(false);
+    };
+    let Ok(first) = EXTRACTION_LINEAGE.decode_value(&stored) else {
+        return Ok(true);
+    };
+    AttemptQueue::new(vault).retry_lineage_pending_in_txn(rtxn, first)
 }
 
 pub(super) fn is_extraction_minted_person_in_txn(

@@ -2,7 +2,7 @@
 //! framed blobs, coordinator, door request parse, repo names, noop seam, dial.
 
 use super::protected_ref_confirm::ProtectedRefPasses;
-use super::tests::{git, landing_outcome, landing_time, seeded_repo, temp_vault};
+use super::tests::{git, landing_outcome, landing_time, owner_principal, seeded_repo, temp_vault};
 use super::*;
 use crate::credential_door::PushedBlob;
 use crate::error::CodeError;
@@ -51,7 +51,7 @@ fn receive_pack_rejects_secret_under_hostile_inherited_git_config() {
     }
     let (_vault_dir, vault) = temp_vault();
     let (source, repo, _, head) = served_repo(&vault);
-    let pusher = EntityId::now().to_hex();
+    let pusher = owner_principal(&vault).to_hex();
     let push = |path: &str, contents: &str, name: &str| {
         let tip = commit_file(source.path(), path, contents);
         // Transfer objects only; the receive-pack below proposes their first new served ref.

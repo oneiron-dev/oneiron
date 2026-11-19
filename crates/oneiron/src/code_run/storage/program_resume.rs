@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::code_run::payload::{decode_self_dispatch_outcome, self_call_request_value};
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunReplayRecord};
-use crate::code_run::spawn_replay::{ReplayRequestMatch, replay_request_match};
+use crate::code_run::spawn_replay::{BaseKnownRead, ReplayRequestMatch, replay_request_match};
 use crate::code_run::types::{SelfCall, SelfDispatchOutcome, SelfDurableWait};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -321,12 +321,19 @@ impl CodeRunBridgeCall {
     /// the very call it recorded, the same effect and canonical request
     /// under the row's own bridge stamp (a request the side-row wall masked
     /// still matches the secrets it holds); a miss for the same spawn asked
-    /// for another project or objectives; drift for any other call.
+    /// for another project or objectives; drift for any other call. A value
+    /// base custody holds, read through `base_known`, meets the handle it
+    /// took in the row (FIX REPLAY-COMPARE-KNOWN-MATCHER).
     ///
     /// # Errors
     ///
-    /// A request or an outcome that does not encode or decode.
-    pub(crate) fn program_answer_for(&self, call: &SelfCall) -> Result<ProgramRowAnswer> {
+    /// A request or an outcome that does not encode or decode, or the read
+    /// of base custody's values.
+    pub(crate) fn program_answer_for(
+        &self,
+        call: &SelfCall,
+        base_known: BaseKnownRead<'_>,
+    ) -> Result<ProgramRowAnswer> {
         if self.effect != call.effect() {
             return Ok(ProgramRowAnswer::Drifted);
         }
@@ -337,7 +344,7 @@ impl CodeRunBridgeCall {
         // A re-offered call meets its row by the guest's original request
         // (FIX 1442 H4: match stays on original).
         Ok(
-            match replay_request_match(self.effect, &self.request, &request)? {
+            match replay_request_match(self.effect, &self.request, &request, Some(base_known))? {
                 ReplayRequestMatch::Hit => ProgramRowAnswer::Settled(Box::new(
                     decode_self_dispatch_outcome(&self.outcome)?,
                 )),

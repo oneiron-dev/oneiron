@@ -125,7 +125,7 @@ fn a_continuation_behind_a_later_consumed_turn_is_selected_again() -> Result<()>
     assert_ne!(again, consumed, "the new words get a new attempt");
     assert_eq!(
         transcript(&vault, conversation, turn, again)?,
-        format!("[{} user] call me Owen\n", turn.to_hex())
+        "[T1 user] call me Owen\n".to_owned()
     );
     Ok(())
 }
@@ -154,7 +154,7 @@ fn a_continuation_in_an_adopted_dag_conversation_is_selected_again() -> Result<(
     assert_ne!(again, consumed, "the new words get a new attempt");
     assert_eq!(
         transcript(&vault, conversation, turn, again)?,
-        format!("[{} user] call me Owen\n", turn.to_hex())
+        "[T1 user] call me Owen\n".to_owned()
     );
     Ok(())
 }

@@ -44,6 +44,7 @@ fn listing(day: u64) -> BookingAvailabilityInput {
         visitor_tz: "UTC".to_owned(),
         constraint: None,
         session_ref: "grant-view".to_owned(),
+        duration_min: None,
     }
 }
 
