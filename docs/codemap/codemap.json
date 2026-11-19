@@ -6986,7 +6986,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/machine_write.rs",
@@ -7150,7 +7150,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/world_hosted.rs",
@@ -7206,7 +7206,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/world_kit_gate.rs",
@@ -7236,13 +7236,13 @@
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/world_privacy.rs",
-     "purpose": "World privacy P2 acceptance: a world's settings change only through the owner's door, on a machine the owner…",
+     "purpose": "World privacy P2 acceptance, as re-cut for the mesh (PR1a): a world's settings change through the owner's…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/world_race.rs",
@@ -16730,7 +16730,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/demotion.rs",
@@ -16802,6 +16802,16 @@
      "surface": {
       "crate-vis": 5,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/held_question.rs",
+     "purpose": "The owner's open question on a held claim follows the claim through the engine's own changes to it (Engine…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -17036,7 +17046,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "mod": 13,
       "re-export": 14
      }
@@ -108475,7 +108485,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/gate_consent_bundle_agent_settle.rs",
@@ -114731,7 +114741,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 155,
+     "files": 156,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116245,7 +116255,7 @@
    },
    "over_bar": 306,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8203,
+   "source_files": 8204,
    "test_files": 1952
   },
   "oneiron-agent-runtime": {
