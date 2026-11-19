@@ -94,14 +94,23 @@ function sourceId(item: MemoryItem): string {
   return item.record.id;
 }
 
+// A diary is never asserted through recall. Owner canon OF-490: "To read a
+// diary, you have to state a reason". Ambient recall states none, so it never
+// returns an owner-only NOTE, the author's own included (Engine ANSWER
+// PORTABILITY06-DIARY-RECALL = B; the engine pins it in
+// memory/tests/takes_notes.rs). The entry is proven by its point read and by
+// its lexical index hit.
 async function expectDiary(
   engine: EngineFixture, query: string, entryId: string, content: string,
 ): Promise<void> {
-  const item = await recallItem(engine, query);
-  expect(item.provenance.source_revision_ids).toContain(entryId);
-  expect(item.value_text).toContain(query);
   const read = await engine.client.call("vault.get", { entity_ref: entryId });
   expect(read.value?.body).toMatchObject({ markdown: content });
+  const id = read.value!.id_hex;
+  await awaitPublic(
+    () => engine.client.call("vault.search.bm25", { query, limit: 100 }),
+    value => value.value.some(hit => hit.record?.id === id),
+    { label: `diary lexical hit ${query}` },
+  );
 }
 
 async function expectBlob(engine: EngineFixture, artifact: string, expected: Uint8Array): Promise<void> {
