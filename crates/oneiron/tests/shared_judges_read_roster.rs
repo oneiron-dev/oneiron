@@ -204,6 +204,7 @@ impl ServedVault {
             device_class,
             encryption_key,
             machine_proof,
+            restored_from: None,
         }
     }
 
@@ -389,6 +390,7 @@ fn stranger_mark(
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     };
     let entry = signed(
         vault_id,

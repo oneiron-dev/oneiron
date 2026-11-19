@@ -342,6 +342,7 @@ fn a_world_orphaned_by_a_removal_that_arrived_late_is_re_picked() {
             seen_world_edits: BTreeSet::new(),
             carrier: None,
             act: None,
+            restored_from: None,
         }),
     );
     // The higher row first, in a write of its own.

@@ -65,6 +65,7 @@ fn a_cloud_root_never_vouches_for_a_machine() {
                     seen_world_edits: BTreeSet::new(),
                     carrier: None,
                     act: None,
+                    restored_from: None,
                 }),
                 key.clone(),
                 seq as u64 + 2,
@@ -242,6 +243,7 @@ pub(super) fn profile_op(host: &Host, machine: EntityId, key: &SigningKey) -> Au
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     })
 }
 
@@ -556,6 +558,7 @@ fn an_uncarried_mark_never_outlives_the_stale_window() {
                     seen_world_edits: BTreeSet::new(),
                     carrier: None,
                     act: None,
+                    restored_from: None,
                 }),
                 authority_key_from_ed(signer),
                 2,
@@ -795,6 +798,7 @@ fn owned_mark(
                 seen_world_edits: BTreeSet::new(),
                 carrier: None,
                 act: None,
+                restored_from: None,
             }),
             authority_key_from_ed(signer),
             2,

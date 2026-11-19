@@ -235,6 +235,9 @@ pub(super) fn project_once(
         actor_bindings,
         machines,
         held_machine_answers,
+        restored_enrolments: merged
+            .as_ref()
+            .map_or_else(BTreeMap::new, super::restored_join::listed),
         waiting_owner_choices: merged.as_ref().map_or_else(BTreeSet::new, |state| {
             super::owner_proof::asking_owner_choices(state)
         }),

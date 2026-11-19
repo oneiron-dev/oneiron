@@ -41,7 +41,10 @@ impl Vault {
     /// chain admits an owner act's carrier and a world key wrap's publisher.
     /// A kit whose R is not a live owner key on the roster is refused before
     /// any write, its identity mint included (WAYBACK-KIT-RESTORE-NO-LIVE-R =
-    /// A).
+    /// A). An install born of a restore that has not joined the vault joins
+    /// first, by R's word, the owner's proved act (Engine ANSWER
+    /// KIT-RESTORE-JOINS-RESTORED-COPY = A); one whose R gives no owner's
+    /// proof here is refused before its identity mint too.
     pub fn restore_world_keys(
         &self,
         owner: &AuthenticatedOwner,
@@ -83,7 +86,8 @@ impl Vault {
             owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
             self.kit_seed_gate_in_txn(txn, &fold, seed, confirm)?;
-            self.kit_root_authority_signer(&fold, seed)?;
+            let authority = self.kit_root_authority_signer(&fold, seed)?;
+            self.restored_join_by_key_precheck(txn, &fold, &authority.authority_key())?;
             let stored = self.restore_key_pads_in_txn(txn, pads)?;
             owed(txn);
             let keys =
@@ -96,9 +100,11 @@ impl Vault {
         Ok((stored, restore))
     }
 
-    /// A restore's checks before its transaction: the seed door's, and the
+    /// A restore's checks before its transaction: the seed door's, the
     /// kit's root authority key R live on the roster
-    /// ([`Self::kit_root_authority_signer`]), both in one read snapshot
+    /// ([`Self::kit_root_authority_signer`]), and, for an install born of a
+    /// restore that has not joined, R giving the owner's proof that joins it
+    /// ([`Self::restored_join_by_key_precheck`]), all in one read snapshot
     /// before this install's machine identity is minted; then its own
     /// request and secret.
     pub(crate) fn restore_prep(
@@ -109,7 +115,8 @@ impl Vault {
     ) -> Result<(MachineSecret, MachineEnrolmentRequest)> {
         self.precheck_root_door(owner, |txn, fold| {
             self.kit_seed_gate_in_txn(txn, fold, seed, confirm)?;
-            self.kit_root_authority_signer(fold, seed).map(drop)
+            let authority = self.kit_root_authority_signer(fold, seed)?;
+            self.restored_join_by_key_precheck(txn, fold, &authority.authority_key())
         })?;
         self.own_request()
     }
@@ -177,16 +184,36 @@ impl Vault {
         if publish {
             self.publish_owner_root_in_txn(txn, &anchor, root_record(&root, actor))?;
         }
+        // An install born of a restore joins first, by R's word, the owner's
+        // proved act (Engine ANSWER KIT-RESTORE-JOINS-RESTORED-COPY = A):
+        // the anchoring and the roster row below then read it as any machine.
+        let key = authority.authority_key();
+        let sign = |transcript: &[u8]| authority.sign_authority_transcript(transcript);
+        let joined =
+            self.join_restored_install_by_key_in_txn(txn, (&key, &sign), actor, request)?;
         let now = self.authority_view_readonly_in_txn(txn)?;
-        let already = now
-            .machine(request.machine)
-            .and_then(|folded| {
-                folded.trusted_under(&crate::authority::MachineAdmitter::Anchor(root.anchor_key))
-            })
-            .is_some_and(|trusted| {
-                trusted.profile.machine_key == request.machine_key
-                    && trusted.profile.encryption_key == request.encryption_key
-            });
+        let folded = now.machine(request.machine);
+        let keys_fit = |profile: &crate::authority::MachineProfile| {
+            profile.machine_key == request.machine_key
+                && profile.encryption_key == request.encryption_key
+        };
+        // A copy R just joined stands on R's roster row alone, whose
+        // approval a newer kit can expire on another install before it
+        // sees the join: it gets the anchor's own mark, as a fresh install
+        // does, unless that anchor's chain already marks it live under
+        // these keys (REVIEW-9534 P1).
+        let already = if joined {
+            folded
+                .and_then(|folded| folded.anchored.get(&root.anchor_key))
+                .is_some_and(|mark| mark.says_yours() && keys_fit(&mark.profile))
+        } else {
+            folded
+                .and_then(|folded| {
+                    folded
+                        .trusted_under(&crate::authority::MachineAdmitter::Anchor(root.anchor_key))
+                })
+                .is_some_and(|trusted| keys_fit(trusted.profile))
+        };
         let mark = if already {
             None
         } else {
@@ -204,8 +231,6 @@ impl Vault {
         // publishes, so they count on every install (FIX
         // KIT-RESTORE-ANCHOR-ONLY-INSTALL-COUNTS-NO-WRAP); already there
         // live with these keys, no row.
-        let key = authority.authority_key();
-        let sign = |transcript: &[u8]| authority.sign_authority_transcript(transcript);
         self.put_machine_on_roster_in_txn(txn, (&key, &sign), actor, request)?;
         let finish = self.repin_finish_in_txn(txn, &door, start)?;
         Ok((

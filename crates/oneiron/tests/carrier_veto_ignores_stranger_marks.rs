@@ -212,6 +212,7 @@ impl ServedVault {
             device_class,
             encryption_key,
             machine_proof,
+            restored_from: None,
         }
     }
 
@@ -461,6 +462,7 @@ fn a_carrier_only_a_strangers_root_admits_writes_no_roster_chain() {
             seen_world_edits: BTreeSet::new(),
             carrier,
             act,
+            restored_from: None,
         };
     let mark = signed(
         vault_id,
@@ -566,6 +568,7 @@ fn a_strangers_mark_of_an_install_the_roster_holds_no_head_of_leaves_its_bootstr
             seen_world_edits: BTreeSet::new(),
             carrier: None,
             act: None,
+            restored_from: None,
         }),
         &anchor,
     );
@@ -913,6 +916,7 @@ fn the_pairing_bootstrap_stays_open_past_a_strangers_answered_mark_of_this_insta
             seen_world_edits: BTreeSet::new(),
             carrier: None,
             act: None,
+            restored_from: None,
         }),
         &anchor,
     );
