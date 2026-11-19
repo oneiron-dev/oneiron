@@ -17249,7 +17249,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 75,
+      "crate-vis": 78,
       "fn": 11,
       "re-export": 1,
       "struct": 1
@@ -72943,7 +72943,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/saved_query/tests.rs",
@@ -89521,7 +89521,7 @@
      "path": "src/sync/selector/guest_document.rs",
      "purpose": "The shared guest-document export door: owner sharing and recipient fetching",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "re-export": 1
      }
     },
@@ -107081,7 +107081,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/connect_export_stamped_claims.rs",
@@ -157448,7 +157448,7 @@
      "path": "src/api/facade/guest_document_doors.rs",
      "purpose": "Guest document envelopes under the owner's or the recipient's own proof",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -174922,6 +174922,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/device_home_dial.rs",
+     "purpose": "Whether a served host is a device of another home (`crate::device_sync::dials_home`), as plain serve and a…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/device_sync_dial_gate.rs",
      "purpose": "The device sync dial gate (`crate::device_sync::standing`), as the sync host asks it before it opens the…",
      "surface": {
@@ -175203,7 +175213,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 67
+      "mod": 68
      }
     },
     {
@@ -176806,6 +176816,14 @@
      "notable": [],
      "path": "tests/delete_authority_served_door.rs",
      "purpose": "DEL-2 at the core HTTP delete (ARCH-0043, owner DEL-2 = A; Engine ruling 13 Nov 02:51 = A)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/device_home_dial_unreadable_enrolment.rs",
+     "purpose": "FIX-LIST [HOME-SELF-MARK-STALE-AS-DEVICE], case 2: a machine whose enrolment record is there but does not…",
      "surface": {}
     },
     {
@@ -179551,7 +179569,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 69,
+     "files": 70,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -179623,8 +179641,8 @@
    },
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2037,
-   "test_files": 500
+   "source_files": 2038,
+   "test_files": 501
   },
   "oneiron-setting-contract": {
    "files": [
