@@ -713,6 +713,10 @@ fn code_run_memory_search_routes_through_dispatcher() -> Result<()> {
 fn code_run_public_put_claim_trap_stamps_host_fields() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let actor = seed_person(&vault, 0x64);
+    crate::conversation_dag::fixtures::grant_reads(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+    );
     let subject = seed_person(&vault, 0xB4);
     let claim = EntityId::from_bytes([0xC4; 16]).expect("claim id");
     let candidate = ClaimCandidate::new(
@@ -1020,6 +1024,11 @@ fn code_run_edge_and_supersede_traps_force_generated_source_into_g2() -> Result<
     let new = EntityId::from_bytes([0xEB; 16]).expect("new claim id");
 
     install_self_memory_allow_policy(&vault, actor)?;
+    // A policy install clears every manifest, this read grant's too: grant after it.
+    crate::conversation_dag::fixtures::grant_reads(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+    );
     dispatcher.dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
         old,
         ClaimCandidate::new(
@@ -1044,6 +1053,10 @@ fn code_run_edge_and_supersede_traps_force_generated_source_into_g2() -> Result<
     )))?;
 
     install_self_memory_policy_trusting_source(&vault, actor, ClaimSource::UserStated)?;
+    crate::conversation_dag::fixtures::grant_reads(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+    );
     let edge_gate_id = edge_operation_gate_id(
         SelfEffect::MemoryPutEdge,
         subject,
@@ -1154,6 +1167,11 @@ fn code_run_stale_supersede_fails_loudly() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let actor = seed_first_party_actor(&vault);
     install_self_memory_allow_policy(&vault, actor)?;
+    // A policy install clears every manifest, this read grant's too: grant after it.
+    crate::conversation_dag::fixtures::grant_reads(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+    );
     let subject = seed_person(&vault, 0x34);
     let old = EntityId::from_bytes([0x31; 16]).expect("old claim id");
     let replacement = EntityId::from_bytes([0x32; 16]).expect("replacement claim id");
@@ -2352,6 +2370,11 @@ fn code_run_claim_doors_preserve_owned_keyed_revisions() -> Result<()> {
     let owner = seed_person(&vault, 0xB7);
     // Admit the owner's setup through the real gate before testing another actor.
     install_self_memory_allow_policy(&vault, owner)?;
+    // A policy install clears every manifest, this read grant's too: grant after it.
+    crate::conversation_dag::fixtures::grant_reads(
+        &vault,
+        WriteActor::new(owner, EdgeActorClass::Agent),
+    );
     let memory = vault.memory(owner, EdgeActorClass::Agent);
     let put = crate::memory::KeyValuePut {
         namespace: vec!["private".into()],
@@ -2368,6 +2391,10 @@ fn code_run_claim_doors_preserve_owned_keyed_revisions() -> Result<()> {
     let id = EntityId::from_hex(&original.item.revision)?;
     let before = vault.get_raw(&id)?.unwrap();
     install_self_memory_allow_policy(&vault, actor)?;
+    crate::conversation_dag::fixtures::grant_reads(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+    );
     let session = vault.off_record_session_vault().enter(
         "keyed-write-guard",
         crate::off_record::OffRecordBackendClass::Local,
@@ -2453,6 +2480,10 @@ fn code_run_claim_doors_preserve_owned_keyed_revisions() -> Result<()> {
         assert_eq!(replay.item, original.item);
     }
     install_self_memory_allow_policy(&vault, owner)?;
+    crate::conversation_dag::fixtures::grant_reads(
+        &vault,
+        WriteActor::new(owner, EdgeActorClass::Agent),
+    );
     let replacement = memory
         .key_value_put(&crate::memory::KeyValuePut {
             request_id: "two".into(),
