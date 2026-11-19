@@ -147,7 +147,7 @@ pub use self::coreference::{
 };
 pub(crate) use self::coreference::{
     ConsolidatedSameAs, check_consolidated_same_as, coreference_share_consent_as_owner,
-    put_consolidated_same_as_in_txn, put_coreference_link_as_owner,
+    person_pair_in_txn, put_consolidated_same_as_in_txn, put_coreference_link_as_owner,
 };
 pub use self::grant::{
     ConnectMemberLeaveBinding, FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION,
