@@ -117,7 +117,9 @@ fn large_test_config() -> VaultConfig {
 }
 
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(test_config())
+    let (dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    vault.prepare_install_signing().expect("install signing");
+    (dir, vault)
 }
 
 fn test_time_range(start: u64, end: u64) -> TimeRange {

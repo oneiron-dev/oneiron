@@ -137,6 +137,16 @@ fn a_mark_lasts_as_long_as_its_vector() {
     let open = || Arc::new(Vault::open_unseeded_for_test(dir.path(), config.clone()).unwrap());
     let (marked, replaced, deleted) = (entity_id(0xB1), entity_id(0xB2), entity_id(0xB3));
     let vault = open();
+    let facet = crate::claim::substrate_facet_id(entity_id(0xC1)).expect("subject facet");
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .expect("seed subject facet");
     for (id, text) in [
         (marked, TEXT),
         (replaced, "second line"),

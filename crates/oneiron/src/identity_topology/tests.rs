@@ -25,7 +25,9 @@ use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(embedding_test_config())
+    let (dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    vault.prepare_install_signing().expect("install signing");
+    (dir, vault)
 }
 
 fn id(byte: u8) -> EntityId {

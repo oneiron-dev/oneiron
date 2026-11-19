@@ -48,6 +48,14 @@ fn host() -> Host {
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
         .unwrap();
     let vault_id = vault.authority_fold().unwrap().vault_id.unwrap();
+    // The handle holds the host's root as a serving host does, so the owner
+    // acts it carries are proven (row CARRIER-OWNER-PROOF).
+    vault.hold_checkpoint_root_signer(std::sync::Arc::new(issuer.duplicate().unwrap()));
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("serving install profile");
     Host {
         _dir: dir,
         vault,
@@ -60,15 +68,16 @@ fn host() -> Host {
 fn install() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
     (dir, vault)
 }
 
-/// `install`'s request to join `vault_id`, with its own encryption key from a
-/// keystore of its own (world privacy P6b).
+/// `install`'s request to join `vault_id`, with its own encryption key from
+/// the keystore `install()` gave it (world privacy P6b). The keystore is not
+/// replaced here: a new one would change the install's signing identity after
+/// it signed its merge.
 fn own_request(vault_id: [u8; 32], install: &Vault) -> MachineEnrolmentRequest {
-    install.install_device_keystore(std::sync::Arc::new(
-        oneiron_keystore::MemoryKeystore::default(),
-    ));
     let own = install.machine_encryption_key(vault_id).unwrap();
     install.machine_enrolment_request(vault_id, own).unwrap()
 }
@@ -521,6 +530,9 @@ fn a_pin_change_alone_moves_the_stored_edges() {
     host.vault.install_device_keystore(std::sync::Arc::new(
         oneiron_keystore::MemoryKeystore::default(),
     ));
+    host.vault
+        .prepare_install_signing()
+        .expect("install signing");
     let (_dir, laptop) = install();
     let (loser, survivor) = (EntityId::now(), EntityId::now());
     merge_locally(&laptop, loser, survivor);
@@ -681,9 +693,12 @@ fn a_strangers_merge_is_no_lifecycle_receipt_or_census_shell() {
 fn a_restore_keeping_authority_keeps_own_merges_in_force() {
     let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    source.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    source.prepare_install_signing().expect("install signing");
     let (loser, survivor) = (EntityId::now(), EntityId::now());
     merge_locally(&source, loser, survivor);
     let image = root.path().join("image");
+    source.ensure_vault_key().expect("mint the vault data key");
     source.snapshot_checkpoint(&image, 100).unwrap();
     merge_locally(&source, EntityId::now(), EntityId::now());
     let checkpoint_key = source.checkpoint_key().unwrap();
@@ -708,9 +723,12 @@ fn a_restore_keeping_authority_keeps_own_merges_in_force() {
 fn own_merges_survive_a_beside_restore_and_never_bind_a_stranger() {
     let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    source.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    source.prepare_install_signing().expect("install signing");
     let (loser, survivor) = (EntityId::now(), EntityId::now());
     merge_locally(&source, loser, survivor);
     let image = root.path().join("image");
+    source.ensure_vault_key().expect("mint the vault data key");
     source.snapshot_checkpoint(&image, 100).unwrap();
     let checkpoint_key = source.checkpoint_key().unwrap();
     let (copy, _) = Vault::restore_checkpoint_beside(
@@ -767,6 +785,9 @@ fn a_restore_keeping_authority_redecides_edges_under_the_current_roster() {
         record_standing(&host);
         let root = crate::test_support::restore_tempdir();
         let image = root.path().join("image");
+        host.vault
+            .ensure_vault_key()
+            .expect("mint the vault data key");
         host.vault.snapshot_checkpoint(&image, 100).unwrap();
         host.vault
             .set_machine_role(&host.owner, ActSurface::ThisInstall, machine, now, None)
