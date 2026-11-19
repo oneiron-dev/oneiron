@@ -144,11 +144,11 @@ async fn public_page_status(server: &Arc<SyncServer>, page: oneiron::EntityId) -
         ))
         .body(Body::empty())
         .expect("request");
-    crate::build_app(Arc::clone(server))
-        .oneshot(request)
-        .await
-        .expect("response")
-        .status()
+    let app = crate::build_app(Arc::clone(server));
+    crate::test_engine_stack::on_engine_stack(async move {
+        app.oneshot(request).await.expect("response").status()
+    })
+    .await
 }
 
 /// The owner's own slip, attenuated to read and propose, under a `proposed`

@@ -245,3 +245,5 @@ pub fn build_artifact_app(server: Arc<SyncServer>) -> Router {
 mod fake_llm;
 #[cfg(test)]
 mod test_credentials;
+#[cfg(test)]
+mod test_engine_stack;
