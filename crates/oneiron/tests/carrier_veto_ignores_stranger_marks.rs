@@ -138,7 +138,18 @@ impl ServedVault {
             .expect("guard: this install has a roster chain")
             .profile
             .machine;
-        Self::bound(vault, issuer, dir, carrier)
+        let served = Self::bound(vault, issuer, dir, carrier);
+        served.hold_host_root();
+        served
+    }
+
+    /// The handle holds the host's root as a serving host does, so the
+    /// owner's machine answers this install carries are proven (row
+    /// CARRIER-OWNER-PROOF) and stand instead of being held for an owner
+    /// device. `test_host_issuer` is the same root `_issuer` is.
+    fn hold_host_root(&self) {
+        self.vault
+            .hold_checkpoint_root_signer(Arc::new(oneiron::test_support::test_host_issuer()));
     }
 
     /// `vault` with this install's profile standing as `carrier`, and the
@@ -216,7 +227,9 @@ impl ServedVault {
         }
     }
 
-    /// The owner enrols `request` as his own, carried by this install.
+    /// The owner enrols `request` as his own, carried by this install. An
+    /// answer held for an owner device is a fixture fault, not a refusal,
+    /// so it fails here rather than at a later guard.
     fn enrol(&self, request: &MachineEnrolmentRequest) -> oneiron::Result<()> {
         self.vault
             .enroll_machine(
@@ -226,7 +239,12 @@ impl ServedVault {
                 MachineRole::Owned(MachineOwnership::Yours),
                 None,
             )
-            .map(drop)
+            .map(|landing| {
+                assert!(
+                    landing.held().is_none(),
+                    "guard: the owner's answer stands, not held: {landing:?}"
+                );
+            })
     }
 }
 
@@ -608,6 +626,7 @@ fn a_strangers_mark_of_an_install_the_roster_holds_no_head_of_leaves_its_bootstr
         "the roster profiles this install under its own machine key"
     );
     let served = ServedVault::bound(vault, issuer, dir, request.machine);
+    served.hold_host_root();
     let joining = served.joining_machine();
     served
         .enrol(&joining)
@@ -677,13 +696,15 @@ fn publish_kit_root(vault: &Vault, owner: EntityId, seed: &RecoveryRootSeed) -> 
 
 /// The honest case of design 3.4: an install the owner's kit marked before
 /// the roster held a head of it. The kit's root is published, this install
-/// restores from the kit's seed through the public restore door (which pins
-/// the root and marks this install's own request under its anchor), and only
-/// then the first serving start runs: it enrols the install under the host
-/// root, and the install carries the owner's enrolment of another machine.
-/// The owner binds before the first serving start, exactly as
+/// anchors its own request with the kit's seed through the public anchor
+/// door (which pins the root and marks that request under its anchor), and
+/// only then the first serving start runs: it enrols the install under the
+/// host root, and the install carries the owner's enrolment of another
+/// machine. The owner binds before the first serving start, exactly as
 /// `ServedVault::bound` binds (that order needs no profile: the bind writes
-/// none, and the restore mints no roster head).
+/// none, and the anchor door mints no roster head). The kit restore door
+/// is not this setup since #9488: it needs the kit's root authority key live
+/// on the roster and puts the install on the roster itself.
 ///
 /// Green (a18a1518667c): the serving-profile door enrols the install (the
 /// roster holds no head of it and the pinned chain agrees) at roster
@@ -724,12 +745,14 @@ fn an_owners_kit_mark_of_an_install_the_roster_holds_no_head_of_leaves_its_boots
     let root_hash = publish_kit_root(&served.vault, served.person, &seed);
     served
         .vault
-        .restore_world_keys(
+        .anchor_machine(
             &served.owner,
             &seed,
+            &request,
+            None,
             Some(KitConfirmation::Fingerprint(root_id)),
         )
-        .expect("the kit restore pins the kit's root and marks this install under it");
+        .expect("the kit's anchoring pins the kit's root and marks this install under it");
 
     let fold = served.vault.authority_fold().expect("authority fold");
     assert_eq!(
@@ -782,6 +805,7 @@ fn an_owners_kit_mark_of_an_install_the_roster_holds_no_head_of_leaves_its_boots
         roster.profile.machine_key, request.machine_key,
         "the roster profiles this install under its own machine key"
     );
+    served.hold_host_root();
     let joining = served.joining_machine();
     served
         .enrol(&joining)
