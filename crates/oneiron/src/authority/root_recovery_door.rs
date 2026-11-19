@@ -302,7 +302,10 @@ impl Vault {
 /// that key revoked. A key the roster names live needs no recovery. A run
 /// checked before another run's recovery committed is refused here, before
 /// it drops the seed of that run's successor, a live key
-/// ([`OwnerSigningSlot::fresh_key`]).
+/// ([`OwnerSigningSlot::fresh_key`]). The slot's revoked key signs nothing,
+/// so the slot takes the fresh key's seed at once ([`OwnerSigningSlot::renew`],
+/// under the slot lock the door holds): a later refusal leaves a key no row
+/// names there, which the next run enrols.
 fn this_install_successor(
     fold: &AuthorityFold,
     actor: EntityId,
@@ -315,7 +318,7 @@ fn this_install_successor(
         Some(device) if !device.revoked => {
             return Err(authority_refused(THIS_INSTALL_KEY_LIVE));
         }
-        Some(_) => key = slot.fresh_key()?,
+        Some(_) => key = slot.renew(&slot.fresh_key()?)?.0,
         None => {}
     }
     let public_key = key.public_key();
