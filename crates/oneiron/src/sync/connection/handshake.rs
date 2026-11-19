@@ -640,7 +640,7 @@ impl SyncConnection {
         // TOMBSTONE-IDS; ARCH-0023b :500): every delete the home lets this
         // device read writes its marker here, even of a window the home
         // refuses to it or that it never held. A fault never fails the
-        // session: the next pass asks again.
+        // session: the residence upkeep asks again.
         if peer.is_none()
             && let Err(error) = client.fetch_followed_tombstones().await
         {

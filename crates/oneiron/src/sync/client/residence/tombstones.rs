@@ -5,7 +5,10 @@
 //!
 //! An opened-item device asks the home, by `residence.tombstones`, for the
 //! tombstones of every window of every world it follows, of every month,
-//! whether or not the home grants it the window's full exchange. Each one
+//! whether or not the home grants it the window's full exchange. The
+//! residence upkeep asks again, every pass, for each followed window this
+//! device holds no rows of, so a delete the home makes during a session
+//! reaches a window the home refuses to it. Each one
 //! goes through the one replay primitive every sync route uses, so a hard
 //! delete purges the row and its thin copies and writes the permanent `dt:`
 //! marker even for an id this device never held, and a soft one stays soft.
@@ -20,7 +23,8 @@ use serde_json::json;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::EntityId;
 use crate::deletion::decode_tombstone_value;
-use crate::sync::client::SyncResidenceMode;
+use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
+use crate::sync::manager::WindowManager;
 use crate::sync::selector::encode_sync_selector;
 use crate::sync::transport::TransportError;
 use crate::sync::types::WindowKey;
@@ -59,16 +63,20 @@ impl SyncClient {
 
     /// Takes the tombstone id set of every followed window from the home and
     /// applies each tombstone here: the count applied. An opened-item device
-    /// lane only; any other lane takes none. A tombstone that fails to apply
-    /// leaves the rest going, and the first failure is returned once the set
-    /// is done; the next pass asks again.
+    /// lane only; any other lane takes none.
     pub(crate) async fn fetch_followed_tombstones(&self) -> Result<usize, TransportError> {
-        if self.config.residence_mode != SyncResidenceMode::Opened
-            || self.config.federation_peer.is_some()
-        {
+        if !opened_device_lane(&self.config) {
             return Ok(0);
         }
         let windows = self.followed_tombstone_windows()?;
+        self.fetch_tombstones_of(windows).await
+    }
+
+    /// Takes the tombstone id set of each of `windows` from the home and
+    /// applies each tombstone here: the count applied. A tombstone that fails
+    /// to apply leaves the rest going, and the first failure is returned once
+    /// the set is done; the next pass asks again.
+    async fn fetch_tombstones_of(&self, windows: Vec<WindowKey>) -> Result<usize, TransportError> {
         if windows.is_empty() {
             return Ok(0);
         }
@@ -166,6 +174,57 @@ impl SyncClient {
             .map_err(storage)?;
         Ok(true)
     }
+}
+
+/// Takes again, from the residence upkeep, the tombstone id set of each
+/// followed window this device holds no rows of (a follow the home refused
+/// or has not answered): the count applied. A window held here takes its
+/// deletes through its own exchange. An opened-item device lane only.
+pub(crate) async fn refresh_followed_tombstones(
+    manager: &std::sync::Arc<WindowManager>,
+    config: &SyncClientConfig,
+) -> Result<usize, TransportError> {
+    if !opened_device_lane(config) {
+        return Ok(0);
+    }
+    let (client, _events) = SyncClient::new(std::sync::Arc::clone(manager), config.clone())
+        .map_err(|error| TransportError::Storage(error.to_string()))?;
+    let mut unheld = Vec::new();
+    for window in client.followed_tombstone_windows()? {
+        if !window_rows_held(&client.vault, &window)
+            .map_err(|error| TransportError::Storage(error.to_string()))?
+        {
+            unheld.push(window);
+        }
+    }
+    client.fetch_tombstones_of(unheld).await
+}
+
+/// Whether `config` is an opened-item device lane, the one lane that takes
+/// followed tombstone id sets.
+fn opened_device_lane(config: &SyncClientConfig) -> bool {
+    config.residence_mode == SyncResidenceMode::Opened && config.federation_peer.is_none()
+}
+
+/// Whether this install keeps rows of `window`: a persisted snapshot or a
+/// persisted update.
+fn window_rows_held(vault: &crate::Vault, window: &WindowKey) -> crate::Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    if vault
+        .store
+        .sync_state
+        .get(&txn, &format!("d:w:{window}"))?
+        .is_some()
+    {
+        return Ok(true);
+    }
+    Ok(vault
+        .store
+        .sync_state
+        .prefix_iter(&txn, &format!("u:w:{window}:"))?
+        .next()
+        .transpose()?
+        .is_some())
 }
 
 /// The ids and raw values of one page, refused unless each id is canonical
