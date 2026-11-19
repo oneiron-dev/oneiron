@@ -615,9 +615,12 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
     .await;
     assert_eq!(status, StatusCode::OK, "{shed:#}");
     assert!(shed["pack"].get("l2_base").is_none());
-    // Allowlisting never overrides an unstamped/private evidence tier. A
-    // claim keeps its birth scope: re-putting it without the public scope is
-    // refused, so the private belief is a new claim and the old one retires.
+    // A claim keeps its birth scope: re-putting it without the public scope
+    // is refused, so the new belief is a new claim and the old one retires.
+    // The new claim is unstamped, so it reads at the unstamped floor, band 2
+    // (canon DEC-0006 #unstamped-claims, SAFETY-PACK = A); this reader is
+    // cleared to the top scope, so the board serves it beside the persona's
+    // fact, and never the retracted claim.
     let private = oneiron::ClaimBody::new(
         "profile.route_test",
         oneiron::ClaimSubject::Entity(person),
@@ -649,8 +652,9 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
     assert_eq!(status, StatusCode::OK);
     let rows: Value =
         serde_json::from_str(third["pack"]["l2_base"]["body"].as_str().unwrap()).unwrap();
-    assert_eq!(rows.as_array().unwrap().len(), 1);
+    assert_eq!(rows.as_array().unwrap().len(), 2, "{rows}");
     assert_eq!(rows[0]["val"], "persona base fact");
+    assert_eq!(rows[1]["val"], "now private");
     server.vault.retract_claim(&persona_claim, 3).unwrap();
     for (session, expected) in [
         (
