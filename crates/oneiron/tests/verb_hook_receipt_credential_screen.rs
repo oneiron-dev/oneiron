@@ -44,14 +44,22 @@
 //!   first call, so its MISSING assert fails there; red on main), red at
 //!   c029867c (2 and 2: LEAK), green on the head.
 //! - (f) `a_credential_reads_no_receipt_whose_input_showed_content_naming_no_held_row`
-//!   (VERB-HOOK-RECEIPT-UNNAMED-SOURCE-PROVENANCE): four calls whose post
-//!   hooks see content no held row id names: a count, a list naming its row
-//!   only by short ref, a list naming a row this vault does not hold, and a
-//!   pack whose item ref does not resolve. Nothing tells which rows a body
+//!   (VERB-HOOK-RECEIPT-UNNAMED-SOURCE-PROVENANCE): five calls whose post
+//!   hooks see content no row object names: a count, a list naming its row
+//!   only by short ref, a list naming a row this vault does not hold, a pack
+//!   whose item ref does not resolve, and (review round 1 of #9643) a bare
+//!   list of a held row's id beside a name. Nothing tells which rows a body
 //!   could copy from them into its receipt, so no credential-bound reader
 //!   keeps their receipts, as for a host verb's free text since #9535; the
-//!   owner reading unbound still lists all eight. Red on main (the narrower
-//!   credential keeps 2 of each call's 2: LEAK), green on the head (0).
+//!   owner reading unbound still lists all ten. Red on main (the narrower
+//!   credential keeps 2 of each call's 2: LEAK), red at a1dfdba3 for the
+//!   last call (2: an id-shaped string named the result), green on the head.
+//! - (g) `a_later_hook_reads_no_receipt_of_unknown_provenance_in_its_tail`
+//!   (review round 1 of #9643): after a call whose receipts (f) withholds,
+//!   the next call's post hooks find those receipts withheld in their
+//!   `receipt_tail`, so no body copies their notes into a receipt of its
+//!   own; a receipt of a call whose input showed nothing stays. Red on main
+//!   and at a1dfdba3 (the tail shows them), green on the head.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::BTreeSet;
@@ -821,7 +829,15 @@ fn a_credential_reads_no_receipt_whose_input_showed_content_naming_no_held_row()
             "rendered": RESTRICTED_WORDS,
         }),
     );
-    let calls = [counted, short_ref, foreign, unresolved];
+    let code = named_hex(&fixture.hook_runs(counted), "code")
+        .into_iter()
+        .next()
+        .expect("FIXTURE: a Hook receipt names its CODE row");
+    let named_beside = fixture.run_verb_call_with(
+        fixture.owner,
+        serde_json::json!({"value": [code, "private-name"], "narrowing": {"suppressed_count": 0}}),
+    );
+    let calls = [counted, short_ref, foreign, unresolved, named_beside];
     let mut kept = Vec::new();
     for call in calls {
         let runs = fixture.hook_runs(call);
@@ -847,8 +863,8 @@ fn a_credential_reads_no_receipt_whose_input_showed_content_naming_no_held_row()
     let got = kept_per_call(&narrow_reader, &calls);
     assert_eq!(
         got,
-        vec![0, 0, 0, 0],
-        "LEAK: a narrower credential of the caller reads receipts whose run's input showed content no held row id names, got {got:?} (count, short ref, unheld id, unresolved pack item)"
+        vec![0, 0, 0, 0, 0],
+        "LEAK: a narrower credential of the caller reads receipts whose run's input showed content no row object names, got {got:?} (count, short ref, unheld id, unresolved pack item, id beside a name)"
     );
 
     let broad = credential(&fixture, fixture.owner, BTreeSet::new());
@@ -859,7 +875,73 @@ fn a_credential_reads_no_receipt_whose_input_showed_content_naming_no_held_row()
     let got = kept_per_call(&broad_reader, &calls);
     assert_eq!(
         got,
-        vec![0, 0, 0, 0],
-        "RULE: no credential-bound reader keeps such a receipt, the broad one included, as for a host verb's free text, got {got:?} (count, short ref, unheld id, unresolved pack item)"
+        vec![0, 0, 0, 0, 0],
+        "RULE: no credential-bound reader keeps such a receipt, the broad one included, as for a host verb's free text, got {got:?} (count, short ref, unheld id, unresolved pack item, id beside a name)"
     );
+}
+
+/// The `receipt_tail` entries of each body input the call `invocation`'s
+/// hooks ran on.
+fn tails_of(invocation: InvocationId) -> Vec<Vec<serde_json::Value>> {
+    let want = invocation.to_hex();
+    HOOK_INPUTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .filter_map(|input| serde_json::from_str::<serde_json::Value>(input).ok())
+        .filter(|input| {
+            input.get("invocation").and_then(serde_json::Value::as_str) == Some(want.as_str())
+        })
+        .map(|input| {
+            input
+                .get("receipt_tail")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// How many of `tail`'s entries are Hook receipts of the call `invocation`.
+fn receipts_of_call(tail: &[serde_json::Value], invocation: InvocationId) -> usize {
+    let want = invocation.to_hex();
+    tail.iter()
+        .filter(|receipt| {
+            receipt
+                .pointer("/fields/invocation")
+                .and_then(serde_json::Value::as_str)
+                == Some(want.as_str())
+        })
+        .count()
+}
+
+#[test]
+fn a_later_hook_reads_no_receipt_of_unknown_provenance_in_its_tail() {
+    let fixture = Fixture::new();
+    fixture.put_verb_pack();
+    // A tail holds the 8 newest receipts, ordered by their second and, within
+    // one, Gate before Hook: the calls start a second after the pack's
+    // install receipts, so their Hook receipts are the tail's newest.
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    let plain = fixture.run_verb_call();
+    let counted = fixture.run_verb_call_with(fixture.owner, serde_json::json!({"count": 3}));
+    let next = fixture.run_verb_call();
+    let tails = tails_of(next);
+    assert_eq!(
+        tails.len(),
+        2,
+        "FIXTURE: both post hooks of the next call ran and kept their input"
+    );
+    for tail in &tails {
+        assert_eq!(
+            receipts_of_call(tail, plain),
+            2,
+            "MISSING: a later hook's tail keeps the receipts of a call whose input showed nothing: {tail:?}"
+        );
+        assert_eq!(
+            receipts_of_call(tail, counted),
+            0,
+            "LEAK: a later hook's tail shows receipts the receipt screen withholds, whose notes it could copy: {tail:?}"
+        );
+    }
 }
