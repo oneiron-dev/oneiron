@@ -233,7 +233,8 @@ pub(super) struct CohortRestore {
     /// The rows already here.
     pub(super) unchanged: usize,
     /// The rows it kept as archive data, since their subject link did not
-    /// come back (`ClaimSubjectEdgeNotRestored`).
+    /// come back, or is a `same_as` this vault already held
+    /// (`ClaimSubjectEdgeNotRestored`).
     pub(super) kept_out: Vec<EntityId>,
 }
 /// Restores the cohort queued under `key`, its subject edge first.
@@ -288,14 +289,26 @@ pub(super) fn restore<R: Read + Seek>(
             // link does (REVIEW-9581 P1). The edge passes count the link.
             let kind = crate::edge::EdgeKind::try_from_u8(edge.kind)
                 .ok_or_else(|| invalid("archive edge kind"))?;
-            if crate::ports::EdgeStoreRead::port_edge_get(
-                &vault.store,
-                txn,
-                &parse_id(&edge.source)?,
-                kind,
-                &parse_id(&edge.target)?,
-            )?
-            .is_none()
+            let (source, target) = (parse_id(&edge.source)?, parse_id(&edge.target)?);
+            // A `same_as` this vault held before the import, one with an end
+            // the import did not insert, is left as it is
+            // (`document_import::import_same_as_edge`), its provenance history
+            // with it: the cohort stays archive data, so an archived
+            // annotation older than the held link's own never reaches the
+            // provenance writer's precedence check and aborts the import
+            // (REVIEW-9581 round 2).
+            let held_same_as = kind == crate::edge::EdgeKind::SameAs
+                && !(archive.index.contains(Tag::Inserted, source.as_bytes())?
+                    && archive.index.contains(Tag::Inserted, target.as_bytes())?);
+            if held_same_as
+                || crate::ports::EdgeStoreRead::port_edge_get(
+                    &vault.store,
+                    txn,
+                    &source,
+                    kind,
+                    &target,
+                )?
+                .is_none()
             {
                 return keep_cohort_out(key, vault, txn, archive, &rows, secrets);
             }

@@ -75,7 +75,8 @@ pub enum ImportOmissionReason {
     /// does not carry the link, or the link is not a plain one restored
     /// before it): the claim door reads its link live, so the claim stays
     /// archive data. An edge-provenance claim whose link the import leaves
-    /// out stays archive data the same way.
+    /// out stays archive data the same way, as does one on a `same_as` link
+    /// this vault already held, which keeps its own provenance history.
     ClaimSubjectEdgeNotRestored,
     /// A coreference share consent: it counts only as this vault's own
     /// Approved act, and an imported claim is neither, so the restored link

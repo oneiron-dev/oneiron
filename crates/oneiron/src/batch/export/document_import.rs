@@ -749,8 +749,9 @@ impl Vault {
         // readiness or fulfillment link is proven on its restored rows and
         // their restored `supersedes` chain, so it lands after the plain
         // links too (WHOLE-VAULT-IMPORT-REFUSES-RESERVED-OWNER-EDGES). An
-        // archived `same_as` link is proven on its two restored PERSONs, so it
-        // lands in the plain pass, or before a claim about it.
+        // archived `same_as` link is proven on its two restored PERSONs and
+        // its restored status claim, so it lands in the plain pass, or before
+        // a claim about it.
         let mut skipped_unproven_regenerates_edges = 0;
         let mut unrestored_identity_topology_shells = BTreeSet::new();
         let mut unrestored_same_as_links = 0;
@@ -767,6 +768,11 @@ impl Vault {
                 }
                 let edge = super::provenance_import::mapped_edge(&edge, &archive.index)?;
                 if archived_edge_skipped(&archive, &edge)? {
+                    // A `same_as` with an end left out stays out, counted as
+                    // every other one does (REVIEW-9581 round 2).
+                    if edge.kind == EdgeKind::SameAs as u8 {
+                        unrestored_same_as_links += 1;
+                    }
                     continue;
                 }
                 let landed =
@@ -2569,10 +2575,12 @@ fn import_readiness_or_fulfillment_edge(
 /// when it is the link the federation door writes
 /// (`federation::put_coreference_link`): between two PERSONs this import
 /// inserted, at weight [`COREFERENCE_LINK_WEIGHT`](crate::federation::COREFERENCE_LINK_WEIGHT),
-/// with no affect and no provenance. The door's actor check is not run
-/// again: the source vault's door ran it. The link's status claims come back
-/// as proposals, as every imported claim does, and its share consents stay
-/// archive data (`CoreferenceConsentNotRestored`), so the link is local here.
+/// with no affect and no provenance, and with a status claim on it that this
+/// import puts in too, since the door writes the link and its status together
+/// (REVIEW-9581 round 2). The door's actor check is not run again: the source
+/// vault's door ran it. The link's status claims come back as proposals, as
+/// every imported claim does, and its share consents stay archive data
+/// (`CoreferenceConsentNotRestored`), so the link is local here.
 ///
 /// A record already here keeps its own links: a link this vault holds is
 /// left as it is, and one naming a PERSON already here stays out, since a
@@ -2608,7 +2616,8 @@ fn import_same_as_edge(
         && edge.provenance.is_none()
         && inserted.contains(Tag::Inserted, source.as_bytes())?
         && inserted.contains(Tag::Inserted, target.as_bytes())?
-        && crate::federation::person_pair_in_txn(vault, wtxn, source, target)?;
+        && crate::federation::person_pair_in_txn(vault, wtxn, source, target)?
+        && same_as_status_restored(inserted, &source, &target)?;
     if !restorable {
         return Ok(EdgeImport::SameAsLeftOut);
     }
@@ -2627,6 +2636,27 @@ fn import_same_as_edge(
         )
         .apply(wtxn)?;
     Ok(EdgeImport::Landed)
+}
+
+/// Whether the archive carries a `core.coreference.status` claim on the
+/// `same_as` link `source` -> `target` that this import puts in: one it has
+/// put in, or one still pending that it has not kept out. A pending status
+/// claim on a link this import wrote goes in after it, staged on the link
+/// as every claim about a link is (`stage_claim_subject_edge`).
+fn same_as_status_restored(
+    archive: &ArchiveIndex<'_>,
+    source: &EntityId,
+    target: &EntityId,
+) -> Result<bool> {
+    let link = edge_key(source, EdgeKind::SameAs as u8, target);
+    let mut after: Option<Vec<u8>> = None;
+    while let Some((key, _)) = archive.next(Tag::CoreferenceStatus, &link, after.as_deref())? {
+        if archive.contains(Tag::Inserted, id_at(&key, link.len())?.as_bytes())? {
+            return Ok(true);
+        }
+        after = Some(key);
+    }
+    Ok(false)
 }
 
 /// The kinds only the conversation DAG writes; every public edge door refuses
