@@ -599,6 +599,77 @@ fn a_sole_link_swap_never_cuts_the_only_path_from_the_entry_point() -> Result<()
     Ok(())
 }
 
+#[test]
+fn a_swap_detour_never_rests_on_a_list_this_insert_prunes_later() -> Result<()> {
+    // Review 9631 round 2: m_max_0 = 3, seven unit vectors whose pairwise
+    // cosines are these weights / 100 (unlisted pairs 0): NX 9, NE 7, NA 4,
+    // NY 2, ND 1, NF 12, XE 8, XA 1, XY 10, XD 3, XF 11, EA 2, EY 5, ED 9,
+    // EF 1, YF 6 (rows of the Gram matrix's Cholesky factor). F links N, X
+    // and Y in that order. N's prune keeps [F, X, E] while A's only link is N;
+    // swapping E for A through E-X-N fails once X's own prune, later in the
+    // same insert, drops E: E-D is cut off from the entry point N. Such a swap
+    // is refused while the entry or the bridge still waits for its prune.
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), small_graph_config(7, 3, 200))?;
+    let e_vector = [0.07, 0.074000314, 0.9947984, 0.0, 0.0, 0.0, 0.0];
+    let d_vector = [
+        0.01,
+        0.029218577,
+        0.087593436,
+        -0.002062359,
+        -0.006762382,
+        0.9956524,
+        0.0,
+    ];
+    let rows = [
+        (id_from_u64(1), [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        (id_from_u64(2), [0.09, 0.99594176, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        (id_from_u64(3), e_vector),
+        (
+            id_from_u64(4),
+            [0.04, 0.006426079, 0.016811917, 0.99903756, 0.0, 0.0, 0.0],
+        ),
+        (
+            id_from_u64(5),
+            [
+                0.02,
+                0.09860014,
+                0.041519526,
+                -0.002133689,
+                0.9940571,
+                0.0,
+                0.0,
+            ],
+        ),
+        (id_from_u64(6), d_vector),
+        (
+            id_from_u64(7),
+            [
+                0.12,
+                0.09960422,
+                -0.005800917,
+                -0.005347687,
+                0.048295464,
+                -0.003300959,
+                0.9865462,
+            ],
+        ),
+    ];
+    for (id, _) in &rows {
+        vault.put_entity(id, 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
+    }
+    for (id, vector) in &rows {
+        vault.put_vector(id, vector)?;
+    }
+
+    let rtxn = vault.store.env.read_txn()?;
+    for (query, expected) in [(e_vector, id_from_u64(3)), (d_vector, id_from_u64(6))] {
+        let hits = hnsw_search(&vault.store, &vault.config, &rtxn, &query, 7, false, None)?;
+        assert_eq!(hits.first().map(|hit| hit.id), Some(expected));
+    }
+    Ok(())
+}
+
 /// ONE-325 regression: orphan protection keeps a victim's last link
 /// (`victim -> from`) one-way, but the symmetric delete of `from` derives
 /// its backlinks from `from`'s OWN forward list — which never contains the
