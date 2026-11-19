@@ -102,10 +102,16 @@ pub(crate) fn open_owner_question_in_txn(
 }
 
 /// Parks `question` on the claim `to`, bound to the Proposed body `to` now
-/// stores: a fresh pending receipt the engine records with the question's
-/// own reasons, and a tray row the owner answers as before. It replaces a
-/// row `to` already holds. A claim that is no longer a live proposal is
-/// asked nothing.
+/// stores: a fresh pending receipt with the question's own reasons, and a
+/// tray row the owner answers as before. It replaces a row `to` already
+/// holds. A claim that is no longer a live proposal is asked nothing.
+///
+/// The restated receipt is the same question, so it keeps what the asked
+/// decision recorded: the writer it names, which the bundle settle door
+/// reads as the opener of a Dreamer bundle member (an Engine receipt names
+/// no writer and that door refuses the whole bundle), and the receipt
+/// reasons, which carry the checker's explanation the owner reads in the
+/// tray. Both come from the engine's own ledger row, never from a caller.
 pub(crate) fn restate_owner_question_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -120,15 +126,25 @@ pub(crate) fn restate_owner_question_in_txn(
     }
     let (diff_handle, read_frontier_hash) =
         crate::gate::claim_consent_binding_parts(store, &*wtxn, &body)?;
+    let asked = store.gate_decision_in_txn(&*wtxn, question.decision_id)?;
+    let actor = asked
+        .as_ref()
+        .map_or(ReceiptActor::Engine, |record| ReceiptActor::Verbatim {
+            class: record.actor_class.clone(),
+            actor_ref: record.actor_ref.clone(),
+        });
     let mut receipt = GateReceipt::with_reasons(
         GateReceiptOutcome::Pending,
         "claim",
         question.reason_codes.clone(),
-        ReceiptActor::Engine,
+        actor,
         diff_handle.clone(),
         PolicyBasis::frontier(read_frontier_hash),
     );
     receipt.about = Some(*to);
+    if let Some(record) = asked {
+        receipt.receipt_reasons = record.receipt_reasons;
+    }
     let decision = store.record_gate_receipt_in_txn(wtxn, receipt)?;
     store.stamp_claim_gate_retention_context_in_txn(
         wtxn,
