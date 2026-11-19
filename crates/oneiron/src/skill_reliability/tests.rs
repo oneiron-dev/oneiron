@@ -164,7 +164,20 @@ fn stamped_receipt_for_as_model(
     else {
         panic!("a leased attempt completes exactly once");
     };
-    attempt_pack_receipt_id(&attempt.id)
+    let receipt_id = attempt_pack_receipt_id(&attempt.id);
+    // The projector mints numerical claims only for anchored outcomes
+    // (projector.rs:535-548): stamp the harness's held-out score beside the
+    // executor revision, so the credited outcome below moves the posterior.
+    let mut receipt = crate::receipt::attempt_pack_receipt(vault, &receipt_id)
+        .expect("read stamped pack receipt")
+        .expect("stamped pack receipt");
+    receipt.fields.insert(
+        FIELD_SKILL_LEARNING_ANCHOR.to_owned(),
+        serde_json::to_string(&crate::learning::Anchor::HeldOut).expect("anchor encodes"),
+    );
+    crate::receipt::overwrite_attempt_pack_receipt_for_test(vault, &receipt)
+        .expect("stamp fixture performance anchor");
+    receipt_id
 }
 
 /// Records one routed outcome and returns the judgments the pass minted.
@@ -482,7 +495,8 @@ fn contributing_wins_raise_the_posterior_and_are_grounded_at_the_door() {
 
     let receipt = stamped_receipt(&vault, "sk05.skill.win");
     record_skill_contributing_win(&vault, &skill, &receipt, 20).expect("credit win");
-    let posterior = project_skill_reliability_for(&vault, &skill, 21).expect("project");
+    let posterior = project_skill_reliability_for_executor(&vault, &skill, "fixture/model@1", 21)
+        .expect("project");
     assert!(
         (posterior.alpha - 2.0).abs() < 1e-6,
         "unvetted prior α=1 + one win"
@@ -491,7 +505,8 @@ fn contributing_wins_raise_the_posterior_and_are_grounded_at_the_door() {
 
     // Same receipt twice = one win.
     record_skill_contributing_win(&vault, &skill, &receipt, 22).expect("re-credit");
-    let replayed = project_skill_reliability_for(&vault, &skill, 23).expect("re-project");
+    let replayed = project_skill_reliability_for_executor(&vault, &skill, "fixture/model@1", 23)
+        .expect("re-project");
     assert_eq!(replayed, posterior);
 
     // A skill the pack never loaded cannot claim the win.
@@ -673,7 +688,8 @@ fn a_win_receipt_must_name_the_revision_it_credits() {
 
     let v2_receipt = stamped_receipt_for_revision(&vault, "sk05.skill.rev", "2.0.0");
     record_skill_contributing_win(&vault, &v2, &v2_receipt, 21).expect("the revision matches");
-    let posterior = project_skill_reliability_for(&vault, &v2, 22).expect("project");
+    let posterior = project_skill_reliability_for_executor(&vault, &v2, "fixture/model@1", 22)
+        .expect("project");
     assert!((posterior.alpha - 2.0).abs() < 1e-6);
 }
 
@@ -716,7 +732,8 @@ fn a_synced_posterior_is_the_base_a_local_loss_folds_onto() {
     );
 
     // Re-projecting must not fold the imported base a second time…
-    let replayed = project_skill_reliability_for(&vault, &skill, 31).expect("re-project");
+    let replayed = project_skill_reliability_for_executor(&vault, &skill, "fixture/model@1", 31)
+        .expect("re-project");
     assert_eq!(replayed, after, "the base is imported once, not per pass");
 
     // …and a second local loss still moves β by exactly one.
@@ -852,7 +869,8 @@ fn a_late_outcome_on_a_frozen_revision_keeps_its_outcome_and_claim() {
 
     let receipt = stamped_receipt_for_revision(&vault, "sk05.skill.frozen", "1.0.0");
     record_skill_contributing_win(&vault, &v1, &receipt, 22).expect("credit the frozen revision");
-    let posterior = project_skill_reliability_for(&vault, &v1, 23).expect("the projection lands");
+    let posterior = project_skill_reliability_for_executor(&vault, &v1, "fixture/model@1", 23)
+        .expect("the projection lands");
 
     assert!((posterior.alpha - 2.0).abs() < 1e-6);
     assert_eq!(

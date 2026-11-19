@@ -704,7 +704,21 @@ fn terminal_attempt(
             now: vault.now_recorded_at(),
         })?;
     }
-    Ok(crate::receipt::attempt_pack_receipt_id(&row.id))
+    let receipt_id = crate::receipt::attempt_pack_receipt_id(&row.id);
+    if !failed {
+        // The projector mints numerical claims only for anchored outcomes
+        // (skill_reliability/projector.rs:535-548): stamp the harness's
+        // held-out score beside the executor revision, so the credited win
+        // below moves the posterior instead of being skipped.
+        let mut receipt = crate::receipt::attempt_pack_receipt(vault, &receipt_id)?
+            .expect("stamped pack receipt");
+        receipt.fields.insert(
+            crate::skill_reliability::FIELD_SKILL_LEARNING_ANCHOR.to_owned(),
+            serde_json::to_string(&crate::learning::Anchor::HeldOut).expect("anchor encodes"),
+        );
+        crate::receipt::overwrite_attempt_pack_receipt_for_test(vault, &receipt)?;
+    }
+    Ok(receipt_id)
 }
 
 /// The attempt arm's reliability posterior as `(alpha, beta)`.
