@@ -268,6 +268,14 @@ impl FakeServer {
                     other => panic!("unexpected sub tag {other}"),
                 }
             }
+            transport::TAG_BATCH => {
+                let members = transport::decode_node_batch(&frame[1..]).unwrap();
+                let mut out = Vec::new();
+                for member in members {
+                    out.extend(self.handle(member));
+                }
+                out
+            }
             other => panic!("unexpected tag {other}"),
         }
     }
@@ -317,6 +325,14 @@ async fn spawn_fake_sync_server(
                         }
                     }
                     server.handle(&data)
+                }
+                transport::TAG_BATCH => {
+                    let members = transport::decode_node_batch(&data[1..]).unwrap();
+                    let mut out = Vec::new();
+                    for member in members {
+                        out.extend(server.handle(member));
+                    }
+                    out
                 }
                 other => panic!("unexpected client tag {other}"),
             };
