@@ -25,11 +25,17 @@ export interface ProviderStep {
     /** Subset of public protocol fields, never a generated-prompt string match. */
     readonly fields?:Readonly<Record<string,Json>>;
     /** Exact text of the first `system` message. Only a shipped or host-configured constant, never generated prompt text. */
-    readonly system?:string};
+    readonly system?:string;
+    /** Matches only a body whose `input` (a string or an array of strings) holds none of these texts. For a standing
+     * answer to the fills of rows the scenario does not author: list every text a scripted step of the origin sends. */
+    readonly inputNotIn?:readonly string[]};
   readonly response:ProviderResponse;
   readonly barrier?:string;
   /** A declared answer to a background producer: matched by origin, method, path, model, fields and system, answered any number of times (zero included), never in FIFO order and never unconsumed. */
   readonly standing?:true;
+  /** With `standing`: answers only a request that the next scripted step of its origin does not match, so it never takes
+   * a scripted step's request (a listing a background retry sends between two scripted listings). */
+  readonly fallback?:true;
 }
 export interface ProviderSocket {
   readonly id:string;readonly origin:string;readonly path:string;readonly role:string;readonly purpose:string;
@@ -61,7 +67,13 @@ function matches(step: ProviderStep, method: string, path: string, body: unknown
   return step.request.method===method&&step.request.path===path&&streamAgrees(step,body)&&
     (step.request.model===undefined||subset({model:step.request.model},body))&&
     (!step.request.fields||subset(step.request.fields,body))&&
-    (step.request.system===undefined||(Array.isArray((body as any)?.messages) && (body as any).messages[0]?.role === "system" && (body as any).messages[0]?.content === step.request.system));
+    (step.request.system===undefined||(Array.isArray((body as any)?.messages) && (body as any).messages[0]?.role === "system" && (body as any).messages[0]?.content === step.request.system))&&
+    (step.request.inputNotIn===undefined||inputOutside(step.request.inputNotIn,body));
+}
+function inputOutside(texts:readonly string[],body:unknown):boolean {
+  const input=(body as {input?:unknown}|null)?.input;
+  const items=typeof input==="string"?[input]:input;
+  return Array.isArray(items)&&items.length>0&&items.every(item=>typeof item==="string"&&!texts.includes(item));
 }
 function event(data:Json,name?:string):string {return `${name ? `event: ${name}\n` : ""}data: ${JSON.stringify(data)}\n\n`}
 function requestHeaders(request:Request):Record<string,string> {
@@ -130,6 +142,7 @@ export class ScriptedProviders {
     const ids=new Set<string>();
     for(const step of scenario.steps) {
       if(!step.id||!step.role||!step.purpose||ids.has(step.id)) throw new ProviderScriptError("Provider steps require unique IDs, role and purpose");
+      if(step.fallback&&!step.standing) throw new ProviderScriptError(`Provider step ${step.id}: a fallback step must be standing`);
       ids.add(step.id);
       if(step.standing) {const queue=instance.standing.get(step.origin)??[];queue.push(step);instance.standing.set(step.origin,queue)}
       else {const queue=instance.pending.get(step.origin)??[];queue.push(step);instance.pending.set(step.origin,queue)}
@@ -201,6 +214,7 @@ export class ScriptedProviders {
     assertFlowActive();
     if(this.closed) throw new ProviderScriptError("Provider fixture is closed");
     if(!step.id||!step.role||!step.purpose) throw new ProviderScriptError("Provider steps require unique IDs, role and purpose");
+    if(step.fallback&&!step.standing) throw new ProviderScriptError(`Provider step ${step.id}: a fallback step must be standing`);
     if(!this.urls[step.origin]) throw new ProviderScriptError(`No provider server for origin ${step.origin}`);
     const known=[...this.pending.values(),...this.standing.values()].flat().some(item=>item.id===step.id)
       ||this.seen.some(call=>call.fixtureId===step.id);
@@ -227,7 +241,10 @@ export class ScriptedProviders {
       const path=new URL(request.url).pathname;
       // Both seen.push calls below take this sequence: nothing between here and them awaits.
       this.headers.set(this.seen.length,requestHeaders(request));
-      const standing=this.standing.get(origin)?.find(candidate=>matches(candidate,request.method,path,body));
+      const head=this.pending.get(origin)?.[0];
+      const standing=this.standing.get(origin)?.find(candidate=>!candidate.fallback&&matches(candidate,request.method,path,body))
+        ??(head&&matches(head,request.method,path,body)?undefined
+          :this.standing.get(origin)?.find(candidate=>candidate.fallback&&matches(candidate,request.method,path,body)));
       if(standing) {
         this.seen.push({fixtureId:standing.id,origin,sequence:this.seen.length,role:standing.role,purpose:standing.purpose,method:request.method,path,body,standing:true});
         if(standing.barrier) await this.hold(standing.barrier);
