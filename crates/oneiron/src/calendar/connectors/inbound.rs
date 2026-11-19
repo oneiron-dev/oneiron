@@ -220,9 +220,10 @@ fn apply_remote_change(
                         // A cancellation whose admission stopped before its
                         // deposit refund or status reads as an echo on the
                         // next pull of the same bytes: they are asked again
-                        // here.
+                        // here. An uncancelled echo withdraws a tombstone's
+                        // date from its passport.
                         if let (Some(id), Some(passport)) = (event_ref, current.as_ref()) {
-                            crate::calendar::ingest::repeat_connector_imported_cancel(
+                            crate::calendar::ingest::repeat_connector_echo(
                                 vault,
                                 system,
                                 admission_source,

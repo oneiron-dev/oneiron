@@ -31,7 +31,7 @@ use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 pub(in crate::calendar) use connector::{
     ConnectorAdmissionSource, ConnectorScreen, admit_connector_event, connector_event_ref,
-    delete_connector_resource, preflight_connector_feed, repeat_connector_imported_cancel,
+    delete_connector_resource, preflight_connector_feed, repeat_connector_echo,
     sweep_connector_resource, sweep_connector_uids,
 };
 use continuation::OwedProperties;
@@ -568,6 +568,8 @@ impl PollAdmission<'_> {
     /// tombstone is cancellation evidence for CAL-07, observed when this
     /// source first reported it; an omission writes the status alone. The
     /// screen body is empty: absence carries no inbound content to screen.
+    /// A tombstone sent again finds its status standing and repairs only a
+    /// missing CAL-07 outcome ([`Self::repair_cancel_outcome`]).
     ///
     /// When a calendar the EVENT was written to has reported the
     /// cancellation ([`Self::written_cancel_seen_at`]), the deposit refund
@@ -594,13 +596,16 @@ impl PollAdmission<'_> {
             CalendarStatus::Cancelled,
             basis,
         )?;
-        if let Some(status_ref) = status_ref
-            && basis == CalendarStatusBasis::ImportedCancel
-        {
+        if basis == CalendarStatusBasis::ImportedCancel {
             let observed_at = self
                 .cancel_seen_at(event_ref, |value| value.system == self.system)?
                 .unwrap_or(self.now);
-            self.record_cancel_outcome(event_ref, status_ref, observed_at)?;
+            match status_ref {
+                Some(status_ref) => {
+                    self.record_cancel_outcome(event_ref, status_ref, observed_at)?
+                }
+                None => self.repair_cancel_outcome(event_ref, observed_at)?,
+            }
         }
         Ok(())
     }
@@ -643,18 +648,23 @@ impl PollAdmission<'_> {
     /// asked again. The passport commits before the refund and the status do,
     /// so a stop between them leaves the next read of the feed here, and this
     /// is where they are repaired; a connector pull reaches it through its
-    /// echo arm ([`repeat_connector_imported_cancel`]). The cancellation
-    /// was first seen when the source's first cancelled passport committed
+    /// echo arm ([`repeat_connector_echo`]). The cancellation was first seen
+    /// when the source's first cancelled passport committed
     /// (`cancelled_since`, carried across later cancelled versions), so a
     /// repair after the booking's start still refunds a cancellation first
     /// seen before it, and CAL-07 observes it then. The refund is asked on
     /// every such read, from a source the EVENT was written to
     /// ([`names_written_calendar`]) only. The status is asked only while no
-    /// `calendar.status` was recorded since this version committed
-    /// ([`Self::status_recorded_since`]): one recorded then is this version's
-    /// own or a later fact, and a status the owner retracted is never
-    /// written back. An older SEQUENCE replay moves nothing: the passport it
-    /// lost to may carry a live booking.
+    /// `calendar.status` other than an omission's was admitted after this
+    /// version's passport ([`Self::explicit_status_admitted_after`]): one
+    /// admitted then is this version's own or a later fact, and a status the
+    /// owner retracted is never written back. An omission's status that
+    /// concluded the cancellation meanwhile gives way to this explicit one,
+    /// as it does when a tombstone concludes. When such a status was
+    /// admitted, only a missing CAL-07 outcome of the standing cancellation
+    /// is recorded ([`Self::repair_cancel_outcome`]). An older SEQUENCE
+    /// replay moves nothing: the passport it lost to may carry a live
+    /// booking.
     fn repeat_imported_cancel(
         &mut self,
         event_ref: EntityId,
@@ -663,7 +673,7 @@ impl PollAdmission<'_> {
         if !event.cancelled {
             return Ok(());
         }
-        let Some((_, passport)) = crate::calendar::passport::live_passport_for(
+        let Some((passport_ref, passport)) = crate::calendar::passport::live_passport_for(
             self.vault,
             &event_ref,
             self.system,
@@ -679,33 +689,89 @@ impl PollAdmission<'_> {
         if names_written_calendar(self.system, &passport) {
             self.refund_host_cancelled_deposit(event_ref, seen_at)?;
         }
-        if !self.status_recorded_since(event_ref, passport.last_seen_at)? {
-            self.admit_imported_cancel_status(event_ref, event, seen_at)?;
+        if self.explicit_status_admitted_after(event_ref, passport_ref)? {
+            self.repair_cancel_outcome(event_ref, seen_at)
+        } else {
+            self.admit_imported_cancel_status(event_ref, event, seen_at)
         }
-        Ok(())
     }
 
-    /// Whether any `calendar.status` claim on the EVENT, live or not, was
-    /// recorded at or after `since`.
-    fn status_recorded_since(
+    /// Whether a `calendar.status` claim on the EVENT, live or not, other than
+    /// an omission's (basis `imported_absence`) was admitted after the
+    /// passport claim `passport_ref`. A store mints claim ids in rising order
+    /// (`StoreClock::ulid`, whose floor survives a reopen), so a higher id is
+    /// a later admission, also within the one second `recorded_at` counts: a
+    /// status another source wrote earlier in that second is no fact recorded
+    /// after this version.
+    fn explicit_status_admitted_after(
         &self,
         event_ref: EntityId,
-        since: u64,
+        passport_ref: EntityId,
     ) -> Result<bool, CalendarError> {
         for claim_id in self.vault.claims_for_subject(&event_ref)? {
+            if claim_id <= passport_ref {
+                continue;
+            }
             let Some(claim) = self.vault.get_claim(&claim_id)? else {
                 continue;
             };
             if claim.predicate == PREDICATE_CALENDAR_STATUS
                 && decode_status_value(&claim.value)
                     .map_err(|_| ingest("stored status claim did not decode"))?
-                    .recorded_at
-                    >= since
+                    .basis
+                    != CalendarStatusBasis::ImportedAbsence
             {
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    /// Records the CAL-07 outcome of the EVENT's live imported cancellation
+    /// when no outcome cites its status yet. The status and its outcome
+    /// commit one after the other, so a stop between them leaves the status
+    /// standing without its evidence; the next sighting of the same
+    /// cancellation writes no new status, and records the outcome here,
+    /// observed at `observed_at`. A status the owner retracted, or one of
+    /// another basis, is left as it stands.
+    fn repair_cancel_outcome(
+        &self,
+        event_ref: EntityId,
+        observed_at: u64,
+    ) -> Result<(), CalendarError> {
+        let Some(status_ref) = self.live_imported_cancel_status(event_ref)? else {
+            return Ok(());
+        };
+        if crate::calendar::outcome::event_outcome_cites(self.vault, event_ref, status_ref)? {
+            return Ok(());
+        }
+        self.record_cancel_outcome(event_ref, status_ref, observed_at)
+    }
+
+    /// The EVENT's live `calendar.status` claim that reads cancelled with
+    /// basis `imported_cancel`, if one stands.
+    fn live_imported_cancel_status(
+        &self,
+        event_ref: EntityId,
+    ) -> Result<Option<EntityId>, CalendarError> {
+        for claim_id in self.vault.claims_for_subject(&event_ref)? {
+            let Some(claim) = self.vault.get_claim(&claim_id)? else {
+                continue;
+            };
+            if claim.predicate != PREDICATE_CALENDAR_STATUS
+                || claim.lifecycle != ClaimLifecycleStatus::Active
+            {
+                continue;
+            }
+            let value = decode_status_value(&claim.value)
+                .map_err(|_| ingest("stored status claim did not decode"))?;
+            if value.status == CalendarStatus::Cancelled
+                && value.basis == CalendarStatusBasis::ImportedCancel
+            {
+                return Ok(Some(claim_id));
+            }
+        }
+        Ok(None)
     }
 
     /// The host cancelled the EVENT explicitly, in a calendar it was written
