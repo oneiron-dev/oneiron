@@ -63,7 +63,7 @@ fn rooted_vault() -> Fixture {
     let clock = ManualClock::new(T0);
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
-    let vault = Vault::open(dir.path(), config).expect("open vault");
+    let vault = Vault::open_owned(dir.path(), config).expect("owned vault");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     vault.prepare_install_signing().expect("install signing");
     let issuer = vault.bootstrap_host_slip_issuer().expect("host issuer");
