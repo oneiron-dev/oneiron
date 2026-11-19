@@ -489,6 +489,7 @@ fn a_stale_machine_never_widens_a_world() {
                     seen_world_edits: BTreeSet::new(),
                     carrier: None,
                     act: None,
+                    restored_from: None,
                 }),
                 authority_key_from_ed(signer),
                 2,
@@ -580,6 +581,7 @@ fn a_holder_going_stale_never_accepts_a_refused_edit() {
                     seen_world_edits: BTreeSet::new(),
                     carrier: None,
                     act: None,
+                    restored_from: None,
                 }),
                 authority_key_from_ed(signer),
                 2,
@@ -692,6 +694,7 @@ fn a_conflict_weakened_back_never_accepts_a_refused_edit() {
                     seen_world_edits: BTreeSet::new(),
                     carrier: None,
                     act: None,
+                    restored_from: None,
                 }),
                 authority_key_from_ed(signer),
                 2,
@@ -811,6 +814,7 @@ fn a_narrowing_above_a_fenced_row_stays() {
                     seen_world_edits: BTreeSet::new(),
                     carrier: None,
                     act: None,
+                    restored_from: None,
                 }),
                 authority_key_from_ed(&old),
                 2,
@@ -1015,6 +1019,7 @@ fn a_custodial_mark_acknowledges_no_widening() {
             seen_world_edits,
             carrier: None,
             act: None,
+            restored_from: None,
         })
     };
     let mark = entry(

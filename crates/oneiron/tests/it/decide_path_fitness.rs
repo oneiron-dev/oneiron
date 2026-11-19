@@ -170,6 +170,12 @@ const OUTSIDE: &[Pin] = &[
     ),
     pin(
         "crates/oneiron-server/src/models/run_backend.rs",
+        "generate",
+        "self.ladder.generate(&run, request, None).await",
+        "run backend: a sourced call forwarding to the ladder on its rows",
+    ),
+    pin(
+        "crates/oneiron-server/src/models/run_backend.rs",
         "stream",
         "self.ladder.stream(&self.run, request, None)",
         "run backend stream forwarding to the ladder",
@@ -475,6 +481,12 @@ const OUTSIDE: &[Pin] = &[
         "model stream door: the admitted raw stream opened for subscribers",
     ),
     pin(
+        "crates/oneiron-server/src/api/facade/skill_doors.rs",
+        "generate",
+        ".block_on(ladder.generate(&run, request, None))",
+        "skill conversion refiner: a refined skill document drafted page by page (generation)",
+    ),
+    pin(
         "crates/oneiron-server/src/api/memory_reason/host/call.rs",
         "generate",
         "self.generate(role, request, pins, budget, None)",
@@ -729,7 +741,7 @@ const OUTSIDE: &[Pin] = &[
     pin(
         "crates/oneiron/src/code_run/contribution/generation.rs",
         "generate",
-        "let Some(response) = self.model.generate(request, &rung, self.clock)? else {",
+        "let Some(response) = self.model.generate(request, rows, &rung, self.clock)? else {",
         "contribution replay: one fork's answer from the capsule's own model, kept as a receipt before scoring",
     ),
     pin(
@@ -911,6 +923,12 @@ const OUTSIDE: &[Pin] = &[
         "stream",
         "let bytes = sealed.stream(stream)?;",
         "checkpoint restore: byte stream read back from the sealed payload, no model",
+    ),
+    pin(
+        "crates/oneiron/src/skill_optimize/labels/rubric.rs",
+        "trait JudgeLabelChecker",
+        "pub trait JudgeLabelChecker {",
+        "judge label rechecks: host decides each recheck through the decision ladder on the Coach provider",
     ),
     pin(
         "crates/oneiron/src/test_doors/wake_d1_park_release.rs",

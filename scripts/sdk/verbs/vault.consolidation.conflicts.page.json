@@ -1,0 +1,14 @@
+{
+  "name": "vault.consolidation.conflicts.page",
+  "description": "The owner under its proof, or a reader with a live Steward grant naming read, pages each open conflict the reader may settle, with its members and retained alternatives whole.",
+  "input": "crate::snapshot_read::ConflictsPageRequest",
+  "output": "crate::claim::ScopedReadResult<crate::snapshot_read::ConflictsPage>",
+  "call": "crate::snapshot_read::conflicts_page(memory, &input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered"
+}

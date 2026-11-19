@@ -33,7 +33,7 @@ const DECAY_UNION_VECTOR: [f32; 4] = [0.9, 0.1, 0.0, 0.0];
 /// A surfaceable CLAIM body whose only decay-relevant inputs are its
 /// predicate root and its validity window; `learned_at` rides the entity
 /// row header, so the caller picks the age.
-fn decay_claim_body(predicate: &str, valid_to: Option<u64>) -> Result<Vec<u8>> {
+fn decay_claim_body(vault: &Vault, predicate: &str, valid_to: Option<u64>) -> Result<Vec<u8>> {
     let mut body = ClaimBody::new(
         predicate,
         ClaimSubject::Entity(entity_id(0x5A)),
@@ -42,6 +42,7 @@ fn decay_claim_body(predicate: &str, valid_to: Option<u64>) -> Result<Vec<u8>> {
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )?;
+    crate::test_util::stamp_vault_default_facet(vault, &mut body);
     body.valid_to = valid_to;
     crate::claim::encode_claim_body(&body)
 }
@@ -167,7 +168,7 @@ fn access_factor_applied_post_fusion() -> Result<()> {
         start: DECAY_NOW,
         end: DECAY_NOW,
     };
-    let body = decay_claim_body("test.decay_union", None)?;
+    let body = decay_claim_body(&vault, "test.decay_union", None)?;
 
     vault
         .batch()
@@ -282,7 +283,7 @@ fn no_read_bump_loop() -> Result<()> {
             ENTITY_TYPE_CLAIM,
             span,
             learned_at,
-            &decay_claim_body("test.no_bump", None)?,
+            &decay_claim_body(&vault, "test.no_bump", None)?,
         )
         .text(&aged, &[("body", "nobumpneedle")])
         .put(&neighbor, ENTITY_TYPE_TURN, span, DECAY_NOW, b"payload")
@@ -350,7 +351,7 @@ fn decay_fork_hash_fixture(vault: &Vault) -> Result<EntityId> {
                 end: learned_at,
             },
             learned_at,
-            &decay_claim_body("test.fork_decay", None)?,
+            &decay_claim_body(vault, "test.fork_decay", None)?,
         )
         .text(&aged, &[("body", DECAY_FORK_TEXT)])
         .commit()?;

@@ -42,6 +42,7 @@ fn commit_auto_request_downgrades_to_proposed_when_gate_pends() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x61);
     let subject = put_person(&vault, 0x62);
+    grant_reads(&vault, actor);
 
     // A Person-backed agent has a valid actor binding, but this explicit
     // ceiling still prevents the Auto request from attaching.
@@ -164,6 +165,7 @@ fn auto_eligible_upsert_stages_before_closing_prior() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x73);
     let subject = put_person(&vault, 0x74);
+    grant_reads(&vault, actor);
     let facade = facade_for(&vault, actor);
     let first = facade
         .claim_upsert(&claim_input(
@@ -285,6 +287,7 @@ fn a_correction_on_an_unregistered_predicate_takes_its_grant() {
         }
         let actor = put_person(&vault, 0x75);
         let subject = put_person(&vault, 0x76);
+        grant_reads(&vault, actor);
         let facade = facade_for(&vault, actor);
         let first = facade
             .claim_upsert(&claim_input(
@@ -357,11 +360,28 @@ fn commit_batch_gating_is_per_element() {
         .expect("commit batch");
 
     assert_eq!(receipts.len(), 3);
-    assert_eq!(receipts[0].approval, "auto");
-    assert_eq!(receipts[1].approval, "rejected");
-    assert!(receipts[1].receipt_ref.starts_with("rejected:"));
+    let crate::memory::CommitOutcome::Landed(first) = &receipts[0] else {
+        panic!("first element lands: {:?}", receipts[0]);
+    };
+    assert_eq!(first.approval, "auto");
+    assert!(
+        matches!(receipts[1], crate::memory::CommitOutcome::Refused { .. }),
+        "middle element is refused: {:?}",
+        receipts[1]
+    );
+    let crate::memory::CommitOutcome::Refused { receipt_ref, .. } = &receipts[1] else {
+        unreachable!("middle element is refused");
+    };
+    assert!(
+        receipt_ref
+            .as_deref()
+            .is_some_and(|reference| reference.starts_with("reference_refusal:"))
+    );
+    let crate::memory::CommitOutcome::Landed(third) = &receipts[2] else {
+        panic!("elements after a rejection still land: {:?}", receipts[2]);
+    };
     assert_eq!(
-        receipts[2].approval, "auto",
+        third.approval, "auto",
         "elements after a rejection still land"
     );
 
@@ -370,14 +390,14 @@ fn commit_batch_gating_is_per_element() {
     assert!(
         receipts_list
             .iter()
-            .any(|r| r.receipt_ref == receipts[0].receipt_ref)
+            .any(|r| r.receipt_ref == first.receipt_ref)
     );
     assert!(
         receipts_list
             .iter()
-            .any(|r| r.receipt_ref == receipts[2].receipt_ref)
+            .any(|r| r.receipt_ref == third.receipt_ref)
     );
-    assert_ne!(receipts[0].receipt_ref, receipts[2].receipt_ref);
+    assert_ne!(first.receipt_ref, third.receipt_ref);
 
     // The rejected element persisted nothing.
     let claims = facade
@@ -703,6 +723,7 @@ fn admit_imported_claim_rides_the_ingest_trust_ceiling() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0xF1);
     let subject = put_person(&vault, 0xF2);
+    grant_reads(&vault, actor);
     let facade = facade_for(&vault, actor);
 
     // The only registered source at base has permits_auto == false, so the
@@ -750,6 +771,7 @@ fn blob_door_round_trips_bytes_and_dedupes_head() {
     // a manifest rule for blob.version.
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
     let actor = put_person(&vault, 0x12);
+    grant_reads(&vault, actor);
     let facade = facade_for(&vault, actor);
 
     let artifact = facade
@@ -772,9 +794,12 @@ fn blob_door_round_trips_bytes_and_dedupes_head() {
         chunk.copy_from_slice(&raw[..chunk.len()]);
     }
 
-    let version = facade
+    let crate::memory::BlobVersionAppendOutcome::Landed(version) = facade
         .append_blob_version(&artifact.id_hex, &bytes, None, 1101, None)
-        .expect("append");
+        .expect("append")
+    else {
+        panic!("human append lands under the cleared manifest");
+    };
     assert_eq!(version.version, 1);
     assert_eq!(version.content_hash_hex.len(), 64);
 
@@ -785,9 +810,12 @@ fn blob_door_round_trips_bytes_and_dedupes_head() {
     assert_eq!(read, bytes, "byte identity through the blob door");
 
     // Re-appending identical head bytes is a dedupe no-op.
-    let again = facade
+    let crate::memory::BlobVersionAppendOutcome::Landed(again) = facade
         .append_blob_version(&artifact.id_hex, &bytes, None, 1102, None)
-        .expect("re-append");
+        .expect("re-append")
+    else {
+        panic!("dedupe re-append lands under the cleared manifest");
+    };
     assert_eq!(again.version, 1);
 }
 
@@ -986,6 +1014,8 @@ fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
     let first_agent = put_person(&vault, 0x19);
     let replacement_agent = put_person(&vault, 0x1A);
     let subject = put_person(&vault, 0x1B);
+    grant_reads(&vault, first_agent);
+    grant_reads(&vault, replacement_agent);
     let first_facade = vault.memory(first_agent, EdgeActorClass::Agent);
     let claim_id = EntityId::from_bytes([0x1C; 16]).expect("claim id");
     let mut first = claim_input(
@@ -1070,6 +1100,7 @@ fn signed_machine_keyed_create_replace_and_delete() {
         &vault,
         vec![("system".into(), machine.to_hex(), "auto".into())],
     );
+    grant_reads_as(&vault, machine, EdgeActorClass::System);
     let machine_sign = |transcript: &[u8]| Ok(machine_key.sign(transcript).to_bytes());
     let facade = vault.memory_signed_machine(
         machine,
@@ -1198,7 +1229,7 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
             crate::store::GateDecisionId::now(),
         )
         .unwrap();
-    let created = vault
+    vault
         .initialize_shared_vault(
             &authenticated,
             42,
@@ -1220,6 +1251,14 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
             1,
         )
         .unwrap();
+    let grant_refs = crate::test_util::accept_founding_invitation(
+        &vault,
+        42,
+        member,
+        FederationGrantRole::Member,
+    );
+    crate::test_util::grant_founding_writer_reads(&vault, member);
+    crate::test_util::accept_founding_invitation(&vault, 42, viewer, FederationGrantRole::Viewer);
     let task = || StructuralPutInput {
         id: None,
         kind: "TASK".into(),
@@ -1320,8 +1359,7 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
         before_claims
     );
 
-    let (id, mut grant) = created
-        .grant_refs
+    let (id, mut grant) = grant_refs
         .iter()
         .find_map(|hex| {
             let id = EntityId::from_hex(hex).unwrap();
@@ -1339,6 +1377,7 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
             ENTITY_TYPE_FEDERATION_GRANT,
             test_time(1),
             1,
+            None,
             &encode_federation_grant_body(&grant).unwrap(),
         )
         .commit()
@@ -1410,6 +1449,7 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
             ENTITY_TYPE_FEDERATION_GRANT,
             test_time(1),
             1,
+            None,
             &encode_federation_grant_body(&grant).unwrap(),
         )
         .commit()

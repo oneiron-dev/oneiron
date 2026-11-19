@@ -162,10 +162,15 @@ impl Vault {
             }
             // A slip cut from it still names the host but may be held by
             // anyone (`attenuate_to`): it reads what its Scope grants, and a
-            // relationship's rows only on a grant, which none can name.
+            // relationship's rows only on a grant, which none can name. Its
+            // holder is no owner and no agent of the vault, so its read is
+            // homed in no conversation of this vault (RULING
+            // SECREAD-HOME-READ-DOORS = B).
             return Ok(base(proof).map(|key| {
                 if proof.is_full_vault_owner_grade() {
                     key
+                } else if key_use == KeyUse::Read {
+                    key.require_relationship_grants(None).homed_unnamed()
                 } else {
                     key.require_relationship_grants(None)
                 }
@@ -266,7 +271,23 @@ impl Vault {
                         Some(bound) => key.within_agent_grants(bound.envelope, &bound.alternatives),
                         None => key,
                     };
-                    key.bound_by_live_agent_grants(holder)
+                    let key = key.bound_by_live_agent_grants(holder);
+                    // The conversation home binds the reader on every read
+                    // door (DEC-0006 `#home-clearance`; RULING
+                    // SECREAD-HOME-READ-DOORS = B): a reader that is neither
+                    // the owner nor one of the vault's own agents reading on
+                    // its own reads no stamped claim outside a room of this
+                    // vault. A write target's key judges reach, not a read.
+                    if self.own_agent_credential_in(
+                        txn,
+                        &holder,
+                        proof.claims().actor_class.as_deref(),
+                        proof.is_transferred(),
+                    )? {
+                        key
+                    } else {
+                        key.homed_unnamed()
+                    }
                 }
                 KeyUse::WriteTarget => key,
             };
@@ -297,9 +318,14 @@ pub(crate) fn actor_is_vault_owner_in_txn(
     actor: EntityId,
     actor_class: EdgeActorClass,
 ) -> MemoryResult<bool> {
-    if actor_class == EdgeActorClass::Human && actor == crate::vault::embedded_owner_actor_id()? {
+    if actor_class == EdgeActorClass::Human
+        && actor == crate::vault::embedded_owner_actor_id()?
+        && crate::memory::embedded_owner_shortcut_holds_in_txn(vault, txn)?
+    {
         // The local embedded-owner reader is the host's own-device read lane.
         // A separately paired authority root does not turn it into a peer.
+        // A shared vault's embedded owner the census no longer names falls
+        // to the owner check below, which refuses it.
         return Ok(true);
     }
     match verify_vault_owner_in_txn(vault, txn, actor, actor_class) {
@@ -320,16 +346,20 @@ pub(crate) fn actor_is_vault_owner_in_txn(
 /// owner needs no owner binding, but its PERSON must still be live, as the
 /// owner key's own reads require (Sol R5-007). A soft delete keeps the
 /// PERSON header as a shell, so the row's deletion state decides (Astra on
-/// #1413).
+/// #1413). A merge or split keeps the row and revokes no owner binding, so
+/// the identity lifecycle decides too: a merged or split PERSON is a
+/// redirect, not an owner, as the consent owner door holds (Astra on #8148).
 pub(crate) fn owner_exemption_holds_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     owner: EntityId,
 ) -> MemoryResult<bool> {
     let row = crate::vault::live_entity_row_in_txn(&vault.store, txn, &owner)?;
-    if row.live_type() != Some(crate::registry::ENTITY_TYPE_PERSON) {
-        // Gone, a deleted shell, or no longer a PERSON: the exemption has no
-        // holder.
+    if row.live_type() != Some(crate::registry::ENTITY_TYPE_PERSON)
+        || !crate::consent::person_is_live_in_txn(vault, txn, &owner)?
+    {
+        // Gone, a deleted shell, no longer a PERSON, or merged or split
+        // away: the exemption has no holder.
         return Ok(false);
     }
     actor_is_vault_owner_in_txn(vault, txn, owner, EdgeActorClass::Human)

@@ -1,8 +1,6 @@
 //! Grant-checked, per-item residence projections over a window document.
 //! Window keys stay opaque here so a world-plus-month key has the same shape.
 
-// FIX [LIBTEST-QUARANTINE-SYNC-RESIDENCE-TESTS]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -24,16 +22,21 @@ mod discover;
 mod home_handoff;
 mod kit_fetch;
 mod machine_history;
+mod machine_names;
+mod own_device_grants;
 mod pad_custody;
 mod policy;
+mod predict;
 mod prune;
 mod publication_access;
 mod recall_scope;
 mod sealed_updates;
 mod search;
+mod secret_same_value;
 mod window_index;
 mod world_base_rows;
 mod world_eviction;
+pub(crate) use admission::admit_promoted_window_destination_in_txn;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_parts::{
     AUTHORITY_ENTRY_PART_MAX, AUTHORITY_PAGE_INLINE_BYTES, AuthorityAppendPart,
@@ -94,7 +97,8 @@ pub use custody::{
 };
 pub use directives::ResidenceDirectiveState;
 pub(crate) use directives::{
-    finish_residence_directive_in_txn, pending_residence_directives, residence_refusal_reason,
+    directive_states_in_txn, finish_residence_directive_in_txn, pending_residence_directives,
+    residence_refusal_reason,
 };
 pub use discover::discover_local_window_keys;
 pub(crate) use discover::retry_pending_tombstones;
@@ -113,6 +117,11 @@ pub use kit_fetch::{
 pub use machine_history::{
     MACHINE_HISTORY_PAGE_ROWS, MachineHistoryCursor, MachineHistoryPage, machine_history_page,
 };
+pub use machine_names::machine_names_residence_exchange;
+pub use own_device_grants::{
+    OWN_DEVICE_GRANTS_PAGE_MAX, OwnDeviceGrantAdmission, OwnDeviceGrantState,
+    admit_own_device_grants, own_device_grant_refs, own_device_grant_states, own_device_grants_for,
+};
 pub use pad_custody::{
     PAD_FETCH_PAGE_KEYS, WorldPadCapsule, WorldPadFetch, WorldPadPage, WorldPadSelection,
     pad_wire_from_hex, pad_wire_hex, world_pad_capsule,
@@ -125,6 +134,9 @@ pub use policy::{
 pub(crate) use policy::{
     device_world_pick_in, set_device_sync_preference_in_txn, set_device_world_pick_in_txn,
 };
+pub use predict::PredictedResidenceAnswer;
+#[cfg(oneiron_test_support)]
+pub(crate) use predict::WithholdingNodes;
 pub(crate) use prune::checkpoint_read_cache_keys;
 pub(crate) use prune::demote_resident_window;
 pub(crate) use prune::erase_item_caches_in_txn;
@@ -147,6 +159,7 @@ pub use search::{
     RESIDENCE_PAGE_REPLY_BYTES, ResidenceSearchCursor, home_search_page_candidates,
     residence_search_revision, with_forwarded_search_page,
 };
+pub use secret_same_value::secret_same_value_residence_exchange;
 pub use window_index::{
     IndexPage, WindowIndexEntry, index_selection_revision, window_index_page,
     window_index_projection, window_index_projection_with,
@@ -416,6 +429,53 @@ pub fn admit_promoted_window_update(
         )?;
     }
     Ok(())
+}
+
+/// The entities a promoted window's update lands, read from the update's own
+/// operations on a fork of `source`: every binary insert into the entities
+/// map with a well-formed id. Anything else the update carries (a birth
+/// restatement, an engine-translated hold) names no landed row and is not
+/// listed. An update that does not decode, arrives as a snapshot, or leaves
+/// pending dependencies is refused, as admission refuses it.
+pub(crate) fn promoted_window_update_rows(
+    source: &LoroDoc,
+    update: &[u8],
+) -> Result<Vec<EntityId>> {
+    let malformed = || Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied);
+    let metadata = LoroDoc::decode_import_blob_meta(update, true).map_err(|_| malformed())?;
+    if metadata.mode.is_snapshot() {
+        return Err(malformed());
+    }
+    let candidate = source.fork();
+    let status = candidate.import(update).map_err(|_| malformed())?;
+    if status.pending.is_some() {
+        return Err(malformed());
+    }
+    let operations =
+        candidate.export_json_updates(&metadata.partial_start_vv, &metadata.partial_end_vv);
+    if !super::loro_support::json_covers_blob(&operations, &metadata) {
+        return Err(malformed());
+    }
+    let entities = ContainerID::new_root("entities", ContainerType::Map);
+    let mut rows = std::collections::BTreeSet::new();
+    for op in operations.changes.into_iter().flat_map(|change| change.ops) {
+        if op.container != entities {
+            continue;
+        }
+        let JsonOpContent::Map(MapOp::Insert {
+            key,
+            value: LoroValue::Binary(_),
+        }) = op.content
+        else {
+            continue;
+        };
+        let id = EntityId::from_hex(&key).map_err(|_| malformed())?;
+        if key != id.to_hex() {
+            return Err(malformed());
+        }
+        rows.insert(id);
+    }
+    Ok(rows.into_iter().collect())
 }
 
 /// Export the canonical window, not the selector's synthetic document.
@@ -698,3 +758,6 @@ pub(crate) mod promotion_hook {
         }
     }
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::search::search_page_revision_for_test;

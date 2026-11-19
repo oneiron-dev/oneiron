@@ -107,15 +107,17 @@ use oneiron_store::extraction_work;
 
 pub mod ports {
     pub use crate::ports::{
-        BlobStore, ChangeLogRecord, ChangeLogStore, ChangeOp, ClaimStore, Clock, DependencyIndex,
-        EdgeDirection, EdgeStore, EntityRecord, EntityStore, IdGen, JobQueue, JobScope,
-        ManualClock, PlaceStore, RetrievalIndex, ShortIdStore, SourceSpan, StoreClock,
-        TombstoneStore, Transactions, safe_read_asset_text, safe_read_text,
+        AssetTextRead, AssetTextValidity, BlobStore, ChangeLogRecord, ChangeLogStore, ChangeOp,
+        ClaimStore, Clock, DependencyIndex, EdgeDirection, EdgeStore, EntityRecord, EntityStore,
+        IdGen, JobQueue, JobScope, ManualClock, PlaceStore, RetrievalIndex, ShortIdStore,
+        SourceSpan, StoreClock, TombstoneStore, Transactions, safe_read_asset_text,
+        safe_read_asset_text_diagnostic, safe_read_text,
     };
     pub use crate::ports::{
         ChangeLogStoreRead, DeletionFamily, DeletionMarker, DeletionState, EdgeStoreRead,
         EntityStoreRead, EntityTime, EntityWriteSegmentRead, JobQueueRead, PortRows,
-        RetrievalIndexRead, ShortIdStoreRead, TimeAxis, TimelineQuery, TombstoneStoreRead,
+        RetrievalIndexRead, ShortIdStoreRead, SoundMatchAdmission, TimeAxis, TimelineQuery,
+        TombstoneStoreRead,
     };
 }
 
@@ -220,6 +222,8 @@ pub mod pack_predicate_rewrites;
 #[cfg(feature = "sync")]
 pub(crate) use oneiron_store::pad_object_membership;
 pub mod person_billing_account;
+// L6-22: the PERSON party-key index the do-not-contact scan reads.
+pub(crate) mod person_party_keys;
 pub mod positive_skill_proposals;
 pub(crate) mod project_kind;
 pub mod proposal_spool;
@@ -248,7 +252,9 @@ pub use oneiron_store::snapshot_key;
 pub use oneiron_store::snapshot_lock_result;
 pub(crate) use oneiron_store::source_audience_obligation;
 
-pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
+pub(crate) use active_write_txn::{
+    active_write_txn_depth, active_write_txn_guard, active_write_txn_holds,
+};
 use oneiron_store::active_write_txn;
 mod archive_scratch;
 #[cfg(unix)]
@@ -352,6 +358,8 @@ mod inference_snapshot_custody;
 pub(crate) mod install_identity;
 mod invocation_claims;
 mod key_custody;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::key_custody::custody_head_digest_for_test;
 mod key_encoding;
 mod known_history;
 pub(crate) mod legal_hold;
@@ -406,8 +414,6 @@ mod writer_lease;
 
 #[cfg(test)]
 pub(crate) mod test_hooks;
-// FIX [LIBTEST-QUARANTINE-STORE-TESTS]: the lib test target's type check fails here (17 errors: E0560 x4, E0061 x4, E0609 x3, E0308 x3, E0063 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -463,6 +469,8 @@ pub(crate) use body_envelope::{
     response_binding_in_txn, response_carrier, response_owed_to_all_in_txn,
     response_owners_bound_in_txn, settle_shared_response_in_txn, stamp_opaque_erased,
 };
+#[cfg(all(unix, oneiron_test_support))]
+pub(crate) use body_store::session_spill_name_for_test;
 #[cfg(unix)]
 pub(crate) use body_store::{
     BodyDir, BodyFacts, BodyMeter, BodySink, LINE_INDEX_BLOCK_BYTES, LINE_INDEX_SUFFIX, SunkBody,
@@ -490,6 +498,10 @@ pub(crate) use key_custody::ForkedCustodyDir;
 pub use key_custody::custody_container_path;
 #[cfg(oneiron_test_support)]
 pub(crate) use key_custody::custody_entry_reads_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use key_custody::custody_policy_digest_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use key_custody::drain_ack_digest_for_test;
 pub use key_custody::protocol as custody_protocol;
 pub use key_custody::sync_dir;
 pub(crate) use key_custody::{
@@ -655,6 +667,8 @@ pub(crate) use oneiron_store::record_references;
 pub(crate) mod scan_count;
 pub(crate) mod skill_resident;
 pub(crate) mod tables;
+#[cfg(oneiron_test_support)]
+mod test_support_rows;
 
 pub(crate) use oneiron_store::host_issuer_seed;
 pub(crate) use oneiron_store::principal_record;

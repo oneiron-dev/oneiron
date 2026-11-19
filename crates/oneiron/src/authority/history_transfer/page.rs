@@ -81,6 +81,13 @@ impl Vault {
             .map(|(hash, _, _)| *hash)
             .filter(|hash| !resident.contains(hash))
             .collect();
+        // Each row's store door reads the fold beside every row this page
+        // stages, as the fold after staging judges them (owner-reserve delta
+        // review F2).
+        let staged_rows: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = decoded
+            .iter()
+            .map(|(hash, _, entry)| (*hash, entry.clone()))
+            .collect();
         // A vault missing history it must hold has no fold until an import
         // closes the gap (OF-469): its arriving rows are judged against the
         // fold that closes it, after staging, and an import that leaves it
@@ -94,7 +101,7 @@ impl Vault {
         page_root(&merged, &resident, prefix)?.ok_or_else(invalid_authority)?;
         let now = crate::unix_seconds_now();
         let mut ids = Vec::new();
-        let mut ops = Vec::new();
+        let mut rows = Vec::new();
         // The store door judges each row against the rows already staged
         // (H72), so stage each after its parents, its consent and its
         // signer's lower sequences, whatever order the caller gave.
@@ -105,12 +112,20 @@ impl Vault {
             .chain(carried_structure(evidence.as_deref(), &resident));
         let own_roots =
             crate::authority::log_structure::LocalRoots::read_in_txn(&self.store, &txn)?;
-        for (hash, bytes, _) in
+        for (hash, bytes, entry) in
             crate::authority::import_order::import_order(stored, &resident, own_roots, decoded)
         {
             let id = authority_log_entity_id_from_hash(&hash)?;
             ids.push(id);
-            ops.push(BatchOp::Put {
+            // An arriving ReRoot is judged as the full-history import judges
+            // it (HOSTED-REROOT-ADMISSION-DOORS = C): the authority-tail
+            // append and history repair reach this door.
+            let re_root = crate::authority::recovery::arriving_re_root(
+                &entry,
+                hash,
+                resident.contains(&hash),
+            );
+            let op = BatchOp::Put {
                 id,
                 entity_type: ENTITY_TYPE_AUTHORITY_LOG,
                 occurred: TimeRange {
@@ -123,24 +138,26 @@ impl Vault {
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
-            });
+            };
+            rows.push((op, re_root));
         }
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut txn,
-            ops,
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
+        self.stage_authority_rows_judging_re_roots_in_txn(&mut txn, rows, &|| {
+            Ok(staged_rows.clone())
+        })?;
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         if judge_merged
-            && let Some(refused) =
-                retired_standing(&self.store, &fold, &merged, evidence.as_deref(), &arriving)?
+            && let Some(refused) = retired_standing(
+                &self.store,
+                &fold,
+                &merged,
+                evidence.as_deref(),
+                &arriving,
+                &mut crate::authority::retired_signers::import_row_held(
+                    &resident,
+                    evidence.as_deref(),
+                ),
+            )?
         {
             return Ok(PageVerdict::Retired(refused));
         }

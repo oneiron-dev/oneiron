@@ -1233,6 +1233,7 @@ fn a_revision_whose_signers_admission_is_a_sibling_imports_in_any_order() {
                 seen_world_edits: BTreeSet::new(),
                 carrier: None,
                 act: None,
+                restored_from: None,
             }),
             authority_key_from_ed(&next),
             3,

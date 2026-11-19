@@ -15,12 +15,14 @@
 
 mod erase;
 mod outcome;
+mod saved_args;
 pub(super) mod session;
 mod wait;
 
 pub(in crate::runtime_hooks) use erase::scrub_erased_asks_in_txn;
 use outcome::completed;
 pub(super) use outcome::{SavedOutcome, saved_producers};
+pub(super) use saved_args::saved_args;
 pub use wait::VerbHookWaitStatus;
 pub(super) use wait::status as wait_status;
 

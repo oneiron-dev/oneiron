@@ -80,6 +80,19 @@ impl Memory<'_> {
                     .facets_allow_id(&room)?))
     }
 
+    /// Whether the caller reads `room`'s roster as [`Self::room_roster`]
+    /// admits a reader past the room's row ([`room_reader_in`]): a member,
+    /// an agent on a Ready join, a leader chat reader or the room's host.
+    /// `false` for an id that names no room.
+    pub(crate) fn room_roster_reader(&self, room: EntityId) -> MemoryResult<bool> {
+        let vault = self.vault();
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let Some(members) = room_members_in(vault, &txn, room)? else {
+            return Ok(false);
+        };
+        Ok(room_reader_in(vault, &txn, room, &members, self.actor())?)
+    }
+
     /// Refuses a turn in a room whose own row sits outside the facets this
     /// caller's credential reads, as it refuses an unknown room (owner ruling
     /// FACET-READ): the turn would confirm the room and report its Scope.
@@ -450,7 +463,7 @@ fn peer_read_keys_in(
         .iter()
         .filter(|member| **member != caller)
         .map(|member| {
-            if crate::disclosure::is_vault_owner(&fold, embedded_owner, member) {
+            if crate::disclosure::is_vault_owner(vault, txn, &fold, embedded_owner, member)? {
                 return Ok(crate::claim::ScopedReadActorKey::vault_owner(*member));
             }
             if owners.contains(member) {
@@ -506,6 +519,37 @@ pub(crate) fn room_reader_in(
     }
     let host = crate::WriteActor::new(caller, crate::EdgeActorClass::Human);
     Ok(crate::conversation::room_host_in_txn(vault, txn, room, host)?.is_some())
+}
+
+/// Whether `caller` stands in `room` as `txn` reads it: [`room_reader_in`]
+/// over the room's roster in this snapshot. A row that is no room has no
+/// roster, and no one stands in it.
+pub(crate) fn room_stander_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: EntityId,
+) -> crate::Result<bool> {
+    match room_roster_in(vault, txn, room)? {
+        Some(members) => room_reader_in(vault, txn, room, &members, caller),
+        None => Ok(false),
+    }
+}
+
+impl Vault {
+    /// Whether `caller` stands in `room` now ([`room_stander_in`]): a member,
+    /// a live Ready join for the room, one of a leader chat's two actors, or
+    /// the room's host. Reading the room's record is not standing in it: a
+    /// reader the conversation home binds names a room to read stamped claims
+    /// only while it stands in it (DEC-0006 `#home-clearance`; RULING
+    /// SECREAD-HOME-READ-DOORS = B).
+    ///
+    /// # Errors
+    /// A store failure reading the room.
+    pub fn stands_in_room(&self, room: EntityId, caller: EntityId) -> crate::Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        room_stander_in(self, &txn, room, caller)
+    }
 }
 
 /// The ceiling `room` puts on `caller`'s reads as `txn` reads the room

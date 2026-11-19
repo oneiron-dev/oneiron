@@ -72,7 +72,8 @@ pub use supervisor::{
     WorkerPolicy, WorkerProbe, WorkerProbeFuture, WorkerQueueStatus, WorkerSpec, WorkerUnavailable,
 };
 pub use supervisor::{
-    AttachedPassFuture, ConsolidationExecutorFactory, DreamerJobsExecutor, LinkedShutdown,
+    AttachedPassFuture, ConflictSettleCursor, ConsolidationExecutorFactory, DreamerJobsExecutor,
+    ExtractionAttemptLender, ExtractionDecisionGate, ExtractionDecisionResources, LinkedShutdown,
     NowSeconds, PassAttachment, PassAttachmentSource, PassExecutorFactory, ProgramExecutorFactory,
     RestartBackoffConfig, ShutdownHandle, SkillOptimizerLoan, WakePassFuture, WakeSupervisor,
     WakeSupervisorConfig, WakeSupervisorReport, WaveReadyDispatcher,

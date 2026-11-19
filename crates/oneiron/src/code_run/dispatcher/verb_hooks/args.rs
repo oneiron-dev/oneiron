@@ -86,9 +86,13 @@ pub(super) fn hook_args(call: &SelfCall) -> Result<Value> {
             json!({"label": fixture.label})
         }
         SelfCall::Context(context) => json!({"spec": to_json(&context.spec)?}),
-        SelfCall::Speak(speech) | SelfCall::Think(speech) | SelfCall::Express(speech) => {
+        SelfCall::Speak(speech)
+        | SelfCall::Think(speech)
+        | SelfCall::ThinkAloud(speech)
+        | SelfCall::Express(speech) => {
             json!({"text": speech.text})
         }
+        SelfCall::SayResult(say) => json!({"result": say.result}),
         SelfCall::ReportBlocked(blocked) => {
             json!({"category": to_json(&blocked.category)?, "detail": blocked.detail})
         }
@@ -109,12 +113,18 @@ pub(super) fn hook_args(call: &SelfCall) -> Result<Value> {
             "resultRef": report.result_ref,
         }),
         SelfCall::TasksWaitSet(wait) => to_json(wait)?,
-        SelfCall::Summarize(summary) => json!({
-            "ref": summary.reference,
-            "effort": summary.effort.map(crate::code_run::SummarizeEffort::as_str),
-            "group": summary.group,
-            "defer": summary.defer,
-        }),
+        SelfCall::Summarize(summary) => {
+            let mut args = json!({
+                "ref": summary.reference,
+                "effort": summary.effort.map(crate::code_run::SummarizeEffort::as_str),
+                "group": summary.group,
+                "defer": summary.defer,
+            });
+            if let Some(note_refs) = &summary.note_refs {
+                args["note_refs"] = json!(note_refs);
+            }
+            args
+        }
         SelfCall::Leader(SelfLeaderCall::Advice { top }) => json!({"top": top}),
         SelfCall::Leader(SelfLeaderCall::Pattern { skill }) => json!({"skill": skill.to_hex()}),
         SelfCall::Leader(SelfLeaderCall::Split { leader, slice }) => json!({

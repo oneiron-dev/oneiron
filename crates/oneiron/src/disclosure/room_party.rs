@@ -47,15 +47,68 @@ impl RoomParty {
 }
 
 /// Whether `member` is positively known as the vault owner: the embedded
-/// owner, or a live human owner binding in a rooted vault.
+/// owner, or a live human owner binding in a rooted vault. A deleted owner is
+/// neither (H149; L9-52 (b)): the embedded owner's deleted shell, a hard
+/// delete's purged row, or a binding whose PERSON is deleted, names no owner.
+/// An embedded owner whose row was never written still is one, as before: the
+/// permanent hard-delete marker tells the purged row from the never-written
+/// one, since both read [`LiveEntityRow::Absent`] without it, and so does a
+/// peer's soft delete replayed before the PERSON reached this vault, which
+/// leaves no row, only its `df:` fence and identity marker. On an unrooted
+/// shared vault the embedded owner is one only while the live owner census
+/// names it ([`crate::memory::embedded_owner_shortcut_holds_in_txn`]): one
+/// another Owner made an Admin is classed as any other member is
+/// (UNROOTED-EMBEDDED-OWNER-SHORTCUTS). A census that cannot be read names
+/// no owner here, as the callers' own census read does
+/// (`owners_in_txn(..).unwrap_or_default()`): it fails closed, never a
+/// refusal.
 pub(crate) fn is_vault_owner(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
     embedded_owner: EntityId,
     member: &EntityId,
-) -> bool {
-    *member == embedded_owner
-        || (fold.vault_id.is_some()
-            && crate::authority::actor_binding_is_active(fold, member, "human"))
+) -> Result<bool> {
+    if *member == embedded_owner {
+        // A hard delete purges the row and records the `dt:` marker, so the
+        // row read below answers `Absent` — the same answer as a row that was
+        // never written. The marker refuses the deleted owner before that
+        // fallback (round-1 P1 of #7900).
+        if vault.local_hard_delete_marker_exists_in_txn(txn, member)? {
+            return Ok(false);
+        }
+        match crate::vault::live_entity_row_in_txn(&vault.store, txn, member)? {
+            LiveEntityRow::DeletedShell => return Ok(false),
+            // The never-written fallback holds only for an id with no
+            // deletion recorded at all: a replayed soft delete writes no row
+            // for an id it finds absent (round-2 P1 of #7900).
+            LiveEntityRow::Absent if absent_row_deletion_recorded_in_txn(vault, txn, member)? => {
+                return Ok(false);
+            }
+            LiveEntityRow::Absent | LiveEntityRow::Live { .. } => {}
+        }
+        return Ok(
+            crate::memory::embedded_owner_shortcut_holds_in_txn(vault, txn).unwrap_or(false),
+        );
+    }
+    Ok(fold.vault_id.is_some()
+        && crate::authority::actor_binding_is_live_in(&vault.store, txn, fold, member, "human")?)
+}
+
+/// Whether this vault records a deletion of `id`, whose row it does not hold:
+/// a `df:` fence, the `dt:` marker, a tombstone or an archive
+/// ([`crate::ports::TombstoneStoreRead::port_deletion_state`]), or the
+/// identity marker of a soft delete applied here.
+fn absent_row_deletion_recorded_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    use crate::ports::{DeletionMarker, TombstoneStoreRead};
+    Ok(vault.store.port_deletion_state(txn, id)?.deleted
+        || vault
+            .store
+            .port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, id)?)
 }
 
 /// The existing Owner party rule for a positively placed live PERSON,
@@ -77,7 +130,13 @@ pub(crate) fn live_vault_owner_person_in_txn(
     let fold = vault.authority_view_readonly_in_txn(txn)?;
     let owners = crate::policy_model::owners_in_txn(vault, txn).unwrap_or_default();
     Ok(owners.contains(&member)
-        || is_vault_owner(&fold, crate::vault::embedded_owner_actor_id()?, &member))
+        || is_vault_owner(
+            vault,
+            txn,
+            &fold,
+            crate::vault::embedded_owner_actor_id()?,
+            &member,
+        )?)
 }
 
 /// One member's room party with the facts the party alone no longer
@@ -129,7 +188,13 @@ fn room_party_entry_with(
     admits: Option<&dyn Fn(&EntityId) -> Result<bool>>,
     member: EntityId,
 ) -> Result<RoomPartyEntry> {
-    let bound_owner = is_vault_owner(fold, crate::vault::embedded_owner_actor_id()?, &member);
+    let bound_owner = is_vault_owner(
+        vault,
+        txn,
+        fold,
+        crate::vault::embedded_owner_actor_id()?,
+        &member,
+    )?;
     if bound_owner {
         // The embedded/binding owner's entry is fixed (VaultOwner, no
         // roster contact, never agent-side), as the classifier's first arm
@@ -164,7 +229,7 @@ fn room_party_entry_with(
         _ => None,
     };
     let agent_bound = fold.vault_id.is_some()
-        && crate::authority::actor_binding_is_active(fold, &member, "agent");
+        && crate::authority::actor_binding_is_live_in(&vault.store, txn, fold, &member, "agent")?;
     let party = if owner {
         RoomParty::VaultOwner
     } else if let Some(contact) = sole_contact {

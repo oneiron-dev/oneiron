@@ -1,10 +1,8 @@
 use core::assert_matches;
-use std::path::PathBuf;
 
 use super::*;
 use crate::config::{
-    HnswConfig, HostingPrivacyPosture, TextAnalyzerConfig, VaultConfig, VaultDataKeyCustody,
-    VaultPrivacyConfig,
+    HnswConfig, HostingPrivacyPosture, VaultConfig, VaultDataKeyCustody, VaultPrivacyConfig,
 };
 use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST};
 use crate::store::{
@@ -14,35 +12,13 @@ use crate::store::{
 use crate::temporal::TimeRange;
 
 fn test_config() -> VaultConfig {
-    VaultConfig {
-        failure_signals: Default::default(),
-        store_clock: crate::ports::StoreClock::default(),
-        ppr_vad_alpha: crate::config::PPR_VAD_ALPHA_DEFAULT,
-        ppr_community: crate::config::PprCommunityConfig::default(),
-        retrieval_telemetry_capture: false,
-        map_size: 32 * 1024 * 1024,
-        dimensions: 4,
-        fast_dims: None,
-        embedding_model: Some("test/model@v1".to_owned()),
-        embedding_transform: None,
-        vector_evidence: crate::config::VectorEvidenceFloors::default(),
-        call_mode_deadline: crate::memory::DEFAULT_CALL_MODE_DEADLINE,
-        tagging: None,
-        max_readers: 16,
-        hnsw: HnswConfig {
-            m_max_0: 64,
-            ef_construction: 200,
-            ef_search: 128,
-        },
-        text_analyzer: TextAnalyzerConfig::default(),
-        dict_search_paths: Vec::<PathBuf>::new(),
-        assistant_display_names: Vec::new(),
-        skip_text_index_manifest_check: false,
-        off_record_enabled: true,
-        off_record_overlay_budget_bytes: crate::config::DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
-        limits: crate::limit_ask::EngineLimits::default(),
-        privacy: VaultPrivacyConfig::default(),
-    }
+    let mut config = VaultConfig::device();
+    config.map_size = 32 * 1024 * 1024;
+    config.dimensions = 4;
+    config.embedding_model = Some("test/model@v1".to_owned());
+    config.max_readers = 16;
+    config.hnsw = HnswConfig::default();
+    config
 }
 
 use crate::error::{RegistryError, StoreError};
@@ -372,8 +348,9 @@ fn torn_open_simulation_reseeds_on_next_open_and_writes_receipt() -> Result<()> 
     let decisions = vault.gate_decisions(20)?;
     let decision = decisions
         .iter()
-        .find(|row| row.outcome == "reseeded_after_loss")
+        .find(|row| row.reason_codes == ["gate.policy_manifest.reseeded_after_loss"])
         .expect("reseed receipt");
+    assert_eq!(decision.outcome, "noted");
     assert_ne!(decision.read_frontier_hash, [0; 32]);
     assert!(decision.created_at > 0);
     assert!(decision.created_at >= reopen_started_at);
@@ -386,7 +363,7 @@ fn torn_open_simulation_reseeds_on_next_open_and_writes_receipt() -> Result<()> 
     assert_eq!(notice.notice_type, "policy_manifest_reseeded");
     let mut query = crate::receipt::ReceiptQuery::new(20);
     query.kinds.insert(crate::receipt::ReceiptKind::Gate);
-    query.outcome = Some("reseeded_after_loss".to_owned());
+    query.outcome = Some("noted".to_owned());
     query.start_at = Some(reopen_started_at);
     query.end_at = Some(reopen_finished_at);
     let receipts = vault.query_receipts(query)?;
@@ -436,7 +413,7 @@ fn valid_manifest_reopen_is_idempotent() -> Result<()> {
         vault
             .gate_decisions(20)?
             .iter()
-            .all(|row| row.outcome != "reseeded_after_loss")
+            .all(|row| row.reason_codes != ["gate.policy_manifest.reseeded_after_loss"])
     );
     Ok(())
 }
@@ -1077,11 +1054,9 @@ fn privacy_config(
 }
 
 fn config_with_privacy(privacy: VaultPrivacyConfig) -> VaultConfig {
-    VaultConfig {
-        failure_signals: Default::default(),
-        privacy,
-        ..test_config()
-    }
+    let mut config = test_config();
+    config.privacy = privacy;
+    config
 }
 
 #[test]

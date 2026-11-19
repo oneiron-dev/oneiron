@@ -51,6 +51,7 @@ fn asserted_actor_bindings_resolve_against_the_store() {
     let (_dir, vault) = open_vault();
     let owner = put_person(&vault, 0x5A);
     let subject = put_person(&vault, 0x5B);
+    grant_reads(&vault, owner);
     let owner_facade = facade_for(&vault, owner);
     let claim = owner_facade
         .claim_upsert(&claim_input(
@@ -86,8 +87,11 @@ fn asserted_actor_bindings_resolve_against_the_store() {
             .witness(&WitnessTurn {
                 conversation_ref: EntityId::from_bytes([0x78; 16]).unwrap().to_hex(),
                 turn_ref: None,
+                thread_audience: None,
+                project: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "x")],
                 occurred_at: 671,
+                assertions: Default::default(),
             })
             .expect_err("ghost witness"),
     ] {
@@ -141,7 +145,11 @@ fn failed_commit_leaves_no_phantom_gate_decision() {
     );
     input.id = Some(claim_id.to_hex());
     let receipts = facade.commit(&[input]).expect("commit batch");
-    assert_eq!(receipts[0].approval, "rejected");
+    assert!(
+        matches!(receipts[0], crate::memory::CommitOutcome::Refused { .. }),
+        "a refused element answers Refused: {:?}",
+        receipts[0]
+    );
 
     assert!(
         vault.get_claim(&claim_id).expect("read back").is_none(),
@@ -200,6 +208,7 @@ fn retract_and_delete_enforce_actor_authority() {
             b"eiri agent",
         )
         .expect("put eiri agent");
+    grant_reads(&vault, first_party_agent);
     let eiri_facade = vault.memory(first_party_agent, EdgeActorClass::Agent);
     let mut agent_input = claim_input(
         "profile.mood",
@@ -357,8 +366,11 @@ fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
         .witness(&WitnessTurn {
             conversation_ref: EntityId::from_bytes([0x66; 16]).unwrap().to_hex(),
             turn_ref: None,
+            thread_audience: None,
+            project: None,
             messages: vec![ghost_message],
             occurred_at: 707,
+            assertions: Default::default(),
         })
         .expect_err("witness message at purged id");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);

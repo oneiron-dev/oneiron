@@ -9,7 +9,7 @@ mod ask_wait;
 mod consent;
 mod render;
 mod signal;
-pub(crate) use render::effective_parent;
+pub(crate) use render::{attempt_metadata, effective_parent};
 pub(crate) use signal::{SignalIntent, pause_pending, takes_boundary_pause, validate_signal_rows};
 mod types;
 mod wire;
@@ -35,8 +35,6 @@ pub use self::types::{
 pub use self::wire::RunTreeWireError;
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-RUN-TREE-TESTS]: the lib test target's type check fails here (4 errors: E0063 x2, E0639 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

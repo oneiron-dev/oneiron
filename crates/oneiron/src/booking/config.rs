@@ -21,6 +21,7 @@ use std::io::Cursor;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::booking::deposit::DepositTerms;
 use crate::booking::{BookingError, EventTypeKey};
 use crate::claim::{ClaimBody, ClaimSubject, claim_surfaceable};
 use crate::entity_id::EntityId;
@@ -122,7 +123,14 @@ impl HostAvailabilityConfig {
 #[serde(deny_unknown_fields)]
 pub struct EventTypeConfig {
     pub key: EventTypeKey,
+    /// The length a request that names none gets (the intro default).
     pub duration_min: u16,
+    /// Every length a visitor may pick on one link, ascending
+    /// (BK-VARIABLE-DURATION). Empty: `duration_min` alone. When set, it
+    /// holds `duration_min`. Skipped when empty, so a configuration without
+    /// a choice encodes, and hashes, as it always has.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_durations_min: Vec<u16>,
     /// Candidate starts are aligned to this step on a UTC grid anchored at the
     /// epoch, so every host offers the same instants and routing is set algebra.
     pub slot_step_min: u16,
@@ -140,9 +148,23 @@ pub struct EventTypeConfig {
     pub weekly_cap: Option<u16>,
     pub routing: RoutingMode,
     pub hosts: Vec<HostAvailabilityConfig>,
+    /// Offer the flex windows beside ordinary availability (`true`), or only
+    /// when ordinary availability is empty (`false`, the shipped choice).
+    /// `false` is the tighter: extended hours reach the public only as a
+    /// fallback. Skipped when false, so a configuration without the choice
+    /// encodes, and hashes, as it always has.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flex_with_ordinary: bool,
     /// Extra host-local windows offered only when ordinary availability is
-    /// empty. Interpreted in each host's own zone, exactly like working hours.
+    /// empty, unless [`Self::flex_with_ordinary`] is set. Interpreted in each
+    /// host's own zone, exactly like working hours.
     pub flex_windows: Vec<WeeklyWallWindow>,
+    /// The deposit this event type asks before a booking is confirmed
+    /// (BK-DEPOSITS): the owner's amount, currency and refund rule. Absent:
+    /// no deposit, and the configuration encodes, and hashes, as it always
+    /// has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deposit: Option<DepositTerms>,
 }
 
 impl EventTypeConfig {
@@ -161,6 +183,11 @@ impl EventTypeConfig {
         if self.duration_min == 0 {
             return Some("booking.event_type duration_min must be positive");
         }
+        if let Some(defect) =
+            allowed_durations_defect(&self.allowed_durations_min, self.duration_min)
+        {
+            return Some(defect);
+        }
         if self.slot_step_min == 0 {
             return Some("booking.event_type slot_step_min must be positive");
         }
@@ -178,12 +205,16 @@ impl EventTypeConfig {
         {
             return Some(defect);
         }
+        // A flag with no effect would read as a choice the solver honours.
+        if self.flex_with_ordinary && self.flex_windows.is_empty() {
+            return Some("booking.event_type flex_with_ordinary needs flex windows");
+        }
         let mut hosts: Vec<&EntityId> = self.hosts.iter().map(|host| &host.host_ref).collect();
         hosts.sort_unstable();
         if hosts.windows(2).any(|pair| pair[0] == pair[1]) {
             return Some("booking.event_type host_ref must be unique");
         }
-        None
+        self.deposit.as_ref().and_then(DepositTerms::defect)
     }
 
     /// Solver-facing validation.
@@ -196,6 +227,44 @@ impl EventTypeConfig {
             Err(BookingError::InvalidConfig(reason.to_owned()))
         })
     }
+
+    /// The length a request for `asked` minutes is solved at: the default
+    /// when it names none, the asked length when this event type offers it,
+    /// and `None` when it does not (such a request has no slot).
+    #[must_use]
+    pub fn offered_duration_min(&self, asked: Option<u16>) -> Option<u16> {
+        match asked {
+            None => Some(self.duration_min),
+            Some(asked) if asked == self.duration_min => Some(asked),
+            Some(asked) => self.allowed_durations_min.contains(&asked).then_some(asked),
+        }
+    }
+}
+
+/// Most lengths one event type offers a visitor.
+pub const MAX_ALLOWED_DURATIONS: usize = 8;
+
+/// Why an allowed-length set cannot stand beside its default, if it cannot:
+/// empty, or nonzero lengths, strictly ascending, holding the default, at
+/// most [`MAX_ALLOWED_DURATIONS`]. The publication card's set obeys the same
+/// table.
+pub(crate) fn allowed_durations_defect<T>(allowed: &[T], default: T) -> Option<&'static str>
+where
+    T: Copy + Ord + Default,
+{
+    if allowed.is_empty() {
+        return None;
+    }
+    if allowed.len() > MAX_ALLOWED_DURATIONS
+        || allowed.iter().any(|minutes| *minutes == T::default())
+        || allowed.windows(2).any(|pair| pair[0] >= pair[1])
+        || !allowed.contains(&default)
+    {
+        return Some(
+            "booking allowed_durations_min must be 1 to 8 positive lengths, ascending, holding duration_min",
+        );
+    }
+    None
 }
 
 /// The stored `booking.event_type` claim value.
@@ -570,6 +639,7 @@ mod tests {
             booking_window_secs: 14 * 24 * 3_600,
             daily_cap: None,
             weekly_cap: None,
+            deposit: None,
             routing: RoutingMode::Either,
             hosts: vec![HostAvailabilityConfig {
                 host_ref: id(HOST),
@@ -582,7 +652,9 @@ mod tests {
                 }],
                 preferred_hours: Vec::new(),
             }],
+            flex_with_ordinary: false,
             flex_windows: Vec::new(),
+            allowed_durations_min: Vec::new(),
         }
     }
 
@@ -651,9 +723,9 @@ mod tests {
         capped.daily_cap = Some(1);
         let narrow = id(0x61);
         for (claim, config) in [(narrow, capped), (id(0x62), intro_config())] {
-            vault
-                .put_claim(&claim, &claim_body(&claim_value(config)), at, 1)
-                .expect("config claim");
+            let mut body = claim_body(&claim_value(config));
+            crate::test_util::stamp_vault_default_facet(&vault, &mut body);
+            vault.put_claim(&claim, &body, at, 1).expect("config claim");
         }
         let key = EventTypeKey("intro-call".to_owned());
         let settled = load_event_type_config(&vault, id(PAGE), &key).expect("settled config");

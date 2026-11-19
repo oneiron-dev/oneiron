@@ -302,6 +302,7 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         AuthorityOp::HomeCandidacy(declaration) => {
             super::home_candidacy::home_candidacy_value(declaration)
         }
+        AuthorityOp::FullCopyMark(mark) => super::full_copy_mark::full_copy_mark_value(mark),
         AuthorityOp::AgentGrantAct(record) => super::agent_grant_act::agent_grant_act_value(record),
         AuthorityOp::PolicySettingSet(set) => super::policy_setting::policy_setting_value(set),
         AuthorityOp::ExportAct(record) => super::export_act::export_act_value(record),
@@ -315,6 +316,12 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         }
         AuthorityOp::MembershipExecution(record) => {
             super::membership_execution::membership_execution_value(record)
+        }
+        AuthorityOp::RootAppointment(appointment) => {
+            super::root_appointment::root_appointment_value(appointment)
+        }
+        AuthorityOp::RestoredMachineJoin(join) => {
+            super::restored_machine_join::restored_machine_join_value(join)
         }
     }
 }

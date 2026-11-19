@@ -234,12 +234,14 @@ fn critical_write_confirm_three_sibling_nonce_collision_keeps_provenance_associa
     let left_then_right = merge_states(&merge_states(&w, &z), &y);
     let right_then_left = merge_states(&w, &merge_states(&z, &y));
     assert_eq!(
-        left_then_right.conflicted_critical_write_confirms,
+        left_then_right
+            .conflicted_critical_write_confirms
+            .to_btree_set(),
         expected_conflicts
     );
     assert_eq!(left_then_right, right_then_left);
     assert_eq!(
-        left_then_right.critical_write_confirm_nonce_provenance[&[51; 16]],
+        left_then_right.critical_write_confirm_nonce_provenance[&[51; 16]].to_btree_set(),
         BTreeSet::from([[40; 32], [41; 32]]),
         "the evicted Z id remains a nonce contender"
     );
@@ -254,7 +256,7 @@ fn critical_write_confirm_three_sibling_nonce_collision_keeps_provenance_associa
     ] {
         let merged = merge_states(&merge_states(ordered[0], ordered[1]), ordered[2]);
         assert_eq!(
-            merged.conflicted_critical_write_confirms,
+            merged.conflicted_critical_write_confirms.to_btree_set(),
             expected_conflicts
         );
         assert_eq!(

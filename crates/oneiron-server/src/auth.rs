@@ -155,8 +155,10 @@ impl RevokedTokenJtis for oneiron::Vault {
         nonce: &[u8],
         signature: &[u8],
     ) -> Result<oneiron::authority::VerifiedSlip, ()> {
+        // The answer stays one bare 401, but the log names the check that
+        // refused (FIX 23748): a reason dropped here cost hours of a trace.
         self.verify_logged_capability_slip_request(slip, timestamp, signature, nonce)
-            .map_err(drop)
+            .map_err(|error| tracing::info!(%error, "slip request refused at admission"))
     }
 
     fn bind_invocation_slip(
@@ -494,7 +496,7 @@ impl CoreAuth {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, oneiron_test_support))]
     pub(crate) fn from_oauth_relay(subject: String, scopes: BTreeSet<CoreScope>) -> Self {
         Self {
             principal: format!("oauth-relay:{subject}"),

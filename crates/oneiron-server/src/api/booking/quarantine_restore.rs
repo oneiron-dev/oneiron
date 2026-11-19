@@ -88,9 +88,11 @@ pub(crate) async fn restore_quarantined_booking(
             constraint: submission.constraint.clone(),
             lease: HoldLeaseSpec::Ordinary,
             idempotency_key: Some(format!("{restore_ref}:hold")),
+            cap_override: None,
         }),
         Some(session),
         now,
+        None,
         None,
     )
     .await?;
@@ -116,6 +118,7 @@ pub(crate) async fn restore_quarantined_booking(
         Some(session),
         now,
         None,
+        None,
     )
     .await?;
     match confirmed {
@@ -128,7 +131,6 @@ pub(crate) async fn restore_quarantined_booking(
                     &proof,
                     &claim,
                     event_ref,
-                    now,
                 )
             })
             .await

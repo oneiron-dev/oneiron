@@ -7,7 +7,7 @@ use rmpv::Value;
 
 fn put(vault: &Vault, id: u8, predicate: &str, subject: ClaimSubject) -> Result<EntityId> {
     let id = entity(id);
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         predicate,
         subject,
         Value::from("live"),
@@ -16,6 +16,7 @@ fn put(vault: &Vault, id: u8, predicate: &str, subject: ClaimSubject) -> Result<
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(vault, &mut body);
     if let ClaimSubject::Entity(target) = subject
         && vault.get_entity_type(&target)? == Some(vault.project_type_byte()?)
     {

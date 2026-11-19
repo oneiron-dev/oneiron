@@ -2,10 +2,14 @@
 
 mod delivery;
 mod disclosure;
+#[cfg(oneiron_test_support)]
+pub(crate) use disclosure::report_request_digest_for_test;
 mod routing;
 mod store;
 
 pub use crate::edit_distance::publisher::IssueCategory;
+#[cfg(oneiron_test_support)]
+pub(crate) use delivery::packet_content_hash_for_test;
 pub(crate) use delivery::received_issue_signature;
 pub use delivery::{
     COACH_FEEDBACK_DELIVERY_FACET, REPORT_SIGNATURE_LANE, REPORT_SIGNATURE_SCHEMA,
@@ -18,6 +22,7 @@ pub use delivery::{
 };
 pub use disclosure::{ReportDisclosureBasis, ReportTextSendBinding};
 pub use routing::{ReportDisclosureChoice, ReportRoute, ReportRoutedPayload, ReportSignature};
+pub(crate) use store::{ReportRestoreOutcome, restorable_archived_report};
 
 use super::FeedbackProposal;
 use crate::Result;
@@ -110,6 +115,25 @@ impl ReportRequest {
     }
 }
 
+/// Whether a report was filed here or recovered as the owner's archive data.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportIssueOrigin {
+    /// A report filed through this vault's reporting door.
+    #[default]
+    Filed,
+    /// A report recovered through the owner's whole-vault archive restore.
+    OwnerArchiveRestore,
+}
+
+impl ReportIssueOrigin {
+    fn is_filed(&self) -> bool {
+        *self == Self::Filed
+    }
+}
+
 /// A provenance-carrying ISSUE record. Free text is untrusted data, not routing policy.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -129,6 +153,10 @@ pub struct ReportIssue {
     /// Number of Deny choices on the issue / disclosure consent round (FIX 9368).
     #[serde(default)]
     pub disclosure_round: u64,
+    /// A report restored from the owner's archive may already have reached its publisher
+    /// from the source vault, so this vault never offers its signature.
+    #[serde(default, skip_serializing_if = "ReportIssueOrigin::is_filed")]
+    pub origin: ReportIssueOrigin,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -134,9 +134,10 @@ impl Memory<'_> {
             prior,
             ..
         } = *write;
-        // OF-023: every standing stated peer on this key, read in
-        // this transaction rather than taken from the advisory
-        // lookup. Each one whose answer differs opens a conflict.
+        // OF-023, and a generated claim beside user-stated truth: every
+        // standing stated peer on this key, read in this transaction rather
+        // than taken from the advisory lookup. Each one whose answer differs
+        // opens a conflict.
         let stated_conflicts = if beside_stated {
             self.stated_preference_conflicts_in_txn(content.read(), key, id, value)?
         } else {
@@ -147,6 +148,13 @@ impl Memory<'_> {
         // commitment series is indexed in this same transaction.
         let commitment_write = input.predicate == crate::commitment::PREDICATE_COMMITMENT_RECORD;
         if commitment_write {
+            // The owner's `commitment.content.max_text_bytes` binds a promise authored here.
+            crate::commitment::setting_keys::check_claim_commitment_text_in_txn(
+                self.vault,
+                content.read(),
+                &input.predicate,
+                value,
+            )?;
             content.stage_claim_support(id, |_| Ok(()))?;
         }
         if publication_write {

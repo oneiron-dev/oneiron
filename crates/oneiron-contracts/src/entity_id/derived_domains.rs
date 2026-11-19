@@ -63,6 +63,11 @@ pub const DREAMER_CLAIM: &[u8] = b"oneiron:dreamer-claim-id:v1";
 /// name's byte range in it (empty, or `0x01`, start and end as u64 big-endian).
 pub const DREAMER_PERSON: &[u8] = b"oneiron:dreamer-person:v1";
 
+/// A PERSON a derivation batch's Person item mints (`derive::person`, untangle
+/// 6.9h). Parts: the first try of the committing attempt's retry lineage, the
+/// normalized name, then the smallest TURN that names it.
+pub const DERIVE_PERSON: &[u8] = b"oneiron:derive-person:v1";
+
 /// A project's home room (`workspace_roster::project`). Parts: project.
 pub const PROJECT_HOME_ROOM: &[u8] = b"project.home_room.v1/";
 
@@ -150,6 +155,11 @@ pub const CALENDAR_ICS_IMPORT_ACTOR: &[u8] = b"oneiron:calendar-ics-import-actor
 /// The conversation-mirror write actor (`reaction::conversation_mirror_actor_id`).
 /// No parts.
 pub const CONVERSATION_MIRROR_ACTOR: &[u8] = b"oneiron:conversation-mirror-actor:v1";
+
+/// A meeting follow-up draft claim (`calendar::follow_up::meeting_follow_up_claim_id`,
+/// CAL-08). Parts: the transcript SESSION, the recipient PERSON (16 bytes
+/// each), the draft's words (UTF-8).
+pub const MEETING_FOLLOW_UP: &[u8] = b"oneiron:calendar-meeting-follow-up:v1";
 
 /// The raw-feed BLOB artifact of one ICS feed (`calendar::ingest::fetch`). Parts:
 /// feed dedupe key.
@@ -481,7 +491,7 @@ pub const RESIDENT_MESSAGE_ASK: &[u8] = b"oneiron.agent_dispatch.resident_messag
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 73] = [
+pub(crate) const ALL: [&[u8]; 74] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -555,4 +565,5 @@ pub(crate) const ALL: [&[u8]; 73] = [
     ESIGN_DOCUMENT_COMMITMENT,
     RESIDENT_MESSAGE_ASK,
     COMMITMENT_LAPSE_ACTOR,
+    DERIVE_PERSON,
 ];

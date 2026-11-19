@@ -446,6 +446,7 @@ pub(crate) fn mcp_api_error(error: ApiError) -> McpGatewayError {
     };
     let mut gateway = McpGatewayError::new(code, error.code().as_str(), error.message());
     gateway.room_join_hold = error.room_join_hold().cloned().map(Box::new);
+    gateway.pending = error.pending().cloned().map(Box::new);
     if let ApiErrorDetails::BadRequest { field } = error.details()
         && let Some(field) = field
     {
@@ -690,6 +691,17 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         && let Some(object) = data.as_object_mut()
     {
         object.insert("room_join_hold".to_owned(), json!(*room_join_hold));
+    }
+    if let Some(pending) = error.pending
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("pending".to_owned(), json!(*pending));
+    }
+    if let Some(pause) = error.reap_pause
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("bound".to_owned(), json!(pause.bound));
+        object.insert("self_hosted".to_owned(), json!(pause.self_hosted));
     }
     if let Some(retry_after) = error.retry_after
         && let Some(object) = data.as_object_mut()
@@ -959,8 +971,9 @@ async fn mcp_off_runtime_row<T: Send + 'static>(
 
 /// The proof a direct MCP caller's own request binds for `tool`, as the
 /// HTTP facade binds it outside a room turn: the work-companion setting
-/// takes the person's own proof (OF-417), an attendee ask's answer the
-/// owner's own authorship (OF-365), and the owner's own `vault.delete` his
+/// takes the person's own proof (OF-417), an ask's answer the owner's own
+/// authorship (OF-365) or else the answering person's person-tier proof
+/// (UC-05), and the owner's own `vault.delete` his
 /// authorship and this host's slip issuer, so deleting a Connect guest's
 /// PERSON withdraws its grants first (FIX 3875, 5317). Every other row binds
 /// none here, and a code-mode call's host origin suppresses either in the
@@ -1024,5 +1037,50 @@ mod tests {
         assert_eq!(output["count"], 2);
         // Only the list the producer names is its page.
         assert_eq!(output["rows"], json!([1, 2, 3]));
+    }
+
+    /// A reap pause's MCP refusal names its capacity bound and the
+    /// self-host route in `error.data`, in the shape the managed HTTP body
+    /// carries, and keeps its kind (L9-61).
+    #[test]
+    fn a_reap_pause_mcp_refusal_names_its_capacity_bound_and_the_self_host_route() {
+        let refusal = super::super::mcp_facade_error(oneiron::MemoryError::new(
+            crate::managed::WRITES_FROZEN_TAG,
+            crate::managed::ManagedError::WritesFrozen.to_string(),
+            &[],
+        ));
+        let response = mcp_error_response(json!(7), refusal);
+        let error = &response["error"];
+        assert_eq!(error["code"], -32020);
+        let data = &error["data"];
+        assert_eq!(data["kind"], "writes_frozen");
+        assert_eq!(
+            data["bound"],
+            json!({
+                "kind": "capacity",
+                "resource": "vault_lifecycle_allocation",
+                "phase": "reap_prepare",
+            })
+        );
+        assert_eq!(
+            data["self_hosted"],
+            json!({"supported": true, "condition": "no_service_reap_limit"})
+        );
+        let message = data["human_message"].as_str().expect("human_message");
+        assert!(message.contains("a capacity bound"), "{message}");
+    }
+
+    /// Any other MCP refusal's `error.data` carries no bound.
+    #[test]
+    fn another_mcp_refusal_carries_no_bound() {
+        let refusal = super::super::mcp_facade_error(oneiron::MemoryError::new(
+            oneiron::MEMORY_CODE_FORBIDDEN,
+            "refused",
+            &[],
+        ));
+        let response = mcp_error_response(json!(8), refusal);
+        let data = &response["error"]["data"];
+        assert!(data.get("bound").is_none(), "{data}");
+        assert!(data.get("self_hosted").is_none(), "{data}");
     }
 }

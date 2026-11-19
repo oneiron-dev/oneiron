@@ -35,9 +35,15 @@ pub use guest_proposal::{
 };
 mod held_retire;
 mod machine_history;
-pub(in crate::sync) use machine_history::machine_history_controls;
+pub(in crate::sync) use machine_history::{HistoryControlGate, machine_history_controls};
 mod note_admission;
 mod peer_confidence;
+// SELECTOR-RELEASE-POINT = B: what a queued answer is judged again by.
+mod release_basis;
+pub use release_basis::{
+    CoreferenceDisclosure, SelectorReaderReach, SelectorReleaseBasis,
+    recording_coreference_disclosure,
+};
 mod scope;
 // FIX 7608 slice 4: the masked copy a sync peer gets of a marked repo item.
 pub(crate) mod secret_projection;
@@ -60,8 +66,6 @@ mod tombstones;
 mod validators;
 pub(crate) use note_admission::admit_note_in_txn;
 pub(in crate::sync) use text_egress::document_sources_readable_in_txn;
-// FIX [LIBTEST-QUARANTINE-SYNC-SELECTOR-TESTS]: the lib test target's type check fails here (8 errors: E0061 x4, E0063 x4); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -72,6 +76,8 @@ use super::loro_support;
 
 #[cfg(test)]
 pub(in crate::sync) use self::admission::admit_peer_window_update;
+#[cfg(feature = "sync")]
+pub(crate) use self::admission::is_peer_task_authority_fact_refusal;
 #[cfg(feature = "test-hooks")]
 pub use self::admission::put_selector_test_federation_grant;
 #[cfg(feature = "sync")]

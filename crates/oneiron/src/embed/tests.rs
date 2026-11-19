@@ -75,6 +75,17 @@ fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     config.dimensions = 4;
     config.embedding_model = Some("test/embedder@v1".to_owned());
     let vault = Vault::open_unseeded_for_test(dir.path(), config).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    let facet = crate::claim::substrate_facet_id(entity_id(0xC1)).expect("subject facet");
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .expect("seed subject facet");
     (dir, Arc::new(vault))
 }
 
@@ -438,8 +449,6 @@ fn remote_rung_dims_and_model_gates() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-EMBED-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn stale_completion_preserves_newer_pending_job() -> Result<()> {
     let (_dir, vault) = test_vault();
@@ -459,6 +468,7 @@ fn stale_completion_preserves_newer_pending_job() -> Result<()> {
         &[1.0, 0.0, 0.0, 0.0],
         EmbedderLocality::OnDevice,
         &EmbeddingProvenance::unknown(),
+        None,
     )?;
     assert!(!filled, "old-token fill must be stale");
     assert!(
@@ -582,10 +592,6 @@ fn zero_remote_lease_duration_is_rejected() {
     assert!(matches!(err, Error::InvalidConfig(_)));
 }
 
-// FIX [LIBTEST-QUARANTINE-EMBED-TESTS-DEVICE]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
-#[cfg(any())]
 mod device;
 mod device_local;
-// FIX [LIBTEST-QUARANTINE-EMBED-TESTS-PAYLOAD]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod payload;

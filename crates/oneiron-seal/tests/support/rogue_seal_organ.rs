@@ -25,11 +25,45 @@
 //!   `extra-cert` adds a copy of a certificate under another serial).
 //!
 //! Its `seal.verify` always passes.
+//!
+//! The evidence modes take an `EvidenceFixture` as their fourth argument
+//! (after the schema): a timestamp authority the organ's fetcher mints tokens
+//! from, and the anchor's CRL it serves, so the organ's own engine seals for
+//! real at B-T and above with no network. Each then forges one thing, claims
+//! the profile it names, and its `seal.verify` runs the real verification and
+//! forges only the verdict: passed, self-verified, the claimed profile, every
+//! signature passed, every later revision validation data or a document
+//! timestamp. The host's own evidence checks are all that stand between
+//! them and a commit (ARCH-0075 `#organ-host-design-seal-residual`):
+//! - `dss-honest`: seals at the requested profile, honestly; its verify is
+//!   the real one, unchanged;
+//! - `dss-untrusted-crl`, `dss-untrusted-ocsp`, `dss-no-revocation`: seal at
+//!   B-T, append a DSS revision holding the fixture's material (a CRL or an
+//!   OCSP response no issuer signed, or certificates alone), and claim B-LT;
+//!   `dss-appended` does the same with whatever material the test gives;
+//! - `doc-timestamp-forged`: seals at B-LTA, then puts the signature's own
+//!   CMS, which is no TSTInfo, in the document timestamp's hole; claims B-LTA;
+//! - `doc-timestamp-unfielded`: seals at B-LT, then appends a revision whose
+//!   only object holds a hole no signature field names, fills it with a
+//!   genuine token from the fixture's authority over every other byte, and
+//!   claims B-LTA; its verify names that hole a passed document timestamp;
+//! - `doc-timestamp-text-field`: the same, but the hole is the `/Contents`
+//!   of a genuine `/DocTimeStamp` dictionary, the `/V` of a field whose
+//!   parent is a signature field and whose own `/FT`, by reference, is
+//!   `/Tx`: a text field, so still no signature field names it;
+//! - `timestamp-forged`: seals at B-T, then replaces the signature
+//!   timestamp token with one an untrusted authority minted over the right
+//!   imprint; claims B-T.
+
+#[cfg(unix)]
+#[path = "rogue_evidence.rs"]
+mod rogue_evidence;
 
 #[cfg(unix)]
 mod rogue {
     use std::future::Future;
     use std::pin::pin;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, PoisonError};
     use std::task::{Context, Poll, Wake, Waker};
     use std::thread::{self, Thread};
@@ -46,16 +80,27 @@ mod rogue {
         INSPECT_SCHEMA, PREPARE_SCHEMA, SealOrgan, VERB_INSPECT, VERB_PREPARE,
     };
     use oneiron_seal::{
-        BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, FetchPolicy,
-        NativeSealEngine, OfflineFetcher, PadesProfile, PdfSealEngine, PreparedRevision,
-        SealBackend, SealClock, SealConfig, SealMemory, SealMemoryProvider, SealMemoryRefusal,
-        SealRequest, SealResourceLimits, SignDigestRequest, SignRevisionRequest,
-        SignatureAlgorithm, SigningIdentity,
+        AdmittedBytes, BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm,
+        FetchError, FetchPolicy, FetchPurpose, FetchRequest, FetchResponse, NativeSealEngine,
+        OfflineFetcher, PadesProfile, PdfSealEngine, PreparedRevision, SealBackend, SealClock,
+        SealConfig, SealFetcher, SealMemory, SealMemoryProvider, SealMemoryRefusal, SealRequest,
+        SealResourceLimits, SignDigestRequest, SignRevisionRequest, SignatureAlgorithm,
+        SigningIdentity, TsaEndpoint,
     };
     use serde::{Deserialize, Serialize};
     use sha2::{Digest, Sha256};
 
+    use super::rogue_evidence::EvidenceFixture;
+
     const UNRELATED: &[u8] = b"astra-1379 synthetic unrelated message";
+    const ID_DATA: &str = "1.2.840.113549.1.7.1";
+    const ID_SIGNED_DATA: &str = "1.2.840.113549.1.7.2";
+    const ID_CT_TST_INFO: &str = "1.2.840.113549.1.9.16.1.4";
+    const ID_SIGNATURE_TIME_STAMP_TOKEN: &str = "1.2.840.113549.1.9.16.2.14";
+    const ID_SHA256: &str = "2.16.840.1.101.3.4.2.1";
+    const ID_ECDSA_SHA256: &str = "1.2.840.10045.4.3.2";
+    /// The policy every fixture token names.
+    const FIXTURE_TSA_POLICY: &str = "1.3.6.1.4.1.99999.3";
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub(super) enum Mode {
@@ -71,9 +116,48 @@ mod rogue {
         SignatureAlgorithmNull,
         LeafOnly,
         ExtraCert,
+        DssHonest,
+        DssUntrustedCrl,
+        DssUntrustedOcsp,
+        DssNoRevocation,
+        DssAppended,
+        DocTimestampForged,
+        DocTimestampUnfielded,
+        DocTimestampTextField,
+        TimestampForged,
     }
 
     impl Mode {
+        /// What an evidence mode has the organ's own engine seal at, for a
+        /// request of `requested`, and the profile it then claims.
+        fn evidence(self, requested: PadesProfile) -> Option<(PadesProfile, PadesProfile)> {
+            match self {
+                Self::DssHonest => Some((requested, requested)),
+                Self::DssUntrustedCrl
+                | Self::DssUntrustedOcsp
+                | Self::DssNoRevocation
+                | Self::DssAppended => Some((PadesProfile::BaselineT, PadesProfile::BaselineLt)),
+                Self::DocTimestampForged => {
+                    Some((PadesProfile::BaselineLta, PadesProfile::BaselineLta))
+                }
+                Self::DocTimestampUnfielded | Self::DocTimestampTextField => {
+                    Some((PadesProfile::BaselineLt, PadesProfile::BaselineLta))
+                }
+                Self::TimestampForged => Some((PadesProfile::BaselineT, PadesProfile::BaselineT)),
+                _ => None,
+            }
+        }
+
+        /// The profile a forging evidence mode's `seal.verify` claims.
+        fn forged_claim(self) -> Option<PadesProfile> {
+            match self {
+                Self::DssHonest => None,
+                mode => mode
+                    .evidence(PadesProfile::BaselineB)
+                    .map(|(_, claim)| claim),
+            }
+        }
+
         pub(super) fn from_args() -> Option<Self> {
             match std::env::args().nth(1)?.as_str() {
                 "forge-signs" => Some(Self::ForgeSigns),
@@ -88,13 +172,27 @@ mod rogue {
                 "sig-alg-null" => Some(Self::SignatureAlgorithmNull),
                 "leaf-only" => Some(Self::LeafOnly),
                 "extra-cert" => Some(Self::ExtraCert),
+                "dss-honest" => Some(Self::DssHonest),
+                "dss-untrusted-crl" => Some(Self::DssUntrustedCrl),
+                "dss-untrusted-ocsp" => Some(Self::DssUntrustedOcsp),
+                "dss-no-revocation" => Some(Self::DssNoRevocation),
+                "dss-appended" => Some(Self::DssAppended),
+                "doc-timestamp-forged" => Some(Self::DocTimestampForged),
+                "doc-timestamp-unfielded" => Some(Self::DocTimestampUnfielded),
+                "doc-timestamp-text-field" => Some(Self::DocTimestampTextField),
+                "timestamp-forged" => Some(Self::TimestampForged),
                 _ => None,
             }
         }
     }
 
-    /// The mode, and the schema it serves `seal.pdf` at.
-    pub(super) struct Rogue(pub(super) Mode, pub(super) u32);
+    /// The mode, the schema it serves `seal.pdf` at, and an evidence mode's
+    /// fixture.
+    pub(super) struct Rogue(
+        pub(super) Mode,
+        pub(super) u32,
+        pub(super) Option<EvidenceFixture>,
+    );
 
     impl Rogue {
         pub(super) fn from_args() -> Option<Self> {
@@ -103,8 +201,46 @@ mod rogue {
                 Some("schema-1") => 1,
                 _ => 2,
             };
-            Some(Self(mode, schema))
+            let fixture = match std::env::args().nth(3) {
+                Some(hex) => Some(fixture_from_hex(&hex)?),
+                None => None,
+            };
+            Some(Self(mode, schema, fixture))
         }
+    }
+
+    /// The fixture a test passed: hex of its MessagePack.
+    fn fixture_from_hex(hex: &str) -> Option<EvidenceFixture> {
+        let bytes = hex
+            .as_bytes()
+            .chunks(2)
+            .map(|pair| {
+                std::str::from_utf8(pair)
+                    .ok()
+                    .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+            })
+            .collect::<Option<Vec<u8>>>()?;
+        rmp_serde::from_slice(&bytes).ok()
+    }
+
+    /// The real verification's reply, without the `observed` entry beside
+    /// it, read back so an evidence mode can forge its verdict and keep the
+    /// rest.
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum RealVerifyReport {
+        Verified(RealVerdict),
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct RealVerdict {
+        verdict: String,
+        reasons: Vec<String>,
+        achieved: Option<PadesProfile>,
+        self_verify_ok: bool,
+        report_json: ByteBuf,
+        active_content: ActiveContentFacts,
+        classification: SealRevisionClassification,
     }
 
     #[derive(Deserialize)]
@@ -246,6 +382,12 @@ mod rogue {
                 let [pdf] = call.inputs else {
                     return Err(bad("inputs"));
                 };
+                if self.0 == Mode::DssHonest {
+                    return SealOrgan.call(call);
+                }
+                if let Some(claim) = self.0.forged_claim() {
+                    return forged_verification(call, pdf, claim, self.0);
+                }
                 return answer(
                     &VerifyReport::Verified(passed(PadesProfile::BaselineB, pdf)),
                     None,
@@ -290,8 +432,12 @@ mod rogue {
                         identity: Mutex::new(None),
                         legacy,
                     };
-                    let engine =
-                        native(&args.config.trust_anchors, args.now_ms, Arc::new(backend))?;
+                    let engine = native(
+                        &args.config.trust_anchors,
+                        args.now_ms,
+                        Arc::new(backend),
+                        None,
+                    )?;
                     let request = SealRequest {
                         operation_id: args.operation_id,
                         target_profile: PadesProfile::BaselineB,
@@ -313,6 +459,87 @@ mod rogue {
                         })?,
                     }
                     (bytes, PadesProfile::BaselineB)
+                }
+                Mode::DssHonest
+                | Mode::DssUntrustedCrl
+                | Mode::DssUntrustedOcsp
+                | Mode::DssNoRevocation
+                | Mode::DssAppended
+                | Mode::DocTimestampForged
+                | Mode::DocTimestampUnfielded
+                | Mode::DocTimestampTextField
+                | Mode::TimestampForged => {
+                    let fixture = self.2.as_ref().ok_or_else(|| bad("no evidence fixture"))?;
+                    let (target, claim) = self
+                        .0
+                        .evidence(args.profile)
+                        .ok_or_else(|| bad("not an evidence mode"))?;
+                    let backend = Backend {
+                        asker: call.asker(),
+                        identity: Mutex::new(None),
+                        legacy: false,
+                    };
+                    let engine = native(
+                        &args.config.trust_anchors,
+                        args.now_ms,
+                        Arc::new(backend),
+                        Some(fixture),
+                    )?;
+                    let request = SealRequest {
+                        operation_id: args.operation_id,
+                        target_profile: target,
+                    };
+                    let sealed = block_on(engine.seal_pdf_in_revisions(pdf, &request, &revisions))
+                        .map_err(bad)?;
+                    // Each mode forges one thing over an honest seal: a
+                    // fixture its own engine would not take is the test's
+                    // error, never a refusal to credit to the host.
+                    if sealed.achieved_profile != target {
+                        return Err(bad(format!(
+                            "the fixture sealed at {:?}, not {target:?}",
+                            sealed.achieved_profile
+                        )));
+                    }
+                    let mut bytes = sealed.bytes.to_vec();
+                    match self.0 {
+                        Mode::DssUntrustedCrl
+                        | Mode::DssUntrustedOcsp
+                        | Mode::DssNoRevocation
+                        | Mode::DssAppended => {
+                            bytes = append_dss(&bytes, fixture)?;
+                        }
+                        Mode::DocTimestampForged => {
+                            forge_document_timestamp(&mut bytes, pdf.len(), &revisions)?;
+                        }
+                        Mode::DocTimestampUnfielded => {
+                            let key = signing_key(&fixture.tsa_key)?;
+                            bytes = append_unfielded_timestamp(
+                                &bytes,
+                                &key,
+                                &fixture.tsa_certificate,
+                                args.now_ms / 1000,
+                            )?;
+                        }
+                        Mode::DocTimestampTextField => {
+                            let key = signing_key(&fixture.tsa_key)?;
+                            bytes = append_text_field_timestamp(
+                                &bytes,
+                                &key,
+                                &fixture.tsa_certificate,
+                                args.now_ms / 1000,
+                            )?;
+                        }
+                        Mode::TimestampForged => {
+                            let key = signing_key(&fixture.untrusted_tsa_key)?;
+                            let certificate = fixture.untrusted_tsa_certificate.to_vec();
+                            let now = args.now_ms / 1000;
+                            rebuild_cms(&mut bytes, pdf.len(), &revisions, |signed| {
+                                replace_signature_timestamp(signed, &key, &certificate, now)
+                            })?;
+                        }
+                        _ => {}
+                    }
+                    (bytes, claim)
                 }
             };
             let report = SealReport::Sealed {
@@ -362,26 +589,668 @@ mod rogue {
 
     /// The organ's own seal engine over `backend`, as the real organ builds
     /// it for a call.
+    /// With `fixture`, it has one timestamp authority, which the
+    /// `FixtureFetcher` answers, and every CRL fetch gets the fixture's.
     fn native(
         anchors: &[ByteBuf],
         now_ms: u64,
         backend: Arc<dyn SealBackend>,
+        fixture: Option<&EvidenceFixture>,
     ) -> Result<NativeSealEngine, OrganError> {
+        let memory = SealMemoryProvider::new(Arc::new(GrantAllMemory));
+        let (timestamp_authorities, fetcher): (Vec<TsaEndpoint>, Arc<dyn SealFetcher>) =
+            match fixture {
+                None => (Vec::new(), Arc::new(OfflineFetcher) as Arc<dyn SealFetcher>),
+                Some(fixture) => {
+                    let second = if fixture.second_tsa_certificate.is_empty() {
+                        None
+                    } else {
+                        Some((
+                            signing_key(&fixture.second_tsa_key)?,
+                            fixture.second_tsa_certificate.to_vec(),
+                        ))
+                    };
+                    let endpoint = |url: &str| -> Result<TsaEndpoint, OrganError> {
+                        Ok(TsaEndpoint {
+                            url: url::Url::parse(url).map_err(bad)?,
+                            expected_policy_oid: Some(FIXTURE_TSA_POLICY.to_owned()),
+                        })
+                    };
+                    let mut endpoints = vec![endpoint(FIRST_TSA_URL)?];
+                    if second.is_some() {
+                        endpoints.push(endpoint(SECOND_TSA_URL)?);
+                    }
+                    (
+                        endpoints,
+                        Arc::new(FixtureFetcher {
+                            tsa_key: signing_key(&fixture.tsa_key)?,
+                            tsa_certificate: fixture.tsa_certificate.to_vec(),
+                            second,
+                            token_delays_secs: fixture.token_delays_secs.clone(),
+                            first_authority_unavailable: fixture
+                                .first_authority_unavailable
+                                .clone(),
+                            timestamp_requests: AtomicUsize::new(0),
+                            crl: fixture.crl.to_vec(),
+                            memory: memory.clone(),
+                            now: now_ms / 1000,
+                        }) as Arc<dyn SealFetcher>,
+                    )
+                }
+            };
         NativeSealEngine::new(
             SealConfig {
                 trust_anchors_der: anchors.iter().map(|anchor| anchor.to_vec()).collect(),
-                timestamp_authorities: Vec::new(),
+                timestamp_authorities,
                 fetch_policy: FetchPolicy::default(),
                 resource_limits: SealResourceLimits {
-                    memory: SealMemoryProvider::new(Arc::new(GrantAllMemory)),
+                    memory,
                     ..SealResourceLimits::default()
                 },
             },
             backend,
-            Arc::new(OfflineFetcher),
+            fetcher,
             Arc::new(Clock(now_ms)),
         )
         .map_err(bad)
+    }
+
+    /// Where an evidence mode's engine asks its fixture authorities, in
+    /// their configured order.
+    const FIRST_TSA_URL: &str = "https://tsa.test/";
+    const SECOND_TSA_URL: &str = "https://tsa-2.test/";
+
+    /// The network an evidence mode's engine sees, served from the
+    /// fixture: a timestamp request gets a token the asked authority
+    /// mints over its imprint and nonce at the call's time plus that
+    /// request's delay (or nothing, when the first authority is to fail
+    /// it), a CRL request the fixture's CRL, and anything else nothing.
+    struct FixtureFetcher {
+        tsa_key: p256::ecdsa::SigningKey,
+        tsa_certificate: Vec<u8>,
+        second: Option<(p256::ecdsa::SigningKey, Vec<u8>)>,
+        token_delays_secs: Vec<u64>,
+        first_authority_unavailable: Vec<usize>,
+        /// How many timestamp requests the call has made, to either.
+        timestamp_requests: AtomicUsize,
+        crl: Vec<u8>,
+        memory: SealMemoryProvider,
+        now: u64,
+    }
+
+    #[async_trait]
+    impl SealFetcher for FixtureFetcher {
+        async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, FetchError> {
+            let body = match request.purpose {
+                FetchPurpose::Timestamp => {
+                    let request_number = self.timestamp_requests.fetch_add(1, Ordering::SeqCst);
+                    let (key, certificate) = match &self.second {
+                        Some((key, certificate)) if request.url.as_str() == SECOND_TSA_URL => {
+                            (key, certificate)
+                        }
+                        _ if self.first_authority_unavailable.contains(&request_number) => {
+                            return Err(FetchError::Unavailable);
+                        }
+                        _ => (&self.tsa_key, &self.tsa_certificate),
+                    };
+                    let delay = self
+                        .token_delays_secs
+                        .get(request_number)
+                        .copied()
+                        .unwrap_or(0);
+                    let query = x509_tsp::TimeStampReq::from_der(&request.request_body)
+                        .map_err(|_| FetchError::InvalidResponse)?;
+                    let token = mint_token(
+                        key,
+                        certificate,
+                        query.message_imprint.hashed_message.as_bytes(),
+                        query.nonce,
+                        self.now.saturating_add(delay),
+                    )
+                    .map_err(|_| FetchError::InvalidResponse)?;
+                    // TimeStampResp { status { granted }, timeStampToken }
+                    tlv(0x30, &[tlv(0x30, &tlv(0x02, &[0])), token].concat())
+                }
+                FetchPurpose::Crl => self.crl.clone(),
+                FetchPurpose::AuthorityInformationAccess | FetchPurpose::Ocsp => {
+                    return Err(FetchError::Unavailable);
+                }
+            };
+            Ok(FetchResponse {
+                body: Arc::new(
+                    AdmittedBytes::copy_from(&self.memory, &body).map_err(FetchError::Memory)?,
+                ),
+                content_type: None,
+            })
+        }
+    }
+
+    /// A P-256 key from its secret scalar.
+    fn signing_key(scalar: &[u8]) -> Result<p256::ecdsa::SigningKey, OrganError> {
+        p256::ecdsa::SigningKey::from_slice(scalar).map_err(bad)
+    }
+
+    /// An RFC 3161 TimeStampToken: a SignedData over a TSTInfo for
+    /// `imprint` (SHA-256) at `gen_time`, under the fixture policy, carrying
+    /// `certificate`, signed by `key` over the three signed attributes a
+    /// token needs (content type id-ct-TSTInfo, its messageDigest,
+    /// signingCertificateV2).
+    fn mint_token(
+        key: &p256::ecdsa::SigningKey,
+        certificate: &[u8],
+        imprint: &[u8],
+        nonce: Option<der::asn1::Int>,
+        gen_time: u64,
+    ) -> der::Result<Vec<u8>> {
+        use cms::cert::{CertificateChoices, IssuerAndSerialNumber};
+        use cms::content_info::{CmsVersion, ContentInfo};
+        use cms::signed_data::{
+            CertificateSet, EncapsulatedContentInfo, SignedAttributes, SignedData,
+            SignerIdentifier, SignerInfo, SignerInfos,
+        };
+        use der::asn1::{Any, ObjectIdentifier, OctetString, SetOfVec};
+        use p256::ecdsa::signature::Signer;
+        use x509_cert::spki::AlgorithmIdentifierOwned;
+        let oid = ObjectIdentifier::new_unwrap;
+        let sha256 = || AlgorithmIdentifierOwned {
+            oid: oid(ID_SHA256),
+            parameters: None,
+        };
+        let cert = x509_cert::Certificate::from_der(certificate)?;
+        let info = x509_tsp::TstInfo {
+            version: x509_tsp::TspVersion::V1,
+            policy: oid(FIXTURE_TSA_POLICY),
+            message_imprint: x509_tsp::MessageImprint {
+                hash_algorithm: sha256(),
+                hashed_message: OctetString::new(imprint)?,
+            },
+            serial_number: der::asn1::Int::new(&[0x01])?,
+            gen_time: der::asn1::GeneralizedTime::from_unix_duration(
+                std::time::Duration::from_secs(gen_time),
+            )?,
+            accuracy: None,
+            ordering: false,
+            nonce,
+            tsa: None,
+            extensions: None,
+        }
+        .to_der()?;
+        let digest: [u8; 32] = Sha256::digest(&info).into();
+        let attributes = attribute_set(ID_CT_TST_INFO, certificate, &digest)?;
+        let signature: p256::ecdsa::Signature = key.sign(&attributes);
+        let signer = SignerInfo {
+            version: CmsVersion::V1,
+            sid: SignerIdentifier::IssuerAndSerialNumber(IssuerAndSerialNumber {
+                issuer: cert.tbs_certificate.issuer.clone(),
+                serial_number: cert.tbs_certificate.serial_number.clone(),
+            }),
+            digest_alg: sha256(),
+            signed_attrs: Some(SignedAttributes::from_der(&attributes)?),
+            signature_algorithm: AlgorithmIdentifierOwned {
+                oid: oid(ID_ECDSA_SHA256),
+                parameters: None,
+            },
+            signature: OctetString::new(signature.to_der().as_bytes())?,
+            unsigned_attrs: None,
+        };
+        let signed = SignedData {
+            version: CmsVersion::V3,
+            digest_algorithms: SetOfVec::from_iter([sha256()])?,
+            encap_content_info: EncapsulatedContentInfo {
+                econtent_type: oid(ID_CT_TST_INFO),
+                econtent: Some(Any::new(der::Tag::OctetString, info)?),
+            },
+            certificates: Some(CertificateSet(SetOfVec::from_iter([
+                CertificateChoices::Certificate(cert),
+            ])?)),
+            crls: None,
+            signer_infos: SignerInfos(SetOfVec::from_iter([signer])?),
+        };
+        ContentInfo {
+            content_type: oid(ID_SIGNED_DATA),
+            content: Any::encode_from(&signed)?,
+        }
+        .to_der()
+    }
+
+    /// `timestamp-forged`: every SignerInfo's signature timestamp becomes
+    /// one `key` minted over the right imprint (SHA-256 of its signature
+    /// value), which only an untrusted authority vouches for.
+    fn replace_signature_timestamp(
+        signed: &mut cms::signed_data::SignedData,
+        key: &p256::ecdsa::SigningKey,
+        certificate: &[u8],
+        now: u64,
+    ) -> der::Result<()> {
+        use der::asn1::{Any, ObjectIdentifier, SetOfVec};
+        let infos = signed.signer_infos.0.clone().into_vec();
+        let mut forged = Vec::with_capacity(infos.len());
+        for mut info in infos {
+            let imprint = Sha256::digest(info.signature.as_bytes());
+            let token = mint_token(key, certificate, &imprint, None, now)?;
+            let attribute = x509_cert::attr::Attribute {
+                oid: ObjectIdentifier::new_unwrap(ID_SIGNATURE_TIME_STAMP_TOKEN),
+                values: SetOfVec::from_iter([Any::from_der(&token)?])?,
+            };
+            info.unsigned_attrs = Some(SetOfVec::from_iter([attribute])?);
+            forged.push(info);
+        }
+        signed.signer_infos.0 = SetOfVec::from_iter(forged)?;
+        Ok(())
+    }
+
+    /// The output with one more revision: a DSS dictionary, named by a new
+    /// catalog, holding the fixture's certificates, CRLs and OCSP responses
+    /// as streams. lopdf writes it after the bytes, which stay as they were.
+    fn append_dss(bytes: &[u8], fixture: &EvidenceFixture) -> Result<Vec<u8>, OrganError> {
+        use lopdf::{Dictionary, Object, Stream};
+        fn streams(document: &mut lopdf::Document, items: &[ByteBuf]) -> Object {
+            Object::Array(
+                items
+                    .iter()
+                    .map(|item| {
+                        Object::Reference(
+                            document.add_object(Stream::new(Dictionary::new(), item.to_vec())),
+                        )
+                    })
+                    .collect(),
+            )
+        }
+        let previous = lopdf::Document::load_mem(bytes).map_err(bad)?;
+        let root = previous
+            .trailer
+            .get(b"Root")
+            .and_then(Object::as_reference)
+            .map_err(bad)?;
+        let mut update = lopdf::IncrementalDocument::create_from(bytes.to_vec(), previous);
+        update.opt_clone_object_to_new_document(root).map_err(bad)?;
+        let document = &mut update.new_document;
+        let mut dss = Dictionary::new();
+        dss.set("Type", Object::Name(b"DSS".to_vec()));
+        for (key, items) in [
+            ("Certs", &fixture.dss_certificates),
+            ("CRLs", &fixture.dss_crls),
+            ("OCSPs", &fixture.dss_ocsps),
+        ] {
+            if !items.is_empty() {
+                let array = streams(document, items);
+                dss.set(key, array);
+            }
+        }
+        let dss = document.add_object(dss);
+        document
+            .get_object_mut(root)
+            .and_then(Object::as_dict_mut)
+            .map_err(bad)?
+            .set("DSS", Object::Reference(dss));
+        let mut out = Vec::with_capacity(bytes.len());
+        update.save_to(&mut out).map_err(bad)?;
+        Ok(out)
+    }
+
+    /// The capacity of the hole an appended document timestamp mode
+    /// writes, in bytes.
+    const APPENDED_HOLE_CAPACITY: usize = 8192;
+
+    /// `doc-timestamp-unfielded`: one more revision, whose only new object
+    /// is a dictionary holding a hole no signature field names; a genuine
+    /// token `key` mints at `now` over every byte but that hole fills it.
+    fn append_unfielded_timestamp(
+        bytes: &[u8],
+        key: &p256::ecdsa::SigningKey,
+        certificate: &[u8],
+        now: u64,
+    ) -> Result<Vec<u8>, OrganError> {
+        use lopdf::{Dictionary, Object, StringFormat};
+        let previous = lopdf::Document::load_mem(bytes).map_err(bad)?;
+        let mut update = lopdf::IncrementalDocument::create_from(bytes.to_vec(), previous);
+        let mut holder = Dictionary::new();
+        holder.set(
+            "Unfielded",
+            Object::String(vec![0; APPENDED_HOLE_CAPACITY], StringFormat::Hexadecimal),
+        );
+        update.new_document.add_object(holder);
+        let mut out = Vec::with_capacity(bytes.len() + 2 * APPENDED_HOLE_CAPACITY + 1024);
+        update.save_to(&mut out).map_err(bad)?;
+        let (open, close) =
+            last_hole(&out, b"/Unfielded").ok_or_else(|| bad("no unfielded hole"))?;
+        fill_hole(&mut out, open, close, key, certificate, now)?;
+        Ok(out)
+    }
+
+    /// `doc-timestamp-text-field`: one more revision, in which the
+    /// AcroForm's `/Fields` gains a signature field whose one kid has its
+    /// own `/FT`, a reference to the name `/Tx`, and for its `/V` a
+    /// `/DocTimeStamp` dictionary (`/SubFilter /ETSI.RFC3161`) whose
+    /// ByteRange is every byte but its `/Contents`; a genuine token `key`
+    /// mints at `now` over them fills that hole. The kid is a text field,
+    /// so no signature field names the timestamp.
+    fn append_text_field_timestamp(
+        bytes: &[u8],
+        key: &p256::ecdsa::SigningKey,
+        certificate: &[u8],
+        now: u64,
+    ) -> Result<Vec<u8>, OrganError> {
+        use lopdf::{Dictionary, Object, StringFormat};
+        /// Ten digits, as wide as any offset the ByteRange is rewritten to.
+        const PLACEHOLDER: i64 = 9_999_999_999;
+        let previous = lopdf::Document::load_mem(bytes).map_err(bad)?;
+        let form = previous
+            .trailer
+            .get(b"Root")
+            .and_then(Object::as_reference)
+            .and_then(|root| previous.get_object(root))
+            .and_then(Object::as_dict)
+            .and_then(|catalog| catalog.get(b"AcroForm"))
+            .and_then(Object::as_reference)
+            .map_err(bad)?;
+        let mut update = lopdf::IncrementalDocument::create_from(bytes.to_vec(), previous);
+        update.opt_clone_object_to_new_document(form).map_err(bad)?;
+        let document = &mut update.new_document;
+        let mut stamp = Dictionary::new();
+        stamp.set("Type", Object::Name(b"DocTimeStamp".to_vec()));
+        stamp.set("Filter", Object::Name(b"Adobe.PPKLite".to_vec()));
+        stamp.set("SubFilter", Object::Name(b"ETSI.RFC3161".to_vec()));
+        stamp.set(
+            "ByteRange",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(PLACEHOLDER),
+                Object::Integer(PLACEHOLDER),
+                Object::Integer(PLACEHOLDER),
+            ]),
+        );
+        stamp.set(
+            "Contents",
+            Object::String(vec![0; APPENDED_HOLE_CAPACITY], StringFormat::Hexadecimal),
+        );
+        let stamp = document.add_object(stamp);
+        let text = document.add_object(Object::Name(b"Tx".to_vec()));
+        let parent = document.new_object_id();
+        let mut kid = Dictionary::new();
+        kid.set("FT", Object::Reference(text));
+        kid.set("T", Object::string_literal("stamp"));
+        kid.set("V", Object::Reference(stamp));
+        kid.set("Parent", Object::Reference(parent));
+        let kid = document.add_object(kid);
+        let mut field = Dictionary::new();
+        field.set("FT", Object::Name(b"Sig".to_vec()));
+        field.set("T", Object::string_literal("archive"));
+        field.set("Kids", Object::Array(vec![Object::Reference(kid)]));
+        document.set_object(parent, field);
+        document
+            .get_object_mut(form)
+            .and_then(Object::as_dict_mut)
+            .and_then(|form| form.get_mut(b"Fields"))
+            .and_then(Object::as_array_mut)
+            .map_err(bad)?
+            .push(Object::Reference(parent));
+        let mut out = Vec::with_capacity(bytes.len() + 2 * APPENDED_HOLE_CAPACITY + 2048);
+        update.save_to(&mut out).map_err(bad)?;
+        let (open, close) =
+            last_hole(&out, b"/Contents").ok_or_else(|| bad("no document timestamp hole"))?;
+        // The ByteRange, rewritten in place over the placeholder's width.
+        let key_at = out
+            .windows(b"/ByteRange".len())
+            .rposition(|window| window == b"/ByteRange")
+            .ok_or_else(|| bad("no ByteRange"))?;
+        let left = key_at
+            + out[key_at..]
+                .iter()
+                .position(|byte| *byte == b'[')
+                .ok_or_else(|| bad("no ByteRange array"))?;
+        let right = left
+            + out[left..]
+                .iter()
+                .position(|byte| *byte == b']')
+                .ok_or_else(|| bad("no ByteRange end"))?;
+        let width = right - left - 1;
+        let values = format!("0 {open} {close} {}", out.len() - close);
+        if values.len() > width {
+            return Err(bad("the ByteRange does not fit its placeholder"));
+        }
+        out[left + 1..right].copy_from_slice(format!("{values:width$}").as_bytes());
+        fill_hole(&mut out, open, close, key, certificate, now)?;
+        Ok(out)
+    }
+
+    /// Fills the hole `[open, close)` of `out` (its `<` and one past its
+    /// `>`) with a genuine token `key` mints at `now` over every other byte.
+    fn fill_hole(
+        out: &mut [u8],
+        open: usize,
+        close: usize,
+        key: &p256::ecdsa::SigningKey,
+        certificate: &[u8],
+        now: u64,
+    ) -> Result<(), OrganError> {
+        let imprint: [u8; 32] = Sha256::new()
+            .chain_update(&out[..open])
+            .chain_update(&out[close..])
+            .finalize()
+            .into();
+        let token = mint_token(key, certificate, &imprint, None, now).map_err(bad)?;
+        let hex: Vec<u8> = token
+            .iter()
+            .flat_map(|byte| format!("{byte:02X}").into_bytes())
+            .collect();
+        if open + 1 + hex.len() >= close {
+            return Err(bad("the token does not fit the hole"));
+        }
+        out[open + 1..open + 1 + hex.len()].copy_from_slice(&hex);
+        Ok(())
+    }
+
+    /// The hole after the last `key` in `bytes`: the offsets of its `<` and
+    /// one past its `>`. The appended modes write theirs last.
+    fn last_hole(bytes: &[u8], key: &[u8]) -> Option<(usize, usize)> {
+        let at = bytes.windows(key.len()).rposition(|window| window == key)? + key.len();
+        let open = at + bytes.get(at..)?.iter().position(|byte| *byte == b'<')?;
+        let close = open + bytes.get(open..)?.iter().position(|byte| *byte == b'>')? + 1;
+        Some((open, close))
+    }
+
+    /// `doc-timestamp-forged`: the last revision's hole (the document
+    /// timestamp's) holds the signature's own CMS, a SignedData of id-data
+    /// that is no TSTInfo, zero padded.
+    fn forge_document_timestamp(
+        bytes: &mut [u8],
+        base: usize,
+        revisions: &[PreparedRevision<'_>],
+    ) -> Result<(), OrganError> {
+        let at = bytes
+            .windows(b"/ByteRange".len())
+            .rposition(|window| window == b"/ByteRange")
+            .ok_or_else(|| bad("no document timestamp"))?;
+        let mut values = bytes[at + b"/ByteRange".len()..]
+            .split(|byte| matches!(byte, b' ' | b'[' | b']' | b'\n' | b'\r'))
+            .filter(|token| !token.is_empty())
+            .map(|token| {
+                std::str::from_utf8(token)
+                    .ok()
+                    .and_then(|token| token.parse::<usize>().ok())
+            });
+        let (Some(Some(_)), Some(Some(open)), Some(Some(close))) =
+            (values.next(), values.next(), values.next())
+        else {
+            return Err(bad("the document timestamp's ByteRange"));
+        };
+        let signature_cms = bound_cms_hex(bytes, base, revisions)?;
+        let hole = bytes
+            .get_mut(open + 1..close - 1)
+            .ok_or_else(|| bad("the document timestamp's hole"))?;
+        hole.fill(b'0');
+        hole.get_mut(..signature_cms.len())
+            .ok_or_else(|| bad("the signature's CMS does not fit"))?
+            .copy_from_slice(&signature_cms);
+        Ok(())
+    }
+
+    /// Hex of the CMS in the hole of the engine's revision the output
+    /// carries, without its zero padding.
+    fn bound_cms_hex(
+        bytes: &[u8],
+        base: usize,
+        revisions: &[PreparedRevision<'_>],
+    ) -> Result<Vec<u8>, OrganError> {
+        let revision = revisions
+            .iter()
+            .find(|revision| {
+                let end = base + revision.suffix.len();
+                let [_, open, close, _] = revision.byte_range.map(|at| usize::try_from(at).ok());
+                let (Some(open), Some(close)) = (open, close) else {
+                    return false;
+                };
+                open >= base
+                    && open < close
+                    && close <= end
+                    && end <= bytes.len()
+                    && bytes[base..=open] == revision.suffix[..=open - base]
+                    && bytes[close - 1..end] == revision.suffix[close - 1 - base..]
+            })
+            .ok_or_else(|| bad("no revision is in the output"))?;
+        let [_, open, close, _] = revision.byte_range;
+        let open = usize::try_from(open).map_err(bad)? + 1;
+        let close = usize::try_from(close).map_err(bad)? - 1;
+        let hex = bytes.get(open..close).ok_or_else(|| bad("hole"))?;
+        let der = hex
+            .chunks(2)
+            .map(|pair| {
+                std::str::from_utf8(pair)
+                    .ok()
+                    .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+                    .ok_or_else(|| bad("hex"))
+            })
+            .collect::<Result<Vec<u8>, OrganError>>()?;
+        let mut reader = der::SliceReader::new(&der).map_err(bad)?;
+        cms::content_info::ContentInfo::decode(&mut reader).map_err(bad)?;
+        let used = usize::try_from(der::Reader::position(&reader)).map_err(bad)?;
+        Ok(hex[..used * 2].to_vec())
+    }
+
+    /// A real verification of `pdf`, its verdict forged: passed, self
+    /// verified, `claim` achieved, every signature passed, and every
+    /// revision after the signed one validation data or, when a document
+    /// timestamp's ByteRange ends it, that timestamp. The classification is
+    /// otherwise the real one, so the host's binding checks see the true
+    /// chain.
+    fn forged_verification(
+        call: &CallContext<'_>,
+        pdf: &[u8],
+        claim: PadesProfile,
+        mode: Mode,
+    ) -> Result<Answer, OrganError> {
+        use oneiron_organ_protocol::seal::{
+            SealCheckVerdict, SealModificationLevel, SealRevisionKind, SealSignatureKind,
+        };
+        let mut real = SealOrgan.call(call)?;
+        // The real reply carries its `observed` counts beside the outcome, a
+        // second map entry (organ.rs `report`). The host takes that entry out
+        // before it reads the outcome; so does this, and puts it back after.
+        let Ok(entries) = std::mem::take(&mut real.report).into_map() else {
+            return Err(bad("the real verification's report is not a map"));
+        };
+        let (observed, outcome): (Vec<_>, Vec<_>) = entries
+            .into_iter()
+            .partition(|(key, _)| key.as_str() == Some("observed"));
+        if outcome
+            .iter()
+            .any(|(key, _)| key.as_str() == Some("failed"))
+        {
+            // The real verification refused the PDF outright: no verdict to
+            // forge. A fixture fault, under its own code, so a test's output
+            // tells it from a reply this could not read.
+            return Err(OrganError::new(
+                ErrorCode::Unsupported,
+                "the real verification failed",
+            ));
+        }
+        let RealVerifyReport::Verified(mut verdict) = from_value(&Value::Map(outcome))?;
+        verdict.verdict = "passed".to_owned();
+        verdict.reasons.clear();
+        verdict.self_verify_ok = true;
+        verdict.achieved = Some(claim);
+        let classification = &mut verdict.classification;
+        classification.artifact_sha256 = ByteBuf::from(Sha256::digest(pdf).to_vec());
+        classification.classified_through = Some(pdf.len() as u64);
+        if !matches!(
+            classification.modifications,
+            SealModifications::Clean(
+                SealModificationLevel::None | SealModificationLevel::LtaUpdates
+            )
+        ) {
+            classification.modifications =
+                SealModifications::Clean(SealModificationLevel::LtaUpdates);
+        }
+        for signature in &mut classification.signatures {
+            signature.integrity = SealCheckVerdict::Passed;
+            signature.verdict = SealCheckVerdict::Passed;
+        }
+        let appended = match mode {
+            Mode::DocTimestampUnfielded => Some(b"/Unfielded".as_slice()),
+            Mode::DocTimestampTextField => Some(b"/Contents".as_slice()),
+            _ => None,
+        };
+        if let Some(key) = appended {
+            // The appended hole, named a document timestamp covering the
+            // whole file, signing the last revision.
+            let (open, close) = last_hole(pdf, key).ok_or_else(|| bad("no appended hole"))?;
+            let len = pdf.len() as u64;
+            let (open, close) = (open as u64, close as u64);
+            let mut named = classification
+                .signatures
+                .first()
+                .cloned()
+                .ok_or_else(|| bad("no signature to name"))?;
+            named.id = "appended-document-timestamp".to_owned();
+            named.kind = SealSignatureKind::DocumentTimestamp;
+            named.byte_range.values = [0, open, close, len - close];
+            named.byte_range.well_formed = true;
+            named.byte_range.covers_to = Some(len);
+            named.byte_range.file_len = len;
+            classification.signatures.push(named);
+            let last = classification
+                .revisions
+                .last_mut()
+                .ok_or_else(|| bad("no revision"))?;
+            last.signed_by = Some("appended-document-timestamp".to_owned());
+        }
+        let signed_by = |kind: SealSignatureKind| -> Vec<String> {
+            classification
+                .signatures
+                .iter()
+                .filter(|signature| signature.kind == kind)
+                .map(|signature| signature.id.clone())
+                .collect()
+        };
+        let signatures = signed_by(SealSignatureKind::Signature);
+        let timestamps = signed_by(SealSignatureKind::DocumentTimestamp);
+        let bound = classification.revisions.iter().position(|revision| {
+            revision
+                .signed_by
+                .as_ref()
+                .is_some_and(|id| signatures.contains(id))
+        });
+        if let Some(bound) = bound {
+            for revision in &mut classification.revisions[bound + 1..] {
+                if revision
+                    .signed_by
+                    .as_ref()
+                    .is_some_and(|id| timestamps.contains(id))
+                {
+                    revision.kind = SealRevisionKind::DocumentTimestamp;
+                } else {
+                    revision.kind = SealRevisionKind::Dss;
+                    revision.signed_by = None;
+                }
+            }
+        }
+        let mut report = to_value(&RealVerifyReport::Verified(verdict))?;
+        if let Value::Map(entries) = &mut report {
+            entries.extend(observed);
+        }
+        real.report = report;
+        Ok(real)
     }
 
     /// What `forge-signs` needs of its call.
@@ -484,7 +1353,7 @@ mod rogue {
                 prehash: Mutex::new(None),
             });
             let backend: Arc<dyn SealBackend> = Arc::<Capture>::clone(&capture);
-            let engine = native(self.anchors, self.now_ms, backend)?;
+            let engine = native(self.anchors, self.now_ms, backend, None)?;
             let request = SealRequest {
                 operation_id: self.operation.to_owned(),
                 target_profile: PadesProfile::BaselineB,
@@ -619,7 +1488,19 @@ mod rogue {
                     certificates,
                 )?));
             }
-            Mode::ForgeSigns | Mode::Unsigned | Mode::AlterPrefix | Mode::AppendUpdate => {}
+            Mode::ForgeSigns
+            | Mode::Unsigned
+            | Mode::AlterPrefix
+            | Mode::AppendUpdate
+            | Mode::DssHonest
+            | Mode::DssUntrustedCrl
+            | Mode::DssUntrustedOcsp
+            | Mode::DssNoRevocation
+            | Mode::DssAppended
+            | Mode::DocTimestampForged
+            | Mode::DocTimestampUnfielded
+            | Mode::DocTimestampTextField
+            | Mode::TimestampForged => {}
         }
         Ok(())
     }
@@ -670,16 +1551,23 @@ mod rogue {
     /// Well-formed signed attributes over `digest`, `[0] IMPLICIT`: content
     /// type id-data, messageDigest, signingCertificateV2 for `cert`.
     fn signed_attributes(cert: &[u8], digest: &[u8; 32]) -> Result<Vec<u8>, OrganError> {
-        let parsed = x509_cert::Certificate::from_der(cert).map_err(bad)?;
-        let issuer = parsed.tbs_certificate.issuer.to_der().map_err(bad)?;
-        let serial = parsed.tbs_certificate.serial_number.to_der().map_err(bad)?;
-        let oid = |dotted: &str| -> Result<Vec<u8>, OrganError> {
-            Ok(tlv(
+        let mut attributes = attribute_set(ID_DATA, cert, digest).map_err(bad)?;
+        attributes[0] = 0xA0;
+        Ok(attributes)
+    }
+
+    /// The three signed attributes over `digest`, sorted, under the
+    /// universal `SET OF` tag (the bytes a signer signs): content type
+    /// `content_type`, messageDigest, signingCertificateV2 for `cert`.
+    fn attribute_set(content_type: &str, cert: &[u8], digest: &[u8; 32]) -> der::Result<Vec<u8>> {
+        let parsed = x509_cert::Certificate::from_der(cert)?;
+        let issuer = parsed.tbs_certificate.issuer.to_der()?;
+        let serial = parsed.tbs_certificate.serial_number.to_der()?;
+        let oid = |dotted: &str| {
+            tlv(
                 0x06,
-                const_oid::ObjectIdentifier::new(dotted)
-                    .map_err(bad)?
-                    .as_bytes(),
-            ))
+                const_oid::ObjectIdentifier::new_unwrap(dotted).as_bytes(),
+            )
         };
         let attribute = |id: Vec<u8>, value: Vec<u8>| tlv(0x30, &[id, tlv(0x31, &value)].concat());
         let issuer_serial = tlv(0x30, &[tlv(0x30, &tlv(0xA4, &issuer)), serial].concat());
@@ -688,15 +1576,15 @@ mod rogue {
             &[tlv(0x04, &Sha256::digest(cert)), issuer_serial].concat(),
         );
         let mut attributes = [
-            attribute(oid("1.2.840.113549.1.9.3")?, oid("1.2.840.113549.1.7.1")?),
-            attribute(oid("1.2.840.113549.1.9.4")?, tlv(0x04, digest)),
+            attribute(oid("1.2.840.113549.1.9.3"), oid(content_type)),
+            attribute(oid("1.2.840.113549.1.9.4"), tlv(0x04, digest)),
             attribute(
-                oid("1.2.840.113549.1.9.16.2.47")?,
+                oid("1.2.840.113549.1.9.16.2.47"),
                 tlv(0x30, &tlv(0x30, &ess)),
             ),
         ];
         attributes.sort();
-        Ok(tlv(0xA0, &attributes.concat()))
+        Ok(tlv(0x31, &attributes.concat()))
     }
 
     fn tlv(tag: u8, content: &[u8]) -> Vec<u8> {
