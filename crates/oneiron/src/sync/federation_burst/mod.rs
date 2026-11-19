@@ -33,7 +33,8 @@ pub use schedule::{
 mod selector;
 
 pub use device::{
-    DeviceBurstAdmission, DeviceBurstWork, DevicePeer, admit_device_window_update,
+    DeviceBurstAdmission, DeviceBurstWork, DevicePeer, PromotedRowAdmission,
+    admit_device_residence_update, admit_device_window_update, admit_promoted_device_window_update,
     ready_device_work, record_device_refusal,
 };
 pub use selector::{PreparedSelectorFetch, prepare_selector_fetch, replay_selector_fetch};
@@ -288,9 +289,12 @@ pub enum FederationBurstDecision {
 /// it runs now, defers, or is isolated for review. Isolation keeps
 /// `admitted_update`, every part, as the review's evidence; the work, its
 /// debit and its replay stay the original request's. `carried` names the
-/// rows whose bytes the work carries, which an erase of any scrubs. No work
-/// comes back only for an own device's batch that already settled (landed,
-/// or rejected at review): its receipt is the answer.
+/// rows whose bytes the work carries, which an erase of any scrubs.
+/// `admitted_authority`, when given, is the peer's authority digest as the
+/// caller's own row admission read it, in that admission's snapshot: the work
+/// is held under it, not under the authority this writer reads (#9226 review
+/// round 2). No work comes back only for an own device's batch that already
+/// settled (landed, or rejected at review): its receipt is the answer.
 pub(in crate::sync) fn admit_work(
     vault: &Vault,
     peer: BurstPeer<'_>,
@@ -298,7 +302,7 @@ pub(in crate::sync) fn admit_work(
     kind: WorkKind,
     payload: &[u8],
     (writes, carried): (u64, &[EntityId]),
-    admitted_update: Option<AdmittedParts<'_>>,
+    admitted: (Option<AdmittedParts<'_>>, Option<[u8; 32]>),
 ) -> Result<(FederationBurstDecision, Option<DeferredWork>)> {
     admit_work_at(
         vault,
@@ -307,7 +311,7 @@ pub(in crate::sync) fn admit_work(
         kind,
         payload,
         (writes, vault.now_recorded_at(), carried),
-        admitted_update,
+        admitted,
     )
 }
 
@@ -318,14 +322,23 @@ fn admit_work_at(
     kind: WorkKind,
     payload: &[u8],
     sample: (u64, u64, &[EntityId]),
-    admitted_update: Option<AdmittedParts<'_>>,
+    (admitted_update, admitted_authority): (Option<AdmittedParts<'_>>, Option<[u8; 32]>),
 ) -> Result<(FederationBurstDecision, Option<DeferredWork>)> {
     let (writes, now, carried) = sample;
     peer.revalidate(vault)?;
     let mut work = DeferredWork::new(peer, key, kind, payload)?;
     work.carried = carried.to_vec();
     vault.with_write_txn_grouped(|txn| {
-        work.authority_digest = peer.authority_digest_in_txn(vault, txn)?;
+        // An update its caller admitted row by row is held under the
+        // authority that admission read. A grant narrowed, expired or
+        // revoked, or a world kept off the device, between that read and
+        // this writer leaves the two apart: the persist writer refuses the
+        // batch, and the drain ends it `StaleAuthority` (#9226 review
+        // round 2).
+        work.authority_digest = match admitted_authority {
+            Some(digest) => digest,
+            None => peer.authority_digest_in_txn(vault, txn)?,
+        };
         // Duplicate/reconnected requests replay the exact durable item. They
         // neither add a debit nor go through the burst policy a second time.
         // One held under an older grant or pact scope, or past its wait, ends
@@ -347,7 +360,11 @@ fn admit_work_at(
             // device, as `find_update` holds them: a device that sends the
             // held bytes again before then is answered as held again, and
             // its home's drain lands them (L7-41).
-            let waits = saved.isolated_update.is_some() || saved.kind == WorkKind::DeviceUpdate;
+            let waits = saved.isolated_update.is_some()
+                || matches!(
+                    saved.kind,
+                    WorkKind::DeviceUpdate | WorkKind::DeviceResidenceUpdate
+                );
             let decision = if waits && !observations::replay_ready_in_txn(vault, txn, peer, now)? {
                 if saved.isolated_update.is_some() {
                     FederationBurstDecision::IsolateAndPropose {

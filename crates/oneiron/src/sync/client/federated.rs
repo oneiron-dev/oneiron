@@ -272,7 +272,7 @@ impl SyncClient {
             kind,
             update,
             (writes, carried.as_slice()),
-            Some(parts.as_slice()),
+            (Some(parts.as_slice()), None),
         )
         .map_err(map_federated_admission_err)?;
         if let FederationBurstDecision::Defer { request_id, inputs }
