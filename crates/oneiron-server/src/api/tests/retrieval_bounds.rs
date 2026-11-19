@@ -187,10 +187,11 @@ async fn an_over_large_limit_is_served_at_the_ceiling_through_mcp() {
 /// `[limits].retrieval_query_bytes` row is refused at the typed-refusal POST
 /// query doors with the typed 413 naming the field, the bound and the bytes
 /// received. The context board asks and runs the query whole (Rule 5,
-/// FIX 6923), and semantic search asks at its own separate
-/// `[limits].semantic_query_bytes` row, so both answer 200 here. On main only
-/// semantic search had a check (a fixed 8 KiB one) and the rest ran the
-/// query.
+/// FIX 6923) and answers 200. Semantic search asks at its own separate
+/// `[limits].semantic_query_bytes` row, which this query does not cross; this
+/// fixture serves no embedder, so it then answers its 503
+/// EMBEDDER_UNAVAILABLE, never the 413. On main only semantic search had a
+/// check (a fixed 8 KiB one) and the rest ran the query.
 #[tokio::test]
 async fn a_query_past_the_shipped_row_is_refused_typed_at_every_query_door() {
     let (_dir, server) = auth_test_server();
@@ -215,8 +216,13 @@ async fn a_query_past_the_shipped_row_is_refused_typed_at_every_query_door() {
             core_request_with_authz("POST", uri, owner_bearer(), Some(&body)),
         )
         .await;
-        if uri == "/v1/core/context-board" || uri == "/api/search/semantic" {
+        if uri == "/v1/core/context-board" {
             assert_eq!(status, StatusCode::OK, "{uri}: {reply}");
+        } else if uri == "/api/search/semantic" {
+            // Past the body read and the semantic row's ask, the handler
+            // finds no embedder serving (api/search.rs, embedder_descriptor).
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}: {reply}");
+            assert_eq!(reply["code"], "EMBEDDER_UNAVAILABLE", "{uri}: {reply}");
         } else {
             assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{uri}");
             let details = too_large(&reply);
