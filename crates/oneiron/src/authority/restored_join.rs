@@ -43,7 +43,7 @@
 //! Cost per entry: one pass over the enrolments the parents hold (none on a
 //! vault no restore marked), and, while one waits, one key-claim lookup and
 //! one carrier check on the signer. Each entry and each merge make one more
-//! pass over them, for the held answers of machines admitted there.
+//! pass over them, for the floored answers of machines admitted there.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -107,8 +107,8 @@ pub(super) fn listed(state: &FoldState) -> BTreeMap<AuthorityEntryHash, Restored
 
 /// Two branches' enrolments: a union by entry, where one that either branch
 /// joined is joined, by the entry that sorts first when both did. `merged`
-/// already holds both branches' machine chains; a machine admitted there
-/// takes the answers held for it ([`stand_held_restrictions`]).
+/// already holds both branches' machine chains; a machine admitted on
+/// either takes its floored answers ([`stand_held_restrictions`]).
 pub(super) fn merge(merged: &mut FoldState, right: &FoldState) {
     for (hash, enrolment) in &right.restored_enrolments {
         match merged.restored_enrolments.get_mut(hash) {
@@ -126,14 +126,13 @@ pub(super) fn merge(merged: &mut FoldState, right: &FoldState) {
     stand_held_restrictions(merged);
 }
 
-/// A carried answer the fold holds because it landed restriction only: the
-/// owner's answer, carried while its machine waited, whose head landed past
-/// this install's floor ([`super::machine_standing::Revision::past_floor`]).
-/// An act-free revision (the root's enrolment, an anchor's mark) is not one:
-/// it waits for an entry that witnesses it, on every install alike.
-fn held_restriction(enrolment: &RestoredEnrolment) -> bool {
-    enrolment.joined_by.is_none()
-        && enrolment.chain.head.profile.act.is_some()
+/// A carried answer that landed restriction only: the owner's answer,
+/// carried while its machine waited, whose head landed past this install's
+/// floor ([`super::machine_standing::Revision::past_floor`]), held or since
+/// joined. An act-free revision (the root's enrolment, an anchor's mark) is
+/// not one: it waits for an entry that witnesses it, on every install alike.
+fn floored_answer(enrolment: &RestoredEnrolment) -> bool {
+    enrolment.chain.head.profile.act.is_some()
         && enrolment
             .chain
             .revisions
@@ -152,27 +151,59 @@ fn admitted(state: &FoldState, machine: EntityId) -> bool {
         .is_some_and(|chains| chains.values().any(|chain| !chain.head.removed))
 }
 
-/// The held answers of every machine admitted in `state` (row
+/// Whether `machine` was admitted on some branch `state` holds: it is
+/// [`admitted`] there, or an entry joined an enrolment of it, which a
+/// removal on any branch since leaves joined (REVIEW-9632 round 2 P1 :152).
+fn ever_admitted(state: &FoldState, machine: EntityId) -> bool {
+    admitted(state, machine)
+        || state
+            .restored_enrolments
+            .values()
+            .any(|enrolment| enrolment.machine == machine && enrolment.joined_by.is_some())
+}
+
+/// Whether `enrolment`'s revision folded over `answer`: its own chain holds
+/// it, or the say-so its entry recorded saw it on another chain, as an
+/// anchor's mark over a roster answer does (REVIEW-9632 round 2 P1 :187).
+fn folded_over(enrolment: &RestoredEnrolment, answer: &AuthorityEntryHash) -> bool {
+    enrolment.chain.revisions.contains_key(answer)
+        || enrolment
+            .chain
+            .head
+            .say_so
+            .as_ref()
+            .is_some_and(|say_so| say_so.saw.contains(answer))
+}
+
+/// The floored answers of every machine admitted in `state` (row
 /// RESTORED-HELD-RESTRICTION-SIBLING-JOIN). A machine admitted by another way
 /// than the answer's own entry (a sibling branch's join of an older
 /// enrolment, met on merge, the owner's join of one enrolment, a pairing)
-/// takes each [`held_restriction`] of it as it would have taken the answer
-/// had it stood when the answer folded: the answer's chain merges into the
-/// machine's chains, where its head holds its chain on this install
-/// ([`super::machine_claims::floor_hold`]), and its key claims stand, as a
-/// joined machine's floored answer records them, so a key it shares poisons
-/// both machines (REVIEW-9632 P1 :181). So does every enrolment held for the
-/// machine whose chain holds such an answer: a revision folded over it,
-/// held only because the answer was (REVIEW-9632 P1 :136). The order of the
-/// join and the answer then changes nothing; before, the machine stood at
-/// the older, wider revision. Each still waits, and no other enrolment joins
-/// by it: an entry that witnesses one later joins it as before. One already
-/// standing (its head in the machine's chain) is not merged again.
+/// takes each [`floored_answer`] of it as it would have taken the answer had
+/// it stood when the answer folded, and so does every enrolment held for the
+/// machine that folded over such an answer ([`folded_over`]): a revision held
+/// only because the answer was (REVIEW-9632 P1 :136), also when the owner's
+/// join named the answer itself (round 2 P1 :135). Each such enrolment that
+/// still waits stands:
+///
+/// - its chain merges into the machine's chains, where a floored head holds
+///   its chain on this install ([`super::machine_claims::floor_hold`]),
+///   unless that chain already holds its head;
+/// - its key claims stand, as a joined machine's floored answer records
+///   them, so a key it shares poisons both machines (REVIEW-9632 P1 :181),
+///   also when a chain joined over it already holds its revision (round 2
+///   P1 :193).
+///
+/// A machine admitted on another branch and removed since takes the claims
+/// alone: its removed chain is never revived (round 2 P1 :152). The order of
+/// the join and the answer then changes nothing; before, the machine stood
+/// at the older, wider revision. Each enrolment still waits, and no other
+/// joins by it: an entry that witnesses one later joins it as before.
 fn stand_held_restrictions(state: &mut FoldState) {
     let answers: Vec<(EntityId, AuthorityEntryHash)> = state
         .restored_enrolments
         .values()
-        .filter(|enrolment| held_restriction(enrolment) && admitted(state, enrolment.machine))
+        .filter(|enrolment| floored_answer(enrolment) && ever_admitted(state, enrolment.machine))
         .map(|enrolment| (enrolment.machine, enrolment.chain.head.entry))
         .collect();
     if answers.is_empty() {
@@ -184,28 +215,36 @@ fn stand_held_restrictions(state: &mut FoldState) {
         .filter(|enrolment| {
             enrolment.joined_by.is_none()
                 && answers.iter().any(|(machine, answer)| {
-                    enrolment.machine == *machine && enrolment.chain.revisions.contains_key(answer)
+                    enrolment.machine == *machine && folded_over(enrolment, answer)
                 })
-                && !state
-                    .machines
-                    .get(&enrolment.machine)
-                    .and_then(|chains| chains.get(&enrolment.admitter))
-                    .is_some_and(|chain| chain.revisions.contains_key(&enrolment.chain.head.entry))
         })
         .cloned()
         .collect();
     for enrolment in standing {
-        super::machine_profile::merge_machine_chain(
-            state,
-            enrolment.machine,
-            enrolment.admitter,
-            &enrolment.chain,
-        );
-        state
+        let chain_holds_it = state
+            .machines
+            .get(&enrolment.machine)
+            .and_then(|chains| chains.get(&enrolment.admitter))
+            .is_some_and(|chain| chain.revisions.contains_key(&enrolment.chain.head.entry));
+        if admitted(state, enrolment.machine) && !chain_holds_it {
+            super::machine_profile::merge_machine_chain(
+                state,
+                enrolment.machine,
+                enrolment.admitter,
+                &enrolment.chain,
+            );
+        }
+        let claimed = state
             .machine_keys
-            .entry(enrolment.machine_key)
-            .or_default()
-            .extend(enrolment.claims);
+            .get(&enrolment.machine_key)
+            .is_some_and(|named| enrolment.claims.iter().all(|claim| named.contains(claim)));
+        if !claimed {
+            state
+                .machine_keys
+                .entry(enrolment.machine_key)
+                .or_default()
+                .extend(enrolment.claims);
+        }
     }
 }
 
@@ -516,10 +555,10 @@ pub(super) fn apply_owner_join(
 
 /// Joins the `witnessed` enrolments in `state`, the state after the entry
 /// `by`: each one's chain and key claims stand from there on, merged as any
-/// branch's chain merges. Every machine admitted then takes the answers
-/// held for it that `by` did not join ([`stand_held_restrictions`]): the
-/// owner's join names one enrolment, and an entry that joins nothing can
-/// still admit its machine.
+/// branch's chain merges. Every machine admitted then takes its floored
+/// answers and the revisions held over them that `by` did not join
+/// ([`stand_held_restrictions`]): the owner's join names one enrolment, and
+/// an entry that joins nothing can still admit its machine.
 pub(super) fn join(
     state: &mut FoldState,
     witnessed: &[AuthorityEntryHash],
