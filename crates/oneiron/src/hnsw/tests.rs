@@ -554,6 +554,51 @@ fn a_lone_vector_stays_reachable_after_many_identical_fills_at_default_width() -
     Ok(())
 }
 
+#[test]
+fn a_sole_link_swap_never_cuts_the_only_path_from_the_entry_point() -> Result<()> {
+    // Review 9631 round 1: with m_max_0 = 2 the graph is D-B-C-A before F.
+    // F links C, then A. C's prune keeps [F, B] and A's only link is C.
+    // Swapping B out for A would cut B-D off from the triangle A-C-F, so the
+    // search from the entry point B would never reach C.
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), small_graph_config(4, 2, 8))?;
+    let b = id_from_u64(1);
+    let a = id_from_u64(2);
+    let c = id_from_u64(3);
+    let d = id_from_u64(4);
+    let f = id_from_u64(5);
+    let rows = [
+        (b, [2.0, -1.0, 0.0, 0.0]),
+        (a, [1.0, 1.0, 0.0, 0.0]),
+        (c, [1.0, 0.0, 0.0, 0.0]),
+        (d, [1.0, -2.0, 0.0, 0.0]),
+        (f, [3.0, 1.0, 0.0, 0.0]),
+    ];
+    for (id, _) in &rows {
+        vault.put_entity(id, 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
+    }
+    for (id, vector) in &rows {
+        vault.put_vector(id, vector)?;
+    }
+
+    let rtxn = vault.store.env.read_txn()?;
+    let hits = hnsw_search(
+        &vault.store,
+        &vault.config,
+        &rtxn,
+        &[1.0, 0.0, 0.0, 0.0],
+        5,
+        false,
+        None,
+    )?;
+    assert_eq!(hits.first().map(|hit| hit.id), Some(c));
+    let found: Vec<_> = hits.iter().map(|hit| hit.id).collect();
+    for (id, _) in &rows {
+        assert!(found.contains(id), "every vector stays reachable");
+    }
+    Ok(())
+}
+
 /// ONE-325 regression: orphan protection keeps a victim's last link
 /// (`victim -> from`) one-way, but the symmetric delete of `from` derives
 /// its backlinks from `from`'s OWN forward list — which never contains the
