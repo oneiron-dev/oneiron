@@ -425,3 +425,26 @@ fn run_before_ack_writer_hook(vault: &crate::Vault) {
         }
     });
 }
+
+#[cfg(test)]
+std::thread_local! {
+    static BETWEEN_ACK_READS: std::cell::RefCell<Option<BeforeAckWriterHook>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Runs `hook` once, on this thread, between an acknowledgement's two reads
+/// of a task (its settlement and its dismissal status): a test lands a
+/// same-second failure there.
+#[cfg(test)]
+pub(crate) fn set_between_ack_reads_hook(hook: impl FnOnce(&crate::Vault) + 'static) {
+    BETWEEN_ACK_READS.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[cfg(test)]
+fn run_between_ack_reads_hook(vault: &crate::Vault) {
+    BETWEEN_ACK_READS.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook(vault);
+        }
+    });
+}
