@@ -545,6 +545,7 @@ impl ScopedRead<'_> {
         let Some(row) = self.entity_record_in(txn, id)? else {
             return Ok(ReadAdmission::OpaqueAbsent);
         };
+        let raw = row.encode();
         // Inside a room turn a withheld row may be another room's or a peer's
         // private one; its count would say it exists, so it reads as absent,
         // and so does a row a room stretch staged that a member's own windows
@@ -557,9 +558,13 @@ impl ScopedRead<'_> {
         // any row outside the facets it is limited to, nor any row its
         // channel or records caveat does not reach. A room's row or turn the
         // room keeps from this reader is a missing row at every door (L9-52),
-        // and so is one whose room's say does not resolve here.
+        // and so is one whose room's say does not resolve here. A private
+        // thread's row counts only to a reader standing in that thread, and a
+        // guest's only inside its grant's current scope in this snapshot.
         if self.actor_key.room_turn.is_none()
             && self.credential_allows_row_in(txn, id)
+            && self.private_threads_readable_in(txn, id, &raw)?
+            && self.guest_bound_admits_in(txn, id, &raw)
             && !self.stretch_staged_in(txn, id, &row)?
             && !self.outside_asked_worlds_in(txn, id, &row)?
             && !self.outside_credential_worlds_in(txn, id, &row)?
