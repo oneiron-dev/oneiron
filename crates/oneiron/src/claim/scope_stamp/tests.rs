@@ -164,10 +164,14 @@ fn legacy_claim_scope_sweep_stamps_explicit_base_once() -> Result<()> {
         .contains(&k.as_str().expect("fixture"))
     });
     let legacy = encode(&Value::Map(entries))?;
+    // The stored row is the 33-byte header (type byte, occurred start/end,
+    // learned_at, row_version) plus the body: without the row_version word
+    // the sweep slices 8 bytes into the map and the body stops decoding.
     let mut raw = vec![ENTITY_TYPE_CLAIM];
     raw.extend_from_slice(&10u64.to_be_bytes());
     raw.extend_from_slice(&10u64.to_be_bytes());
     raw.extend_from_slice(&10u64.to_be_bytes());
+    raw.extend_from_slice(&0u64.to_be_bytes());
     raw.extend_from_slice(&legacy);
     vault.with_write_txn(|txn| {
         vault.store.entities.put(txn, id.as_bytes(), &raw)?;
@@ -220,10 +224,13 @@ fn duplicate_legacy_corpus_entries_refuse_both_orders_and_persist_nothing() -> R
             upgrade_pre_scope_body(&legacy),
             Err(Error::InvalidClaimBody(_))
         ));
+        // The full 33-byte header (with row_version), so the sweep reaches
+        // the duplicate corpus refusal, not a misaligned body.
         let mut raw = vec![ENTITY_TYPE_CLAIM];
         raw.extend_from_slice(&10u64.to_be_bytes());
         raw.extend_from_slice(&10u64.to_be_bytes());
         raw.extend_from_slice(&10u64.to_be_bytes());
+        raw.extend_from_slice(&0u64.to_be_bytes());
         raw.extend_from_slice(&legacy);
         vault.with_write_txn(|txn| {
             vault.store.entities.put(txn, id.as_bytes(), &raw)?;
