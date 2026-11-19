@@ -457,3 +457,37 @@ pub(crate) fn decided_rows_for_turn(vault: &Vault, turn: EntityId) -> Result<usi
     let txn = vault.store.env.read_txn()?;
     Ok(super::replica::turn_decided_rows_in_txn(vault, &txn, &turn)?.len())
 }
+
+/// The copy of an owed wake this machine took from a window, as an image of
+/// the vault holds it.
+#[cfg(feature = "sync")]
+#[derive(Debug)]
+pub struct ImportedWakeImage(super::types::TurnProgramWake);
+
+/// The owed wake TURN `turn` owes `registration`, read as an image of this
+/// vault taken now holds it. `None` when this machine owes no such wake.
+#[cfg(feature = "sync")]
+pub(crate) fn imported_wake_image(
+    vault: &Vault,
+    turn: EntityId,
+    registration: EntityId,
+) -> Result<Option<ImportedWakeImage>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(WAKE
+        .get(vault, &txn, &(turn, registration))?
+        .map(ImportedWakeImage))
+}
+
+/// Puts `image` back as a historical restore replays it: the owed row, its
+/// index row and its imported mark return as content, and each live row this
+/// machine kept for the wake (a release, a decision) stands as it is.
+#[cfg(feature = "sync")]
+pub(crate) fn restore_imported_wake_image(vault: &Vault, image: &ImportedWakeImage) -> Result<()> {
+    let wake = &image.0;
+    let (actor, key) = (wake.authority.actor(), wake.key());
+    vault.with_write_txn_grouped(|txn| {
+        WAKE.put(vault, txn, &key, wake)?;
+        super::index::index_wake_in_txn(vault, txn, actor, key)?;
+        super::retraction::mark_imported_in_txn(vault, txn, actor, key)
+    })
+}
