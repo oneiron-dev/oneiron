@@ -156,12 +156,13 @@ impl SessionBinding<'_> {
     ) -> Result<()> {
         let mut answered = receipt.clone();
         answered.bridge_calls.push(row);
-        self.session.overlay().mark_bookkeeping_row(
-            OverlayKeyspace::VaultMeta,
-            &replay_rows::key_bytes(&answered.run_id),
-        )?;
+        for key in replay_rows::row_keys(&answered) {
+            self.session
+                .overlay()
+                .mark_bookkeeping_row(OverlayKeyspace::VaultMeta, &key)?;
+        }
         let view = self.session.read_view()?;
-        replay_rows::put(&view, wtxn, &answered.run_id, &answered)
+        replay_rows::put(&view, wtxn, &answered.run_id, &answered).map(drop)
     }
 
     /// Settles the caller's view on the receipt `receipt` keeps for `call`:
@@ -202,7 +203,7 @@ impl SessionBinding<'_> {
                     ));
                 };
                 *first = row;
-                replay_rows::put(&store, wtxn, &receipt, &record)
+                replay_rows::put(&store, wtxn, &receipt, &record).map(drop)
             })
     }
 }

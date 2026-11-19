@@ -62,10 +62,15 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
     let Some(reason) = write_payload_hit(&row) else {
         return Ok(Done::Clean);
     };
-    let admitted = admit_side_row(vault, txn, decl, key, &row, |copy| match decl.accepts {
-        Some(accepts) => accepts(copy),
-        None => keeps_shape(decl, &row, copy),
-    })?;
+    // A code-run replay item is admitted through its run's head, as its write
+    // admits it (FIX CODE-RUN-REPLAY-SPLIT-LAYOUT).
+    let admitted = match crate::code_run::replay_rows::admit_lifted_item(vault, txn, key, &row) {
+        Some(admitted) => admitted?,
+        None => admit_side_row(vault, txn, decl, key, &row, |copy| match decl.accepts {
+            Some(accepts) => accepts(copy),
+            None => keeps_shape(decl, &row, copy),
+        })?,
+    };
     let Some(masked) = admitted else {
         return Ok(Done::Propose(LiftCause::Unplaceable, reason));
     };
