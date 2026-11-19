@@ -94,7 +94,7 @@ impl super::CoreContextPackRequest {
 }
 
 fn resolve_audience<'a>(
-    vault: &'a oneiron::Vault,
+    vault: &oneiron::Vault,
     auth: &CoreAuth,
     read: oneiron::claim::ScopedRead<'a>,
     room_id: Option<oneiron::EntityId>,
