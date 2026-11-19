@@ -629,6 +629,10 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
     }
     let dir = tempfile::tempdir()?;
     let vault = std::rc::Rc::new(Vault::open(dir.path(), crate::VaultConfig::default())?);
+    // This test covers cold-send approval, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     let actor = EntityId::now();
     let owner_id = vault
         .ensure_embedded_owner_actor()

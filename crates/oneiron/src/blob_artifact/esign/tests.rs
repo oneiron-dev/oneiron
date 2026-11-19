@@ -83,6 +83,10 @@ fn setup_with(
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), config)?;
     vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    // These tests cover e-sign behavior, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     let person = EntityId::now();
     vault.put_entity(
         &person,
@@ -2149,6 +2153,10 @@ fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_g
     }
     drop(vault);
     let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    // This reopen restores the seed marker; the built-in pack gate is not under test.
+    reopened
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     for entry in &expected {
         assert!(reopened.receipts(receipt_query.clone())?.contains(entry));
         let scan = reopened.scan_receipts(receipt_query.clone())?;

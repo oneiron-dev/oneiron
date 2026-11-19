@@ -20,6 +20,10 @@ pub(super) fn temp_vault() -> (tempfile::TempDir, crate::Vault) {
     let vault =
         crate::Vault::open(tmp.path(), crate::config::VaultConfig::default()).expect("open vault");
     vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    // These tests cover policy decisions, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     clear_policy_manifests_for_test(&vault);
     (tmp, vault)
 }
