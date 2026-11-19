@@ -6,6 +6,7 @@ mod facet_selection;
 mod gate_window;
 mod linkedin_connect;
 mod linkedin_send;
+mod owner_declined_resend_ack;
 mod pipeline_contract;
 mod quiet_window;
 mod retry_audit;
