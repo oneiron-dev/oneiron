@@ -812,10 +812,11 @@ pub(super) fn land(
     // is admitted there: a value ruled in the fork lands kept, and a key
     // still open is answered on the NOTE
     // (NOTE-PROPOSAL-FORK-RULING-KEEPS-HANDLE). A reject lands no text. A
-    // merge the write gate holds as Proposed keeps the move with the fork
-    // still pending, so a later reject leaves its keys on the NOTE (FIX
+    // switch has no held return, so its move goes first; a merge moves them
+    // in its admission once the write gate lands the text, and one the gate
+    // holds as Proposed moves none (REVIEW-9471 F2; FIX
     // [NOTE-FORK-PROPOSED-MERGE-KEYS-ON-NOTE]).
-    if verdict != NoteVerdict::Reject {
+    if verdict == NoteVerdict::Switch {
         crate::secret_custody::move_side_row_custody_in_txn(
             &vault.store,
             txn,
@@ -848,7 +849,7 @@ pub(super) fn land(
         };
         let receipt = vault
             .memory(actor.entity_ref(), actor.actor_class())
-            .apply_note_operation_in_txn(txn, fork.note, &operation, None)
+            .apply_fork_merge_text_in_txn(txn, fork.note, fork.fork, &operation)
             .map_err(|_| invalid("canonical NOTE proposal admission failed"))?;
         if matches!(receipt.outcome, super::NoteScalarEditOutcome::Proposed(_)) {
             return Ok(None);
@@ -869,6 +870,9 @@ pub(super) fn land(
             .ok_or(invalid("NOTE head sequence exhausted"))?;
         super::documents::set_head(&vault.store, txn, fork.note, fork.fork, seq)?;
         let doc = super::document::NoteDocument::from_loro(fork.note, proposed.doc)?;
+        super::found_key_restore::restore_kept_handles_in_candidate_in_txn(
+            vault, txn, &doc, fork, actor,
+        )?;
         super::document_store::persist_authoritative(vault, txn, &doc)?;
         fork.fork
     } else {
