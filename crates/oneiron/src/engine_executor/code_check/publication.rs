@@ -22,12 +22,14 @@ impl Service {
             .is_none_or(|vault| job.route.live_on(vault))
     }
 
-    /// `diagnostics` placed as the check keeps them: a collection past one
-    /// reply in a body of the run when its rows are this service's vault's
-    /// own, else as they are, for the step to place. Whether it is placed.
+    /// `diagnostics` placed as check `check_id` keeps them: a collection
+    /// past one reply in a body of the run, at that check's own path, when
+    /// its rows are this service's vault's own, else as they are, for the
+    /// step to place. Whether it is placed.
     pub(super) fn placed(
         &self,
         job: &CheckJob,
+        check_id: EntityId,
         diagnostics: TypeDiagnostics,
     ) -> (TypeDiagnostics, Option<CodeRunRawOutput>, bool) {
         let canonical = self
@@ -37,8 +39,13 @@ impl Service {
         match canonical {
             Some(vault) => {
                 let storage = ExecutorStorage::Canonical(vault);
-                let (diagnostics, body) =
-                    keep_collection(&storage, job.key, job.source.as_ref(), diagnostics);
+                let (diagnostics, body) = keep_collection(
+                    &storage,
+                    job.key,
+                    check_id,
+                    job.source.as_ref(),
+                    diagnostics,
+                );
                 (diagnostics, body, true)
             }
             None => (diagnostics, None, false),

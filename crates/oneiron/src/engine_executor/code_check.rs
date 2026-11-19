@@ -185,7 +185,7 @@ impl Service {
                 }
                 let checked = check(&checker, job);
                 let diagnostics = checked.type_diagnostics(cell.facts());
-                let (diagnostics, body, finalized) = self.placed(job, diagnostics);
+                let (diagnostics, body, finalized) = self.placed(job, cell.check_id, diagnostics);
                 Landed {
                     diagnostics,
                     body,
@@ -320,12 +320,14 @@ impl Checked {
     }
 }
 
-/// `diagnostics` with a collection past one reply kept whole in a body of
-/// the run, its stored program's marks taken: the body, when one was kept.
-/// A body that cannot be kept leaves the collection inline, traced.
+/// `diagnostics`, check `check_id`'s, with a collection past one reply kept
+/// whole in a body of the run at that check's own path, its stored
+/// program's marks taken: the body, when one was kept. A body that cannot
+/// be kept leaves the collection inline, traced.
 fn keep_collection(
     storage: &ExecutorStorage<'_>,
     key: StepKey,
+    check_id: EntityId,
     source: Option<&CodeRunRawOutput>,
     diagnostics: TypeDiagnostics,
 ) -> (TypeDiagnostics, Option<CodeRunRawOutput>) {
@@ -348,7 +350,7 @@ fn keep_collection(
     let (run, seq, invocation) = key;
     let kept = storage.code_run_output_sink().and_then(|mut sink| {
         write_json(&mut sink, &list)?;
-        let path = type_diagnostics_output_path(seq, invocation);
+        let path = type_diagnostics_output_path(seq, invocation, check_id);
         let body = storage.publish_code_run_output(path, sink, true, run)?;
         if let Some(source) = source {
             storage.inherit_code_run_result_marks(run, &body, &[(run, source.clone())])?;
@@ -527,8 +529,13 @@ impl StepCell {
                 _ => return,
             }
         };
-        let (diagnostics, body) =
-            keep_collection(storage, self.key, self.source.as_ref(), diagnostics);
+        let (diagnostics, body) = keep_collection(
+            storage,
+            self.key,
+            self.check_id,
+            self.source.as_ref(),
+            diagnostics,
+        );
         if let Some(landed) = lock(&self.state).landed.as_mut() {
             landed.diagnostics = diagnostics;
             landed.body = body;

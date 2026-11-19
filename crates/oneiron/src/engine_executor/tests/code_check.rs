@@ -481,12 +481,11 @@ fn a_dead_incarnations_row_yields_to_the_current_check_at_its_step() {
     );
 }
 
-/// Every check of a step keeps a collection past one reply at the step's
-/// one body path. A row that takes another check's place releases the body
-/// the replaced row named, and a late row that does not take the held
-/// row's place releases its own, each in the same write: no body of the
-/// step stays held that no row names, for an erase of the run's actor to
-/// miss.
+/// Each check of a step keeps a collection past one reply at its own body
+/// path. A row that takes another check's place releases the body the
+/// replaced row named, and a late row that does not take the held row's
+/// place releases its own, each in the same write: no body of the step
+/// stays held that no row names, for an erase of the run's actor to miss.
 #[test]
 fn a_step_body_no_feedback_row_names_is_released_in_the_write() {
     use crate::code_run::{
@@ -508,15 +507,15 @@ fn a_step_body_no_feedback_row_names_is_released_in_the_write() {
         peak_memory_bytes: None,
     };
     let step = ProgramStepIdentity::of(run, 0, 0);
-    // A landed row of check `id` whose collection the run keeps in the
-    // step's body.
+    // A landed row of check `id` whose collection the run keeps in that
+    // check's own body.
     let landed_with_body = |id: EntityId, text: &str| {
         let mut sink = vault.code_run_output_sink().expect("a body sink");
         crate::engine_executor::store::write_json(&mut sink, &[text])
             .expect("the collection is written");
         let body = vault
             .publish_code_run_output(
-                crate::engine_executor::store::type_diagnostics_output_path(0, 0),
+                crate::engine_executor::store::type_diagnostics_output_path(0, 0, id),
                 sink,
                 true,
                 Some(run),

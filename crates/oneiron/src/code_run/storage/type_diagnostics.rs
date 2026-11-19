@@ -226,8 +226,8 @@ impl StoredStepFeedback {
     }
 
     /// This row's body when `kept`, the row its key keeps in its place,
-    /// does not name it too: every check of a step keeps its body at the
-    /// step's one path, so a body the kept row names is the kept row's own.
+    /// does not name it too: each check keeps its body at its own path, its
+    /// own occurrence, so a body the kept row names is the same check's.
     fn body_not_named_by(&self, kept: &Self) -> Option<CodeRunRawOutput> {
         let body = self.body.as_ref()?;
         kept.body
@@ -406,9 +406,10 @@ pub(super) fn rows_in(
 ///
 /// Returns the body the write leaves no row naming, for the caller to
 /// release where the route registered it: the replaced row's, or this
-/// row's when it does not take the held row's place. Every check of a step
-/// keeps its body at the step's one path, so a body the kept row names
-/// too is its own and stays.
+/// row's when it does not take the held row's place. Each check keeps its
+/// body at its own path, so releasing one check's never releases another
+/// check's, even of the same bytes; a body the kept row names too is the
+/// same check's and stays.
 pub(super) fn put_in(
     read: &impl SideTableDbs,
     write: &impl SideTableDbs,
