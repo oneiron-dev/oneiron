@@ -554,8 +554,12 @@ impl ScopedRead<'_> {
         // credential cannot read, or one a device-local world keeps from a
         // caller off this device, has no name and no count (DEC-0005), and
         // neither has a TASK outside the credential's worlds or facets, nor
-        // any row outside the facets it is limited to.
+        // any row outside the facets it is limited to, nor any row its
+        // channel or records caveat does not reach. A room's row or turn the
+        // room keeps from this reader is a missing row at every door (L9-52),
+        // and so is one whose room's say does not resolve here.
         if self.actor_key.room_turn.is_none()
+            && self.credential_allows_row_in(txn, id)
             && !self.stretch_staged_in(txn, id, &row)?
             && !self.outside_asked_worlds_in(txn, id, &row)?
             && !self.outside_credential_worlds_in(txn, id, &row)?
@@ -563,6 +567,15 @@ impl ScopedRead<'_> {
             && !self.outside_credential_task_position_in(txn, id, &row)?
             && !self.outside_credential_facets_in(txn, id, &row)?
             && crate::note::countable_read_suppression(row.entity_type, &row.body)
+            && matches!(
+                self.vault.room_structure_admitted_held_in(
+                    self,
+                    txn,
+                    id,
+                    &crate::conversation_dag::RoomVerdicts::default(),
+                ),
+                Ok(true)
+            )
             && crate::store::legal_hold::use_limit_in_txn(&self.vault.store, txn, id)?.is_none()
         {
             Ok(ReadAdmission::Suppressed)

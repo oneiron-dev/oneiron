@@ -182,19 +182,43 @@ impl ScopedRead<'_> {
         let txn = self.grant_read_txn()?;
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let rooms = RoomVerdicts::default();
-        let anchor_allowed = self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)?
-            && self.timeline_anchor_allowed_in(&txn, &fresh_policy, &fresh_filter, anchor)?
-            && self
-                .vault
-                .room_structure_admitted_held_in(self, &txn, anchor, &rooms)?;
+        let anchor_admitted = self.admit_in(&txn, anchor, || {
+            Ok(
+                (self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)?
+                    && self.timeline_anchor_allowed_in(
+                        &txn,
+                        &fresh_policy,
+                        &fresh_filter,
+                        anchor,
+                    )?
+                    && self
+                        .vault
+                        .room_structure_admitted_held_in(self, &txn, anchor, &rooms)?)
+                .then_some(()),
+            )
+        })?;
+        if !anchor_admitted.visible() {
+            // An anchor the final snapshot refuses ends the read as it would
+            // have on entry: only the anchor is judged, so no record of its
+            // chain counts and the receipt cannot size the chain.
+            let mut receipt =
+                self.receipt_for(None, &policy, &filter, anchor_admitted.suppression());
+            receipt.restrict_with(&self.receipt_for(None, &fresh_policy, &fresh_filter, 0));
+            return Ok(ScopedReadResult {
+                value: MemoryTimeline {
+                    anchor: *anchor,
+                    records: Vec::new(),
+                },
+                receipt,
+            });
+        }
         let mut kept = Vec::new();
         let mut suppressed = 0;
         for record in timeline.records {
             let admitted = self.admit_in(&txn, &record.id, || {
-                Ok((anchor_allowed
-                    && self
-                        .vault
-                        .room_structure_admitted_held_in(self, &txn, &record.id, &rooms)?
+                Ok((self
+                    .vault
+                    .room_structure_admitted_held_in(self, &txn, &record.id, &rooms)?
                     && self.timeline_record_allowed_in(&txn, &policy, &filter, &record)?
                     && self.timeline_record_allowed_in(
                         &txn,
