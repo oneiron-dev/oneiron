@@ -6,7 +6,8 @@
 //! its ledger. A reader that asks who reads a room asks here as well.
 //!
 //! The index is derived and a prefilter only: every hit is re-read as its
-//! entry fact. The entity row's staging keeps it, a peer's synced row too,
+//! entry fact, and a hit whose row is gone or a withdrawn Shell with no body
+//! names no one. The entity row's staging keeps it, a peer's synced row too,
 //! and every row removal drops its row; writable open and a checkpoint
 //! restore rebuild it whole. Until a whole rebuild has committed it answers
 //! nothing, and a reader takes any container as one a speaker entered.
@@ -82,6 +83,15 @@ pub(crate) fn speaker_entered_in(
     }
     for row in SPEAKER_ENTRY_BY_CONTAINER.iter_from(&vault.store, txn, container.as_bytes())? {
         let ((_, entry), ()) = row?;
+        // A withdrawn entry's Shell keeps its TASK header and no body, and
+        // its row here: a dead hit, which names no attendee.
+        if vault
+            .store
+            .port_entity_record(txn, &entry)?
+            .is_none_or(|record| record.body.is_empty())
+        {
+            continue;
+        }
         let Some(fact) = super::read_attendee_entry_in(vault, txn, entry)? else {
             continue;
         };
