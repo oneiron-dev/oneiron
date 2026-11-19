@@ -1543,13 +1543,12 @@ impl LlmBackend for ScriptedBackend {
     }
 }
 
-fn extraction_response(subject: &EntityId, turn: &EntityId) -> crate::LlmResponse {
-    let json = format!(
-        "{{\"candidates\": [{{\"subject\": \"{}\", \"predicate\": \"profile.name\", \
-         \"value\": \"Owen\", \"confidence\": 0.8, \"evidence_refs\": [{{\"source_id\":\"{}\",\"byte_range\":[0,1]}}]}}]}}",
-        bytes_to_hex_lower(subject.as_bytes()),
-        bytes_to_hex_lower(turn.as_bytes()),
-    );
+fn extraction_response(_subject: &EntityId, _turn: &EntityId) -> crate::LlmResponse {
+    let json = serde_json::json!({"candidates": [{
+        "subject": "P1", "predicate": "profile.name", "value": "Owen",
+        "confidence": 0.8, "evidence_refs": [{"source": "T1", "quote": "Owen"}]
+    }]})
+    .to_string();
     crate::LlmResponse {
         message: LlmMessage {
             role: LlmMessageRole::Assistant,
@@ -1603,8 +1602,15 @@ fn authorized_extraction_egress_reaches_executor_only_after_host_verdict() -> Re
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
     let (admitted, turns, _) =
-        admitted_attempt_fixture(&vault, &store, 0x71, &[("user", "call me Casey")])?;
+        admitted_attempt_fixture(&vault, &store, 0x71, &[("user", "call me Owen")])?;
     let subject = EntityId::now();
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        occurred(1),
+        1,
+        &super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?,
+    )?;
     let backend = ScriptedBackend::new(vec![Ok(extraction_response(&subject, &turns[0]))]);
     let guard = crate::BudgetGuard::with_reserve_units(
         "wake",
@@ -1696,6 +1702,13 @@ fn no_fabricated_belief_writes() -> Result<()> {
     };
 
     let subject = EntityId::from_bytes([0x37; 16]).expect("subject");
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        occurred(1),
+        1,
+        &super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?,
+    )?;
     let backend = ScriptedBackend::new(vec![Ok(extraction_response(&subject, &turn))]);
     let guard = crate::BudgetGuard::with_reserve_units(
         "wake",
@@ -1905,20 +1918,17 @@ fn key_reordered_objects_are_not_a_conflict() -> Result<()> {
 }
 
 fn two_candidate_extraction(
-    subject: &EntityId,
-    turn_a: &EntityId,
-    turn_b: &EntityId,
+    _subject: &EntityId,
+    _turn_a: &EntityId,
+    _turn_b: &EntityId,
 ) -> crate::LlmResponse {
-    let json = format!(
-        "{{\"candidates\": [\
-         {{\"subject\": \"{s}\", \"predicate\": \"profile.name\", \"value\": \"Owen\", \
-          \"confidence\": 0.8, \"evidence_refs\": [{{\"source_id\":\"{a}\",\"byte_range\":[0,1]}}]}},\
-         {{\"subject\": \"{s}\", \"predicate\": \"profile.name\", \"value\": \"Alex\", \
-          \"confidence\": 0.6, \"evidence_refs\": [{{\"source_id\":\"{b}\",\"byte_range\":[0,1]}}]}}]}}",
-        s = bytes_to_hex_lower(subject.as_bytes()),
-        a = bytes_to_hex_lower(turn_a.as_bytes()),
-        b = bytes_to_hex_lower(turn_b.as_bytes()),
-    );
+    let json = serde_json::json!({"candidates": [
+        {"subject": "P1", "predicate": "profile.name", "value": "Owen",
+         "confidence": 0.8, "evidence_refs": [{"source": "T1", "quote": "Owen"}]},
+        {"subject": "P1", "predicate": "profile.name", "value": "Alex",
+         "confidence": 0.6, "evidence_refs": [{"source": "T2", "quote": "Alex"}]}
+    ]})
+    .to_string();
     text_response(json)
 }
 
@@ -2016,10 +2026,16 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             &vault,
             &store,
             0x79 + expire_on_call as u8,
-            &[("user", "call me Owen"), ("user", "or Alex")],
+            &[("user", "call me Owen"), ("user", "or Alex Owen")],
         )?;
         let subject = EntityId::now();
-        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+        vault.put_entity(
+            &subject,
+            ENTITY_TYPE_PERSON,
+            occurred(1),
+            1,
+            &super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?,
+        )?;
         let extraction = if expire_on_call == 1 {
             extraction_response(&subject, &turns[0]) // conflict-free path
         } else {
@@ -2029,7 +2045,14 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             inner: ScriptedBackend::new(vec![
                 Ok(extraction),
                 Ok(text_response(
-                    "{\"resolution\":\"merge\",\"value\":\"Merged\"}".to_owned(),
+                    serde_json::json!({
+                        "Q1": {"merge": 1.0, "supersede": 0.0, "accumulate": 0.0, "escalate": 0.0},
+                        "Q2": {"none": 1.0, "C1": 0.0, "C2": 0.0},
+                    })
+                    .to_string(),
+                )),
+                Ok(text_response(
+                    serde_json::json!({"value": "Merged"}).to_string(),
                 )),
             ]),
             clock: std::sync::Arc::new(AtomicU64::new(0)),
@@ -2093,7 +2116,7 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             "each terminal response remains replayable"
         );
 
-        // A new wake consumes the terminal memo(s) without another call.
+        // A new wake replays terminal reads; a late conflict decision still needs its value.
         // Neither the conflict-free extraction nor the merge is lost.
         backend.clock.store(0, Ordering::SeqCst);
         let mut resumed = ConsolidationExecutor {
@@ -2113,7 +2136,11 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             DreamerAttemptExecution::Completed { .. }
         ));
         drop(resumed);
-        assert_eq!(backend.calls.load(Ordering::SeqCst), expire_on_call);
+        // The late decision checkpoints before merged_value; only that value calls on resume.
+        assert_eq!(
+            backend.calls.load(Ordering::SeqCst),
+            if expire_on_call == 1 { 1 } else { 3 }
+        );
         assert_eq!(sink.accepted.len(), 1, "output lands on the later wake");
     }
     Ok(())
@@ -2127,15 +2154,30 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
         &vault,
         &store,
         0x2A,
-        &[("user", "call me Owen"), ("user", "or Alex")],
+        &[("user", "call me Owen"), ("user", "or Alex Owen")],
     )?;
     let subject = EntityId::from_bytes([0x38; 16]).expect("subject");
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        occurred(1),
+        1,
+        &super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?,
+    )?;
 
     let backend = ScriptedBackend::new(vec![
         Ok(two_candidate_extraction(&subject, &turns[0], &turns[1])),
+        // The conflict pack asks its labelled choice (Q1 resolution, Q2 identity).
         Ok(text_response(
-            "{\"resolution\": \"merge\", \"value\": \"Owen (Alex)\"}".to_owned(),
+            serde_json::json!({
+                "Q1": {"merge": 1.0, "supersede": 0.0, "accumulate": 0.0, "escalate": 0.0},
+                "Q2": {"none": 1.0, "C1": 0.0, "C2": 0.0},
+            })
+            .to_string(),
+        )),
+        // The merged value is a separate generation beside the decision.
+        Ok(text_response(
+            serde_json::json!({"value": "Owen (Alex)"}).to_string(),
         )),
     ]);
     let guard = crate::BudgetGuard::with_reserve_units(
@@ -2175,7 +2217,8 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
     // union of the evidence refs.
     assert_eq!(sink.accepted.len(), 1);
     assert_eq!(sink.accepted[0].evidence_turn_refs, turns);
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 2, "one merge step");
+    // Extraction, then the labelled choice pack, then the merged-value reply.
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 3, "one merge step");
     Ok(())
 }
 
@@ -2188,10 +2231,19 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
             &vault,
             &store,
             0x2B,
-            &[("user", "i live in Tokyo"), ("user", "i live in Osaka")],
+            &[
+                ("user", "call me Owen in Tokyo"),
+                ("user", "or Alex Owen in Osaka"),
+            ],
         )?;
         let subject = EntityId::from_bytes([0x39; 16]).expect("subject");
-        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+        vault.put_entity(
+            &subject,
+            ENTITY_TYPE_PERSON,
+            occurred(1),
+            1,
+            &super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?,
+        )?;
 
         let backend = ScriptedBackend::new(vec![
             Ok(two_candidate_extraction(&subject, &turns[0], &turns[1])),
@@ -2701,10 +2753,19 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
         &vault,
         &store,
         0x2D,
-        &[("user", "i live in Tokyo"), ("user", "i live in Osaka")],
+        &[
+            ("user", "call me Owen in Tokyo"),
+            ("user", "or Alex Owen in Osaka"),
+        ],
     )?;
     let subject = EntityId::from_bytes([0x3B; 16]).expect("subject");
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        occurred(1),
+        1,
+        &super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?,
+    )?;
 
     // Extraction succeeds with two conflicting values; the merge step is then
     // denied. reserve 100, limit 100: extraction admits (projected 100 ≤ 100)
@@ -2788,6 +2849,13 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
     let (admitted, turns, _) =
         admitted_attempt_fixture(&vault, &store, 0x2E, &[("user", "my name is Owen")])?;
     let subject = EntityId::from_bytes([0x37; 16]).expect("subject");
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        occurred(1),
+        1,
+        &super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?,
+    )?;
     let backend = ScriptedBackend::new(vec![Ok(extraction_response(&subject, &turns[0]))]);
     let guard = crate::BudgetGuard::with_reserve_units(
         "wake",
@@ -2857,14 +2925,27 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
         &vault,
         &store,
         0x2F,
-        &[("user", "call me Owen"), ("user", "or Alex")],
+        &[("user", "call me Owen"), ("user", "or Alex Owen")],
     )?;
     let subject = EntityId::from_bytes([0x38; 16]).expect("subject");
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        occurred(1),
+        1,
+        &super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?,
+    )?;
     let backend = ScriptedBackend::new(vec![
         Ok(two_candidate_extraction(&subject, &turns[0], &turns[1])),
         Ok(text_response(
-            "{\"resolution\": \"merge\", \"value\": \"Owen (Alex)\"}".to_owned(),
+            serde_json::json!({
+                "Q1": {"merge": 1.0, "supersede": 0.0, "accumulate": 0.0, "escalate": 0.0},
+                "Q2": {"none": 1.0, "C1": 0.0, "C2": 0.0},
+            })
+            .to_string(),
+        )),
+        Ok(text_response(
+            serde_json::json!({"value": "Owen (Alex)"}).to_string(),
         )),
     ]);
     let guard = crate::BudgetGuard::with_reserve_units(
@@ -2909,16 +2990,16 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
     };
 
     let ids_first = run(21_000)?;
-    // Both the extraction and the merge memo-hit on the re-run; the MERGED
-    // candidate id is content-addressed, so it is stable across re-execution
+    // Extraction, the conflict decision and merged value all memo-hit on the re-run;
+    // the MERGED candidate id is content-addressed, so it is stable across re-execution
     // and independent of `now` (#485-3).
     let ids_second = run(987_000)?;
 
     assert_eq!(ids_first.len(), 1, "one merged candidate");
     assert_eq!(
         backend.calls.load(Ordering::SeqCst),
-        2,
-        "the re-run memo-hit both steps; no new generate"
+        3,
+        "the re-run memo-hit extraction, decision and value; no new generate"
     );
     assert_eq!(
         ids_first, ids_second,

@@ -190,19 +190,29 @@ fn conflict_close_stays_in_the_marker_project() -> Result<()> {
 fn extraction_keeps_same_answers_for_different_topics_distinct_on_replay() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
-    let (admitted, turns, _) =
-        admitted_attempt_fixture(&vault, &store, 0xB4, &[("user", "I like coffee and tea")])?;
+    let (admitted, _turns, _) = admitted_attempt_fixture(
+        &vault,
+        &store,
+        0xB4,
+        &[("user", "Owen likes coffee and tea")],
+    )?;
     let subject = EntityId::now();
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        occurred(1),
+        1,
+        &super::super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?,
+    )?;
     let relationships = [EntityId::now(), EntityId::now()];
     let candidates: Vec<_> = relationships
         .into_iter()
         .flat_map(|rel| ["coffee", "tea"].into_iter().map(move |topic| (rel, topic)))
         .map(|(rel, topic)| {
             serde_json::json!({
-                "subject": subject.to_hex(), "predicate": "preference.food",
+                "subject": "P1", "predicate": "preference.food",
                 "value": "yes", "topic_key": topic, "rel": rel.to_hex(), "confidence": 0.9,
-                "evidence_refs": [{"source_id":turns[0].to_hex(), "byte_range":[0,1]}]
+                "evidence_refs": [{"source":"T1", "quote":"Owen"}]
             })
         })
         .collect();
