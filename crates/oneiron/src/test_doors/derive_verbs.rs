@@ -111,6 +111,14 @@ fn wire<T: serde::Serialize>(view: T) -> MemoryResult<Value> {
 }
 
 impl LiveRun {
+    /// This run's attempt row as it was leased: its id and its lease
+    /// generation, for a test that completes or retries the run through the
+    /// queue's own doors. Its lease owner is `test-door`.
+    #[must_use]
+    pub fn leased(&self) -> &AttemptRecord {
+        &self.leased
+    }
+
     fn dispatcher<'a>(&self, vault: &'a Vault) -> Result<HostSelfDispatcher<'a>> {
         HostSelfDispatcher::for_leased_agent_attempt(
             vault,

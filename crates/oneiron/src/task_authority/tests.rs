@@ -21,6 +21,7 @@ fn fact(task_ref: EntityId, kind: TaskAuthorityFactKind, actor_ref: EntityId) ->
         assigned_ref: (kind == TaskAuthorityFactKind::HumanAssigned).then(|| id(0xA8)),
         actor_generation: None,
         assigned_generation: None,
+        answered_heads: None,
         occurred_at: 100,
         maker: None,
     }
@@ -66,6 +67,7 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
         assigned_ref: None,
         actor_generation: None,
         assigned_generation: None,
+        answered_heads: None,
         occurred_at: 1_700_000_000,
         maker: None,
     };
@@ -374,4 +376,223 @@ fn a_generation_at_the_cap_keeps_every_class() {
         generation.names(&[0; 32]),
         "the lowest human binding is kept"
     );
+}
+
+/// B58 G1: an Acked fact round trips the heads it saw; one from before
+/// the field still decodes with none and encodes the base seven keys.
+#[test]
+fn an_acked_fact_round_trips_its_answered_heads() {
+    let task = id(0xB1);
+    let actor = id(0xB2);
+    let head_a = "00000000000000000000000000000000".to_owned();
+    let head_b = "11111111111111111111111111111111".to_owned();
+
+    let mut empty = fact(task, TaskAuthorityFactKind::Acked, actor);
+    empty.answered_heads = Some(std::collections::BTreeSet::new());
+    let encoded = encode_task_authority_fact_body(&empty);
+    assert_eq!(
+        decode_task_authority_fact_body(&encoded).expect("empty round trip"),
+        empty
+    );
+
+    let mut two = fact(task, TaskAuthorityFactKind::Acked, actor);
+    two.answered_heads = Some(std::collections::BTreeSet::from([
+        head_a.clone(),
+        head_b.clone(),
+    ]));
+    let encoded = encode_task_authority_fact_body(&two);
+    assert_eq!(
+        decode_task_authority_fact_body(&encoded).expect("two round trip"),
+        two
+    );
+
+    let none = fact(task, TaskAuthorityFactKind::Acked, actor);
+    assert!(none.answered_heads.is_none());
+    let encoded = encode_task_authority_fact_body(&none);
+    let mut cursor = encoded.as_slice();
+    let Value::Map(entries) = rmpv::decode::read_value(&mut cursor).expect("decode map") else {
+        panic!("a fact body is a map")
+    };
+    assert_eq!(entries.len(), 7);
+    assert_eq!(
+        decode_task_authority_fact_body(&encoded)
+            .expect("none round trip")
+            .answered_heads,
+        None
+    );
+}
+
+/// B58 G2: the strict decoder refuses answered heads that are not a
+/// sorted unique list of 32-digit lowercase hex attempt ids, and refuses
+/// the field on any kind but Acked.
+#[test]
+fn the_decoder_refuses_malformed_answered_heads() {
+    let task = id(0xB1);
+    let actor = id(0xB2);
+    let head_a = "00000000000000000000000000000000".to_owned();
+    let head_b = "11111111111111111111111111111111".to_owned();
+
+    let cancelled = fact(task, TaskAuthorityFactKind::Cancelled, actor);
+    let encoded = encode_task_authority_fact_body(&cancelled);
+    let with_heads = rewrite_body(&encoded, |entries| {
+        entries.push((
+            Value::from(BODY_KEY_ANSWERED_HEADS),
+            Value::Array(Vec::new()),
+        ));
+    });
+    assert!(
+        decode_task_authority_fact_body(&with_heads).is_err(),
+        "Cancelled with heads must be refused"
+    );
+
+    let mut acked = fact(task, TaskAuthorityFactKind::Acked, actor);
+    acked.answered_heads = Some(std::collections::BTreeSet::new());
+    let base = encode_task_authority_fact_body(&acked);
+    let short = "0".repeat(31);
+    let long = "0".repeat(33);
+    let cases = [
+        (
+            "unsorted",
+            Value::Array(vec![
+                Value::from(head_b.as_str()),
+                Value::from(head_a.as_str()),
+            ]),
+        ),
+        (
+            "duplicate",
+            Value::Array(vec![
+                Value::from(head_a.as_str()),
+                Value::from(head_a.as_str()),
+            ]),
+        ),
+        (
+            "uppercase",
+            Value::Array(vec![Value::from("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")]),
+        ),
+        ("31 digits", Value::Array(vec![Value::from(short.as_str())])),
+        ("33 digits", Value::Array(vec![Value::from(long.as_str())])),
+        ("non-array", Value::from(head_a.as_str())),
+        ("non-string", Value::Array(vec![Value::from(1_u8)])),
+    ];
+    for (label, value) in cases {
+        let case = body_with(&base, BODY_KEY_ANSWERED_HEADS, value);
+        assert!(
+            decode_task_authority_fact_body(&case).is_err(),
+            "{label} must be refused"
+        );
+    }
+}
+
+/// B58 G3: acks of one second union the heads they saw, in either fold
+/// order; one from before the field answers its whole second; a newer
+/// second wins outright, in either fold order.
+#[test]
+fn same_second_acks_union_and_an_old_fact_answers_its_whole_second() {
+    let task = id(0xB1);
+    let actor = id(0xB2);
+    let head_a = "00000000000000000000000000000000".to_owned();
+    let head_b = "11111111111111111111111111111111".to_owned();
+    let head_c = "ffffffffffffffffffffffffffffffff".to_owned();
+    let empty: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    let mut first = fact(task, TaskAuthorityFactKind::Acked, actor);
+    first.occurred_at = 200;
+    first.answered_heads = Some(std::collections::BTreeSet::from([head_a.clone()]));
+    let mut second = fact(task, TaskAuthorityFactKind::Acked, actor);
+    second.occurred_at = 200;
+    second.answered_heads = Some(std::collections::BTreeSet::from([head_b.clone()]));
+    for swapped in [false, true] {
+        let mut facts = TaskAuthorityFacts::default();
+        if swapped {
+            facts.absorb(&second).expect("absorb second");
+            facts.absorb(&first).expect("absorb first");
+        } else {
+            facts.absorb(&first).expect("absorb first");
+            facts.absorb(&second).expect("absorb second");
+        }
+        let ack = facts.ack.as_ref().expect("an ack");
+        assert_eq!(ack.at, 200);
+        assert!(
+            ack.answers(
+                200,
+                &std::collections::BTreeSet::from([head_a.clone(), head_b.clone()])
+            ),
+            "same-second acks answer their union"
+        );
+        assert!(
+            !ack.answers(
+                200,
+                &std::collections::BTreeSet::from([head_a.clone(), head_b.clone(), head_c.clone()])
+            ),
+            "same-second acks do not answer an unseen head"
+        );
+    }
+
+    let mut headed = fact(task, TaskAuthorityFactKind::Acked, actor);
+    headed.occurred_at = 200;
+    headed.answered_heads = Some(std::collections::BTreeSet::from([head_a.clone()]));
+    let mut legacy = fact(task, TaskAuthorityFactKind::Acked, actor);
+    legacy.occurred_at = 200;
+    legacy.answered_heads = None;
+    for swapped in [false, true] {
+        let mut facts = TaskAuthorityFacts::default();
+        if swapped {
+            facts.absorb(&legacy).expect("absorb legacy");
+            facts.absorb(&headed).expect("absorb headed");
+        } else {
+            facts.absorb(&headed).expect("absorb headed");
+            facts.absorb(&legacy).expect("absorb legacy");
+        }
+        let ack = facts.ack.as_ref().expect("an ack");
+        assert_eq!(ack.at, 200);
+        assert!(
+            ack.answers(
+                200,
+                &std::collections::BTreeSet::from([head_a.clone(), head_b.clone(), head_c.clone()])
+            ),
+            "an old fact answers its whole second"
+        );
+    }
+
+    let mut later = fact(task, TaskAuthorityFactKind::Acked, actor);
+    later.occurred_at = 201;
+    later.answered_heads = Some(std::collections::BTreeSet::new());
+    for swapped in [false, true] {
+        let mut facts = TaskAuthorityFacts::default();
+        if swapped {
+            facts.absorb(&later).expect("absorb later");
+            facts.absorb(&first).expect("absorb first");
+            facts.absorb(&second).expect("absorb second");
+        } else {
+            facts.absorb(&first).expect("absorb first");
+            facts.absorb(&second).expect("absorb second");
+            facts.absorb(&later).expect("absorb later");
+        }
+        let ack = facts.ack.as_ref().expect("an ack");
+        assert_eq!(ack.at, 201);
+        assert!(
+            !ack.answers(201, &std::collections::BTreeSet::from([head_a.clone()])),
+            "a newer empty second answers no nonempty heads"
+        );
+        assert!(
+            ack.answers(201, &empty),
+            "a newer empty second answers empty"
+        );
+        assert!(
+            ack.answers(
+                200,
+                &std::collections::BTreeSet::from([head_a.clone(), head_b.clone(), head_c.clone()])
+            ),
+            "an earlier second stays answered"
+        );
+        assert!(
+            ack.answers(199, &std::collections::BTreeSet::from([head_c.clone()])),
+            "any earlier second stays answered"
+        );
+        assert!(!ack.answers(202, &empty), "nothing answers past the ack");
+        assert!(
+            !ack.answers(202, &std::collections::BTreeSet::from([head_a.clone()])),
+            "nothing answers past the ack"
+        );
+    }
 }

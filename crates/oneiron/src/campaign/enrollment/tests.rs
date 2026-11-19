@@ -31,6 +31,7 @@ const REENTRY_AT: u64 = 1_754_400_000;
 fn vault_fixture() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (dir, vault)
 }
 

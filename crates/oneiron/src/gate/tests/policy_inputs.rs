@@ -12,6 +12,22 @@ fn companion_profile_access_grants_allow_deny_and_revoke() -> Result<()> {
     let person = test_id(0xC1);
     let persona = test_id(0xD1);
     let other_persona = test_id(0xD2);
+    // `check_companion_profile_target` needs a live PERSON and a live FACET
+    // behind the grant's refs; `other_persona` is only read negatively.
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"companion person",
+    )?;
+    vault.put_entity(
+        &persona,
+        crate::registry::ENTITY_TYPE_FACET,
+        test_time(1),
+        1,
+        b"companion persona",
+    )?;
 
     assert_eq!(
         vault.companion_profile_access_grant(&principal, &person, Some(&persona))?,
@@ -60,6 +76,21 @@ fn companion_profile_access_grant_fails_closed_on_malformed_record() -> Result<(
     let principal = test_id(0xB2);
     let person = test_id(0xC2);
     let persona = test_id(0xD3);
+    // Live PERSON and FACET rows for the valid grant's refs, as above.
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"companion person",
+    )?;
+    vault.put_entity(
+        &persona,
+        crate::registry::ENTITY_TYPE_FACET,
+        test_time(1),
+        1,
+        b"companion persona",
+    )?;
 
     put_malformed_access_grant_bytes(&vault, &malformed_id, b"not-msgpack")?;
     let grant = crate::AccessGrant::companion_profile_read(principal, person, Some(persona), 10);

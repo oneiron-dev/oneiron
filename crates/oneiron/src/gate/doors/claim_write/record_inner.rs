@@ -48,6 +48,24 @@ fn preflight_receipt_matches(
     })
 }
 
+/// Whether the auto checker may read `predicate`, the claim `id`'s, as
+/// written: the door's plan for the claim's text places nothing in it (no
+/// value custody holds, no secret its rules detect, none the owner kept as
+/// text there). The checker's request carries the predicate verbatim, so one
+/// the plan would change is never sent (review 9216 round 2 P1).
+fn predicate_reaches_checker_as_written(
+    store: &Store,
+    wtxn: &heed::RwTxn<'_>,
+    id: EntityId,
+    predicate: &str,
+) -> Result<bool> {
+    let written = rmpv::Value::from(predicate);
+    Ok(
+        crate::batch::secret_scan::plan_masked_claim_value_in_txn(store, wtxn, id, &written)?
+            .is_some_and(|planned| planned == written),
+    )
+}
+
 // The inner executor carries the outer record seam's axis tuple plus the
 // preflight identity exactly once; a parameter struct would only rename the
 // same boundary.
@@ -391,6 +409,14 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                 &body.value,
             )?
             .and_then(|planned| auto_check_value_preview(&planned));
+            // The checker reads the predicate as written, so a predicate
+            // that holds a secret (a value custody holds, or one the door's
+            // rules detect) is never sent either: no checker is asked, and
+            // the write is held below as for a value it cannot see whole
+            // (review 9216 round 2 P1).
+            let predicate_as_written =
+                predicate_reaches_checker_as_written(store, &*wtxn, *id, &body.predicate)?;
+            let value_preview = value_preview.filter(|_| predicate_as_written);
             if value_preview.is_none() {
                 checker_receipt_reasons.push(CHECKER_PARTIAL_VIEW_RECEIPT_REASON.to_owned());
             }

@@ -328,19 +328,17 @@ pub(super) fn settle_handoffs(
 }
 
 /// Every row of `states` that `refused` names or that descends from one.
+/// One marked pass over the index, not a lookup of each refused row in
+/// each row's ancestry (row [ROSTER-KEY-LOG-FLOOD], PR 3).
 fn with_descendants(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     refused: &BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
     ancestors: &AncestorIndex,
 ) -> BTreeSet<AuthorityEntryHash> {
+    let below_refused = ancestors.marks(|row| refused.contains_key(row));
     states
         .keys()
-        .filter(|hash| {
-            refused.contains_key(*hash)
-                || ancestors
-                    .get(*hash)
-                    .is_some_and(|past| refused.keys().any(|row| past.contains(row)))
-        })
+        .filter(|hash| refused.contains_key(*hash) || below_refused.in_ancestry(hash))
         .copied()
         .collect()
 }
@@ -552,6 +550,36 @@ pub(crate) fn door_ancestor_row(
     match stored_authority_row(store, txn, hash)? {
         Some(row) => Ok(Some(row)),
         None => evidence.map_or(Ok(None), |evidence| evidence.ancestor(hash)),
+    }
+}
+
+/// Whether this vault held the row at `hash` before a write: it stores it,
+/// or the checkpoint image it adopted (`evidence`) covers it. A row only the
+/// write brings is not held, so a refused write's sibling rows never stand in
+/// its equivocation evidence as handoffs this vault holds (OF-166).
+pub(crate) fn authority_row_held(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    evidence: Option<&super::adopted_evidence::AdoptedEvidence>,
+    hash: &AuthorityEntryHash,
+) -> crate::error::Result<bool> {
+    Ok(stored_authority_row(store, txn, hash)?.is_some()
+        || evidence.is_some_and(|evidence| evidence.rows().contains_key(hash)))
+}
+
+/// What an import held before its write, as [`authority_row_held`] reads a
+/// vault: whether the row at a hash was resident (`resident`), or covered by
+/// the image the vault had adopted before the import's transaction staged
+/// anything (`held_evidence`). An image the import's own prelude adopts (a
+/// sealed kit restore's) rolls back with a refused import, so a row only it
+/// covers is no handoff this vault holds (REVIEW-9572 round 2).
+pub(super) fn import_row_held<'a>(
+    resident: &'a BTreeSet<AuthorityEntryHash>,
+    held_evidence: Option<&'a super::adopted_evidence::AdoptedEvidence>,
+) -> impl FnMut(&AuthorityEntryHash) -> crate::error::Result<bool> + 'a {
+    move |hash| {
+        Ok(resident.contains(hash)
+            || held_evidence.is_some_and(|evidence| evidence.rows().contains_key(hash)))
     }
 }
 

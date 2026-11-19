@@ -38,12 +38,20 @@
 //! roster, and the live successor was a key no install held. Red with the
 //! pickup pinning a carried root (as before CARRIED-PIN): the awaited-root
 //! test, whose second install then holds a pin no owner confirmed there.
+//!
+//! FIX APPOINTMENT-PIN-STEP-AND-VOUCH-ENTRY-FOLD-NO-TEST: the door enters the
+//! device PIN's step before its writer, so it waits for a first PIN's set
+//! that is inside its step, and once the PIN is set its writer makes no
+//! successor in the slot. Red with the door taking no step: the appointment
+//! goes on beside the set.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_anchor_appointment`.
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
@@ -56,15 +64,23 @@ use oneiron::authority::{
     encode_authority_log_entry_body, root_appointment_challenge,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::error::SecretError;
 use oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED;
 use oneiron::recovery::{
     KitIssue, KitSecretKind, PassphraseCost, PieceHome, issue_recovery_root_kit, restore_kit,
 };
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::device_pin::steps_that_waited;
 use oneiron::test_doors::root_appointment::appoint_owner_root_between;
 use oneiron::test_support::bind_host_owner;
-use oneiron::world_keys::RecoveryRootSeed;
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::world_keys::{DevicePin, RecoveryRootSeed};
+use oneiron::{EdgeActorClass, EntityId, Error, Vault, VaultConfig};
+use oneiron_keystore::{
+    AuthBoundSecretStore, DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality,
+    KeystoreSlot, ManualPresenceClock, MemoryKeystore, PresenceCapability, SealedBytesStore,
+    SlotKind,
+};
+use zeroize::Zeroizing;
 
 /// The seed of the owner key that signs the fork.
 const OWNER_KEY_SEED: u8 = 21;
@@ -77,6 +93,18 @@ const UNRELATED_SEED: u8 = 35;
 const SUCCESSOR_SEED: u8 = 36;
 /// The seed of the agent key a successor's row enrols.
 const AGENT_SEED: u8 = 37;
+
+/// The device PIN a test sets.
+const PIN: &[u8] = b"271828";
+
+/// What the owner signing slot answers on a device with a PIN set
+/// (`KEPT_UNDER_DEVICE_PIN` of `world_keys::owner_signing`).
+const KEPT_UNDER_DEVICE_PIN: &str =
+    "this install's owner signing key is kept under the device PIN and is not handed out";
+
+/// How long a test waits for a step to reach the read it pauses at, a
+/// paused read for the test's word, and a second step to wait or go on.
+const PAUSE_WAIT: Duration = Duration::from_secs(30);
 
 fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
     vault
@@ -162,9 +190,14 @@ struct Owned {
 }
 
 fn owned() -> Owned {
+    owned_on(Arc::new(MemoryKeystore::default()))
+}
+
+/// [`owned`], the install keeping its slots in `keystore`.
+fn owned_on(keystore: Arc<dyn DeviceKeystore>) -> Owned {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("the vault");
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault.install_device_keystore(keystore);
     let issuer = oneiron::test_support::provision_engine_machines(&vault);
     vault
         .ensure_serving_install_profile(&issuer, MachineRole::HostedNode)
@@ -197,6 +230,9 @@ fn owned() -> Owned {
         )
         .expect("the owner enrols an owner key");
     let owner = proof(&vault, person);
+    vault
+        .enrol_device_owner_signing_key(&authority, &issuer)
+        .expect("this install holds a predecessor for the activation");
     let prepared = vault.prepare_owner_root(&owner).expect("a kit root");
     let seed = restored(vault_id, prepared.seed());
     let root = vault
@@ -608,6 +644,203 @@ fn a_door_run_beside_a_committed_appointment_keeps_the_successor_in_the_slot() {
         "the install's owner signing slot holds the live successor"
     );
     assert!(owned.passes_owner_verbs());
+}
+
+/// A read of the owner signing slot paused before it reaches the keystore:
+/// it tells the test through the sender and goes on at the test's word on
+/// the receiver.
+type PausedRead = (mpsc::Sender<()>, mpsc::Receiver<()>);
+
+/// The process-memory keystore, its hardware counting wrong PINs, with one
+/// read of the owner signing slot that a test pauses in the middle of a
+/// device PIN step (as `SteppedKeystore` of `tests/device_pin.rs` pauses a
+/// call).
+struct PausingKeystore {
+    inner: MemoryKeystore,
+    pause: Mutex<Option<PausedRead>>,
+}
+
+impl PausingKeystore {
+    fn hardware_counted() -> Self {
+        Self {
+            inner: MemoryKeystore::with_counted_auth_bound(32, 1000),
+            pause: Mutex::new(None),
+        }
+    }
+
+    /// Pauses the next read of the owner signing slot before it reaches the
+    /// keystore. The test hears of it on the receiver and lets the read go
+    /// on through the sender.
+    fn pause_next_owner_slot_read(&self) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (reached, test_hears) = mpsc::channel();
+        let (test_resumes, resumed) = mpsc::channel();
+        *self.pause.lock().unwrap_or_else(PoisonError::into_inner) = Some((reached, resumed));
+        (test_hears, test_resumes)
+    }
+}
+
+impl DeviceKeystore for PausingKeystore {
+    fn get(&self, slot: &KeystoreSlot) -> Result<Option<Zeroizing<[u8; 32]>>, KeystoreError> {
+        if slot.kind == SlotKind::OwnerSigning {
+            let paused = self
+                .pause
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            if let Some((reached, resumed)) = paused {
+                reached.send(()).expect("the test waits for the pause");
+                resumed
+                    .recv_timeout(PAUSE_WAIT)
+                    .expect("the test lets the paused read go on");
+            }
+        }
+        DeviceKeystore::get(&self.inner, slot)
+    }
+
+    fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<(), KeystoreError> {
+        DeviceKeystore::create(&self.inner, slot, secret)
+    }
+
+    fn delete(&self, slot: &KeystoreSlot) -> Result<(), KeystoreError> {
+        DeviceKeystore::delete(&self.inner, slot)
+    }
+
+    fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<bool, KeystoreError> {
+        DeviceKeystore::replace(&self.inner, slot, secret)
+    }
+
+    fn locality(&self) -> KeystoreLocality {
+        self.inner.locality()
+    }
+
+    fn assurance(&self) -> KeystoreAssurance {
+        self.inner.assurance()
+    }
+
+    fn sealed_bytes(&self) -> Option<&dyn SealedBytesStore> {
+        self.inner.sealed_bytes()
+    }
+
+    fn auth_bound_secret(&self) -> Option<&dyn AuthBoundSecretStore> {
+        self.inner.auth_bound_secret()
+    }
+}
+
+/// Whether a second step waited for the first, which the test paused inside
+/// its step: true once `pin` counted a step that waited, false when the
+/// second step went on instead and `went_on` heard of it. A second step
+/// that does neither fails the test.
+fn second_step_waited(pin: &DevicePin, waited_before: u64, went_on: &mpsc::Receiver<()>) -> bool {
+    let deadline = Instant::now() + PAUSE_WAIT;
+    loop {
+        if steps_that_waited(pin) > waited_before {
+            return true;
+        }
+        if went_on.recv_timeout(Duration::from_millis(10)).is_ok() {
+            return false;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the second step neither waited for the first nor went on"
+        );
+    }
+}
+
+/// A run of the door beside a first device PIN's set. The set is paused
+/// inside its step, at its read of the owner signing slot and before any PIN
+/// is stored. The door enters the same step before its writer, so it waits
+/// there. Once the PIN is set the door's writer runs: the slot's rule
+/// refuses a key beside a set PIN, so no successor is made and no row is
+/// written.
+#[test]
+fn an_appointment_waits_for_a_first_device_pin_set_and_makes_no_successor() {
+    let keystore = Arc::new(PausingKeystore::hardware_counted());
+    let owned = owned_on(Arc::<PausingKeystore>::clone(&keystore));
+    let pin = DevicePin::with_clock_and_cost(
+        Arc::<PausingKeystore>::clone(&keystore),
+        ManualPresenceClock::new(1_000_000, 1_000_000),
+        PassphraseCost::FLOOR,
+    )
+    .expect("the device PIN over the install's keystore");
+    owned
+        .vault
+        .install_device_pin(Arc::clone(&pin))
+        .expect("the device PIN goes on the handle");
+    owned.revoke_unrelated_binding();
+    owned.fork();
+    assert!(owned.rootless(), "the fork leaves no live root key");
+    assert_eq!(
+        pin.capability(),
+        PresenceCapability::DevicePin { set: false },
+        "guard: the device takes a PIN and has none"
+    );
+    let stored = owned
+        .vault
+        .export_signed_authority_history()
+        .expect("the signed history");
+
+    // Both proofs are made before the set starts, so each thread runs its
+    // door alone.
+    let setting_owner = proof(&owned.vault, owned.person);
+    let appointing_owner = proof(&owned.vault, owned.person);
+    let waited_before = steps_that_waited(&pin);
+    let (vault, seed) = (&owned.vault, &owned.seed);
+    let (appointment_ended, went_on) = mpsc::channel();
+    let (set, appointment, appointment_waited, waits) = thread::scope(|scope| {
+        let (reached, resume) = keystore.pause_next_owner_slot_read();
+        let set = scope.spawn(move || {
+            vault.set_device_pin_as(
+                &ActAuthority::Owner(setting_owner, ActSurface::ThisInstall),
+                PIN,
+                false,
+            )
+        });
+        reached
+            .recv_timeout(PAUSE_WAIT)
+            .expect("the first PIN's set reaches its read of the owner signing slot");
+        let appointment = scope.spawn(move || {
+            let answer = vault.appoint_owner_root(&appointing_owner, seed, None);
+            let _heard = appointment_ended.send(());
+            answer
+        });
+        let appointment_waited = second_step_waited(&pin, waited_before, &went_on);
+        let waits = steps_that_waited(&pin) - waited_before;
+        resume.send(()).expect("the first PIN's set goes on");
+        (
+            set.join().expect("the set's thread ends"),
+            appointment.join().expect("the appointment's thread ends"),
+            appointment_waited,
+            waits,
+        )
+    });
+
+    assert!(
+        appointment_waited,
+        "the appointment waits for the first PIN's set; it went on beside it instead"
+    );
+    assert_eq!(waits, 1, "one step waited for the set: the appointment's");
+    set.expect("the owner sets this device's first PIN");
+    assert_eq!(
+        pin.capability(),
+        PresenceCapability::DevicePin { set: true }
+    );
+    let refusal = appointment.expect_err("no successor is made in a slot beside a set PIN");
+    assert!(
+        matches!(
+            &refusal,
+            Error::Secret(SecretError::WorldKeyRefused(reason)) if *reason == KEPT_UNDER_DEVICE_PIN
+        ),
+        "the slot's rule refuses the successor once the PIN is set: {refusal}"
+    );
+    assert_eq!(
+        owned
+            .vault
+            .export_signed_authority_history()
+            .expect("the signed history"),
+        stored,
+        "the refused appointment writes no row"
+    );
+    assert!(owned.rootless(), "no successor was appointed");
 }
 
 /// The owner's second install: enrolled as his through the hosted console,

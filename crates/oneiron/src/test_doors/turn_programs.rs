@@ -261,15 +261,6 @@ pub fn erase_actor_programs(vault: &Vault, actor: EntityId) -> Result<()> {
     crate::dreamer_runner::turn_program_test_hooks::erase_actor_programs(vault, actor)
 }
 
-/// Each due row one of `actor`'s timers keeps: its due time and registration.
-///
-/// # Errors
-///
-/// A store failure.
-pub fn timer_due_rows_for_actor(vault: &Vault, actor: EntityId) -> Result<Vec<(u64, EntityId)>> {
-    crate::dreamer_runner::turn_program_test_hooks::timer_due_rows_for_actor(vault, actor)
-}
-
 /// Each idle or feed row one of `actor`'s programs keeps: its kind tag and registration.
 ///
 /// # Errors

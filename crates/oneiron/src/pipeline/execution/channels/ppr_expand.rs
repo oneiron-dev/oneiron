@@ -97,6 +97,10 @@ impl PipelineBuilder<'_> {
             // specificity weighting is search_ppr-only. A narrowed walk is
             // compute-only and takes no shared cache; its community prior,
             // when configured, comes from the admitted scope alone.
+            // The walk alone, for `oneiron-bench ppr-walk-share`
+            // (UNBUILT3-06): a span no subscriber listens to costs a level
+            // check and changes no output.
+            let walk = tracing::trace_span!("ppr_expand_walk").entered();
             let ppr = match pipeline_ppr_visibility(self, inputs.filter_config, &*claim_gate) {
                 Some(visibility) if self.ppr_community.beta != 0.0 && !self.read.is_union() => {
                     // A hidden seed takes no place in the evidence order:
@@ -208,6 +212,7 @@ impl PipelineBuilder<'_> {
                     result
                 }
             };
+            drop(walk);
             if !state.diagnostics.succeeded.contains(&RetrievalSignal::Ppr) {
                 state.diagnostics.succeeded.push(RetrievalSignal::Ppr);
             }

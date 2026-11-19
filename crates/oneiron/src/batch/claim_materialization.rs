@@ -128,6 +128,19 @@ impl ClaimMaterialization {
             binding.validate_actor(&vault.store, txn)?;
             bindings.push(binding);
         }
+        // A demotion is the engine's act, not the owner's answer: an open
+        // question on a held claim leaves the tray while the write is judged
+        // and is restated on the body the claim then stores (S17-1 = A).
+        let claim_id = *id;
+        let question =
+            crate::claim::held_question::open_owner_question_in_txn(&vault.store, txn, &claim_id)?;
+        if question.is_some() {
+            vault.store.remove_pending_gate_consent_in_txn(
+                txn,
+                &claim_id,
+                crate::store::TrayRemoval::Silent,
+            )?;
+        }
         // No binding still means the existing first-party local policy, not
         // authority inferred from evidence. The pipeline refreshes a consumed
         // binding from the finalized row, atomically with the edge update.
@@ -143,7 +156,16 @@ impl ClaimMaterialization {
             ApplyOpsGateMode::new(false, false)
                 .with_claim_materializations(bindings)
                 .with_verified_claim_transitions(vec![transition]),
-        )
+        )?;
+        match question {
+            Some(question) => crate::claim::held_question::restate_owner_question_in_txn(
+                &vault.store,
+                txn,
+                &question,
+                &claim_id,
+            ),
+            None => Ok(()),
+        }
     }
 
     /// The writer's envelope for a stored claim, rebuilt from its private

@@ -11,13 +11,15 @@ use crate::skill_hub::tests::ladder_fixture::{
 };
 use serde_json::Value as Json;
 
+use crate::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
 use crate::attempt_queue::{
-    AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
-    EnqueueOutcome, ManifestEntry, ManifestKind,
+    AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, ManifestEntry,
+    ManifestKind,
 };
 use crate::config::VaultConfig;
 use crate::dreamer_runner::{
-    DreamerRunnerStore, EnqueueDreamerAttemptOutcome, EnqueueDreamerSkillOptimizeAttempt,
+    DREAMER_RUNNER_ATTEMPT_KIND, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
+    EnqueueDreamerSkillOptimizeAttempt,
 };
 use crate::edge::EdgeKind;
 use crate::error::ErrorKind;
@@ -111,19 +113,16 @@ fn stamped_receipt_version_as(
     now: u64,
     actor: Option<EntityId>,
 ) -> String {
+    let now = vault.now_recorded_at().max(now);
     let queue = AttemptQueue::new(vault);
-    let EnqueueOutcome::Enqueued(attempt) = queue
-        .enqueue(EnqueueAttempt {
-            kind: "skill-opt.attempt".to_owned(),
-            payload: Vec::new(),
-            dedupe_key: None,
-            run_id: None,
-            now,
-        })
-        .expect("enqueue")
+    let dispatcher = AgentDispatcher::new(vault);
+    let AgentDispatchOutcome::Dispatched(dispatched) = dispatcher
+        .dispatch_default_base(None, None, None, now)
+        .expect("enqueue typed agent dispatch")
     else {
-        panic!("a fresh dedupe-free enqueue is never Existing");
+        panic!("a fresh dedupe-free dispatch is never Existing");
     };
+    let attempt = dispatched.attempt;
     if let Some(actor) = actor {
         vault
             .bind_actor_attempt(attempt.id, &actor)
@@ -136,14 +135,18 @@ fn stamped_receipt_version_as(
         )
         .expect("manifest append");
     let ClaimOutcome::Claimed(leased) = queue
-        .claim(ClaimAttempt {
-            lease_owner: "skill-opt-worker".to_owned(),
-            now: now + 1,
-        })
+        .claim_kind(
+            DREAMER_RUNNER_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: "skill-opt-worker".to_owned(),
+                now,
+            },
+        )
         .expect("claim")
     else {
         panic!("the enqueued attempt is claimable");
     };
+    assert_eq!(leased.id, attempt.id);
     queue
         .set_executor_model(
             attempt.id,
@@ -157,15 +160,26 @@ fn stamped_receipt_version_as(
             id: attempt.id,
             lease_owner: "skill-opt-worker".to_owned(),
             attempt_count: leased.attempt_count,
-            now: now + 2,
+            now,
         })
         .expect("complete")
     else {
         panic!("a leased attempt completes exactly once");
     };
     let receipt_id = attempt_pack_receipt_id(&attempt.id);
-    crate::receipt::make_attempt_receipt_legacy_for_tests(vault, &receipt_id)
-        .expect("emulate historical unknown-executor evidence");
+    // The reliability projector mints numerical claims only for anchored outcomes
+    // (skill_reliability/projector.rs:535-548): stamp the harness's held-out score
+    // beside the executor revision, so a routed defect moves the whole-ledger
+    // posterior the dev-partition fixture reads below.
+    let mut receipt = crate::receipt::attempt_pack_receipt(&vault, &receipt_id)
+        .expect("read stamped pack receipt")
+        .expect("stamped pack receipt");
+    receipt.fields.insert(
+        crate::skill_reliability::FIELD_SKILL_LEARNING_ANCHOR.to_owned(),
+        serde_json::to_string(&crate::learning::Anchor::HeldOut).expect("anchor encodes"),
+    );
+    crate::receipt::overwrite_attempt_pack_receipt_for_test(&vault, &receipt)
+        .expect("stamp fixture performance anchor");
     receipt_id
 }
 
@@ -4953,30 +4967,32 @@ fn context_recipe_workflow_keeps_manifest_attribution_after_improver_edit() -> R
     admit_optimized_skill_revision(&vault, &proposal_id, t(400), 401).expect("recipe admission");
     vault.supersede_skill_record(&skill, &proposal_id, t(404), 405)?;
     let queue = AttemptQueue::new(&vault);
-    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
-        kind: "recipe.attempt".into(),
-        payload: vec![],
-        dedupe_key: None,
-        run_id: None,
-        now: 500,
-    })?
+    let dispatcher = AgentDispatcher::new(&vault);
+    let now = vault.now_recorded_at();
+    let AgentDispatchOutcome::Dispatched(dispatched) =
+        dispatcher.dispatch_default_base(None, None, None, now)?
     else {
         panic!("fresh recipe attempt")
     };
-    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
-        lease_owner: "recipe-worker".into(),
-        now: 501,
-    })?
+    let attempt = dispatched.attempt;
+    let ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        DREAMER_RUNNER_ATTEMPT_KIND,
+        ClaimAttempt {
+            lease_owner: "recipe-worker".into(),
+            now,
+        },
+    )?
     else {
         panic!("leased recipe attempt")
     };
+    assert_eq!(leased.id, attempt.id);
     let loaded = vault.load_attempt_skill_pack(
         attempt.id,
         &proposal_id,
         "recipe-worker",
         leased.attempt_count,
         "fixture-recipe-model@1",
-        501,
+        now,
     )?;
     let source = loaded
         .source_files
@@ -4994,12 +5010,12 @@ fn context_recipe_workflow_keeps_manifest_attribution_after_improver_edit() -> R
             id: attempt.id,
             lease_owner: "recipe-worker".into(),
             attempt_count: leased.attempt_count,
-            now: 502,
+            now,
         })?,
         CompleteOutcome::Completed(_)
     ));
     let receipt = attempt_pack_receipt_id(&attempt.id);
-    record_skill_contributing_win(&vault, &proposal_id, &receipt, 503)?;
+    record_skill_contributing_win(&vault, &proposal_id, &receipt, now)?;
     assert!(crate::skill_reliability::skill_reliability_posterior(&vault, &proposal_id)?.is_none());
     // The attributed outcome is held under the NEW skill entity and exact
     // revision, never copied from the previous recipe's receipt history.

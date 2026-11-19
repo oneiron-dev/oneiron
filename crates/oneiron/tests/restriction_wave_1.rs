@@ -125,6 +125,7 @@ impl Fixture {
             device_class,
             encryption_key,
             machine_proof,
+            restored_from: None,
         };
         let mut transcript = b"oneiron/mesh-machine-binding/v1\0".to_vec();
         transcript.extend_from_slice(machine.as_bytes());

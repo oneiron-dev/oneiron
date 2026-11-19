@@ -397,6 +397,7 @@ fn private_diary_and_foreign_scope_are_not_admitted() -> TestResult {
 fn removed_evidence_and_landed_claim_cannot_be_replayed_from_cache() -> TestResult {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let owner = EntityId::now();
     let unit = EntityId::now();
     let evidence = EntityId::now();
@@ -778,6 +779,15 @@ fn a_relationship_message_is_a_standing_source_only_on_the_principals_grant() ->
     let owner = EntityId::now();
     let principal = crate::test_util::seed_agent_definition(&vault, EntityId::now(), "asker");
     let space = EntityId::now();
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault.put_entity(
+        &space,
+        crate::registry::ENTITY_TYPE_RELATIONSHIP,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"relationship",
+    )?;
     let message = EntityId::now();
     person(&vault, owner)?;
     grant(&vault, principal)?;
@@ -863,6 +873,15 @@ fn an_expired_grant_is_no_standing_source_at_either_door() -> TestResult {
         let owner = EntityId::now();
         let principal = crate::test_util::seed_agent_definition(&vault, EntityId::now(), "asker");
         let space = EntityId::now();
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault.put_entity(
+            &space,
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )?;
         let message = EntityId::now();
         person(&vault, owner)?;
         grant(&vault, principal)?;

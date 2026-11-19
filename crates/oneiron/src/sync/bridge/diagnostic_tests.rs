@@ -10,6 +10,7 @@ use crate::sync::{
     types::WindowKey,
     window::{forward_rematerialize, reverse_rematerialize},
 };
+use crate::temporal::TimeRange;
 use crate::test_util::open_test_vault_with;
 use crate::{config::VaultConfig, registry::ENTITY_TYPE_DIAGNOSTIC};
 fn id(seed: u8) -> EntityId {
@@ -32,11 +33,17 @@ fn diagnostic_fixture(seed: u8, valid_to: Option<u64>) -> Result<(EntityId, Vec<
     event.valid_to = valid_to;
     let body = encode_diagnostic_event_body(&event)?;
     let entity = diagnostic_event_id(&event.detector_id, &body);
-    let mut blob = vec![ENTITY_TYPE_DIAGNOSTIC];
-    blob.extend_from_slice(&event.valid_from.to_be_bytes());
-    blob.extend_from_slice(&valid_to.unwrap_or(u64::MAX).to_be_bytes());
-    blob.extend_from_slice(&1_000_u64.to_be_bytes());
-    blob.extend_from_slice(&body);
+    // Fresh test carrier: row_version 0, the value base writes for a new row.
+    let blob = crate::test_util::entity_record(
+        ENTITY_TYPE_DIAGNOSTIC,
+        TimeRange {
+            start: event.valid_from,
+            end: valid_to.unwrap_or(u64::MAX),
+        },
+        1_000,
+        0,
+        &body,
+    );
     Ok((entity, blob))
 }
 

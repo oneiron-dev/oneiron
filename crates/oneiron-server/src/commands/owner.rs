@@ -111,6 +111,30 @@ pub(super) fn open_stopped_vault_with(
     vault_config: oneiron::VaultConfig,
     instead: &str,
 ) -> anyhow::Result<oneiron::Vault> {
+    let vault = open_stopped_vault_unprovisioned(config, vault_config, instead)?;
+    // A command that signs (a delete's receipt, a settings edit) needs this
+    // install's keys from the keystore.
+    config.keystore.install_on(&vault, &config.vault_path);
+    // And this install's own machine profile, under the configured host root
+    // as `serve` ensures it, to carry the owner's acts (FIX 4648). No root is
+    // minted here, and the command goes on without one.
+    vault.ensure_serving_install_profile_at_start(
+        configured_host_issuer(config, &vault, false).as_ref(),
+        "owner command",
+    );
+    Ok(vault)
+}
+
+/// The stopped vault at `config`'s path under the writer lease, and nothing
+/// more: no keystore keys installed and no machine profile ensured. For a
+/// command that reads its refusals before it provisions anything, as
+/// `restore --join` (row RESTORED-COPIES-ENROL-EACH-OTHER; REVIEW-9511 P1),
+/// whose refusal writes nothing.
+pub(super) fn open_stopped_vault_unprovisioned(
+    config: &ServeConfig,
+    vault_config: oneiron::VaultConfig,
+    instead: &str,
+) -> anyhow::Result<oneiron::Vault> {
     let path = &config.vault_path;
     anyhow::ensure!(
         path.join("data.mdb").is_file(),
@@ -124,16 +148,6 @@ pub(super) fn open_stopped_vault_with(
         ),
         error => anyhow::anyhow!("open vault {}: {error}", path.display()),
     })?;
-    // A command that signs (a delete's receipt, a settings edit) needs this
-    // install's keys from the keystore.
-    config.keystore.install_on(&vault, path);
-    // And this install's own machine profile, under the configured host root
-    // as `serve` ensures it, to carry the owner's acts (FIX 4648). No root is
-    // minted here, and the command goes on without one.
-    vault.ensure_serving_install_profile_at_start(
-        configured_host_issuer(config, &vault, false).as_ref(),
-        "owner command",
-    );
     Ok(vault)
 }
 

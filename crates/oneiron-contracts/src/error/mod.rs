@@ -40,7 +40,7 @@ pub use self::record::{
 };
 pub use self::registry::RegistryError;
 pub use self::relay::RelayError;
-pub use self::secret::{KitRecord, SecretError};
+pub use self::secret::{DevicePinRefusal, KitRecord, SecretError};
 pub use self::store::{SideTableRowProblem, StoreError, VaultRootEntry, VaultRootProblem};
 pub use self::sync::SyncError;
 #[cfg(feature = "sync")]
@@ -93,6 +93,8 @@ pub enum ErrorKind {
     InvalidAuthorityLogBody,
     /// An authority door refused a well-formed request and named its rule.
     AuthorityRefused,
+    /// A delete of the PERSON that holds the vault's last owner binding.
+    LastBoundOwnerDelete,
     /// The checkpoint root policy cannot be fixed or chosen as asked.
     CheckpointPolicyRefused,
     /// The owner's checkpoint policy choice named a stale revision.
@@ -341,6 +343,9 @@ pub enum ErrorKind {
     TaintedArtifactStale,
     WorldKeyRefused,
     KeystoreUnavailable,
+    /// A device PIN door refused: the PIN is required, wrong, or not one
+    /// this device takes (row OCS-OWNER-PIN).
+    DevicePinRefused,
     UnverifiedKitRestore,
     KitConfirmationStale,
     MicroVmBackendUnavailable,

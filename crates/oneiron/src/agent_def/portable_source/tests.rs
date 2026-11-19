@@ -381,7 +381,7 @@ fn captured_knowledge() -> Result<(
     let claim = EntityId::now();
     let at = crate::TimeRange { start: 10, end: 10 };
     vault.put_agent_definition(&parent, &definition("birth.knowledge-parent", None), at, 10)?;
-    let body = crate::ClaimBody::new(
+    let mut body = crate::ClaimBody::new(
         "test.source_note",
         crate::ClaimSubject::Entity(parent),
         Value::from("A private source fact"),
@@ -389,6 +389,7 @@ fn captured_knowledge() -> Result<(
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )?;
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     vault.put_claim(&claim, &body, at, 10)?;
     vault.put_agent_definition(
         &child,

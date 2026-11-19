@@ -638,14 +638,16 @@ fn a_fill_leased_before_a_same_body_put_mid_walk_writes_nothing() -> Result<()> 
     put_source(&vault, DependentWalkDoor::SoftErase, &source)?;
     derive_five(&vault, &source)?;
     let claim = entity(0x75);
-    let claim_body = crate::claim::encode_claim_body(&ClaimBody::new(
+    let mut walk_body = ClaimBody::new(
         "test.walk_fill",
         ClaimSubject::Entity(entity(0x74)),
         rmpv::Value::from("filled mid-walk"),
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    )?)?;
+    )?;
+    crate::test_util::stamp_vault_default_facet(&vault, &mut walk_body);
+    let claim_body = crate::claim::encode_claim_body(&walk_body)?;
     let claim_row = (crate::registry::ENTITY_TYPE_CLAIM, at(10), 11);
     vault
         .batch()
@@ -720,7 +722,7 @@ fn a_second_change_mid_walk_withdraws_what_the_first_passed_by() -> Result<()> {
 #[test]
 fn a_second_mark_lends_its_rows_none_of_the_first_marks_worlds() -> Result<()> {
     use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
-    let claim_in = |world: Option<EntityId>| -> Result<Vec<u8>> {
+    let claim_in = |vault: &crate::Vault, world: Option<EntityId>| -> Result<Vec<u8>> {
         let mut claim = ClaimBody::new(
             "test.walk_world",
             ClaimSubject::Entity(entity(0x74)),
@@ -729,6 +731,7 @@ fn a_second_mark_lends_its_rows_none_of_the_first_marks_worlds() -> Result<()> {
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )?;
+        crate::test_util::stamp_vault_default_facet(vault, &mut claim);
         claim.world = world;
         crate::claim::encode_claim_body(&claim)
     };
@@ -742,12 +745,18 @@ fn a_second_mark_lends_its_rows_none_of_the_first_marks_worlds() -> Result<()> {
         1,
         b"world",
     )?;
-    vault.put_entity(&source, claim_type, at(1), 1, &claim_in(Some(world))?)?;
+    vault.put_entity(
+        &source,
+        claim_type,
+        at(1),
+        1,
+        &claim_in(&vault, Some(world))?,
+    )?;
     derive_five(&vault, &source)?;
     vault.store.test_hooks.stop_dependent_walks_after(0);
     assert!(vault.delete_entity(&source)?);
 
-    vault.put_entity(&source, claim_type, at(1), 10, &claim_in(None)?)?;
+    vault.put_entity(&source, claim_type, at(1), 10, &claim_in(&vault, None)?)?;
     let summary = entity(0xEE);
     vault
         .batch()
