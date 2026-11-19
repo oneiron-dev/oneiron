@@ -9,9 +9,10 @@
 
 use crate::cli::InitArgs;
 use crate::config::{
-    EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider, OneironerConfig,
-    OneironerMode, OneironerProvider,
+    EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider, EnvConfig, OneironerConfig,
+    OneironerMode, OneironerProvider, ServeArgs, ServeConfig,
 };
+use crate::owner::OwnerError;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -326,11 +327,32 @@ pub(super) fn stage_config(path: &Path, text: &str) -> anyhow::Result<PathBuf> {
     Ok(staged)
 }
 
+/// The config serve started from, read again for the owner route's first-run
+/// model setup: the startup layers replayed onto the file at `path`, so a
+/// server started with a settings file or holder overrides compares its live
+/// source, not the bare file, and an unchanged server never reads as Changed.
+pub(super) fn replay_startup_config(
+    startup_args: &ServeArgs,
+    path: &Path,
+    env: EnvConfig,
+) -> Result<ServeConfig, OwnerError> {
+    let mut replay = startup_args.clone();
+    replay.config = Some(path.to_owned());
+    crate::config::resolve_serve_config_with_sources(
+        &replay,
+        env,
+        crate::config::default_config_path(),
+    )
+    .map_err(OwnerError::Host)
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::super::{init_with_env, read_config};
+    use super::replay_startup_config;
     use crate::cli::InitArgs;
-    use crate::config::{EmbedderProvider, EnvConfig};
+    use crate::config::{EmbedderProvider, EnvConfig, ServeArgs};
+    use crate::owner::OwnerError;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
@@ -402,5 +424,50 @@ mod tests {
         assert_eq!(config.port, 12345);
         assert!(!config.embedder.unwrap().is_active());
         assert_eq!(mode(&path), 0o600);
+    }
+
+    /// The owner route's first-run setup reads the config again before its
+    /// answers: a refusal there is the owner's to mend, in the words that say
+    /// how, not a host failure the route answers 500 to (review of #9605).
+    #[test]
+    fn the_setup_replay_returns_an_admission_refusal_for_the_owner_to_mend() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oneiron.toml");
+        let secret = "ab".repeat(32);
+        let issuer = format!("auth_secret = \"{secret}\"\n{EXISTING}");
+        for (text, mode, says) in [
+            (
+                EXISTING.to_owned(),
+                0o666,
+                "can be written by any user (mode 666)",
+            ),
+            (issuer, 0o644, "sets auth_secret at line 1"),
+        ] {
+            config_file(&path, &text, mode);
+            match replay_startup_config(&ServeArgs::default(), &path, EnvConfig::default()) {
+                Err(OwnerError::Invalid(message)) => {
+                    assert!(
+                        message.contains(says) && message.contains("chmod"),
+                        "{message}"
+                    );
+                    assert!(!message.contains(&secret), "{message}");
+                }
+                Err(other) => panic!("mode {mode:o}: not the owner's to mend: {other}"),
+                Ok(_) => panic!("mode {mode:o}: the replay read a config serve refuses"),
+            }
+        }
+    }
+
+    /// A config that does not parse is no admission refusal: it stays a host
+    /// failure, which the route answers with no line of the file.
+    #[test]
+    fn the_setup_replay_keeps_a_config_that_does_not_parse_a_host_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oneiron.toml");
+        config_file(&path, "port = \n", 0o644);
+        assert!(matches!(
+            replay_startup_config(&ServeArgs::default(), &path, EnvConfig::default()),
+            Err(OwnerError::Host(_))
+        ));
     }
 }
