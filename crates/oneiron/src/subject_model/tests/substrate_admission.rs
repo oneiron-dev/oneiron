@@ -194,7 +194,10 @@ fn substrate_missing_person_is_rejected_until_the_actual_row_arrives() -> Result
         assert!(vault.claims_for_subject(&person)?.is_empty());
         seed(&vault, person, ENTITY_TYPE_PERSON);
         admit(&vault, door, &id, &body)?;
-        assert_eq!(vault.get_claim(&id)?, Some(body));
+        // `admit` stamps the vault default facet before each door's put.
+        let mut stored = body.clone();
+        crate::test_util::stamp_vault_default_facet(&vault, &mut stored);
+        assert_eq!(vault.get_claim(&id)?, Some(stored));
     }
     Ok(())
 }
