@@ -511,10 +511,15 @@ fn a_non_owner_full_vault_slip_deletes_nothing_on_the_owner_path() {
             let caller = full_vault_slip(&fx, holder, class);
             let note = owners_note(&fx);
             let (status, body) = send(&fx, &caller, "delete", json!({ "id": note.to_hex() })).await;
-            assert_eq!(
-                status,
-                StatusCode::FORBIDDEN,
-                "a non-owner {class}'s full-vault slip deletes the owner's NOTE as the owner: {body}"
+            // The role path refuses: the delete authority answers 403, and the
+            // facade row's reference admission 422 for a record this writer
+            // cannot read (FIX-LIST 25699).
+            assert!(
+                matches!(
+                    status,
+                    StatusCode::FORBIDDEN | StatusCode::UNPROCESSABLE_ENTITY
+                ),
+                "a non-owner {class}'s full-vault slip deletes the owner's NOTE as the owner: {status} {body}"
             );
             assert!(
                 live(&fx, note),
