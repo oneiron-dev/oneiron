@@ -1279,6 +1279,65 @@ impl HeldMachineClaims {
             .unwrap();
         wtxn.commit().unwrap();
     }
+
+    /// As [`Self::hold_with_checker_reason`], for a write a runner's attempt
+    /// `attempt` made as an agent on a Normal predicate: the asked receipt
+    /// also carries the loop link to that attempt and the drift tripwire's
+    /// normal-baseline token, as the claim write door records them.
+    fn hold_from_runner_attempt(&self, id: &EntityId, reason: &str, attempt: [u8; 16]) {
+        self.hold_with_checker_reason(id, reason);
+        let row = self.tray_row(id).expect("the claim is asked");
+        let asked = self.asked(id);
+        let mut wtxn = self.vault.store.env.write_txn().unwrap();
+        let mut receipt = crate::store::GateReceipt::with_reasons(
+            crate::store::gate_reason::GateReceiptOutcome::Pending,
+            "claim",
+            row.reason_codes.clone(),
+            crate::store::ReceiptActor::Verbatim {
+                class: asked.actor_class.clone(),
+                actor_ref: asked.actor_ref.clone(),
+            },
+            row.diff_handle.clone(),
+            crate::store::PolicyBasis::frontier(row.read_frontier_hash),
+        );
+        receipt.about = Some(*id);
+        receipt.receipt_reasons = asked
+            .receipt_reasons
+            .iter()
+            .cloned()
+            .chain([crate::self_heal::tripwires::normal_baseline_token(
+                &self.claim(id).predicate,
+            )])
+            .collect();
+        receipt.context = crate::store::GateDecisionContext::linked(
+            crate::store::GateLoopLink {
+                family: crate::store::GateLoopFamily::Action,
+                source: crate::store::GateLoopSource::Runner,
+                run: Some("held-claim-restate-run".to_owned()),
+                attempt: Some(attempt),
+                origin: crate::store::GateLoopOrigin::SelfDecision,
+                basis: None,
+            },
+            [],
+        );
+        let decision = self
+            .vault
+            .store
+            .record_gate_receipt_in_txn(&mut wtxn, receipt)
+            .unwrap();
+        self.vault
+            .store
+            .put_pending_gate_consent_in_txn(
+                &mut wtxn,
+                &crate::store::PendingGateConsentRecord {
+                    decision_id: decision.decision_id,
+                    created_at: decision.created_at,
+                    ..row
+                },
+            )
+            .unwrap();
+        wtxn.commit().unwrap();
+    }
 }
 
 // S17-1 = A (Engine 19 Nov 20:31): a decay rewrites the held claim in place,
@@ -1430,7 +1489,72 @@ fn a_restated_owner_question_keeps_its_writer_and_checker_reasons() {
         "the checker's explanation survives: {:?}",
         after.receipt_reasons
     );
-    assert_eq!(after.receipt_reasons, before.receipt_reasons);
+    // Review round 2: every asked reason but the drift tripwire's token for
+    // the agent's own write (a restatement is no new write).
+    let asked_reasons: Vec<String> = before
+        .receipt_reasons
+        .iter()
+        .filter(|reason| crate::self_heal::tripwires::normal_baseline_predicate(reason).is_none())
+        .cloned()
+        .collect();
+    assert_eq!(after.receipt_reasons, asked_reasons);
+}
+
+// S17-1 = A, review round 2: the restated question answers the asked decision
+// inside its loop, so a job-filtered receipt read still finds the runner's
+// attempt (and so does the owner's answer, which carries the restated links),
+// and it is no second write by the agent: the drift tripwire's normal-baseline
+// token stays on the asked receipt only, while the checker's reason moves on.
+#[test]
+fn a_restated_owner_question_keeps_its_loop_attempt_and_is_no_new_agent_write() {
+    use crate::claim::ClaimDemotionAction;
+    let held = HeldMachineClaims::open(b"held-claim-restate-loop-root", 236);
+    let id = held.propose("looped proposal");
+    let attempt = [0x4a; 16];
+    held.hold_from_runner_attempt(&id, "checker_hedged_low_confidence", attempt);
+    let before = held.asked(&id);
+    let baseline = crate::self_heal::tripwires::normal_baseline_token(&held.claim(&id).predicate);
+    assert!(before.receipt_reasons.contains(&baseline));
+    let job_ref = crate::store::gate_receipt::gate_decision_receipt(&before).job_ref;
+    assert!(job_ref.is_some(), "the asked write names its attempt");
+    let later = held.vault.now_recorded_at() + 1;
+    held.vault
+        .apply_claim_demotion(
+            &id,
+            ClaimDemotionAction::Decay {
+                new_claim_of_weight: 0.5,
+            },
+            later,
+        )
+        .unwrap();
+    let after = held.asked(&id);
+    assert_ne!(
+        after.decision_id, before.decision_id,
+        "the decay restates the question"
+    );
+    assert_eq!(
+        after.context.links,
+        crate::store::GateDecisionContext::answering(&before).links,
+        "the restated question keeps the asked loop links, based on the asked decision"
+    );
+    assert_eq!(
+        crate::store::gate_receipt::gate_decision_receipt(&after).job_ref,
+        job_ref,
+        "a job-filtered receipt read finds the restated question"
+    );
+    assert!(
+        !after.receipt_reasons.contains(&baseline),
+        "a restatement is no new agent write: {:?}",
+        after.receipt_reasons
+    );
+    assert!(
+        after
+            .receipt_reasons
+            .iter()
+            .any(|reason| reason == "checker_hedged_low_confidence"),
+        "the checker's explanation survives: {:?}",
+        after.receipt_reasons
+    );
 }
 
 #[test]
