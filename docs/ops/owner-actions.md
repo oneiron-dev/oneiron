@@ -705,6 +705,21 @@ in flight; retry once it drains. After the cutover, a push here runs under this 
 it is the writer. Otherwise the push gets 403 naming the epoch: at a mirror (`"mirror": true`),
 or when another host writes the repository. Reads still serve. Only a live owner can cut over.
 
+Name the writer's git door as well, and this copy sends pushes there:
+
+```sh
+oneiron api raw POST /v1/owner/origin-authority \
+  --data '{"repo": "demo", "expected_epoch": 3, "residence": "cloud-vault",
+           "writer": "<the new host machine id>", "writer_door": "https://cloud.example/git"}'
+```
+
+`writer_door` is the writer host's door base: `https://<host>/git` (HTTP only on loopback), with
+no userinfo, query or fragment. A pusher who may push to the repository is then redirected (307)
+to `https://cloud.example/git/demo.git`, and stock git follows the redirect for the whole push.
+Git asks for credentials for the new host. A push request that does not start with the ref
+advertisement, or that is bound to a checkout lease on this host, gets the 403 with that URL
+added. A caller without the `git_push` grant gets its usual 403 and never learns the URL.
+
 ## Mirror a served repository outward
 
 Each repository names one https mirror (GitHub, GitLab, a Gitea), and the mirror carries a
@@ -1980,15 +1995,22 @@ nothing, and the question goes up the ladder again.
 owner-grade credential, as before: your top-scope slip with its holder
 proof, or your managed vault's attested owner. The page reads the PDF and
 the geography pack from your own files; it reads no private PDF from the
-vault and stores nothing there. Export saves the pack as a local download.
+vault. Export saves the pack as a local download.
 
-Each time the page loads it gets a fresh editor token, kept only in the
-page's memory. It sends the token with its two computations, page geometry
-(`POST /sign/geometry`) and field layout (`POST /sign/layout`). The server
-keeps only the token's digest. The token admits new computations for an
-hour; one already running finishes. After that hour, or after the server
-restarts, the page says the session has ended: reload the editor and carry
-on.
+"Save fields to the draft" writes the pack's fields to a document still in
+draft, named by its 32-hex document reference (`POST /sign/fields`). It runs
+`vault.esign.fields.place` as the credential that loaded the page, with that
+verb's own checks. A document already sent keeps its fields: its content is
+frozen, and the save answers 400.
+
+Each time the page loads it gets two fresh editor tokens, kept only in the
+page's memory. The first goes with its two computations, page geometry
+(`POST /sign/geometry`) and field layout (`POST /sign/layout`); the second
+goes only with a save to a draft. Neither token opens the other's doors.
+The server keeps only each token's digest. A token admits new requests for
+an hour; one already running finishes. After that hour, after the server
+restarts, or once the credential that loaded the page is revoked, the page
+says the session has ended: reload the editor and carry on.
 
 - No ceiling on the PDF, the pack or a select field's choices. A larger PDF
   spools to disk and is inspected whole; only the vault's disk floor
@@ -2177,12 +2199,63 @@ oneiron restore BACKUP --unlock kit --vault-id HEX --piece /Volumes/KEY/kit/piec
 With a kit issued with a `passphrase` home, the passkey and the kit passphrase restore with no piece
 file: leave out `--piece` and give the passphrase with `--secret-file` (or on stdin).
 
+On a host that already holds the vault, the kit unlock reads the passkey the same way:
+`vault-key add-device` with its own `--credential` and `--kit-passkey-prf-file`, and every command
+that takes the shared unlock with `--unlock-credential` and `--unlock-kit-passkey-prf-file`:
+
+```sh
+oneiron vault-key add-device --unlock kit --vault-id HEX --piece /Volumes/KEY/kit/piece-1.txt \
+  --credential phone --kit-passkey-prf-file prf.bin
+oneiron vault-key status --unlock kit --unlock-vault-id HEX --unlock-piece /Volumes/KEY/kit/piece-1.txt \
+  --unlock-credential phone --unlock-kit-passkey-prf-file prf.bin
+```
+
+With no piece file, the passkey and the kit passphrase (`--secret-file` or `--unlock-secret-file`,
+or stdin) open the key.
+
 `vault-key recovery-preset --set nobody-but-me` turns the switch off: it prints a fresh sheet, and
 the kit stays usable. The old sheet opens nothing written after either change.
 
 A sheet, passkey or capsule handed out before the change still opens the backups written before it:
 the data key does not rotate. A backup names the preset it was written under, so a capsule, or a key
 an escrow recipient opened from an earlier backup, opens nothing written after the change.
+
+### A new data-key generation
+
+A new data-key generation replaces the vault's data key: everything written after it is sealed under
+a fresh key, and everything written before still opens with the old one, reached through the link
+chain. Each way you present gets a wrap of the new key; every other wrap of the old key is removed
+only when you confirmed its removal by id. This install's device wrap always gets one. Only you
+start it; an agent may ask you to, and its ask waits in your inbox.
+
+First the preview names, in plain words, every wrap the act would remove:
+
+```sh
+oneiron vault-key new-generation --preview --keep-password
+```
+
+Then present each way you keep, or confirm its removal, and start the act:
+
+```sh
+printf %s "$PASSWORD" | oneiron vault-key new-generation --keep-password --confirm-removal passkey:old-key
+```
+
+`--keep-password` reads the password from stdin or `--secret-file`. `--keep-passkey NAME=FILE` and
+`--keep-escrow LABEL=FILE` keep a passkey or an escrow: FILE is an owner-only file holding the
+passkey's PRF output, or the file holding the recipient's hybrid public key bytes, as
+`reseal-capsule --recipient-file` reads it. `--confirm-removal ID` confirms one wrap's removal; a
+way neither presented nor confirmed refuses the act and changes nothing. A running server takes the
+same steps at `POST /v1/owner/vault-key/generation/preview` with `{"password": true,
+"passkeys": [...], "escrows": [...]}` and `POST /v1/owner/vault-key/generation` with
+`{"password": "...", "passkeys": [{"credential": "...", "prf": "..."}], "escrows": [{"label": "...",
+"recipient": "..."}], "confirmed_removals": [...]}`: a PRF output is 32 bytes, hex or base64url, and
+a recipient is the hybrid public key's bytes, base64url without padding.
+
+Under any recovery preset but `standard` the act runs from the recovery preset switch instead, and
+here the engine refuses it. On a page-sealed vault the act stands, and the answer says so: its
+`notice` reads "this device's stored copy keeps its old key until it is re-keyed"
+(`pages_keep_earlier_key` is true), and `mirror_pending` true means the page-seal mirror is
+rewritten at the vault's next sealed open.
 
 ### Maximum tier
 
@@ -2277,8 +2350,10 @@ change to another install's root through your request and that target install.
 On the install you are signed in on, while its server runs:
 
 - `GET /v1/owner/roots` shows the root this install pins, one page of the foreign roots it sees
-  (each with how many machines it admits), the root a pin awaits and whether it has arrived, and
-  this install's `machine`. Pass `limit` for a larger page (100 by default) and `after` set to
+  (each with how many machines it admits), the root it awaits and whether it has arrived, and
+  this install's `machine`. An awaited root with a `request` is one a pending root request asks
+  for (see below): unless it is the root already pinned, you never pinned it here. Without
+  `request` it is your own earlier pin. Pass `limit` for a larger page (100 by default) and `after` set to
   the page's `next` to read the next page.
 - `POST /v1/owner/roots/pin` with `root` (64 hex) pins that root here and re-wraps the keys this
   machine may still read. A root this install does not store yet is awaited, and `GET
@@ -2316,9 +2391,25 @@ Another install's root changes through your request and its target install:
   the change names them. The request carries ids only. Its receipt says "recorded, awaiting a
   holder" until the target acts, or why nothing was recorded (the target is this install, or not
   a linked one).
-- The target lists what waits for it at `GET /v1/owner/roots/requests`.
+- The target lists what waits for it at `GET /v1/owner/roots/requests`. Each entry names the
+  machine the request says carried it (`carrier`), the role this install's own records give the
+  key that signed the request on that machine (`carrier_role`), and whether this install trusts
+  that key as one of your machines (`carrier_is_yours`). The machine id is the request's own
+  claim. Read who asked from `carrier_role` and `carrier_is_yours`: when `carrier_role` is
+  absent, this install's records tie that machine to no key they read, so treat the asker as
+  unknown.
+- A waiting pin also carries the question to show you (`prompt`) and the code of the root it
+  names (`root_code`). The question is three lines: what happens, the kit's code, and who asked
+  by the same reading: one of your devices, a device that is not yours (a server Oneiron hosts,
+  for one), or no device your vault knows. Compare the code with your kit's before you confirm:
+  `oneiron recovery-kit issue` prints it as `root_code`, and a machine that pins the kit shows it
+  as `pinned_code` at `GET /v1/owner/roots`. The code is 26 letters and digits; the fingerprint in
+  full stays in `root`.
 - `GET /v1/owner/owner-work/{request}` reads where any owner work request stands.
-- A pin needs no kit: the target makes it on its own.
+- A pin needs no kit. A pin of the root the target already pins runs on its own. A pin of any
+  other root waits on the target for your confirm there: `GET /v1/owner/roots` shows that root as
+  awaited with the request's id, and you confirm it with `POST /v1/owner/roots/pin` on the
+  target, or decline it with the cancel below.
 - `POST /v1/owner/roots/requests/cancel` with `request` cancels one, from any install you are
   signed in on. It carries ids only and takes effect on the target whenever it syncs, however long
   it was offline. A newer request on the same target also replaces an older one. The target never
@@ -2469,13 +2560,17 @@ contact offer.
   `once` discloses this once and keeps nothing. `standing` clears the contact for that Scope
   until you narrow or revoke it. `deny` refuses. An offer settles once. It is refused when it
   expired, when the delta differs from what you were shown, when the contact's clearance changed
-  since it was filed, or when the credential line that filed it tries to settle it.
+  since it was filed, or when the credential line that filed it tries to settle it. A confirm
+  of an offer that is missing, settled, expired or changed answers 409 with the
+  `consent_widen_proposal` state, as the core widen accept does.
 - `POST /v1/owner/disclosure/narrow` with `{"contact": "<hex>", "scope": {...}}` narrows a
   standing clearance to a Scope inside the current one.
 - `POST /v1/owner/disclosure/revoke` with `{"contact": "<hex>"}` is
   `consent.revoke_contact_disclosure`. The row stays, revoked, and admits nothing.
 - `POST /v1/owner/disclosure/preclear` with `{"set_name": "...", "contacts": [...], "scope": {...}}`
-  clears a named trusted set in advance, 1 to 256 contacts, one receipt each.
+  clears a named trusted set in advance, 1 to 256 contacts, one receipt each. A refused narrow or
+  trusted set (a Scope wider than the current clearance, an inactive contact, a contact named
+  twice) answers 409 with the `refused` state in the engine's words, as a refused entry answer does.
 - `GET` and `PUT /v1/owner/disclosure/mode` read and set the mode: `always_ask` (the companion
   never offers), `auto` (the default) or `always_yes` (pre-clear trusted sets; offers stay
   allowed). No mode clears anyone by itself.

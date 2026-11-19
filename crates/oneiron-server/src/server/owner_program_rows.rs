@@ -132,7 +132,10 @@ fn owner_row(
             Some(line) => runtime.block_on(crate::api::ai_media_for_run(
                 server, line, operation, attempt, input,
             )),
-            None => runtime.block_on(crate::api::ai_media_as_owner(server, operation, input)),
+            // An owner's own program binds no off-record session.
+            None => runtime.block_on(crate::api::ai_media_as_owner(
+                server, operation, input, false,
+            )),
         };
         encode(answered?)
     };

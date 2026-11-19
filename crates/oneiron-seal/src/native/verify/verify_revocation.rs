@@ -16,14 +16,21 @@ fn time_secs(t: x509_cert::time::Time) -> u64 {
 }
 
 /// Freshness window shared by CRL and OCSP evidence (§7.5 step 3): issued
-/// at or before the applicable time, and a present nextUpdate not in the
-/// past. Also used by the seal-side CRL fetcher.
+/// at or before the applicable time, and a nextUpdate that is present and
+/// not in the past. Evidence without nextUpdate is never fresh: Oneiron sets
+/// no maximum freshness, so ETSI EN 319 102-1 V1.4.1 §5.2.5.4 step 1 finds
+/// its freshness failed, as for stale evidence (FIX
+/// SEAL-REVOCATION-NO-NEXT-UPDATE-MAX-FRESHNESS). The host's own check
+/// refuses it too (organ-host seal/evidence.rs). The seal-side CRL and OCSP
+/// fetchers use this check, so the organ never embeds such evidence: it
+/// falls to the next source, or the material degrades to B-T (FIX
+/// SEAL-EVIDENCE-NO-NEXTUPDATE).
 pub(crate) fn evidence_fresh(
     this_update: x509_cert::time::Time,
     next_update: Option<x509_cert::time::Time>,
     at_unix: u64,
 ) -> bool {
-    time_secs(this_update) <= at_unix && next_update.is_none_or(|n| at_unix <= time_secs(n))
+    time_secs(this_update) <= at_unix && next_update.is_some_and(|n| at_unix <= time_secs(n))
 }
 
 /// Certificates whose subject is `issuer`, embedded DSS certs first, then
@@ -84,8 +91,8 @@ pub(crate) fn issued_by(
     )
 }
 
-/// deltaCRLIndicator (2.5.29.46) and IssuingDistributionPoint (2.5.29.28).
-const OID_EXT_DELTA_CRL_INDICATOR: &[u8] = b"\x55\x1d\x2e";
+/// deltaCRLIndicator (2.5.29.27) and IssuingDistributionPoint (2.5.29.28).
+const OID_EXT_DELTA_CRL_INDICATOR: &[u8] = b"\x55\x1d\x1b";
 
 const OID_EXT_ISSUING_DISTRIBUTION_POINT: &[u8] = b"\x55\x1d\x1c";
 
@@ -118,8 +125,8 @@ pub(crate) fn crl_complete_scope(crl: &x509_cert::crl::CertificateList) -> bool 
 /// otherwise why it is rejected (lead ruling F): unparseable, verified by
 /// no claimed issuer's key, signed by an issuer without cRLSign, or listing
 /// a covered certificate for an issuer it shadows is Unverifiable; a delta
-/// or IDP-scoped CRL or one stale at `at_unix` is Unusable; one listing a
-/// covered serial is Revoked.
+/// or IDP-scoped CRL, or one stale or without nextUpdate at `at_unix`, is
+/// Unusable; one listing a covered serial is Revoked.
 ///
 /// A CRL is about the covered chains when its signer has revocation
 /// authority over a covered non-anchor certificate: it issued it, or it
@@ -432,8 +439,8 @@ pub(crate) enum EvidenceRejection {
     /// failure.
     Unverifiable,
     /// Genuine but not usable here: stale or future-dated at the applicable
-    /// time, a delegate responder outside its validity, or a delta or
-    /// IDP-scoped CRL.
+    /// time, without nextUpdate, a delegate responder outside its validity,
+    /// or a delta or IDP-scoped CRL.
     Unusable,
     /// Genuine, and says a validation-set certificate is revoked.
     Revoked,
@@ -458,9 +465,9 @@ pub(crate) struct UnknownStatus<'a> {
 }
 
 /// What an authenticated SingleResponse says no to about the certificate
-/// it binds: `revoked` (Revoked), or stale, signed by a delegate outside
-/// its validity, or in a response produced after the applicable time
-/// (Unusable). It counts only when its issuer and serial name a covered
+/// it binds: `revoked` (Revoked), or stale or without nextUpdate, signed by
+/// a delegate outside its validity, or in a response produced after the
+/// applicable time (Unusable). It counts only when its issuer and serial name a covered
 /// non-anchor certificate (Engine call Q-C = A, 10 Nov 07:23); about any
 /// other certificate it claims nothing (Q4).
 pub(crate) struct NegativeClaim<'a> {
@@ -481,8 +488,9 @@ pub(crate) struct NegativeClaim<'a> {
 /// unsuccessful, empty, without a responder, bound to no validation-set
 /// certificate, signed by an unauthorized responder or not verifying. What
 /// an authentic response says no to (produced after the applicable time,
-/// stale, a delegate outside its validity, `revoked`) is returned as its
-/// negative claims, for the caller to weigh against the covered chains.
+/// stale or without nextUpdate, a delegate outside its validity, `revoked`)
+/// is returned as its negative claims, for the caller to weigh against the
+/// covered chains.
 pub(crate) fn ocsp_entry_valid<'a>(
     data: &[u8],
     embedded: &'a [EmbeddedCert],
@@ -524,6 +532,56 @@ pub(crate) fn ocsp_entry_valid<'a>(
     ocsp_basic_valid(&basic, &candidates, embedded, anchors, at_unix, memory)
 }
 
+/// The authority each bound SingleResponse's issuer grants the response's
+/// responder, one entry per `bound`: the responder is the first name match —
+/// response-embedded, then DSS, then anchors — whose key verifies the
+/// response and which every bound issuer leaves authorized. Each match is
+/// tried in turn, so a same-subject shadow filed ahead of the genuine
+/// responder fails only its own try, never the response. `pools` are the
+/// name-match pools in that order. `None` when no match both verifies and
+/// stands authorized.
+fn ocsp_responder_authority(
+    basic: &x509_ocsp::BasicOcspResponse,
+    tbs: &[u8],
+    pools: [&[EmbeddedCert]; 3],
+    bound: &[(&EmbeddedCert, &EmbeddedCert)],
+    at_unix: u64,
+    memory: &MemoryLedger,
+) -> Result<Option<Vec<Result<(), EvidenceRejection>>>, SealMemoryRefusal> {
+    let oid = basic.signature_algorithm.oid.as_bytes();
+    for responder in pools
+        .into_iter()
+        .flatten()
+        .filter(|c| ocsp_responder_matches(&basic.tbs_response_data.responder_id, &c.cert))
+    {
+        let Ok(alg) = cms::cert_signature_algorithm(&responder.der) else {
+            continue;
+        };
+        if !cms::sig_alg_permitted(alg, oid) {
+            continue;
+        }
+        if cms::verify_signature_value(alg, &responder.der, tbs, basic.signature.raw_bytes())
+            .is_err()
+        {
+            continue;
+        }
+        let mut authority_of = Vec::with_capacity(bound.len());
+        let mut authorized = true;
+        for (_, issuer) in bound {
+            let authority = ocsp_responder_authorized(responder, issuer, at_unix, memory)?;
+            if authority == Err(EvidenceRejection::Unverifiable) {
+                authorized = false;
+                break;
+            }
+            authority_of.push(authority);
+        }
+        if authorized {
+            return Ok(Some(authority_of));
+        }
+    }
+    Ok(None)
+}
+
 /// The rest of [`ocsp_entry_valid`]: the responder among `candidates`, the
 /// DSS certificates and the anchors, the response signature, each
 /// SingleResponse's binding and the responder's authority over it, and
@@ -540,25 +598,7 @@ fn ocsp_basic_valid<'a>(
     memory: &MemoryLedger,
 ) -> Result<Result<OcspEvidence<'a>, EvidenceRejection>, SealMemoryRefusal> {
     use der::Encode;
-    let Some(responder) = candidates
-        .iter()
-        .find(|c| ocsp_responder_matches(&basic.tbs_response_data.responder_id, &c.cert))
-        .or_else(|| {
-            embedded
-                .iter()
-                .chain(anchors.iter())
-                .find(|c| ocsp_responder_matches(&basic.tbs_response_data.responder_id, &c.cert))
-        })
-    else {
-        return Ok(Err(EvidenceRejection::Unverifiable));
-    };
-    let Ok(alg) = cms::cert_signature_algorithm(&responder.der) else {
-        return Ok(Err(EvidenceRejection::Unverifiable));
-    };
-    let oid = basic.signature_algorithm.oid.as_bytes();
-    if !cms::sig_alg_permitted(alg, oid) {
-        return Ok(Err(EvidenceRejection::Unverifiable));
-    }
+    let responses = &basic.tbs_response_data.responses;
     let Some(tbs_len) = basic
         .tbs_response_data
         .encoded_len()
@@ -571,13 +611,9 @@ fn ocsp_basic_valid<'a>(
     let Ok(tbs) = basic.tbs_response_data.to_der() else {
         return Ok(Err(EvidenceRejection::Unverifiable));
     };
-    if cms::verify_signature_value(alg, &responder.der, &tbs, basic.signature.raw_bytes()).is_err()
-    {
-        return Ok(Err(EvidenceRejection::Unverifiable));
-    }
-    drop(tbs);
-    drop(tbs_held);
-    let responses = &basic.tbs_response_data.responses;
+    // Binding names no responder, so every SingleResponse binds before any
+    // name match is tried: an unbound response is Unverifiable whichever
+    // match would have verified it.
     memory.admit_len::<(&EmbeddedCert, &EmbeddedCert, Result<(), EvidenceRejection>)>(
         responses.len(),
     )?;
@@ -587,12 +623,21 @@ fn ocsp_basic_valid<'a>(
         else {
             return Ok(Err(EvidenceRejection::Unverifiable));
         };
-        let authority = ocsp_responder_authorized(responder, issuer, at_unix, memory)?;
-        if authority == Err(EvidenceRejection::Unverifiable) {
-            return Ok(Err(EvidenceRejection::Unverifiable));
-        }
-        bound.push((target, issuer, authority));
+        bound.push((target, issuer));
     }
+    let Some(authority_of) = ocsp_responder_authority(
+        basic,
+        &tbs,
+        [candidates, embedded, anchors],
+        &bound,
+        at_unix,
+        memory,
+    )?
+    else {
+        return Ok(Err(EvidenceRejection::Unverifiable));
+    };
+    drop(tbs);
+    drop(tbs_held);
     // producedAt sanity bound: RFC 6960 assigns producedAt no freshness
     // semantics, but a response claiming to be produced BEYOND the
     // applicable time (plus a documented clock-skew tolerance) is not
@@ -608,6 +653,10 @@ fn ocsp_basic_valid<'a>(
     let mut unknown_statuses: Vec<UnknownStatus<'_>> = Vec::new();
     memory.admit_len::<NegativeClaim<'_>>(responses.len())?;
     let mut negative = Vec::with_capacity(responses.len());
+    let bound = bound
+        .into_iter()
+        .zip(authority_of)
+        .map(|((target, issuer), authority)| (target, issuer, authority));
     for (single, (target, issuer, authority)) in responses.iter().zip(bound) {
         let rejection = if produced_late {
             Some(EvidenceRejection::Unusable)

@@ -29,6 +29,7 @@ mod model_list;
 mod owner_fallback_door;
 mod replay_prompt;
 mod rung;
+mod rung_hours;
 mod sends;
 mod shadow_capture;
 mod step_attempt;
@@ -75,6 +76,7 @@ use super::served::{served_receipt, stamp_cache_horizon};
 use super::source_admission::{self, SourceAdmission};
 use super::status::RungHealth;
 use super::walk::{Passed, Walk, ends_call, failure_kind, provider_down};
+use crate::runtime::GpuPodHours;
 
 /// Why a rung past its ladder's locality ceiling is passed over (FIX 12735).
 const PAST_LOCALITY_CEILING: &str = "the rung would send past its ladder's locality ceiling";
@@ -99,6 +101,9 @@ pub(super) struct LadderRung {
     /// A media seat's rung: the media wire it sends `ai.*` media calls
     /// through, and what it serves. A chat rung has none.
     pub(super) media: Option<MediaRung>,
+    /// The daily hours it serves its seat's walk (UNBUILT-14): inside them
+    /// the walk tries it first, outside them it passes it. `None`: any hour.
+    pub(super) hours: Option<GpuPodHours>,
 }
 
 /// The wire a ladder's calls speak. An owner's fallback for its parked
@@ -322,6 +327,34 @@ impl OfferLadder {
         }
     }
 
+    /// This ladder for a call of a role whose work never leaves the device
+    /// (`leave_device = "never"`): a call-local copy scoped so that no
+    /// owner's fallback that would take the call off the device is
+    /// reachable ([`Self::can_serve`]), as the role's own seat is scoped. A
+    /// role's route may hand out a ladder its seat does not scope: a
+    /// model's bare ladder, or another role's seat or rung (FIX-LIST
+    /// ROLE-LEAVE-DEVICE-LOST-ON-BARE-LADDER-FALLBACK). This ladder itself
+    /// when its scope already keeps the call on the device. The shared
+    /// ladder is never changed.
+    #[must_use]
+    pub(super) fn with_stays_on_device(self: &Arc<Self>) -> Arc<Self> {
+        if self.scope.stays_on_device {
+            return Arc::clone(self);
+        }
+        Arc::new(Self {
+            name: self.name.clone(),
+            rungs: self.rungs.clone(),
+            picked: self.picked,
+            rests: Arc::clone(&self.rests),
+            scope: SeatScope {
+                stays_on_device: true,
+                ..self.scope
+            },
+            prefix: self.prefix.clone(),
+            listed: self.listed.clone(),
+        })
+    }
+
     /// This ladder with its rungs in the order `routes` names them (FIX
     /// 11768 seam for L05): [`WorldModelRoutes::order`] over each rung's
     /// [`LadderRung::offer_id`], the same route id the ladder's doors
@@ -499,6 +532,7 @@ impl OfferLadder {
                 prompt: None,
                 offer,
                 media: None,
+                hours: None,
             },
             OfferCooldowns::unkept(),
         )
@@ -607,6 +641,13 @@ impl OfferLadder {
     #[must_use]
     pub fn rungs(&self) -> usize {
         self.rungs.len()
+    }
+
+    /// Whether an exact call may go out on this ladder: it is one picked
+    /// model, the guard every `generate_exact` keeps. A seat's ladder never
+    /// is.
+    pub(super) fn is_exact(&self) -> bool {
+        self.picked && self.rungs.len() == 1
     }
 
     /// Each rung's host-bound offer, in ladder order: the access a vault's
@@ -836,10 +877,11 @@ impl OfferLadder {
     /// does not hold the call's voice (FIX 1746), its world's order does not
     /// name its route (FIX 11768), it sits past the ladder's locality ceiling
     /// (FIX 12735), a fallback to it would take the work off the device and
-    /// the call's world stays on it, its offer rests from an earlier refusal,
-    /// or its offer is on probation with its one probation request out. The
-    /// voice, the order, the ceiling and the device come first, so a rung the
-    /// call may not use is never one it waits for.
+    /// the call's world stays on it, it keeps daily hours and the call came
+    /// outside them (UNBUILT-14), its offer rests from an earlier refusal, or
+    /// its offer is on probation with its one probation request out. The
+    /// voice, the order, the ceiling, the device and the hours come first, so
+    /// a rung the call may not use is never one it waits for.
     fn passes_over(&self, call: Call<'_>, index: usize, walk: &mut Walk) -> bool {
         if self.voice_not_held(call, index) {
             walk.note(index, Passed::VoiceNotHeld);
@@ -855,6 +897,10 @@ impl OfferLadder {
         }
         if let Some(reason) = self.kept_on_device(index, call.request) {
             self.hold(call, index, walk, reason);
+            return true;
+        }
+        if self.outside_hours(index) {
+            walk.note(index, Passed::OutsideHours);
             return true;
         }
         // A managed worker's own supervisor says when it serves (FIX 8315):
@@ -1111,10 +1157,13 @@ impl OfferLadder {
             return;
         }
         let rung = &self.rungs[index];
-        call.run.refuse(
+        // The row names the held call's own world (DEC-0005 fix 12), never
+        // the world that kept a call naming none on the device.
+        call.run.refuse_in_world(
             Some(call.selector.unwrap_or(self.name.as_str())),
             rung.model.as_str(),
             RunDenied::KeptOnDevice { reason },
+            call.request.envelope.scope.world,
         );
         tracing::info!(
             rung = rung.position,
@@ -1134,10 +1183,11 @@ impl OfferLadder {
             return;
         }
         let rung = &self.rungs[index];
-        call.run.refuse(
+        call.run.refuse_in_world(
             Some(call.selector.unwrap_or(self.name.as_str())),
             rung.model.as_str(),
             RunDenied::WorldRouteNotAdmitted,
+            call.request.envelope.scope.world,
         );
         tracing::info!(
             rung = rung.position,
@@ -1168,7 +1218,8 @@ impl OfferLadder {
     /// and can use now. Each is asked again every time, so a rung whose rest
     /// ended while a later one was sent is the next one used.
     fn next_rung(&self, call: Call<'_>, sent: &[bool], walk: &mut Walk) -> Option<usize> {
-        (0..self.rungs.len()).find(|index| !sent[*index] && !self.passes_over(call, *index, walk))
+        self.walk_order()
+            .find(|index| !sent[*index] && !self.passes_over(call, *index, walk))
     }
 
     /// Rests the offer at `index` when `error` is a limit refusal: a rate
@@ -1293,8 +1344,9 @@ impl OfferLadder {
     /// that time, so a caller can say when. Any other last failure is
     /// returned as it came, as is an outage: every rung resting rests for
     /// its health, so the call ends with its provider's own failure, never a
-    /// rate refusal. Every rung parked, the owner is asked about the spent
-    /// ones.
+    /// rate refusal. A call that met no failure and passed rungs for their
+    /// hours refuses as outside them, with when the first opens. Every rung
+    /// parked, the owner is asked about the spent ones.
     fn unanswered(&self, call: Call<'_>, walk: Walk) -> LlmError {
         self.ask_parked(&walk, call.needs, call.run.principal());
         // The world's own order refused every rung the call met: that
@@ -1336,6 +1388,13 @@ impl OfferLadder {
             }
             .into();
         }
+        // A call that met no failure and passed rungs for their hours: no
+        // rung serves at this hour, until the first of them opens.
+        let closed = if walk.last.is_none() {
+            self.outside_hours_refusal(&walk)
+        } else {
+            None
+        };
         match back.filter(|_| walk.limited()) {
             Some((retry_after, resets_at)) => RetryableLlmError::RateLimited {
                 retry_after,
@@ -1344,6 +1403,7 @@ impl OfferLadder {
             .into(),
             None => walk
                 .last
+                .or(closed)
                 .unwrap_or_else(|| FatalLlmError::InvalidRequest.into()),
         }
     }
@@ -1573,15 +1633,10 @@ impl OfferLadder {
                 }
             };
         }
-        let answered = if let Some(release) = release {
-            call.deadline
-                .bound(gate.run_progress_released(bound, permit.lease(), Some(release)))
-                .await
-        } else {
-            call.deadline
-                .bound(gate.run_progress(bound, permit.lease()))
-                .await
-        };
+        let answered = call
+            .deadline
+            .bound(gate.run_progress_released(bound, permit.lease(), release))
+            .await;
         let Some(answered) = answered else {
             settle_failed(permit);
             return Err(CallDeadline::expiry());
@@ -1707,7 +1762,8 @@ impl OfferLadder {
             deadline,
         };
         let mut walk = Walk::default();
-        let (start, wait) = match (0..self.rungs.len())
+        let (start, wait) = match self
+            .walk_order()
             .find(|index| !self.passes_over(call, *index, &mut walk))
         {
             Some(start) => (start, None),

@@ -1,6 +1,8 @@
 //! Read-snapshot causal head fold for independently keyed project-depth policy facts.
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::HostingPrivacyPosture;
 use crate::authority::{ActorBindingStatus, AuthorityKey, CausalWriteDisposition};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -141,7 +143,7 @@ fn birth_disposition(
     let source = EntityId::from_hex(&birth.source_manifest)?;
     let (seed_id, seed_body) = super::codec::seeded_default_carrier()?;
     let source_status = if source == seed_id {
-        if *blake3::hash(&seed_body).as_bytes() == birth.source_hash
+        if *ContentHash::of(&seed_body).as_bytes() == birth.source_hash
             && birth.depth == super::codec::seeded_default().depth
         {
             ProjectDepthDisposition::Authorized
@@ -158,7 +160,7 @@ fn birth_disposition(
             return Ok(ProjectDepthDisposition::Quarantined);
         }
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-        if *blake3::hash(body).as_bytes() != birth.source_hash {
+        if *ContentHash::of(body).as_bytes() != birth.source_hash {
             return Ok(ProjectDepthDisposition::Quarantined);
         }
         match decode_contribution(body)? {
@@ -286,7 +288,7 @@ pub(crate) fn unsigned_birth_trusted(
     if store
         .sync_state
         .get(txn, &local_key)?
-        .is_some_and(|hash| hash.as_ref() == blake3::hash(&exact).as_bytes())
+        .is_some_and(|hash| hash.as_ref() == ContentHash::of(&exact).as_bytes())
     {
         return Ok(true);
     }

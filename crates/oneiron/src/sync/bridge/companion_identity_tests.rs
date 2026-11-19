@@ -6,7 +6,7 @@ use ed25519_dalek::SigningKey;
 use loro::LoroDoc;
 
 use crate::authority::{
-    EditOrigin, HostSlipIssuer, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey,
+    ActSurface, HostSlipIssuer, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey,
     MachineEnrolmentRequest, MachineOwnership, MachineRole,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -48,6 +48,14 @@ fn host() -> Host {
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
         .unwrap();
     let vault_id = vault.authority_fold().unwrap().vault_id.unwrap();
+    // The handle holds the host's root as a serving host does, so the owner
+    // acts it carries are proven (row CARRIER-OWNER-PROOF).
+    vault.hold_checkpoint_root_signer(std::sync::Arc::new(issuer.duplicate().unwrap()));
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("serving install profile");
     Host {
         _dir: dir,
         vault,
@@ -60,15 +68,16 @@ fn host() -> Host {
 fn install() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
     (dir, vault)
 }
 
-/// `install`'s request to join `vault_id`, with its own encryption key from a
-/// keystore of its own (world privacy P6b).
+/// `install`'s request to join `vault_id`, with its own encryption key from
+/// the keystore `install()` gave it (world privacy P6b). The keystore is not
+/// replaced here: a new one would change the install's signing identity after
+/// it signed its merge.
 fn own_request(vault_id: [u8; 32], install: &Vault) -> MachineEnrolmentRequest {
-    install.install_device_keystore(std::sync::Arc::new(
-        oneiron_keystore::MemoryKeystore::default(),
-    ));
     let own = install.machine_encryption_key(vault_id).unwrap();
     install.machine_enrolment_request(vault_id, own).unwrap()
 }
@@ -77,7 +86,7 @@ fn own_request(vault_id: [u8; 32], install: &Vault) -> MachineEnrolmentRequest {
 fn enroll(host: &Host, install: &Vault, role: MachineRole) -> EntityId {
     let request = own_request(host.vault_id, install);
     host.vault
-        .enroll_machine(&host.issuer, &host.owner, &request, role)
+        .enroll_machine(&host.owner, ActSurface::ThisInstall, &request, role, None)
         .unwrap();
     request.machine
 }
@@ -227,11 +236,17 @@ fn replica_of(host: &Host) -> (tempfile::TempDir, Vault) {
 
 /// One type-74 row a peer minted, delivered as its replicated blob.
 fn deliver_row(vault: &Vault, id: EntityId, row: &StoredIdentityOpEvent) {
-    let mut blob = vec![ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT];
-    for stamp in [row.at; 3] {
-        blob.extend_from_slice(&stamp.to_be_bytes());
-    }
-    blob.extend_from_slice(&encode_identity_topology_event_body(row).unwrap());
+    // Fresh test carrier: row_version 0, the value base writes for a new row.
+    let blob = crate::test_util::entity_record(
+        ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        TimeRange {
+            start: row.at,
+            end: row.at,
+        },
+        row.at,
+        0,
+        &encode_identity_topology_event_body(row).unwrap(),
+    );
     deliver_blob(vault, &id, &blob).unwrap();
     assert!(vault.get_raw(&id).unwrap().is_some(), "stored, not refused");
 }
@@ -449,7 +464,13 @@ fn a_local_enrolment_and_removal_move_the_stored_edges() {
     );
 
     host.vault
-        .set_machine_role(&host.issuer, &host.owner, machine, MachineRole::Removed)
+        .set_machine_role(
+            &host.owner,
+            ActSurface::ThisInstall,
+            machine,
+            MachineRole::Removed,
+            None,
+        )
         .unwrap();
     assert!(
         !shell_edge(&host.vault, loser, survivor),
@@ -481,11 +502,14 @@ fn anchor_root(host: &Host, seed: &RecoveryRootSeed, install: Option<&Vault>) ->
             machine: request.machine,
             owner: host.owner.actor(),
             machine_key: request.machine_key,
+            device_class: request.device_class,
             encryption_key: request.encryption_key,
             role: MachineRole::Owned(MachineOwnership::Yours),
             revision: 1,
             machine_proof: request.machine_proof,
             seen_world_edits: std::collections::BTreeSet::new(),
+            carrier: None,
+            act: None,
         }));
     }
     for op in ops {
@@ -511,6 +535,9 @@ fn a_pin_change_alone_moves_the_stored_edges() {
     host.vault.install_device_keystore(std::sync::Arc::new(
         oneiron_keystore::MemoryKeystore::default(),
     ));
+    host.vault
+        .prepare_install_signing()
+        .expect("install signing");
     let (_dir, laptop) = install();
     let (loser, survivor) = (EntityId::now(), EntityId::now());
     merge_locally(&laptop, loser, survivor);
@@ -522,10 +549,7 @@ fn a_pin_change_alone_moves_the_stored_edges() {
         "an anchor no pin trusts lends no standing"
     );
 
-    let here = EditOrigin::ThisMachine;
-    host.vault
-        .pin_owner_root(&host.owner, here, marking)
-        .unwrap();
+    host.vault.pin_owner_root(&host.owner, marking).unwrap();
     assert!(
         shell_edge(&host.vault, loser, survivor),
         "pinned to the marking root"
@@ -536,7 +560,7 @@ fn a_pin_change_alone_moves_the_stored_edges() {
         EntityLifecycleState::Merged
     );
 
-    host.vault.pin_owner_root(&host.owner, here, other).unwrap();
+    host.vault.pin_owner_root(&host.owner, other).unwrap();
     assert!(
         !shell_edge(&host.vault, loser, survivor),
         "pinned to another root"
@@ -674,14 +698,19 @@ fn a_strangers_merge_is_no_lifecycle_receipt_or_census_shell() {
 fn a_restore_keeping_authority_keeps_own_merges_in_force() {
     let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    source.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    source.prepare_install_signing().expect("install signing");
     let (loser, survivor) = (EntityId::now(), EntityId::now());
     merge_locally(&source, loser, survivor);
     let image = root.path().join("image");
+    source.ensure_vault_key().expect("mint the vault data key");
     source.snapshot_checkpoint(&image, 100).unwrap();
     merge_locally(&source, EntityId::now(), EntityId::now());
+    let checkpoint_key = source.checkpoint_key().unwrap();
 
     let (copy, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &checkpoint_key,
         &root.path().join("copy"),
         VaultConfig::device(),
         &source,
@@ -699,12 +728,17 @@ fn a_restore_keeping_authority_keeps_own_merges_in_force() {
 fn own_merges_survive_a_beside_restore_and_never_bind_a_stranger() {
     let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    source.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    source.prepare_install_signing().expect("install signing");
     let (loser, survivor) = (EntityId::now(), EntityId::now());
     merge_locally(&source, loser, survivor);
     let image = root.path().join("image");
+    source.ensure_vault_key().expect("mint the vault data key");
     source.snapshot_checkpoint(&image, 100).unwrap();
+    let checkpoint_key = source.checkpoint_key().unwrap();
     let (copy, _) = Vault::restore_checkpoint_beside(
         &image,
+        &checkpoint_key,
         &root.path().join("copy"),
         VaultConfig::device(),
         &source.side_restore_source().unwrap(),
@@ -756,13 +790,18 @@ fn a_restore_keeping_authority_redecides_edges_under_the_current_roster() {
         record_standing(&host);
         let root = crate::test_support::restore_tempdir();
         let image = root.path().join("image");
+        host.vault
+            .ensure_vault_key()
+            .expect("mint the vault data key");
         host.vault.snapshot_checkpoint(&image, 100).unwrap();
         host.vault
-            .set_machine_role(&host.issuer, &host.owner, machine, now)
+            .set_machine_role(&host.owner, ActSurface::ThisInstall, machine, now, None)
             .unwrap();
 
+        let checkpoint_key = host.vault.checkpoint_key().unwrap();
         let (copy, _) = Vault::restore_checkpoint_keeping_authority(
             &image,
+            &checkpoint_key,
             &root.path().join("copy"),
             VaultConfig::default(),
             &host.vault,
@@ -781,12 +820,15 @@ fn a_restore_keeping_authority_redecides_edges_under_the_current_roster() {
     }
 }
 
-/// Standing follows the posture a vault opens with. Reopened as a hosted
-/// vault, whose root never vouches that a machine is the owner's, a paired
-/// laptop's merge leaves force with no authority write in between, and it
-/// comes back when the vault opens self-hosted again.
+/// Standing carries over a reopen under another posture (Engine ANSWER
+/// HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A): host custody comes from the
+/// log's cloud stamp, and a self-host root carries none, so reopened as a
+/// hosted vault its vouch that the laptop is the owner's still counts and
+/// the laptop's merge keeps force, and it does when the vault opens
+/// self-hosted again. Only a root move under the Hosted posture, to a
+/// stamped root, takes the root into the host's custody.
 #[test]
-fn a_reopen_under_another_posture_redecides_the_stored_edges() {
+fn a_reopen_under_the_hosted_posture_keeps_the_self_host_roots_vouch() {
     let host = host();
     let (_laptop_dir, laptop) = install();
     enroll(&host, &laptop, MachineRole::Owned(MachineOwnership::Yours));
@@ -800,21 +842,16 @@ fn a_reopen_under_another_posture_redecides_the_stored_edges() {
         _dir: dir, vault, ..
     } = host;
     drop(vault);
-    let hosted = Vault::open(
-        dir.path(),
-        VaultConfig {
-            privacy: crate::config::VaultPrivacyConfig {
-                posture: crate::config::HostingPrivacyPosture::Hosted,
-                data_key_custody: crate::config::VaultDataKeyCustody::HostManagedKms {
-                    key_ref: "kms://example/placeholder".to_owned(),
-                },
-            },
-            ..VaultConfig::default()
+    let mut hosted_config = VaultConfig::device();
+    hosted_config.privacy = crate::config::VaultPrivacyConfig {
+        posture: crate::config::HostingPrivacyPosture::Hosted,
+        data_key_custody: crate::config::VaultDataKeyCustody::HostManagedKms {
+            key_ref: "kms://example/placeholder".to_owned(),
         },
-    )
-    .unwrap();
-    assert!(!shell_edge(&hosted, loser, survivor));
-    assert_eq!(folded_state(&hosted, loser), EntityLifecycleState::Active);
+    };
+    let hosted = Vault::open(dir.path(), hosted_config).unwrap();
+    assert!(shell_edge(&hosted, loser, survivor));
+    assert_eq!(folded_state(&hosted, loser), EntityLifecycleState::Merged);
 
     drop(hosted);
     let local = Vault::open(dir.path(), VaultConfig::default()).unwrap();

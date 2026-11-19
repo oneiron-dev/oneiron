@@ -5,7 +5,6 @@
 //! whose address is private or the node's own, by its literal here and by its
 //! name's answers in the client's resolver. A self-hosted node fetches as before.
 use std::io::Read;
-use std::net::IpAddr;
 use std::sync::Arc;
 
 use oneiron::Vault;
@@ -37,7 +36,7 @@ impl HttpIcsFeed {
             vault,
             owner,
             config,
-            client: super::feed_client(egress.clone())
+            client: super::client(egress.clone())
                 .map_err(|_| "ICS HTTP client unavailable".to_owned())?,
             egress,
         })
@@ -69,21 +68,11 @@ pub(crate) fn admit_feed_url(
                 .into(),
         );
     }
-    if let Some(guard) = egress {
-        let literal = url
-            .host_str()
-            .map(|host| host.trim_start_matches('[').trim_end_matches(']'))
-            .and_then(|host| host.parse::<IpAddr>().ok());
-        let refused = match literal {
-            Some(ip) => guard.refuses(ip),
-            None => guard.refuses_origin(&url),
-        };
-        if refused.is_some() {
-            return Err(
-                "ICS feed URL names a private or node address, which a hosted node does not fetch"
-                    .into(),
-            );
-        }
+    if super::hosted_guard_refuses(&url, egress) {
+        return Err(
+            "ICS feed URL names a private or node address, which a hosted node does not fetch"
+                .into(),
+        );
     }
     Ok(url)
 }
@@ -102,7 +91,7 @@ impl IcsHttpTransport for HttpIcsFeed {
 }
 
 /// One conditional GET of an admitted feed URL ([`admit_feed_url`]) on the
-/// feed client ([`super::feed_client`]): a complete 200 body of at most 16 MiB,
+/// feed client ([`super::client`]): a complete 200 body of at most 16 MiB,
 /// a 304, or the provider's status.
 pub(crate) fn get_admitted(
     client: &reqwest::blocking::Client,

@@ -1,5 +1,7 @@
 //! Genesis vectors, wall-clock clock, signature suites, roles and quorum.
 
+use oneiron_persistent_collections::PersistentMap;
+
 use super::support::hex;
 use super::support::*;
 use super::*;
@@ -321,7 +323,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
     let state = FoldState {
         slips: SlipAuthorityState::default(),
         vault_id: [40; 32],
-        roster: BTreeMap::from([
+        roster: PersistentMap::from([
             (
                 owner_key.clone(),
                 FoldedDevice {
@@ -343,27 +345,27 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         ]),
         genesis_recovery_dismissed: false,
         recovery_redundancy_established: false,
-        federation_pacts: BTreeMap::new(),
-        federation_confirms: BTreeMap::new(),
-        critical_write_confirms: BTreeMap::new(),
-        consumed_critical_write_confirm_nonces: BTreeSet::new(),
-        critical_write_confirm_nonce_provenance: BTreeMap::new(),
-        conflicted_critical_write_confirms: BTreeSet::new(),
-        federation_grant_bindings: BTreeMap::new(),
-        actor_bindings: BTreeMap::new(),
-        actor_binding_revocations: BTreeMap::new(),
-        actor_revocation_hashes: BTreeMap::new(),
-        seqs: BTreeMap::from([(owner_key.clone(), 0)]),
-        machines: BTreeMap::new(),
-        machine_keys: BTreeMap::new(),
-        held_machine_answers: BTreeMap::new(),
-        root_anchors: BTreeMap::new(),
-        anchor_entries: BTreeSet::new(),
-        host_custody_keys: BTreeSet::new(),
-        worlds: BTreeMap::new(),
-        refused_world_edits: BTreeSet::new(),
-        grant_travel: BTreeMap::new(),
-        refused_grant_travel: BTreeSet::new(),
+        federation_pacts: Default::default(),
+        federation_confirms: Default::default(),
+        critical_write_confirms: Default::default(),
+        consumed_critical_write_confirm_nonces: Default::default(),
+        critical_write_confirm_nonce_provenance: Default::default(),
+        conflicted_critical_write_confirms: Default::default(),
+        federation_grant_bindings: Default::default(),
+        actor_bindings: Default::default(),
+        actor_binding_revocations: Default::default(),
+        actor_revocation_hashes: Default::default(),
+        seqs: PersistentMap::from([(owner_key.clone(), 0)]),
+        machines: Default::default(),
+        machine_keys: Default::default(),
+        held_machine_answers: Default::default(),
+        root_anchors: Default::default(),
+        anchor_entries: Default::default(),
+        host_custody_keys: Default::default(),
+        worlds: Default::default(),
+        refused_world_edits: Default::default(),
+        grant_travel: Default::default(),
+        refused_grant_travel: Default::default(),
         checkpoint_policy: Default::default(),
         home_pick: Default::default(),
         origin_cut: Default::default(),
@@ -371,17 +373,20 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         conversation_training: Default::default(),
         conversation_training_vault: Default::default(),
         policy_settings: Default::default(),
-        refused_export_acts: BTreeSet::new(),
-        agent_carried_acts: BTreeMap::new(),
+        refused_export_acts: Default::default(),
+        agent_carried_acts: Default::default(),
         home_candidacy: Default::default(),
         full_copy_mark: Default::default(),
         owner_work: Default::default(),
-        world_keys: BTreeMap::new(),
-        refused_world_keys: BTreeSet::new(),
-        key_admitters: BTreeMap::new(),
+        world_keys: Default::default(),
+        refused_world_keys: Default::default(),
+        key_admitters: Default::default(),
         hosted: false,
-        actor_rows: BTreeSet::new(),
-        residence_directives: BTreeMap::new(),
+        actor_rows: Default::default(),
+        residence_directives: Default::default(),
+        passkey_contexts: BTreeMap::new(),
+        passkey_vouched_keys: BTreeSet::new(),
+        passkey_vouch_confirmations: BTreeSet::new(),
     };
     let entry = cosign_ed(
         unsigned_entry(

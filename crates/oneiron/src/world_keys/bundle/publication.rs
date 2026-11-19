@@ -183,7 +183,20 @@ impl OpenedVaultBundle {
         fold: &AuthorityFold,
         holder: Option<Destination>,
     ) -> Result<()> {
-        if self.signed_by_owner_machine(fold) {
+        self.require_publisher_under(fold, holder, fold.pinned_root.as_ref())
+    }
+
+    /// [`Self::require_publisher`] under the owner anchor `pin` names in
+    /// place of the one `fold`'s install pins: a kit restore reads the kit's
+    /// own root, which it pins once the bundle opens.
+    #[cfg(feature = "sync")]
+    pub(crate) fn require_publisher_under(
+        &self,
+        fold: &AuthorityFold,
+        holder: Option<Destination>,
+        pin: Option<&crate::authority::PinnedRoot>,
+    ) -> Result<()> {
+        if self.signed_by_owner_machine(fold, pin) {
             return Ok(());
         }
         let asked = match BUNDLE_PUBLISH_PROOF {
@@ -191,10 +204,9 @@ impl OpenedVaultBundle {
                 asks(fold, &request, self.publisher, holder)
                     && fold.machine(self.publisher).is_some_and(|machine| {
                         machine
-                            .roster
+                            .roster_trusted
                             .iter()
-                            .chain(&machine.roster_trusted)
-                            .chain(machine.anchored.values())
+                            .chain(machine.standing_heads(pin))
                             .any(|chain| self.signed_by(&chain.profile.machine_key))
                     })
             }),

@@ -215,8 +215,6 @@ pub(crate) fn erase_voice_offer_actor_in_txn(
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GENUI-VOICE-OFFER-TESTS]: the lib test target's type check fails here (2 errors: E0599 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,7 +304,7 @@ mod tests {
             ConsentSurface::Dashboard,
         )?;
         assert_eq!(
-            receipt.grant_ref().as_deref(),
+            crate::consent::consent_receipt_grant_ref(&receipt).as_deref(),
             Some(offer.bound_digest.as_str())
         );
         assert_eq!(
@@ -338,6 +336,7 @@ mod tests {
     #[test]
     fn retired_owner_cannot_confirm_cached_offer_or_spend_nonce() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+        vault.prepare_install_signing().expect("install signing");
         let actor = person(&vault, 0xC1)?;
         let survivor = person(&vault, 0xC2)?;
         let owner = vault.authenticate_owner(actor, "owner", true, GateDecisionId::now())?;
@@ -455,7 +454,10 @@ mod tests {
             ConsentSurface::Dashboard,
         )?;
         let grant_ref = bound.digest().to_hex();
-        assert_eq!(receipt.grant_ref().as_deref(), Some(grant_ref.as_str()));
+        assert_eq!(
+            crate::consent::consent_receipt_grant_ref(&receipt).as_deref(),
+            Some(grant_ref.as_str())
+        );
         assert!(
             vault
                 .confirm_voice_grant_offer(

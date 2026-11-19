@@ -34,8 +34,6 @@ mod read_set;
 mod room;
 pub(crate) mod room_offer;
 mod room_verbs;
-// FIX [LIBTEST-QUARANTINE-CONTEXT-BOARD-ROOM-VERBS-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod room_verbs_tests;
 mod worlds;
@@ -85,8 +83,11 @@ pub use memories::MemoryTier;
 pub use memories_frame::assemble_memories_sections;
 mod paging;
 mod plugin;
+#[cfg(oneiron_test_support)]
+pub(crate) use plugin::fit_map_entry_for_test;
 mod readers;
 mod scratchpad;
+pub(crate) mod setting_keys;
 mod stream;
 mod unprocessed;
 pub use unprocessed::unprocessed_items;
@@ -116,8 +117,6 @@ pub use stream::{
 pub use stream::{HANDED_WAKES_CAP, WakeDelivery};
 mod layout;
 mod layout_store;
-// FIX [LIBTEST-QUARANTINE-CONTEXT-BOARD-SURFACES-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod surfaces_tests;
 mod tasks;
@@ -182,6 +181,7 @@ pub(crate) use plugin::{ensure_fit_install_writer_machine, fit_install_writer_id
 pub(crate) use plugin::{
     scrub_section_fit_receipt_actors_in_txn, stored_section_fit_actor_erasure_body,
 };
+pub use setting_keys::fold_attention_rows;
 pub use tasks::{
     CancelRejectionPathology, ConsultWidening, JobPresence, TaskBoardStatus, TaskIntentPresence,
     TaskRow, TasksSection, TasksSectionRows, expand_task, failed_lane, fold_up_status,
@@ -214,3 +214,6 @@ pub(crate) use self::plugin::context_board_plugin_block_accepts_masked;
 
 pub mod agent_run_status;
 pub(crate) mod tables;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::plugin::block_key_pin_for_test;

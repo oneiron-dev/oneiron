@@ -155,6 +155,23 @@ impl AgentDispatcher<'_> {
         )
     }
 
+    /// The goal-intake skill a run loads: a host's own configured skill as
+    /// configured; for the shipped one, the in-force head from its bootstrap
+    /// id, or from the admitted restored default once the bootstrap's
+    /// succession holds no loadable revision (`bootstrap_skill_root_in_txn`);
+    /// else the shipped id, as before.
+    fn goal_intake_skill_in_force(&self, configured: EntityId) -> Result<EntityId> {
+        let shipped = EntityId::derive(
+            crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
+            &[GOAL_INTAKE_SKILL.as_bytes()],
+        )?;
+        if configured != shipped {
+            return Ok(configured);
+        }
+        let txn = self.vault.store.env.read_txn()?;
+        super::bootstrap_skill_in_force_in_txn(self.vault, &txn, GOAL_INTAKE_SKILL)
+    }
+
     fn prepare_project_conversation_run_with(
         &self,
         leased: &AttemptRecord,
@@ -173,6 +190,16 @@ impl AgentDispatcher<'_> {
             .and_then(|spec| spec.briefing.as_deref())
             .and_then(project_briefing)
             .transpose()?;
+        // Only a goal-intake run resolves the goal-intake skill it loads.
+        let skills = &ProjectConversationSkills {
+            goal_intake: match &briefing {
+                Some(ProjectRunBriefing::GoalIntake(_)) => {
+                    self.goal_intake_skill_in_force(skills.goal_intake)?
+                }
+                _ => skills.goal_intake,
+            },
+            ..skills.clone()
+        };
         let Some(briefing) = briefing else {
             return Ok(None);
         };

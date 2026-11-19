@@ -19,8 +19,8 @@
 //! install does not hold yet waits, and so does one it cannot rebuild.
 //!
 //! The signer sits behind [`CheckpointRootSigner`]. The host root
-//! ([`HostSlipIssuer`]) is today's only one; a device-held owner key (FIX
-//! 4921) is another behind the same two calls. A host holds its signers on
+//! ([`HostSlipIssuer`]) is one; a device-held owner key (FIX 4921) is
+//! another behind the same trait. A host holds its signers on
 //! the vault handle ([`Vault::hold_checkpoint_root_signer`]) for the device
 //! sync's steady pass. An attestation made here goes to the writing host,
 //! which verifies it again, and never into this install's attestation table,
@@ -50,6 +50,7 @@ const WAIT_NOT_COUNTED: &str = "the image's root policy is not the one this vaul
 const WAIT_NOT_A_ROOT: &str = "this root is not a root of the image's policy";
 const WAIT_NOT_CAUGHT_UP: &str = "this install does not hold every row the image covers yet";
 const WAIT_NOT_REBUILT: &str = "this install's own fold does not rebuild the image";
+const WAIT_NOT_SIGNING: &str = "this root does not sign on this install now";
 
 /// When roots' checkpoint attestations move between a machine and its home.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,21 +86,91 @@ impl RootCheckpointAuthority {
     }
 }
 
+/// The domain of an owner key's proof that the owner gives one ask word in
+/// person (UC-05 PR 2b, [`Vault::authenticate_owner_device`]): the bytes
+/// [`CheckpointRootSigner::sign_ask_word_proof`] signs start with it. No
+/// checkpoint statement and no authority transcript does, so neither
+/// signature ever stands for the other.
+pub const ASK_WORD_PROOF_DOMAIN: &[u8] = b"oneiron/tasks/ask-word-owner-proof/v1";
+
 /// A root of the policy a vault counts, as a checkpoint signer: the root's
 /// raw signature over a checkpoint statement, a key binding's or an
-/// attestation's, and over nothing else.
+/// attestation's, and, as an owner key's proof, over the transcript of an
+/// owner act (row CARRIER-OWNER-PROOF). It signs nothing else.
 pub trait CheckpointRootSigner: Send + Sync {
     /// The root key it signs as.
     fn root(&self) -> AuthorityKey;
     /// The root's raw signature over `statement`, which must be a checkpoint
-    /// statement.
-    fn sign_checkpoint_statement(&self, statement: &[u8]) -> Result<Vec<u8>>;
+    /// statement, made on `vault`. A root whose right to sign can end checks
+    /// it at this call and refuses: a signer a caller took earlier stops
+    /// with its key. An owner signing key signs only while `vault`'s roster
+    /// lists it live, and one that rests under a device PIN only inside the
+    /// window a right PIN opened (row OCS-OWNER-PIN).
+    fn sign_checkpoint_statement(&self, vault: &Vault, statement: &[u8]) -> Result<Vec<u8>>;
+    /// Whether the root signs on `vault` at this moment: what
+    /// [`Self::sign_checkpoint_statement`] checks, asked without a
+    /// signature. [`Vault::checkpoint_root_signers`] leaves out a root that
+    /// does not sign now, so a pass neither asks it nor logs for it. The
+    /// default always signs.
+    fn signs_now(&self, vault: &Vault) -> bool {
+        let _ = vault;
+        true
+    }
     /// The root's raw signature over `transcript`, an authority entry's
     /// transcript, as an owner key's proof of an owner act the install that
-    /// holds it carries (row CARRIER-OWNER-PROOF). Refused for any bytes
-    /// outside the authority transcript domain, so a checkpoint statement is
-    /// never signed as a proof, nor a proof as a statement.
-    fn sign_owner_proof(&self, transcript: &[u8]) -> Result<Vec<u8>>;
+    /// holds it carries on `vault` (row CARRIER-OWNER-PROOF). Refused for
+    /// any bytes outside the authority transcript domain, so a checkpoint
+    /// statement is never signed as a proof, nor a proof as a statement.
+    ///
+    /// A root whose right to sign can end refuses a proof wherever it
+    /// refuses a statement ([`Self::sign_checkpoint_statement`]), checked at
+    /// this call. One reading differs. A door signs the proof inside its own
+    /// transaction, so the roster is read from `fold`, the door's view of
+    /// it, and the signer opens no transaction of the vault: a second one on
+    /// the door's thread would fail, or read the roster as it was before the
+    /// door's own writes. So `fold` must be the caller's own fold of
+    /// `vault`, the one the entry is signed on. A signature made over
+    /// another fold proves nothing: the vault's fold takes a proof only from
+    /// a key it trusts at the entry's parent state.
+    fn sign_owner_proof(
+        &self,
+        vault: &Vault,
+        fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> Result<Vec<u8>>;
+    /// Whether the root proves an owner act on `vault` at this moment, by
+    /// `fold`'s roster: what [`Self::sign_owner_proof`] checks, asked
+    /// without a signature and with no transaction of the vault.
+    /// The proof's pick (`Vault::owner_proof_signer`) leaves out a root that
+    /// does not prove now. The default always proves.
+    fn proves_now(&self, vault: &Vault, fold: &AuthorityFold) -> bool {
+        let _ = (vault, fold);
+        true
+    }
+    /// The root's raw signature over `transcript`, an owner key's proof that
+    /// the owner gives one ask word in person on the install that holds it
+    /// (UC-05 PR 2b), made on `vault`. Refused for any bytes outside
+    /// [`ASK_WORD_PROOF_DOMAIN`], so it signs no checkpoint statement and no
+    /// authority transcript. A root whose right to sign can end refuses it
+    /// wherever it refuses an owner act's proof ([`Self::sign_owner_proof`]),
+    /// checked at this call with the roster read from `fold`: a key that
+    /// rests under a device PIN proves an ask word only inside the window a
+    /// right PIN opened.
+    fn sign_ask_word_proof(
+        &self,
+        vault: &Vault,
+        fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> Result<Vec<u8>>;
+    /// Whether it signs as a host's own root, whose roster row carries the
+    /// host-root attestation (`HostSlipIssuer::root_device`): a self-host
+    /// server's root, or a managed host's. Under the Hosted posture an
+    /// install never offers such a key as the owner's proof
+    /// (`AuthorityFold::offers_owner_proof`). An owner's enrolled device key
+    /// is none.
+    fn is_host_root(&self) -> bool {
+        false
+    }
 }
 
 impl CheckpointRootSigner for HostSlipIssuer {
@@ -107,15 +178,45 @@ impl CheckpointRootSigner for HostSlipIssuer {
         self.public_key()
     }
 
-    fn sign_checkpoint_statement(&self, statement: &[u8]) -> Result<Vec<u8>> {
+    /// A host's root signs whenever it is asked: the image's policy check
+    /// decides whether its signature counts.
+    fn sign_checkpoint_statement(&self, vault: &Vault, statement: &[u8]) -> Result<Vec<u8>> {
+        let _ = vault;
         self.sign_checkpoint(statement)
     }
 
-    fn sign_owner_proof(&self, transcript: &[u8]) -> Result<Vec<u8>> {
+    /// A host's root proves whenever it is asked: the fold decides whether
+    /// its proof counts.
+    fn sign_owner_proof(
+        &self,
+        vault: &Vault,
+        fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> Result<Vec<u8>> {
+        let _ = (vault, fold);
         if !transcript.starts_with(super::AUTHORITY_TRANSCRIPT_DOMAIN) {
             return Err(super::invalid_authority());
         }
         Ok(self.sign_slip(transcript))
+    }
+
+    /// A host's root proves an ask word whenever it is asked, as it proves
+    /// an owner act.
+    fn sign_ask_word_proof(
+        &self,
+        vault: &Vault,
+        fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> Result<Vec<u8>> {
+        let _ = (vault, fold);
+        if !transcript.starts_with(ASK_WORD_PROOF_DOMAIN) {
+            return Err(super::invalid_authority());
+        }
+        Ok(self.sign_slip(transcript))
+    }
+
+    fn is_host_root(&self) -> bool {
+        true
     }
 }
 
@@ -190,14 +291,40 @@ impl Vault {
             .clear();
     }
 
-    /// The root signers this handle holds.
-    #[must_use]
-    pub fn checkpoint_root_signers(&self) -> Vec<Arc<dyn CheckpointRootSigner>> {
+    /// Every root signer this handle holds, whether or not it signs now,
+    /// in the order of each one's latest hold: a signer held again moves to
+    /// the end. The list is a copy: a signer's answer may read the vault,
+    /// and none is asked under the list's lock.
+    pub(super) fn held_checkpoint_root_signers(&self) -> Vec<Arc<dyn CheckpointRootSigner>> {
         self.world_keys
             .checkpoint_roots
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    /// The root signers this handle holds that sign at this moment
+    /// ([`CheckpointRootSigner::signs_now`]), in the order of each one's
+    /// latest hold.
+    /// Each signer reads the vault's roster in a transaction of its own, so
+    /// the caller holds none: a door that picks a signer inside its
+    /// transaction asks the proof's pick (`Vault::owner_proof_signer`).
+    #[must_use]
+    pub fn checkpoint_root_signers(&self) -> Vec<Arc<dyn CheckpointRootSigner>> {
+        self.held_checkpoint_root_signers()
+            .into_iter()
+            .filter(|signer| signer.signs_now(self))
+            .collect()
+    }
+
+    /// Lets go of the signer held for `root`, when one is: its key is gone
+    /// from this install.
+    pub(crate) fn release_checkpoint_root_signer(&self, root: &AuthorityKey) {
+        self.world_keys
+            .checkpoint_roots
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|held| held.root() != *root);
     }
 
     /// `signer`'s root attests checkpoint image `image`, which another host
@@ -244,6 +371,11 @@ impl Vault {
             }
             (*self.vault_id().as_bytes(), genesis)
         };
+        // A signer taken for an earlier pass may have stopped since: its key
+        // revoked, or its device PIN's window over.
+        if !signer.signs_now(self) {
+            return Ok(Err(WAIT_NOT_SIGNING));
+        }
         let binding = self.root_checkpoint_binding(&root, signer, vault_id, genesis)?;
         let policy = candidate.root_policy.digest()?;
         let attestation = self.sign_checkpoint_attestation(
@@ -252,7 +384,7 @@ impl Vault {
             id,
             policy,
             binding,
-            |transcript| signer.sign_checkpoint_statement(transcript),
+            |transcript| signer.sign_checkpoint_statement(self, transcript),
         )?;
         Ok(Ok(RootSigned {
             image: id,
@@ -355,7 +487,7 @@ impl Vault {
             return Ok(binding);
         }
         self.checkpoint_key_binding(root, |statement| {
-            signer.sign_checkpoint_statement(statement)
+            signer.sign_checkpoint_statement(self, statement)
         })
     }
 }

@@ -17,12 +17,22 @@ use crate::authority::slip_vault::{random_slip_id, require_host};
 /// device exactly as a never-profiled install does (Engine, CALLS
 /// "selfprofile serving-install role", amendment (c)). A profiled install
 /// that cannot carry (removed, poisoned) never falls back to the root.
+/// "Profiled" is the roster's word (Fable design pass 29, 3.4; Engine
+/// 06:15): an install the roster holds no head of is unprofiled whatever an
+/// anchor's chain says of it, unless the chain of the anchor it pins removed
+/// it or is conflicted.
 fn unprofiled_install(fold: &AuthorityFold, machine: Option<crate::EntityId>) -> bool {
     machine.is_none_or(|machine| {
         fold.machine(machine).is_none_or(|folded| {
-            folded.chains().all(|(_, chain)| {
-                !chain.profile.role.answered() && !chain.removed && !chain.conflicted
-            })
+            let roster = folded.roster.as_ref().is_none_or(|head| {
+                !head.profile.role.answered() && !head.removed && !head.conflicted
+            });
+            let pinned = fold
+                .pinned_root
+                .as_ref()
+                .and_then(|pin| folded.anchored.get(&pin.anchor_key))
+                .is_none_or(|chain| !chain.removed && !chain.conflicted);
+            roster && pinned
         })
     })
 }
@@ -301,7 +311,7 @@ impl Vault {
             .map(canonical_id)
             .transpose()?;
         // Recheck in the actual mint transaction: policy may have narrowed
-        // after link issuance while the one-hour link was still outstanding.
+        // after link issuance while the link was still outstanding.
         let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
         let slip_lifetime_secs = pending.slip_lifetime_secs.min(ceiling.initial_owner_secs);
         // A live owner's own device gets their residence grant, named in the
@@ -423,7 +433,11 @@ impl Vault {
     /// unanswered, takes the explicit bootstrap arm instead (C4, a fresh
     /// self-host first install): the host root signs the owner's answer with
     /// no act, as it always has, and the fold judges the root's custody, so a
-    /// hosted root never answers for the owner there. Any other install that
+    /// hosted root never answers for the owner there. Under the Hosted
+    /// posture an owner's answer (`Owned`) never takes that arm
+    /// ([`Vault::host_root_may_sign_role`]), whatever root this install
+    /// holds: the install carries the answer as any profiled one does, and
+    /// with no owner key it lands held. Any other install that
     /// cannot carry refuses, and nothing is written. A machine the roster
     /// already holds, pairing again under its own identity and class with
     /// its machine key's `possession` proof over this redemption's binding
@@ -455,7 +469,10 @@ impl Vault {
         held_machine_possession(&fold, request, possession)?;
         // The never-profiled path first: an unanswered serving install also
         // carries, and it keeps pairing exactly as it did before its profile.
-        if unprofiled_install(&fold, crate::identity::read_machine_id_in_txn(self, txn)?) {
+        // A hosted install's owner answer goes to the carrier instead.
+        if self.host_root_may_sign_role(role)
+            && unprofiled_install(&fold, crate::identity::read_machine_id_in_txn(self, txn)?)
+        {
             return self
                 .enroll_bootstrap_in_txn(txn, issuer, answer.owner, request, role)
                 .map(|machine| (MachineAnswerLanding::Stands(machine), false));

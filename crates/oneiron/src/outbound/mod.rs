@@ -24,6 +24,7 @@ mod reply_job;
 pub mod report_signature;
 mod retry_audit;
 mod retry_edge;
+pub(crate) use self::retry_edge::kept_send_backoff_until;
 mod schedule_contract;
 pub use schedule_contract::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 mod send_lookup;
@@ -116,6 +117,7 @@ pub(crate) use self::reply_job::{
 pub(crate) use self::uncertain_send::{
     UNCERTAIN_SEND_ANSWER_VERB, UNCERTAIN_SEND_NOTIFICATION_PRODUCER,
 };
+pub(crate) use self::undo_send::UNDO_SEND_RELEASE_JOB;
 pub(crate) use self::undo_send::{
     UndoSendCandidate, hold_send_for_undo_in_txn, undo_send_first_agent_sends_in_txn,
 };

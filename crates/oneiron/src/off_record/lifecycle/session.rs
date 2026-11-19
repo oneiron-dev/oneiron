@@ -1025,6 +1025,21 @@ impl OffRecordSession<'_> {
         self.vault.vault_id()
     }
 
+    /// The values base custody holds now (FIX REPLAY-COMPARE-KNOWN-MATCHER):
+    /// a run bound to this room compares its replay rows with them, since
+    /// the room reads its rows over base, where a value custody holds took
+    /// its handle. It projects the matcher rather than lending out the
+    /// vault, and it reads base only.
+    ///
+    /// # Errors
+    ///
+    /// The custody read's.
+    pub(crate) fn base_known_values(
+        &self,
+    ) -> Result<Option<Arc<crate::store::known_value_index::KnownValues>>> {
+        self.vault.known_values_now()
+    }
+
     /// Notes the messages of a turn witnessed while the room was on record:
     /// they landed in base, where a copy of the talk reads them.
     pub(crate) fn note_on_record_messages(
@@ -1044,13 +1059,14 @@ impl OffRecordSession<'_> {
     /// so new writes stage there again. Pre-flip turns stay base-invisible.
     pub fn flip_off_record(&self) -> Result<()> {
         let mut state = session_entry_state(&self.entry)?;
-        super::vault_api::set_entry_mode(
+        let (_, writer_wait) = super::vault_api::set_entry_mode(
             &self.entry,
             &mut state,
             &self.session_ref,
             OffRecordMode::OffRecord,
         )?;
-        Ok(())
+        drop(state);
+        writer_wait.wait(&self.vault.store)
     }
 
     /// Records one emit-adjacent receipt in the registry-owned log consumed

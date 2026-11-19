@@ -2,6 +2,7 @@
 
 use super::support::*;
 use super::*;
+use crate::registry::ENTITY_TYPE_RELATIONSHIP;
 
 /// T9: on a ROOTED vault the three owner verbs demand a folded ACTIVE
 /// human-class binding. This is the ESB-C fix: asserting `human` at the
@@ -9,11 +10,12 @@ use super::*;
 #[test]
 fn owner_verbs_require_active_owner_binding_when_rooted() {
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0x5E);
+    let owner = put_owner(&vault);
     let agent = put_person(&vault, 0x5F);
     let subject = put_person(&vault, 0x60);
     let owner_facade = facade_for(&vault, owner);
     let agent_facade = vault.memory(agent, EdgeActorClass::Agent);
+    grant_reads(&vault, agent);
     let agent_claim = agent_facade
         .claim_upsert(&claim_input(
             "profile.mood",
@@ -117,6 +119,7 @@ fn owner_verbs(facade: &Memory<'_>, claim: &str, subject: EntityId) -> [MemoryRe
 
 /// An agent's claim about `subject`, for an owner to retract.
 fn agent_claim(vault: &crate::Vault, agent: EntityId, subject: EntityId, seed: u8) -> String {
+    grant_reads(vault, agent);
     vault
         .memory(agent, EdgeActorClass::Agent)
         .claim_upsert(&claim_input(
@@ -354,10 +357,8 @@ fn second_owner_hard_deletes_actor_before_target_delete_txn1() {
     use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
 
     let clock = crate::ports::ManualClock::new(1_000);
-    let config = VaultConfig {
-        store_clock: clock.bundle(),
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::default();
+    config.store_clock = clock.bundle();
     #[cfg(feature = "sync")]
     let mut harness = PublishBoundaryHarness::open_with_config("owner-actor-race", false, config);
     #[cfg(feature = "sync")]
@@ -367,7 +368,7 @@ fn second_owner_hard_deletes_actor_before_target_delete_txn1() {
     #[cfg(not(feature = "sync"))]
     let vault = std::sync::Arc::new(crate::Vault::open(_dir.path(), config).expect("open vault"));
 
-    let actor_a = put_person(&vault, 0x31);
+    let actor_a = put_owner(&vault);
     let target = put_person(&vault, 0x33);
     let target_body = vault.get_raw(&target).expect("target body");
 
@@ -425,10 +426,22 @@ fn second_owner_hard_deletes_actor_before_target_delete_txn1() {
         arrived_rx
             .recv()
             .expect("A reached pre-TXN1 after the gate");
-        let purge = facade_for(&vault, actor_a)
+        // A holds the vault's last owner binding, so the last-owner guard
+        // (L9-52 b) refuses the owner's own purge of A at every delete door.
+        // The route that still purges A's row with its binding untouched is
+        // a peer's hard-delete tombstone, replayed here.
+        let refused = facade_for(&vault, actor_a)
             .safe_delete(&actor_a.to_hex(), SafeDeleteReason::UserHardDelete)
-            .expect("the owner's second request hard-deletes A through the facade");
-        assert!(purge.existed, "the second request really purged A");
+            .expect_err("the last bound owner's own purge");
+        assert_eq!(refused.code, MEMORY_CODE_INVALID_STATE, "{refused:?}");
+        let peer_purge = crate::deletion::TombstoneValueV2 {
+            reason: crate::deletion::TombstoneReason::UserHardDelete,
+            deleted_at: 1_000,
+            request_id: *EntityId::now().as_bytes(),
+        };
+        vault
+            .apply_replayed_tombstone(&actor_a, &peer_purge.encode())
+            .expect("a peer's purge of A replays");
         assert!(vault.get_raw(&actor_a).expect("actor A row").is_none());
 
         let decisions_before = vault.gate_decisions(50).expect("decisions after the purge");
@@ -445,7 +458,7 @@ fn second_owner_hard_deletes_actor_before_target_delete_txn1() {
                 .count()
         };
         #[cfg(feature = "sync")]
-        while harness.outbound.try_recv().is_ok() {} // the purge's authorized publication
+        while harness.outbound.try_recv().is_ok() {} // nothing before A resumes counts as A's
         resume_tx
             .send(())
             .expect("resume A after the purge commits");
@@ -512,7 +525,7 @@ fn an_owner_lane_read_after_revocation_keeps_the_binding_code() {
     use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
     use crate::claim::{ClaimReadStatus, PointRead};
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0x6B);
+    let owner = put_owner(&vault);
     let subject = put_person(&vault, 0x6C);
     let facet = EntityId::from_bytes([0x6D; 16]).expect("facet id");
     vault
@@ -619,7 +632,18 @@ fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
     use crate::claim::PointRead;
     use crate::federation::ScopeAxis;
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0x6D);
+    let owner = put_owner(&vault);
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &EntityId::from_bytes([0x6E; 16]).unwrap(),
+            ENTITY_TYPE_RELATIONSHIP,
+            test_time(1),
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let (spaced, unscoped) = (EntityId::now(), EntityId::now());
     let mut messages = Vec::new();
     for (order, (id, content, rel)) in [
@@ -642,6 +666,9 @@ fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
             turn_ref: None,
             messages,
             occurred_at: 1500,
+            thread_audience: None,
+            project: None,
+            assertions: Default::default(),
         })
         .expect("witness the owner's words");
 
@@ -735,6 +762,17 @@ fn narrower_embedded_owner_reads_past(reason: crate::deletion::DeleteReason) {
         .ensure_embedded_owner_actor()
         .expect("the embedded owner");
     let author = put_person(&vault, 0x6C);
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &EntityId::from_bytes([0x6B; 16]).unwrap(),
+            ENTITY_TYPE_RELATIONSHIP,
+            test_time(1),
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let (spaced, unscoped) = (EntityId::now(), EntityId::now());
     let mut messages = Vec::new();
     for (order, (id, content, rel)) in [
@@ -757,6 +795,9 @@ fn narrower_embedded_owner_reads_past(reason: crate::deletion::DeleteReason) {
             turn_ref: None,
             messages,
             occurred_at: 1500,
+            thread_audience: None,
+            project: None,
+            assertions: Default::default(),
         })
         .expect("witness another person's words");
 
@@ -809,9 +850,9 @@ fn narrower_embedded_owner_reads_past(reason: crate::deletion::DeleteReason) {
         "the embedded owner's narrower credential"
     );
 
-    vault
-        .delete_entity_with_reason(&embedded, reason)
-        .expect("delete the embedded owner");
+    // The last-owner guard refuses deleting the bound owner (L9-52 b): the
+    // embedded owner is deleted under a stand-in binding and bound again.
+    crate::test_util::delete_bound_person(&vault, &issuer, embedded, "human", reason);
     let fresh = lane_of();
     for (lane, which) in [(&kept, "kept"), (&fresh, "fresh")] {
         assert!(
@@ -842,7 +883,7 @@ fn revocation_racing_a_gated_delete_refuses_and_tears_nothing() {
         SafeDeleteReason::UserHardDelete,
     ] {
         let (_dir, vault) = open_vault();
-        let owner = put_person(&vault, 0x90);
+        let owner = put_owner(&vault);
         let subject = put_person(&vault, 0x91);
         let revoke = root_binding_with_pending_revocation(&vault, 0x92, owner);
 
@@ -928,7 +969,8 @@ fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault =
         Arc::new(crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
-    let owner = put_person(&vault, 0x94);
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    let owner = put_owner(&vault);
     let subject = put_person(&vault, 0x95);
     let revoke = root_binding_with_pending_revocation(&vault, 0x96, owner);
 
@@ -1110,7 +1152,7 @@ fn revocation_racing_the_soft_delete_publish_refuses_and_publishes_nothing() {
     for live_window in [true, false] {
         let leg = if live_window { "live" } else { "transient" };
         let mut harness = PublishBoundaryHarness::open("facade-soft-publish-boundary", live_window);
-        let owner = put_person(&harness.vault, 0x20);
+        let owner = put_owner(&harness.vault);
         let subject = put_person(&harness.vault, 0x2A);
         let revoke = root_binding_with_pending_revocation(&harness.vault, 0x2B, owner);
 
@@ -1207,7 +1249,7 @@ fn revocation_after_the_publish_commit_lets_the_delete_complete() {
                 let case = format!("{leg}/{step:?}/{reason:?}");
                 let harness =
                     PublishBoundaryHarness::open("facade-post-publish-boundary", live_window);
-                let owner = put_person(&harness.vault, 0x2D);
+                let owner = put_owner(&harness.vault);
                 let subject = put_person(&harness.vault, 0x2E);
                 let revoke = root_binding_with_pending_revocation(&harness.vault, 0x2F, owner);
 
@@ -1271,7 +1313,7 @@ fn revocation_after_the_publish_commit_lets_a_headerless_delete_complete() {
             "facade-headerless-boundary",
             live_window,
         );
-        let owner = put_person(&harness.vault, 0x34);
+        let owner = put_owner(&harness.vault);
         let revoke = root_binding_with_pending_revocation(&harness.vault, 0x35, owner);
 
         // Headerless residue: a vector with no entities row, so the delete takes
@@ -1363,7 +1405,7 @@ fn revocation_after_a_nonpublishing_delete_refuses_and_tears_nothing() {
         let vault = std::sync::Arc::new(
             crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault"),
         );
-        let owner = put_person(&vault, 0x40);
+        let owner = put_owner(&vault);
         let subject = put_person(&vault, 0x41);
         let revoke = root_binding_with_pending_revocation(&vault, 0x42, owner);
 
@@ -1423,18 +1465,11 @@ fn revocation_after_a_nonpublishing_delete_refuses_and_tears_nothing() {
 #[test]
 fn revocation_after_a_nonpublishing_headerless_delete_refuses_and_tears_nothing() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = std::sync::Arc::new(
-        crate::Vault::open(
-            dir.path(),
-            VaultConfig {
-                embedding_model: Some("test/model@v1".to_owned()),
-                dimensions: 4,
-                ..VaultConfig::default()
-            },
-        )
-        .expect("open vault"),
-    );
-    let owner = put_person(&vault, 0x43);
+    let mut config = VaultConfig::default();
+    config.embedding_model = Some("test/model@v1".to_owned());
+    config.dimensions = 4;
+    let vault = std::sync::Arc::new(crate::Vault::open(dir.path(), config).expect("open vault"));
+    let owner = put_owner(&vault);
     let revoke = root_binding_with_pending_revocation(&vault, 0x44, owner);
 
     // Headerless residue: a vector with no entities row, so the delete takes
@@ -1498,6 +1533,7 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
     let facade = facade_for(&vault, owner);
 
     let agent = put_person(&vault, 0x6D);
+    grant_reads(&vault, agent);
     let claim = vault
         .memory(agent, EdgeActorClass::Agent)
         .claim_upsert(&claim_input(
@@ -1593,6 +1629,7 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
     let facade = facade_for(&vault, attacker);
 
     let agent = put_person(&vault, 0x7A);
+    grant_reads(&vault, agent);
     let claim = vault
         .memory(agent, EdgeActorClass::Agent)
         .claim_upsert(&claim_input(
@@ -1757,7 +1794,7 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
 #[test]
 fn owner_verbs_suspend_when_a_first_seen_sidecar_is_lost_after_migration() {
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0x7B);
+    let owner = put_owner(&vault);
     let subject = put_person(&vault, 0x7C);
     let facade = facade_for(&vault, owner);
     root_vault_binding(&vault, 0x7D, owner, "human");

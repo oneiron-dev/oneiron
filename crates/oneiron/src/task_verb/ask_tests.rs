@@ -134,7 +134,7 @@ fn answer_first_waits_do_not_mint_traps_and_waiter_storage_is_bounded() -> Resul
             if let Some(answer) = &answer {
                 assert_eq!(
                     settled(&memory, handle).decision,
-                    TaskAskDecision::First(*answer)
+                    TaskAskDecision::First(answer.clone())
                 );
                 assert_eq!(
                     result,
@@ -204,6 +204,7 @@ fn ask_wait_is_owner_bound_and_abstention_is_not_an_answer() -> Result<()> {
                 reason_ref: input.what.reference,
             },
             completed_at: crate::unix_seconds_now(),
+            measured_spend: None,
         },
     )?;
     assert_eq!(
@@ -256,7 +257,7 @@ fn cancelled_ask_member_cannot_answer_or_mint_a_wait_trap() -> Result<()> {
     )?;
     assert!(
         memory
-            .cancel_with_mode(TaskCancelTarget::Task(task), TaskCancelMode::FullAccess)?
+            .cancel_with_mode(TaskCancelTarget::Task(task), CheckInMode::NeverAsk)?
             .effected
     );
     assert!(vault.task_authority_state(task)?.unwrap().cancelled);
@@ -300,11 +301,11 @@ fn ask_rejects_impossible_electorates_options_and_coverage_before_sending() -> R
     input
         .what
         .options
-        .insert(yes.clone(), "Same display text".into());
-    input
-        .what
-        .options
-        .insert(TaskAskOptionId::new("no")?, "Same display text".into());
+        .insert(yes.clone(), TaskAskOption::new("Same display text"));
+    input.what.options.insert(
+        TaskAskOptionId::new("no")?,
+        TaskAskOption::new("Same display text"),
+    );
     let before = vault.entities_by_type(crate::registry::ENTITY_TYPE_TASK)?;
     let mut bad = input.clone();
     bad.need.of = TaskAskElectorate::People([other].into());
@@ -473,7 +474,7 @@ fn ask_retries_bind_every_typed_request_field_without_reminting() -> Result<()> 
     changed
         .what
         .options
-        .insert(TaskAskOptionId::new("choice")?, "text".into());
+        .insert(TaskAskOptionId::new("choice")?, TaskAskOption::new("text"));
     variants.push(changed);
     let mut changed = input.clone();
     changed.what.revision = 2;
@@ -508,6 +509,7 @@ impl RuledAskFixture {
         let mut config = crate::test_util::embedding_test_config();
         config.store_clock = clock.bundle();
         let vault = Vault::open(dir.path(), config)?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let owner = vault.ensure_embedded_owner_actor()?;
         let mut people = Vec::new();
         for _ in 0..count {
@@ -537,6 +539,7 @@ impl RuledAskFixture {
             1_000,
             &body,
         )?;
+        super::tests::support::grant_ask_read(&vault, &people)?;
         Ok(Self {
             vault,
             dir,
@@ -552,11 +555,11 @@ impl RuledAskFixture {
         question.options = [
             (
                 TaskAskOptionId::new("yes").unwrap(),
-                "same display text".into(),
+                TaskAskOption::new("same display text"),
             ),
             (
                 TaskAskOptionId::new("no").unwrap(),
-                "same display text".into(),
+                TaskAskOption::new("same display text"),
             ),
         ]
         .into();
@@ -721,6 +724,7 @@ fn consult_result_with_an_option_settles_its_member_task() -> Result<()> {
             evidence_refs: vec![fixture.question],
         },
         completed_at: 1_000,
+        measured_spend: None,
     };
     fixture
         .vault
@@ -752,6 +756,7 @@ fn consult_result_replay_requires_the_stored_ask_option() -> Result<()> {
             evidence_refs: vec![fixture.question],
         },
         completed_at: 1_000,
+        measured_spend: None,
     };
     let first = memory.land_consult_result(task, &input)?;
     assert!(!first.idempotent_replay);
@@ -810,6 +815,7 @@ fn consult_result_without_an_option_on_an_options_ask_is_refused_before_the_writ
             evidence_refs: vec![fixture.question],
         },
         completed_at: 1_000,
+        measured_spend: None,
     };
     let refused = fixture
         .vault
@@ -1284,7 +1290,7 @@ fn ask_cutoff_includes_word_admitted_after_timer_fires_before_close() -> Result<
         result
             .evidence
             .iter()
-            .map(|entry| entry.answer)
+            .map(|entry| entry.answer.clone())
             .collect::<Vec<_>>(),
         vec![first, second]
     );
@@ -1350,6 +1356,7 @@ fn ask_word_after_settlement_is_late_evidence_without_changing_the_receipt() -> 
                     end: 1_000
                 },
                 1_000,
+                None,
                 &forged
             )
             .commit()
@@ -1499,17 +1506,22 @@ fn governed_agent_in(
         1_000,
         b"agent",
     )?;
-    let mut manifest: serde_json::Value =
-        rmp_serde::from_slice(&crate::gate::default_policy_manifest()?)?;
+    let manifest_id = crate::gate::default_policy_manifest_id()?;
+    let manifest_bytes = match fixture.vault.get(&manifest_id)? {
+        Some(body) => body,
+        None => crate::gate::default_policy_manifest()?,
+    };
+    let mut manifest: serde_json::Value = rmp_serde::from_slice(&manifest_bytes)?;
     manifest["actor_ceilings"]
         .as_array_mut()
         .ok_or("default actor ceilings")?
         .push(serde_json::json!({"actor_class": "agent", "actor_ref": agent.to_hex(), "ceiling": "auto"}));
     crate::test_util::put_policy_manifest_bytes(
         &fixture.vault,
-        crate::gate::default_policy_manifest_id()?,
+        manifest_id,
         &rmp_serde::to_vec_named(&manifest)?,
     )?;
+    super::tests::support::grant_ask_read(&fixture.vault, &[agent])?;
     let class = fixture.policy(true);
     assign_governed_task(fixture, agent, &class, world)?;
     Ok((agent, class))
@@ -2038,9 +2050,15 @@ fn guest_fixture(
             )?,
         )?;
     }
+    // The companion reads the question like any holder. Without this grant the
+    // scoped-read lane refuses every companion answer first, so the callers'
+    // refusal asserts (undisclosed fact, revoked disclosure) would never reach
+    // the guest grant and the revocation check they test.
+    super::tests::support::grant_ask_read(&fixture.vault, &[companion])?;
     Ok(TaskAskGuest {
         companion_ref: companion,
         disclosure_grant_ref,
+        holder_key: None,
     })
 }
 
@@ -2342,7 +2360,7 @@ fn person_word_overrides_companion_hint_without_authorizing_an_effect() -> Resul
     assert_eq!(result.evidence[1].source, TaskAskSource::Human);
     assert_eq!(
         result.decision,
-        TaskAskDecision::First(result.evidence[1].answer)
+        TaskAskDecision::First(result.evidence[1].answer.clone())
     );
     assert_eq!(
         result.effect_authorization,
@@ -2723,8 +2741,8 @@ fn commitment_option_ids_are_not_confirmation_response_ids() -> Result<()> {
     let fixture = RuledAskFixture::new(1)?;
     let mut spec = fixture.spec();
     spec.what.options = [
-        (TaskAskOptionId::new("slot-a")?, "early".into()),
-        (TaskAskOptionId::new("slot-b")?, "late".into()),
+        (TaskAskOptionId::new("slot-a")?, TaskAskOption::new("early")),
+        (TaskAskOptionId::new("slot-b")?, TaskAskOption::new("late")),
     ]
     .into();
     spec.what.commitment = true;
@@ -2995,6 +3013,7 @@ fn a_grant_the_guest_stamped_is_no_consent_and_the_owners_record_is() -> Result<
         disclosure_grant_ref: fixture
             .vault
             .put_standing_grant_unchecked_for_test(&guests_own, bound.clone())?,
+        holder_key: None,
     };
     let row = fixture
         .vault
@@ -3126,8 +3145,8 @@ fn slot_commitment_human_can_approve_or_reject_typed_notice() -> Result<()> {
         spec.what.class_key = Some("meeting".into());
         spec.what.commitment = true;
         spec.what.options = [
-            (TaskAskOptionId::new("slot-a")?, "early".into()),
-            (TaskAskOptionId::new("slot-b")?, "late".into()),
+            (TaskAskOptionId::new("slot-a")?, TaskAskOption::new("early")),
+            (TaskAskOptionId::new("slot-b")?, TaskAskOption::new("late")),
         ]
         .into();
         spec.default = TaskAskDefault::Proceed;
@@ -3199,7 +3218,11 @@ fn slot_commitment_human_can_approve_or_reject_typed_notice() -> Result<()> {
 #[test]
 fn manifest_retry_limit_bounds_pending_notice_work() -> Result<()> {
     let fixture = RuledAskFixture::new(2)?;
-    let mut bytes = crate::gate::default_policy_manifest().unwrap();
+    let manifest_id = crate::gate::default_policy_manifest_id()?;
+    let mut bytes = match fixture.vault.get(&manifest_id)? {
+        Some(body) => body,
+        None => crate::gate::default_policy_manifest().unwrap(),
+    };
     let rmpv::Value::Map(mut entries) =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("default policy manifest map")
     else {
@@ -3219,11 +3242,7 @@ fn manifest_retry_limit_bounds_pending_notice_work() -> Result<()> {
     bytes.clear();
     rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
         .expect("encode policy manifest");
-    crate::test_util::put_policy_manifest_bytes(
-        &fixture.vault,
-        crate::gate::default_policy_manifest_id()?,
-        &bytes,
-    )?;
+    crate::test_util::put_policy_manifest_bytes(&fixture.vault, manifest_id, &bytes)?;
     let mut guests = std::collections::BTreeMap::new();
     let mut companions = Vec::new();
     for person in &fixture.people {
@@ -3330,8 +3349,10 @@ fn a_restore_never_widens_a_task_ask_class_narrowed_since() -> Result<()> {
     )?;
 
     let destination = backups.path().join("restored");
+    let key = fixture.vault.checkpoint_key()?;
     let error = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &destination,
         fixture.vault.config.clone(),
         &fixture.vault,
@@ -3416,6 +3437,7 @@ fn an_agents_omitted_target_lists_the_assignment_it_comes_from() -> Result<()> {
     let human = vault.ensure_embedded_owner_actor()?;
     let agent = super::tests::support::own_agent(&vault);
     let question = super::tests::support::consult_turn(&vault, 0x81);
+    super::tests::support::grant_ask_read(&vault, &[agent])?;
     let world = EntityId::now();
     vault.put_entity(
         &world,
@@ -3713,9 +3735,15 @@ fn task_scans_off_this_device_count_no_device_local_task() -> Result<()> {
     let members = std::collections::BTreeSet::from([owner.to_hex()]);
     let census = |locality| {
         let memory = vault.memory(owner, EdgeActorClass::Human).at(locality);
-        super::room_thread::thread_tasks(&memory, &roots, &members, 1)
-            .map(|tasks| tasks.len())
-            .map_err(|error| format!("{error:?}"))
+        super::room_thread::thread_tasks(
+            &memory,
+            &roots,
+            &std::collections::BTreeMap::new(),
+            &members,
+            1,
+        )
+        .map(|tasks| tasks.len())
+        .map_err(|error| format!("{error:?}"))
     };
     assert_eq!(census(CallerLocality::OffDevice)?, 0);
     assert_eq!(census(CallerLocality::OnDevice)?, 2);
@@ -3760,8 +3788,14 @@ fn a_room_thread_read_walks_only_its_members_tasks() -> Result<()> {
     let roots = std::collections::BTreeMap::from([(root, root)]);
     let members = std::collections::BTreeSet::from([owner.to_hex()]);
     let memory = vault.memory(owner, EdgeActorClass::Human);
-    let tasks = super::room_thread::thread_tasks(&memory, &roots, &members, 1)
-        .expect("the members' tasks read");
+    let tasks = super::room_thread::thread_tasks(
+        &memory,
+        &roots,
+        &std::collections::BTreeMap::new(),
+        &members,
+        1,
+    )
+    .expect("the members' tasks read");
     assert_eq!(tasks.len(), 1);
     Ok(())
 }
@@ -3813,7 +3847,13 @@ fn ask_and_thread_census_read_past_their_threshold_row() -> Result<()> {
     assert_eq!(evidence.len(), 2);
     let roots = std::collections::BTreeMap::from([(root, root)]);
     let members = std::collections::BTreeSet::from([fixture.owner.to_hex()]);
-    let tasks = super::room_thread::thread_tasks(&owner_memory, &roots, &members, 1)?;
+    let tasks = super::room_thread::thread_tasks(
+        &owner_memory,
+        &roots,
+        &std::collections::BTreeMap::new(),
+        &members,
+        1,
+    )?;
     assert_eq!(tasks.len(), 2);
     let checks = fixture.vault.scan_checks()?;
     for scan in scans {

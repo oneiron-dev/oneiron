@@ -16,6 +16,7 @@ use crate::{EntityId, TimeRange, Vault};
 use super::*;
 
 mod request_code_text;
+pub(super) use request_code_text::code_text;
 
 const MACHINE_CONNECTION_DOMAIN: &[u8] = b"oneiron/machine-proof/v1\0";
 /// The request header a machine names itself in, beside the slip proof.
@@ -113,8 +114,11 @@ impl MachineEnrolmentRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalMachine {
     pub id: EntityId,
-    /// Every admitter's chain for this row, once one of them names this
-    /// install's key.
+    /// Every admitter's chain for this row, once a chain this install reads
+    /// ([`FoldedMachine::names_key_under`] its pin: the accepted roster
+    /// revisions, the roster's head, the pinned anchor's) names this
+    /// install's key. A reader of it reads
+    /// [`FoldedMachine::standing_heads`], never another anchor's chain.
     pub profile: Option<FoldedMachine>,
     /// Mine under this install's pin, through a trusted identity that names
     /// this install's key. A chain that clones the row with other keys never
@@ -169,15 +173,25 @@ pub(super) fn resident_genesis_vault_id_in_txn(
 }
 
 /// Whether this install's own profile already stands as a carrier: the one
-/// carrier rule admits its install key, and a live chain names both its keys.
-/// The full predicate the owner-act writers ask, not the roster head alone.
+/// carrier rule admits its install key, and a live head it stands under here
+/// ([`FoldedMachine::standing_heads`]) names both its keys. The full
+/// predicate the owner-act writers ask, not the roster head alone. Another
+/// anchor's chain is no profile of it here (FIX
+/// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES).
 pub(super) fn serving_profile_stands(
     fold: &AuthorityFold,
     folded: &FoldedMachine,
     request: &MachineEnrolmentRequest,
 ) -> bool {
-    owner_act_signer_admits(Some(folded), &fold.roster, &request.machine_key)
-        && folded.chains().any(|(_, chain)| {
+    owner_act_signer_admits(
+        Some(folded),
+        &fold.roster,
+        &request.machine_key,
+        fold.pinned_root.as_ref(),
+    ) && folded
+        .standing_heads(fold.pinned_root.as_ref())
+        .into_iter()
+        .any(|chain| {
             chain.is_live()
                 && chain.profile.machine_key == request.machine_key
                 && chain.profile.encryption_key == request.encryption_key
@@ -187,6 +201,8 @@ pub(super) fn serving_profile_stands(
 impl Vault {
     /// This install's own MACHINE id while a profile of it names this
     /// install's machine key, in any role and any standing (FIX 4728): the
+    /// roster's, its accepted revisions or the pinned anchor's, never another
+    /// anchor's chain (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES);
     /// one machine row an authority-preserving restore keeps live. Read in
     /// `txn`'s snapshot alone: nothing is minted, loaded or ensured, and no
     /// role selects it. The key is the loaded signer's for that id, else the
@@ -211,7 +227,7 @@ impl Vault {
         };
         Ok(fold
             .machine(machine)
-            .is_some_and(|folded| folded.names_key(&key))
+            .is_some_and(|folded| folded.names_key_under(&key, fold.pinned_root.as_ref()))
             .then_some(machine))
     }
 
@@ -235,23 +251,57 @@ impl Vault {
     }
 }
 
-/// Whether a live chain of this install's standing profile names another
-/// class than the one its host declares now (FIX 3835).
-fn serving_class_differs(folded: &FoldedMachine, request: &MachineEnrolmentRequest) -> bool {
-    folded.chains().any(|(_, chain)| {
+/// Whether a live head of this install's standing profile under `pin`
+/// names another class than the one its host declares now (FIX 3835).
+fn serving_class_differs(
+    folded: &FoldedMachine,
+    pin: Option<&PinnedRoot>,
+    request: &MachineEnrolmentRequest,
+) -> bool {
+    folded.standing_heads(pin).into_iter().any(|chain| {
         chain.is_live()
             && chain.profile.machine_key == request.machine_key
             && chain.profile.device_class != request.device_class
     })
 }
 
-/// Why a profile under this install's id that does not stand is never
-/// enrolled over: the first of removed, conflicted, other keys and not live.
-fn serving_profile_refusal(
+/// Why the chain of the anchor this install pins refuses to let the roster
+/// enrol an install it holds no head of: it removed the install, it is
+/// conflicted, or it names other keys. `None` with no pin, no such chain, or
+/// one that agrees: the door then enrols. Only the pinned anchor vetoes here;
+/// another anchor's chain says nothing on this install.
+fn pinned_bootstrap_veto(
+    fold: &AuthorityFold,
     folded: &FoldedMachine,
     request: &MachineEnrolmentRequest,
+) -> Option<&'static str> {
+    let chain = fold
+        .pinned_root
+        .as_ref()
+        .and_then(|pin| folded.anchored.get(&pin.anchor_key))?;
+    if chain.removed {
+        Some(SERVING_PROFILE_REMOVED)
+    } else if chain.conflicted {
+        Some(SERVING_PROFILE_CONFLICTED)
+    } else if chain.profile.machine_key != request.machine_key
+        || chain.profile.encryption_key != request.encryption_key
+    {
+        Some(SERVING_PROFILE_KEY_MISMATCH)
+    } else {
+        None
+    }
+}
+
+/// Why a profile under this install's id that does not stand is never
+/// enrolled over: the first of removed, conflicted, other keys and not live,
+/// on the heads it stands under with `pin`.
+fn serving_profile_refusal(
+    folded: &FoldedMachine,
+    pin: Option<&PinnedRoot>,
+    request: &MachineEnrolmentRequest,
 ) -> &'static str {
-    let chains = move || folded.chains().map(|(_, chain)| chain);
+    let heads = folded.standing_heads(pin);
+    let chains = || heads.iter().copied();
     if chains().any(|chain| chain.removed) {
         SERVING_PROFILE_REMOVED
     } else if chains().any(|chain| chain.conflicted) {
@@ -307,7 +357,9 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let profile = fold
             .machine(id)
-            .filter(|machine| key.is_some_and(|key| machine.names_key(&key)))
+            .filter(|machine| {
+                key.is_some_and(|key| machine.names_key_under(&key, fold.pinned_root.as_ref()))
+            })
             .cloned();
         let mine = fold
             .trusted_machine(id)
@@ -448,10 +500,25 @@ impl Vault {
         let request = self.machine_enrolment_request(vault_id, encryption_key)?;
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        if let Some(folded) = fold.machine(request.machine) {
+        // "On the roster yet?" is the roster's question (Fable design pass
+        // 29, 3.4; Engine 06:15, FIX
+        // SERVING-PROFILE-ANCHOR-MARKED-INSTALL-NO-BOOTSTRAP): an install the
+        // roster holds no head of is enrolled, whatever an anchor's chain
+        // says of it, unless the chain of the anchor it pins refuses it.
+        let held = fold
+            .machine(request.machine)
+            .filter(|folded| folded.roster.is_some());
+        if let Some(reason) = fold
+            .machine(request.machine)
+            .filter(|_| held.is_none())
+            .and_then(|folded| pinned_bootstrap_veto(&fold, folded, &request))
+        {
+            return Err(authority_refused(reason));
+        }
+        if let Some(folded) = held {
             return if serving_profile_stands(&fold, folded, &request) {
                 let issuer_is_root = super::slip_vault::require_host(&fold, issuer).is_ok();
-                if serving_class_differs(folded, &request) {
+                if serving_class_differs(folded, fold.pinned_root.as_ref(), &request) {
                     tracing::warn!(
                         declared = request.device_class.wire(),
                         reason = SERVING_PROFILE_CLASS_DIFFERS,
@@ -460,7 +527,11 @@ impl Vault {
                 }
                 Ok((folded.clone(), Some(issuer_is_root)))
             } else {
-                Err(authority_refused(serving_profile_refusal(folded, &request)))
+                Err(authority_refused(serving_profile_refusal(
+                    folded,
+                    fold.pinned_root.as_ref(),
+                    &request,
+                )))
             };
         }
         if fold.vault_root_is_conflicted() {
@@ -579,6 +650,26 @@ impl Vault {
         timestamp: u64,
         nonce: &str,
     ) -> Result<Option<(EntityId, [u8; 64])>> {
+        self.machine_connection_proof_with_pin(token, timestamp, nonce, None)
+    }
+
+    /// [`Self::machine_connection_proof`] for a sync client that holds the
+    /// checkpoint pin its owner-authorized pairing handed it. While this
+    /// vault has no root of its own (no resident Genesis, no adopted pin), as
+    /// on a machine that joined from an empty vault before its first
+    /// catch-up, it signs for the pin's genesis: the vault its enrolment
+    /// request signed for (FIX 3375). Without that proof the home serves the
+    /// pinned checkpoint and the tail to no one, so the join never adopts
+    /// (FIX DEVICE-JOIN-PROOF-DEADLOCK). Proof only: the pin is never read as
+    /// this vault's root, and the home verifies against its own vault id and
+    /// the machine key the pairing enrolled.
+    pub fn machine_connection_proof_with_pin(
+        &self,
+        token: &str,
+        timestamp: u64,
+        nonce: &str,
+        pin: Option<&AuthorityCheckpointPin>,
+    ) -> Result<Option<(EntityId, [u8; 64])>> {
         self.load_install_signing_if_minted()?;
         let txn = self.store.env.read_txn()?;
         let Some(machine) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
@@ -591,8 +682,12 @@ impl Vault {
             Ok(view) => view.vault_id,
             Err(_) => resident_genesis_vault_id_in_txn(&self.store, &txn)?,
         };
-        let Some(vault_id) = vault_id else {
-            return Ok(None);
+        let vault_id = match (vault_id, pin) {
+            (Some(vault_id), _) => vault_id,
+            (None, Some(pin)) if resident_genesis_vault_id_in_txn(&self.store, &txn)?.is_none() => {
+                pin.genesis
+            }
+            (None, _) => return Ok(None),
         };
         let transcript = machine_connection_transcript(&vault_id, machine, token, timestamp, nonce);
         Ok(Some((machine, key.sign(&transcript).to_bytes())))

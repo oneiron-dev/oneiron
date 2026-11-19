@@ -8,6 +8,7 @@ use crate::dreamer_promotion::{DreamerRunContext, PromotionWriterSink};
 use crate::dreamer_wake::{DreamerWakeDriver, RunWakePass, WakeCancellation, WakeTrigger};
 use crate::llm::ScopeResource;
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+use crate::registry::ENTITY_TYPE_RELATIONSHIP;
 use crate::vault_cleanup::{CleanupKind, zero_live_members};
 
 const SAID: &str = "call me Owen";
@@ -31,7 +32,7 @@ impl RecordingBackend {
             .iter()
             .flat_map(|message| &message.content)
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect()
@@ -112,6 +113,7 @@ pub(super) fn grant_messages(vault: &Vault, space: EntityId, expires_at: u64) ->
             revoked_at: None,
             expires_at: Some(expires_at),
             authority_scope: crate::federation::scope_codec::read_preset(),
+            companion_bounds: None,
         },
     )?;
     Ok(grant)
@@ -152,7 +154,12 @@ fn head_scope(
     admitted: &crate::dreamer_runner::DreamerAdmittedAttempt,
     head: EntityId,
 ) -> Result<(ConsolidationPartitionKey, Vec<EntityId>, crate::llm::Scope)> {
-    let (partition, turns, _) = decode_partition_payload(&admitted.status.payload.input)?;
+    let queued = decode_partition_payload(&admitted.status.payload.input)?;
+    let [part] = queued.parts.as_slice() else {
+        return Err(Error::InvalidConfig("a one-part branch".into()));
+    };
+    let partition = queued.part_key(part.conversation_ref);
+    let turns = part.turns.clone();
     let mut scope = BranchResources::open(
         vault,
         vault.dreamer_authority()?,
@@ -220,9 +227,11 @@ pub(super) fn message(
         author,
         message_type: "dialogue".to_owned(),
         content: content.to_owned(),
+        parts: None,
         metadata: None,
         is_visible,
         order,
+        quote: None,
     }
 }
 
@@ -243,8 +252,11 @@ pub(super) fn witness(
         .witness(&WitnessTurn {
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
+            project: None,
             messages,
             occurred_at: 10,
+            assertions: Default::default(),
         })
         .expect("witnessed turn");
     (turn, conversation)
@@ -304,6 +316,7 @@ fn executor<'a>(
         sink,
         inference: test_inference_host(),
         scope,
+        decisions: ConsolidationDecisions::shipped()?,
     })
 }
 
@@ -327,10 +340,13 @@ fn execute_direct(
         &mut WakeAttemptContext {
             vault,
             deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms: 21_000,
             prepared_wake: None,
             prepared_attempt: None,
+            spend_meter: None,
         },
     ))
 }
@@ -697,6 +713,17 @@ fn private_or_ungranted_relationship_messages_never_reach_consolidation() -> Res
     let related = || serde_json::json!({"rel": space.to_hex()});
     for case in ["private", "no grant", "revoked grant", "expired grant"] {
         let (_dir, vault, clock) = open_clocked_vault();
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault
+            .put_entity(
+                &space,
+                ENTITY_TYPE_RELATIONSHIP,
+                occurred(1),
+                1,
+                b"relationship",
+            )
+            .expect("put the relationship space");
         let metadata = if case == "private" {
             serde_json::json!({"scope": {"private": true}})
         } else {
@@ -758,6 +785,17 @@ fn private_or_ungranted_relationship_messages_never_reach_consolidation() -> Res
     // the grant was live, commits only if the grant still holds when written.
     for expire in [false, true] {
         let (_dir, vault, clock) = open_clocked_vault();
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault
+            .put_entity(
+                &space,
+                ENTITY_TYPE_RELATIONSHIP,
+                occurred(1),
+                1,
+                b"relationship",
+            )
+            .expect("put the relationship space");
         let (turn, _) = witness(
             &vault,
             0x6d,
@@ -793,7 +831,7 @@ fn private_or_ungranted_relationship_messages_never_reach_consolidation() -> Res
             &facts.value,
             facts.world,
             facts.facet,
-            facts.rel,
+            facts.rel.as_ref(),
             facts.project,
             facts.topic.as_deref(),
         )?;
@@ -831,6 +869,17 @@ fn gap_queue_refuses_a_text_gap_whose_message_changed_after_the_scan() -> Result
     for case in ["deleted row", "expired grant"] {
         let (_dir, vault, clock) = open_clocked_vault();
         let space = EntityId::now();
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault
+            .put_entity(
+                &space,
+                ENTITY_TYPE_RELATIONSHIP,
+                occurred(1),
+                1,
+                b"relationship",
+            )
+            .expect("put the relationship space");
         let said = WitnessMessage {
             metadata: (case == "expired grant").then(|| serde_json::json!({"rel": space.to_hex()})),
             ..message(0, WitnessAuthor::User, "I'll call Casey tomorrow", true)
@@ -1120,14 +1169,7 @@ pub(super) fn stream_turn(
     text: &str,
     ending: &str,
 ) -> Result<(EntityId, EntityId, EntityId, WitnessTurn)> {
-    let person = EntityId::from_bytes([seed; 16])?;
-    vault.put_entity(
-        &person,
-        ENTITY_TYPE_PERSON,
-        occurred(1),
-        1,
-        b"stream writer",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().expect("owner");
     // A continuation stream needs its human writer's live owner binding.
     crate::test_util::bind_test_owner(vault, person);
     let conversation = EntityId::from_bytes([seed + 1; 16])?;
@@ -1135,8 +1177,11 @@ pub(super) fn stream_turn(
     let input = WitnessTurn {
         conversation_ref: conversation.to_hex(),
         turn_ref: Some(turn.to_hex()),
+        thread_audience: None,
+        project: None,
         messages: vec![message(0, WitnessAuthor::User, "", true)],
         occurred_at: 10,
+        assertions: Default::default(),
     };
     end_stream(vault, person, &input, text, ending);
     Ok((turn, conversation, id_of(&input.messages[0]), input))
@@ -1233,7 +1278,7 @@ fn a_cancelled_continuation_turns_its_final_message_into_audit_text() -> Result<
     assert!(branch.transcript(branch.scope(), &[turn])?.contains(SAID));
     end_stream(
         &vault,
-        EntityId::from_bytes([0x77; 16])?,
+        vault.ensure_embedded_owner_actor().expect("owner"),
         &input,
         "",
         "cancel",
@@ -1316,7 +1361,7 @@ fn a_finalized_continuation_brings_its_consumed_turn_back() -> Result<()> {
     let [consumed] = <[WorkingSetTurn; 1]>::try_from(dirty(&vault)?).expect("one dirty turn");
     advance_watermark_to_turn(&vault, scope, &consumed)?;
     assert!(dirty(&vault)?.is_empty(), "the round consumed the turn");
-    let writer = EntityId::from_bytes([0x7b; 16])?;
+    let writer = vault.ensure_embedded_owner_actor().expect("owner");
     let memory = vault.memory(writer, EdgeActorClass::Human);
     let handle = memory
         .begin_message_stream(&input, Some(crate::memory::MessageWriteMode::Atomic))
@@ -1356,7 +1401,7 @@ fn a_continuation_in_a_dag_conversation_still_finalizes() -> Result<()> {
     );
     end_stream(
         &vault,
-        EntityId::from_bytes([0x81; 16])?,
+        vault.ensure_embedded_owner_actor().expect("owner"),
         &input,
         " Owen",
         "finalize",
@@ -1386,6 +1431,7 @@ fn stored_rows_join_by_order_then_id_and_a_foreign_bucket_refuses() -> Result<()
             author,
             message_type: "dialogue",
             content: text,
+            parts: None,
             metadata: None,
             is_visible,
             order,
@@ -1440,11 +1486,10 @@ fn stored_rows_join_by_order_then_id_and_a_foreign_bucket_refuses() -> Result<()
 
 fn branch_gap_rows(
     vault: &Vault,
-    partition: &ConsolidationPartitionKey,
+    branch: &ConsolidationBranchPlan<EntityId>,
     scope: &crate::llm::Scope,
 ) -> Result<usize> {
-    let ScopeResource::Projection { key } =
-        super::super::gap::branch_gap_projection(partition, scope)
+    let ScopeResource::Projection { key } = super::super::gap::branch_gap_projection(branch, scope)
     else {
         panic!("branch gap identity is a projection")
     };
@@ -1465,6 +1510,17 @@ fn branch_gap_write_refuses_evidence_that_moved_after_the_read() -> Result<()> {
     for case in ["none", "deleted row", "expired grant"] {
         let (_dir, vault, clock) = open_clocked_vault();
         let space = EntityId::now();
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault
+            .put_entity(
+                &space,
+                ENTITY_TYPE_RELATIONSHIP,
+                occurred(1),
+                1,
+                b"relationship",
+            )
+            .expect("put the relationship space");
         let said = WitnessMessage {
             metadata: Some(serde_json::json!({"rel": space.to_hex()})),
             ..message(0, WitnessAuthor::User, SAID, true)
@@ -1506,15 +1562,26 @@ fn branch_gap_write_refuses_evidence_that_moved_after_the_read() -> Result<()> {
             "expired grant" => clock.set(200),
             _ => {}
         }
+        let queued_branch: ConsolidationBranchPlan<EntityId> = ConsolidationBranchPlan {
+            world_ref: partition.world_ref,
+            facet_ref: partition.facet_ref,
+            thing: None,
+            parts: vec![ConversationPart {
+                conversation_ref: partition.conversation_ref,
+                turns: vec![turn],
+                watermark_last_learned_at: 0,
+                line: 0,
+            }],
+        };
         let written = super::super::gap::upsert_branch_gap_queue(
             &vault,
             branch.scope(),
-            &partition,
+            &queued_branch,
             &fence,
             vec![gap],
             2_000,
         );
-        let rows = branch_gap_rows(&vault, &partition, branch.scope())?;
+        let rows = branch_gap_rows(&vault, &queued_branch, branch.scope())?;
         if case == "none" {
             assert_eq!(written?.created, 1);
             assert_eq!(rows, 1);
