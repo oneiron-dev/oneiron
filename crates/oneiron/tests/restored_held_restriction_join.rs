@@ -194,17 +194,10 @@ fn yours_enrolment(host: &Host, request: &MachineEnrolmentRequest) -> AuthorityE
     enrolment
 }
 
-/// The host carries the owner's proved answer "work/school" for `target` at
-/// revision 2 over `enrolment` alone, then signs a sibling over `before` at
-/// the next sequence, so the answer lands below its floor. Returns the
-/// answer, which the fold holds, and the sibling.
-fn floored_demotion(
-    host: &Host,
-    target: EntityId,
-    enrolment: AuthorityEntryHash,
-    before: BTreeSet<AuthorityEntryHash>,
-) -> (SignedRow, SignedRow) {
-    let demotion = MachineProfile {
+/// The owner's answer "work/school" for `target` at revision 2 over the
+/// held `enrolment`, carried by the host.
+fn demotion(host: &Host, target: EntityId, enrolment: &AuthorityEntryHash) -> MachineProfile {
+    MachineProfile {
         role: WORK_SCHOOL,
         revision: 2,
         seen_world_edits: BTreeSet::new(),
@@ -216,16 +209,27 @@ fn floored_demotion(
             ActSurface::ThisInstall,
             [0; 32],
         )),
-        ..held_profile(&host.vault, &enrolment)
-    };
-    let demotion = put_signed_row(
+        ..held_profile(&host.vault, enrolment)
+    }
+}
+
+/// The host carries `answer`, proved, over `enrolment` alone, then signs a
+/// sibling over `before` at the next sequence, so the answer lands below its
+/// floor. Returns the answer, which the fold holds, and the sibling.
+fn floored_answer(
+    host: &Host,
+    answer: MachineProfile,
+    enrolment: AuthorityEntryHash,
+    before: BTreeSet<AuthorityEntryHash>,
+) -> (SignedRow, SignedRow) {
+    let answer = put_signed_row(
         &host.vault,
         RowSigner::InstallWithOwnerProof(&host.key),
-        AuthorityOp::MachineProfile(demotion),
+        AuthorityOp::MachineProfile(answer),
         None,
         BTreeSet::from([enrolment]),
     )
-    .expect("FIXTURE: the host's carried demotion is stored");
+    .expect("FIXTURE: the host's carried answer is stored");
     let sibling = put_signed_row(
         &host.vault,
         RowSigner::Install(&host.key),
@@ -233,7 +237,7 @@ fn floored_demotion(
             family: FrontierJoinFamily::Install(host.machine),
             scope: FrontierJoinScope::Main,
         }),
-        Some(demotion.seq + 1),
+        Some(answer.seq + 1),
         before,
     )
     .expect("FIXTURE: the floor sibling is stored");
@@ -242,14 +246,24 @@ fn floored_demotion(
         "FIXTURE: the floor sibling counts"
     );
     assert!(
-        counted(&host.vault, &demotion.entry),
-        "FIXTURE: the demotion counts"
+        counted(&host.vault, &answer.entry),
+        "FIXTURE: the answer counts"
     );
     assert!(
-        waits(&host.vault, &demotion.entry),
-        "FIXTURE: the floored demotion is held"
+        waits(&host.vault, &answer.entry),
+        "FIXTURE: the floored answer is held"
     );
-    (demotion, sibling)
+    (answer, sibling)
+}
+
+/// [`demotion`], carried below the host's floor by [`floored_answer`].
+fn floored_demotion(
+    host: &Host,
+    target: EntityId,
+    enrolment: AuthorityEntryHash,
+    before: BTreeSet<AuthorityEntryHash>,
+) -> (SignedRow, SignedRow) {
+    floored_answer(host, demotion(host, target, &enrolment), enrolment, before)
 }
 
 /// The owner's word that no other machine is left, joining `enrolment` of
@@ -371,5 +385,92 @@ fn the_owners_join_of_an_older_enrolment_stands_a_held_demotion() {
     assert!(
         !stands(&host.vault, target),
         "its floored head holds the machine's chain on this install"
+    );
+}
+
+#[test]
+fn a_root_revision_over_a_held_demotion_stands_with_it() {
+    let host = rooted_host();
+    let request = restored_request(host.vault_id, 0x63);
+    let target = request.machine;
+    let before = rows_before(&host);
+    let enrolment = yours_enrolment(&host, &request);
+    let (demotion, sibling) = floored_demotion(&host, target, enrolment, before);
+    // The root answers "unanswered" at revision 3 over the held demotion:
+    // the machine has not joined, so it is held too.
+    let later = put_signed_row(
+        &host.vault,
+        RowSigner::OwnerProof,
+        AuthorityOp::MachineProfile(MachineProfile {
+            role: MachineRole::Unanswered,
+            revision: 3,
+            ..held_profile(&host.vault, &enrolment)
+        }),
+        None,
+        BTreeSet::from([demotion.entry]),
+    )
+    .expect("FIXTURE: the root's revision 3 is stored");
+    assert!(
+        counted(&host.vault, &later.entry) && waits(&host.vault, &later.entry),
+        "FIXTURE: the root's revision 3 counts and is held"
+    );
+
+    owner_join(
+        &host,
+        target,
+        enrolment,
+        BTreeSet::from([later.entry, sibling.entry]),
+    );
+
+    let (revision, role, yours) = roster_head(&host.vault, target);
+    assert_eq!(
+        (revision, role),
+        (3, MachineRole::Unanswered),
+        "a revision held over the held demotion stands with it, as it stands without the floor"
+    );
+    assert!(!yours, "the machine no longer reads as \"yours\"");
+}
+
+#[test]
+fn a_held_demotion_naming_a_shared_key_holds_the_other_machine() {
+    let host = rooted_host();
+    let request = restored_request(host.vault_id, 0x64);
+    let target = request.machine;
+    let before = rows_before(&host);
+    let enrolment = yours_enrolment(&host, &request);
+    // The demotion names the host install's own key for the machine, with
+    // that key's proof of the machine's profile.
+    let held = held_profile(&host.vault, &enrolment);
+    let machine_key = host.key.verifying_key().to_bytes();
+    let transcript = restored_machine_profile_proof_transcript(
+        &host.vault_id,
+        target,
+        &machine_key,
+        held.device_class,
+        &held.encryption_key,
+        &held.restored_from.expect("FIXTURE: the machine's origin"),
+    );
+    let answer = MachineProfile {
+        machine_key,
+        machine_proof: host.key.sign(&transcript).to_bytes(),
+        ..demotion(&host, target, &enrolment)
+    };
+    let (answer, sibling) = floored_answer(&host, answer, enrolment, before);
+    assert!(
+        stands(&host.vault, host.machine),
+        "FIXTURE: the host's install stands"
+    );
+
+    owner_join(
+        &host,
+        target,
+        enrolment,
+        BTreeSet::from([answer.entry, sibling.entry]),
+    );
+
+    assert!(
+        !stands(&host.vault, host.machine),
+        "a key the held demotion names for the machine, which the host's install claims, \
+         holds the host's install too, as it does without the floor"
     );
 }
