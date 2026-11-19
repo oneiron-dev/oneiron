@@ -112,8 +112,9 @@ pub(super) fn bound_to_thread(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityI
 
 /// The gate check an appended record passes: labelled by who composed its
 /// words ([`policy::check_append_policy`] or
-/// [`policy::check_composed_append_policy`]), or, for a Retry's TURN, the
-/// transcript gate its reply's MESSAGE meets
+/// [`policy::check_composed_append_policy`]), labelled observed for a record
+/// that holds no words ([`policy::check_observed_append_policy`]), or, for a
+/// Retry's TURN, the transcript gate its reply's MESSAGE meets
 /// ([`policy::check_regenerated_turn_policy`]).
 type AppendPolicy = fn(&Vault, &mut RwTxn<'_>, &EntityId, &AppendRecord, &[u8]) -> Result<()>;
 
@@ -125,6 +126,9 @@ enum AppendDoor {
     Own,
     /// A record whose words the engine composed under its writer's actor.
     Composed,
+    /// A record that holds no words, only the typed refs of what the engine
+    /// observed, under its writer's actor.
+    Observed,
     /// A Retry's assistant TURN, which regenerates the stored TURN it names.
     Regenerated(EntityId),
 }
@@ -134,6 +138,7 @@ impl AppendDoor {
         match self {
             Self::Own => policy::check_append_policy,
             Self::Composed => policy::check_composed_append_policy,
+            Self::Observed => policy::check_observed_append_policy,
             Self::Regenerated(_) => policy::check_regenerated_turn_policy,
         }
     }
@@ -182,16 +187,19 @@ pub(crate) fn append_composed_in_txn(
     )
 }
 
-/// [`append_composed_in_txn`] at `id`, an id its caller derives so a
-/// replayed write finds the record it made: an approved plan's run result,
-/// filed into the run's sub-session.
-pub(crate) fn append_composed_at_in_txn(
+/// Appends a record that holds no words, only the typed refs of what the
+/// engine observed under its writer's actor, checked as observed: an
+/// approved plan's run result, filed into the run's sub-session. It lands
+/// at `id`, an id its caller derives so a replayed write finds the record it
+/// made. Words the engine composed never come through this door: they stay
+/// generated ([`append_composed_in_txn`]).
+pub(crate) fn append_observed_at_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     input: &AppendRecord,
     id: EntityId,
 ) -> Result<AppendedRecord> {
-    append_at_in_txn(vault, txn, input, None, false, id, AppendDoor::Composed)
+    append_at_in_txn(vault, txn, input, None, false, id, AppendDoor::Observed)
 }
 
 /// Appends a Retry's assistant TURN under the record id `id` its reply's

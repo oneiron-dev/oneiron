@@ -70,9 +70,12 @@ fn merge_chain(left: &MachineChain, right: &MachineChain) -> MachineChain {
         crate::authority::machine_standing::merge_revisions(&left.revisions, &right.revisions);
     // Concurrent owner say-sos that say otherwise conflict, whatever their
     // numeric revisions (mesh PR1b C5, FIX 4610): the higher number never
-    // wins them.
+    // wins them. So do revisions that name different origins: a merge never
+    // drops a machine's restore mark under a higher revision
+    // (RESTORED-COPIES-ENROL-EACH-OTHER; REVIEW-9509 round 2 P1).
     let contest = |mut head: MachineRevision| {
-        head.conflicted |= super::say_so_contested(&head, &revisions);
+        head.conflicted |= super::say_so_contested(&head, &revisions)
+            || crate::authority::restored_join::origins_disagree(&revisions);
         head
     };
     MachineChain {

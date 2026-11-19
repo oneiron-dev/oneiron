@@ -882,7 +882,7 @@ fn shared_keyed_writes_recheck_current_role_and_both_claim_positions() {
             crate::store::GateDecisionId::now(),
         )
         .unwrap();
-    let created = vault
+    vault
         .initialize_shared_vault(
             &authenticated,
             42,
@@ -904,6 +904,14 @@ fn shared_keyed_writes_recheck_current_role_and_both_claim_positions() {
             1,
         )
         .unwrap();
+    let grant_refs = crate::test_util::accept_founding_invitation(
+        &vault,
+        42,
+        member,
+        FederationGrantRole::Member,
+    );
+    crate::test_util::grant_founding_writer_reads(&vault, member);
+    crate::test_util::accept_founding_invitation(&vault, 42, viewer, FederationGrantRole::Viewer);
     let memory = vault.memory(member, EdgeActorClass::Human);
     let key = address(&["shared"], "k");
     let first = memory
@@ -918,8 +926,7 @@ fn shared_keyed_writes_recheck_current_role_and_both_claim_positions() {
         vault.get_claim(&first_id).unwrap().unwrap().lifecycle,
         ClaimLifecycleStatus::Superseded
     );
-    let (grant_id, mut grant) = created
-        .grant_refs
+    let (grant_id, mut grant) = grant_refs
         .iter()
         .find_map(|hex| {
             let id = EntityId::from_hex(hex).unwrap();
