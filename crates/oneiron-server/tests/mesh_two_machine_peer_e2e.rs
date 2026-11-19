@@ -45,7 +45,7 @@ use oneiron::sync::mesh_path::{
 };
 use oneiron::sync::peer_route::{HOME_DOWN_AFTER_SECS, choose_sync_peer};
 use oneiron::sync::{
-    ConnectionConfig, SyncClientConfig, SyncConnection, SyncEvent, SyncPeerDialer,
+    ConnectionConfig, SyncClientConfig, SyncConnection, SyncDial, SyncEvent, SyncPeerDialer,
     SyncResidenceMode, SyncTransportCredential,
 };
 use oneiron::test_doors::steward;
@@ -355,32 +355,55 @@ struct Served {
     listener: MeshListener,
 }
 
+/// The asking device's real peer dialer, recording each dial as it starts:
+/// the peer it names and when, before the dial reaches that peer. The timing
+/// and order promises are about the dials: a peer receipt is written only
+/// once the upgrade and the peer's proof succeed, so a dial that failed
+/// before that leaves none, and one admitted late shows only its admission.
+#[derive(Debug)]
+struct RecordingPeerDialer {
+    dialer: MeshPeerDialer,
+    dials: Arc<Mutex<Vec<(EntityId, Instant)>>>,
+}
+
+impl SyncPeerDialer for RecordingPeerDialer {
+    fn peers(&self) -> Vec<EntityId> {
+        self.dialer.peers()
+    }
+
+    fn dial_peer(&self, peer: EntityId) -> SyncDial<'_> {
+        self.dials
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((peer, Instant::now()));
+        self.dialer.dial_peer(peer)
+    }
+}
+
 /// The asking device's link, running: its home is `home` at a URL nobody
 /// answers, and its peer dialer rides its listener's endpoint.
 struct Asking {
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     run: tokio::task::JoinHandle<oneiron::Result<()>>,
     events: Arc<Mutex<Vec<SyncEvent>>>,
-    /// When the link started, in Unix milliseconds.
-    started_ms: u64,
-}
-
-fn unix_millis_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-        })
+    /// Every peer dial the link made, with when it started.
+    dials: Arc<Mutex<Vec<(EntityId, Instant)>>>,
+    /// When the link started.
+    started: Instant,
 }
 
 impl Asking {
     fn start(device: &Device, served: &Served, home: EntityId) -> TestResult<Self> {
-        let peer_dialer = Arc::new(MeshPeerDialer::new(
-            served.listener.transport(),
-            Arc::clone(&device.vault),
-            device.machine,
-            Arc::new(move || home),
-        )) as Arc<dyn SyncPeerDialer>;
+        let dials = Arc::new(Mutex::new(Vec::new()));
+        let peer_dialer = Arc::new(RecordingPeerDialer {
+            dialer: MeshPeerDialer::new(
+                served.listener.transport(),
+                Arc::clone(&device.vault),
+                device.machine,
+                Arc::new(move || home),
+            ),
+            dials: Arc::clone(&dials),
+        }) as Arc<dyn SyncPeerDialer>;
         let config = ConnectionConfig {
             client_config: SyncClientConfig {
                 server_url: dead_home_url()?,
@@ -398,7 +421,7 @@ impl Asking {
         let events = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::clone(&events);
         let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
-        let started_ms = unix_millis_now();
+        let started = Instant::now();
         let run = tokio::spawn(async move {
             connection
                 .run_observed(shutdown_rx, move |event| {
@@ -412,8 +435,20 @@ impl Asking {
             shutdown: Some(shutdown),
             run,
             events,
-            started_ms,
+            dials,
+            started,
         })
+    }
+
+    /// The peer dials the link has made, oldest first: the peer each named
+    /// and how long after the link started it began.
+    fn dials(&self) -> Vec<(EntityId, Duration)> {
+        self.dials
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|&(peer, at)| (peer, at.saturating_duration_since(self.started)))
+            .collect()
     }
 
     fn errors(&self) -> Vec<String> {
@@ -582,18 +617,16 @@ async fn peer_marked_mine_serves() -> TestResult {
          receipts {served:?}, asker errors {:?}",
         asking.errors()
     );
-    // The earliest session the asker asked, whatever its outcome: a refused
-    // or failed ask before the window breaks the promise as much as an
-    // admitted one.
-    let first = asked
-        .iter()
-        .find(|ask| ask.asked)
-        .ok_or("the asker's peer receipts went")?;
+    // The earliest peer dial the asker made, whatever became of it: a dial
+    // before the window breaks the promise even when it failed before the
+    // peer answered, or the peer admitted it only after the window.
+    let dials = asking.dials();
+    let &(_, first_dial_after) = dials.first().ok_or("the asker made no peer dial")?;
     assert!(
-        first.opened_at_ms >= asking.started_ms + HOME_DOWN_AFTER_SECS * 1000,
-        "the asker asks a peer only once its home has served it nothing for \
-         {HOME_DOWN_AFTER_SECS} s: first peer session {} ms after the link started: {asked:?}",
-        first.opened_at_ms.saturating_sub(asking.started_ms)
+        first_dial_after >= Duration::from_secs(HOME_DOWN_AFTER_SECS),
+        "the asker dials a peer only once its home has served it nothing for \
+         {HOME_DOWN_AFTER_SECS} s: first peer dial {first_dial_after:?} after the link started: \
+         {dials:?}"
     );
     assert!(
         eventually(PEER_SESSION_GRACE, || holds(&asker.vault, entity)).await,
@@ -643,8 +676,13 @@ async fn machine_not_marked_mine_is_refused() -> TestResult {
          peer receipts {served:?}, asker errors {:?}",
         asking.errors()
     );
+    // The peer commits its refusal receipt before it sends the 403, so the
+    // asker's error may come a moment after the receipt shows.
     assert!(
-        asking.errors().iter().any(|error| error.contains("403")),
+        eventually(PEER_SESSION_GRACE, || {
+            asking.errors().iter().any(|error| error.contains("403"))
+        })
+        .await,
         "the asker's upgrade is answered 403; asker errors {:?}",
         asking.errors()
     );
@@ -742,6 +780,23 @@ async fn full_copy_holder_first() -> TestResult {
          asker errors {:?}",
         asking.errors()
     );
+    // The asker's first peer dial, whatever became of it, goes to the
+    // full-copy holder once the window has passed: a dial to the peer without
+    // the mark that failed before reaching it would leave no receipt.
+    let dials = asking.dials();
+    let &(first_dialled, first_dial_after) = dials.first().ok_or("the asker made no peer dial")?;
+    assert_eq!(
+        first_dialled, second.machine,
+        "the asker's first peer dial goes to the full-copy holder, none to the peer without the \
+         mark before it: {dials:?}"
+    );
+    assert!(
+        first_dial_after >= Duration::from_secs(HOME_DOWN_AFTER_SECS),
+        "no peer is dialled before the home has been down {HOME_DOWN_AFTER_SECS} s: first peer \
+         dial {first_dial_after:?} after the link started: {dials:?}"
+    );
+    // The full-copy holder admits that first session: the asker's first
+    // peer receipt is an admitted one naming it.
     let first_ask = asked
         .iter()
         .find(|ask| ask.asked)
@@ -749,25 +804,12 @@ async fn full_copy_holder_first() -> TestResult {
     assert_eq!(
         first_ask.peer.as_deref(),
         Some(second.machine.to_hex().as_str()),
-        "the asker's first peer session goes to the full-copy holder: {asked:?}"
+        "the asker's first admitted peer session is the full-copy holder's: {asked:?}"
     );
     assert_eq!(
         first_ask.outcome,
         MeshPathOutcome::Admitted,
         "the full-copy holder serves the asker's first peer session: {asked:?}"
-    );
-    assert!(
-        first_ask.opened_at_ms >= asking.started_ms + HOME_DOWN_AFTER_SECS * 1000,
-        "no peer is asked before the home has been down {HOME_DOWN_AFTER_SECS} s: first peer \
-         session {} ms after the link started",
-        first_ask.opened_at_ms.saturating_sub(asking.started_ms)
-    );
-    assert!(
-        !peer_receipts(&first.vault).iter().any(|serve| {
-            serve.opened_at_ms <= first_ask.opened_at_ms
-                && serve.peer.as_deref() == Some(asker.machine.to_hex().as_str())
-        }),
-        "the peer without the mark is not asked before the full-copy holder"
     );
 
     asking.stop().await;
