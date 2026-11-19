@@ -27,6 +27,13 @@
 //! green on the head of the lifecycle PR. The Disconnect variant guards the
 //! fix (an ended pact stays ended) and passes on both heads.
 //!
+//! Review round 1 of the lifecycle PR adds three. The owner's Disconnect door
+//! on the held pact: red on a686d5db, where the door names only the heads,
+//! which B left, and its Disconnect finds no pact. A live Connect A that
+//! agrees with B on the ceiling but pins another peer key than B's lesser
+//! one: red on a686d5db, where A renews the pact on the pin only B gave. A
+//! live Connect pinning the same peer renews the pact and passes on both.
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test withheld_cosign_below_floor`.
 
@@ -455,7 +462,22 @@ const PEER_VAULT_ID: AuthorityVaultId = [0x56; 32];
 /// with the gesture of the peer's owner key (outside this vault's roster)
 /// over the side-symmetric transcript.
 fn connect_of(vault_id: AuthorityVaultId, pact_id: [u8; 32], grant: EntityId) -> AuthorityOp {
-    let peer = SigningKey::from_bytes(&[0x50; 32]);
+    connect_gestured_by(
+        vault_id,
+        pact_id,
+        grant,
+        &SigningKey::from_bytes(&[0x50; 32]),
+    )
+}
+
+/// [`connect_of`] with `peer` as the peer owner key that signs the gesture:
+/// the key the pact pins.
+fn connect_gestured_by(
+    vault_id: AuthorityVaultId,
+    pact_id: [u8; 32],
+    grant: EntityId,
+    peer: &SigningKey,
+) -> AuthorityOp {
     let pact_nonce = [0x4E; 16];
     let open = FederationDirectionScope {
         worlds: ScopeAxis::All,
@@ -482,7 +504,7 @@ fn connect_of(vault_id: AuthorityVaultId, pact_id: [u8; 32], grant: EntityId) ->
         &scope_digest,
         None,
         &pact_nonce,
-        key_of(&peer),
+        key_of(peer),
         |transcript| Ok(peer.sign(transcript).to_bytes().to_vec()),
     )
     .expect("the peer's gesture");
@@ -575,6 +597,124 @@ fn an_owner_disconnect_still_ends_the_pact_a_withheld_connect_set_up() {
             FederationGrantActivation::Inactive(FederationPactStatus::Disconnected)
         ),
         "the Disconnect ends the pact: the grant reads {activation:?}; issues {:?}",
+        fold.issues
+    );
+}
+
+/// After B, the owner ends the held pact through the Disconnect door. The
+/// expiry took B out of the heads, so the door names B beside them: without
+/// B in its ancestry the Disconnect would find no pact (REVIEW-9609 round 1).
+#[test]
+fn the_owner_disconnect_door_ends_the_pact_a_withheld_connect_set_up() {
+    let pact_id = [0x72; 32];
+    let grant = EntityId::now();
+    let delivered = deliver_withheld(|_, _, _, vault_id| connect_of(vault_id, pact_id, grant));
+    let rooted = &delivered.rooted;
+    let ended = rooted
+        .vault
+        .disconnect_connect_as(&rooted.proof, &rooted.issuer, pact_id);
+    let fold = rooted.vault.authority_fold().expect("the fold");
+    assert!(
+        ended
+            .as_ref()
+            .is_ok_and(|pact| pact.status == FederationPactStatus::Disconnected),
+        "the owner's Disconnect door ends the held pact: it answered {ended:?}; issues {:?}",
+        fold.issues
+    );
+    let activation = federation_grant_activation(&fold, &grant);
+    assert!(
+        matches!(
+            activation,
+            FederationGrantActivation::Inactive(FederationPactStatus::Disconnected)
+        ),
+        "the fold ends the pact: the grant reads {activation:?}; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        !applied(&fold).contains(&delivered.withheld),
+        "B stays out of the valid rows; issues {:?}",
+        fold.issues
+    );
+}
+
+/// The two peer owner keys of the pin variants, the lesser first: the merge
+/// of two agreeing Connects pins the lesser.
+fn peer_keys_lesser_first() -> (SigningKey, SigningKey) {
+    let one = SigningKey::from_bytes(&[0x61; 32]);
+    let two = SigningKey::from_bytes(&[0x62; 32]);
+    if key_of(&one) < key_of(&two) {
+        (one, two)
+    } else {
+        (two, one)
+    }
+}
+
+/// After B, O2 signs a live Connect A of the same pact on R, agreeing with B
+/// on the ceiling, with the gesture of `live_peer`; the fold after A.
+fn deliver_live_twin(
+    pact_id: [u8; 32],
+    grant: EntityId,
+    withheld_peer: SigningKey,
+    live_peer: &SigningKey,
+) -> (Delivered, AuthorityFold) {
+    let delivered = deliver_withheld(move |_, _, _, vault_id| {
+        connect_gestured_by(vault_id, pact_id, grant, &withheld_peer)
+    });
+    let revoking_owner = SigningKey::from_bytes(&[0x52; 32]);
+    let live = row_signed_by(
+        &delivered.rooted,
+        &revoking_owner,
+        &[],
+        2,
+        vec![delivered.revocation],
+        connect_gestured_by(delivered.rooted.vault_id, pact_id, grant, live_peer),
+    );
+    let arrival = put(&delivered.rooted, &live);
+    let fold = delivered.rooted.vault.authority_fold().expect("the fold");
+    assert!(
+        applied(&fold).contains(&hash_of(&live)),
+        "setup: the live Connect A folds; put {arrival}, issues {:?}",
+        fold.issues
+    );
+    (delivered, fold)
+}
+
+/// B pins the lesser peer key, and a live Connect A agrees with B on the
+/// ceiling but pins the other. The merge keeps B's key, which only the
+/// expired B backs, so A renews nothing and the pact stays held
+/// (REVIEW-9609 round 1).
+#[test]
+fn a_live_connect_pinning_another_peer_never_renews_the_pact_a_withheld_connect_pinned() {
+    let pact_id = [0x73; 32];
+    let grant = EntityId::now();
+    let (lesser, greater) = peer_keys_lesser_first();
+    let (_delivered, fold) = deliver_live_twin(pact_id, grant, lesser, &greater);
+    let activation = federation_grant_activation(&fold, &grant);
+    assert!(
+        matches!(
+            activation,
+            FederationGrantActivation::Inactive(FederationPactStatus::Suspended)
+        ),
+        "the pact pins the peer key only the expired B gave, so it must confer nothing: the \
+         grant reads {activation:?}; issues {:?}",
+        fold.issues
+    );
+}
+
+/// A live Connect A that agrees with B on the ceiling and pins the same peer
+/// key renews the pact, as a live row renews a binding's tuple.
+#[test]
+fn a_live_connect_pinning_the_same_peer_renews_the_pact_a_withheld_connect_set_up() {
+    let pact_id = [0x74; 32];
+    let grant = EntityId::now();
+    let (lesser, _) = peer_keys_lesser_first();
+    let live_peer = lesser.clone();
+    let (_delivered, fold) = deliver_live_twin(pact_id, grant, lesser, &live_peer);
+    let activation = federation_grant_activation(&fold, &grant);
+    assert!(
+        matches!(activation, FederationGrantActivation::Active),
+        "a live Connect backing the same ceiling and pin renews the pact: the grant reads \
+         {activation:?}; issues {:?}",
         fold.issues
     );
 }
