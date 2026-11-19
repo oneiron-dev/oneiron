@@ -103,6 +103,8 @@ mod proposal_create;
 mod query_facade;
 #[cfg(test)]
 pub(crate) use query_facade::set_before_ack_writer_hook;
+#[cfg(test)]
+pub(crate) use query_facade::set_between_ack_reads_hook;
 mod rate_limit;
 mod reconciliation;
 pub(crate) use reconciliation::REPO_RECONCILIATION_TASK_HELD;

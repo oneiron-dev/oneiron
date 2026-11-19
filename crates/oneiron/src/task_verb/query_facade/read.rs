@@ -252,6 +252,8 @@ impl Memory<'_> {
                 report: None,
             });
         }
+        #[cfg(test)]
+        run_between_ack_reads_hook(self.vault());
         // The settlement this request answers: the instant the board fence
         // compares the acknowledgement with, and the failed heads that
         // settled at it.
