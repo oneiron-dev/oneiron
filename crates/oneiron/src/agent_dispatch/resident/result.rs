@@ -248,7 +248,9 @@ impl AgentDispatcher<'_> {
         run: EntityId,
         now: u64,
     ) {
+        eprintln!("PROBE filing start task_ref={:?}", attempt.task_ref);
         if let Err(error) = self.file_plan_run_result_in(attempt, result, run, now) {
+            eprintln!("PROBE filing error: {error:?}");
             tracing::warn!(%error, result = %result.to_hex(), "plan run result not filed into its sub-session");
         }
     }
@@ -265,6 +267,7 @@ impl AgentDispatcher<'_> {
             .as_deref()
             .and_then(|task| EntityId::from_hex(task).ok())
         else {
+            eprintln!("PROBE return: no task_ref");
             return Ok(());
         };
         let session = EntityId::derive(PLAN_RUN_SESSION, &[task.as_bytes()])?;
@@ -275,6 +278,7 @@ impl AgentDispatcher<'_> {
             if live != Some(ENTITY_TYPE_SESSION)
                 || crate::ports::EntityStoreRead::port_entity_present(store, txn, &record)?
             {
+                eprintln!("PROBE return: session live={live:?} or record present");
                 return Ok(());
             }
             let [turn] = crate::conversation_dag::edge_ids(
@@ -285,6 +289,7 @@ impl AgentDispatcher<'_> {
                 false,
                 2,
             )?[..] else {
+                eprintln!("PROBE return: not exactly one SpawnedBy edge");
                 return Ok(());
             };
             // A thread's turn takes no trunk continuation, and a thread has
@@ -293,17 +298,23 @@ impl AgentDispatcher<'_> {
                 crate::vault::LiveEntityRow::Live { body, .. } => {
                     crate::workspace_roster::thread_binding(&body)?.is_some()
                 }
-                _ => return Ok(()),
+                _ => {
+                    eprintln!("PROBE return: turn not live");
+                    return Ok(());
+                }
             };
             if threaded || crate::conversation_dag::is_thread_record(store, txn, &turn)? {
+                eprintln!("PROBE return: threaded={threaded} or thread record");
                 return Ok(());
             }
             let room = crate::conversation_dag::conversation_of(store, txn, &turn)?;
             let Some(owner) =
                 crate::workspace_roster::room_sole_owner_reader_in(self.vault, txn, room)?
             else {
+                eprintln!("PROBE return: guard None for room {}", room.to_hex());
                 return Ok(());
             };
+            eprintln!("PROBE guard owner {}", owner.to_hex());
             let field = |key: &str, value: Value| (Value::from(key), value);
             let filed = Value::Map(vec![
                 field("kind", Value::from("plan.run_result")),

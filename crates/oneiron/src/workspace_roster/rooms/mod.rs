@@ -404,10 +404,21 @@ pub(crate) fn room_sole_owner_reader_in(
     txn: &heed::RoTxn<'_>,
     room: EntityId,
 ) -> Result<Option<EntityId>> {
-    if project_room_audience_in(vault, txn, room, &[])?.is_some() {
+    let project = project_room_audience_in(vault, txn, room, &[])?.is_some();
+    let members = vault.members_in_txn(txn, room)?;
+    eprintln!("PROBE guard project={project} members={:?}", members.iter().map(|m| m.to_hex()).collect::<Vec<_>>());
+    if let [owner] = members[..] {
+        eprintln!(
+            "PROBE guard live_owner={:?} ready_join_other={:?} speaker={:?}",
+            crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &owner),
+            super::join_receipt::room_ready_join_for_other_in(&vault.store, txn, room, owner),
+            crate::task_verb::speaker_entry_index::speaker_entered_in(vault, txn, room),
+        );
+    }
+    if project {
         return Ok(None);
     }
-    let [owner] = vault.members_in_txn(txn, room)?[..] else {
+    let [owner] = members[..] else {
         return Ok(None);
     };
     if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &owner)?
