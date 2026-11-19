@@ -212,6 +212,16 @@ pub(super) fn hydrate_entity(
     // A file-plane ASSET's live row hydrates its body, not its manifest,
     // as does an older revision whose file its revisions keep (FIX 22091).
     let raw = vault.materialized_revision_in_txn(rtxn, &id, raw)?;
+    // DIAG pin only (OPUS-MAINFIX N39 Q3): the revision a PERSON row hydrates.
+    if raw.first() == Some(&10) {
+        eprintln!(
+            "TRACE hydrate-entity id={} read_mode={:?} other_revision={} raw={:?}",
+            id.to_hex(),
+            options.read_mode,
+            other_revision,
+            &raw[..raw.len().min(120)],
+        );
+    }
     // A history pin cannot restore a claim inadmissible at the current door,
     // its live support included, as the scoped read lane admits a pin.
     if other_revision && live_raw[0] == ENTITY_TYPE_CLAIM {

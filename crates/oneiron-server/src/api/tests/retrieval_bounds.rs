@@ -312,12 +312,30 @@ fn item<'a>(items: &'a Value, id: &oneiron::EntityId) -> &'a Value {
 /// body whole. On main every body was decoded, whatever its size.
 #[tokio::test]
 async fn a_multi_row_read_omits_bodies_past_its_budget_and_one_read_returns_them_whole() {
+    let diag_t0 = std::time::Instant::now();
+    eprintln!("TRACE multi-row step=start ms=0");
     let (_dir, server) = auth_test_server();
+    eprintln!(
+        "TRACE multi-row step=server-up ms={}",
+        diag_t0.elapsed().as_millis()
+    );
     let small_txt = "omission needle, the short row";
     let (small, _) = indexed_turn(&server, small_txt, "omission needle");
+    eprintln!(
+        "TRACE multi-row step=small-indexed ms={}",
+        diag_t0.elapsed().as_millis()
+    );
     let large_txt = "x".repeat(SHIPPED_BODY_ROW + 1);
     let (large, large_bytes) = indexed_turn(&server, &large_txt, "omission needle");
+    eprintln!(
+        "TRACE multi-row step=large-indexed ms={}",
+        diag_t0.elapsed().as_millis()
+    );
 
+    eprintln!(
+        "TRACE multi-row step=before-route-1-query ms={}",
+        diag_t0.elapsed().as_millis()
+    );
     let (status, query) = route_json(
         server.clone(),
         core_request_with_authz(
@@ -342,6 +360,10 @@ async fn a_multi_row_read_omits_bodies_past_its_budget_and_one_read_returns_them
     assert_eq!(marker["bodyBytes"], large_bytes);
     assert!(marker["ref"].as_str().is_some_and(|r| !r.is_empty()));
 
+    eprintln!(
+        "TRACE multi-row step=before-route-2-summary ms={}",
+        diag_t0.elapsed().as_millis()
+    );
     let (status, summary) = route_json(
         server.clone(),
         core_request_with_authz(
@@ -358,6 +380,10 @@ async fn a_multi_row_read_omits_bodies_past_its_budget_and_one_read_returns_them
     assert_eq!(omitted["bodyOmitted"]["code"], "PROJECTION_BYTES_EXCEEDED");
     assert_eq!(item(&summary["items"], &small)["label"], small_txt);
 
+    eprintln!(
+        "TRACE multi-row step=before-route-3-whole ms={}",
+        diag_t0.elapsed().as_millis()
+    );
     let (status, whole) = route_json(
         server.clone(),
         core_request_with_authz(
@@ -382,6 +408,10 @@ async fn a_multi_row_read_omits_bodies_past_its_budget_and_one_read_returns_them
             Some(&json!({"ref": reference, "view": "full"})),
         )
     };
+    eprintln!(
+        "TRACE multi-row step=before-route-4-hydrated ms={}",
+        diag_t0.elapsed().as_millis()
+    );
     let (status, hydrated) = route_json(server.clone(), hydrate(&marker["ref"])).await;
     assert_eq!(status, StatusCode::OK, "{hydrated}");
     assert_eq!(
@@ -404,12 +434,20 @@ async fn a_multi_row_read_omits_bodies_past_its_budget_and_one_read_returns_them
             &edited,
         )
         .expect("edit turn");
+    eprintln!(
+        "TRACE multi-row step=before-route-5-hydrated ms={}",
+        diag_t0.elapsed().as_millis()
+    );
     let (status, hydrated) = route_json(server.clone(), hydrate(&pinned)).await;
     assert_eq!(status, StatusCode::OK, "{pinned}: {hydrated}");
     assert_eq!(
         hydrated["item"]["txt"].as_str().map(str::len),
         Some(large_txt.len()),
         "{pinned} names the omitted revision"
+    );
+    eprintln!(
+        "TRACE multi-row step=done ms={}",
+        diag_t0.elapsed().as_millis()
     );
 }
 
