@@ -347,10 +347,10 @@ impl FrozenReadLane {
     /// ([`Self::reads_as_principal`]): each rebuild judges that grant (FIX
     /// OWN-DEVICE-GRANT-NOT-RECHECKED). Otherwise the
     /// credential's id, read Scope and records caveat, each agent Grant
-    /// alternative alone, the asked worlds and the room facets are kept. A
-    /// lane that keeps a Scope also keeps its key's grant basis
-    /// (`NativeReadBasis`). A key rebuilt from a frozen lane keeps the
-    /// credential it carries (`SavedCredential`). A channel caveat the lane
+    /// alternative alone, the asked worlds and the room facets are kept, and
+    /// no Scope where the key held none. Such a lane also keeps its key's
+    /// grant basis (`NativeReadBasis`). A key rebuilt from a frozen lane
+    /// keeps the credential it carries (`SavedCredential`). A channel caveat the lane
     /// did not meet freezes as a Scope that reads nothing, as the live lane
     /// read nothing under it.
     ///
@@ -489,22 +489,22 @@ impl FrozenReadLane {
         if names_grant && narrows_beyond_home {
             return Err(Error::InvalidConfig(GUEST_LANE_NOT_SAVED.into()));
         }
-        // A key agent Grants bind keeps each Grant's alternative, never their
-        // meet: two Grants on disjoint worlds meet to no world, and saved work
-        // must read what each one alone admits (FIX AGENT-GRAPHFS-GRANT-WORLDS).
+        // The lane keeps the key's own Scope, and none where it held none:
+        // every such lane keeps its grant basis, and a top Scope would stand
+        // as read authority the live key lacked, a policy floor of its own
+        // (Sol F1/F2 on #8065). Where no row binds a key's class, a key with
+        // no Scope reads nothing, and one with a Scope reads what that Scope
+        // admits (FIX FROZEN-LANE-FREEZES-ABSENT-AUTHORITY-AS-TOP). A key
+        // agent Grants bind keeps each Grant's alternative, never their meet:
+        // two Grants on disjoint worlds meet to no world, and saved work must
+        // read what each one alone admits (FIX AGENT-GRAPHFS-GRANT-WORLDS).
         let (authority, grant_alternatives) = if channel_refused {
             (Some(Scope::default()), None)
-        } else if keeps_scope || narrows {
+        } else {
             (
-                Some(key.authority_scope().cloned().unwrap_or_else(Scope::top)),
+                key.authority_scope().cloned(),
                 key.grant_alternatives().map(<[Scope]>::to_vec),
             )
-        } else {
-            // Kept for its grant basis alone, with the key's own Scope, if
-            // any: a top Scope would stand as read authority the live key
-            // lacked, a policy floor of its own and no own Grant alternative
-            // (Sol F1/F2 on #8065).
-            (key.authority_scope().cloned(), None)
         };
         Ok(Self {
             credential,
@@ -720,9 +720,9 @@ impl FrozenReadLane {
                 .ok_or(Error::InvariantViolation("frozen read lane actor"))?
                 .within_native_basis(basis.clone());
         }
-        // A lane kept for its grant basis alone holds no Scope its live key
-        // lacked (Sol F1/F2 on #8065); a lane saved before the basis was
-        // kept reads under top.
+        // A lane that keeps a grant basis holds no Scope its live key lacked
+        // (Sol F1/F2 on #8065; FIX FROZEN-LANE-FREEZES-ABSENT-AUTHORITY-AS-TOP);
+        // a lane saved before the basis was kept reads under top.
         if self.authority.is_some() || self.native_basis.is_none() {
             key = key.within_authority(self.authority.clone().unwrap_or_else(Scope::top));
         }
