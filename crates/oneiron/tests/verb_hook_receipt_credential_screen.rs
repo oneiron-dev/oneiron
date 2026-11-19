@@ -43,6 +43,38 @@
 //!   six. Green on main (the invocation withholds every one: 0 for the
 //!   first call, so its MISSING assert fails there; red on main), red at
 //!   c029867c (2 and 2: LEAK), green on the head.
+//! - (f) `a_credential_reads_no_receipt_whose_input_showed_content_naming_no_held_row`
+//!   (VERB-HOOK-RECEIPT-UNNAMED-SOURCE-PROVENANCE): five calls whose post
+//!   hooks see content no row object names: a count, a list naming its row
+//!   only by short ref, a list naming a row this vault does not hold, a pack
+//!   whose item ref does not resolve, and (review round 1 of #9643) a bare
+//!   list of a held row's id beside a name. Nothing tells which rows a body
+//!   could copy from them into its receipt, so no credential-bound reader
+//!   keeps their receipts, as for a host verb's free text since #9535; the
+//!   owner reading unbound still lists all ten. Red on main (the narrower
+//!   credential keeps 2 of each call's 2: LEAK), red at a1dfdba3 for the
+//!   last call (2: an id-shaped string named the result), green on the head.
+//! - (g) `a_later_hook_reads_no_receipt_of_unknown_provenance_in_its_tail`
+//!   (review round 1 of #9643): after a call whose receipts (f) withholds,
+//!   the next call's post hooks find those receipts withheld in their
+//!   `receipt_tail`, so no body copies their notes into a receipt of its
+//!   own; a receipt of a call whose input showed nothing stays. Red on main
+//!   and at a1dfdba3 (the tail shows them), green on the head.
+//! - (h) `a_later_hook_names_the_rows_of_the_result_its_producer_gave_after_a_redact`
+//!   (review round 2 of #9643): the first post hook redacts a claim view's
+//!   `claim_ref` (and a pack's `items`), so the second hook sees the
+//!   restricted row's words beside a readable `subject_ref` (or in the
+//!   pack's rendering alone). The second hook's run names its rows from
+//!   the result the call gave, so a credential that cannot read the
+//!   restricted row keeps neither call's receipts. Red at b9e0829d (1 and
+//!   1: the second hook's receipt), green on the head.
+//! - (i) `a_later_hook_reads_no_receipt_of_another_actors_call_in_its_tail`
+//!   (review round 2 of #9643): a verb hook's receipt reaches only the actor
+//!   that made its call, so a later call of another actor finds it withheld
+//!   in its hooks' `receipt_tail`; the receipts of the actor's own earlier
+//!   call, whose binding, CODE and run rows its hooks' view shows, stay. Red
+//!   on main and at b9e0829d (2: the tail shows the other actor's), green
+//!   on the head.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::BTreeSet;
@@ -124,6 +156,25 @@ Second post hook: answers Continue.
 
 const CONTINUE_BODY_JS: &str = "return { kind: \"continue\" };\n";
 
+/// `post-first` as a hook that may redact the result its call gave.
+const POST_FIRST_REDACT_HOOK_MD: &str = "---
+name: post-first
+version: 1.0.0
+verbs: [\"vault.claims.list\"]
+phase: post
+priority: 10
+budget_ms: 1000
+blocking: false
+outcomes: [\"continue\", \"redact\"]
+---
+First post hook: redacts a claim view's own ref and a pack's items.
+";
+
+/// What [`RedactRuntime`]'s `post-first` hides: a listed claim view's own
+/// ref, which leaves its subject's ref and its value, and a pack's items,
+/// which leaves its rendering.
+const REDACTED_PATHS: &str = r#"["/rows/0/claim_ref", "/items"]"#;
+
 const FACT_PACK_MD: &str = "---
 name: example.factscreen
 description: One fact hook the owner binds.
@@ -170,6 +221,42 @@ impl HookBodyRuntime for ContinueRuntime {
     }
 }
 
+/// A hook sandbox that answers `post-first` with a Redact of
+/// [`REDACTED_PATHS`] and every other verb body with Continue, reading
+/// nothing; it keeps each input in [`HOOK_INPUTS`].
+struct RedactRuntime;
+
+impl HookBodyRuntime for RedactRuntime {
+    fn run_hook(
+        &self,
+        _body: &str,
+        input_json: &str,
+        _context: &mut HookRunContext,
+        _read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
+    ) -> oneiron::Result<HookBodyRun> {
+        HOOK_INPUTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(input_json.to_owned());
+        let input: serde_json::Value =
+            serde_json::from_str(input_json).expect("FIXTURE: a verb body's input is JSON");
+        let outcome_json = if input
+            .pointer("/hook/name")
+            .and_then(serde_json::Value::as_str)
+            == Some("post-first")
+        {
+            format!(r#"{{"kind":"redact","paths":{REDACTED_PATHS}}}"#)
+        } else {
+            r#"{"kind":"continue"}"#.to_owned()
+        };
+        Ok(HookBodyRun {
+            outcome_json,
+            fuel_used: None,
+            host_calls: 1,
+        })
+    }
+}
+
 /// A hook sandbox that answers every fact body with Nothing, reading nothing.
 struct NothingRuntime;
 
@@ -203,13 +290,18 @@ impl Fixture {
     /// fake Continue runtime verb hooks run on, installed before any hook
     /// runs so no sandbox builds first.
     fn new() -> Self {
+        Self::with_runtime(Arc::new(ContinueRuntime))
+    }
+
+    /// [`Self::new`] with verb hooks run on `runtime`.
+    fn with_runtime(runtime: Arc<dyn HookBodyRuntime>) -> Self {
         let directory = tempfile::tempdir().expect("FIXTURE: vault dir");
         let vault =
             Vault::open(directory.path(), VaultConfig::device()).expect("FIXTURE: open vault");
         vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
         vault
-            .install_hook_runtime(Arc::new(ContinueRuntime))
-            .expect("FIXTURE: the vault runs verb hooks on the fake Continue runtime");
+            .install_hook_runtime(runtime)
+            .expect("FIXTURE: the vault runs verb hooks on the fake runtime");
         vault
             .prepare_install_signing()
             .expect("FIXTURE: load this install's signing keys");
@@ -233,9 +325,14 @@ impl Fixture {
 
     /// The owner's put of the two post hooks; answers this pack's live bindings.
     fn put_verb_pack(&self) -> Vec<(EntityId, PackHookBinding)> {
+        self.put_verb_pack_with(POST_FIRST_HOOK_MD)
+    }
+
+    /// [`Self::put_verb_pack`] with `post-first` declared by `first_hook_md`.
+    fn put_verb_pack_with(&self, first_hook_md: &str) -> Vec<(EntityId, PackHookBinding)> {
         let files = vec![
             HubFile::new("PACK.md", PACK_MD),
-            HubFile::new("hooks/post-first/HOOK.md", POST_FIRST_HOOK_MD),
+            HubFile::new("hooks/post-first/HOOK.md", first_hook_md),
             HubFile::new("hooks/post-first/body.js", CONTINUE_BODY_JS),
             HubFile::new("hooks/post-second/HOOK.md", POST_SECOND_HOOK_MD),
             HubFile::new("hooks/post-second/body.js", CONTINUE_BODY_JS),
@@ -788,4 +885,298 @@ fn a_narrower_credential_of_the_caller_reads_no_receipt_whose_input_showed_a_row
         &[0, 0],
         "LEAK: a narrower credential of the caller reads receipts whose run's input showed a row it cannot read, got {got:?} (plain, packed, listed)"
     );
+}
+
+#[test]
+fn a_credential_reads_no_receipt_whose_input_showed_content_naming_no_held_row() {
+    let fixture = Fixture::new();
+    fixture.put_verb_pack();
+    let unheld = EntityId::now();
+    let counted = fixture.run_verb_call_with(fixture.owner, serde_json::json!({"count": 3}));
+    let short_ref = fixture.run_verb_call_with(
+        fixture.owner,
+        serde_json::json!({"rows": [{"short_id": "ms1:0a", "value": RESTRICTED_WORDS}]}),
+    );
+    let foreign = fixture.run_verb_call_with(
+        fixture.owner,
+        serde_json::json!({"rows": [{"claim_ref": unheld.to_hex(), "value": RESTRICTED_WORDS}]}),
+    );
+    let unresolved = fixture.run_verb_call_with(
+        fixture.owner,
+        serde_json::json!({
+            "pack_version": "v1",
+            "items": [{"short_id": "ms1:0a", "text": RESTRICTED_WORDS}],
+            "rendered": RESTRICTED_WORDS,
+        }),
+    );
+    let code = named_hex(&fixture.hook_runs(counted), "code")
+        .into_iter()
+        .next()
+        .expect("FIXTURE: a Hook receipt names its CODE row");
+    let named_beside = fixture.run_verb_call_with(
+        fixture.owner,
+        serde_json::json!({"value": [code, "private-name"], "narrowing": {"suppressed_count": 0}}),
+    );
+    let calls = [counted, short_ref, foreign, unresolved, named_beside];
+    let mut kept = Vec::new();
+    for call in calls {
+        let runs = fixture.hook_runs(call);
+        assert_eq!(
+            runs.len(),
+            2,
+            "FIXTURE: the post chain records two Hook receipts for each call, read unbound: {runs:?}"
+        );
+        kept.extend(runs);
+    }
+    let mut records = named_hex(&kept, "binding");
+    records.extend(named_hex(&kept, "code"));
+    assert!(
+        records.len() >= 2 && !records.contains(&unheld.to_hex()),
+        "FIXTURE: the narrower credential is held to the binding and CODE rows: {records:?}"
+    );
+
+    let narrow = credential(&fixture, fixture.owner, records);
+    let narrow_reader = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .with_read_proof(&narrow);
+    let got = kept_per_call(&narrow_reader, &calls);
+    assert_eq!(
+        got,
+        vec![0, 0, 0, 0, 0],
+        "LEAK: a narrower credential of the caller reads receipts whose run's input showed content no row object names, got {got:?} (count, short ref, unheld id, unresolved pack item, id beside a name)"
+    );
+
+    let broad = credential(&fixture, fixture.owner, BTreeSet::new());
+    let broad_reader = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .with_read_proof(&broad);
+    let got = kept_per_call(&broad_reader, &calls);
+    assert_eq!(
+        got,
+        vec![0, 0, 0, 0, 0],
+        "RULE: no credential-bound reader keeps such a receipt, the broad one included, as for a host verb's free text, got {got:?} (count, short ref, unheld id, unresolved pack item, id beside a name)"
+    );
+}
+
+/// The `receipt_tail` entries of each body input the call `invocation`'s
+/// hooks ran on.
+fn tails_of(invocation: InvocationId) -> Vec<Vec<serde_json::Value>> {
+    let want = invocation.to_hex();
+    HOOK_INPUTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .filter_map(|input| serde_json::from_str::<serde_json::Value>(input).ok())
+        .filter(|input| {
+            input.get("invocation").and_then(serde_json::Value::as_str) == Some(want.as_str())
+        })
+        .map(|input| {
+            input
+                .get("receipt_tail")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// How many of `tail`'s entries are Hook receipts of the call `invocation`.
+fn receipts_of_call(tail: &[serde_json::Value], invocation: InvocationId) -> usize {
+    let want = invocation.to_hex();
+    tail.iter()
+        .filter(|receipt| {
+            receipt
+                .pointer("/fields/invocation")
+                .and_then(serde_json::Value::as_str)
+                == Some(want.as_str())
+        })
+        .count()
+}
+
+#[test]
+fn a_later_hook_reads_no_receipt_of_unknown_provenance_in_its_tail() {
+    let fixture = Fixture::new();
+    fixture.put_verb_pack();
+    // A tail holds the 8 newest receipts, ordered by their second and, within
+    // one, Gate before Hook: the calls start a second after the pack's
+    // install receipts, so their Hook receipts are the tail's newest.
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    let plain = fixture.run_verb_call();
+    let counted = fixture.run_verb_call_with(fixture.owner, serde_json::json!({"count": 3}));
+    let next = fixture.run_verb_call();
+    let tails = tails_of(next);
+    assert_eq!(
+        tails.len(),
+        2,
+        "FIXTURE: both post hooks of the next call ran and kept their input"
+    );
+    for tail in &tails {
+        assert_eq!(
+            receipts_of_call(tail, plain),
+            2,
+            "MISSING: a later hook's tail keeps the receipts of a call whose input showed nothing: {tail:?}"
+        );
+        assert_eq!(
+            receipts_of_call(tail, counted),
+            0,
+            "LEAK: a later hook's tail shows receipts the receipt screen withholds, whose notes it could copy: {tail:?}"
+        );
+    }
+}
+
+/// One PERSON row holding `body`; answers its id.
+fn put_person(fixture: &Fixture, body: &[u8]) -> EntityId {
+    let row = EntityId::now();
+    fixture
+        .vault
+        .put_entity(
+            &row,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            body,
+        )
+        .expect("FIXTURE: put the person row");
+    row
+}
+
+#[test]
+fn a_later_hook_names_the_rows_of_the_result_its_producer_gave_after_a_redact() {
+    let fixture = Fixture::with_runtime(Arc::new(RedactRuntime));
+    fixture.put_verb_pack_with(POST_FIRST_REDACT_HOOK_MD);
+    let restricted = put_person(&fixture, b"a row the narrower credential does not read");
+    let subject = put_person(&fixture, b"a row the narrower credential reads");
+    let listed = fixture.run_verb_call_with(
+        fixture.owner,
+        serde_json::json!({
+            "rows": [{
+                "claim_ref": restricted.to_hex(),
+                "subject_ref": subject.to_hex(),
+                "value": RESTRICTED_WORDS,
+            }],
+        }),
+    );
+    let packed = fixture.run_verb_call_with(
+        fixture.owner,
+        serde_json::json!({
+            "pack_version": "v1",
+            "items": [{"short_id": restricted.to_hex(), "text": RESTRICTED_WORDS}],
+            "rendered": RESTRICTED_WORDS,
+        }),
+    );
+    let seen: Vec<(bool, bool)> = {
+        let inputs = HOOK_INPUTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        [listed, packed]
+            .iter()
+            .map(|call| {
+                let want = call.to_hex();
+                let second = inputs
+                    .iter()
+                    .filter_map(|input| serde_json::from_str::<serde_json::Value>(input).ok())
+                    .find(|input| {
+                        input.get("invocation").and_then(serde_json::Value::as_str)
+                            == Some(want.as_str())
+                            && input
+                                .pointer("/hook/name")
+                                .and_then(serde_json::Value::as_str)
+                                == Some("post-second")
+                    })
+                    .expect("FIXTURE: the second post hook of each call ran");
+                let result = second
+                    .get("result")
+                    .map(ToString::to_string)
+                    .unwrap_or_default();
+                (
+                    result.contains(RESTRICTED_WORDS),
+                    result.contains(&restricted.to_hex()),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        seen,
+        vec![(true, false), (true, false)],
+        "FIXTURE: the first hook's Redact took the restricted row's ref from the second hook's result and left its words (listed, packed)"
+    );
+    let mut kept = Vec::new();
+    for call in [listed, packed] {
+        let runs = fixture.hook_runs(call);
+        assert_eq!(
+            runs.len(),
+            2,
+            "FIXTURE: the post chain records two Hook receipts for each call: {runs:?}"
+        );
+        kept.extend(runs);
+    }
+    let mut records = named_hex(&kept, "binding");
+    records.extend(named_hex(&kept, "code"));
+    records.insert(subject.to_hex());
+    assert!(
+        records.len() >= 3 && !records.contains(&restricted.to_hex()),
+        "FIXTURE: the narrower credential is held to the binding, CODE and subject rows: {records:?}"
+    );
+    let calls = [listed, packed];
+
+    let broad = credential(&fixture, fixture.owner, BTreeSet::new());
+    let broad_reader = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .with_read_proof(&broad);
+    assert_eq!(
+        kept_per_call(&broad_reader, &calls),
+        vec![2, 2],
+        "MISSING: the owner's broad credential, which reads every row the calls gave, keeps both receipts of each call (listed, packed)"
+    );
+
+    let narrow = credential(&fixture, fixture.owner, records);
+    let narrow_reader = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .with_read_proof(&narrow);
+    let got = kept_per_call(&narrow_reader, &calls);
+    assert_eq!(
+        got,
+        vec![0, 0],
+        "LEAK: a credential that cannot read the restricted row reads the second hook's receipt, whose input showed that row's words after a Redact took its ref, got {got:?} (listed, packed)"
+    );
+}
+
+#[test]
+fn a_later_hook_reads_no_receipt_of_another_actors_call_in_its_tail() {
+    let fixture = Fixture::new();
+    fixture.put_verb_pack();
+    let caller = put_person(&fixture, b"the person who makes the other call");
+    // As in (g): the calls start a second after the pack's install
+    // receipts, so their Hook receipts are the tail's newest.
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    let own = fixture.run_verb_call();
+    let other = fixture.run_verb_call_as(caller);
+    let next = fixture.run_verb_call();
+    assert_eq!(
+        fixture.hook_runs(other).len(),
+        2,
+        "FIXTURE: the other actor's call records two Hook receipts"
+    );
+    let tails = tails_of(next);
+    assert_eq!(
+        tails.len(),
+        2,
+        "FIXTURE: both post hooks of the next call ran and kept their input"
+    );
+    for tail in &tails {
+        assert_eq!(
+            receipts_of_call(tail, own),
+            2,
+            "MISSING: a later hook's tail keeps the receipts of its actor's own earlier call, whose binding, CODE and run rows its view shows: {tail:?}"
+        );
+        assert_eq!(
+            receipts_of_call(tail, other),
+            0,
+            "LEAK: a later hook's tail shows the receipts of another actor's call, which the receipt screen keeps to that actor: {tail:?}"
+        );
+    }
 }
