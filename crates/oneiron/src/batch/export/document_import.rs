@@ -2314,12 +2314,19 @@ fn import_edge_with_seeds(
     if let Some(existing) =
         crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
     {
+        // A link this vault held with provenance of its own keeps its own
+        // stamp, since its archived cohort stayed archive data
+        // (`provenance_import::restore`, REVIEW-9652 P1): only its base
+        // fields compare.
+        let own_history =
+            inserted.contains(Tag::OwnHistoryLink, &edge_key(&source, edge.kind, &target))?;
         let same_body = existing.weight == edge.weight
             && existing.vad.map(|v| [v.valence, v.arousal, v.dominance]) == edge.vad
-            && existing
-                .provenance
-                .map(|p| [p.confirmation_status as u8, p.actor_class as u8])
-                == edge.provenance;
+            && (own_history
+                || existing
+                    .provenance
+                    .map(|p| [p.confirmation_status as u8, p.actor_class as u8])
+                    == edge.provenance);
         let seed_edge = seeds.is_some_and(|seeds| match kind {
             EdgeKind::ClaimOf => seeds.is_subject_claim_edge(&source, &target),
             EdgeKind::FacetOf => seeds.is_carrier_facet_edge(&source, &target),
