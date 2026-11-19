@@ -1,7 +1,7 @@
 //! The owner's mark that he imported one export secret supplement, as the
 //! fold keeps it (FIX 12062).
 //!
-//! A mark is valid when some chain of its carrier names the key that signed
+//! A mark is valid when its carrier's roster chain names the key that signed
 //! it and the request it names is in its causal past (the fold of its
 //! parents), an export secret request. It has effect when the one carrier
 //! rule admits that carrier on the roster view, and its owner is live there
