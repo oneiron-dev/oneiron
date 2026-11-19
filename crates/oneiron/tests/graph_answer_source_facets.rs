@@ -5,12 +5,14 @@
 //! row holds. One said in a project's home room is read in the room's facet,
 //! and the answer sits there; one read in no facet stands at the vault
 //! default facet. Two such rows fold; two rows whose stored facets differ
-//! still refuse.
+//! still refuse. Rows read in several facets meet at the lowest facet id
+//! (Engine ANSWER STANDING-ANSWER-FACET-PLACEMENT = A, 19 Nov 12:57).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test graph_answer_source_facets`.
 #![cfg(oneiron_test_support)]
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::HostSlipIssuer;
@@ -27,7 +29,7 @@ use oneiron::llm::decision::{
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_ORG};
 use oneiron::store::GateDecisionId;
-use oneiron::test_doors::room_facet_set::create_owner_project;
+use oneiron::test_doors::room_facet_set::{create_owner_project, set_room_facets};
 use oneiron::workspace_roster::ProjectRecord;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use serde_json::json;
@@ -134,8 +136,8 @@ impl Fixture {
     }
 
     /// An owner-born project under the root, led by the owner and sliced to
-    /// `facet`; returns its home room.
-    fn project_room(&self, facet: EntityId) -> TestResult<EntityId> {
+    /// `facet`; returns the project and its home room.
+    fn project_room(&self, facet: EntityId) -> TestResult<(EntityId, EntityId)> {
         let root = self.vault.root_project()?;
         let id = EntityId::now();
         let mut record = ProjectRecord::new(id, Some(root), root, self.owner)?;
@@ -150,7 +152,7 @@ impl Fixture {
             id,
             &record,
         )?;
-        Ok(EntityId::from_hex(&record.home_room)?)
+        Ok((id, EntityId::from_hex(&record.home_room)?))
     }
 
     /// The owner's saved graph question over `units`.
@@ -293,7 +295,7 @@ fn an_answer_on_two_rows_in_no_facet_stands_at_the_vault_default_facet() -> Test
 fn an_answer_on_rows_said_in_a_project_room_sits_in_the_rooms_facet() -> TestResult {
     let fixture = open()?;
     let work = fixture.put_row(ENTITY_TYPE_FACET, "work")?;
-    let room = fixture.project_room(work)?;
+    let (_, room) = fixture.project_room(work)?;
     let first = fixture.message_in_room(room, "The launch slips a week.")?;
     let second = fixture.message_in_room(room, "The launch notes are in.")?;
     let question = fixture.question(vec![first])?;
@@ -341,5 +343,35 @@ fn an_answer_on_rows_at_two_different_stored_facets_still_refuses() -> TestResul
             "two different stored facets refuse as no shared position; got: {error}"
         ),
     }
+    Ok(())
+}
+
+#[test]
+fn an_answer_on_rows_read_in_several_facets_lands_at_the_lowest() -> TestResult {
+    let fixture = open()?;
+    let work = fixture.put_row(ENTITY_TYPE_FACET, "work")?;
+    let health = fixture.put_row(ENTITY_TYPE_FACET, "health")?;
+    let (project, room) = fixture.project_room(work)?;
+    set_room_facets(
+        &fixture.vault,
+        &fixture.owner_proof,
+        &fixture.vault.owner_project_signer(&fixture.issuer)?,
+        project,
+        Some(BTreeSet::from([work, health])),
+    )?;
+    let first = fixture.message_in_room(room, "The clinic moved to Tuesdays.")?;
+    let second = fixture.message_in_room(room, "The Tuesday slot is booked.")?;
+    let question = fixture.question(vec![first])?;
+
+    let both = fixture
+        .ask(question, first, vec![second])
+        .map_err(|error| {
+            format!("an answer on two MESSAGEs in a room of two facets folds; it refused: {error}")
+        })?;
+    assert_eq!(
+        fixture.answer_facet(&both)?,
+        work.min(health),
+        "an answer on rows read in two facets lands at the lower facet id"
+    );
     Ok(())
 }
