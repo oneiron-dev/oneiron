@@ -14,8 +14,10 @@
 //! rewrites; the move keeps a receipt of its own beside them, naming the
 //! failed attempt, when it failed and the approval that continued it.
 
+use std::collections::{BTreeMap, HashSet};
+
 use crate::Vault;
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -147,11 +149,16 @@ pub(crate) fn continue_failed_task_in_txn(
 /// owner's acknowledgement of that failure answers it alone, never the
 /// successor's later settlement.
 ///
-/// A typed terminal is the settlement when one stands. Otherwise the
-/// current head failed-state projection the dismissal eligibility reads
-/// decides: the newest failed head realizing this TASK, queue-only when
-/// the TASK body carries no terminal, a malformed body included. Live
-/// work and non-failed heads settle nothing.
+/// A typed terminal is the settlement when one stands; a persisted `Expired`
+/// settles at the deadline the sweep expired, not at the sweep's own write,
+/// so an acknowledgement between the two still answers the expiry it read.
+/// Otherwise the failures the board actually folds decide: the newest
+/// projected failed head realizing this TASK (queue-only when the TASK body
+/// carries no terminal, a malformed body included), or the passed deadline
+/// when the row derives expired with no failed head. Live work and
+/// non-failed heads settle nothing. A connector-send outcome carries no
+/// settlement instant, so a Failed outcome without a failed head settles
+/// nothing yet.
 ///
 /// # Errors
 ///
@@ -169,23 +176,68 @@ pub(crate) fn task_settled_at_in(
         Err(error) => return Err(error),
     };
     if let Some(terminal) = body.as_ref().and_then(|body| body.terminal()) {
+        if terminal.disposition == TaskTerminalDisposition::Expired
+            && let Some(deadline) = body
+                .as_ref()
+                .and_then(|body| body.ttl.as_ref().map(|ttl| ttl.deadline_at))
+        {
+            return Ok(Some(terminal.finished_at.min(deadline)));
+        }
         return Ok(Some(terminal.finished_at));
     }
-    // No typed terminal: the queue-only settlement, when a current head
-    // failed. Same heads the board folds (a retry successor supersedes
-    // its source), newest failure wins so an older ack never dismisses a
-    // later continuation's failure.
+    // No typed terminal: the newest failure the board folds for this TASK —
+    // the same projected failed heads, so a job kind the board excludes
+    // never moves the settlement — or the passed deadline when the row
+    // derives expired. A retry successor supersedes its source, and the
+    // newest failure wins, so an older ack never dismisses a later
+    // continuation's failure.
     let task_hex = task.to_hex();
     let records =
         crate::attempt_queue::AttemptQueue::new(vault).task_subtree_in_txn(rtxn, &task_hex)?;
-    let superseded = crate::task_verb::superseded_attempt_ids(&records);
-    Ok(records
+    let failed = projected_failed_head_settled_at(records, &task_hex)?;
+    let expired = body.as_ref().and_then(|body| {
+        let deadline = body.ttl.as_ref().map(|ttl| ttl.deadline_at)?;
+        if body.settled_ladder_disposition().is_some() {
+            return None;
+        }
+        (deadline <= vault.store.clock.now_recorded_at()).then_some(deadline)
+    });
+    Ok(failed.into_iter().chain(expired).max())
+}
+
+/// The newest failure instant over the failed heads the board folds for one
+/// TASK, each stamped with its backing row's terminal instant; `None` when no
+/// head failed. The heads come from the scan's own walk
+/// ([`super::presence_jobs::for_each_head_job`]: retry-chain heads only, each
+/// judged by the board's accept rule), so a job kind the board excludes never
+/// moves the settlement the fence reads, and the newest failure wins.
+fn projected_failed_head_settled_at(
+    records: Vec<AttemptRecord>,
+    task_hex: &str,
+) -> Result<Option<u64>> {
+    let members: HashSet<String> = records
         .iter()
-        .filter(|record| record.task_ref.as_deref() == Some(task_hex.as_str()))
-        .filter(|record| !superseded.contains(&record.id))
-        .filter(|record| record.state == crate::attempt_queue::AttemptState::Failed)
-        .map(|record| record.settled_at.unwrap_or(record.updated_at))
-        .max())
+        .filter(|record| record.task_ref.as_deref() == Some(task_hex))
+        .map(|record| super::presence_scan::attempt_hex(record.id))
+        .collect();
+    let settled_by_attempt: BTreeMap<String, u64> = records
+        .iter()
+        .map(|record| {
+            (
+                super::presence_scan::attempt_hex(record.id),
+                record.settled_at.unwrap_or(record.updated_at),
+            )
+        })
+        .collect();
+    let mut max_settled = None;
+    super::presence_jobs::for_each_head_job(records, |node, job, _| {
+        if members.contains(&node.attempt_id)
+            && job.status == crate::context_board::TaskBoardStatus::Failed
+        {
+            max_settled = max_settled.max(settled_by_attempt.get(&node.attempt_id).copied());
+        }
+    })?;
+    Ok(max_settled)
 }
 
 /// A TASK writer's refusal, as the engine's error.
