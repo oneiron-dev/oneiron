@@ -2523,6 +2523,7 @@ fn ask_void_notice_replays_until_durable_bridge_result_then_reparks()
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
     let owner = vault.ensure_embedded_owner_actor()?;
     let friend = seed_person(&vault, 0xA7);
+    crate::task_verb::tests::support::grant_ask_read(&vault, &[friend])?;
     let question = entity(0xA8);
     let body = rmp_serde::to_vec_named(&std::collections::BTreeMap::from([("role", "question")]))?;
     vault.put_entity(
