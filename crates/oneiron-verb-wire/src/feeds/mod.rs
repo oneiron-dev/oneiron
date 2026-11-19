@@ -61,7 +61,8 @@ pub struct FeedReadRequest {
     #[serde(with = "oneiron_contracts::serialize::entity_ref")]
     #[schemars(with = "String")]
     pub subscription: EntityId,
-    /// Entries to return from each source, at most [`FEED_READ_MAX_LIMIT`];
+    /// Entries to return from each source, at most the owner's
+    /// `feeds.read.max_per_source` (default [`FEED_READ_MAX_LIMIT`]);
     /// [`FEED_READ_DEFAULT_LIMIT`] when absent.
     #[serde(default)]
     pub limit: Option<usize>,

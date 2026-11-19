@@ -68,9 +68,15 @@ pub(super) fn owner_proof_key(
 /// Whether `key` is a key `state` trusts as the owner's: live on the roster
 /// with `ROLE_OWNER`, and not in the host's custody on a hosted fold. A
 /// revoked or retired key, an admin-only key and a managed host's custodial
-/// root prove nothing.
+/// root prove nothing. Custody is read from the log's cloud stamp alone
+/// ([`in_host_custody`]: the key, or a key that admitted it, is stamped
+/// `ROLE_CLOUD` or `CloudCustodial`), so every fold reads it alike: a
+/// self-host root keeps proving for the owner when its log is folded under
+/// the Hosted posture, on a Hosted reopen, an import into a hosted vault, a
+/// restore onto a managed node or a hosted peer of a linked vault (Engine
+/// ANSWER HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A).
 fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
-    roster_has_live_owner(&state.roster, key) && !(state.hosted && in_host_custody(state, key))
+    state.has_live_owner(key) && !(state.hosted && in_host_custody(state, key))
 }
 
 /// Whether `key` is one whose cosign the fold takes as the owner's proof in
@@ -82,9 +88,17 @@ fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
 /// for a proof that no key it holds can give. A key of the owner's in
 /// another suite (a P-256 key, a passkey's suite) is the owner's key and
 /// gives no proof; when the fold learns that suite's proof form, this is the
-/// one place that widens.
-fn gives_owner_proof(state: &FoldState, key: &AuthorityKey) -> bool {
-    matches!(key, AuthorityKey::Ed25519(_)) && proves_for_the_owner(state, key)
+/// one place that widens. A key only a passkey vouched for, until a key that
+/// is no passkey confirms it, gives no proof either
+/// ([`FoldState::passkey_limited`]; Engine ANSWER
+/// WEBPASSKEY-LIMITED-KEY-OWNER-PROOF = A): its cosign would answer a machine
+/// as the owner's through a carrier, the act its own signature may not make,
+/// and a vault whose only Ed25519 owner keys are such keys asks for no proof,
+/// as a passkey-only vault does.
+pub(super) fn gives_owner_proof(state: &FoldState, key: &AuthorityKey) -> bool {
+    matches!(key, AuthorityKey::Ed25519(_))
+        && proves_for_the_owner(state, key)
+        && !state.passkey_limited(key)
 }
 
 /// Whether an act a not-mine carrier delivers needs the proof in `state`
@@ -155,6 +169,18 @@ pub(super) fn owner_key_revoke_proved(
         || participants
             .iter()
             .any(|key| proves_for_the_owner(state, key))
+}
+
+/// Whether an `OwnerKeyEnroll` of `key` draws the owner key's line in the
+/// state it leaves ([`super::owner_key_line`]): `key` is a key `state`
+/// trusts as the owner's ([`proves_for_the_owner`]), of any suite. A
+/// passkey's key, and a key only a passkey vouched for, give no proof
+/// ([`gives_owner_proof`]) but are the owner's keys (CARRIER-HOSTED-WEB-ACTS
+/// = C): the line refuses another enrolment of them as it does of a
+/// device's key, so the roster merge cannot narrow them away (row
+/// PASSKEY-OWNER-KEY-DRAWS-NO-LINE).
+pub(super) fn owner_key_draws_a_line(state: &FoldState, key: &AuthorityKey) -> bool {
+    proves_for_the_owner(state, key)
 }
 
 /// One held answer in a fold state: the answer as it folded, and whether the
@@ -238,15 +264,126 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
         .collect()
 }
 
+/// Whether a bind or rebind in `state` has the owner's proof where the fold
+/// asks for it: on a hosted fold, one of the row's `participants` (its signer
+/// and cosigners) proves for the owner ([`proves_for_the_owner`]), an owner
+/// key no cloud key holds. A managed host's root acts as
+/// nobody inside a customer's vault, and being the trust root never makes
+/// the operator a person there (owner ruling 2026-10-18, "A + support"; rows
+/// OLD-PARENTS-OWNER-BINDING-REVOKE and OLD-PARENTS-OWNER-BINDING-CONFLICT).
+/// So its signature alone binds no person. A binding it made alone would let
+/// it end the owner's standing on every replica (`owner_live_at` takes an
+/// owner every binding of whom is revoked or conflicted as removed), by
+/// revoking that binding, on parents from before an owner key's enrolment
+/// too, or by a conflicting sibling bind. No writer binds a person on a
+/// hosted vault, so its owner is unbound and trusted on the carrier's word;
+/// the owner binds from a device of their own.
+///
+/// The gate asks for a `human` bind or rebind, and for a bind or rebind, of
+/// whatever class, of a key that could hold a person's binding: a key whose
+/// binding, live or revoked, is `human`, or a live roster key the fold's
+/// `consent_arm` takes, the arm a `human` bind of the key must pass
+/// (`apply_actor_binding`). On a hosted fold that is every owner or admin
+/// key, the custodial root's own key and an owner key no cloud key holds
+/// among them. Else the root alone could turn the owner's binding into an
+/// agent's, replace a revoked one and so undo the owner's removal (an owner
+/// no binding names reads as live), or bind such a key as another actor's at
+/// the owner's epoch on parents that bind no person, which the merge with
+/// the owner's own bind of that key marks conflicted, and
+/// [`super::owner_act::owner_live_at`] reads that as the owner removed
+/// (blind review of #9137, round 1 P1: the owner's key; round 2 P1: the
+/// root's key, bound as the owner's with an owner key's proof). A key no
+/// person's binding can name, such as a machine's `ROLE_AGENT` key, binds
+/// on the root's word. A self-host or relay fold and every other op pass: a
+/// self-host root is the owner's own key, and those folds take no cloud
+/// key's consent. A revoke never asks (ONE-REVOKE-DURABILITY), so the root
+/// alone can still end a binding an owner key made (row
+/// HOSTED-OWNER-BIND-ROOT-REVOKE).
+///
+/// A passkey-limited key ([`FoldState::passkey_limited`]) gives no proof
+/// here, as it gives none to a carried answer or to a revoke of an owner
+/// key: such a key authorizes no actor binding from any signature position
+/// (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B), and every rule that reads a
+/// participant as the owner's proof leaves it out (REVIEW2 #8451 P2-1). Else
+/// the host, which serves the page a passkey signs on, binds a person with
+/// its root and the cosign of a key it had the passkey vouch for blind.
+pub(super) fn human_bind_proved(
+    state: &FoldState,
+    op: &AuthorityOp,
+    participants: &BTreeSet<AuthorityKey>,
+    consent_arm: fn(&FoldedDevice) -> bool,
+) -> bool {
+    let (AuthorityOp::BindActor {
+        authority_key,
+        actor_class,
+        ..
+    }
+    | AuthorityOp::RebindActor {
+        authority_key,
+        actor_class,
+        ..
+    }) = op
+    else {
+        return true;
+    };
+    if !state.hosted {
+        return true;
+    }
+    let touches_a_person = actor_class == ACTOR_CLASS_HUMAN
+        || state
+            .actor_bindings
+            .get(authority_key)
+            .is_some_and(|binding| binding.actor_class == ACTOR_CLASS_HUMAN)
+        || state.roster.get(authority_key).is_some_and(consent_arm);
+    !touches_a_person
+        || participants
+            .iter()
+            .any(|key| !state.passkey_limited(key) && proves_for_the_owner(state, key))
+}
+
 impl AuthorityFold {
-    /// Whether `key` is a key this fold trusts as the owner's: live on the
-    /// roster with `ROLE_OWNER`, and outside the host's custody when the
-    /// vault is `hosted`. The writer's side of `proves_for_the_owner`; the
-    /// fold takes a proof cosign only from such a key in the Ed25519 suite
-    /// ([`owner_proof_key`]), and every signer an install holds is one.
+    /// Whether `key` is a key whose cosign this fold takes as the owner's
+    /// proof: live on the roster with `ROLE_OWNER`, outside the host's
+    /// custody when the vault is `hosted`, and held by no passkey limit (a
+    /// key only a passkey vouched for, until confirmed). The writer's side
+    /// of `gives_owner_proof`, read on the merged history, so an install
+    /// never signs a proof cosign the fold judges forged (REVIEW-8451 P1);
+    /// the fold takes one only in the Ed25519 suite ([`owner_proof_key`]),
+    /// and every signer an install holds is one.
     #[must_use]
     pub(crate) fn proves_owner_acts(&self, key: &AuthorityKey, hosted: bool) -> bool {
-        roster_has_live_owner(&self.roster, key) && !(hosted && self.in_host_custody(key))
+        roster_has_live_owner(&self.roster, key)
+            && !(hosted && self.in_host_custody(key))
+            && !self.passkey_limited_keys.contains(key)
+    }
+
+    /// Whether an install may offer `signer`, a root signer it holds, as the
+    /// owner's proof: this fold trusts its key as the owner's
+    /// ([`Self::proves_owner_acts`]), and under the Hosted posture it is no
+    /// host root ([`CheckpointRootSigner::is_host_root`]). The fold keeps
+    /// what a self-host root proved when its log is folded as hosted; a
+    /// hosted install that holds that root, as after a move of the vault
+    /// onto a managed host, never acts for the owner with it (Engine ANSWER
+    /// HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A). A root move under the
+    /// Hosted posture hands the vault to a stamped root, which proves
+    /// nothing.
+    #[must_use]
+    pub(crate) fn offers_owner_proof(
+        &self,
+        signer: &dyn CheckpointRootSigner,
+        hosted: bool,
+    ) -> bool {
+        !(hosted && signer.is_host_root()) && self.proves_owner_acts(&signer.root(), hosted)
+    }
+
+    /// Whether the passkey limits hold `key` on this fold, read on the
+    /// merged history ([`FoldState::passkey_limited`]): a passkey, or a key
+    /// only a passkey vouched for until a key that is no passkey confirms
+    /// it. Such a key vouches for no further key and signs no machine
+    /// profile (row WEB-PASSKEY-OWNER-KEY).
+    #[must_use]
+    pub(crate) fn passkey_limited(&self, key: &AuthorityKey) -> bool {
+        self.passkey_limited_keys.contains(key)
     }
 
     /// A choice door's answer about `act`, the choice it appended in its
@@ -296,21 +433,88 @@ impl AuthorityFold {
     }
 }
 
-impl crate::Vault {
-    /// The owner key this install can prove an owner act with on `fold`: the
-    /// first root signer this handle holds whose key the fold trusts as the
-    /// owner's ([`AuthorityFold::proves_owner_acts`]) under this vault's
-    /// posture. A self-host server holds its host root, a device its enrolled
-    /// owner signing key ([`crate::Vault::hold_checkpoint_root_signer`]); a
-    /// managed host's custodial root proves nothing, and an install that
-    /// holds neither carries its acts unproven.
-    pub(crate) fn owner_proof_signer(
+/// The owner key an install proves an owner act with, picked on one vault
+/// ([`crate::Vault::owner_proof_signer`]). It is bound to that vault, so a
+/// proof is never signed without the signer's own check of it
+/// ([`CheckpointRootSigner::sign_owner_proof`]).
+pub(crate) struct OwnerProofSigner<'vault> {
+    vault: &'vault crate::Vault,
+    signer: std::sync::Arc<dyn CheckpointRootSigner>,
+}
+
+impl OwnerProofSigner<'_> {
+    /// The key the proof is made with: the cosign's key.
+    pub(crate) fn key(&self) -> AuthorityKey {
+        self.signer.root()
+    }
+
+    /// The key's signature over `transcript`, the transcript of an entry on
+    /// `fold`, the signing door's view of the vault.
+    ///
+    /// # Errors
+    /// The signer's refusal: a key that stopped since it was picked signs no
+    /// proof, and the door's act fails with that refusal. One that rests
+    /// under a device PIN answers [`crate::error::DevicePinRefusal::Required`]
+    /// once its window ended.
+    pub(crate) fn sign(
         &self,
         fold: &AuthorityFold,
-    ) -> Option<std::sync::Arc<dyn CheckpointRootSigner>> {
+        transcript: &[u8],
+    ) -> crate::error::Result<Vec<u8>> {
+        self.signer.sign_owner_proof(self.vault, fold, transcript)
+    }
+
+    /// The key's signature over `transcript`, the owner's proof that he
+    /// gives one ask word in person (UC-05 PR 2b), by the roster of `fold`,
+    /// the view the key was picked on.
+    ///
+    /// # Errors
+    /// The signer's refusal, as [`Self::sign`] answers it: a key that rests
+    /// under a device PIN proves an ask word only inside its window.
+    pub(crate) fn sign_ask_word(
+        &self,
+        fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> crate::error::Result<Vec<u8>> {
+        self.signer
+            .sign_ask_word_proof(self.vault, fold, transcript)
+    }
+}
+
+impl crate::Vault {
+    /// The owner key this install can prove an owner act with on `fold`: the
+    /// first root signer this handle holds that it may offer as the owner's
+    /// proof ([`AuthorityFold::offers_owner_proof`]) under this vault's
+    /// posture and that proves at this moment
+    /// ([`CheckpointRootSigner::proves_now`]). The list is in the order of
+    /// each signer's latest hold, so where an install holds two keys that
+    /// both prove (a self-host server's host root and its owner signing
+    /// key), which one signs is not fixed: the fold takes either. A
+    /// self-host server holds its host root, a device its enrolled owner
+    /// signing key ([`crate::Vault::hold_checkpoint_root_signer`]); a managed
+    /// host's custodial root proves nothing, no host root is offered under
+    /// the Hosted posture, and an install that holds neither carries its
+    /// acts unproven.
+    ///
+    /// A key that does not prove now is passed over as if it were not held:
+    /// an owner signing key the roster no longer lists live, one whose seed
+    /// left its slot, and one that rests under a device PIN outside the
+    /// window a right PIN opened (row OCS-OWNER-PIN). The act is then
+    /// carried unproven, and the fold judges it as any unproven act: where
+    /// it needs the proof, it waits or is held until the owner proves it.
+    ///
+    /// A door calls this inside its own transaction, so nothing here opens
+    /// one: each signer reads the roster from `fold`.
+    pub(crate) fn owner_proof_signer(&self, fold: &AuthorityFold) -> Option<OwnerProofSigner<'_>> {
         let hosted = self.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
-        self.checkpoint_root_signers()
+        self.held_checkpoint_root_signers()
             .into_iter()
-            .find(|signer| fold.proves_owner_acts(&signer.root(), hosted))
+            .find(|signer| {
+                fold.offers_owner_proof(signer.as_ref(), hosted) && signer.proves_now(self, fold)
+            })
+            .map(|signer| OwnerProofSigner {
+                vault: self,
+                signer,
+            })
     }
 }

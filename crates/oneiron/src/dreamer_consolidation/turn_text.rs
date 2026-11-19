@@ -45,6 +45,8 @@ use oneiron_model::llm::{Scope, ScopeResource};
 mod attribution;
 pub(super) mod compaction_span;
 pub(super) mod projection;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::attribution::attribution_hash_for_test;
 
 type SourceRow = (u8, u64, Vec<u8>);
 type BranchRead = (Vec<Option<SourceRow>>, BTreeMap<EntityId, TurnText>);
@@ -172,6 +174,32 @@ impl TurnText {
 
     pub(crate) fn text(&self) -> Option<&str> {
         self.text.as_deref()
+    }
+
+    /// The words this text holds, piece by piece, as it reads: each projected
+    /// MESSAGE's words with its id, in projection order, or the TURN's own
+    /// words alone (`None`). The `"\n"` joins belong to no piece.
+    ///
+    /// # Errors
+    ///
+    /// A layout that does not cut the text.
+    pub(crate) fn pieces(&self) -> Result<Vec<(Option<EntityId>, &str)>> {
+        let Some(text) = self.text.as_deref() else {
+            return Ok(Vec::new());
+        };
+        if self.messages.is_none() {
+            return Ok(vec![(None, text)]);
+        }
+        self.layout
+            .iter()
+            .map(|&(message, offset, len)| {
+                text.get(offset..offset + len)
+                    .map(|words| (Some(message), words))
+                    .ok_or_else(|| {
+                        invalid_consolidation("projected message layout is out of order")
+                    })
+            })
+            .collect()
     }
 
     /// Every MESSAGE row this text was read from: the TURN's exact live
@@ -639,7 +667,7 @@ pub(crate) fn live_turn_text_in(
 /// no text.
 pub(super) fn read_turn_text(vault: &Vault, id: &EntityId) -> Result<TurnText> {
     let read = dreamer_read(vault)?;
-    let txn = snapshot(vault)?;
+    let txn = read_only_snapshot(vault)?;
     // A TURN the Dreamer may not read has no text here, like an absent one.
     let Some((_, _, body)) = read
         .get_entities_parts_in_txn(&txn, std::slice::from_ref(id))?
@@ -668,6 +696,15 @@ pub(super) fn dreamer_read(vault: &Vault) -> Result<ScopedRead<'_>> {
 /// expiry is judged at a real floor, never inside the snapshot.
 pub(super) fn snapshot(vault: &Vault) -> Result<heed::RoTxn<'_>> {
     vault.store.authorization_now()?;
+    Ok(vault.store.env.read_txn()?)
+}
+
+/// A read snapshot for the side doors, opened without persisting the grant
+/// clock, so a read-only side door writes nothing. A grant's expiry is
+/// still judged inside the snapshot, at the committed floor: the read
+/// takes no time of its own, so it judges nothing past what the vault
+/// committed or this store already judged.
+fn read_only_snapshot(vault: &Vault) -> Result<heed::RoTxn<'_>> {
     Ok(vault.store.env.read_txn()?)
 }
 

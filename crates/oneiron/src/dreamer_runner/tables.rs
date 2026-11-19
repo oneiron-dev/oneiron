@@ -70,6 +70,14 @@ crate::side_table::side_tables! {
     /// twice. Key: id16.
     COACH_PERSON_CHANGED_READ: VaultMeta b"coach:person_changed_read:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The last nightly retrieval tune's slow-loop status (census L1-18): the review it queued,
+    /// or why it queued none, and the newest run the latest review was queued through. Key: ().
+    COACH_RETRIEVAL_SLOW_LOOP: VaultMeta b"coach:retrieval_slow_loop:v1" Named
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// One slow retrieval loop review's receipt (census L1-18): the proposal, the skill version
+    /// and hub commit it read, and what the engine did with it. Key: id16 (the review attempt).
+    COACH_RETRIEVAL_TUNING_RECEIPT: VaultMeta b"coach:retrieval_tuning_receipt:v1:" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A hash of the turns the Coach's room upkeep last declared a room's summary from, so an
     /// unchanged room is not declared again. Key: id16 of the room.
     COACH_ROOM_UPKEEP_DECLARED: VaultMeta b"coach:room_upkeep_declared:v1:" Raw
@@ -210,15 +218,9 @@ crate::side_table::side_tables! {
     /// it, the revert. Key: id16 (finding).
     DREAMER_MAINTENANCE_APPLIED: VaultMeta b"dreamer:maintenance:applied:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Due-time index of hinted provider-outage parks. Key: u64be(due at) + id16(attempt).
-    DREAMER_OUTAGE_DUE: VaultMeta b"dreamer:outage_due:v1:" Named Engine
-        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// One model seat's durable availability row: whether the seat may take work, its
     /// refusal generation, its latest reset, when it last moved and what moved it. Key: id16.
     MODEL_SEAT_STATE: VaultMeta b"llm:model_seat_state:v1:" Named Engine
-        [restore: not_imaged] [family: not_imaged] [tier: runtime];
-    /// Seats with a reported reset, so the sweep releases what is due. Key: u64be(reset) + id16.
-    MODEL_SEAT_RESET_DUE: VaultMeta b"llm:model_seat_reset_due:v1:" Named Engine
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// Seat parks by seat, so one available write wakes every park of its seat. Key: id16 + id16.
     MODEL_SEAT_WAITS: VaultMeta b"llm:model_seat_waits:v1:" Named Engine
@@ -329,11 +331,6 @@ crate::side_table::side_tables! {
     DREAMER_TURN_PROGRAM_STOP_OWED: VaultMeta b"dreamer:turn_program:stop_owed:v1:" Named
         // Restore class: FIX 7188: an owner Stop's owed abandon works on the outbound ledger, which
         // stands as the live vault holds it; so does what it still owes.
-        [restore: live] [family: structure] [tier: canonical];
-    /// Untangle slice 6.8c: each timer turn program's next due time, written and deleted with its
-    /// arming's. Key: u64be(due time) + id16(actor) + id16(registration).
-    DREAMER_TURN_PROGRAM_TIMER_DUE: VaultMeta b"dreamer:turn_program:timer_due:v1:" Named Engine
-        // Restore class: the due index stands as the armings it names do.
         [restore: live] [family: structure] [tier: canonical];
     /// Untangle slice 6.8c: each idle or feed turn program, by its trigger's kind, written and
     /// deleted with its arming. Key: u8(kind) + id16(actor) + id16(registration).

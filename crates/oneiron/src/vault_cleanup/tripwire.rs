@@ -98,8 +98,10 @@ pub(super) const CLEANUP_CHECKS: [(u8, CleanupKind, EmptinessPredicate); 4] = [
 /// `Ok(None)` for a row that is not a candidate — wrong type, absent,
 /// already archived or deleted, kept by the owner at this revision, or simply
 /// not empty. Closed-form: the answer is a function of the row's type byte,
-/// its liveness, the owner's kept mark, its inbound claims and its edges, and
-/// nothing else. There is no score anywhere on this path.
+/// its liveness, the owner's kept mark, its inbound claims and its edges,
+/// and, for a PERSON an attempt minted, whether a try of that attempt's retry
+/// lineage is pending, and nothing else. There is no score anywhere on this
+/// path.
 ///
 /// # Errors
 ///
@@ -159,11 +161,47 @@ pub(crate) fn zero_live_members_in_txn(
 
 /// A PERSON needs positive mint-time provenance AND no live claims.
 /// ONE live claim of ANY source disqualifies even an extraction-minted row.
+/// A PERSON an attempt minted is spared while a try of that attempt's retry
+/// lineage is pending: its claims land in a later write, of that try or of a
+/// retry (FIX CLEANUP-ARCHIVES-MINTED-PERSON-BETWEEN-TRIES). A derivation
+/// batch's revert reads [`person_mint_unclaimed_in_txn`] and is not held by
+/// this: it archives its own mint while its run is live.
 fn person_is_claimless(vault: &Vault, rtxn: &heed::RoTxn<'_>, person: &EntityId) -> Result<bool> {
     Ok(
-        person_provenance::is_extraction_minted_person_in_txn(vault, rtxn, person)?
-            && !has_live_claim(vault, rtxn, person)?,
+        person_mint_unclaimed_in_txn(vault, rtxn, person, &std::collections::BTreeSet::new())?
+            && !person_provenance::minting_lineage_pending_in_txn(vault, rtxn, person)?,
     )
+}
+
+/// Whether the PERSON `person` is an extraction mint with no live claim
+/// about it but those `taken_back` names, read in `rtxn`: the cleanup's own
+/// rule (`person_is_claimless`), with nothing set aside, and a derivation
+/// batch's revert's, with the claims that same revert took back first set
+/// aside. Either archives only such a row.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn person_mint_unclaimed_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    person: &EntityId,
+    taken_back: &std::collections::BTreeSet<EntityId>,
+) -> Result<bool> {
+    if !person_provenance::is_extraction_minted_person_in_txn(vault, rtxn, person)? {
+        return Ok(false);
+    }
+    for claim in vault.claims_for_subject_in_txn(rtxn, person)? {
+        if !taken_back.contains(&claim)
+            && matches!(
+                live_entity_row_in_txn(&vault.store, rtxn, &claim)?,
+                LiveEntityRow::Live { .. }
+            )
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// A SUMMARY is a candidate exactly when nothing points at it and it points

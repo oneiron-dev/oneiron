@@ -35,8 +35,8 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
-use sha2::{Digest, Sha256};
 
 use crate::claim::ClaimSource;
 use crate::context_board::{
@@ -67,10 +67,6 @@ pub const DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE: &str = "dreamer.plugin_suggest";
 /// Engine vocabulary, not product copy: a package that does not ship this
 /// file simply contributes no section candidate.
 pub const PACK_SECTION_MANIFEST_PATH: &str = "section_manifest.mp";
-
-/// Domain separator for the suggestion key. Pinned: changing it renames every
-/// suggestion and would un-suppress everything already answered.
-const PLUGIN_SUGGESTION_KEY_DOMAIN: &[u8] = b"oneiron.plugin_suggestion.v1";
 
 /// Bound on the install-claim scan the duplicate check performs.
 const PLUGIN_SUGGESTION_ATTEMPT_INPUT_KEYS: [&str; 5] = [
@@ -288,18 +284,18 @@ pub fn plugin_suggestion_key(
     let manifest_bytes = encode_section_manifest(&candidate.manifest)?;
     let manifest_digest = section_manifest_digest(&manifest_bytes);
 
-    let mut hasher = Sha256::new();
-    hasher.update(PLUGIN_SUGGESTION_KEY_DOMAIN);
+    // The tag is pinned: a new one renames every suggestion and would un-suppress
+    // everything already answered (K, PLAN-UC-04 stage 6.1).
+    let mut digest = LegacyDigest::new(purposes::plugin::SUGGESTION_KEY);
     for field in [
         notice.pattern_key.as_str(),
         candidate.pack_id.as_str(),
         candidate.version.as_str(),
     ] {
-        hasher.update(u64::try_from(field.len()).unwrap_or(u64::MAX).to_be_bytes());
-        hasher.update(field.as_bytes());
+        digest.len_u64_be(field.len()).raw(field.as_bytes());
     }
-    hasher.update(manifest_digest);
-    Ok(PluginSuggestionKey::from_digest(hasher.finalize().into()))
+    digest.raw(&manifest_digest);
+    Ok(PluginSuggestionKey::from_digest(digest.finish()))
 }
 
 // ---------------------------------------------------------------------------

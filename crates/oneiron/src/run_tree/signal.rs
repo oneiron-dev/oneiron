@@ -5,9 +5,10 @@ use crate::attempt_queue::{
     AttemptId, AttemptState, CancelRequestOutcome, CancelStanding, LandingTrigger, PauseAtBoundary,
     RequestAttemptCancel,
 };
-use crate::batch::secret_scan::{admitted_from, named_tree};
+use crate::batch::secret_scan::{admitted_from_known, named_tree};
 use crate::error::{Error, Result};
 use crate::limit_ask::{EngineLimit, LimitWatch};
+use crate::store::known_value_index::KnownValues;
 
 use super::RunTreeAdapter;
 
@@ -95,9 +96,16 @@ impl RunTreeAdapter<'_> {
         }
         if let Some(existing) = record.asks.iter().find(|ask| ask.handle == handle) {
             // The held questions are as the side-row wall stored them: a
-            // secret it lifted reads as its handle there (OF-067).
+            // secret it lifted reads as its handle there (OF-067), and so
+            // does a value base custody holds, which the wall planned with
+            // the values this writer reads (FIX
+            // REPLAY-COMPARE-KNOWN-OTHER-CALLERS).
             if existing.questions != questions
-                && !admitted_from(&named_tree(&existing.questions)?, &named_tree(&questions)?)?
+                && !admitted_from_known(
+                    &named_tree(&existing.questions)?,
+                    &named_tree(&questions)?,
+                    || KnownValues::shared_in_writer(&self.vault.store, &txn),
+                )?
             {
                 return Err(Error::InvalidConfig("ask handle reused".into()));
             }

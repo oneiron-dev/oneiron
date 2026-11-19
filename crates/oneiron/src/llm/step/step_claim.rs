@@ -1,7 +1,9 @@
 //! Terminal dreamer.step claim write and step-claim codec. The memo index
 //! moved to `step_index` (FIX 4816); its names stay reachable here.
 
-use super::super::{CallPurpose, LlmRequest, LlmResponse, canonical_json_bytes};
+use super::super::{
+    CallPurpose, ContentPart, LlmMessage, LlmRequest, LlmResponse, canonical_json_bytes,
+};
 use super::codec::{
     decode_attempt_id_value, decode_entity_id_value, decode_hash_hex, expect_key, expect_map,
     expect_string, expect_u64, invalid_step, pinned_key_index,
@@ -16,9 +18,9 @@ use super::types::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_VALUE_KEYS,
     DREAMER_STEP_VALUE_SCHEMA_VERSION, DurableStepContext, DurableStepError, DurableStepResult,
     ENVELOPE_PROVENANCE_ATTEMPT_KEY, ENVELOPE_PROVENANCE_RUN_KEY, ENVELOPE_PROVENANCE_SURFACE_KEY,
-    KEY_AT, KEY_ATTEMPT_ID, KEY_MODEL_ID, KEY_PARAMS_HASH, KEY_PROGRESSION, KEY_PURPOSE,
-    KEY_RESPONSE, KEY_RESPONSE_HASH, KEY_RESPONSE_REF, KEY_RESPONSE_VERSION, KEY_SCHEMA_VERSION,
-    KEY_STEP_HASH, KEY_USAGE_IN, KEY_USAGE_OUT, StepProgression,
+    KEY_AT, KEY_ATTEMPT_ID, KEY_INPUT_VERSIONS, KEY_MODEL_ID, KEY_PARAMS_HASH, KEY_PROGRESSION,
+    KEY_PURPOSE, KEY_RESPONSE, KEY_RESPONSE_HASH, KEY_RESPONSE_REF, KEY_RESPONSE_VERSION,
+    KEY_SCHEMA_VERSION, KEY_STEP_HASH, KEY_USAGE_IN, KEY_USAGE_OUT, StepProgression,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -29,6 +31,7 @@ use crate::dreamer_wake::{StepClaimed, StepTerminal, record_call_terminal_in_txn
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+use crate::snapshot_read::SourceVersion;
 use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
@@ -71,6 +74,49 @@ fn call_audience(
 /// The claim scope key the record-scope codec reads as the audience.
 const STEP_SCOPE_PROJECT_KEY: &str = "scopeProjectId";
 
+/// The reply a step keeps while an
+/// [`UncapturedSteps`](crate::self_heal::blocked_reports::UncapturedSteps)
+/// guard holds its attempt: the request quoted words the step's owners would
+/// not retire on their erase (fix list row 20501, the mail claim re-check's
+/// judge), so the kept reply is the verdict alone, with no reasoning about
+/// those words (FIX CLAIM-RECHECK-REPLY-PARTS; RULING RECHECK-REPLY-ERASE =
+/// A, which names Reasoning parts, signatures and token scores). Only Text
+/// parts stay, each without its provider signature, so tool and media parts,
+/// which a verdict never carries, go as well. Role, usage, finish reason and
+/// the host's reply assertions stay. Rows filed before this keep what they
+/// hold (M-1 keep). Every other step keeps its whole reply (ARCH-0026
+/// #llm-backend-seam).
+pub(super) fn verdict_only_reply(response: LlmResponse) -> LlmResponse {
+    let LlmResponse {
+        message,
+        usage,
+        finish_reason,
+        reply_assertions,
+        token_scores: _,
+    } = response;
+    let content = message
+        .content
+        .into_iter()
+        .filter_map(|part| match part {
+            ContentPart::Text { text, .. } => Some(ContentPart::Text {
+                text,
+                signature: None,
+            }),
+            _ => None,
+        })
+        .collect();
+    LlmResponse {
+        message: LlmMessage {
+            role: message.role,
+            content,
+        },
+        usage,
+        finish_reason,
+        reply_assertions,
+        token_scores: None,
+    }
+}
+
 /// Persists the terminal `dreamer.step` claim (checkpoint-in-append).
 /// `payload` MUST be the serialized JSON bytes of `response` — the fresh path
 /// passes the one serialization it already wrote to the ResponseReceived row;
@@ -95,6 +141,7 @@ pub(super) fn log_terminal_step(
 ) -> DurableStepResult<Option<EntityId>> {
     let step_hash = &binding.step_hash;
     let params_hash = request_params_hash(request)?;
+    let input_versions = super::request_hash_step::step_input_versions(request)?;
     let claim_id = ctx.vault.store.clock.entity_id()?;
     let occurred = TimeRange {
         start: source.at,
@@ -190,7 +237,7 @@ pub(super) fn log_terminal_step(
                 })
             };
 
-            let value = encode_step_claim_value(&EncodedStepClaim {
+            let mut value = encode_step_claim_value(&EncodedStepClaim {
                 attempt_id: binding.attempt_id,
                 step_hash: *step_hash,
                 progression: StepProgression::Finished,
@@ -203,6 +250,12 @@ pub(super) fn log_terminal_step(
                 response_ref,
                 at: source.at,
             });
+            if let (Some(versions), Value::Map(entries)) = (&input_versions, &mut value) {
+                entries.push((
+                    Value::from(KEY_INPUT_VERSIONS),
+                    Value::from(versions.as_str()),
+                ));
+            }
             let candidate = call_audience(
                 ClaimCandidate::new(
                     DREAMER_STEP_PREDICATE,
@@ -496,6 +549,9 @@ pub(super) struct DecodedStepClaim {
     pub(crate) usage_out: u64,
     pub(crate) response: Option<String>,
     pub(crate) response_ref: Option<StepResponseRef>,
+    /// The version of every source row a bound step's request was read from;
+    /// `None` for a step that names none.
+    pub(crate) input_versions: Option<Vec<SourceVersion>>,
 }
 
 /// Fail-closed `dreamer.step` claim value decode: pinned keys only, no
@@ -517,6 +573,7 @@ pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
     let mut response_version = None;
     let mut response_hash = None;
     let mut at = None;
+    let mut input_versions = None;
     let mut seen = [false; DREAMER_STEP_VALUE_KEYS.len()];
 
     for (key, value) in entries {
@@ -603,6 +660,13 @@ pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
                     "dreamer step value at must be an integer",
                 )?);
             }
+            KEY_INPUT_VERSIONS => {
+                let encoded =
+                    expect_string(value, "dreamer step value input_versions must be a string")?;
+                input_versions = Some(serde_json::from_str(&encoded).map_err(|_| {
+                    invalid_step("dreamer step value input_versions must list source versions")
+                })?);
+            }
             _ => unreachable!("index resolved from DREAMER_STEP_VALUE_KEYS"),
         }
     }
@@ -651,6 +715,7 @@ pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
         usage_out,
         response,
         response_ref,
+        input_versions,
     })
 }
 

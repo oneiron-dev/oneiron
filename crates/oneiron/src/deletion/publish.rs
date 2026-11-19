@@ -31,11 +31,13 @@ use super::topology_delete_intent::{
 };
 // The `pt:` withdrawal helper is part of the sync persistence transaction.
 #[cfg(feature = "sync")]
-use super::tombstone::{PENDING_TOMBSTONE, PendingTombstoneKey};
+use super::tombstone::PENDING_TOMBSTONE;
 #[cfg(feature = "sync")]
 use crate::error::SyncError;
 #[cfg(feature = "sync")]
 use crate::ports::{WindowAddress, WindowDeletionRows};
+#[cfg(feature = "sync")]
+use oneiron_store::side_table::key::WindowEntityHexKey;
 
 /// Inputs committed together by the sync tombstone persistence transaction.
 /// Grouping these values makes the TXN1 contract explicit: the request-keyed
@@ -574,6 +576,16 @@ impl Vault {
             crate::blob_artifact::esign::reject_event_delete(&self.store, &wtxn, id)
                 .and_then(|()| due.map_or(Ok(()), |due| due.prove_in(self, &wtxn, id).map(drop)))
                 .and_then(|()| reverify_deletion_authority_before_publication(gate, &wtxn))
+                // The last-bound-owner guard at this delete's linearizing
+                // commit (round-1 P1 of #7900): a hard delete publishes before
+                // it purges, so the publish decides the guard and the later
+                // purge must not re-decide a call peers already obey. A soft
+                // publication runs it too (round-2 P1): the headerless leg
+                // publishes before its purge, so a PERSON put and bound as
+                // the last owner under the id since the guard phase is
+                // refused here. A headerful soft delete's scrub decided it
+                // already and left a shell, which the guard passes.
+                .and_then(|()| self.refuse_last_bound_owner_delete_in(&wtxn, id))
                 .and_then(|()| {
                     self.store.delete_guards.precheck_goal_delete(
                         &self.store,
@@ -603,6 +615,13 @@ impl Vault {
                             &self.store,
                             &wtxn,
                             &[*id],
+                        )?;
+                        // The purge refuses a project with a live child, so
+                        // its publication refuses it first, before the fence.
+                        crate::workspace_roster::reject_project_with_live_children(
+                            &self.store,
+                            &wtxn,
+                            id,
                         )?;
                         self.reject_held_redirect_shells_in_txn(&wtxn, id)
                     } else {
@@ -674,7 +693,7 @@ impl Vault {
         id: &EntityId,
         value: &TombstoneValueV2,
     ) -> Result<()> {
-        let key = PendingTombstoneKey {
+        let key = WindowEntityHexKey {
             window: window_label.to_owned(),
             id: *id,
         };

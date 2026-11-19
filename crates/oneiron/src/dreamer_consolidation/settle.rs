@@ -21,11 +21,12 @@
 //! `user_stated`. The open marker is never edited; it stays as audit
 //! evidence beside the claim that answers it.
 //!
-//! The Dreamer asks its host's decision ladder ([`ConflictSettleDecisions`])
-//! and applies the answer at once; the owner reverts it
-//! (`Memory::revert_conflict_settlement`), and a reverted conflict, or one
-//! under the owner's hold, is the owner's to answer. An abstention or an
-//! escalation leaves the marker parked for the owner.
+//! The rule loop in `oneiron_dreamer::conflict_settle` chooses whole asks or
+//! pages and rounds. The engine builds and runs each bound `ai.verdict` ask
+//! on the host's decision ladder ([`ConflictSettleDecisions`]), and derive
+//! Settle items apply the answers. The owner reverts through `vault.derive.revert`.
+//! A reverted conflict, or one under the owner's hold, is the owner's to answer.
+//! An abstention or an escalation leaves the marker parked for the owner.
 
 use std::collections::BTreeSet;
 
@@ -35,7 +36,7 @@ pub(crate) mod keep_approval;
 
 use self::keep_approval::KeepAs;
 use super::retained_conflict::RetainedAlternative;
-use super::retained_keep::{ConflictSettleOutcome, KeptAlternative, SettlementApplied, StagedKeep};
+use super::retained_keep::{KeptAlternative, SettlementApplied};
 use super::support::invalid_consolidation;
 use crate::claim::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject, PREDICATE_CONFLICT_OPEN,
@@ -50,8 +51,8 @@ use crate::retrieval_depth::RetrievalDeadline;
 use crate::write_envelope::{WriteActor, WriteEnvelope};
 use crate::{ClaimBody, EntityId, TimeRange, Vault};
 
-pub(super) mod decision_pages;
-mod decision_projection;
+pub(crate) mod decision_pages;
+pub(crate) mod decision_projection;
 mod preference_pair;
 
 /// The marker-value keys that name a contradiction's claims: the
@@ -64,7 +65,7 @@ const REPO_CONFLICT_KIND: &str = "repo_branch";
 /// The most members one ladder question offers to keep, under the Choice
 /// contract's 64 options with hold-both, dismiss and escalate beside them;
 /// past it the members split into more questions (FIX 7636).
-const MAX_KEEP_OPTIONS: usize = 61;
+pub(crate) const MAX_KEEP_OPTIONS: usize = 61;
 /// The resolution key naming the retained alternative a Keep landed.
 pub(super) const MATERIALIZED_KEY: &str = "materialized";
 /// The conflict a settlement revert's fresh MACHINE copy still belongs to.
@@ -490,7 +491,18 @@ pub(crate) fn open_conflict_in_txn(
 /// closes), under the claim lifecycle's own guards: a generated claim still
 /// never supersedes user-stated truth.
 /// Only a `person` closes user-stated truth at all: an agent's settlement
-/// that would is refused, and the conflict stays for the owner. `close_as`
+/// that would is refused, and the conflict stays for the owner. Only a
+/// `person` supersedes a member that restricts someone's access either
+/// (a delivery window, an opt-out, a do-not-contact, a held campaign
+/// membership, ...; [`crate::federation::claim_removal_widens_in`]),
+/// whatever its source: removing a restriction widens access, and an
+/// agent's widening always asks the person affected (canon
+/// #widen-world-floor). An agent holder's or the Dreamer's settlement that
+/// would is refused, and the conflict stays for a person holder or the
+/// owner (RULING RESTRICTION-CLOSE-BY-CONFLICT-SETTLE). So is a Keep by no
+/// person that approves a retained curator finding whose rung would retract,
+/// weaken or mark stale a restricting claim, a member or not (RULING
+/// RESTRICTION-CLOSE-BY-CURATOR-APPROVAL). `close_as`
 /// attributes a delegate's close; the owner's close is the owner's. The
 /// answering claim then records the settlement on the marker's own axes.
 /// `keep_as` says how a kept retained alternative lands (FIX 5753). `now` is
@@ -520,6 +532,23 @@ pub(crate) fn apply_settlement_in_txn(
             .iter()
             .find(|alternative| alternative.id == selected)
         {
+            // A Keep that approves its landing applies a curator finding's
+            // rung as the finding lands (FIX 5423), on a target that need not
+            // be a member. Asked before the landing: once the rung applied,
+            // its target no longer reads as restricting anyone.
+            if !person
+                && matches!(keep_as, KeepAs::Approved(_))
+                && crate::dreamer_runner::maintenance::curator_proposal_lifts_restriction_in(
+                    vault,
+                    txn,
+                    &alternative.predicate,
+                    &alternative.value,
+                )?
+            {
+                return Err(invalid_consolidation(
+                    "only a person keeps a curator finding that lifts a claim restricting someone's access",
+                ));
+            }
             match super::retained_keep::keep_in_txn(
                 vault,
                 txn,
@@ -572,6 +601,11 @@ pub(crate) fn apply_settlement_in_txn(
             if !person && matches!(body.source, None | Some(ClaimSource::UserStated)) {
                 return Err(invalid_consolidation(
                     "only a person supersedes user-stated truth",
+                ));
+            }
+            if !person && crate::federation::claim_removal_widens_in(vault, txn, &body)? {
+                return Err(invalid_consolidation(
+                    "only a person supersedes a claim that restricts someone's access",
                 ));
             }
             vault.cancel_deferred_claim_in_txn(txn, &loser)?;
@@ -784,6 +818,43 @@ pub(crate) fn revert_settlement_in_txn(
     Ok(reverted)
 }
 
+/// Whether reverting the settlement `resolved` answers would retract a
+/// claim that restricts someone's access
+/// ([`crate::federation::claim_removal_widens_in`]): the winner it landed
+/// from its marker's retained candidates, still standing, which
+/// [`revert_settlement_in_txn`] retracts. The members it restores close
+/// nothing. An answer that is no standing settlement's lifts nothing: its
+/// revert refuses.
+pub(crate) fn settlement_revert_lifts_restriction_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    resolved: EntityId,
+) -> Result<bool> {
+    let Some(answer) = vault.get_claim_in_txn(txn, &resolved)? else {
+        return Ok(false);
+    };
+    if answer.predicate != PREDICATE_CONFLICT_RESOLVED || !claim_surfaceable(&answer) {
+        return Ok(false);
+    }
+    let Some(resolution) = string_at(&answer.value, "resolution")
+        .filter(|resolution| string_at(resolution, "settlement").is_some())
+    else {
+        return Ok(false);
+    };
+    let Some(kept) = marker_ids(resolution, "kept").next() else {
+        return Ok(false);
+    };
+    if marker_ids(resolution, MATERIALIZED_KEY).next() != Some(kept) {
+        return Ok(false);
+    }
+    match vault.get_claim_in_txn(txn, &kept)? {
+        Some(body) if body.lifecycle == ClaimLifecycleStatus::Active => {
+            crate::federation::claim_removal_widens_in(vault, txn, &body)
+        }
+        _ => Ok(false),
+    }
+}
+
 /// Where a revert's fresh Dreamer copy says it came from: its provenance
 /// surface and its birth reason.
 pub(super) struct RevertSurface {
@@ -983,13 +1054,11 @@ const DISMISS: &str = "dismiss";
 const ESCALATE: &str = "escalate";
 const KEEP_PREFIX: &str = "keep:";
 
-/// The shared decision path a settlement ask goes through: the host's ladder,
-/// the principal the answer is for, the dial and learned bands, the host's
-/// wording of the question, and the call's clock. A provider sees the marker
-/// and its members as evidence ids; the contested predicates and each member's
-/// predicate, value, source, approval and window are its state, each member by
-/// a call-local label (FIX 7506). Each value rides whole; past the ladder's
-/// bound the members are asked in pages (`decision_pages`).
+/// The host's ladder, principal, dial, learned bands, wording and deadline for
+/// one bound settlement ask. The engine builds and runs the ask for `ai.verdict`;
+/// `oneiron_dreamer::conflict_settle` owns the rule loop over whole asks, pages
+/// and rounds. A provider sees the marker and stored members as evidence ids,
+/// and each offered member or retained alternative whole by a call-local label.
 pub struct ConflictSettleDecisions<'a> {
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
@@ -997,99 +1066,4 @@ pub struct ConflictSettleDecisions<'a> {
     pub bands: DecisionBandPolicy,
     pub wording: String,
     pub deadline: &'a RetrievalDeadline,
-}
-
-impl ConflictSettleDecisions<'_> {
-    /// Rules on one open conflict: `None` when the ladder abstains, escalates
-    /// or answers outside the vocabulary. The asks are `decision_pages`':
-    /// every member is asked about whole, in pages past one ask's bound,
-    /// and every standing member can be kept.
-    pub fn rule(
-        &self,
-        vault: &Vault,
-        conflict: &OpenConflict,
-    ) -> Result<Option<ConflictSettlement>> {
-        decision_pages::rule(self, vault, conflict)
-    }
-}
-
-/// One Dreamer pass over the parked conflicts it reviews.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ParkedConflictPass {
-    pub asked: usize,
-    pub settled: Vec<ConflictSettleReceipt>,
-    /// Kept alternatives from imported words, staged in their import's
-    /// review (FIX 5754): each conflict stays open.
-    pub staged: Vec<StagedKeep>,
-    /// Abstained, escalated, refused or failed: each stays for the owner.
-    pub left_parked: usize,
-    /// The last marker asked about: the next pass starts after it.
-    pub last: Option<EntityId>,
-}
-
-/// Asks `decisions` about up to `limit` open conflicts `memory`'s actor may
-/// settle and settles each answer through the same authorised door a person
-/// uses. The pass starts at the first marker after `after` and wraps to the
-/// oldest, so the conflicts a ladder leaves parked never starve newer ones.
-/// A failure on one conflict is logged by a closed name and leaves it
-/// parked; the pass goes on.
-pub fn settle_parked_conflicts(
-    memory: &crate::memory::Memory<'_>,
-    decisions: &ConflictSettleDecisions<'_>,
-    after: Option<EntityId>,
-    limit: usize,
-    now: u64,
-) -> crate::memory::MemoryResult<ParkedConflictPass> {
-    settle_parked_conflicts_while(memory, decisions, after, limit, now, &mut || true)
-}
-
-/// [`settle_parked_conflicts`] under a host's pause (FIX 7376): no next
-/// conflict is asked once `may_start` says no. The one in flight finishes
-/// its ruling and settlement, and the pass returns as it stands. A conflict
-/// left unasked is neither counted nor left parked: `last` stays on the last
-/// one asked, and the next pass starts after it.
-pub fn settle_parked_conflicts_while(
-    memory: &crate::memory::Memory<'_>,
-    decisions: &ConflictSettleDecisions<'_>,
-    after: Option<EntityId>,
-    limit: usize,
-    now: u64,
-    may_start: &mut impl FnMut() -> bool,
-) -> crate::memory::MemoryResult<ParkedConflictPass> {
-    let mut pass = ParkedConflictPass::default();
-    let open = memory.open_conflicts(None, None, usize::MAX)?;
-    let start = after.map_or(0, |after| {
-        open.partition_point(|conflict| conflict.marker <= after)
-    });
-    let (older, newer) = open.split_at(start);
-    for conflict in newer.iter().chain(older).take(limit) {
-        if !may_start() {
-            break;
-        }
-        pass.asked += 1;
-        pass.last = Some(conflict.marker);
-        let settlement = match decisions.rule(memory.vault(), conflict) {
-            Ok(Some(settlement)) => settlement,
-            Ok(None) => {
-                pass.left_parked += 1;
-                continue;
-            }
-            Err(error) => {
-                tracing::warn!(target: "oneiron::dreamer", kind = ?error.kind(), marker = %conflict.marker.to_hex(), "a settlement ask failed; the conflict stays parked");
-                pass.left_parked += 1;
-                continue;
-            }
-        };
-        match memory.settle_conflict(None, conflict.marker, settlement, now) {
-            Ok(ConflictSettleOutcome::Settled(receipt)) => pass.settled.push(receipt),
-            Ok(ConflictSettleOutcome::ImportReviewPending { staged, .. }) => {
-                pass.staged.push(staged);
-            }
-            Err(_) => {
-                tracing::warn!(target: "oneiron::dreamer", marker = %conflict.marker.to_hex(), "a ruled settlement was refused; the conflict stays parked");
-                pass.left_parked += 1;
-            }
-        }
-    }
-    Ok(pass)
 }

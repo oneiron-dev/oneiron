@@ -187,6 +187,7 @@ impl Fixture {
             },
             constraint: None,
             visitor_tz: "UTC".to_owned(),
+            duration_min: None,
         })
         .expect("solve the fixture day")
         .slots
@@ -356,6 +357,7 @@ fn fixture_config() -> EventTypeConfig {
         booking_window_secs: 7 * 24 * 3_600,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: test_id(HOST_SEED),
@@ -370,6 +372,7 @@ fn fixture_config() -> EventTypeConfig {
         }],
         flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 

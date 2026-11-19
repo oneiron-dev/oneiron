@@ -112,7 +112,8 @@ async function startEndpointEngine(id: string, data: Scenarios, endpoint: string
     { label: "endpoint fixture health", timeoutMs: LIMITS.readyMs, readiness: true });
   };
   try {
-    await writeFile(config, `host = "127.0.0.1"\nport = ${address.port}\n\n[keystore]\nbackend = "off"\n${modelConfig}`, { mode: 0o600 });
+    // `token bootstrap` mints the host issuer, which needs a keystore (as EngineFixture.start configures one).
+    await writeFile(config, `host = "127.0.0.1"\nport = ${address.port}\n\n[keystore]\nbackend = "platform"\ndir = ${JSON.stringify(resolve(root, "keys"))}\n${modelConfig}`, { mode: 0o600 });
     const args = ["init", resolve(root, "vault"), "--config", config, "--oneironer", "none",
       "--embedder", "endpoint", "--embedder-endpoint", remote?.endpoint ?? endpoint,
       "--embedder-model-key", data.space.modelKey, "--embedder-model-id", data.space.modelId,
@@ -193,7 +194,10 @@ function witness(client: PublicHttpClient, data: Scenarios, text: string,
 }
 async function lexical(client: PublicHttpClient, keyword: string, receipt: WitnessReceipt) {
   const hits = await client.call("vault.search.bm25", { query: keyword, limit: 100 });
-  expect(hits.value.some(hit => receipt.message_short_ids.includes(hit.short_id) || hit.short_id === receipt.turn_short_id)).toBe(true);
+  // A hit's short_id is pinned to the revision it read (`<ref>@<revision>`), so match the typed record id first.
+  const landed = new Set([receipt.turn?.id, ...receipt.messages.map(message => message.id)]);
+  expect(hits.value.some(hit => (hit.record?.id !== undefined && landed.has(hit.record.id))
+    || receipt.message_short_ids.includes(hit.short_id) || hit.short_id === receipt.turn_short_id)).toBe(true);
   const recalled = await client.call("vault.recall", { query: keyword, effort: "light", limit: 10 });
   expect(recalled.items.some(item => item.value_text.includes(keyword))).toBe(true);
 }

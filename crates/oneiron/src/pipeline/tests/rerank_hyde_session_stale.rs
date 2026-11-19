@@ -144,12 +144,7 @@ fn put_indexed_person(vault: &Vault, id: EntityId, name: &str) -> Result<()> {
 fn open_test_vault_keeping_policy_manifest() -> (tempfile::TempDir, Vault) {
     let mut config = crate::test_util::embedding_test_config();
     config.retrieval_telemetry_capture = true;
-    let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(dir.path(), config).expect("open vault");
-    vault.install_device_keystore(std::sync::Arc::new(
-        oneiron_keystore::MemoryKeystore::default(),
-    ));
-    (dir, vault)
+    crate::test_util::open_test_vault_with_manifest(config)
 }
 
 fn restage_room_person(

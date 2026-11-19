@@ -6,28 +6,27 @@ fn stamped_resident_receipt(
     skill: &EntityId,
     now: u64,
 ) -> Result<String> {
+    let now = vault.now_recorded_at().max(now);
     let queue = AttemptQueue::new(vault);
-    let EnqueueOutcome::Enqueued(row) = queue.enqueue(EnqueueAttempt {
-        kind: "resident.optimize".into(),
-        payload: Vec::new(),
-        dedupe_key: None,
-        run_id: None,
-        now,
-    })?
+    let dispatcher = AgentDispatcher::new(vault);
+    let AgentDispatchOutcome::Dispatched(dispatched) =
+        dispatcher.dispatch_default_base(None, None, None, now)?
     else {
         panic!("new attempt")
     };
+    let row = dispatched.attempt;
 
     let ClaimOutcome::Claimed(leased) = queue.claim_kind(
-        "resident.optimize",
+        DREAMER_RUNNER_ATTEMPT_KIND,
         ClaimAttempt {
             lease_owner: "resident-opt".into(),
-            now: now + 1,
+            now,
         },
     )?
     else {
         panic!("claim")
     };
+    assert_eq!(leased.id, row.id);
     vault.load_resident_skill_pack(
         row.id,
         resident,
@@ -42,7 +41,7 @@ fn stamped_resident_receipt(
         lease_owner: "resident-opt".into(),
         attempt_count: leased.attempt_count,
         reason: "failed".into(),
-        now: now + 2,
+        now,
     })?;
     Ok(attempt_pack_receipt_id(&row.id))
 }
@@ -190,7 +189,7 @@ fn optimizer_proposal_cannot_change_resident_across_recreation() -> Result<()> {
     assert_eq!(
         vault
             .batch()
-            .put_replicated(&proposal_id, ENTITY_TYPE_SKILL, t(303), 303, &raw)
+            .put_replicated(&proposal_id, ENTITY_TYPE_SKILL, t(303), 303, None, &raw)
             .commit()
             .expect_err("replay cannot reassign optimizer origin")
             .kind(),
@@ -206,6 +205,7 @@ fn optimizer_proposal_cannot_change_resident_across_recreation() -> Result<()> {
                 ENTITY_TYPE_SKILL,
                 t(304),
                 304,
+                None,
                 &crate::skill::encode_skill_record(&original)?,
             )
             .commit()

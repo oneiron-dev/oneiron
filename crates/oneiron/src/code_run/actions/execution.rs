@@ -257,7 +257,10 @@ impl ActionRegistry {
                 _ => None,
             };
             let replay = verb_door.as_deref().zip(replayed_verb.as_deref());
-            let cursor = record.replay_cursor();
+            // A value base custody holds took its handle in the row, and
+            // meets it there (FIX REPLAY-COMPARE-KNOWN-MATCHER).
+            let base_known = || vault.known_values_now();
+            let cursor = record.replay_cursor().with_base_known(&base_known);
             let replayed = match &held {
                 Some(held) => cursor.dispatch_held(call, held),
                 None => cursor.dispatch(call),

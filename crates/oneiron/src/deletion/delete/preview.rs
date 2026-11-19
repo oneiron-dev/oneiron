@@ -113,6 +113,7 @@ impl DeleteEntityPreview {
 
 impl Vault {
     /// The owner authority fold and all impact fields use one read snapshot.
+    /// The root project previews no delete: every delete door refuses it.
     pub(crate) fn preview_entity_delete_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -120,6 +121,7 @@ impl Vault {
     ) -> Result<DeleteEntityPreview> {
         let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
+        crate::workspace_roster::reject_root_project_delete(&self.store, txn, id)?;
         let shared_with = crate::share::active_brief_shares_for(
             &self.store,
             txn,

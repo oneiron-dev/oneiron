@@ -28,7 +28,6 @@ pub(crate) use self::lift_history::{
     enqueue_known_remark_in_txn, enqueue_lift_in_txn, propose_sync_text_in_txn,
     propose_typed_body_at_in_txn, run_lift_pass, typed_body_at_proposal_due_in_txn,
 };
-pub(super) use self::mask::MaskedFiles;
 pub(crate) use self::mask::admit::{
     Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, plan_parts_in_txn,
     predict_masked_body, predict_masked_text, scan_content_in_txn, scan_document_in_txn,
@@ -37,6 +36,8 @@ pub(crate) use self::mask::carrier::{
     CarrierText, LiftedKeys, carrier_origin, carrier_text_placeable, carrier_texts_hit_in_txn,
     mark_carrier_text_in_txn, mark_carrier_texts_in_txn, mask_spanning_json, mask_unplaced_json,
 };
+pub(crate) use self::mask::claim_value_plan::plan_masked_claim_value_in_txn;
+pub(crate) use self::mask::held_template::{MapOrder, held_row_meets};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mask::mark_text_value_in_txn;
 pub(super) use self::mask::mask_batch_ops;
@@ -49,19 +50,24 @@ pub(crate) use self::mask::retained_repo::{
     RetainedRepoBlobMarks, RetainedRepoBlobPlan, RetainedRepoCustody, RetainedRepoPlacedKey,
     mark_retained_repo_blob_in_txn, plan_retained_repo_blob,
 };
+pub(crate) use self::mask::side_row::admit_typed_with_rule;
 pub(crate) use self::mask::side_row::{
     SidePart, TextReplacements, admit_side_parts, admit_side_row, admit_tracked_side_parts,
-    admit_typed, admitted_from, from_named_tree, named_tree, origin as side_row_origin,
+    admit_typed, admitted_from_known, admitted_from_plan, from_named_tree, named_tree,
+    origin as side_row_origin,
 };
 pub(crate) use self::mask::spool::{
     AdmissionCustody, BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
 };
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
+pub(super) use self::mask::{MaskedClaimBodies, MaskedFiles};
+pub(crate) use self::mask::{
+    file_mints_in_txn, move_mask_origin_in_txn, rebind_mask_origin_in_txn, side_row::admission_form,
+};
 pub(crate) use self::mask::{
     file_spans, mask_origin_in_txn, seal_promoted_message_ops_in_txn, seal_whole_part_in_txn,
     span_placed_for,
 };
-pub(crate) use self::mask::{rebind_mask_origin_in_txn, side_row::admission_form};
 pub(crate) use self::message_parts::seal_message_parts_in_txn;
 use self::provider_tokens::{classify_token, provider_token_spans};
 pub(crate) use self::provider_tokens::{embedded_credential, provider_prefix_head};
@@ -121,7 +127,7 @@ const REASON_MESSAGEPACK_TOO_DEEP: &str = "gate.secret_scan.messagepack_depth_ov
 pub use oneiron_verb_wire::batch::secret_scan::SecretScanMode;
 
 /// The owner's switch row. Key: ().
-const SECRET_SCAN_MODE: SideTable<(), SecretScanMode, Named> =
+pub(crate) const SECRET_SCAN_MODE: SideTable<(), SecretScanMode, Named> =
     SideTable::new(&side_table::OWNER_POLICY_SECRET_SCAN_MODE);
 
 /// The switch as the write door reads it. An absent row reads as on, and so
@@ -532,6 +538,35 @@ fn credential_field(name: &str, nil: bool, text: Option<&str>, door: Door) -> bo
         && !text.is_some_and(|text| shapes::field_placeholder(text, door))
 }
 
+/// Which values under a credential name the write door's field rule reads
+/// whole: its mask lifts such a value into custody, and its scan refuses one
+/// the mask left.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum FieldRule {
+    /// Any value but nil or a placeholder, whatever its shape: the batch
+    /// door's rule.
+    #[default]
+    AnyShape,
+    /// Text alone, a string or bytes. A number, a flag, a list or a map under
+    /// a credential name is read part by part, as a member under any other
+    /// name is. For a typed value whose type fixes each member's shape, where
+    /// a handle can stand only in text: a setting value (FIX
+    /// SETTING-WALL-CREDENTIAL-NAMED-MEMBERS). Such a member is stored as
+    /// written unless a text rule finds a shape in it: a value that holds a
+    /// secret holds it as text.
+    TextOnly,
+}
+
+impl FieldRule {
+    /// Whether this rule reads `value`, under a credential name, whole.
+    pub(crate) fn reads_whole(self, value: &rmpv::Value) -> bool {
+        match self {
+            Self::AnyShape => true,
+            Self::TextOnly => matches!(value, rmpv::Value::String(_) | rmpv::Value::Binary(_)),
+        }
+    }
+}
+
 /// Identifiers and records outside the batch door (refs, paths, telemetry
 /// keys, session tags, question rows) keep their scan in both modes: they land
 /// in keys, indexes and receipts that a later mask cannot reach.
@@ -559,7 +594,13 @@ pub(crate) fn scan_write_payload(data: &[u8]) -> Result<()> {
 /// payload's own bytes. A container the walk reads no further is read as
 /// far as it reads.
 pub(crate) fn scan_write_tree(data: &[u8]) -> Result<()> {
-    let _secrets_nulled = scan_payload(data)?;
+    scan_write_tree_with_rule(data, FieldRule::AnyShape)
+}
+
+/// [`scan_write_tree`], with the field rule `rule` over the payload's own
+/// members; a container's members are read by the batch door's rule.
+fn scan_write_tree_with_rule(data: &[u8], rule: FieldRule) -> Result<()> {
+    let _secrets_nulled = scan_payload_with_rule(data, rule)?;
     container::scan_readable_members(data)
 }
 
@@ -605,6 +646,11 @@ pub(crate) fn payload_carries_secret(data: &[u8]) -> bool {
 }
 
 fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
+    scan_payload_with_rule(data, FieldRule::AnyShape)
+}
+
+/// [`scan_payload`], with the field rule `rule` over the members it reads.
+fn scan_payload_with_rule(data: &[u8], rule: FieldRule) -> Result<ExportSecretsNulledManifest> {
     // A lossy copy is wiped on drop (FIX 6668).
     let mut wiped = None::<Zeroizing<String>>;
     let haystack = wiped_lossy(data, &mut wiped);
@@ -618,7 +664,7 @@ fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
         let Some(mut value) = read_members(body)? else {
             continue;
         };
-        if sanitize_messagepack(&mut value, false, Door::Write) {
+        if sanitize_messagepack_with_rule(&mut value, false, Door::Write, rule) {
             return Err(secret_scan_error("gate.secret_scan.sensitive_env"));
         }
         // A secret spread over parts the walk keeps apart (a phrase one word
@@ -803,6 +849,16 @@ fn sanitize_messagepack_whole(
 }
 
 fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool {
+    sanitize_messagepack_with_rule(value, null, door, FieldRule::AnyShape)
+}
+
+/// [`sanitize_messagepack`], with the field rule `rule` at every depth.
+fn sanitize_messagepack_with_rule(
+    value: &mut rmpv::Value,
+    null: bool,
+    door: Door,
+    rule: FieldRule,
+) -> bool {
     use rmpv::Value;
     let replacement = || {
         if null {
@@ -831,7 +887,7 @@ fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool
                 return true;
             }
             let changed = values.iter_mut().fold(false, |changed, value| {
-                sanitize_messagepack(value, null, door) | changed
+                sanitize_messagepack_with_rule(value, null, door, rule) | changed
             });
             // Read again once items are nulled, as the JSON walk does.
             if changed && joined_messagepack(values, door) {
@@ -846,14 +902,15 @@ fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool
             fields.retain(|(key, _)| !messagepack_has_secret(key, door));
             let dropped = fields.len() != before;
             fields.iter_mut().fold(dropped, |changed, (key, value)| {
-                let sensitive = key
-                    .as_str()
-                    .is_some_and(|key| credential_field(key, value.is_nil(), value.as_str(), door));
+                let sensitive = rule.reads_whole(value)
+                    && key.as_str().is_some_and(|key| {
+                        credential_field(key, value.is_nil(), value.as_str(), door)
+                    });
                 if sensitive {
                     *value = replacement();
                     true
                 } else {
-                    sanitize_messagepack(value, null, door) | changed
+                    sanitize_messagepack_with_rule(value, null, door, rule) | changed
                 }
             })
         }

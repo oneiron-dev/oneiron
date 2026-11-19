@@ -5,12 +5,16 @@
 //! [`merge_states`], which must be edited in lockstep with the `FoldState`
 //! field list because it folds every field 1:1.
 
-use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
+
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
 
 use crate::entity_id::EntityId;
 
 use super::*;
+
+mod actor_binding_merge;
+use actor_binding_merge::merge_actor_bindings;
 
 #[doc(hidden)]
 pub use oneiron_records::authority::fold_state::{
@@ -55,6 +59,14 @@ pub struct AuthorityFold {
     /// (FIX 12196).
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) host_custody: BTreeSet<AuthorityKey>,
+    /// Every roster key the passkey limits hold on the merged history
+    /// (`FoldState::passkey_limited`, row WEB-PASSKEY-OWNER-KEY): a passkey,
+    /// and a key only a passkey vouched for until a key that is no passkey
+    /// confirms it. Read through [`AuthorityFold::proves_owner_acts`], so
+    /// the writer takes no owner proof from a key whose cosign the fold
+    /// judges forged (REVIEW-8451 P1).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) passkey_limited_keys: BTreeSet<AuthorityKey>,
     /// The handoffs whose fences stand: settled, or in conflict.
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     /// Owner dismissed saving the recovery secret and no second device has enrolled.
@@ -87,6 +99,12 @@ pub struct AuthorityFold {
     /// through [`AuthorityFold::held_machine_answers`].
     pub(super) held_machine_answers:
         BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, MachineRevision>>,
+    /// Each enrolment of a machine born of a restore, by entry, and the entry
+    /// that joined it (row RESTORED-COPIES-ENROL-EACH-OTHER): read through
+    /// [`AuthorityFold::restored_enrolments`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) restored_enrolments:
+        BTreeMap<AuthorityEntryHash, super::restored_join::RestoredEnrolmentStanding>,
     /// The owner choices that wait for the owner's proof and still ask, by
     /// entry: read through [`AuthorityFold::waiting_owner_choices`].
     pub(super) waiting_owner_choices: BTreeSet<AuthorityEntryHash>,
@@ -234,6 +252,41 @@ pub fn actor_binding_is_active(
     })
 }
 
+/// [`actor_binding_is_active`] for a door that lets the bound actor act: the
+/// Active binding AND a live row behind it whose kind admits the class
+/// (`human`: a PERSON; `agent`: a PERSON or an AGENT_DEF; `system`: a
+/// MACHINE; `provenance::validate_actor_class`). A soft-deleted actor keeps
+/// its row's header (ARCH-0038) and its binding, so the fold alone would
+/// still let it act; a deleted actor's binding authorizes nothing, as H149
+/// rules for the unrooted owner and for host acts ("A deleted owner is not
+/// brought back").
+///
+/// # Errors
+///
+/// The row or deletion-state read's: it fails closed, never live.
+pub(crate) fn actor_binding_is_live_in(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    actor_ref: &EntityId,
+    actor_class: &str,
+) -> crate::Result<bool> {
+    if !actor_binding_is_active(fold, actor_ref, actor_class) {
+        return Ok(false);
+    }
+    let class = match actor_class {
+        "human" => crate::edge::EdgeActorClass::Human,
+        "agent" => crate::edge::EdgeActorClass::Agent,
+        "system" => crate::edge::EdgeActorClass::System,
+        _ => return Ok(false),
+    };
+    Ok(crate::vault::live_entity_row_in_txn(store, txn, actor_ref)?
+        .live_type()
+        .is_some_and(|entity_type| {
+            crate::provenance::validate_actor_class(entity_type, class).is_ok()
+        }))
+}
+
 impl AuthorityFold {
     /// The entries this install holds back (FIX 1104): each machine revision
     /// that landed restriction only, and each world edit, grant travel choice
@@ -308,55 +361,67 @@ impl AuthorityFold {
 pub(super) struct FoldState {
     pub(super) slips: SlipAuthorityState,
     pub(super) vault_id: AuthorityVaultId,
-    pub(super) roster: BTreeMap<AuthorityKey, FoldedDevice>,
+    pub(super) roster: PersistentMap<AuthorityKey, FoldedDevice>,
     pub(super) genesis_recovery_dismissed: bool,
     pub(super) recovery_redundancy_established: bool,
-    pub(super) federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
-    pub(super) federation_confirms: BTreeMap<AuthorityEntryHash, AuthorityConfirmAction>,
-    pub(super) critical_write_confirms: BTreeMap<[u8; 32], CriticalWriteConfirmState>,
-    pub(super) consumed_critical_write_confirm_nonces: BTreeSet<[u8; 16]>,
+    pub(super) federation_pacts: PersistentMap<[u8; 32], FederationPactState>,
+    pub(super) federation_confirms: PersistentMap<AuthorityEntryHash, AuthorityConfirmAction>,
+    pub(super) critical_write_confirms: PersistentMap<[u8; 32], CriticalWriteConfirmState>,
+    pub(super) consumed_critical_write_confirm_nonces: PersistentSet<[u8; 16]>,
     /// Every confirmation id ever observed for each consumed nonce.
     ///
     /// This is kept apart from `critical_write_confirms`, whose deterministic
     /// winner selection can discard a sibling needed to poison nonce reuse.
-    pub(super) critical_write_confirm_nonce_provenance: BTreeMap<[u8; 16], BTreeSet<[u8; 32]>>,
-    pub(super) conflicted_critical_write_confirms: BTreeSet<[u8; 32]>,
-    pub(super) federation_grant_bindings: BTreeMap<EntityId, BTreeSet<[u8; 32]>>,
+    pub(super) critical_write_confirm_nonce_provenance:
+        PersistentMap<[u8; 16], PersistentSet<[u8; 32]>>,
+    pub(super) conflicted_critical_write_confirms: PersistentSet<[u8; 32]>,
+    pub(super) federation_grant_bindings: PersistentMap<EntityId, PersistentSet<[u8; 32]>>,
     /// Live binding content per authority key (`RevokeActor` never edits this).
     ///
     /// Kept SEPARATE from the revocation watermarks so a `RevokeActor` folding
     /// on a branch that never saw the bind needs no placeholder content.
-    pub(super) actor_bindings: BTreeMap<AuthorityKey, ActorBindingState>,
+    pub(super) actor_bindings: PersistentMap<AuthorityKey, ActorBindingState>,
     /// Inclusive revocation watermark per authority key, merged by max.
-    pub(super) actor_binding_revocations: BTreeMap<AuthorityKey, u64>,
-    pub(super) actor_revocation_hashes: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
-    pub(super) seqs: BTreeMap<AuthorityKey, u64>,
-    pub(super) machines: BTreeMap<EntityId, BTreeMap<MachineAdmitter, MachineChain>>,
+    pub(super) actor_binding_revocations: PersistentMap<AuthorityKey, u64>,
+    pub(super) actor_revocation_hashes:
+        PersistentMap<AuthorityKey, PersistentSet<AuthorityEntryHash>>,
+    pub(super) seqs: PersistentMap<AuthorityKey, u64>,
+    pub(super) machines: PersistentMap<EntityId, BTreeMap<MachineAdmitter, MachineChain>>,
     /// Every claim of each install key (the machine, its admitter, and an
     /// owner-held roster signer), merged by union.
-    pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<KeyClaim>>,
+    pub(super) machine_keys: PersistentMap<[u8; 32], PersistentSet<KeyClaim>>,
     /// Each machine's held answers by entry (row CARRIER-OWNER-PROOF): the
     /// carried answers that needed an owner key's proof and carried none.
     /// They stand for nothing (no head, no removal, no key claim). Merged by
     /// union; a held answer the owner answered on either side stays answered.
     pub(super) held_machine_answers:
-        BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, super::owner_proof::HeldAnswer>>,
+        PersistentMap<EntityId, PersistentMap<AuthorityEntryHash, super::owner_proof::HeldAnswer>>,
+    /// Each act-free enrolment of a machine born of a restore, by entry (row
+    /// RESTORED-COPIES-ENROL-EACH-OTHER): the chain and key claims it would
+    /// stand, held until an entry signed by a joined machine with it among
+    /// its ancestors joins it ([`super::restored_join`]). Merged by union; one
+    /// either side joined is joined.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) restored_enrolments:
+        BTreeMap<AuthorityEntryHash, super::restored_join::RestoredEnrolment>,
     /// Each valid root's anchor key, mapped to every root id it signed,
     /// merged by union. No root record is fold state.
-    pub(super) root_anchors: BTreeMap<[u8; 32], BTreeSet<RecoveryRootId>>,
+    pub(super) root_anchors: PersistentMap<[u8; 32], PersistentSet<RecoveryRootId>>,
     /// The entries that folded through an owner anchor's branch (its roots
     /// and its marks), merged by union. They rest on no roster key, even when
     /// a roster also names the anchor's public key.
-    pub(super) anchor_entries: BTreeSet<AuthorityEntryHash>,
-    /// Roster keys marked as the host's, merged by union: each key a host
-    /// enrolled as its own root, and each key marked for the cloud (role or
-    /// tier). Custody also passes along `key_admitters`.
-    pub(super) host_custody_keys: BTreeSet<AuthorityKey>,
-    pub(super) worlds: BTreeMap<EntityId, WorldFrontier>,
-    pub(super) refused_world_edits: BTreeSet<AuthorityEntryHash>,
+    pub(super) anchor_entries: PersistentSet<AuthorityEntryHash>,
+    /// Roster keys marked as the host's, merged by union: each key stamped
+    /// for the cloud (`ROLE_CLOUD` or `CloudCustodial`), as every Hosted root
+    /// is. The host-root attestation alone marks none: a self-host root
+    /// carries it too (HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A). Custody also
+    /// passes along `key_admitters`.
+    pub(super) host_custody_keys: PersistentSet<AuthorityKey>,
+    pub(super) worlds: PersistentMap<EntityId, WorldFrontier>,
+    pub(super) refused_world_edits: PersistentSet<AuthorityEntryHash>,
     /// Each grant's signed travel choices, merged as the worlds' edits are.
-    pub(super) grant_travel: BTreeMap<EntityId, super::grant_travel::GrantFrontier>,
-    pub(super) refused_grant_travel: BTreeSet<AuthorityEntryHash>,
+    pub(super) grant_travel: PersistentMap<EntityId, super::grant_travel::GrantFrontier>,
+    pub(super) refused_grant_travel: PersistentSet<AuthorityEntryHash>,
     /// The vault's checkpoint policy choices, merged as the worlds' edits
     /// are (mesh PR2c).
     pub(super) checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState,
@@ -395,14 +460,14 @@ pub(super) struct FoldState {
     /// Well-signed export acts without effect, merged by union: their
     /// carrier was not admitted, or their owner not live, at their parents
     /// (FIX 4624).
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub(super) refused_export_acts: BTreeSet<AuthorityEntryHash>,
+    #[serde(default, skip_serializing_if = "PersistentSet::is_empty")]
+    pub(super) refused_export_acts: PersistentSet<AuthorityEntryHash>,
     /// Each agent-carried setting or export act the fold admitted, with its
     /// agent, Grant, kind and advisory time, merged by union: the fold holds
     /// no Grant row, so a view judges each one's Grant (contract §4).
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default, skip_serializing_if = "PersistentMap::is_empty")]
     pub(super) agent_carried_acts:
-        BTreeMap<AuthorityEntryHash, super::carried_act::AgentCarriedAct>,
+        PersistentMap<AuthorityEntryHash, super::carried_act::AgentCarriedAct>,
     /// Each machine's home candidacies, the newest replacing the older
     /// (FIX 4898).
     pub(super) home_candidacy: super::home_candidacy::HomeCandidacyState,
@@ -417,27 +482,51 @@ pub(super) struct FoldState {
     pub(super) owner_work: super::owner_work::OwnerWorkState,
     /// Each world key's counted records, merged by union.
     pub(super) world_keys:
-        BTreeMap<WorldKeyId, std::sync::Arc<super::world_key_fold::WorldKeyState>>,
+        PersistentMap<WorldKeyId, std::sync::Arc<super::world_key_fold::WorldKeyState>>,
     /// Well-signed key records that count for nothing here, merged by union.
-    pub(super) refused_world_keys: BTreeSet<AuthorityEntryHash>,
+    pub(super) refused_world_keys: PersistentSet<AuthorityEntryHash>,
     /// Each roster key's admitters, merged by union: the keys that enrolled,
     /// rotated to or re-rooted to it, on any branch. A key is in the host's
     /// custody when it, or any key up this graph, is marked as the host's,
     /// whatever labels it carries and whichever branch carried the mark.
-    pub(super) key_admitters: BTreeMap<AuthorityKey, BTreeSet<AuthorityKey>>,
+    pub(super) key_admitters: PersistentMap<AuthorityKey, PersistentSet<AuthorityKey>>,
     /// The fold judges a hosted vault (`FoldContext::hosted`), fixed at genesis.
     pub(super) hosted: bool,
     /// Every row an accepted bind or rebind named, merged by union: the
     /// actor merge keeps one winner, and a row bound on a losing branch is
     /// still no physical machine.
-    pub(super) actor_rows: BTreeSet<EntityId>,
+    pub(super) actor_rows: PersistentSet<EntityId>,
     /// Each valid residence directive's id and named machine, by its row,
     /// merged by union: a residence result past its directive's row reads
     /// it here (FIX 5412).
-    pub(super) residence_directives: BTreeMap<AuthorityEntryHash, (EntityId, EntityId)>,
+    pub(super) residence_directives: PersistentMap<AuthorityEntryHash, (EntityId, EntityId)>,
+    /// Each enrolled passkey's assertion contexts (row WEB-PASSKEY-OWNER-KEY;
+    /// Sol xhigh F2): the RP id hash and origin of its enrollment's own
+    /// assertion, merged by union. A passkey-form signature by the key counts
+    /// only in one of them. An image carries it only once a passkey enrolled.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) passkey_contexts: BTreeMap<AuthorityKey, BTreeSet<WebAuthnContext>>,
+    /// Each key whose enrollment a passkey vouched for, merged by union
+    /// (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B): until a non-passkey,
+    /// owner-held key vouches for it too, it neither re-roots, nor revokes
+    /// another owner key, nor vouches for a further key.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) passkey_vouched_keys: BTreeSet<AuthorityKey>,
+    /// Each passkey-vouched key such a second vouch confirmed, merged by
+    /// union.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) passkey_vouch_confirmations: BTreeSet<AuthorityKey>,
 }
 
 impl FoldState {
+    /// Whether this state's roster holds `key` as a live owner device:
+    /// [`roster_has_live_owner`] read in place on the persistent roster.
+    pub(super) fn has_live_owner(&self, key: &AuthorityKey) -> bool {
+        self.roster
+            .get(key)
+            .is_some_and(folded_device_is_live_owner)
+    }
+
     /// A binding is live iff it out-epochs the revocation watermark and no
     /// divergent same-epoch merge poisoned it. Liveness is DERIVED, never
     /// stored, so revoke and bind can arrive in any order.
@@ -453,9 +542,23 @@ impl FoldState {
             && self
                 .actor_revocation_hashes
                 .get(key)
-                .is_none_or(|revocations| revocations.is_subset(&binding.observed_revocations)))
+                .is_none_or(|revocations| {
+                    revocations
+                        .iter()
+                        .all(|hash| binding.observed_revocations.contains(hash))
+                }))
         .then_some(binding)
     }
+}
+
+/// Each key's persistent set as a std set: the seam to the std-typed
+/// checkpoint image and public fold, copied once per fold, never per row.
+pub(super) fn to_btree_set_map<K: Ord + Clone, T: Ord + Clone>(
+    map: &PersistentMap<K, PersistentSet<T>>,
+) -> BTreeMap<K, BTreeSet<T>> {
+    map.iter()
+        .map(|(key, set)| (key.clone(), set.to_btree_set()))
+        .collect()
 }
 
 /// Projects fold-internal binding state onto the public tuple.
@@ -531,12 +634,13 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .conflicted_critical_write_confirms
         .extend(right.conflicted_critical_write_confirms.iter().copied());
+    // Each write below stores only a changed value (`modify`,
+    // `modify_or_default`, `insert`, `extend`), so a merge row copies only
+    // the entries its right parent changes.
     for (nonce, confirm_ids) in &right.critical_write_confirm_nonce_provenance {
         merged
             .critical_write_confirm_nonce_provenance
-            .entry(*nonce)
-            .or_default()
-            .extend(confirm_ids.iter().copied());
+            .modify_or_default(*nonce, |held| held.extend(confirm_ids.iter().copied()));
     }
     // Detect reuse from append-only provenance, not from the lossy winner map.
     // A same-id sibling may have been evicted before a later nonce contender is
@@ -568,79 +672,75 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
         .extend(right.federation_confirms.clone());
     let local = merged.vault_id;
     for (pact_id, right_pact) in &right.federation_pacts {
-        match merged.federation_pacts.get_mut(pact_id) {
-            Some(left_pact) => {
-                *left_pact = merge_pact_states(&local, left_pact, right_pact);
-            }
-            None => {
-                merged.federation_pacts.insert(*pact_id, right_pact.clone());
-            }
+        let held = merged.federation_pacts.modify(pact_id, |left_pact| {
+            *left_pact = merge_pact_states(&local, left_pact, right_pact);
+        });
+        if !held {
+            merged.federation_pacts.insert(*pact_id, right_pact.clone());
         }
     }
     for (grant_ref, pact_ids) in &right.federation_grant_bindings {
         merged
             .federation_grant_bindings
-            .entry(*grant_ref)
-            .or_default()
-            .extend(pact_ids.iter().copied());
+            .modify_or_default(*grant_ref, |held| held.extend(pact_ids.iter().copied()));
     }
     for (key, device) in &right.roster {
-        match merged.roster.get_mut(key) {
-            Some(existing) => {
-                existing.revoked |= device.revoked;
-                existing.roles &= device.roles;
-                existing.tier = most_restrictive_device_tier(existing.tier, device.tier);
-            }
-            None => {
-                merged.roster.insert(key.clone(), device.clone());
-            }
+        let held = merged.roster.modify(key, |existing| {
+            existing.revoked |= device.revoked;
+            existing.roles &= device.roles;
+            existing.tier = most_restrictive_device_tier(existing.tier, device.tier);
+        });
+        if !held {
+            merged.roster.insert(key.clone(), device.clone());
         }
     }
     for (key, epoch) in &right.actor_binding_revocations {
-        merged
+        let held = merged
             .actor_binding_revocations
-            .entry(key.clone())
-            .and_modify(|current| *current = (*current).max(*epoch))
-            .or_insert(*epoch);
+            .modify(key, |current| *current = (*current).max(*epoch));
+        if !held {
+            merged.actor_binding_revocations.insert(key.clone(), *epoch);
+        }
     }
     for (key, hashes) in &right.actor_revocation_hashes {
         merged
             .actor_revocation_hashes
-            .entry(key.clone())
-            .or_default()
-            .extend(hashes.iter().copied());
+            .modify_or_default(key.clone(), |held| held.extend(hashes.iter().copied()));
     }
     for (key, binding) in &right.actor_bindings {
-        match merged.actor_bindings.get_mut(key) {
-            Some(existing) => *existing = merge_actor_bindings(existing, binding),
-            None => {
-                merged.actor_bindings.insert(key.clone(), binding.clone());
-            }
+        let held = merged.actor_bindings.modify(key, |existing| {
+            *existing = merge_actor_bindings(existing, binding)
+        });
+        if !held {
+            merged.actor_bindings.insert(key.clone(), binding.clone());
         }
     }
     for (key, seq) in &right.seqs {
-        merged
+        let held = merged
             .seqs
-            .entry(key.clone())
-            .and_modify(|current| *current = (*current).max(*seq))
-            .or_insert(*seq);
+            .modify(key, |current| *current = (*current).max(*seq));
+        if !held {
+            merged.seqs.insert(key.clone(), *seq);
+        }
     }
     merge_machine_maps(&mut merged.machines, &mut merged.machine_keys, right);
+    super::restored_join::merge(&mut merged.restored_enrolments, &right.restored_enrolments);
     for (machine, held) in &right.held_machine_answers {
-        let merged_held = merged.held_machine_answers.entry(*machine).or_default();
-        for (hash, answer) in held {
-            merged_held
-                .entry(*hash)
-                .and_modify(|kept| kept.answered |= answer.answered)
-                .or_insert_with(|| answer.clone());
-        }
+        merged
+            .held_machine_answers
+            .modify_or_default(*machine, |merged_held| {
+                for (hash, answer) in held {
+                    merged_held
+                        .entry(*hash)
+                        .and_modify(|kept| kept.answered |= answer.answered)
+                        .or_insert_with(|| answer.clone());
+                }
+            });
     }
     for (anchor, roots) in &right.root_anchors {
         merged
             .root_anchors
-            .entry(*anchor)
-            .or_default()
-            .extend(roots.iter().copied());
+            .modify_or_default(*anchor, |held| held.extend(roots.iter().copied()));
     }
     merged
         .anchor_entries
@@ -697,9 +797,7 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     for (key, admitters) in &right.key_admitters {
         merged
             .key_admitters
-            .entry(key.clone())
-            .or_default()
-            .extend(admitters.iter().cloned());
+            .modify_or_default(key.clone(), |held| held.extend(admitters.iter().cloned()));
     }
     merged.actor_rows.extend(right.actor_rows.iter().copied());
     merged.residence_directives.extend(
@@ -708,44 +806,20 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .iter()
             .map(|(row, directive)| (*row, *directive)),
     );
-    merged
-}
-
-/// Higher epoch wins; conflict poison is per-epoch, carried by the winner.
-///
-/// Equal epoch with divergent content is the dangerous case: two branches each
-/// believe a different actor holds this key. Keeping the byte-wise smaller
-/// tuple makes the merge deterministic in every arrival order, and
-/// `conflicted` makes it never Active — a fork over identity fails closed
-/// rather than silently picking a winner.
-///
-/// Poison deliberately does NOT leak across epochs: a strictly higher epoch
-/// supersedes the conflicted state outright. It has to, or one historical
-/// divergence would brick the key forever with no way to rebind. The
-/// fail-closed property survives because two branches that each advance past
-/// a conflict must themselves land on the same epoch to be concurrent, and
-/// that tie re-poisons at the new epoch.
-fn merge_actor_bindings(left: &ActorBindingState, right: &ActorBindingState) -> ActorBindingState {
-    match left.epoch.cmp(&right.epoch) {
-        Ordering::Greater => left.clone(),
-        Ordering::Less => right.clone(),
-        Ordering::Equal => {
-            let left_tuple = (left.actor_ref, left.actor_class.as_str());
-            let right_tuple = (right.actor_ref, right.actor_class.as_str());
-            let mut winner = if left_tuple <= right_tuple {
-                left.clone()
-            } else {
-                right.clone()
-            };
-            winner.observed_revocations = left
-                .observed_revocations
-                .intersection(&right.observed_revocations)
-                .copied()
-                .collect();
-            winner.conflicted |= left_tuple != right_tuple || left.conflicted || right.conflicted;
-            winner
-        }
+    for (key, contexts) in &right.passkey_contexts {
+        merged
+            .passkey_contexts
+            .entry(key.clone())
+            .or_default()
+            .extend(contexts.iter().cloned());
     }
+    merged
+        .passkey_vouched_keys
+        .extend(right.passkey_vouched_keys.iter().cloned());
+    merged
+        .passkey_vouch_confirmations
+        .extend(right.passkey_vouch_confirmations.iter().cloned());
+    merged
 }
 
 pub(super) fn most_restrictive_device_tier(

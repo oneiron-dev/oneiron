@@ -40,10 +40,11 @@ use serde::de::DeserializeOwned;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::super::{
-    REASON_DETECTED, SecretScanMode, off_record_fresh_key_refusal, scan_write_tree,
-    secret_scan_error, secret_scan_mode_in_txn,
+    FieldRule, REASON_DETECTED, SecretScanMode, off_record_fresh_key_refusal,
+    scan_write_tree_with_rule, secret_scan_error, secret_scan_mode_in_txn,
 };
 use super::admit::Lifted;
+use super::held_template::{MapOrder, held_row_meets};
 pub(crate) use super::text::TextReplacements;
 use super::wipe::{PlanParts, PlanTree, replace_wiped, wipe_value};
 use super::{HANDLE_OPEN, Masker, STAND_IN, credential_member};
@@ -71,16 +72,17 @@ pub(crate) enum SidePart {
 
 impl SidePart {
     /// The door's scan of this part, a container's members included (FIX
-    /// 2312), with this record's owner-kept values screened first. A tree's
-    /// encoded copy and its screened copy are wiped once read (FIX 1101).
-    fn scan(&self, kept: &KeptValues, record: &EntityId) -> Result<()> {
+    /// 2312), with this record's owner-kept values screened first, its own
+    /// members read by the field rule `rule`. A tree's encoded copy and its
+    /// screened copy are wiped once read (FIX 1101).
+    fn scan(&self, kept: &KeptValues, record: &EntityId, rule: FieldRule) -> Result<()> {
         let scanned: Cow<'_, [u8]> = match self {
             Self::Body(bytes) => Cow::Borrowed(bytes.as_slice()),
             Self::Text(text) => Cow::Borrowed(text.as_bytes()),
             Self::Value(value) => Cow::Owned(encoded(value)?),
         };
         let mut screened = kept.screened(record, &scanned);
-        let scan = scan_write_tree(screened.as_deref().unwrap_or(scanned.as_ref()));
+        let scan = scan_write_tree_with_rule(screened.as_deref().unwrap_or(scanned.as_ref()), rule);
         if let Some(copy) = screened.as_mut() {
             copy.zeroize();
         }
@@ -177,7 +179,7 @@ fn mask_referenced(
             let under = beneath(refs, key);
             changed |= masker.mask_value(key)?;
             // A value under a credential name is read whole, path or none.
-            if under.is_empty() || credential_member(key, member) {
+            if under.is_empty() || credential_member(key, member, masker.field_rule) {
                 if nested {
                     changed |= mask_nested(masker, member)?;
                 }
@@ -419,13 +421,15 @@ impl<'a> Scope<'a> {
 
 /// How one admission runs: the fields the row keeps structural references
 /// in (FIX 6634), whether it keeps where each handle went in each text it
-/// masks (FIX 6144), and the known values its caller already read in this
-/// writer, so they are not read again (FIX 2722).
+/// masks (FIX 6144), the known values its caller already read in this
+/// writer, so they are not read again (FIX 2722), and which values under a
+/// credential name its field rule reads whole, in the plan and the scans.
 #[derive(Default)]
 struct Pass {
     refs: &'static [RefPath],
     tracked: bool,
     known: Option<Arc<KnownValues>>,
+    field_rule: FieldRule,
 }
 
 /// The wall's one admission for a record's own parts, which every part's
@@ -519,7 +523,7 @@ fn admitted(
     };
     let mut refusal = None;
     for (part, (record, _)) in parts.iter().zip(origins) {
-        if let Err(error) = part.scan(&kept, record) {
+        if let Err(error) = part.scan(&kept, record, pass.field_rule) {
             refusal = Some(error);
             break;
         }
@@ -539,6 +543,7 @@ fn admitted(
     let mut plan = Masker {
         handles: seed.0.clone(),
         mints: true,
+        field_rule: pass.field_rule,
         known: known.clone(),
         kept: kept.clone(),
         ..Masker::default()
@@ -555,7 +560,7 @@ fn admitted(
     }
     // A hit no span places is still in the copy, and refuses as before.
     for (part, (record, _)) in planned.iter().zip(origins) {
-        part.scan(&kept, record)?;
+        part.scan(&kept, record, pass.field_rule)?;
     }
     if !accepts(&planned[..]) {
         return Err(refusal.unwrap_or_else(|| secret_scan_error(REASON_DETECTED)));
@@ -584,6 +589,7 @@ fn admitted(
     let mut minted = Masker {
         handles: seed.0.clone(),
         minted: true,
+        field_rule: pass.field_rule,
         known,
         kept,
         traced: pass.tracked.then(TextReplacements::default),
@@ -653,9 +659,24 @@ pub(crate) fn admit_typed<T: Serialize + DeserializeOwned>(
     at: (&str, &[u8]),
     value: &mut T,
 ) -> Result<bool> {
+    admit_typed_with_rule(dbs, wtxn, at, value, FieldRule::AnyShape)
+}
+
+/// [`admit_typed`], its plan and its scans read by the field rule `rule`.
+pub(crate) fn admit_typed_with_rule<T: Serialize + DeserializeOwned>(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    at: (&str, &[u8]),
+    value: &mut T,
+    rule: FieldRule,
+) -> Result<bool> {
     let mut parts = [SidePart::Value(named_tree(&*value)?)];
     let reads_back = |parts: &[SidePart]| matches!(parts, [SidePart::Value(tree)] if from_named_tree::<T>(tree).is_some());
-    if !admit_side_parts(dbs, wtxn, at, &mut parts, reads_back)? {
+    let pass = Pass {
+        field_rule: rule,
+        ..Pass::default()
+    };
+    if admit_read_parts(dbs, wtxn, at, &mut parts, reads_back, pass)?.is_none() {
         return Ok(false);
     }
     *value = match &parts {
@@ -669,45 +690,100 @@ pub(crate) fn admit_typed<T: Serialize + DeserializeOwned>(
 }
 
 /// Whether `held`, a value the wall may have masked, is what admitting `raw`
-/// stored: a replay that compares a held row with the value offered again.
-/// Each handle on either side reads as the plan's one stand-in, so a secret
-/// the wall lifted matches the same secret offered again. Nothing is minted.
-pub(crate) fn admitted_from(held: &Value, raw: &Value) -> Result<bool> {
+/// stored: a replay that compares a held row with the value offered again
+/// in a scope that decides with custody (FIX REPLAY-COMPARE-KNOWN-MATCHER).
+/// `known` gives the values custody holds now, and custody alone decides:
+/// the held row is read as a template ([`held_row_meets`], FIX
+/// RECEIPT-RECORDS-CALL-HELD-INPUT). Each handle it holds that names a
+/// record custody knows meets the same handle offered again, or one value
+/// of that record at any generation, whose length lets the row's text after
+/// it match; every other byte of the row meets only itself. So two values
+/// custody holds apart stay apart, shaped or not (FIX
+/// REPLAY-COMPARE-KNOWN-OTHER-CALLERS); a longer value custody took since
+/// never hides the one a handle names; a value the row holds as written,
+/// admitted before custody held it, meets its call beside the handle of
+/// another value, and never reads as a handle, also after a rotation into
+/// it; and a handle no record custody knows names (literal text, or an
+/// erased record's) meets only itself. A custody that knows no value holds
+/// no record a handle names, so the two meet only as written (blind review
+/// round 2 of #9503): two handle texts are never one stand-in there. A
+/// compare with no custody read in reach takes [`admitted_from_plan`].
+/// Nothing is minted.
+pub(crate) fn admitted_from_known(
+    held: &Value,
+    raw: &Value,
+    known: impl FnOnce() -> Result<Option<Arc<KnownValues>>>,
+) -> Result<bool> {
     if held == raw {
         return Ok(true);
     }
-    // The plan's copy is wiped once compared (FIX 1101).
-    let mut planned = PlanTree(raw.clone());
-    Masker {
-        mints: true,
-        at: Some((origin("replay", &[])?, "replay".to_owned())),
-        ..Masker::default()
+    match known()? {
+        Some(known) => held_row_meets(held, raw, &known, MapOrder::Written),
+        None => Ok(false),
     }
-    .mask_value(&mut planned.0)?;
-    let mut held = held.clone();
-    stand_in_handles(&mut held);
-    stand_in_handles(&mut planned.0);
-    Ok(held == planned.0)
 }
 
-/// `value` in the one form [`admitted_from`] compares a held row and a raw
-/// offer in (FIX 6534): each secret the plan places, and each handle, as
-/// the plan's one stand-in. A held row and the raw value it was admitted
-/// from read the same here, so a digest of either is one identity. Nothing
-/// is minted, and the plan's copy is wiped.
+/// Whether `held` is what admitting `raw` stored, in a compare with no
+/// custody read in reach (a record read in memory): each handle on either
+/// side, and each secret the plan places in `raw`, as the plan's one
+/// stand-in, so a secret the wall lifted meets the same secret offered
+/// again (FIX 6534). Nothing is minted.
 ///
 /// # Errors
 ///
 /// A value the plan cannot read.
-pub(crate) fn admission_form(value: &Value) -> Result<Value> {
+pub(crate) fn admitted_from_plan(held: &Value, raw: &Value) -> Result<bool> {
+    Ok(held == raw || held_form(held) == planned_form(raw, None)?.0)
+}
+
+/// `held`, a value the wall may have masked, in the form
+/// [`admitted_from_plan`] reads a held row in: each handle as the plan's one
+/// stand-in, and nothing else changed. A raw offer takes that form through
+/// [`admission_form`].
+fn held_form(held: &Value) -> Value {
+    let mut held = held.clone();
+    stand_in_handles(&mut held);
+    held
+}
+
+/// `value` as the replay plan places it: each secret the plan places, and
+/// each handle, as the plan's one stand-in, and with `known`, each value it
+/// holds too. Nothing is minted. The copy is wiped when it drops (FIX 1101).
+fn planned_form(value: &Value, known: Option<Arc<KnownValues>>) -> Result<PlanTree> {
+    let mut planned = masked_plan(value, known)?;
+    stand_in_handles(&mut planned.0);
+    Ok(planned)
+}
+
+/// `value` with each secret the plan places as the plan's one stand-in, and
+/// with `known`, each value it holds as its record's handle. Handles already
+/// in `value` are left as written.
+fn masked_plan(value: &Value, known: Option<Arc<KnownValues>>) -> Result<PlanTree> {
     let mut planned = PlanTree(value.clone());
     Masker {
         mints: true,
         at: Some((origin("replay", &[])?, "replay".to_owned())),
+        known,
         ..Masker::default()
     }
     .mask_value(&mut planned.0)?;
-    stand_in_handles(&mut planned.0);
+    Ok(planned)
+}
+
+/// `value` in the one form [`admitted_from_plan`] compares a held row and a raw
+/// offer in (FIX 6534): each secret the plan places, and each handle, as
+/// the plan's one stand-in. A held row and the raw value it was admitted
+/// from read the same here, so a digest of either is one identity. Nothing
+/// is minted, and the plan's copy is wiped. With `known`, the values
+/// custody holds now, each of them reads as the stand-in too: the form a
+/// raw offer takes against the identity a row erased while it held such a
+/// value's handle keeps (FIX REPLAY-COMPARE-KNOWN-MATCHER).
+///
+/// # Errors
+///
+/// A value the plan cannot read.
+pub(crate) fn admission_form(value: &Value, known: Option<Arc<KnownValues>>) -> Result<Value> {
+    let mut planned = planned_form(value, known)?;
     Ok(std::mem::replace(&mut planned.0, Value::Nil))
 }
 
@@ -776,7 +852,7 @@ fn stand_in_text(text: &str) -> String {
 }
 
 /// `sc` and digits: a custody handle.
-fn bare_handle(text: &str) -> bool {
+pub(super) fn bare_handle(text: &str) -> bool {
     text.strip_prefix("sc").is_some_and(|digits| {
         !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
     })

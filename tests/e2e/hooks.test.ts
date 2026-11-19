@@ -505,7 +505,8 @@ suite.test(test, "HOOKS-03", "Before-hook rewrite and durable ask should work", 
     facets: { kind: "some", values: [position.scope_facet_id] },
     audience: { kind: "some", values: [position.scope_project_id] },
     bands: { kind: "all" }, verbs: { kind: "some", values: ["write"] },
-    sensitivity: { kind: "all" },
+    // The top ceiling in its canonical form (`all` is written back as it).
+    sensitivity: { kind: "at_most", value: "restricted" },
   };
   const mintSupport = (purpose: string) => engine.client.call("vault.support_grants.mint", {
     holder: principal.principal_ref, holder_class: "agent", holder_key: publicKey,
@@ -1169,8 +1170,11 @@ suite.test(test, "HOOKS-05", "Hook sandbox and author scope should work", async 
       scope: {
         worlds: { kind: "all" }, facets: { kind: "all" },
         bands: { kind: "all" }, audience: { kind: "all" },
-        verbs: { kind: "some", values: ["read", "propose"] },
-        sensitivity: { kind: "all" },
+        // The scope's canonical form, as the policy read answers it: the verbs
+        // axis is a sorted set, and the top sensitivity ceiling is written
+        // `at_most` the highest band (`all` reads as it).
+        verbs: { kind: "some", values: ["propose", "read"] },
+        sensitivity: { kind: "at_most", value: "restricted" },
       },
       receipt_required: false,
     };

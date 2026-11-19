@@ -113,6 +113,7 @@ fn seeded_booking_vault() -> (tempfile::TempDir, Arc<Vault>, EntityId) {
             booking_window_secs: 30 * 86_400,
             daily_cap: None,
             weekly_cap: None,
+            deposit: None,
             routing: RoutingMode::Either,
             hosts: vec![HostAvailabilityConfig {
                 host_ref: host,
@@ -129,6 +130,7 @@ fn seeded_booking_vault() -> (tempfile::TempDir, Arc<Vault>, EntityId) {
             }],
             flex_with_ordinary: false,
             flex_windows: Vec::new(),
+            allowed_durations_min: Vec::new(),
         },
     };
     let mut body = ClaimBody::new(

@@ -18,6 +18,7 @@ use std::collections::BTreeSet;
 use std::sync::{Mutex, PoisonError};
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::custody::{instance_id, instance_of};
 use super::rows::{BODY_INSTANCES, BODY_KEYS, remembered_body_instances_in_txn};
@@ -265,7 +266,7 @@ pub(crate) fn erase_bodies_for_owner_in_txn(
         let digest = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, body_owner)?
             .and_then(|raw| {
                 raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                    .map(|body| *blake3::hash(body).as_bytes())
+                    .map(|body| *ContentHash::of(body).as_bytes())
             })
             .unwrap_or_default();
         ERASE_PENDING.put(store, wtxn, &instance, &digest)?;

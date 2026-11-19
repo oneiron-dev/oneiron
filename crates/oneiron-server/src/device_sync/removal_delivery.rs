@@ -159,6 +159,9 @@ impl DeviceSyncHost {
             stop,
             task: tokio::spawn(async {}),
             removal: Some(removal),
+            linked: false,
+            #[cfg(oneiron_test_support)]
+            dials_peers: false,
         }
     }
 }

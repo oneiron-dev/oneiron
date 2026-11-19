@@ -18,6 +18,7 @@ use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::llm::decision::questions::keep_artifact_unit_ask;
 use crate::llm::decision::{DecisionQuestion, EvidenceVersion};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_docedit::resource::ResourceRefusal;
 use oneiron_docedit::retained_opc::Limits;
 use oneiron_docedit::xlsx_body::{XlsxChange, XlsxValue, project_xlsx, read_xlsx_cells};
@@ -244,7 +245,7 @@ impl Vault {
         let source = self
             .read_blob_artifact_version(artifact_id, version)?
             .ok_or(Error::EntityNotFound)?;
-        if *blake3::hash(&source).as_bytes() != frontier {
+        if *ContentHash::of(&source).as_bytes() != frontier {
             return Err(Error::CorruptedIndex("answered workbook base hash"));
         }
         // Verify the source independently of the edit session, including any
@@ -343,7 +344,7 @@ impl Vault {
         if sheet_ask_checkpoint(&resources, work_until).is_err() {
             return Ok(run);
         }
-        let frontier = *blake3::hash(&bytes).as_bytes();
+        let frontier = *ContentHash::of(&bytes).as_bytes();
         let in_rows = |row: u32| {
             (rows.start.row..=rows.end.row).contains(&row)
                 && request.only_rows.is_none_or(|only| only.contains(&row))
