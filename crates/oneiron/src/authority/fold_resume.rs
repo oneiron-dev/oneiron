@@ -150,7 +150,11 @@ impl<'a> RowMeta<'a> {
 
 /// Whether a fold past the base reads `op`'s row whole: the approvals and
 /// revocations stale-roster expiry and renewal weigh (`stale_roster`; a
-/// root appointment revokes every old roster key, OWNER-ANCHOR-ROOT-RECOVERY),
+/// root appointment revokes every old roster key, OWNER-ANCHOR-ROOT-RECOVERY;
+/// an owner handover or a residence directive that forked its signer's
+/// sequence expires once a key it rests on is revoked, row
+/// SEQ-FLOOR-S-WITHHELD-COSIGN, and so does a federation lifecycle row, whose
+/// pact the expiry holds suspended while the row still shapes it),
 /// the world-key records whose envelopes a folded key carries
 /// (`world_key_fold::folded_world_keys`), and the owner work requests,
 /// results, cancels and import marks an executor, a receipt and a relay
@@ -165,6 +169,9 @@ pub(super) fn is_projected(op: &AuthorityOp) -> bool {
             | AuthorityOp::RebindActor { .. }
             | AuthorityOp::FederationConfirm(_)
             | AuthorityOp::CriticalWriteConfirm(_)
+            | AuthorityOp::OwnerHandover(_)
+            | AuthorityOp::ResidenceDirective(_)
+            | AuthorityOp::FederationLifecycle(_)
             | AuthorityOp::RevokeDevice { .. }
             | AuthorityOp::RotateKey { .. }
             | AuthorityOp::ReRoot { .. }
