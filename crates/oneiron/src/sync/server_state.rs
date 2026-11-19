@@ -396,10 +396,10 @@ mod tests {
 
     #[test]
     fn persist_imported_window_update_writes_contract_key_literals() {
-        // ARCH-0023b "sync_state key layout" literals:
+        // ARCH-0023b "sync_state key layout" literals, at the widths FIX 8883 set:
         //   u:w:2026-02:{seq:016x}  Loro update (pending window update)
-        //   m:u_seq:w:2026-02      u64 LE (8 bytes) monotonic counter
-        //   svf:w:2026-02          1 byte (1 = fresh, 0 = stale)
+        //   m:u_seq:w:2026-02       u64 LE (8 bytes) monotonic counter
+        //   svf:w:2026-02           1 byte (1 = fresh, 0 = stale)
         let (_dir, vault) = test_vault();
         let key = WindowKey::new("2026-02");
 
