@@ -87,9 +87,13 @@ fn not_due(report: &HousekeepingReport, sweep: HousekeepingSweep) -> bool {
 fn a_restart_in_the_middle_of_a_pass_resumes_the_unfinished_sweeps_and_reruns_none_early() {
     let dir = tempfile::tempdir().expect("tempdir");
     let clock = ManualClock::new(T0);
+    // Every sweep is first due at T0, and the runner takes rows due at one
+    // time in job-code order, so the crash at esign_seal_backstop comes after
+    // commitment_lapse, critical_confirm_expiry and esign_expiry finished and
+    // before the six later sweeps started.
     {
         let vault = open(dir.path(), &clock);
-        inject(HousekeepingSweep::VoicePrintRetention, Injected::Crash);
+        inject(HousekeepingSweep::EsignSealBackstop, Injected::Crash);
         let crashed = std::panic::catch_unwind(AssertUnwindSafe(|| {
             vault.housekeeping(HousekeepingBudget::unbounded())
         }));
@@ -100,9 +104,9 @@ fn a_restart_in_the_middle_of_a_pass_resumes_the_unfinished_sweeps_and_reruns_no
     let vault = open(dir.path(), &clock);
     let report = pass(&vault);
     for sweep in [
-        HousekeepingSweep::SecretLeaseExpiry,
+        HousekeepingSweep::CommitmentLapse,
         HousekeepingSweep::CriticalConfirmExpiry,
-        HousekeepingSweep::SymbolLeaseExpiry,
+        HousekeepingSweep::EsignExpiry,
     ] {
         assert!(
             not_due(&report, sweep),
@@ -110,12 +114,12 @@ fn a_restart_in_the_middle_of_a_pass_resumes_the_unfinished_sweeps_and_reruns_no
         );
     }
     for sweep in [
-        HousekeepingSweep::EsignExpiry,
-        HousekeepingSweep::EsignSealBackstop,
-        HousekeepingSweep::CommitmentLapse,
         HousekeepingSweep::GateDecisionRetention,
         HousekeepingSweep::HardEraseSweep,
         HousekeepingSweep::PprCacheEviction,
+        HousekeepingSweep::SecretLeaseExpiry,
+        HousekeepingSweep::SymbolLeaseExpiry,
+        HousekeepingSweep::VoicePrintRetention,
     ] {
         assert!(
             ran(&report, sweep),
@@ -125,14 +129,14 @@ fn a_restart_in_the_middle_of_a_pass_resumes_the_unfinished_sweeps_and_reruns_no
     // The interrupted run counts as a failure: retried after the first
     // backoff rather than first at every restart, and never dropped.
     assert_eq!(
-        outcome(&report, HousekeepingSweep::VoicePrintRetention),
+        outcome(&report, HousekeepingSweep::EsignSealBackstop),
         &SweepOutcome::NotDue { due_at: T0 + 60 }
     );
 
     clock.set(T0 + 60);
     let report = pass(&vault);
     assert!(
-        ran(&report, HousekeepingSweep::VoicePrintRetention),
+        ran(&report, HousekeepingSweep::EsignSealBackstop),
         "the interrupted sweep was skipped: {report:#?}"
     );
     assert!(
@@ -140,13 +144,14 @@ fn a_restart_in_the_middle_of_a_pass_resumes_the_unfinished_sweeps_and_reruns_no
         "{report:#?}"
     );
 
-    // Once it finished, it waits its whole cadence again.
+    // Once it finished, it is due at its next fifteen-minute occurrence: the
+    // retry served the T0 occurrence and left the cadence's grid where it was.
     clock.set(T0 + 61);
     let report = pass(&vault);
     assert_eq!(
-        outcome(&report, HousekeepingSweep::VoicePrintRetention),
+        outcome(&report, HousekeepingSweep::EsignSealBackstop),
         &SweepOutcome::NotDue {
-            due_at: T0 + 60 + 60 * 60
+            due_at: T0 + 15 * 60
         }
     );
 }
@@ -342,6 +347,7 @@ fn an_owners_erasure_run_cut_short_is_retried_as_the_owners() {
     };
     {
         let vault = Vault::open(dir.path(), config()).expect("open vault");
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         // A persisted window, and no obligation left: an erasure the owner's
         // own sweep has already discharged.
         let erased = EntityId::now();
@@ -370,6 +376,7 @@ fn an_owners_erasure_run_cut_short_is_retried_as_the_owners() {
 
     clock.set(T0 + 3_600);
     let vault = Vault::open(dir.path(), config()).expect("reopen vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let report = pass(&vault);
 
     assert!(
@@ -410,6 +417,7 @@ fn a_window_held_through_the_owners_erasure_run_is_compacted_while_held() {
     let mut config = crate::test_util::embedding_test_config();
     config.store_clock = clock.bundle();
     let vault = Arc::new(Vault::open(dir.path(), config).expect("open vault"));
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     // A persisted window, and no obligation left.
     let erased = EntityId::now();
     vault

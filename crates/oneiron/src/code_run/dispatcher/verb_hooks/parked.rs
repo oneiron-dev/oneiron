@@ -11,10 +11,10 @@
 //! answers that its reply was erased. It never asks again, never resumes
 //! the old ask and never runs its effect.
 
-use crate::code_run::RESPONSE_ERASED;
 use crate::code_run::payload::self_call_request_value;
 use crate::code_run::replay::CodeRunBridgeCall;
 use crate::code_run::types::{SelfCall, SelfDispatchOutcome, SelfEffect, SelfFailedResult};
+use crate::code_run::{CompareKnown, RESPONSE_ERASED};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::runtime_hooks::InvocationId;
@@ -84,8 +84,10 @@ impl HostSelfDispatcher<'_> {
         if site.is_none() {
             return Ok(None);
         }
+        let base_known = || self.base_known_values();
+        let known = CompareKnown::new(Some(&base_known));
         for parked in &*self.parked_hooks.borrow() {
-            if parked.meets(ParkedOffer::Call(call))? {
+            if parked.meets(ParkedOffer::Call(call), &known)? {
                 return Ok(Some(read(parked)));
             }
         }
@@ -113,13 +115,16 @@ impl ParkedHook {
     /// compare whole, less the bridge's own stamps. When an erase took
     /// the words of one side only (FIX 6534), that side's row meets the
     /// other's request as made under the row's own seq and start clock, by
-    /// the identity the row keeps. Two erased requests compare their erased
-    /// forms. A call of another effect is another call.
+    /// the identity the row keeps, each value base custody holds read through
+    /// `known` as the stand-in there (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS).
+    /// Two erased requests compare their erased forms. A call of another
+    /// effect is another call.
     ///
     /// # Errors
     ///
-    /// A request the side-row wall cannot read, or one that does not encode.
-    pub(super) fn meets(&self, offered: ParkedOffer<'_>) -> Result<bool> {
+    /// A request the side-row wall cannot read, one that does not encode,
+    /// or the read of base custody's values.
+    pub(super) fn meets(&self, offered: ParkedOffer<'_>, known: &CompareKnown<'_>) -> Result<bool> {
         let row = &self.row;
         if row.effect != offered.effect() {
             return Ok(false);
@@ -127,13 +132,13 @@ impl ParkedHook {
         match (row.request_erased(), offered) {
             (true, ParkedOffer::Call(call)) => {
                 let restamped = call.clone().with_bridge_stamp(row.seq, row.started_at_ms);
-                row.request_identity_is(&self_call_request_value(&restamped)?)
+                row.request_identity_is(&self_call_request_value(&restamped)?, known)
             }
             (true, ParkedOffer::Row(later)) if !later.request_erased() => {
-                row.request_identity_is(&stamped_as(&later.request, row))
+                row.request_identity_is(&stamped_as(&later.request, row), known)
             }
             (false, ParkedOffer::Row(later)) if later.request_erased() => {
-                later.request_identity_is(&stamped_as(&row.request, later))
+                later.request_identity_is(&stamped_as(&row.request, later), known)
             }
             _ => Ok(parked_call(row.effect, row.request.clone())
                 == parked_call(offered.effect(), offered.request()?)),

@@ -95,7 +95,7 @@ impl PollAdmission<'_> {
                 self.apply_imported_cancel(event_ref, event)?;
             }
             PassportDecision::SkipUnchanged { event_ref } => {
-                self.repeat_host_cancel_refund(event_ref, event)?;
+                self.repeat_imported_cancel(event_ref, event)?;
             }
             PassportDecision::MarkSourceAbsent { .. } => {}
             PassportDecision::UpdateExisting { event_ref } => {

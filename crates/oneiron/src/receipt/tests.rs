@@ -1570,6 +1570,8 @@ fn identity_topology_receipt_scan_finds_an_older_receipt_past_a_flood() -> Resul
     const FLOOD_EVENTS: usize = 9;
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), embedding_test_config())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
     for seed in [0x61_u8, 0x62, 0x63, 0x64] {
         vault.put_entity(
             &entity(seed),

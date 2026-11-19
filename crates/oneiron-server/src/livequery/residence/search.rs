@@ -8,6 +8,8 @@ use super::*;
 /// receipt to name (FIX 3550), and taken back if the caller stops verifying;
 /// `off_carrier` is set when that caller sits off the carrying device, so
 /// the reply's send judges its rows for an unknown destination (FIX 11991).
+/// That caller's reach is written to `reader` before the read, for the
+/// answer's release to judge again (SELECTOR-RELEASE-POINT = B).
 pub(super) fn search(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -16,6 +18,7 @@ pub(super) fn search(
     budgets: ResidenceOperationBudgets,
     attribution: &mut Option<ForwardedAttribution>,
     off_carrier: &mut bool,
+    reader: &mut Option<oneiron::sync::SelectorReaderReach>,
 ) -> Result<Answer, AppError> {
     let input: SearchRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
@@ -26,5 +29,14 @@ pub(super) fn search(
     {
         return Err(AppError::invalid_params());
     }
-    pages::search_pages(server, auth, peer, input, budgets, attribution, off_carrier)
+    pages::search_pages(
+        server,
+        auth,
+        peer,
+        input,
+        budgets,
+        attribution,
+        off_carrier,
+        reader,
+    )
 }

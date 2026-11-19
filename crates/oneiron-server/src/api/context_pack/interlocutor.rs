@@ -281,7 +281,9 @@ fn bound_room_owner(
     let fold = vault
         .authority_fold()
         .map_err(|error| core_engine_error("room owner binding failed", error))?;
-    let owner = oneiron::authority::actor_binding_is_active(&fold, &id, "human")
+    let owner = vault
+        .actor_binding_is_live(&fold, &id, "human")
+        .map_err(|error| core_engine_error("room owner binding failed", error))?
         || members.iter().zip(parties).any(|(member, entry)| {
             *member == id && matches!(entry.party, oneiron::disclosure::RoomParty::VaultOwner)
         });

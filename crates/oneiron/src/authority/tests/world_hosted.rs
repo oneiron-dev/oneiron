@@ -40,6 +40,11 @@ pub(super) fn hosted_host() -> Host {
     let owner = vault
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
         .unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("serving install profile");
     let vault_id = vault.authority_fold().unwrap().vault_id.unwrap();
     Host {
         _dir: dir,
@@ -65,6 +70,7 @@ pub(super) fn anchor_on(host: &Host, seed: &RecoveryRootSeed, request: &MachineE
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     });
     let entry = anchor_signed_entry(&fold, &seed.anchor(), mark, 2).unwrap();
     host.vault
@@ -105,12 +111,23 @@ fn a_hosted_vaults_kit_restores_and_the_hosts_material_opens_nothing() {
     let world = world_row(&host);
     let (root, seed, id, first_machine) = {
         let first = fresh_install_with(&host, hosted());
+        first
+            .vault
+            .enrol_device_owner_signing_key(
+                &ActAuthority::Owner(first.owner.clone(), ActSurface::ThisInstall),
+                &host.issuer,
+            )
+            .unwrap();
         let prepared = first.vault.prepare_owner_root(&first.owner).unwrap();
         let root = prepared.seed().public(&host.vault_id).unwrap().id;
         let seed = kit_seed(host.vault_id, prepared.seed());
         first
             .vault
             .activate_owner_root(&first.owner, prepared, &BTreeSet::new())
+            .unwrap();
+        first
+            .vault
+            .join_restored_install(&host.issuer, &first.owner, MachineRole::Unanswered)
             .unwrap();
         first
             .vault
@@ -216,12 +233,23 @@ fn a_dishonest_host_never_wins_the_root() {
         };
         let early = host_first.then(|| host_moves(&host));
         sync(&host.vault, &owner.vault);
+        owner
+            .vault
+            .enrol_device_owner_signing_key(
+                &ActAuthority::Owner(owner.owner.clone(), ActSurface::ThisInstall),
+                &host.issuer,
+            )
+            .unwrap();
         let prepared = owner.vault.prepare_owner_root(&owner.owner).unwrap();
         let ours = prepared.seed().public(&host.vault_id).unwrap().id;
         let seed = kit_seed(host.vault_id, prepared.seed());
         owner
             .vault
             .activate_owner_root(&owner.owner, prepared, &BTreeSet::new())
+            .unwrap();
+        owner
+            .vault
+            .join_restored_install(&host.issuer, &owner.owner, MachineRole::Unanswered)
             .unwrap();
         sync(&owner.vault, &host.vault);
         let theirs = early.unwrap_or_else(|| host_moves(&host));

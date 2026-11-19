@@ -26,6 +26,7 @@ fn owner_and_person() -> (
     AuthenticatedOwner,
 ) {
     let (dir, vault) = open_test_vault_with(embedding_test_config());
+    vault.prepare_install_signing().expect("install signing");
     let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let owner = vault
         .authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())

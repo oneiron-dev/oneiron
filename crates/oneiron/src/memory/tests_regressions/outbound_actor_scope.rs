@@ -151,6 +151,7 @@ fn put_calendar_claim(
         crate::claim::ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(vault, &mut body);
     body.world = world;
     vault
         .put_claim(&EntityId::now(), &body, test_time(1), 1)

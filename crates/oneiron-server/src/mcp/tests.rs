@@ -67,14 +67,17 @@ fn unexpected_actor_ceiling_lookup(_: &str, _: &str) -> bool {
 fn assert_closed_object_schemas(value: &Value, path: &str) {
     match value {
         Value::Object(map) => {
-            // A typed map (the ask's disclosure) keys on data, not fields;
-            // every value is still constrained by its item schema.
-            let typed_map = map.get("properties").is_none()
+            // A map keys on data, not fields, so the projection leaves it
+            // open (`close_object_schemas` closes struct-shaped objects
+            // only): a typed map (the ask's disclosure) constrains each value
+            // by its item schema, and a free-form map (an `ai.*` call's
+            // provider `params`) passes its values to the provider as sent.
+            let map_schema = map.get("properties").is_none()
                 && map
                     .get("additionalProperties")
-                    .is_some_and(Value::is_object);
+                    .is_some_and(|extra| matches!(extra, Value::Object(_) | Value::Bool(true)));
             if matches!(map.get("type"), Some(Value::String(kind)) if kind == "object")
-                && !typed_map
+                && !map_schema
             {
                 assert_eq!(
                     map.get("additionalProperties"),
@@ -1214,12 +1217,12 @@ fn raw_endpoint_decode_admits(
 /// fails under the old lossy path.
 #[test]
 fn raw_decode_boundary_preserves_advertised_integer_number_text() {
-    let expand = registered_surface(McpSurfaceMode::ToolFirst)
-        .resolve("board.expand")
-        .expect("board.expand is registered");
-    let mut expand_args = endpoint_envelope("read_board");
-    expand_args["arguments"] = json!({ "key": "TASKS", "frame_epoch": 0 });
-    expand_args["cache"] = json!({ "ttl_ms": 0 });
+    let describe = registered_surface(McpSurfaceMode::ToolFirst)
+        .resolve("describe")
+        .expect("describe is registered");
+    let mut describe_args = endpoint_envelope("read_board");
+    describe_args["arguments"] = json!({ "key": "TASKS", "frame_epoch": 0 });
+    describe_args["cache"] = json!({ "ttl_ms": 0 });
 
     // Both advertised `u64` positions, one nested a level deeper than the
     // other, judged at the same ceiling.
@@ -1250,7 +1253,7 @@ fn raw_decode_boundary_preserves_advertised_integer_number_text() {
             ("1e30", false),
         ] {
             assert_eq!(
-                raw_endpoint_decode_admits(expand, &expand_args, pointer, number),
+                raw_endpoint_decode_admits(describe, &describe_args, pointer, number),
                 admitted,
                 "{pointer} at {number}: the raw boundary and the advertised integer domain disagree",
             );
@@ -1262,8 +1265,8 @@ fn raw_decode_boundary_preserves_advertised_integer_number_text() {
         // That is the path every row above used to take.
         assert!(
             validate_mcp_endpoint_tool_args(
-                expand,
-                with_number(expand_args.clone(), pointer, "18446744073709551615.0",),
+                describe,
+                with_number(describe_args.clone(), pointer, "18446744073709551615.0",),
             )
             .is_err(),
             "{pointer}: a rounded `Value` cannot carry the caller's ceiling value",
@@ -1274,18 +1277,18 @@ fn raw_decode_boundary_preserves_advertised_integer_number_text() {
 /// Raw fractional epochs must not become rounded integer epochs at admission.
 #[test]
 fn raw_board_expand_refuses_high_precision_fractional_epochs() {
-    let expand = registered_surface(McpSurfaceMode::ToolFirst)
-        .resolve("board.expand")
-        .expect("board.expand is registered");
+    let describe = registered_surface(McpSurfaceMode::ToolFirst)
+        .resolve("describe")
+        .expect("describe is registered");
     let mut args = endpoint_envelope("read_board");
     args["arguments"] = json!({ "key": "TASKS", "frame_epoch": 0 });
 
     let integral = raw_args_with_number(&args, "/arguments/frame_epoch", "1.0");
     let admitted =
-        validate_mcp_endpoint_tool_args(expand, McpToolArguments::from_raw_json(integral))
+        validate_mcp_endpoint_tool_args(describe, McpToolArguments::from_raw_json(integral))
             .expect("an exact integral spelling is valid");
     let McpValidatedToolArgs::Verb(verb) = admitted else {
-        panic!("board.expand is a verb")
+        panic!("describe is a verb")
     };
     assert_eq!(verb.payload.arguments.frame_epoch, Some(1));
 
@@ -1293,9 +1296,9 @@ fn raw_board_expand_refuses_high_precision_fractional_epochs() {
         let raw = raw_args_with_number(&args, "/arguments/frame_epoch", token);
         assert!(
             matches!(
-                validate_mcp_endpoint_tool_args(expand, McpToolArguments::from_raw_json(raw)),
+                validate_mcp_endpoint_tool_args(describe, McpToolArguments::from_raw_json(raw)),
                 Err(McpToolValidationError::Decode {
-                    tool: "board.expand",
+                    tool: "describe",
                     ..
                 })
             ),
@@ -1309,9 +1312,9 @@ fn raw_board_expand_refuses_high_precision_fractional_epochs() {
 /// an admitted field; a live fractional epoch must still fail closed.
 #[test]
 fn raw_board_expand_integer_walk_ignores_shadowed_object_members() {
-    let expand = registered_surface(McpSurfaceMode::ToolFirst)
-        .resolve("board.expand")
-        .expect("board.expand is registered");
+    let describe = registered_surface(McpSurfaceMode::ToolFirst)
+        .resolve("describe")
+        .expect("describe is registered");
     let mut args = endpoint_envelope("read_board");
     args["arguments"] = json!({ "key": "TASKS", "frame_epoch": 1 });
     let base = args.to_string();
@@ -1333,21 +1336,22 @@ fn raw_board_expand_integer_walk_ignores_shadowed_object_members() {
     for raw in [shadowed_field, shadowed_parent] {
         assert_ne!(raw, base, "a duplicate was inserted");
         let parsed: Value = serde_json::from_str(&raw).expect("valid JSON");
-        let expected = validate_mcp_endpoint_tool_args(expand, parsed)
+        let expected = validate_mcp_endpoint_tool_args(describe, parsed)
             .expect("parsed arguments select the final integer epoch");
-        let actual = validate_mcp_endpoint_tool_args(expand, McpToolArguments::from_raw_json(raw))
-            .expect("raw arguments must select the same epoch");
+        let actual =
+            validate_mcp_endpoint_tool_args(describe, McpToolArguments::from_raw_json(raw))
+                .expect("raw arguments must select the same epoch");
         assert_eq!(actual, expected);
         let McpValidatedToolArgs::Verb(verb) = actual else {
-            panic!("board.expand is a verb")
+            panic!("describe is a verb")
         };
         assert_eq!(verb.payload.arguments.frame_epoch, Some(1));
     }
     assert_ne!(live_fraction, base, "a live fractional epoch was inserted");
     assert!(matches!(
-        validate_mcp_endpoint_tool_args(expand, McpToolArguments::from_raw_json(live_fraction)),
+        validate_mcp_endpoint_tool_args(describe, McpToolArguments::from_raw_json(live_fraction)),
         Err(McpToolValidationError::Decode {
-            tool: "board.expand",
+            tool: "describe",
             ..
         })
     ));
@@ -1416,18 +1420,17 @@ fn page_argument_digest_excludes_page_and_sorts_nested_objects() {
     );
 }
 
-/// ONE-1704 repair: `tasks.create` refuses a label the engine's board row
-/// ceiling could not render, at the WRITER, before anything is persisted.
-///
-/// The generated schema and the runtime admission previously accepted any
-/// nonblank label, so a label just over `MAX_BOARD_ROW_BYTES` could be stored
-/// and then make the rendered intent row — and with it the whole TASKS section
-/// — unrenderable for every later reader of that board.
+/// FIX 52 (#2057): `tasks.create` writes a label of any length whole. The
+/// engine's board row ceiling bounds only the label's PREVIEW in the rendered
+/// TASKS intent row (`context_board::tasks::render`), cut at a character
+/// boundary and ended with an ellipsis, so a long label never makes the TASKS
+/// section unrenderable. Neither the advertised schema nor the writer's
+/// admission caps the label; a blank one keeps its settled refusal.
 #[test]
-fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
+fn tasks_create_keeps_a_long_label_whole_past_the_board_preview_bound() {
     use oneiron::context_board::{TASK_LABEL_MAX_BYTES, TASK_ROW_FIXED_TOKEN_BYTES};
-    // One limit system: the bound IS the engine's row ceiling less the fixed
-    // tokens the rendered row adds beside the label.
+    // One limit system: the preview bound IS the engine's row ceiling less
+    // the fixed tokens the rendered row adds beside the label.
     assert_eq!(
         TASK_LABEL_MAX_BYTES + TASK_ROW_FIXED_TOKEN_BYTES,
         oneiron::context_board::MAX_BOARD_ROW_BYTES,
@@ -1446,49 +1449,33 @@ fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
         validate_mcp_endpoint_tool_args(create, McpToolArguments::from(args_with_label(label)))
     };
 
-    // The advertised closed schema states the same ceiling, so a caller learns
-    // it from `tools/list` rather than from a refusal.
+    // The advertised closed schema states no writer cap, so a caller learns
+    // from `tools/list` that any nonblank label is written.
     let schema = create.schema().input_schema;
-    assert_eq!(
-        schema["properties"]["arguments"]["properties"]["label"]["maxLength"],
-        Value::from(TASK_LABEL_MAX_BYTES),
-    );
+    let label_schema = &schema["properties"]["arguments"]["properties"]["label"];
+    assert!(label_schema.get("maxLength").is_none(), "{label_schema}");
 
-    // Exactly at the boundary: admitted, and carried through unchanged.
-    let boundary = "x".repeat(TASK_LABEL_MAX_BYTES);
-    let McpValidatedToolArgs::Verb(verb) =
-        decode(&boundary).expect("a label exactly at the ceiling is admitted")
-    else {
-        panic!("tasks.create decodes to a verb payload");
-    };
-    assert_eq!(
-        verb.payload.arguments.label.as_deref(),
-        Some(boundary.as_str()),
-        "the boundary label reaches the writer unchanged",
-    );
-
-    // One byte over: the established typed argument error, on the label's own
-    // field, before any facade is reached.
-    let over = "x".repeat(TASK_LABEL_MAX_BYTES + 1);
-    let error = decode(&over).expect_err("a label one byte over the ceiling is refused");
-    assert!(
-        matches!(
-            &error,
-            McpToolValidationError::Field { tool, field, .. }
-                if *tool == "tasks.create" && *field == "arguments.label"
-        ),
-        "the refusal names the label field: {error}",
-    );
-
-    // The bound is on BYTES because the row ceiling is: a multi-byte label
-    // inside the advertised code-point ceiling is still refused here.
+    // At the preview bound, one byte past it, and a multi-byte label past it
+    // in BYTES (the row ceiling's unit): each is admitted and reaches the
+    // writer unchanged.
     let multibyte = "é".repeat(TASK_LABEL_MAX_BYTES / 2 + 1);
-    assert!(
-        multibyte.chars().count() <= TASK_LABEL_MAX_BYTES,
-        "the multi-byte case is inside the advertised code-point ceiling",
-    );
     assert!(multibyte.len() > TASK_LABEL_MAX_BYTES);
-    decode(&multibyte).expect_err("a multi-byte label over the byte ceiling is refused");
+    for label in [
+        "x".repeat(TASK_LABEL_MAX_BYTES),
+        "x".repeat(TASK_LABEL_MAX_BYTES + 1),
+        multibyte,
+    ] {
+        let McpValidatedToolArgs::Verb(verb) =
+            decode(&label).expect("a long label is admitted whole")
+        else {
+            panic!("tasks.create decodes to a verb payload");
+        };
+        assert_eq!(
+            verb.payload.arguments.label.as_deref(),
+            Some(label.as_str()),
+            "the label reaches the writer unchanged",
+        );
+    }
 
     // Every ordinary label an actual caller writes is untouched, and a blank
     // one keeps its settled refusal.
@@ -1646,10 +1633,13 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
             assert!(short["properties"].get("intent_key").is_none());
         } else if name == "can" {
             // 7aacd82bbb1 (FIX 22102 slice 1b): `can` takes `{ask}` or
-            // `{effect}`, untagged, and each branch refuses the other's field.
-            let branches = input["anyOf"].as_array().expect("ask and effect branches");
-            assert_eq!(branches.len(), 2, "{input}");
-            for field in ["ask", "effect"] {
+            // `{effect}`, untagged, and each branch refuses the others'
+            // fields; 946b42aedf1 (FIX [UI-GATE-PREVIEW]) adds `{verb}`.
+            let branches = input["anyOf"]
+                .as_array()
+                .expect("ask, effect and verb branches");
+            assert_eq!(branches.len(), 3, "{input}");
+            for field in ["ask", "effect", "verb"] {
                 let branch = branches
                     .iter()
                     .find(|branch| branch["required"] == json!([field]))
