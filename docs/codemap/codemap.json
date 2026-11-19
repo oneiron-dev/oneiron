@@ -17218,7 +17218,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "fn": 1
      }
     },
@@ -170200,7 +170200,7 @@
      "purpose": "MCP endpoint surface: modes, verb bindings, and the registered tool listing",
      "surface": {
       "const": 17,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 4,
       "fn": 21,
       "struct": 3

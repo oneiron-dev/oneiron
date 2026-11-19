@@ -1652,7 +1652,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/results.rs` | src | m | 4 struct · 1 enum · 9 fn · 1 crate-vis | McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError, McpSetupSelfBrief | MCP result envelopes: metadata, board keyframes, and setup payloads |
 | `src/mcp/run_seats.rs` | src | s | 3 crate-vis | — | Each durable run's compaction seat, kept by the host across `execute_code` calls: a pass in flight, its… |
 | `src/mcp/schema_parts.rs` | src | s | 7 crate-vis | — | Shared JSON-schema fragments: actors, scopes, consent, and envelope pieces |
-| `src/mcp/surface.rs` | src | m | 3 struct · 4 enum · 21 fn · 17 const · 10 crate-vis | McpEndpointTool, McpEndpointToolSchema, McpGeneratedVerbTool, McpRegisteredSurface, McpSurfaceConstructionError, McpSurfaceMode, McpVerbFamily | MCP endpoint surface: modes, verb bindings, and the registered tool listing |
+| `src/mcp/surface.rs` | src | m | 3 struct · 4 enum · 21 fn · 17 const · 11 crate-vis | McpEndpointTool, McpEndpointToolSchema, McpGeneratedVerbTool, McpRegisteredSurface, McpSurfaceConstructionError, McpSurfaceMode, McpVerbFamily | MCP endpoint surface: modes, verb bindings, and the registered tool listing |
 | `src/mcp/tests.rs` | test | XL | — | — | — |
 | `src/mcp/tool_catalog.rs` | src | s | 2 enum · 3 const · 3 crate-vis | McpToolValidationError, McpValidatedToolArgs | MCP tool-argument constants and the validated arguments the endpoint decoder produces |
 | `src/mcp/validate.rs` | src | s | 2 crate-vis | — | Validation of the actor and consent metadata every MCP tool call carries |
