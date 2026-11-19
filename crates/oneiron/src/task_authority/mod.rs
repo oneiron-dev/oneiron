@@ -986,7 +986,7 @@ fn decode_carried_task_authority_fact_body(bytes: &[u8]) -> Result<CarriedTaskAu
             let answered_heads = optional_fact_body_field(entries, BODY_KEY_ANSWERED_HEADS)?
                 .map(decode_answered_heads)
                 .transpose()?;
-            if own_keys != FACT_BODY_KEY_COUNT + usize::from(answered_heads.is_some()) {
+            if entries.len() != FACT_BODY_KEY_COUNT + usize::from(answered_heads.is_some()) {
                 return Err(Error::Record(RecordError::InvalidTaskBody(
                     "task acknowledgement key set",
                 )));
