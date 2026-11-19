@@ -462,10 +462,10 @@ fn enrolled_machine(host: Host) -> (tempfile::TempDir, Vault, MachineEnrolmentRe
         .machine_enrolment_request(vault_id, own_encryption_key(&vault, vault_id))
         .unwrap();
     vault
-        .enroll_machine(
+        .set_machine_role(
             &owner,
             ActSurface::ThisInstall,
-            &request,
+            request.machine,
             MachineRole::Owned(MachineOwnership::Yours),
             None,
         )
