@@ -155,7 +155,9 @@ impl<'a> RowMeta<'a> {
 /// (`world_key_fold::folded_world_keys`), and the owner work requests,
 /// results, cancels and import marks an executor, a receipt and a relay
 /// read past the base. Every other row's summary is all a later fold reads
-/// of it.
+/// of it. Every row that files a machine profile is read whole: a profile
+/// row, and an owner's join that carries its enrolment inline (REVIEW-9539
+/// round 2 P1).
 pub(super) fn is_projected(op: &AuthorityOp) -> bool {
     matches!(
         op,
@@ -163,7 +165,6 @@ pub(super) fn is_projected(op: &AuthorityOp) -> bool {
             | AuthorityOp::RebindActor { .. }
             | AuthorityOp::FederationConfirm(_)
             | AuthorityOp::CriticalWriteConfirm(_)
-            | AuthorityOp::MachineProfile(_)
             | AuthorityOp::RevokeDevice { .. }
             | AuthorityOp::RotateKey { .. }
             | AuthorityOp::ReRoot { .. }
@@ -173,7 +174,7 @@ pub(super) fn is_projected(op: &AuthorityOp) -> bool {
             | AuthorityOp::OwnerWorkResult(_)
             | AuthorityOp::OwnerWorkCancel(_)
             | AuthorityOp::ExportSupplementImported(_)
-    )
+    ) || super::stale_roster::filed_machine_profile(op).is_some()
 }
 
 /// A stored log's fold, and what a resumed fold needs to carry it on.
