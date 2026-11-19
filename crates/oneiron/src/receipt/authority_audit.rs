@@ -411,6 +411,18 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 ..OpFields::default()
             },
         ),
+        // The owner's word that no other machine is left: its subject is the
+        // machine it joins, its detail the held enrolment it names (row
+        // RESTORED-COPIES-ENROL-EACH-OTHER).
+        AuthorityOp::RestoredMachineJoin(join) => (
+            Other,
+            "restored_machine_join",
+            OpFields {
+                detail: Some(hex_lower(&join.enrolment)),
+                subject_ref: Some(join.act.target.to_hex()),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::WorldPrivacy(_) => (Other, "world_privacy", OpFields::default()),
         AuthorityOp::WorldKeyWraps(_) => (Other, "world_key_wraps", OpFields::default()),
         AuthorityOp::OwnerHandover(action) => (
