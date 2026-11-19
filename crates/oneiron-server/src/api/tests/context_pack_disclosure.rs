@@ -1534,6 +1534,10 @@ async fn an_owners_empty_pack_reads_alike_beside_another_principals_match() {
             oneiron::ClaimLifecycleStatus::Active,
         )
         .unwrap();
+        claim.scope_facet = server
+            .vault
+            .default_facet()
+            .expect("the vault default facet");
         claim.scope = Some(rmpv::Value::Map(vec![(
             rmpv::Value::from("principal"),
             rmpv::Value::Binary(principal.as_bytes().to_vec()),

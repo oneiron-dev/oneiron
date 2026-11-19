@@ -812,6 +812,7 @@ mod program {
         let dir = tempfile::tempdir().expect("create note fixture directory");
         let vault =
             Vault::open(dir.path(), VaultConfig::default()).expect("open note fixture vault");
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let owner = vault
             .ensure_embedded_owner_actor()
             .expect("create fixture owner");
@@ -1133,6 +1134,11 @@ mod program {
             let (_dir, source, actor) = fixture();
             let peer_dir = tempfile::tempdir().unwrap();
             let peer = Vault::open(peer_dir.path(), VaultConfig::default()).unwrap();
+            peer.install_device_keystore(std::sync::Arc::new(
+                oneiron_keystore::MemoryKeystore::new(),
+            ));
+            peer.prepare_install_signing().expect("install signing");
+
             let note = source.create_note("research", "erase me", actor).unwrap();
             let fork = rewrite(&source, note, "erase this fork", actor);
             let bundle = source

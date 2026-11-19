@@ -169,7 +169,7 @@ fn page(vault: &Vault, page_seed: u8, host_seed: u8) {
         flex_windows: Vec::new(),
         allowed_durations_min: Vec::new(),
     };
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         BOOKING_EVENT_TYPE_PREDICATE,
         ClaimSubject::Entity(id(page_seed)),
         encode_event_type_claim_value(&BookingEventTypeClaimValue {
@@ -183,6 +183,7 @@ fn page(vault: &Vault, page_seed: u8, host_seed: u8) {
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(vault, &mut body);
     vault
         .put_claim(&EntityId::now(), &body, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
