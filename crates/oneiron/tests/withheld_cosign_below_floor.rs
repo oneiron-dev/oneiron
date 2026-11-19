@@ -9,30 +9,37 @@
 //! two agent keys, K and T: an agent key lends no consent, so every row K
 //! signs needs an owner key's cosign. While O is live, O cosigns two rows K
 //! signs on the same parents P: C at K's sequence 10, which K publishes, and
-//! B at K's sequence 5, which K withholds. O2 revokes O on C. Then K, still
-//! live, delivers B. B's sequence is below K's floor of 10, so the fold
-//! counts B and records it as a SequenceFork (shape S). Because B is a fork
-//! and its cosigner O is revoked in the final fold, B expires at once: it
-//! binds nothing, is no handover evidence and lists no directive.
+//! B at K's sequence 5, which K withholds and then delivers. B's sequence is
+//! below K's floor of 10, so the fold counts B and records it as a
+//! SequenceFork (shape S). O2 sees the fork and revokes O on C and B. Because
+//! B is a fork and its cosigner O is revoked in the final fold, B expires at
+//! once: it binds nothing, is no handover evidence and lists no directive.
+//!
+//! R names B. A B that K delivers only after a revocation that never saw it
+//! is refused outright: the revocation fences every row O signed or cosigned
+//! outside R and its ancestry (`retired_signers`,
+//! REVOKED-OWNER-ROOT-SIBLING-ENROL), so it grants nothing on any head; a
+//! Connect so refused binds no grant, and a Connect guest grant no Active
+//! pact binds is inert (REVIEW-9609 round 2).
 //!
 //! B may also be a federation pact's Connect, with the peer's gesture. Then
 //! the pact B set up is held suspended: it confers nothing, its grant stays
 //! bound to it, so the grant never reads as unpacted (legacy allow), and an
 //! owner key still live ends it with a Disconnect (PR 2 of the row).
 //!
-//! Expected (estimate, not run yet): red on main 64fa6f07, where B binds T
-//! until the 24 h stale-roster window ends and the handover and the directive
-//! stay valid for ever; green on the head of the fork-expiry PR. The pact
-//! variant: red on that PR's head a04e1ddd, where B's pact stays active;
-//! green on the head of the lifecycle PR. The Disconnect variant guards the
-//! fix (an ended pact stays ended) and passes on both heads.
-//!
-//! Review round 1 of the lifecycle PR adds three. The owner's Disconnect door
-//! on the held pact: red on a686d5db, where the door names only the heads,
-//! which B left, and its Disconnect finds no pact. A live Connect A that
-//! agrees with B on the ceiling but pins another peer key than B's lesser
-//! one: red on a686d5db, where A renews the pact on the pin only B gave. A
-//! live Connect pinning the same peer renews the pact and passes on both.
+//! Expected (estimate, not run yet): red on main, where B binds T until the
+//! 24 h stale-roster window ends and the handover and the directive stay
+//! valid for ever; green on the head of the fork-expiry PR. The pact
+//! variants, on that PR's head (red) and the lifecycle PR's head (green):
+//! - B's Connect holds its pact suspended: red, where B's pact stays active.
+//! - A live Connect A, concurrent with B, that agrees with B on the ceiling
+//!   but pins another peer key than B's lesser one never renews the pact:
+//!   red, where nothing holds the pact.
+//! - The owner's narrowing door refuses the held pact: red, where the pact
+//!   stays active and the narrowing folds (REVIEW-9609 round 2).
+//! - Guards that pass on both heads: an owner's Disconnect and the
+//!   Disconnect door end the pact (an ended pact stays ended), and a live
+//!   Connect pinning the same peer renews it.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test withheld_cosign_below_floor`.
@@ -266,6 +273,7 @@ fn put(rooted: &Rooted, row: &AuthorityLogEntry) -> String {
 
 /// C6 after O2 revokes O on the fork B.
 struct Delivered {
+    published: AuthorityEntryHash,
     revocation: AuthorityEntryHash,
     rooted: Rooted,
     withheld: AuthorityEntryHash,
@@ -391,6 +399,7 @@ fn deliver_withheld(
         fold.issues
     );
     Delivered {
+        published: hash_of(&published),
         revocation: hash_of(&revocation),
         rooted,
         withheld,
@@ -564,8 +573,9 @@ fn a_withheld_connect_cosigned_by_a_revoked_owner_key_holds_its_pact_suspended()
     );
 }
 
-/// After B, a live owner key ends the held pact: its Disconnect at the
-/// pact's epoch, on B and R, folds, and the pact ends rather than stays held.
+/// After R, a live owner key ends the held pact: its Disconnect at the
+/// pact's epoch, on R, which holds B, folds, and the pact ends rather than
+/// stays held.
 #[test]
 fn an_owner_disconnect_still_ends_the_pact_a_withheld_connect_set_up() {
     let pact_id = [0x71; 32];
@@ -577,7 +587,7 @@ fn an_owner_disconnect_still_ends_the_pact_a_withheld_connect_set_up() {
         &revoking_owner,
         &[],
         2,
-        vec![delivered.withheld, delivered.revocation],
+        vec![delivered.revocation],
         AuthorityOp::FederationLifecycle(FederationLifecycleAction {
             kind: FederationLifecycleKind::Disconnect,
             pact_id,
@@ -610,9 +620,10 @@ fn an_owner_disconnect_still_ends_the_pact_a_withheld_connect_set_up() {
     );
 }
 
-/// After B, the owner ends the held pact through the Disconnect door. The
-/// expiry took B out of the heads, so the door names B beside them: without
-/// B in its ancestry the Disconnect would find no pact (REVIEW-9609 round 1).
+/// After R, the owner ends the held pact through the Disconnect door. The
+/// door names the heads, and an expired row of the pact that no head holds
+/// beside them, so its Disconnect finds the pact (REVIEW-9609 rounds 1 and
+/// 2); here R holds B.
 #[test]
 fn the_owner_disconnect_door_ends_the_pact_a_withheld_connect_set_up() {
     let pact_id = [0x72; 32];
@@ -646,6 +657,44 @@ fn the_owner_disconnect_door_ends_the_pact_a_withheld_connect_set_up() {
     );
 }
 
+/// After R, the owner's narrowing door refuses the held pact: a narrowing
+/// keeps the ceiling only the expired B set, and the fold refuses it on a
+/// pact a merge suspended (REVIEW-9609 round 2).
+#[test]
+fn the_owner_narrowing_door_refuses_the_pact_a_withheld_connect_set_up() {
+    let pact_id = [0x75; 32];
+    let grant = EntityId::now();
+    let delivered = deliver_withheld(|_, _, _, vault_id| connect_of(vault_id, pact_id, grant));
+    let rooted = &delivered.rooted;
+    let narrowest = FederationDirectionScope {
+        worlds: ScopeAxis::Bottom,
+        facets: ScopeAxis::Bottom,
+        bands: ScopeAxis::Bottom,
+    };
+    let narrowed =
+        rooted
+            .vault
+            .narrow_connect_as(&rooted.proof, &rooted.issuer, pact_id, 1, narrowest);
+    let fold = rooted.vault.authority_fold().expect("the fold");
+    assert!(
+        narrowed
+            .as_ref()
+            .is_err_and(|refusal| refusal.to_string().contains("held suspended")),
+        "the narrowing door refuses the held pact for its status: it answered {narrowed:?}; \
+         issues {:?}",
+        fold.issues
+    );
+    let activation = federation_grant_activation(&fold, &grant);
+    assert!(
+        matches!(
+            activation,
+            FederationGrantActivation::Inactive(FederationPactStatus::Suspended)
+        ),
+        "the pact stays held: the grant reads {activation:?}; issues {:?}",
+        fold.issues
+    );
+}
+
 /// The two peer owner keys of the pin variants, the lesser first: the merge
 /// of two agreeing Connects pins the lesser.
 fn peer_keys_lesser_first() -> (SigningKey, SigningKey) {
@@ -658,7 +707,8 @@ fn peer_keys_lesser_first() -> (SigningKey, SigningKey) {
     }
 }
 
-/// After B, O2 signs a live Connect A of the same pact on R, agreeing with B
+/// O2 signs a live Connect A of the same pact on C, concurrent with B (on R
+/// it would find B's pact and fold as a duplicate Connect), agreeing with B
 /// on the ceiling, with the gesture of `live_peer`; the fold after A.
 fn deliver_live_twin(
     pact_id: [u8; 32],
@@ -675,7 +725,7 @@ fn deliver_live_twin(
         &revoking_owner,
         &[],
         2,
-        vec![delivered.revocation],
+        vec![delivered.published],
         connect_gestured_by(delivered.rooted.vault_id, pact_id, grant, live_peer),
     );
     let arrival = put(&delivered.rooted, &live);
