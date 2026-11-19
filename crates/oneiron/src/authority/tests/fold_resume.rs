@@ -428,9 +428,9 @@ impl Chain {
             let mut under = under.clone();
             match case {
                 "a row below its floor" => {
-                    // Real rows-floor disqualifier (#8449): a row on the base head with a
-                    // sequence at or below its signer's top in its own scope, refused by
-                    // scope_tops (seq <= top).
+                    // The row is at or below its signer's sequence in its own
+                    // ancestry, so its own transition refuses it as NonMonotonicSeq
+                    // and the tail declines.
                     let op = row.op.clone();
                     row = owner_row(self.vault_id, &self.owner, 1, vec![tip], op, None);
                 }
@@ -697,7 +697,7 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
         request: None,
         permitted: vec![to],
     });
-    let wraps = owner_row(id, &install, 2, vec![hash(&settings)], record, None);
+    let wraps = owner_row(id, &install, 3, vec![hash(&settings)], record, None);
     check(
         &mut misses,
         "a world's settings and key",
@@ -731,6 +731,44 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
     // A base that holds a world and its key carries on, row by row, off
     // its main head (the world's settings edit).
     let keyed = [with_settings, vec![wraps]].concat();
+    // This sibling's own ancestry has install seq 1, so seq 2 transitions
+    // successfully. ScopeTops::past declines it below the base's seq-3 top
+    // for the same signer and world, even though settings is a kept head.
+    let sibling_key = WorldKey::mint(world, FIRST_GENERATION).unwrap();
+    let sibling_binding = WorldKeyBinding {
+        key: *sibling_key.id(),
+        commitment: sibling_key.commitment(),
+        ..binding
+    };
+    let sibling_pad = oneiron_store::world_pad_codec::WorldKeyPad::mint().unwrap();
+    let sibling_envelope = seal_world_key(
+        &sibling_binding,
+        to,
+        &root.recovery_key,
+        &sibling_key,
+        &sibling_pad,
+    )
+    .unwrap()
+    .to_bytes();
+    let sibling_record = AuthorityOp::WorldKeyWraps(WorldKeyWrapsRecord {
+        key: *sibling_key.id(),
+        commitment: sibling_key.commitment(),
+        owner: sibling_binding.owner,
+        policy,
+        machine,
+        wraps: vec![(to, sibling_envelope)],
+        request: None,
+        permitted: vec![to],
+    });
+    let sibling = owner_row(id, &install, 2, vec![hash(&settings)], sibling_record, None);
+    check(
+        &mut misses,
+        "a key record below its signer's top in its world",
+        &keyed,
+        vec![sibling],
+        &plain,
+        false,
+    );
     let one = owner_row(id, &owner, 10, vec![hash(&settings)], confirm_op(100), None);
     let two = owner_row(id, &owner, 11, vec![hash(&one)], confirm_op(101), None);
     let case = "confirms over a world's key record";
