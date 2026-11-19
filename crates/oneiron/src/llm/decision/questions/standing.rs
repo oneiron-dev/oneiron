@@ -859,6 +859,10 @@ fn backfill_answer_with_caller(
         if frontier != input.source_frontier {
             return Err(Error::ConcurrentWrite("standing source changed"));
         }
+        // The fold reads where each source sits now; the frontier hashes rows,
+        // not placement, so it is taken before the dedup lookup below.
+        let fold = fold_sources(&sources, principal)?;
+        let landing = fold.facet();
         if let Measured::Admitted(decision) = &measurement {
             super::graph_ask::validate_decision(&record.definition.question, principal, decision)?;
             let ids: Vec<_> = context.iter().skip(1).map(|source| source.id).collect();
@@ -929,25 +933,31 @@ fn backfill_answer_with_caller(
             {
                 return Err(Error::EntityNotFound);
             }
-            // FIX 7461: the old gate first, unchanged; then the principal's
-            // own live authority under its bare key, never the writer's class.
-            let facets = crate::claim::facet_refs_in_port(&vault.store, txn, &id)?;
-            let own = Reader::bare(crate::authority::StandingHome::Vault(vault), principal)?;
-            if !crate::gate::scoped_read_claim_allowed(&policy, &reader, &body, &facets)
-                && !own.own_claim_allowed_in_txn(txn, &policy, &body, &facets)?
-            {
-                return Err(Error::EntityNotFound);
+            // The stored answer is this landing's only while it sits in the
+            // facet the sources fold to now. A room's facet set can change
+            // under unchanged rows; then a fresh answer lands where the fold
+            // puts it and takes the dedup key (review round 2 on #9582).
+            if landing == Some(body.scope_facet) {
+                // FIX 7461: the old gate first, unchanged; then the principal's
+                // own live authority under its bare key, never the writer's class.
+                let facets = crate::claim::facet_refs_in_port(&vault.store, txn, &id)?;
+                let own = Reader::bare(crate::authority::StandingHome::Vault(vault), principal)?;
+                if !crate::gate::scoped_read_claim_allowed(&policy, &reader, &body, &facets)
+                    && !own.own_claim_allowed_in_txn(txn, &policy, &body, &facets)?
+                {
+                    return Err(Error::EntityNotFound);
+                }
+                // Admit the already-recorded proposal under this caller's live
+                // bounds too; its principal's bare read is not the caller's grant.
+                if let Some(caller) = caller
+                    && !caller
+                        .recorded_lane()?
+                        .entities_readable_in_txn(txn, &[id])?[0]
+                {
+                    return Err(Error::EntityNotFound);
+                }
+                return Ok(answer);
             }
-            // Admit the already-recorded proposal under this caller's live
-            // bounds too; its principal's bare read is not the caller's grant.
-            if let Some(caller) = caller
-                && !caller
-                    .recorded_lane()?
-                    .entities_readable_in_txn(txn, &[id])?[0]
-            {
-                return Err(Error::EntityNotFound);
-            }
-            return Ok(answer);
         }
         let mut answer = AnswerRecord {
             claim: EntityId::now(),
@@ -1027,7 +1037,7 @@ fn backfill_answer_with_caller(
             value.clone(),
             1.0,
         );
-        let taint = constrain_sources(&mut candidate, &sources, principal)?;
+        let taint = fold.bound(&mut candidate);
         let mut refs = vec![input.unit];
         for id in &answer.decision.evidence {
             if !refs.contains(id) {
@@ -1219,15 +1229,23 @@ impl ScopeFold {
         Ok(())
     }
 
+    /// The facet an answer on the sources folded so far lands in: the lowest
+    /// every source may sit in.
+    fn facet(&self) -> Option<EntityId> {
+        self.position
+            .as_ref()
+            .and_then(|(facets, _, _)| facets.first().copied())
+    }
+
     /// Bounds `candidate` by every source folded in; returns their met taint.
     fn bound(self, candidate: &mut ClaimCandidate) -> ClaimSource {
+        let facet = self.facet();
         let mut scope = self.scope;
         if self.sensitivity != 2 {
             scope.push((Value::from("sensitivity"), Value::from(self.sensitivity)));
         }
-        if let Some((facets, project, world)) = self.position {
-            // The lowest facet every source may sit in; the fold keeps one.
-            if let Some(facet) = facets.first() {
+        if let Some((_, project, world)) = self.position {
+            if let Some(facet) = facet {
                 scope.push((
                     Value::from("facet"),
                     Value::Binary(facet.as_bytes().to_vec()),
