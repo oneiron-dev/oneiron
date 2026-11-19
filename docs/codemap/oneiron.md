@@ -5384,7 +5384,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/smart_http/secret_marks.rs` | src | m | 1 struct · 8 crate-vis | ReceiveSecretMarks | The marks a push's admitted scan hits carry from the door window to the push's intent (FIX 7608, owner… |
 | `src/origin/smart_http/serve.rs` | src | L | 1 struct · 1 trait · 6 fn · 5 crate-vis | ServeReport, ServeSink | One-request orchestration: coordinator lock, reconcile, threaded exchange, finish |
 | `src/origin/smart_http/serve_cmd.rs` | src | m | 2 struct · 10 fn · 1 re-export · 8 crate-vis | ServeChild, ServeCommand | Core half of `origin::smart_http::serve_cmd`: its store-layer items live in… |
-| `src/origin/smart_http/tests.rs` | test | m | 29 crate-vis | — | Shared test harness: fixtures, temp vault, seeded repos, the capturing sink, and the stock-git test origin |
+| `src/origin/smart_http/tests.rs` | test | m | 31 crate-vis | — | Shared test harness: fixtures, temp vault, seeded repos, the capturing sink, and the stock-git test origin |
 | `src/origin/tables.rs` | src | s | — | — | The side tables `origin` keeps (core split slice 1): each row declares one, and the crate's build script… |
 | `src/origin/tree.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | OriginTreeFile | Byte-preserving projection of complete Git trees |
 | `src/outbound/ambient_alternative.rs` | src | s | 2 struct · 1 re-export | OutboundScheduleContinuation, OutboundSendSelection | The ambient send an interrupt degrades to (FIX 7962), and what a scheduled send carries beside its schedule… |
