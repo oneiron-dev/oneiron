@@ -1459,7 +1459,12 @@ fn a_bound_correction_replaces_its_head_with_no_verdict_call() -> Result<()> {
         fx.scope.clone(),
         Some(&pin),
     )?;
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 1, "no verdict call");
+    // The named Auto head is correctable: extraction, then the correction pack, then the bound correction skips the verdict.
+    assert_eq!(
+        backend.calls.load(Ordering::SeqCst),
+        2,
+        "extraction + correction, no verdict"
+    );
     let [new] = sink.outcome.landed.as_slice() else {
         panic!("one granted replacement: {:?}", sink.outcome);
     };
@@ -1770,14 +1775,34 @@ fn a_correction_that_names_no_value_writes_nothing() -> Result<()> {
 #[test]
 fn a_correction_of_a_head_the_listing_did_not_show_asks_the_verdict() -> Result<()> {
     let (_dir, vault) = open_vault();
-    let fx = fixture_with(
+    let fx = named_fixture(
         &vault,
         (ClaimSource::Generated, ClaimApprovalStatus::Approved),
-        crate::claim::default_project_id(),
-        false,
-        b"person",
         &[("user", "my name is Owen")],
     )?;
+    // Pin a subject-only listing: withhold the head for one run, so the wake lists P1 but not the head.
+    let mut subject_only = fx.scope.clone();
+    let head_pin = document_version(fx.head, &vault.get(&fx.head)?.expect("head body"));
+    subject_only.readable.remove(&head_pin);
+    subject_only.writable.remove(&head_pin);
+    let prime = ReasoningBackend {
+        inner: ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]),
+        requests: Mutex::new(Vec::new()),
+    };
+    let mut prime_sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    assert!(matches!(
+        execute(&vault, &fx, &prime, &mut prime_sink, subject_only)?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    assert_eq!(prime.inner.calls.load(Ordering::SeqCst), 1);
+    let prime_prompt: String = prime.requests.lock().unwrap()[0]
+        .messages
+        .iter()
+        .map(message_text)
+        .collect();
+    assert!(prime_prompt.contains("entity P1"), "{prime_prompt}");
+    assert!(!prime_prompt.contains("claim C1"), "{prime_prompt}");
+    // The head is held by its scope pin alone: P1 resolves, no correction is asked, the verdict judges.
     let backend = ScriptedBackend::new(vec![
         Ok(correct(&fx, "Alex")),
         Ok(text_response("{\"resolution\":\"escalate\"}".into())),
@@ -1977,7 +2002,8 @@ fn a_head_an_earlier_branch_closed_is_counted_and_the_next_branch_still_runs() -
                 _ => None,
             })
             .collect();
-        seen.push((prompt.contains(&head.to_hex()), opened));
+        // The listing shows the head as `claim C1 residence.city`, never its hex id.
+        seen.push((prompt.contains("claim C1 residence.city"), opened));
     }
     assert_eq!(
         vault.get_claim(&head)?.expect("closed").lifecycle,
@@ -3399,8 +3425,12 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
         execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
         let requests = backend.requests.lock().unwrap();
-        let [extraction, verdict] = requests.as_slice() else {
-            panic!("one extraction and one verdict call: {}", requests.len());
+        // The named head is correctable: extraction, then the correction pack, then the verdict.
+        let [extraction, correction, verdict] = requests.as_slice() else {
+            panic!(
+                "one extraction, one correction and one verdict call: {}",
+                requests.len()
+            );
         };
         let budget = serde_json::json!(4_096);
         assert_eq!(extraction.envelope.response_format, ResponseFormat::Text);
@@ -3414,9 +3444,26 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
             );
             assert_eq!(extraction.params.get(REASONING_BUDGET_PARAM), Some(&budget));
         }
+        // The correction pack's purpose has no authored level either.
+        assert_eq!(
+            correction.envelope.seat_effort,
+            Some(ReasoningEffort::Medium)
+        );
+        assert_eq!(correction.params.get(REASONING_BUDGET_PARAM), Some(&budget));
         // The verdict's purpose has no authored level in either arm.
         assert_eq!(verdict.envelope.seat_effort, Some(ReasoningEffort::Medium));
         assert_eq!(verdict.params.get(REASONING_BUDGET_PARAM), Some(&budget));
+        // Tell the correction read from the conflict verdict by their wordings.
+        let correction_text: String = correction.messages.iter().map(message_text).collect();
+        assert!(
+            correction_text.contains("correct or update"),
+            "{correction_text}"
+        );
+        let verdict_text: String = verdict.messages.iter().map(message_text).collect();
+        assert!(
+            verdict_text.contains("How do they resolve"),
+            "{verdict_text}"
+        );
 
         let roles: Vec<_> = extraction.messages.iter().map(|m| m.role).collect();
         assert_eq!(
@@ -3547,7 +3594,7 @@ fn a_mended_reply_whose_candidate_lacks_a_field_is_refused_and_asked_again() -> 
     let (_dir, vault) = open_vault();
     let fx = fixture(&vault)?;
     let mut lacking = serde_json::json!({"candidates": [{
-        "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": "Alex",
+        "subject": "P1", "predicate": "profile.name", "value": "Alex",
         "confidence": 0.8,
     }]})
     .to_string();

@@ -2156,8 +2156,17 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
 
     let backend = ScriptedBackend::new(vec![
         Ok(two_candidate_extraction(&subject, &turns[0], &turns[1])),
+        // The conflict pack asks its labelled choice (Q1 resolution, Q2 identity).
         Ok(text_response(
-            "{\"resolution\": \"merge\", \"value\": \"Owen (Alex)\"}".to_owned(),
+            serde_json::json!({
+                "Q1": {"merge": 1.0, "supersede": 0.0, "accumulate": 0.0, "escalate": 0.0},
+                "Q2": {"none": 1.0, "C1": 0.0, "C2": 0.0},
+            })
+            .to_string(),
+        )),
+        // The merged value is a separate generation beside the decision.
+        Ok(text_response(
+            serde_json::json!({"value": "Owen (Alex)"}).to_string(),
         )),
     ]);
     let guard = crate::BudgetGuard::with_reserve_units(
@@ -2197,7 +2206,8 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
     // union of the evidence refs.
     assert_eq!(sink.accepted.len(), 1);
     assert_eq!(sink.accepted[0].evidence_turn_refs, turns);
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 2, "one merge step");
+    // Extraction, then the labelled choice pack, then the merged-value reply.
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 3, "one merge step");
     Ok(())
 }
 

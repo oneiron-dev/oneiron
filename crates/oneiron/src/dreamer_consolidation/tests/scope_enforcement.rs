@@ -379,12 +379,15 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
         locality: crate::ModelLocality::OwnServer,
         keyless: false,
     };
-    // A candidate citing a turn outside the attempt is not written. Since
-    // Bugbot on #1427 decode skips it rather than failing the attempt.
-    assert!(matches!(
-        block_on_ready(executor.execute(&attempt, &mut ctx))?,
-        DreamerAttemptExecution::Completed { .. }
-    ));
+    // A candidate citing a turn outside the attempt is not written: the bound wire refuses its unshown T2 at the citation check and parks.
+    let parked = block_on_ready(executor.execute(&attempt, &mut ctx))?;
+    assert!(
+        matches!(&parked, DreamerAttemptExecution::ParkWithSpend { reason, .. }
+            if reason.starts_with("extraction reply refused")
+                && reason.contains("cites outside its source")
+                && reason.contains("UnknownSourceLabel")),
+        "{parked:?}"
+    );
     drop(executor);
     assert_eq!(sink.accepted.len(), 1);
     assert_eq!(sink.accepted[0].evidence_turn_refs, turns);
