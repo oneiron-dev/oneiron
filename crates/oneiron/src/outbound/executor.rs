@@ -20,9 +20,9 @@ use super::dispatch_types::{
 };
 use super::receipt_fields::{PROVIDER_WAIT_FIELD, append_connector_task_window_receipt};
 use super::retry_audit::{
-    complete_degraded_connector_task, persist_failed_send_receipt_and_retry,
-    persist_send_receipt_and_retry, reconcile_connector_task, settle_suppressed_send,
-    stop_owner_declined_send,
+    complete_degraded_connector_task, fail_connector_send_attempt_in_txn,
+    persist_failed_send_receipt_and_retry, persist_send_receipt_and_retry,
+    reconcile_connector_task, settle_suppressed_send, stop_owner_declined_send,
 };
 use super::send_lookup::{
     SENT_LOOKUP_CANNOT_TELL, SENT_LOOKUP_FIELD, SENT_LOOKUP_NOT_SENT,
@@ -720,17 +720,15 @@ fn fail_connector_task_attempt_and_project(
     outcome: ConnectorSendTaskOutcome,
 ) -> Result<(), Error> {
     vault.with_write_txn_grouped(|wtxn| {
-        project_connector_send_task_attempt_failure_in_txn(vault, wtxn, task_ref, outcome, now)?;
-        queue.fail_in_txn(
-            wtxn,
-            FailAttempt {
-                id: attempt.id,
-                lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
-                attempt_count: attempt.attempt_count,
-                reason: reason.to_owned(),
-                now,
-            },
-        )?;
+        // Fail first: the TASK's outcome takes the instant the queue stamped
+        // on the failure, and a replay leaves a newer failure's stamp alone.
+        if let Some(failed_at) =
+            fail_connector_send_attempt_in_txn(queue, wtxn, attempt, reason, now)?
+        {
+            project_connector_send_task_attempt_failure_in_txn(
+                vault, wtxn, task_ref, outcome, failed_at,
+            )?;
+        }
         Ok(())
     })
 }

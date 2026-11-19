@@ -252,6 +252,15 @@ impl Memory<'_> {
                 report: None,
             });
         }
+        // The settlement this request answers: the instant the board fence
+        // compares the acknowledgement with.
+        let observed = {
+            let rtxn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            crate::task_verb::task_settled_at_in(self.vault(), &rtxn, task_ref)
+                .map_err(MemoryError::from)?
+        };
+        #[cfg(test)]
+        run_before_ack_writer_hook(self.vault());
         // The acknowledgement is a FACT about a real failed row, stamped with
         // who acknowledged it and when, and it commits inside the verified
         // actor's write transaction like every other engine-authored fact.
@@ -268,9 +277,15 @@ impl Memory<'_> {
             // The acknowledgement answers the settlement it was made on, so
             // it is never stamped before that settlement: one a peer stamped
             // on a clock ahead of this device's stays answered, as the board
-            // fence compares the two instants.
+            // fence compares the two instants. A settlement that moved since
+            // the read (a synced refailure, whose instant may even sit behind
+            // `now` on a peer's slower clock) was never seen: refused, and the
+            // row stays listed Failed.
             let settled = crate::task_verb::task_settled_at_in(self.vault(), &*wtxn, task_ref)
                 .map_err(MemoryError::from)?;
+            if settled != observed {
+                return Err(failure_changed_since_read());
+            }
             let acked_at = settled.map_or(now, |settled| settled.max(now));
             ack_task_in_txn(self.vault(), wtxn, task_ref, self.actor(), acked_at)
                 .map_err(MemoryError::from)?;

@@ -64,7 +64,10 @@ fn a_send_that_fails_again_moves_its_synced_settlement() {
     assert_eq!(attempts.len(), 1, "one realizing attempt, with no failure");
     assert_eq!(attempts[0].state, AttemptState::Queued);
 
+    // The failure takes the store's recorded instant: the clock reads the
+    // drain's instant, as it does in production.
     let t1 = now + 10;
+    vault.clock.set(t1);
     let mut sink = RecordingExecutor {
         outcome: OutboundExecutionOutcome::failed("provider_timeout"),
         ..Default::default()
@@ -107,6 +110,10 @@ fn a_send_that_fails_again_moves_its_synced_settlement() {
         AttemptState::Failed,
         "the first attempt failed"
     );
+    assert_eq!(
+        attempts[0].settled_at, task.outcome_at,
+        "the synced settlement is the failed attempt's own instant"
+    );
 
     let t2 = t1 + 10;
     vault.clock.set(t2);
@@ -142,6 +149,7 @@ fn a_send_that_fails_again_moves_its_synced_settlement() {
     );
 
     let t3 = t1 + 100;
+    vault.clock.set(t3);
     assert_eq!(
         vault
             .run_connector_task_executor(&mut sink, t3)
