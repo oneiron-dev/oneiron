@@ -793,14 +793,19 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(txn)?.secs();
+        // An end or a re-pact of a pact the expiry holds suspended names the
+        // pact's expired rows beside the heads (row SEQ-FLOOR-S-WITHHELD-COSIGN).
+        let beside = super::stale_roster::suspended_pact_rows_in_txn(&self.store, txn, &fold, &op)?;
         // FIX 7908: join a frontier wider than one entry names, else today's path.
         let joiner = FrontierSigner::Host(issuer);
+        let room = MAX_PARENTS.saturating_sub(beside.len());
         let fold = self
-            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, room)?
             .unwrap_or(fold);
+        let entry = next_entry_naming(issuer, &fold, &beside, op, now)?;
         let entry = match proof {
-            Some(proof) => next_entry_with_owner_proof(issuer, &fold, op, now, proof)?,
-            None => next_entry(issuer, &fold, op, now)?,
+            Some(proof) => with_owner_proof(issuer, &fold, entry, proof)?,
+            None => entry,
         };
         let hash = authority_entry_hash(&entry)?;
         Ok(PreparedHashedSlipOp {
@@ -829,7 +834,16 @@ pub(super) fn next_entry_with_owner_proof(
     now: u64,
     proof: &OwnerProofSigner<'_>,
 ) -> Result<AuthorityLogEntry> {
-    let mut entry = next_entry(issuer, fold, op, now)?;
+    with_owner_proof(issuer, fold, next_entry(issuer, fold, op, now)?, proof)
+}
+/// `entry`, built on `fold`, with `proof` beside the host root's signature,
+/// as [`next_entry_with_owner_proof`] makes it.
+fn with_owner_proof(
+    issuer: &HostSlipIssuer,
+    fold: &AuthorityFold,
+    mut entry: AuthorityLogEntry,
+    proof: &OwnerProofSigner<'_>,
+) -> Result<AuthorityLogEntry> {
     let proof_key = proof.key();
     entry.cosigns.push(AuthoritySignature {
         suite: proof_key.suite(),
@@ -849,6 +863,17 @@ pub(super) fn next_entry(
     op: AuthorityOp,
     now: u64,
 ) -> Result<AuthorityLogEntry> {
+    next_entry_naming(issuer, fold, &std::collections::BTreeSet::new(), op, now)
+}
+/// [`next_entry`] naming `beside` too: rows the act must hold in its
+/// ancestry that the heads leave out.
+fn next_entry_naming(
+    issuer: &HostSlipIssuer,
+    fold: &AuthorityFold,
+    beside: &std::collections::BTreeSet<AuthorityEntryHash>,
+    op: AuthorityOp,
+    now: u64,
+) -> Result<AuthorityLogEntry> {
     let seq = fold
         .append_sequences
         .get(&issuer.public_key())
@@ -861,7 +886,7 @@ pub(super) fn next_entry(
     issuer.sign_entry(
         fold.vault_id,
         seq,
-        fold.append_heads.iter().copied().collect(),
+        fold.append_heads.union(beside).copied().collect(),
         op,
         now,
     )

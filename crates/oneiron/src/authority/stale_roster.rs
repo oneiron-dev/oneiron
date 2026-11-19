@@ -247,6 +247,70 @@ fn sets_ceiling(action: &FederationLifecycleAction, pact: &FederationPactState) 
         && action.pact_nonce == pact.pact_nonce
 }
 
+/// Whether lifecycle `renewal` backs the peer `pact` is pinned to: its peer
+/// vault, its grant, and the peer owner key its gesture verified. Equal
+/// competitors may pin different peers, and the merge keeps the lesser
+/// (`op_apply::merge_pact_states`), so a live row that pins another peer
+/// renews no ceiling an expired row pinned. A re-pact whose gesture another
+/// key of the peer's roster signed backs no pin either: the pact stays held
+/// until a new re-pact sets its own ceiling.
+fn backs_peer_pin(renewal: &FederationLifecycleAction, pact: &FederationPactState) -> bool {
+    renewal.peer_vault_id == pact.peer_vault_id
+        && renewal.grant_ref == pact.grant_ref
+        && renewal
+            .gesture
+            .as_ref()
+            .is_some_and(|gesture| gesture.signer == pact.peer_owner_key)
+}
+
+/// The rows an end or a re-pact (`op`: a Disconnect, a Dissolve or a
+/// dual-signed Rescope) of a pact the expiry holds suspended names beside the
+/// heads: that pact's lifecycle rows the projection took out
+/// (`StaleRosterApproval`). The pact rests on them, and an expired row leaves
+/// the heads, so only with them in its ancestry does the act find the pact at
+/// the epoch it keeps. The act ends the pact or sets a new ceiling, so nothing
+/// an expired row set stands past it; a narrowing or a Promote, which would
+/// keep that ceiling, names none and is refused on the suspended pact. Empty
+/// for every other op.
+pub(super) fn suspended_pact_rows_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    op: &AuthorityOp,
+) -> crate::error::Result<BTreeSet<AuthorityEntryHash>> {
+    let AuthorityOp::FederationLifecycle(action) = op else {
+        return Ok(BTreeSet::new());
+    };
+    let ends_or_repacts = match action.kind {
+        FederationLifecycleKind::Disconnect | FederationLifecycleKind::Dissolve => true,
+        FederationLifecycleKind::Rescope => action.effective_scope.is_none(),
+        FederationLifecycleKind::Connect | FederationLifecycleKind::Promote => false,
+    };
+    if !ends_or_repacts
+        || fold
+            .federation_pacts
+            .get(&action.pact_id)
+            .is_none_or(|pact| pact.status != FederationPactStatus::Suspended)
+    {
+        return Ok(BTreeSet::new());
+    }
+    let mut rows = BTreeSet::new();
+    for issue in &fold.issues {
+        let AuthorityFoldIssue::StaleRosterApproval(hash) = issue else {
+            continue;
+        };
+        if let Some(entry) = super::retired_signers::stored_authority_row(store, txn, hash)?
+            && matches!(
+                &entry.op,
+                AuthorityOp::FederationLifecycle(row) if row.pact_id == action.pact_id
+            )
+        {
+            rows.insert(*hash);
+        }
+    }
+    Ok(rows)
+}
+
 /// Holds suspended each active pact an expired lifecycle row still shapes:
 /// the ceiling the pact stands on ([`sets_ceiling`]), or a narrowing that
 /// stands, which may have lifted its own party's earlier one. A pact keeps
@@ -291,6 +355,7 @@ fn suspend_pacts_of_expired_rows<E: LogRow>(
                         && fold.valid_entries.contains(other)
                         && !expired.contains(other)
                         && sets_ceiling(renewal, pact)
+                        && backs_peer_pin(renewal, pact)
                 })
         };
         if shapes {
