@@ -47,6 +47,8 @@ mod mcp_oracle;
 mod mcp_stdio_agent;
 mod notes_import;
 mod owner_backup;
+#[path = "../support/owner_only_file.rs"]
+mod owner_only_file;
 mod remote_pairing;
 // SIGTERM through `libc::kill` is Unix-only.
 #[cfg(unix)]
