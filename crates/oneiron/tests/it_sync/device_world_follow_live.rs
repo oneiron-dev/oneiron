@@ -104,6 +104,10 @@ pub(super) struct TombstoneHome {
     pub(super) refused_windows: Vec<String>,
     /// Whether the home refuses every followed window (`FOLLOW_REFUSED`).
     pub(super) refuse_follows: bool,
+    /// How many asks of a window the home answers with no tombstone before
+    /// it serves the planted ones: a delete it makes after the device's
+    /// first passes.
+    pub(super) serve_after_asks: usize,
 }
 
 pub(super) struct FakeHome {
@@ -350,15 +354,22 @@ fn rpc_request(frame: &[u8]) -> Option<RpcRequest> {
 }
 
 /// Answers one `residence.tombstones` page: every tombstone planted for the
-/// asked window, in one page, and records the ask.
+/// asked window, in one page, once the window was asked `serve_after_asks`
+/// times before, and records the ask.
 fn answer_tombstones(home: &TombstoneHome, request: &RpcRequest) -> Vec<Vec<u8>> {
-    home.asks
-        .lock()
-        .expect("the recorded tombstone asks")
-        .push(request.window.clone());
+    let earlier = {
+        let mut asks = home.asks.lock().expect("the recorded tombstone asks");
+        let earlier = asks
+            .iter()
+            .filter(|window| **window == request.window)
+            .count();
+        asks.push(request.window.clone());
+        earlier
+    };
     let served = home.served.lock().expect("the served tombstones");
     let items: Vec<serde_json::Value> = served
         .get(&request.window)
+        .filter(|_| earlier >= home.serve_after_asks)
         .into_iter()
         .flatten()
         .map(|(id, value)| {

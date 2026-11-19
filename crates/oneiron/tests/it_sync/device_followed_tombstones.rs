@@ -538,3 +538,92 @@ async fn withheld_world_is_never_asked_for_tombstones() {
         "the device takes no marker from a withheld world's window",
     );
 }
+
+/// A delete the home makes during a live session: the device's followed
+/// window is refused, so its exchange brings no tombstone, and the home's
+/// first answer for the window names none. The home then hard-deletes item
+/// E. The residence upkeep's next pass asks for the window's set again, on
+/// the same connection, and the device writes `dt:E`. Before, the marker
+/// waited for the next connection.
+#[test]
+fn a_delete_during_a_live_session_reaches_a_refused_window_on_upkeep() {
+    on_engine_stack(
+        "a_delete_during_a_live_session_reaches_a_refused_window_on_upkeep",
+        delete_during_a_live_session_reaches_a_refused_window_on_upkeep,
+    );
+}
+
+async fn delete_during_a_live_session_reaches_a_refused_window_on_upkeep() {
+    let device = Device::open();
+    let at = now_secs();
+    let founder = WindowKey::for_world(at, device.founder);
+    let item = EntityId::now();
+    let tombstones = Arc::new(TombstoneHome {
+        refuse_follows: true,
+        serve_after_asks: 1,
+        ..TombstoneHome::default()
+    });
+    tombstones
+        .served
+        .lock()
+        .expect("the served tombstones")
+        .insert(
+            founder.as_str().to_owned(),
+            vec![(item.to_hex(), hard_tombstone(at))],
+        );
+    let (url, home, release_index) = FakeHome::start_tombstones(
+        root_listing(&[WindowKey::from_timestamp(at), founder.clone()]),
+        Arc::clone(&tombstones),
+    )
+    .await;
+    release_index.send(()).expect("the index read is not held");
+    let connection = opened_connection(&device, url);
+    connection
+        .set_followed_worlds([device.founder].into_iter().collect())
+        .expect("the owner's pick");
+    let (shutdown, shutdown_rx) = oneshot::channel();
+    let (sync_tx, sync) = mpsc::unbounded_channel();
+    let run = connection.run_observed(shutdown_rx, move |event| {
+        let _ = sync_tx.send(event);
+    });
+    let mut watch = Watch {
+        home,
+        sync,
+        home_seen: Vec::new(),
+        sync_seen: Vec::new(),
+    };
+    let script = async {
+        watch
+            .until("the first negotiation syncs", |_, sync| synced(sync) >= 1)
+            .await;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !marked(&device, item) {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the upkeep pass writes the marker of a delete made during the session (asks: {:?})",
+                tombstones.asks.lock().expect("the recorded asks"),
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let _ = shutdown.send(());
+    };
+    let (_ran, ()) = tokio::join!(run, script);
+
+    let asked = tombstones
+        .asks
+        .lock()
+        .expect("the recorded asks")
+        .iter()
+        .filter(|window| **window == founder.as_str())
+        .count();
+    assert!(
+        asked >= 2,
+        "the window's set was asked on connect and again by the upkeep ({asked})"
+    );
+    let sockets = watch
+        .home_seen
+        .iter()
+        .filter(|event| matches!(event, HomeEvent::SyncOpened(_)))
+        .count();
+    assert_eq!(sockets, 1, "the marker came with no reconnect");
+}
