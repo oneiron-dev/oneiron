@@ -724,7 +724,7 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
         }
     }
     merge_machine_maps(&mut merged.machines, &mut merged.machine_keys, right);
-    super::restored_join::merge(&mut merged.restored_enrolments, &right.restored_enrolments);
+    super::restored_join::merge(&mut merged, right);
     for (machine, held) in &right.held_machine_answers {
         merged
             .held_machine_answers
