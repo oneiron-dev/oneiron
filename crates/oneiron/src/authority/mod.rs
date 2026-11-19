@@ -161,6 +161,7 @@ mod principal_standing;
 mod readonly_fold;
 mod recover_many;
 mod recovery;
+mod restored_join;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
@@ -244,8 +245,8 @@ pub use oneiron_authority::authority::{
     authority_transcript, decode_authority_log_entry_body, effective_slip_comm,
     encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
     genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
-    sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
-    verify_authority_signature,
+    restored_machine_profile_proof_transcript, sign_federation_pact_gesture,
+    validate_authority_log_entry_body_bytes, verify_authority_signature,
 };
 // The custody work body's own types (WILL L04 row 04), its permits in
 // pieces (FIX 11866) and its shared permit set (FIX 12281).
@@ -419,6 +420,7 @@ pub use mesh_machine::{
     MeshAlpnGrant, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshMachineAddress,
     MeshMachineAddressEnvelope, MeshMachineBinding,
 };
+pub use restored_join::RestoredEnrolmentStanding;
 // The vault as its own `/mcp`'s OAuth 2.1 authorization server (FIX 4902 slice B), and the
 // agent tiers it and `oneiron token agent` share.
 pub use agent_tier::AgentTier;

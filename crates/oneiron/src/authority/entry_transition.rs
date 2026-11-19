@@ -238,6 +238,7 @@ fn transition_entry(
             machines: PersistentMap::new(),
             machine_keys: PersistentMap::new(),
             held_machine_answers: PersistentMap::new(),
+            restored_enrolments: BTreeMap::new(),
             root_anchors: PersistentMap::new(),
             anchor_entries: PersistentSet::new(),
             host_custody_keys: PersistentSet::new(),
@@ -290,10 +291,38 @@ fn transition_entry(
             None => state.clone(),
         });
     }
-    let Some(mut state) = parent_state else {
+    let Some(state) = parent_state else {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidAncestry(hash));
     };
+    // A held enrolment of a machine born of a restore, among this entry's
+    // ancestors, joins when a live machine signs the entry (row
+    // RESTORED-COPIES-ENROL-EACH-OTHER): judged on the parents, applied only
+    // to an entry its own transition accepts. A row that lands as
+    // restriction only (past its signer's floor, or held back) grants
+    // nothing, so it joins nothing (REVIEW-9509 round 2 P1).
+    let witnessed = if restriction_only {
+        Vec::new()
+    } else {
+        super::restored_join::witnessed(&state, entry, (context.pin, context.machine_standing))
+    };
+    match fold_merged_entry(entry, hash, state, context, restriction_only) {
+        EntryFold::Ready(mut state) => {
+            super::restored_join::join(&mut state, &witnessed, hash);
+            EntryFold::Ready(state)
+        }
+        other => other,
+    }
+}
 
+/// [`fold_entry_state`] past the parent merge: the vault and passkey checks
+/// and each op's transition on its parents' merged `state`.
+fn fold_merged_entry(
+    entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
+    mut state: FoldState,
+    context: FoldContext<'_>,
+    restriction_only: bool,
+) -> EntryFold {
     if entry.vault_id != Some(state.vault_id) {
         return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
     }
@@ -520,14 +549,24 @@ fn transition_entry(
     if let AuthorityOp::MachineProfile(profile) = &entry.op
         && profile.act.is_some()
     {
-        if let Err(issue) = super::machine_profile::apply_owner_answer(
+        // Carried by a live machine, so it stands on a restored target's
+        // held enrolments, which its entry joins.
+        if let Err(issue) = super::restored_join::fold_revision(
             &mut state,
-            entry,
             profile,
             hash,
-            (context.pin, context.machine_standing),
-            restriction_only,
-            context.needs_owner_proof_off_the_line(&hash),
+            true,
+            |state, parents| {
+                super::machine_profile::apply_owner_answer(
+                    state,
+                    entry,
+                    profile,
+                    hash,
+                    (context.pin, context.machine_standing),
+                    restriction_only,
+                    (context.needs_owner_proof_off_the_line(&hash), parents),
+                )
+            },
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -730,14 +769,12 @@ fn transition_entry(
         return EntryFold::Ready(state);
     }
     if let AuthorityOp::MachineProfile(profile) = &entry.op {
-        if let Err(issue) = apply_machine_profile(
-            &mut state,
-            &signer,
-            profile,
-            hash,
-            context,
-            restriction_only,
-        ) {
+        // A restored machine's root-signed enrolment is held until it joins.
+        if let Err(issue) =
+            super::restored_join::fold_revision(&mut state, profile, hash, false, |state, _| {
+                apply_machine_profile(state, &signer, profile, hash, context, restriction_only)
+            })
+        {
             return EntryFold::Invalid(issue);
         }
         state.seqs.insert(signer, entry.seq);

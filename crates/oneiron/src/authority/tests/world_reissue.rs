@@ -346,6 +346,7 @@ fn a_compromised_old_roots_late_widening_is_never_promoted() {
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     });
     let fold = a.vault.authority_fold().unwrap();
     let entry = anchor_signed_entry(&fold, &first.seed.anchor(), mark, 2).unwrap();

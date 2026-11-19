@@ -232,6 +232,7 @@ impl ServedVault {
             device_class,
             encryption_key,
             machine_proof,
+            restored_from: None,
         }
     }
 
@@ -370,6 +371,7 @@ fn strangers_removal_mark(
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     };
     let entry = signed(
         served.vault_id(),
@@ -647,6 +649,7 @@ fn a_carriers_removal_counts_once_its_key_is_taken_as_own() {
                     ActSurface::ThisInstall,
                     [0; 32],
                 )),
+                restored_from: None,
             };
             signed_at(
                 vault_id,
@@ -705,6 +708,7 @@ fn a_carriers_removal_counts_once_its_key_is_taken_as_own() {
                 seen_world_edits: BTreeSet::new(),
                 carrier: None,
                 act: None,
+                restored_from: None,
             };
             signed_at(
                 vault_id,
@@ -812,6 +816,7 @@ fn a_proven_removal_a_strangers_carrier_carries_removes_nothing() {
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     };
     let mark = signed(
         vault_id,
@@ -843,6 +848,7 @@ fn a_proven_removal_a_strangers_carrier_carries_removes_nothing() {
             ActSurface::ThisInstall,
             [0; 32],
         )),
+        restored_from: None,
     };
     let removal = cosigned_at(
         vault_id,

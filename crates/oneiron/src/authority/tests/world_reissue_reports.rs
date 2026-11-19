@@ -227,6 +227,7 @@ fn a_clones_widening_is_never_offered_for_re_assertion() {
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     });
     let fold = a.vault.authority_fold().unwrap();
     let entry = anchor_signed_entry(&fold, &host_seed.anchor(), mark, 2).unwrap();

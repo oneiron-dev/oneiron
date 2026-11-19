@@ -510,6 +510,7 @@ fn anchor_root(host: &Host, seed: &RecoveryRootSeed, install: Option<&Vault>) ->
             seen_world_edits: std::collections::BTreeSet::new(),
             carrier: None,
             act: None,
+            restored_from: None,
         }));
     }
     for op in ops {
