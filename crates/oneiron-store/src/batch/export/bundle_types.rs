@@ -76,6 +76,10 @@ pub enum ImportOmissionReason {
     /// before it): the claim door reads its link live, so the claim stays
     /// archive data.
     ClaimSubjectEdgeNotRestored,
+    /// A coreference share consent: it counts only as this vault's own
+    /// Approved act, and an imported claim is neither, so the restored link
+    /// stays local until the owner consents again.
+    CoreferenceConsentNotRestored,
 }
 
 /// Foundations not stored as vault-owned source. Never fabricate PACK.md/code.

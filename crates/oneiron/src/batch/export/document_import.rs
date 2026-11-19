@@ -739,9 +739,12 @@ impl Vault {
         // (WHOLE-VAULT-IMPORT-REFUSES-CONVERSATION-DAG). An archived
         // readiness or fulfillment link is proven on its restored rows and
         // their restored `supersedes` chain, so it lands after the plain
-        // links too (WHOLE-VAULT-IMPORT-REFUSES-RESERVED-OWNER-EDGES).
+        // links too (WHOLE-VAULT-IMPORT-REFUSES-RESERVED-OWNER-EDGES). An
+        // archived `same_as` link is proven on its two restored PERSONs, so it
+        // lands in the plain pass, or before a claim about it.
         let mut skipped_unproven_regenerates_edges = 0;
         let mut unrestored_identity_topology_shells = BTreeSet::new();
+        let mut unrestored_same_as_links = 0;
         for pass in [
             ArchiveEdgePass::Plain,
             ArchiveEdgePass::ConversationDag,
@@ -765,6 +768,7 @@ impl Vault {
                     EdgeImport::IdentityTopologyLeftOut => {
                         unrestored_identity_topology_shells.insert(parse_id(&edge.source)?);
                     }
+                    EdgeImport::SameAsLeftOut => unrestored_same_as_links += 1,
                 }
             }
         }
@@ -858,6 +862,7 @@ impl Vault {
             skipped_revoked_secrets,
             skipped_unproven_regenerates_edges,
             unrestored_identity_topology_shells: unrestored_identity_topology_shells.len(),
+            unrestored_same_as_links,
             missing_secrets,
             owed_secrets,
             embedding_setup,
@@ -1003,7 +1008,16 @@ fn insert_ready_row<R: Read + Seek>(
                 // inbox group (R1, RULING 02:26 13 Nov). A claim about a link
                 // goes in after its link, staged here; one whose link does not
                 // come back stays archive data
-                // (WHOLE-VAULT-IMPORT-REFUSES-EDGE-SUBJECT-CLAIMS).
+                // (WHOLE-VAULT-IMPORT-REFUSES-EDGE-SUBJECT-CLAIMS). A share
+                // consent stays archive data: it counts only as this vault's
+                // own Approved act, and an imported claim is neither
+                // (`federation::coreference_shared_for_pact`), so the
+                // restored link is local until the owner consents again.
+                _ if claim.predicate == crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT => {
+                    archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
+                    archive.index.remove(Tag::Inserted, id.as_bytes())?;
+                    return Ok(Some(ImportOmissionReason::CoreferenceConsentNotRestored));
+                }
                 _ => {
                     if let ClaimSubject::Edge {
                         source,
@@ -1244,8 +1258,9 @@ fn archived_edge_skipped<R: Read + Seek>(
 /// (`provenance_import::restore`). Only a plain link the edge passes would
 /// restore is staged here, and the plain pass then finds it as the archive
 /// has it. A link of a later pass is proven on rows and links not in yet; a
-/// skipped link, one whose door leaves it out (`merged_into`, `split_into`)
-/// and one the archive does not carry never come back before the claim.
+/// skipped link, one whose door leaves it out (`merged_into`, `split_into`,
+/// a `same_as` [`import_same_as_edge`] does not restore) and one the archive
+/// does not carry never come back before the claim.
 fn stage_claim_subject_edge<R: Read + Seek>(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -1982,6 +1997,14 @@ fn imported_body(
             if body.approval != ClaimApprovalStatus::Rejected {
                 body.approval = ClaimApprovalStatus::Proposed;
             }
+            // A coreference status states its approval in its value too (the
+            // validator pins `confirmed` to Approved), so a confirmed link
+            // comes back proposed, as its approval does.
+            if body.predicate == crate::claim::PREDICATE_COREFERENCE_STATUS
+                && body.value.as_str() == Some(crate::claim::COREFERENCE_STATUS_CONFIRMED)
+            {
+                body.value = rmpv::Value::from(crate::claim::COREFERENCE_STATUS_PROPOSED);
+            }
             if let Some(restore) = owner_restore {
                 owner_archive_restore::owner_restored_claim(&mut body, restore);
             }
@@ -2210,6 +2233,9 @@ pub(super) enum EdgeImport {
     /// hold, left out: the type-76 events such a link follows stay archive
     /// data (OWNEDGES-SHELL-RESTORE = A); the edge passes count its source.
     IdentityTopologyLeftOut,
+    /// An archived `same_as` link [`import_same_as_edge`] does not restore,
+    /// left out; the edge passes count it.
+    SameAsLeftOut,
 }
 
 /// Writes one archived edge; `inserted` names the rows this import put in or
@@ -2249,6 +2275,9 @@ fn import_edge_with_seeds(
         } else {
             EdgeImport::IdentityTopologyLeftOut
         });
+    }
+    if kind == EdgeKind::SameAs {
+        return import_same_as_edge(vault, wtxn, edge, inserted, source, target);
     }
     if let Some(existing) =
         crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
@@ -2507,6 +2536,70 @@ fn import_readiness_or_fulfillment_edge(
             },
         )
         .apply(wtxn)
+}
+
+/// An archived `same_as` link (WHOLE-VAULT-IMPORT-REFUSES-RESERVED-OWNER-EDGES)
+/// comes back through the internal write, with its archived `created_at`,
+/// when it is the link the federation door writes
+/// (`federation::put_coreference_link`): between two PERSONs this import
+/// inserted, at weight [`COREFERENCE_LINK_WEIGHT`](crate::federation::COREFERENCE_LINK_WEIGHT),
+/// with no affect and no provenance. The door's actor check is not run
+/// again: the source vault's door ran it. The link's status claims come back
+/// as proposals, as every imported claim does, and its share consents stay
+/// archive data (`CoreferenceConsentNotRestored`), so the link is local here.
+///
+/// A record already here keeps its own links: a link this vault holds is
+/// left as it is, and one naming a PERSON already here stays out, since a
+/// foreign archive would otherwise tell this vault who its own person is.
+/// Every other `same_as` stays out too: a link between two CLAIMs is applied
+/// only under the owner's standing nightly-link grant
+/// (`federation::put_consolidated_same_as_in_txn`), and one between two diary
+/// NOTEs only on its residents' own submission
+/// (`Memory::link_diary_coreference`). The edge passes count each link left
+/// out, and a claim about it stays archive data (`ClaimSubjectEdgeNotRestored`).
+fn import_same_as_edge(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    edge: &ExportEdge,
+    inserted: &ArchiveIndex<'_>,
+    source: EntityId,
+    target: EntityId,
+) -> Result<EdgeImport> {
+    if crate::ports::EdgeStoreRead::port_edge_get(
+        &vault.store,
+        wtxn,
+        &source,
+        EdgeKind::SameAs,
+        &target,
+    )?
+    .is_some()
+    {
+        return Ok(EdgeImport::Landed);
+    }
+    let restorable = edge.weight == crate::federation::COREFERENCE_LINK_WEIGHT
+        && edge.vad.is_none()
+        && edge.provenance.is_none()
+        && inserted.contains(Tag::Inserted, source.as_bytes())?
+        && inserted.contains(Tag::Inserted, target.as_bytes())?
+        && crate::federation::person_pair_in_txn(vault, wtxn, source, target)?;
+    if !restorable {
+        return Ok(EdgeImport::SameAsLeftOut);
+    }
+    vault
+        .batch_in()
+        .edge_with_value_fields(
+            &source,
+            EdgeKind::SameAs,
+            &target,
+            crate::batch::EdgeValueFields {
+                weight: edge.weight,
+                created_at: edge.created_at,
+                vad: oneiron_contracts::affect::Vad::NEUTRAL,
+                provenance: None,
+            },
+        )
+        .apply(wtxn)?;
+    Ok(EdgeImport::Landed)
 }
 
 /// The kinds only the conversation DAG writes; every public edge door refuses
