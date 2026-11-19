@@ -22,6 +22,8 @@ mod core_discover;
 mod dreamer_binding;
 mod dreamer_host_wording;
 mod dreamer_live;
+#[path = "../support/engine_stack.rs"]
+mod engine_stack;
 #[path = "../support/fake_llm.rs"]
 mod fake_llm;
 mod first_owner_bootstrap;

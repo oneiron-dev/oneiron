@@ -2539,7 +2539,7 @@ fn a_pass_prunes_every_expired_trace_before_it_claims() {
 fn a_dag_turn_reads_its_retained_ancestry_and_a_root_reads_alone() {
     use crate::WriteActor;
     use crate::conversation_dag::AppendRecord;
-    use crate::conversation_dag::fixtures::{grant, input};
+    use crate::conversation_dag::fixtures::{grant, grant_reads, input};
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path(), true);
     let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
@@ -2554,6 +2554,7 @@ fn a_dag_turn_reads_its_retained_ancestry_and_a_root_reads_alone() {
         )
         .expect("author");
     grant(&vault, actor, true);
+    grant_reads(&vault, actor);
     let room = EntityId::now();
     vault
         .create_conversation(
