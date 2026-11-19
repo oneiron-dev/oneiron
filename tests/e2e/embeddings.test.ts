@@ -182,6 +182,31 @@ function documentStep(origin: string, id: string, data: Scenarios, text: string,
     request: { method: "POST", path: "/v1/embeddings", model: data.space.modelKey, fields: { input: [text] } },
     response: embeddingReply(data.space.modelKey, [vector], 8), ...(barrier ? { barrier } : {}) };
 }
+/* Bootstrap rows the engine's own open writes before any fixture document:
+ * a seeded person.substrate claim ("model"), the goal-intake SKILL's desc,
+ * and a seeded actor.subject_ref claim (a person id hex). The endpoint
+ * embedder's background fill sends them at any time, so each case answers
+ * them with standing steps (matched by origin, method, path, model and
+ * fields; answered any number of times; never in FIFO order; never
+ * unconsumed) on the exact input, with a vector that can never outrank or
+ * tie the fixture's target. Purpose stays off "fixture document fill" and
+ * "owned retrieval probe" so the per-case call censuses keep proving what
+ * they prove. */
+const BOOTSTRAP_SUBSTRATE_TEXT = "model";
+const BOOTSTRAP_GOAL_INTAKE_TEXT = "Interview a human for a typed project goal record and commit it via authenticated intake.";
+const BOOTSTRAP_SUBJECT_REF_TEXT = "a4c287a77f1c843ba4b81ebc08ca586b";
+function bootstrapStanding(origin: string, data: Scenarios, vector: number[]): ProviderStep[] {
+  const texts = [
+    ["bootstrap-substrate", BOOTSTRAP_SUBSTRATE_TEXT],
+    ["bootstrap-goal-intake", BOOTSTRAP_GOAL_INTAKE_TEXT],
+    ["bootstrap-subject-ref", BOOTSTRAP_SUBJECT_REF_TEXT],
+  ] as const;
+  return texts.map(([id, text]) => ({ id, origin, role: "embedder",
+    purpose: "bootstrap row fill", standing: true as const,
+    request: { method: "POST" as const, path: "/v1/embeddings", model: data.space.modelKey,
+      fields: { input: [text] } },
+    response: embeddingReply(data.space.modelKey, [vector], 8) }));
+}
 function witness(client: PublicHttpClient, data: Scenarios, text: string,
   refs: { conversation?: string; turn?: string; message?: string } = {}): Promise<WitnessReceipt> {
   const input: FacadeInput<"vault.witness"> = {
@@ -230,6 +255,7 @@ suite.test(test, "EMBEDDINGS-01", "First-run embedder choice should work", async
     ...startup("primary", "init", data, false), ...startup("primary", "serve", data, true),
     documentStep("primary", "first-run-document", data, data.firstRun.text, data.firstRun.vector),
     ...startup("primary", "restart", data, true),
+    ...bootstrapStanding("primary", data, [0, 0, 0, 1]),
   ] });
   const engine = await startEndpointEngine("EMBEDDINGS-01-endpoint", data, `${providers.urls.primary!}/v1`);
   expect((await new PublicHttpClient(engine.url).request<{ status: string }>("GET", "/api/health")).body.status).toBe("ok");
@@ -269,6 +295,7 @@ suite.test(test, "EMBEDDINGS-02", "Async embedding durability should work", asyn
     ...startup("primary", "recovery", data, true),
     documentStep("primary", "successful-fill", data, row.text, row.vector, "recovered-fill"), query("semantic-before-restart"),
     ...startup("primary", "durable-restart", data, true), query("semantic-after-restart"),
+    ...bootstrapStanding("primary", data, [0, 0, 0, 1]),
   ] });
   const engine = await startEndpointEngine("EMBEDDINGS-02", data, `${providers.urls.primary!}/v1`);
   // This acknowledgment resolves while the model response remains held.
@@ -340,6 +367,7 @@ suite.test(test, "EMBEDDINGS-03", "Exact embedding identity and checked swap sho
     mediaDocument("good", "good-distractor", swap.distractorText, vectors.distractor),
     ...swap.probes.map((_, i) => probeStep("good", `good-candidate-${i}`, vectors.goodQuery)),
     probeStep("good", "after-automatic-swap", vectors.goodQuery),
+    ...bootstrapStanding("primary", data, [0, 0, 0, 1]),
   ] });
   const modelConfig = ["bad", "good"].map(origin => `
 [models.providers.${origin}]
@@ -481,6 +509,7 @@ suite.test(test, "EMBEDDINGS-05", "Remote egress deny falls back locally should 
     ...startup("remote", "remote-init", data, false), ...startup("remote", "remote-serve", data, false),
     listing("remote", "remote-rung-listing", data),
     documentStep("remote", "allowed-remote", data, allowed.text, allowed.vector), failedStep,
+    ...bootstrapStanding("primary", data, [-0.5, -0.5, -0.5, -0.5]),
   ] });
   // "third-party" is the real adapter's locality policy, not a trusted-model
   // exemption. The recording origin is loopback for the network-isolated run;
