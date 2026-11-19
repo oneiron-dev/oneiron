@@ -255,6 +255,17 @@ fn clear_all_preserves_hard_erase_sweeps_and_metadata_counters() {
     .unwrap();
     let quarantine_key = quarantine::encode_quarantine_key(quarantine_seq);
 
+    let embed_before = {
+        let rtxn = vault.store.env.read_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .get(&rtxn, &embed_key)
+            .unwrap()
+            .expect("embed job row exists before clear")
+            .to_vec()
+    };
+
     queue.clear_all().unwrap();
 
     let rtxn = vault.store.env.read_txn().unwrap();
@@ -267,14 +278,15 @@ fn clear_all_preserves_hard_erase_sweeps_and_metadata_counters() {
             .is_none(),
         "clear_all must drop queued update rows",
     );
-    assert!(
+    assert_eq!(
         vault
             .store
             .sync_queue
             .get(&rtxn, &embed_key)
             .unwrap()
-            .is_none(),
-        "clear_all must drop queued embed-job rows",
+            .as_deref(),
+        Some(embed_before.as_slice()),
+        "clear_all must preserve embedding jobs (reconciler-owned, FIX 8884)",
     );
     assert_eq!(
         vault

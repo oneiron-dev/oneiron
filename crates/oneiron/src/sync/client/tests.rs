@@ -75,15 +75,51 @@ fn sync_state_values_with_prefix(vault: &Vault, prefix: &str) -> Vec<(String, Ve
         .collect()
 }
 
-fn read_u_seq(vault: &Vault, key: &str) -> Option<u32> {
+fn read_u_seq(vault: &Vault, key: &str) -> Option<u64> {
     vault
         .sync_state_get(&format!("m:u_seq:w:{key}"))
         .unwrap()
-        .map(|raw| u32::from_le_bytes(raw.try_into().unwrap()))
+        .map(|raw| u64::from_le_bytes(raw.try_into().unwrap()))
 }
 
 fn task_body() -> Vec<u8> {
     crate::habit::task_body_for_test(crate::habit::TaskRole::Task)
+}
+
+/// Wraps window bytes in the pad-free window pad envelope the engine requires
+/// (FIX 7107): every UPDATE frame carries its bytes in an envelope.
+fn pad_update(payload: &[u8]) -> Vec<u8> {
+    transport::WindowPadEnvelope {
+        kind: transport::WindowPadKind::Update,
+        form: transport::WindowPadForm::PadFree,
+        queue_seq: None,
+        payload: payload.to_vec(),
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode()
+    .unwrap()
+}
+
+/// Wraps a snapshot in the pad-free replacement envelope.
+fn pad_replacement(payload: &[u8]) -> Vec<u8> {
+    transport::WindowPadEnvelope {
+        kind: transport::WindowPadKind::Replacement,
+        form: transport::WindowPadForm::PadFree,
+        queue_seq: None,
+        payload: payload.to_vec(),
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode()
+    .unwrap()
+}
+
+/// Unwraps a pad-free envelope's payload (client outbound UPDATEs are enveloped).
+fn unpad_update(enveloped: &[u8]) -> Vec<u8> {
+    transport::decode_window_pad_envelope(enveloped)
+        .unwrap()
+        .payload
 }
 
 fn commit_local_entity(
@@ -690,8 +726,9 @@ fn sync_all_discovers_unopened_world_and_old_base_windows_between_independent_va
             )
             .unwrap()
             .into_bytes();
+            let enveloped = pad_update(&payload);
             let frame =
-                transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &payload)
+                transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &enveloped)
                     .into_result()
                     .unwrap();
             peer_client
@@ -745,10 +782,14 @@ fn sync_all_discovers_unopened_world_and_old_base_windows_between_independent_va
             )
             .unwrap()
             .into_bytes();
-            let frame =
-                transport::encode_window_sync(next_key.as_str(), window_sub_tags::UPDATE, &payload)
-                    .into_result()
-                    .unwrap();
+            let enveloped = pad_update(&payload);
+            let frame = transport::encode_window_sync(
+                next_key.as_str(),
+                window_sub_tags::UPDATE,
+                &enveloped,
+            )
+            .into_result()
+            .unwrap();
             peer_client.handle_server_message(&frame).unwrap();
             assert_eq!(
                 peer.get(&next_claim).unwrap(),
@@ -942,7 +983,8 @@ fn binary_vv_delta_round_trip_converges_with_smaller_payloads() {
         .unwrap();
     server_doc.commit();
     let base = server_doc.export(ExportMode::all_updates()).unwrap();
-    let base_msg = transport::encode_window_sync(key, window_sub_tags::UPDATE, &base);
+    let base_enveloped = pad_update(&base);
+    let base_msg = transport::encode_window_sync(key, window_sub_tags::UPDATE, &base_enveloped);
     assert!(client.handle_server_message(&base_msg).unwrap().is_empty());
 
     // Diverge: client writes one key, server writes another.
@@ -988,7 +1030,8 @@ fn binary_vv_delta_round_trip_converges_with_smaller_payloads() {
         client_delta.len(),
         client_all.len()
     );
-    server_doc.import(client_delta).unwrap();
+    let client_inner = unpad_update(client_delta);
+    server_doc.import(&client_inner).unwrap();
 
     // responses[1]: client VV for the reverse leg.
     let (k1, sub1, client_vv) = transport::decode_window_sync(&responses[1][1..]).unwrap();
@@ -1005,7 +1048,8 @@ fn binary_vv_delta_round_trip_converges_with_smaller_payloads() {
         server_delta.len(),
         server_all.len()
     );
-    let update_msg = transport::encode_window_sync(key, window_sub_tags::UPDATE, &server_delta);
+    let server_enveloped = pad_update(&server_delta);
+    let update_msg = transport::encode_window_sync(key, window_sub_tags::UPDATE, &server_enveloped);
     assert!(
         client
             .handle_server_message(&update_msg)
@@ -1042,7 +1086,7 @@ fn noop_echo_after_hard_delete_writes_no_uw_carrier() {
         "Observer B materialized the live payload before the hard delete"
     );
 
-    vault.sync_state_put(&seq_key, &0u32.to_le_bytes()).unwrap();
+    vault.sync_state_put(&seq_key, &0u64.to_le_bytes()).unwrap();
     let outcome = vault
         .delete_entity_with_reason(&id, crate::DeleteReason::UserHardDelete)
         .unwrap();
@@ -1059,7 +1103,8 @@ fn noop_echo_after_hard_delete_writes_no_uw_carrier() {
     let prefix = format!("u:w:{key}:");
     let rows_before_echo = sync_state_values_with_prefix(&vault, &prefix);
     let seq_before_echo = read_u_seq(&vault, key);
-    let echo = transport::encode_window_sync(key, window_sub_tags::UPDATE, &payload_update);
+    let echo_enveloped = pad_update(&payload_update);
+    let echo = transport::encode_window_sync(key, window_sub_tags::UPDATE, &echo_enveloped);
     assert!(client.handle_server_message(&echo).unwrap().is_empty());
 
     let rows_after_echo = sync_state_values_with_prefix(&vault, &prefix);
@@ -1117,7 +1162,8 @@ fn noop_echo_after_snapshot_subsumes_writes_no_uw_row() {
         "all rows subsumed leaves svf fresh"
     );
 
-    let echo = transport::encode_window_sync(key, window_sub_tags::UPDATE, &payload_update);
+    let echo_enveloped = pad_update(&payload_update);
+    let echo = transport::encode_window_sync(key, window_sub_tags::UPDATE, &echo_enveloped);
     assert!(client.handle_server_message(&echo).unwrap().is_empty());
     assert!(
         sync_state_values_with_prefix(&vault, &prefix).is_empty(),
@@ -1161,11 +1207,9 @@ fn device_vector_arms_rebase_a_pinned_window_on_the_server_and_keep_unsent_rows(
             )
             .unwrap();
         server_doc.commit();
-        let base = transport::encode_window_sync(
-            key,
-            window_sub_tags::UPDATE,
-            &server_doc.export(ExportMode::all_updates()).unwrap(),
-        );
+        let base_raw = server_doc.export(ExportMode::all_updates()).unwrap();
+        let base_enveloped = pad_update(&base_raw);
+        let base = transport::encode_window_sync(key, window_sub_tags::UPDATE, &base_enveloped);
         assert!(client.handle_server_message(&base).unwrap().is_empty());
 
         // The device writes two rows it never sends, and holds a carrier its export scrubs.
@@ -1224,7 +1268,9 @@ fn device_vector_arms_rebase_a_pinned_window_on_the_server_and_keep_unsent_rows(
         let snapshot = server_doc
             .export(ExportMode::shallow_snapshot(&server_doc.oplog_frontiers()))
             .unwrap();
-        let frame = transport::encode_window_sync(key, window_sub_tags::REPLACEMENT, &snapshot);
+        let snapshot_enveloped = pad_replacement(&snapshot);
+        let frame =
+            transport::encode_window_sync(key, window_sub_tags::REPLACEMENT, &snapshot_enveloped);
         let responses = client.handle_server_message(&frame).unwrap();
         let (_, tag, vv) = transport::decode_window_sync(&responses[0][1..]).unwrap();
         assert_eq!(
@@ -1257,7 +1303,8 @@ fn device_vector_arms_rebase_a_pinned_window_on_the_server_and_keep_unsent_rows(
             window_sub_tags::UPDATE,
             "arm {arm}: the rebased device sends history"
         );
-        let status = server_doc.import(delta).unwrap();
+        let inner = unpad_update(delta);
+        let status = server_doc.import(&inner).unwrap();
         assert!(
             status.pending.is_none(),
             "arm {arm}: the server cannot apply the device's history"
@@ -1313,7 +1360,8 @@ fn vv_response_triggers_local_diff_update() {
     let (k, sub, delta) = transport::decode_window_sync(&responses[0][1..]).unwrap();
     assert_eq!(k, key);
     assert_eq!(sub, window_sub_tags::UPDATE);
-    server_doc.import(delta).unwrap();
+    let inner = unpad_update(delta);
+    server_doc.import(&inner).unwrap();
     assert_eq!(
         replicated_deep_value(&client.window(key).unwrap().doc),
         replicated_deep_value(&server_doc)
@@ -1360,7 +1408,8 @@ fn window_converged_requires_server_witness_and_vv_equality() {
         &client.window(key).unwrap().doc.oplog_vv().encode(),
     )
     .unwrap();
-    let update = transport::encode_window_sync(key, window_sub_tags::UPDATE, &delta);
+    let enveloped = pad_update(&delta);
+    let update = transport::encode_window_sync(key, window_sub_tags::UPDATE, &enveloped);
     client.handle_server_message(&update).unwrap();
     assert_eq!(client.window_converged(key), Some(true));
 
@@ -1591,9 +1640,10 @@ fn selector_request_builder_refuses_an_unbound_client_and_records_nothing() {
         .expect("a bound client retries the deferred selector");
     assert_eq!(retry.len(), 1);
 
-    let response = transport::encode_window_sync(key, window_sub_tags::UPDATE, &update)
-        .into_result()
-        .expect("full-window update encodes");
+    let response =
+        transport::encode_window_sync(key, window_sub_tags::UPDATE, &pad_update(&update))
+            .into_result()
+            .expect("full-window update encodes");
 
     client
         .handle_server_message(&response)
@@ -2447,7 +2497,8 @@ fn bound_wire_federation_burst_is_durable_before_import_and_replays_after_restar
     }
     remote.commit();
     let update = remote.export(ExportMode::all_updates()).unwrap();
-    let frame = transport::encode_window_sync(key, window_sub_tags::UPDATE, &update)
+    let enveloped = pad_update(&update);
+    let frame = transport::encode_window_sync(key, window_sub_tags::UPDATE, &enveloped)
         .into_result()
         .unwrap();
     client.handle_server_message(&frame).unwrap();
