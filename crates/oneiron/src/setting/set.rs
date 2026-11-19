@@ -1,31 +1,26 @@
 //! The one door that changes a setting row: [`Vault::set_setting`].
 
+mod actor_reading;
+mod approval;
+
 use serde::{Deserialize, Serialize};
 
 use oneiron_authority::authority::{ActSurface, Direction, Permitted};
-use oneiron_contracts::fingerprint::{Fingerprinter, purposes};
 use oneiron_setting_contract::{ChangeDirection, FoundRow, Order, Quorum, RowKey};
 
+use self::actor_reading::{agent_reading_in_txn, person_reading_in_txn};
+use self::approval::{open_request_in_txn, spend_in_txn};
 use super::change::record_change_in_txn;
 use super::learned::{checked_weight, fits_in_txn};
 use super::pack::layer_default_in_txn;
-use super::read::{
-    Loaded, StoredRow, in_force_of, key_line_grant_in_txn, load_in_txn, names_subject, table_of,
-};
+use super::read::{Loaded, StoredRow, in_force_of, load_in_txn, table_of};
 use super::signed_act::sign_owner_change_in_txn;
 use super::{
-    EncodedValue, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, set_line,
-    spec_named, widen_line, widen_line_at, widen_scope_line,
+    EncodedValue, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, spec_named,
 };
 use crate::Vault;
 use crate::batch::secret_scan::{FieldRule, admit_typed_with_rule};
-use crate::check_in::{
-    CheckInMode, CheckInScope, HolderAnswer, NoAgentVerdict, OpenPendingCheckIn, PendingState,
-    VerifiedChain, WaitReason, consume_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn,
-    pending_check_in_in_txn,
-};
 use crate::consent::AuthenticatedOwner;
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -625,259 +620,6 @@ fn is_slot(row: &Loaded, change: &Change<'_>) -> bool {
         && row.found.mode == change.key.mode
 }
 
-/// What `agent` may do to `change`'s row, and in which capacity: A0's reading of the actor, or
-/// `None` when it may do nothing without asking. This is the one place the agent-holder rule
-/// lives.
-/// - With the owner's standing approval for the key or the row's scope
-///   ([`standing_grant_in_txn`]): any move, so its widening lands without asking (owner
-///   principle, 16 Nov 00:44: the ask is the default, and standing approval the owner's opt-out).
-/// - A holder of the key (its own Grant line `settings.set:<key>`, a live `engine.controls`
-///   Grant for the key's class, or its own row of a key its subject sets) makes no widening: its
-///   loose move asks the user (AUTH-1 = A).
-/// - The row's own subject, on a key whose rows meet, narrows only.
-/// - Neither, or a pin: nothing. On a key that reads one row every agent keeps clear of the
-///   owner's pin, and one without standing approval of the owner's rows too
-///   ([`one_row_bounds_in_txn`]).
-fn agent_reading_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    change: &Change<'_>,
-    agent: EntityId,
-) -> Result<Option<(Setter, Permitted)>> {
-    let spec = change.spec;
-    if change.key.mode == SettingMode::Pin {
-        return Ok(None);
-    }
-    if let Some(grant) = standing_grant_in_txn(vault, txn, agent, change)? {
-        return Ok(
-            one_row_bounds_in_txn(vault, txn, change, StandingApproval::Given)?
-                .then_some((Setter::Standing { grant }, Permitted::AnyMove)),
-        );
-    }
-    let holder = match key_line_grant_in_txn(vault, txn, agent, &set_line(spec.name))? {
-        Some(grant) => Some(Setter::KeyGrant { grant }),
-        None => match spec.set_by {
-            SetBy::Class(class) => vault
-                .engine_controls_grant_in(txn, agent, class)?
-                .map(|grant| Setter::Holder { grant }),
-            SetBy::Subject if names_subject(&change.key.scope, agent) => Some(Setter::Subject),
-            SetBy::Owner | SetBy::Subject => None,
-        },
-    };
-    let reading = match holder {
-        Some(setter) => (setter, Permitted::NoWidening),
-        None if spec.reads_met() && names_subject(&change.key.scope, agent) => {
-            (Setter::Subject, Permitted::NarrowingOnly)
-        }
-        None => return Ok(None),
-    };
-    Ok(one_row_bounds_in_txn(vault, txn, change, StandingApproval::Absent)?.then_some(reading))
-}
-
-/// The live owner Grant through which `agent` holds the owner's standing approval for
-/// `change`'s row: the key's line ([`widen_line`]), the key's line at the row's scope
-/// ([`widen_line_at`]), or the line of every key at that scope ([`widen_scope_line`]), the
-/// first found in that order. Each is the vault-wide line rule of [`key_line_grant_in_txn`],
-/// checked live in this write, so a revoked Grant ends it at once.
-fn standing_grant_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    agent: EntityId,
-    change: &Change<'_>,
-) -> Result<Option<EntityId>> {
-    let name = change.spec.name;
-    let scope = &change.key.scope;
-    let lines = [
-        Some(widen_line(name)),
-        widen_line_at(name, scope),
-        widen_scope_line(scope),
-    ];
-    for line in lines.into_iter().flatten() {
-        if let Some(grant) = key_line_grant_in_txn(vault, txn, agent, &line)? {
-            return Ok(Some(grant));
-        }
-    }
-    Ok(None)
-}
-
-/// Whether a non-owner's change carries the owner's standing approval, for the bounds of a key
-/// that reads one row.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum StandingApproval {
-    /// No standing approval: the owner's rows and a learned key's cap bind it.
-    Absent,
-    /// The owner's standing approval: only the owner's pin binds it.
-    Given,
-}
-
-/// What `person` may do to `change`'s row: only a value row at their own `Person` scope. On a
-/// key set by its subject the row is their own choice, so they make any move on it (authority
-/// pass 26, section 1.2); on another key whose rows meet they narrow it only; else nothing.
-fn person_reading_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    change: &Change<'_>,
-    person: EntityId,
-) -> Result<Option<(Setter, Permitted)>> {
-    if change.key.mode == SettingMode::Pin || change.key.scope != SettingScope::Person(person) {
-        return Ok(None);
-    }
-    let permitted = match change.spec.set_by {
-        SetBy::Subject => Permitted::AnyMove,
-        SetBy::Owner | SetBy::Class(_) if change.spec.reads_met() => Permitted::NarrowingOnly,
-        SetBy::Owner | SetBy::Class(_) => return Ok(None),
-    };
-    Ok(
-        one_row_bounds_in_txn(vault, txn, change, StandingApproval::Absent)?
-            .then_some((Setter::Subject, permitted)),
-    )
-}
-
-/// Whether a non-owner's `change` stays clear of the owner's rows where the move rule cannot
-/// judge it (DESIGN 1.2 step 4). On a key whose rows meet, always: a value row there only
-/// narrows what it meets, and the rule judges every move. On a key that reads one row: no owner's
-/// pin on the chain; and without the owner's standing approval, no row the owner set in the slot,
-/// and on a learned key with an order a value inside the owner's nearest value row at that scope
-/// or wider, else inside the default the vault accepted (stage 3's holder rule).
-fn one_row_bounds_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    change: &Change<'_>,
-    standing: StandingApproval,
-) -> Result<bool> {
-    let spec = change.spec;
-    if spec.reads_met() {
-        return Ok(true);
-    }
-    let chain = slot_chain(change)?;
-    let item = change.key.item.as_deref();
-    let loaded = load_in_txn(&vault.store, txn, spec, &chain, item)?;
-    if loaded
-        .iter()
-        .any(|row| row.found.by_owner && row.found.mode == SettingMode::Pin)
-    {
-        return Ok(false);
-    }
-    if standing == StandingApproval::Given {
-        return Ok(true);
-    }
-    if loaded
-        .iter()
-        .any(|row| row.found.by_owner && is_slot(row, change))
-    {
-        return Ok(false);
-    }
-    let Some(value) = change
-        .value
-        .filter(|_| spec.is_learned() && spec.kind.order() != Order::None)
-    else {
-        return Ok(true);
-    };
-    let cap = loaded
-        .iter()
-        .filter(|row| row.found.mode == SettingMode::Value && row.found.by_owner)
-        .min_by_key(|row| (row.found.at, !row.found.item));
-    Ok(match cap {
-        Some(cap) => cap
-            .found
-            .value
-            .as_ref()
-            .and_then(|cap| spec.kind.no_wider(value, cap))
-            .unwrap_or(false),
-        None => spec
-            .kind
-            .no_wider(value, &layer_default_in_txn(&vault.store, txn, spec)?.value)
-            .unwrap_or(false),
-    })
-}
-
-/// The check-in scope of a row: its world or project, else the whole vault.
-fn check_in_scope(scope: &SettingScope) -> CheckInScope {
-    match scope {
-        SettingScope::World(world) => CheckInScope {
-            world_ref: Some(world.to_hex()),
-            project_ref: None,
-        },
-        SettingScope::Project(project) => CheckInScope {
-            world_ref: None,
-            project_ref: Some(project.to_hex()),
-        },
-        _ => CheckInScope::default(),
-    }
-}
-
-/// The digest a proposal binds and its yes names (DESIGN 1.5, "A proposal binds what it will
-/// write"): the row's key, the value it would hold, a seed's weight, and the stored bytes of the
-/// row it replaces, so an approval spends only over the row it was asked over. A fingerprint
-/// under [`purposes::setting::SET_EFFECT_V2`]; each optional part writes its presence first.
-fn effect_digest(change: &Change<'_>, replaced: Option<&[u8]>) -> [u8; 32] {
-    let mut digest = Fingerprinter::new(purposes::setting::SET_EFFECT_V2);
-    digest.part(&change.key.encode());
-    match change.value {
-        None => digest.flag(false),
-        Some(value) => digest.flag(true).part(&value.0),
-    };
-    match change.weight_runs {
-        None => digest.flag(false),
-        Some(weight) => digest.flag(true).u64(weight.to_bits()),
-    };
-    match replaced {
-        None => digest.flag(false),
-        Some(bytes) => digest.flag(true).part(bytes),
-    };
-    digest.finish().into_bytes()
-}
-
-/// Opens, or finds, the check-in `agent`'s change waits on, under its own live owner Grant that
-/// lists `vault.settings.set`.
-fn open_request_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    change: &Change<'_>,
-    replaced: Option<&[u8]>,
-    agent: EntityId,
-    now: u64,
-) -> Result<SetSettingOutcome> {
-    let grant = crate::authority::principal_standing_in_txn(
-        vault,
-        txn,
-        agent,
-        EdgeActorClass::Agent,
-        SET_VERB,
-    )?
-    .and_then(|standing| standing.grant)
-    .ok_or_else(|| {
-        Error::InvalidConfig(format!(
-            "an agent asks for a setting change under its own live owner Grant that lists {SET_VERB}"
-        ))
-    })?;
-    let (row, _) = open_keyed_pending_check_in_in_txn(
-        vault,
-        txn,
-        OpenPendingCheckIn {
-            asker: agent,
-            grant_ref: grant.to_hex(),
-            verb: SET_VERB.to_owned(),
-            act: change.spec.act,
-            scope: check_in_scope(&change.key.scope),
-            effect_digest: effect_digest(change, replaced),
-            mode: CheckInMode::AlwaysAsk,
-            reason: WaitReason::AlwaysAsk,
-            asker_wait_secs: None,
-            until: None,
-            undo_plan: None,
-            delay_window: None,
-        },
-        None,
-        &VerifiedChain::new(&NoAgentVerdict),
-        now,
-    )?;
-    super::ask::keep_ask_in_txn(vault, txn, &row.id, agent, change.key, change.value)?;
-    Ok(SetSettingOutcome::Pending {
-        check_in: row.id.to_hex(),
-    })
-}
-
 /// The change an approved check-in spends on: the change, the stored row it replaces, whether
 /// the owner set that row, and which way the change moves it.
 struct Spend<'a, 'b> {
@@ -885,79 +627,4 @@ struct Spend<'a, 'b> {
     replaced: Option<&'a [u8]>,
     over_owners_row: bool,
     moved: Direction,
-}
-
-/// Spends the approved check-in `id` for `agent`'s change, in the door's writer: the ask must be
-/// this agent's for this change over the row it replaces, and its yes must come from someone who
-/// could make the change themselves ([`approver_may_make_in_txn`]).
-fn spend_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    spend: &Spend<'_, '_>,
-    agent: EntityId,
-    id: &EntityId,
-    now: u64,
-) -> Result<()> {
-    let change = spend.change;
-    let row = pending_check_in_in_txn(&vault.store, txn, id)?.ok_or(Error::EntityNotFound)?;
-    if row.asker != agent
-        || row.verb != SET_VERB
-        || row.act != change.spec.act
-        || row.scope != check_in_scope(&change.key.scope)
-    {
-        return Err(Error::InvalidConfig(
-            "the check-in is not this agent's ask for this setting change".into(),
-        ));
-    }
-    if row.eligible_basis().is_some() && !approver_may_make_in_txn(vault, txn, &row.state, spend)? {
-        return Err(Error::InvalidConfig(format!(
-            "the yes on this check-in came from someone who cannot make this change of `{}`: an \
-             agent's change spends the yes of the vault's owner, or of a live person who may make \
-             it on their own row, read now",
-            change.spec.name
-        )));
-    }
-    consume_pending_check_in_in_txn(vault, txn, id, &effect_digest(change, spend.replaced), now)?;
-    super::ask::drop_ask_in_txn(vault, txn, id)
-}
-
-/// Whether the yes in `state` came from someone who could make `spend`'s change themselves, read
-/// live in this write. ARCH-0082 `#ladder`: a holder answers only what it could do itself without
-/// asking; DESIGN 1.2 step 3: "when a holder answers, the same door runs under the holder's
-/// proof". The ladder rechecks only a holder's grant and own check-in for the verb, and the ask
-/// keeps only the effect's digest, so the setting door's own rule is read here: a live owner of
-/// the vault now makes any change; another live person makes what their own reading admits
-/// ([`person_reading_in_txn`]), inside the owner's row as every non-owner is. Any other yes does
-/// not spend: a person who is not, or is no longer, an owner on an owner-set key, a pin or the
-/// owner's row; a yes whose answerer was erased; and any eligibility that is no one's yes.
-fn approver_may_make_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    state: &PendingState,
-    spend: &Spend<'_, '_>,
-) -> Result<bool> {
-    let PendingState::Answered {
-        answer: HolderAnswer::Approve,
-        by: Some(by),
-        ..
-    } = state
-    else {
-        return Ok(false);
-    };
-    if crate::policy_model::owners_in_txn(vault, txn)?.contains(by) {
-        return Ok(true);
-    }
-    if !crate::consent::person_is_live_in_txn(vault, txn, by)? {
-        return Ok(false);
-    }
-    Ok(
-        person_reading_in_txn(vault, txn, spend.change, *by)?.is_some_and(|(_, permitted)| {
-            let permitted = if spend.over_owners_row {
-                permitted.limited_by(Permitted::NoWidening)
-            } else {
-                permitted
-            };
-            permitted.admit(spend.moved).is_some()
-        }),
-    )
 }

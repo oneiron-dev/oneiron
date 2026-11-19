@@ -9,7 +9,7 @@ purposes! {
     SET_EFFECT = "oneiron.setting.set_effect.v1";
 
     /// The effect digest of one setting change, which a proposal binds and its yes names
-    /// (`setting/set.rs`, `effect_digest`; DESIGN 1.5, "A proposal binds what it will
+    /// (`setting/set/approval.rs`, `effect_digest`; DESIGN 1.5, "A proposal binds what it will
     /// write"). Parts: the row key's encoding; a flag for a value, then the value's JSON
     /// bytes when there is one; a flag for a seed's weight, then its `f64` bits as a u64
     /// when there is one; a flag for the row the change replaces, then that row's stored
