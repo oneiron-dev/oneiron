@@ -235,3 +235,47 @@ fn restore_pending_forks_in_txn(
     }
     Ok(())
 }
+
+/// Each handle of a key `note` or `fork` holds that the owner ruled no
+/// secret or kept as text takes its value in `candidate`, the text a land of
+/// `fork` puts in `note`, before the write gate reads it. The ruling's edit
+/// put the value in the NOTE and left a merge fork that keeps its operations
+/// as it was, so a handle that fork wrote on its own, or the handle a fork
+/// switched in whole still holds, would land ruled, unrevealable
+/// (REVIEW-9471 F3). One commit stamped by `actor`, the person who lands
+/// it, and no authorship entry, as a rewrite fork takes the value.
+pub(super) fn restore_kept_handles_in_candidate_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    candidate: &NoteDocument,
+    fork: &super::proposals::NoteFork,
+    actor: WriteActor,
+) -> Result<()> {
+    let kept =
+        crate::secret_custody::kept_handles_in_txn(&vault.store, txn, [fork.note, fork.fork])?;
+    let markdown = candidate.view()?.markdown;
+    let title = candidate.title()?;
+    let (mut body, mut titled) = (markdown.clone(), title.clone());
+    for (text_form, value) in &kept {
+        let text_form = text_form.as_str();
+        if body.contains(text_form) {
+            body = body.replace(text_form, as_text(value)?);
+        }
+        if let Some(text) = titled.as_mut().filter(|text| text.contains(text_form)) {
+            *text = text.replace(text_form, as_text(value)?);
+        }
+    }
+    if body == markdown && titled == title {
+        return Ok(());
+    }
+    let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, actor)?;
+    if body != markdown {
+        candidate.restore_body(&body, stamp)?;
+    }
+    if titled != title
+        && let Some(text) = &titled
+    {
+        candidate.set_title(text, stamp)?;
+    }
+    Ok(())
+}
