@@ -646,6 +646,7 @@ impl Memory<'_> {
         // never materializes its full edge set.
         lane.neighborhood_projected(
             &id,
+            crate::ports::EdgeDirection::Both,
             kind_filter,
             opts.min_weight,
             opts.limit,
