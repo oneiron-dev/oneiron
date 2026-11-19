@@ -63240,7 +63240,7 @@
      "path": "src/origin/smart_http/tests.rs",
      "purpose": "Shared test harness: fixtures, temp vault, seeded repos, the capturing sink, and the stock-git test origin",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
