@@ -14,6 +14,7 @@
 
 use std::sync::Arc;
 
+use oneiron::code_run::SelfDispatchOutcome;
 use oneiron::code_run::actions::ActionDispatch;
 use oneiron::test_doors::action_replay_custody::remember_twice;
 use oneiron::{Error, Vault, VaultConfig};
@@ -27,6 +28,10 @@ const UNHELD_PASSPHRASE: &str = "summer harbour pencil compass";
 /// The replay cursor's refusal of a call that drifted from its row.
 const REQUEST_MISMATCH: &str = "code-run replay request mismatch";
 
+/// The trap the replay cursor raises for a row whose call failed
+/// (`code_run::payload::replay_failed_trap_error`).
+const REPLAYED_FAILED_TRAP: &str = "replayed failed self trap";
+
 fn vault() -> TestResult<(tempfile::TempDir, Vault)> {
     let directory = tempfile::tempdir()?;
     let vault = Vault::open(directory.path(), VaultConfig::device())?;
@@ -36,8 +41,18 @@ fn vault() -> TestResult<(tempfile::TempDir, Vault)> {
 }
 
 /// Checks that the action's second making answered from the row its first
-/// making recorded: as the first answered, or, for a first making a gate
-/// refused, with that refusal again. Never a drift from the row.
+/// making recorded: as the first answered; for a first making whose call
+/// failed, with the trap the replay cursor raises for that row's failed call;
+/// or, for a first making a gate refused, with that refusal again. Never a
+/// drift from the row.
+///
+/// The fixture's agent reads under a deny-all scope, so its claim's subject
+/// does not resolve for it and the first making's call fails
+/// (INVENTED_REFERENCE). The second making still meets the row, which a
+/// drift never does, and answers its failed call with the trap. The proof
+/// of 19 Nov (b8458-4) expected the first answer again and failed at the
+/// head of #8458 for that reason alone (FIX-LIST
+/// [ACTION-REPLAY-PROOF-FAILED-FIRST-MAKING]).
 fn answered_from_row(answers: [oneiron::Result<ActionDispatch>; 2]) -> TestResult {
     let [first, second] = answers;
     let second = second.map_err(|error| format!("{error:?}"));
@@ -48,6 +63,14 @@ fn answered_from_row(answers: [oneiron::Result<ActionDispatch>; 2]) -> TestResul
         );
     }
     match first {
+        Ok(first) if matches!(first.outcome, SelfDispatchOutcome::Failed(_)) => {
+            assert!(
+                second
+                    .as_ref()
+                    .is_err_and(|error| error.contains(REPLAYED_FAILED_TRAP)),
+                "the action made again answers its row's failed call with its trap: {second:?}"
+            );
+        }
         Ok(first) => assert_eq!(
             second,
             Ok(first),
