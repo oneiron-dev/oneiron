@@ -35,6 +35,21 @@
 //!   consent was kept out, and the door aborted the whole import
 //!   (`EntityNotFound`). Now it stays archive data with the consent
 //!   (`ClaimSubjectNotRestored`).
+//! * `a_held_link_keeps_its_own_provenance`: REVIEW-9581 round 2: the
+//!   destination took the bare link from an earlier archive and annotated it
+//!   itself, after the source's own annotation; the later archive's older
+//!   annotation reached the provenance writer, whose precedence check aborted
+//!   the whole import (`ProvenancePrecedenceViolation`). Now a link this
+//!   vault held keeps its own provenance, and the archived annotation stays
+//!   archive data (`ClaimSubjectEdgeNotRestored`).
+//! * `a_link_whose_status_claim_is_gone_stays_out`: REVIEW-9581 round 2: the
+//!   source purged the link's status claim, so the archive carries the bare
+//!   link between two new PERSONs; the import wrote it with no status claim,
+//!   which the federation door never does. Now it stays out, counted.
+//! * `a_link_from_a_consent_kept_out_is_counted` (needs the doors):
+//!   REVIEW-9581 round 2: a `same_as` between two CLAIMs whose source is the
+//!   share consent; the consent is kept out, so the edge passes skip the link
+//!   before they count it, and the receipt said 0. Now it says 1.
 //!
 //! Red on main f8ebe0a0d6b3: each test fails at its first import of an
 //! archive that carries the link, refused with `ReservedEdgeKind("same_as")`;
@@ -42,12 +57,19 @@
 //! are read by their debug text, so the file compiles on main, where neither
 //! exists. Red on cb06f77e8331 (#9581 before the review fix): the two
 //! REVIEW-9581 tests fail at the import, with `EdgeNotFound` and
-//! `EntityNotFound`.
+//! `EntityNotFound`. Red on 4ead66dc3111 (#9581 before the round-2 fix), with
+//! this file and the door: `a_held_link_keeps_its_own_provenance` fails at
+//! the second import (`ProvenancePrecedenceViolation`),
+//! `a_link_whose_status_claim_is_gone_stays_out` finds the link restored, and
+//! `a_link_from_a_consent_kept_out_is_counted` reads a count of 0.
 //!
-//! Vaults in tempdirs, every step through public doors. Each destination
+//! Vaults in tempdirs, every step through public doors but the one door
+//! `test_doors::archive_import::put_claim_pair_same_as`. Each destination
 //! opens at least one wall-clock second after its source (sleep 1100 ms), as
-//! in `whole_vault_restore_seeds.rs`. Run with `cargo test --locked -p
-//! oneiron --all-features --test whole_vault_restore_same_as_links`.
+//! in `whole_vault_restore_seeds.rs`. Run with `RUSTFLAGS="--cfg
+//! oneiron_test_support" cargo test --locked -p oneiron --all-features --test
+//! whole_vault_restore_same_as_links`; without the cfg flag the door test is
+//! left out.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::io::Cursor;
@@ -209,19 +231,7 @@ fn linked_archive(status: CoreferenceStatus, beside: Beside) -> Linked {
                 .expect("the claim about the consent lands");
             id
         });
-    let provenance_claim = beside.provenance.then(|| {
-        let id = EntityId::now();
-        vault
-            .put_structural_edge_provenance(
-                &id,
-                &EdgeRef::new(local, EdgeKind::SameAs, other),
-                &EdgeProvenanceClaimBody::new(local, 1.0, SupersessionStatus::Confirmed),
-                EdgeActorClass::Human,
-                vault.now_recorded_at(),
-            )
-            .expect("the provenance claim on the link lands");
-        id
-    });
+    let provenance_claim = beside.provenance.then(|| annotate(&vault, local, other));
     assert!(
         vault
             .edge_exists(&local, EdgeKind::SameAs, &other)
@@ -266,6 +276,75 @@ fn linked_archive(status: CoreferenceStatus, beside: Beside) -> Linked {
         claim_about_consent,
         provenance_claim,
     }
+}
+
+/// The owner's provenance claim on the link `local` -> `other`, through the
+/// structural provenance door, learned now.
+fn annotate(vault: &Vault, local: EntityId, other: EntityId) -> EntityId {
+    let id = EntityId::now();
+    vault
+        .put_structural_edge_provenance(
+            &id,
+            &EdgeRef::new(local, EdgeKind::SameAs, other),
+            &EdgeProvenanceClaimBody::new(local, 1.0, SupersessionStatus::Confirmed),
+            EdgeActorClass::Human,
+            vault.now_recorded_at(),
+        )
+        .expect("the provenance claim on the link lands");
+    id
+}
+
+/// A source vault still open, whose owner linked two PERSONs through the
+/// federation door.
+struct LinkedVault {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    #[cfg_attr(not(oneiron_test_support), allow(dead_code))]
+    proof: AuthenticatedOwner,
+    local: EntityId,
+    other: EntityId,
+    status_claim: EntityId,
+}
+
+fn linked_vault(status: CoreferenceStatus) -> LinkedVault {
+    let (dir, vault) = open_vault();
+    let proof = owner_proof(&vault);
+    let local = put_person(&vault);
+    let other = put_person(&vault);
+    let status_claim = link_coreference_as_owner(
+        &vault,
+        &proof,
+        CoreferenceLinkRequest {
+            local_person: local,
+            other_person: other,
+            status,
+        },
+    )
+    .expect("the owner's link lands")
+    .status_claim;
+    LinkedVault {
+        _dir: dir,
+        vault,
+        proof,
+        local,
+        other,
+        status_claim,
+    }
+}
+
+/// Whether the archive carries the `same_as` link `source` -> `target`.
+fn archive_carries_link(vault: &Vault, archive: &[u8], source: EntityId, target: EntityId) -> bool {
+    vault
+        .read_whole_vault_archive(archive)
+        .expect("read the archive back")
+        .evidence_ledger
+        .edges
+        .iter()
+        .any(|edge| {
+            edge.source == source.to_hex()
+                && edge.kind == EdgeKind::SameAs as u8
+                && edge.target == target.to_hex()
+        })
 }
 
 /// `dest` holds the link, and its status claim as a proposal.
@@ -559,5 +638,177 @@ fn a_claim_about_the_share_consent_stays_archive_data() {
         Some("ClaimSubjectNotRestored"),
         "the receipt names the claim about the consent: {:?}",
         receipt.destination_omissions
+    );
+}
+
+#[test]
+fn a_held_link_keeps_its_own_provenance() {
+    let source = linked_vault(CoreferenceStatus::Proposed);
+    let link_archive = export(&source.vault);
+    let archived_annotation = annotate(&source.vault, source.local, source.other);
+    let annotated_archive = export(&source.vault);
+    let (_dir, dest) = open_later_vault();
+    dest.import_whole_vault_archive_from(Cursor::new(&link_archive))
+        .expect("the archive with the bare link imports");
+    assert!(
+        dest.edge_exists(&source.local, EdgeKind::SameAs, &source.other)
+            .expect("read the link"),
+        "precondition: the destination holds the link"
+    );
+    let own_annotation = annotate(&dest, source.local, source.other);
+    let receipt = dest
+        .import_whole_vault_archive_from(Cursor::new(&annotated_archive))
+        .expect("the archive with the older annotation imports");
+    assert!(
+        dest.edge_exists(&source.local, EdgeKind::SameAs, &source.other)
+            .expect("read the link"),
+        "the held link stays"
+    );
+    assert!(
+        dest.entity_exists(&own_annotation)
+            .expect("read the destination's annotation"),
+        "the held link keeps its own provenance claim"
+    );
+    assert!(
+        !dest
+            .entity_exists(&archived_annotation)
+            .expect("read the archived annotation"),
+        "the archived annotation stays archive data"
+    );
+    assert_eq!(
+        omission_reason(&receipt, archived_annotation).as_deref(),
+        Some("ClaimSubjectEdgeNotRestored"),
+        "the receipt names the archived annotation: {:?}",
+        receipt.destination_omissions
+    );
+    assert_eq!(
+        unrestored_same_as_links(&receipt),
+        Some(0),
+        "the held link is left as it is"
+    );
+}
+
+#[test]
+fn a_link_whose_status_claim_is_gone_stays_out() {
+    let source = linked_vault(CoreferenceStatus::Proposed);
+    source
+        .vault
+        .delete_entity_with_options(
+            &source.status_claim,
+            oneiron::deletion::DeleteEntityOptions { purge: true },
+        )
+        .expect("the owner purges the status claim");
+    assert!(
+        source
+            .vault
+            .edge_exists(&source.local, EdgeKind::SameAs, &source.other)
+            .expect("read the source link"),
+        "precondition: the link outlives its status claim"
+    );
+    let archive = export(&source.vault);
+    assert!(
+        archive_carries_link(&source.vault, &archive, source.local, source.other),
+        "precondition: the archive carries the link"
+    );
+    assert!(
+        !source
+            .vault
+            .read_whole_vault_archive(&archive)
+            .expect("read the archive back")
+            .claims
+            .iter()
+            .any(|row| row.id == source.status_claim.to_hex()),
+        "precondition: the archive carries no status claim"
+    );
+    let (_dir, dest) = open_later_vault();
+    let receipt = dest
+        .import_whole_vault_archive_from(Cursor::new(&archive))
+        .expect("the archive with the bare link imports");
+    for person in [source.local, source.other] {
+        assert!(
+            dest.entity_exists(&person).expect("read the person"),
+            "the person comes back"
+        );
+    }
+    assert!(
+        !dest
+            .edge_exists(&source.local, EdgeKind::SameAs, &source.other)
+            .expect("read the link"),
+        "a link with no status claim stays out"
+    );
+    assert_eq!(
+        unrestored_same_as_links(&receipt),
+        Some(1),
+        "the receipt counts the link that stayed out"
+    );
+}
+
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_link_from_a_consent_kept_out_is_counted() {
+    let source = linked_vault(CoreferenceStatus::Proposed);
+    let consent = share_coreference_as_owner(
+        &source.vault,
+        &source.proof,
+        CoreferenceShareConsentRequest {
+            local_person: source.local,
+            other_person: source.other,
+            pact: "ab".repeat(COREFERENCE_PACT_ID_LEN),
+        },
+    )
+    .expect("the owner's share consent lands")
+    .consent_claim;
+    let context = EntityId::now();
+    source
+        .vault
+        .put_claim(
+            &context,
+            &ClaimBody::new(
+                "relationship.context",
+                ClaimSubject::Entity(source.local),
+                Value::from("met at the climbing gym"),
+                0.9,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            )
+            .expect("claim body"),
+            TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+        )
+        .expect("the context claim lands");
+    oneiron::test_doors::archive_import::put_claim_pair_same_as(&source.vault, consent, context)
+        .expect("the claim-pair link lands");
+    let archive = export(&source.vault);
+    assert!(
+        archive_carries_link(&source.vault, &archive, consent, context),
+        "precondition: the archive carries the claim-pair link"
+    );
+    let (_dir, dest) = open_later_vault();
+    let owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner)
+        .expect("the owner's restore completes");
+    assert!(
+        dest.edge_exists(&source.local, EdgeKind::SameAs, &source.other)
+            .expect("read the person link"),
+        "the link between the two new persons comes back"
+    );
+    assert!(
+        !dest.entity_exists(&consent).expect("read the consent"),
+        "the share consent stays archive data"
+    );
+    assert_eq!(
+        omission_reason(&receipt, consent).as_deref(),
+        Some("CoreferenceConsentNotRestored"),
+        "the receipt names the consent: {:?}",
+        receipt.destination_omissions
+    );
+    assert_eq!(
+        unrestored_same_as_links(&receipt),
+        Some(1),
+        "the receipt counts the link from the consent it kept out"
     );
 }
