@@ -10,7 +10,7 @@
 //! - their key enrols one key twice on sibling branches, once for them and
 //!   once for another Owner, and the row for the other Owner is the one the
 //!   key list keeps (the smallest entry);
-//! - their key signs a `human` binding of another Owner's key.
+//! - their key signs or cosigns a `human` binding of another Owner's key.
 //!
 //! On removal every such key ends and every such binding is revoked. A key
 //! the host root enrolled for another Owner stays live, even when their key
@@ -35,7 +35,7 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::passkey_vouch_limits::{
-    SignedRow, append_signed_rows, enrol_owner_key_on, main_log_heads,
+    SignedRow, append_signed_rows, enrol_owner_key_on, main_log_heads, sign_as_host_root,
 };
 use oneiron::test_support::bind_host_owner;
 use oneiron::{EntityId, Vault, VaultConfig};
@@ -404,6 +404,67 @@ fn a_removed_owners_sibling_enrolment_leaves_a_key_the_host_root_enrolled_live()
     );
     assert_eq!(
         shared.bound_to(&shared.issuer.public_key()),
+        Some(shared.owner),
+        "the owner's own binding stays"
+    );
+}
+
+/// Blind review round 2 of #9585, P1 2: a binding the removed Owner's key
+/// cosigned does not stand without them because another key is its primary
+/// signer. The host root signs a `human` binding of the owner's second key
+/// with the co-Owner's key as its one cosigner; the co-Owner's removal
+/// revokes it.
+#[test]
+fn a_removed_owners_cosign_ends_a_binding_the_host_root_signed() {
+    let shared = shared();
+    let co_owner_key = shared.co_owner_key();
+    let owner_key = shared.enrol_owner_key(shared.owner, OWNER_SEED);
+    let root = shared.issuer.public_key();
+    let counted = append_signed_rows(
+        &shared.vault,
+        vec![SignedRow {
+            op: AuthorityOp::BindActor {
+                authority_key: AuthorityKey::Ed25519(owner_key),
+                actor_ref: shared.owner,
+                actor_class: ACTOR_CLASS_HUMAN.into(),
+                epoch: 1,
+            },
+            signer: root.clone(),
+            cosigners: vec![ed25519(&co_owner_key)],
+        }],
+        |key, transcript| {
+            if *key == root {
+                sign_as_host_root(&shared.issuer, transcript)
+            } else {
+                co_owner_key.sign(transcript).to_bytes().to_vec()
+            }
+        },
+    )
+    .expect("the door stores the binding");
+    assert_eq!(
+        counted,
+        vec![true],
+        "the fold counts a binding the host root signed and the co-Owner's key cosigned"
+    );
+    assert_eq!(
+        shared.bound_to(&AuthorityKey::Ed25519(owner_key)),
+        Some(shared.owner)
+    );
+
+    shared.remove_co_owner();
+
+    assert_eq!(
+        shared.bound_to(&AuthorityKey::Ed25519(owner_key)),
+        None,
+        "a binding the removed Owner's key cosigned is revoked with the removal, though the host \
+         root signed it"
+    );
+    assert!(
+        shared.key_is_live(owner_key),
+        "the key the host root enrolled for the owner stays live"
+    );
+    assert_eq!(
+        shared.bound_to(&root),
         Some(shared.owner),
         "the owner's own binding stays"
     );
