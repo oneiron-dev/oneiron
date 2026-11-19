@@ -1126,6 +1126,440 @@ fn scoped_birth_control_follows_restrictive_current_demotion() {
     );
 }
 
+/// A vault whose MACHINE holds signed Proposed claims the default policy
+/// parks for the owner (actor ceiling): held claims with ordinary tray rows.
+struct HeldMachineClaims {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    issuer: HostSlipIssuer,
+    machine: EntityId,
+    signing: SigningKey,
+}
+
+impl HeldMachineClaims {
+    fn open(secret: &[u8], key_seed: u8) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+        let issuer = HostSlipIssuer::from_secret(secret).unwrap();
+        vault.ensure_host_root_slip(&issuer).unwrap();
+        let machine = EntityId::now();
+        vault
+            .put_entity(
+                &machine,
+                crate::registry::ENTITY_TYPE_MACHINE,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"machine",
+            )
+            .unwrap();
+        let signing = ed_key(key_seed);
+        vault
+            .enroll_machine_identity(
+                &issuer,
+                machine,
+                signing.verifying_key().to_bytes(),
+                [key_seed; 32],
+                |transcript| Ok(signing.sign(transcript).to_bytes()),
+            )
+            .unwrap();
+        Self {
+            _dir: dir,
+            vault,
+            issuer,
+            machine,
+            signing,
+        }
+    }
+
+    /// The MACHINE's signed Proposed `profile.color` claim `value`, parked
+    /// for the owner.
+    fn propose(&self, value: &str) -> EntityId {
+        let id = EntityId::now();
+        let candidate = ClaimCandidate::new(
+            "profile.color",
+            ClaimSubject::Entity(self.machine),
+            Value::from(value),
+            1.0,
+        )
+        .with_scope(Value::Map(vec![(
+            Value::from("sensitivity"),
+            Value::from("public"),
+        )]));
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(self.machine, EdgeActorClass::System),
+            ClaimSource::Observed,
+            WriteProvenance::new(Value::from("held")).unwrap(),
+            ClaimApprovalStatus::Proposed,
+        );
+        let transcript = self
+            .vault
+            .machine_claim_transcript(&id, &candidate, &envelope)
+            .unwrap();
+        let signed = envelope.with_machine_signature(MachineWriteSignature {
+            public_key: self.signing.verifying_key().to_bytes(),
+            signature: self.signing.sign(&transcript).to_bytes(),
+        });
+        self.vault
+            .batch()
+            .claim_candidate(&id, candidate, &signed, TimeRange { start: 1, end: 1 }, 1)
+            .commit()
+            .unwrap();
+        assert!(
+            self.tray_row(&id).is_some(),
+            "the default policy parks the MACHINE's proposal for the owner"
+        );
+        id
+    }
+
+    fn tray_row(&self, id: &EntityId) -> Option<crate::store::PendingGateConsentRecord> {
+        let txn = self.vault.store.env.read_txn().unwrap();
+        self.vault
+            .store
+            .pending_gate_consent_in_txn(&txn, id)
+            .unwrap()
+    }
+
+    fn approve_as_owner(&self, id: EntityId) -> crate::Result<()> {
+        let owner = crate::vault::embedded_owner_actor_id().unwrap();
+        self.vault
+            .approve_machine_claim_as(id, WriteActor::new(owner, EdgeActorClass::Human))
+    }
+
+    fn claim(&self, id: &EntityId) -> crate::claim::ClaimBody {
+        self.vault.get_claim(id).unwrap().unwrap()
+    }
+
+    /// The pending decision the tray row of `id` names.
+    fn asked(&self, id: &EntityId) -> crate::store::GateDecisionRecord {
+        let row = self.tray_row(id).expect("the claim is asked");
+        let txn = self.vault.store.env.read_txn().unwrap();
+        self.vault
+            .store
+            .gate_decision_in_txn(&txn, row.decision_id)
+            .unwrap()
+            .expect("the asked decision is recorded")
+    }
+
+    /// Parks the held row of `id` again on a pending decision whose receipt
+    /// also carries `reason`, the token a checker hold records for the owner.
+    fn hold_with_checker_reason(&self, id: &EntityId, reason: &str) {
+        let row = self.tray_row(id).expect("the claim is asked");
+        let asked = self.asked(id);
+        let mut wtxn = self.vault.store.env.write_txn().unwrap();
+        let mut receipt = crate::store::GateReceipt::with_reasons(
+            crate::store::gate_reason::GateReceiptOutcome::Pending,
+            "claim",
+            row.reason_codes.clone(),
+            crate::store::ReceiptActor::Verbatim {
+                class: asked.actor_class.clone(),
+                actor_ref: asked.actor_ref.clone(),
+            },
+            row.diff_handle.clone(),
+            crate::store::PolicyBasis::frontier(row.read_frontier_hash),
+        );
+        receipt.about = Some(*id);
+        receipt.receipt_reasons = asked
+            .receipt_reasons
+            .iter()
+            .cloned()
+            .chain([reason.to_owned()])
+            .collect();
+        let decision = self
+            .vault
+            .store
+            .record_gate_receipt_in_txn(&mut wtxn, receipt)
+            .unwrap();
+        self.vault
+            .store
+            .put_pending_gate_consent_in_txn(
+                &mut wtxn,
+                &crate::store::PendingGateConsentRecord {
+                    decision_id: decision.decision_id,
+                    created_at: decision.created_at,
+                    ..row
+                },
+            )
+            .unwrap();
+        wtxn.commit().unwrap();
+    }
+
+    /// As [`Self::hold_with_checker_reason`], for a write a runner's attempt
+    /// `attempt` made as an agent on a Normal predicate: the asked receipt
+    /// also carries the loop link to that attempt and the drift tripwire's
+    /// normal-baseline token, as the claim write door records them.
+    fn hold_from_runner_attempt(&self, id: &EntityId, reason: &str, attempt: [u8; 16]) {
+        self.hold_with_checker_reason(id, reason);
+        let row = self.tray_row(id).expect("the claim is asked");
+        let asked = self.asked(id);
+        let mut wtxn = self.vault.store.env.write_txn().unwrap();
+        let mut receipt = crate::store::GateReceipt::with_reasons(
+            crate::store::gate_reason::GateReceiptOutcome::Pending,
+            "claim",
+            row.reason_codes.clone(),
+            crate::store::ReceiptActor::Verbatim {
+                class: asked.actor_class.clone(),
+                actor_ref: asked.actor_ref.clone(),
+            },
+            row.diff_handle.clone(),
+            crate::store::PolicyBasis::frontier(row.read_frontier_hash),
+        );
+        receipt.about = Some(*id);
+        receipt.receipt_reasons = asked
+            .receipt_reasons
+            .iter()
+            .cloned()
+            .chain([crate::self_heal::tripwires::normal_baseline_token(
+                &self.claim(id).predicate,
+            )])
+            .collect();
+        receipt.context = crate::store::GateDecisionContext::linked(
+            crate::store::GateLoopLink {
+                family: crate::store::GateLoopFamily::Action,
+                source: crate::store::GateLoopSource::Runner,
+                run: Some("held-claim-restate-run".to_owned()),
+                attempt: Some(attempt),
+                origin: crate::store::GateLoopOrigin::SelfDecision,
+                basis: None,
+            },
+            [],
+        );
+        let decision = self
+            .vault
+            .store
+            .record_gate_receipt_in_txn(&mut wtxn, receipt)
+            .unwrap();
+        self.vault
+            .store
+            .put_pending_gate_consent_in_txn(
+                &mut wtxn,
+                &crate::store::PendingGateConsentRecord {
+                    decision_id: decision.decision_id,
+                    created_at: decision.created_at,
+                    ..row
+                },
+            )
+            .unwrap();
+        wtxn.commit().unwrap();
+    }
+}
+
+// S17-1 = A (Engine 19 Nov 20:31): a decay rewrites the held claim in place,
+// and the owner's question follows the body it now stores.
+#[test]
+fn owner_approval_after_a_decay_settles_the_held_claim() {
+    use crate::claim::ClaimDemotionAction;
+    let held = HeldMachineClaims::open(b"held-claim-decay-root", 232);
+    let id = held.propose("decayed proposal");
+    let later = held.vault.now_recorded_at() + 1;
+    held.vault
+        .apply_claim_demotion(
+            &id,
+            ClaimDemotionAction::Decay {
+                new_claim_of_weight: 0.5,
+            },
+            later,
+        )
+        .unwrap();
+    assert!(
+        held.tray_row(&id).is_some(),
+        "the decayed claim is still asked"
+    );
+    held.approve_as_owner(id).unwrap();
+    assert_eq!(held.claim(&id).approval, ClaimApprovalStatus::Approved);
+    assert!(held.tray_row(&id).is_none());
+}
+
+// S17-1 = A: the Dreamer's weakening supersedes a held claim; the old row
+// goes silently and the owner answers the weakened successor instead.
+#[test]
+fn dreamer_weakening_of_a_held_claim_moves_the_owner_question_to_its_successor() {
+    use crate::claim::{ClaimDemotionAction, ClaimDemotionRung, ClaimLifecycleStatus};
+    let held = HeldMachineClaims::open(b"held-claim-weaken-root", 233);
+    let id = held.propose("weakened proposal");
+    let opener = held.asked(&id);
+    let later = held.vault.now_recorded_at() + 1;
+    held.vault
+        .apply_claim_demotion(
+            &id,
+            ClaimDemotionAction::Decay {
+                new_claim_of_weight: 0.5,
+            },
+            later,
+        )
+        .unwrap();
+    held.vault
+        .provision_engine_machine_identities(&held.issuer)
+        .unwrap();
+    let weakened = held
+        .vault
+        .apply_claim_demotion(
+            &id,
+            ClaimDemotionAction::Weaken {
+                new_confidence: 0.5,
+            },
+            later + 1,
+        )
+        .unwrap();
+    assert_eq!(weakened.rung, ClaimDemotionRung::Weakened);
+    let successor = weakened.claim;
+    assert_eq!(held.claim(&id).lifecycle, ClaimLifecycleStatus::Superseded);
+    assert!(
+        held.tray_row(&id).is_none(),
+        "the superseded claim keeps no question"
+    );
+    let row = held
+        .tray_row(&successor)
+        .expect("the owner is asked about the weakened successor");
+    assert_eq!(row.predicate.as_deref(), Some("profile.color"));
+    let restated = held.asked(&successor);
+    assert_eq!(
+        (restated.actor_class.as_str(), restated.actor_ref.as_deref()),
+        (opener.actor_class.as_str(), opener.actor_ref.as_deref()),
+        "the successor's question names the writer the owner was asked about"
+    );
+    assert_eq!(
+        held.claim(&successor).approval,
+        ClaimApprovalStatus::Proposed
+    );
+    held.approve_as_owner(successor).unwrap();
+    assert_eq!(
+        held.claim(&successor).approval,
+        ClaimApprovalStatus::Approved
+    );
+    assert!(held.tray_row(&successor).is_none());
+}
+
+// S17-1 = A: a plain supersession of a held claim closes its row silently;
+// the owner keeps one answerable item, the superseding proposal's own.
+#[test]
+fn plain_supersession_of_a_held_claim_leaves_one_answerable_item() {
+    use crate::claim::ClaimLifecycleStatus;
+    let held = HeldMachineClaims::open(b"held-claim-supersede-root", 234);
+    let old = held.propose("first proposal");
+    let new = held.propose("second proposal");
+    let later = held.vault.now_recorded_at() + 1;
+    held.vault.supersede_claim(&new, &old, later).unwrap();
+    assert_eq!(held.claim(&old).lifecycle, ClaimLifecycleStatus::Superseded);
+    assert!(
+        held.tray_row(&old).is_none(),
+        "the closed claim keeps no question"
+    );
+    assert!(held.tray_row(&new).is_some());
+    held.approve_as_owner(new).unwrap();
+    assert_eq!(held.claim(&new).approval, ClaimApprovalStatus::Approved);
+    assert!(held.tray_row(&new).is_none());
+}
+
+// S17-1 = A, review round 1: a restated question is the same question. Its
+// receipt names the writer the asked decision named (the bundle settle door
+// reads it as the opener) and keeps the checker's explanation the owner reads.
+#[test]
+fn a_restated_owner_question_keeps_its_writer_and_checker_reasons() {
+    use crate::claim::ClaimDemotionAction;
+    let held = HeldMachineClaims::open(b"held-claim-restate-root", 235);
+    let id = held.propose("checked proposal");
+    held.hold_with_checker_reason(&id, "checker_hedged_low_confidence");
+    let before = held.asked(&id);
+    assert!(
+        before.actor_ref.is_some(),
+        "the MACHINE's held write names its writer"
+    );
+    let later = held.vault.now_recorded_at() + 1;
+    held.vault
+        .apply_claim_demotion(
+            &id,
+            ClaimDemotionAction::Decay {
+                new_claim_of_weight: 0.5,
+            },
+            later,
+        )
+        .unwrap();
+    let after = held.asked(&id);
+    assert_ne!(
+        after.decision_id, before.decision_id,
+        "the decay restates the question"
+    );
+    assert_eq!(
+        (after.actor_class.as_str(), after.actor_ref.as_deref()),
+        (before.actor_class.as_str(), before.actor_ref.as_deref()),
+        "the restated question names the asked writer"
+    );
+    assert!(
+        after
+            .receipt_reasons
+            .iter()
+            .any(|reason| reason == "checker_hedged_low_confidence"),
+        "the checker's explanation survives: {:?}",
+        after.receipt_reasons
+    );
+    // Review round 2: every asked reason but the drift tripwire's token for
+    // the agent's own write (a restatement is no new write).
+    let asked_reasons: Vec<String> = before
+        .receipt_reasons
+        .iter()
+        .filter(|reason| crate::self_heal::tripwires::normal_baseline_predicate(reason).is_none())
+        .cloned()
+        .collect();
+    assert_eq!(after.receipt_reasons, asked_reasons);
+}
+
+// S17-1 = A, review round 2: the restated question answers the asked decision
+// inside its loop, so a job-filtered receipt read still finds the runner's
+// attempt (and so does the owner's answer, which carries the restated links),
+// and it is no second write by the agent: the drift tripwire's normal-baseline
+// token stays on the asked receipt only, while the checker's reason moves on.
+#[test]
+fn a_restated_owner_question_keeps_its_loop_attempt_and_is_no_new_agent_write() {
+    use crate::claim::ClaimDemotionAction;
+    let held = HeldMachineClaims::open(b"held-claim-restate-loop-root", 236);
+    let id = held.propose("looped proposal");
+    let attempt = [0x4a; 16];
+    held.hold_from_runner_attempt(&id, "checker_hedged_low_confidence", attempt);
+    let before = held.asked(&id);
+    let baseline = crate::self_heal::tripwires::normal_baseline_token(&held.claim(&id).predicate);
+    assert!(before.receipt_reasons.contains(&baseline));
+    let job_ref = crate::store::gate_receipt::gate_decision_receipt(&before).job_ref;
+    assert!(job_ref.is_some(), "the asked write names its attempt");
+    let later = held.vault.now_recorded_at() + 1;
+    held.vault
+        .apply_claim_demotion(
+            &id,
+            ClaimDemotionAction::Decay {
+                new_claim_of_weight: 0.5,
+            },
+            later,
+        )
+        .unwrap();
+    let after = held.asked(&id);
+    assert_ne!(
+        after.decision_id, before.decision_id,
+        "the decay restates the question"
+    );
+    assert_eq!(
+        after.context.links,
+        crate::store::GateDecisionContext::answering(&before).links,
+        "the restated question keeps the asked loop links, based on the asked decision"
+    );
+    assert_eq!(
+        crate::store::gate_receipt::gate_decision_receipt(&after).job_ref,
+        job_ref,
+        "a job-filtered receipt read finds the restated question"
+    );
+    assert!(
+        !after.receipt_reasons.contains(&baseline),
+        "a restatement is no new agent write: {:?}",
+        after.receipt_reasons
+    );
+    assert!(
+        after
+            .receipt_reasons
+            .iter()
+            .any(|reason| reason == "checker_hedged_low_confidence"),
+        "the checker's explanation survives: {:?}",
+        after.receipt_reasons
+    );
+}
+
 #[test]
 fn signing_and_materialization_share_birth_facet_across_default_change() {
     let dir = tempfile::tempdir().unwrap();
