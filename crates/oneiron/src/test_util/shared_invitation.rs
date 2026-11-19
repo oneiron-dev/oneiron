@@ -34,3 +34,33 @@ pub(crate) fn accept_founding_invitation(
         .expect("the founding member accepts")
         .grants
 }
+
+/// OF-063: scoped reads are default-deny, so a shared-vault writer needs an
+/// explicit actor-bound `core:read` grant to name its own PERSON as a CLAIM
+/// subject. Same shape as `conversation_dag::fixtures::grant_reads` (#9547):
+/// a fixture-only test policy manifest folding beside the shipped default,
+/// over `read_preset()`.
+///
+/// Call for writer members only, right after `accept_founding_invitation`.
+/// Viewers and demoted/out-of-scope states keep no grant.
+pub(crate) fn grant_founding_writer_reads(vault: &Vault, writer: EntityId) {
+    let actor = crate::WriteActor::new(writer, crate::EdgeActorClass::Human);
+    let policy = serde_json::json!({
+        "schema_version": "1.2", "pack_id": "shared-fixture-read", "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {}, "rules": [], "actor_ceilings": [],
+        "scoped_grants": [{
+            "actor_ref": writer.to_hex(),
+            "effector": "core:read",
+            "scope": crate::federation::scope_codec::read_preset(),
+            "receipt_required": false,
+        }],
+    });
+    crate::conversation_dag::test_support::put_test_policy_manifest(
+        vault,
+        actor,
+        EntityId::now(),
+        &policy,
+    )
+    .expect("the writer's fixture read grant");
+}

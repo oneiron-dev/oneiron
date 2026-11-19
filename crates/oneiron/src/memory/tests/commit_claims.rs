@@ -1249,6 +1249,7 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
         member,
         FederationGrantRole::Member,
     );
+    crate::test_util::grant_founding_writer_reads(&vault, member);
     crate::test_util::accept_founding_invitation(&vault, 42, viewer, FederationGrantRole::Viewer);
     let task = || StructuralPutInput {
         id: None,

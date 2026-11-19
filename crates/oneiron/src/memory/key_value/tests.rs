@@ -897,6 +897,7 @@ fn shared_keyed_writes_recheck_current_role_and_both_claim_positions() {
         member,
         FederationGrantRole::Member,
     );
+    crate::test_util::grant_founding_writer_reads(&vault, member);
     crate::test_util::accept_founding_invitation(&vault, 42, viewer, FederationGrantRole::Viewer);
     let memory = vault.memory(member, EdgeActorClass::Human);
     let key = address(&["shared"], "k");

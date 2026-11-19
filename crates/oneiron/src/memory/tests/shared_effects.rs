@@ -51,6 +51,7 @@ fn shared() -> (tempfile::TempDir, Vault, EntityId, EntityId, Vec<String>) {
         member,
         FederationGrantRole::Member,
     );
+    crate::test_util::grant_founding_writer_reads(&vault, member);
     crate::test_util::accept_founding_invitation(&vault, 42, viewer, FederationGrantRole::Viewer);
     (dir, vault, member, viewer, grant_refs)
 }
