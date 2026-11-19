@@ -1,15 +1,46 @@
 //! Atomic send-receipt retry and terminal settlement.
 
 use super::connector_task::{
-    ConnectorSendTaskOutcome, project_connector_send_task_outcome_in_txn,
-    renew_send_executor_lease_in_txn,
+    ConnectorSendTaskOutcome, project_connector_send_task_attempt_failure_in_txn,
+    project_connector_send_task_outcome_in_txn, renew_send_executor_lease_in_txn,
 };
 use super::executor::CONNECTOR_TASK_EXECUTOR_LEASE_OWNER;
 use crate::Vault;
-use crate::attempt_queue::{AttemptQueue, CompleteAttempt, FailAttempt, RetryAttempt};
+use crate::attempt_queue::{AttemptQueue, CompleteAttempt, FailAttempt, FailOutcome, RetryAttempt};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::receipt::{SendReceiptOutcome, persist_admitted_send_receipt_in_txn};
+
+/// Fails a connector send's attempt in this write and answers the instant
+/// the queue stamped on it (the store's recorded time, not the drain's
+/// sampled `now`), or `None` when the attempt had already failed: a newer
+/// drain's failure, whose write already stamped the TASK. A caller projects
+/// the failure onto the TASK at that instant only after this, so a peer's
+/// ack fence (`outcome_at`) and this machine's failed head name one instant,
+/// and a stale drain never rewrites a newer failure's stamp.
+pub(super) fn fail_connector_send_attempt_in_txn(
+    queue: &AttemptQueue<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    reason: &str,
+    now: u64,
+) -> Result<Option<u64>, Error> {
+    match queue.fail_in_txn(
+        wtxn,
+        FailAttempt {
+            id: attempt.id,
+            lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+            attempt_count: attempt.attempt_count,
+            reason: reason.to_owned(),
+            now,
+        },
+    )? {
+        FailOutcome::Failed(record) => record.settled_at.map(Some).ok_or(
+            Error::InvariantViolation("a failed connector send attempt carries no settled instant"),
+        ),
+        FailOutcome::AlreadyFailed(_) => Ok(None),
+    }
+}
 
 /// Commits the audit row, source finalization, successor and indexes together.
 /// No receipt may advertise a retry edge unless that retry also commits. A
@@ -160,17 +191,16 @@ pub(super) fn persist_terminal_send_receipt_and_fail_in_txn(
         )?;
         return Ok(false);
     }
-    project_connector_send_task_outcome_in_txn(vault, wtxn, task_ref, task_outcome, now)?;
-    queue.fail_in_txn(
-        wtxn,
-        FailAttempt {
-            id: attempt.id,
-            lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
-            attempt_count: attempt.attempt_count,
-            reason: reason.to_owned(),
-            now,
-        },
-    )?;
+    if let Some(failed_at) = fail_connector_send_attempt_in_txn(&queue, wtxn, attempt, reason, now)?
+    {
+        project_connector_send_task_attempt_failure_in_txn(
+            vault,
+            wtxn,
+            task_ref,
+            task_outcome,
+            failed_at,
+        )?;
+    }
     Ok(true)
 }
 
@@ -182,11 +212,10 @@ pub(super) fn settle_suppressed_send(
     task_ref: EntityId,
     now: u64,
 ) -> Result<(), Error> {
-    use crate::attempt_queue::{CompleteAttempt, FailAttempt};
     let queue = AttemptQueue::new(vault);
     vault.with_write_txn_grouped(|wtxn| {
         let delivered = crate::receipt::delivered_send_exists_in_txn(&vault.store, wtxn, task_ref)?;
-        if delivered {
+        let stamp = if delivered {
             queue.complete_in_txn(
                 wtxn,
                 CompleteAttempt {
@@ -196,20 +225,22 @@ pub(super) fn settle_suppressed_send(
                     now,
                 },
             )?;
+            now
         } else {
-            queue.fail_in_txn(
+            match fail_connector_send_attempt_in_txn(
+                &queue,
                 wtxn,
-                FailAttempt {
-                    id: attempt.id,
-                    lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
-                    attempt_count: attempt.attempt_count,
-                    reason: "dedupe_suppressed".to_owned(),
-                    now,
-                },
-            )?;
-        }
+                attempt,
+                "dedupe_suppressed",
+                now,
+            )? {
+                Some(failed_at) => failed_at,
+                // A newer drain failed it and stamped the TASK.
+                None => return Ok(()),
+            }
+        };
         super::connector_task::project_connector_send_task_suppression_in_txn(
-            vault, wtxn, task_ref, now, delivered,
+            vault, wtxn, task_ref, stamp, delivered,
         )?;
         Ok(())
     })
@@ -397,35 +428,47 @@ pub(super) fn reconcile_connector_task(
             transport_dispatched,
             idempotency,
         )?;
-        project_connector_send_task_outcome_in_txn(
-            vault,
-            wtxn,
-            task.task_ref,
-            if wrote {
-                task_outcome
-            } else {
-                ConnectorSendTaskOutcome::Delivered
-            },
-            now,
-        )?;
-        if !wrote || task_outcome == ConnectorSendTaskOutcome::Delivered || deferred {
+        // The attempt fails below exactly when the stop stands as a failure,
+        // and that failure is the outcome's instant.
+        let fails_attempt =
+            wrote && task_outcome != ConnectorSendTaskOutcome::Delivered && !deferred;
+        if fails_attempt {
+            // Fail first; the failure's stamped instant is the outcome's.
+            if let Some(failed_at) = fail_connector_send_attempt_in_txn(
+                &queue,
+                wtxn,
+                attempt,
+                "terminal_outbound_stop",
+                now,
+            )? {
+                project_connector_send_task_attempt_failure_in_txn(
+                    vault,
+                    wtxn,
+                    task.task_ref,
+                    task_outcome,
+                    failed_at,
+                )?;
+            }
+        } else {
+            project_connector_send_task_outcome_in_txn(
+                vault,
+                wtxn,
+                task.task_ref,
+                if wrote {
+                    task_outcome
+                } else {
+                    ConnectorSendTaskOutcome::Delivered
+                },
+                now,
+            )?;
+        }
+        if !fails_attempt {
             queue.complete_in_txn(
                 wtxn,
                 CompleteAttempt {
                     id: attempt.id,
                     lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
                     attempt_count: attempt.attempt_count,
-                    now,
-                },
-            )?;
-        } else {
-            queue.fail_in_txn(
-                wtxn,
-                FailAttempt {
-                    id: attempt.id,
-                    lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
-                    attempt_count: attempt.attempt_count,
-                    reason: "terminal_outbound_stop".to_owned(),
                     now,
                 },
             )?;

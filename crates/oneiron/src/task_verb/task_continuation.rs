@@ -157,9 +157,13 @@ pub(crate) fn continue_failed_task_in_txn(
 /// that, the failures the board actually folds decide: the newest projected
 /// failed head realizing this TASK (queue-only when the TASK body carries no
 /// terminal, a malformed body included, whose bare failed jobs the board
-/// folds by the same ack). Live work and non-failed heads settle nothing. A connector-send outcome carries no
-/// settlement instant, so a Failed outcome without a failed head settles
-/// nothing yet.
+/// folds by the same ack). A connector-send TASK's synced outcome, which the
+/// board shows over its jobs, settles it at the instant that outcome was set,
+/// even with no failed head (an undone send's only attempt is cancelled; an
+/// owner's no-resend answer fails none) and on a peer that holds none of its
+/// node-local attempts; the later of that instant and its newest failed head
+/// stands. Live work and non-failed heads settle nothing, and a connector
+/// body written before the outcome stamp settles by its failed heads alone.
 ///
 /// # Errors
 ///
@@ -200,6 +204,13 @@ pub(crate) fn task_settled_at_in(
     if expired.is_some() {
         return Ok(expired);
     }
+    // A connector-send TASK has no typed body: the outcome the board shows
+    // over its jobs settles it when that outcome was set.
+    let outcome_at = if body.is_none() {
+        connector_outcome_at_in(vault, rtxn, task)?
+    } else {
+        None
+    };
     // Otherwise the newest failure the board folds for this TASK: the same
     // projected failed heads, so a job kind the board excludes never moves
     // the settlement. A retry successor supersedes its source, and the
@@ -208,7 +219,26 @@ pub(crate) fn task_settled_at_in(
     let task_hex = task.to_hex();
     let records =
         crate::attempt_queue::AttemptQueue::new(vault).task_subtree_in_txn(rtxn, &task_hex)?;
-    projected_failed_head_settled_at(records, &task_hex)
+    Ok(projected_failed_head_settled_at(records, &task_hex)?.max(outcome_at))
+}
+
+/// When a connector-send TASK's synced outcome was set, read through the
+/// validated door the board renders that outcome by; `None` for any other
+/// TASK, for a send still in flight and for a body written before the stamp.
+/// A connector body that does not validate is `None` too: the board renders
+/// that row by its jobs alone, and so does the settlement.
+fn connector_outcome_at_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    task: EntityId,
+) -> Result<Option<u64>> {
+    match vault.connector_send_task_in(rtxn, &task) {
+        Ok(connector) => {
+            Ok(connector.and_then(|connector| connector.outcome.and(connector.outcome_at)))
+        }
+        Err(Error::Record(RecordError::InvalidTaskBody(_))) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// The newest failure instant over the failed heads the board folds for one
