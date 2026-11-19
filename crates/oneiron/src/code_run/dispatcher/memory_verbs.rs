@@ -785,9 +785,11 @@ fn landing_gate_answer(
 ) -> crate::claim::LandingGateAnswer {
     use crate::claim::LandingGateAnswer;
     match (verdict, recorded, held_envelope) {
-        (Ok(()), recorded, _) => {
-            LandingGateAnswer::Admitted(recorded.map(|decision| decision.decision_id()))
-        }
+        (Ok(()), recorded, _) => LandingGateAnswer::Admitted(
+            recorded
+                .as_ref()
+                .map(crate::gate::RecordedClaimGateDecision::decision_id),
+        ),
         (Err(refusal), Some(recorded), Some(envelope))
             if recorded.checker_hold() && crate::gate::gate_rejection_pends(&refusal) =>
         {
