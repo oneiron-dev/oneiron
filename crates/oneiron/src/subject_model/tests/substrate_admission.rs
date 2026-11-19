@@ -26,13 +26,15 @@ pub(super) fn admit(
     id: &EntityId,
     body: &ClaimBody,
 ) -> Result<()> {
-    let data = encode_claim_body(body)?;
+    let mut stamped = body.clone();
+    crate::test_util::stamp_vault_default_facet(vault, &mut stamped);
+    let data = encode_claim_body(&stamped)?;
     let occurred = TimeRange {
         start: 100,
         end: 100,
     };
     match door {
-        AdmissionDoor::ReservedTyped => put_subject_fixture(vault, id, body),
+        AdmissionDoor::ReservedTyped => put_subject_fixture(vault, id, &stamped),
         AdmissionDoor::ReservedBatch => vault.with_write_txn(|txn| {
             vault
                 .batch_in()

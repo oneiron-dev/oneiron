@@ -866,19 +866,16 @@ fn whole_vault_provenance_restore_replays_history_with_local_model_binding_and_p
     source.put_edge_provenance(&withdrawn, &reversed, &record, EdgeActorClass::Human, 30)?;
     source.retract_edge_provenance(&withdrawn, 40)?;
     let dependent = crate::EntityId::now();
-    source.put_claim(
-        &dependent,
-        &ClaimBody::new(
-            "archive.provenance_note",
-            ClaimSubject::Entity(first),
-            "retained dependent".into(),
-            1.0,
-            ClaimApprovalStatus::Proposed,
-            ClaimLifecycleStatus::Active,
-        )?,
-        range(),
-        789,
+    let mut body = ClaimBody::new(
+        "archive.provenance_note",
+        ClaimSubject::Entity(first),
+        "retained dependent".into(),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
     )?;
+    crate::test_util::stamp_vault_default_facet(&source, &mut body);
+    source.put_claim(&dependent, &body, range(), 789)?;
     let chained = crate::EntityId::now();
     let chained_edge = EdgeRef::new(dependent, EdgeKind::EmployedBy, to);
     source
