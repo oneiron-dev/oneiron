@@ -19,7 +19,6 @@
 //! The signature proves the owner's word, not that no other machine exists:
 //! run on two copies of one image, each joins, as the owner said twice.
 
-use super::owner_proof::OwnerProofSigner;
 use super::world_key_support::{next_sequence, unsigned_side_entry};
 use super::*;
 use crate::consent::AuthenticatedOwner;
@@ -58,6 +57,21 @@ const NOT_LIVE_HERE: &str = "this install's machine stands in the vault, but not
 const HELD_DIFFERS: &str = "the vault holds an enrolment of this install's machine that names \
                             other keys, another class, another origin, another owner or another \
                             role than this install asks; nothing was written";
+
+/// A kit restore of an install born of a restore that has not joined,
+/// whose kit's root authority key R this vault does not take as the owner's
+/// proof (a key the host holds, on a hosted install): R's word joins no
+/// restored install. The words say nothing of what was written, as the
+/// kit restore's other refusals (the sealed bundle's restore gives them
+/// after its history's import committed; REVIEW-9517 round 2 P1).
+const KEY_PROVES_NO_JOIN: &str = "this install was restored from a checkpoint and has not joined \
+                                  the vault, and this recovery kit's root key does not prove the \
+                                  owner's word here, so the kit cannot join it; pair this install \
+                                  from a machine of the vault";
+
+/// An owner key's signature over an entry's transcript, made on the fold
+/// the entry is signed on.
+type FoldSign<'a> = dyn Fn(&AuthorityFold, &[u8]) -> Result<Vec<u8>> + 'a;
 
 /// Whether `folded` stands live under `request`'s keys: the machine this
 /// install is.
@@ -171,8 +185,12 @@ impl Vault {
             ActSurface::ThisInstall,
             restored_machine_join_seen(&enrolment),
         );
-        let op = AuthorityOp::RestoredMachineJoin(RestoredMachineJoin { act, enrolment });
-        self.append_owner_signed_in_txn(&mut txn, &fold, op, &proof)?;
+        let op = AuthorityOp::RestoredMachineJoin(RestoredMachineJoin {
+            act,
+            enrolment: RestoredJoinEnrolment::Held(enrolment),
+        });
+        let sign: &FoldSign<'_> = &|fold, transcript| proof.sign(fold, transcript);
+        self.append_owner_signed_in_txn(&mut txn, &fold, op, (&proof.key(), sign))?;
         let after = self.authority_view_readonly_in_txn(&txn)?;
         let folded = after
             .machine(target)
@@ -218,30 +236,123 @@ impl Vault {
         Ok(())
     }
 
-    /// Appends `op`, signed alone by `proof`'s owner key over the authority
-    /// transcript, on `fold`'s main-log heads (joined first when wider than
-    /// one entry names, in the host family, whose rule is a live owner
-    /// roster key: FIX 7908, 11867). The key signs each entry through its own
-    /// check, on the fold the entry is signed on: a join carries no op, so
-    /// every join's parent state is `fold`'s, and the row's is the joined
-    /// fold's.
+    /// A kit restore's join of this install when a restore made it (Engine
+    /// ANSWER KIT-RESTORE-JOINS-RESTORED-COPY = A): `signer`, the kit's root
+    /// authority key R held behind `sign`, a live owner key of the roster,
+    /// files this install's enrolment as its own act-free roster revision
+    /// and joins it, in one owner's [`RestoredMachineJoin`] row in its
+    /// inline form, signed by R alone, in the caller's transaction. One R
+    /// row, as main's kit restore puts a machine on the roster in one R row,
+    /// so two kit restores of copies of one image stay equal-sequence
+    /// siblings and neither floors the other (Engine ANSWER
+    /// KIT-JOIN-ONE-R-ROW = A; REVIEW-9534 round 2 P1). A kit restore signed
+    /// by R is the owner's proved act RESTORED-COPIES-JOIN-SCOPE = A names,
+    /// so the fold takes R's join as it takes any owner key's
+    /// ([`super::restored_join`]). Writes nothing for an install no restore
+    /// made, or one whose machine stands in the vault: the restore anchors
+    /// it and puts it on the roster as any install. The join stands only
+    /// when the fold reads the machine live under this install's keys.
+    /// Returns whether it joined this install.
+    ///
+    /// # Errors
+    /// [`crate::error::RecordError::AuthorityRefused`] when R gives no
+    /// owner's proof here ([`Self::restored_join_by_key_precheck`]) or the
+    /// fold does not count the join; an enrolment the fold holds for the
+    /// machine under other keys or another origin; storage faults.
+    pub(crate) fn join_restored_install_by_key_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        (signer, sign): (&AuthorityKey, &dyn Fn(&[u8]) -> Result<Vec<u8>>),
+        owner: EntityId,
+        request: &MachineEnrolmentRequest,
+    ) -> Result<bool> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if request.restored_from.is_none() || fold.machine(request.machine).is_some() {
+            return Ok(false);
+        }
+        if !self.key_proves_owner_word(&fold, signer) {
+            return Err(authority_refused(KEY_PROVES_NO_JOIN));
+        }
+        let profile = self.kit_restore_enrolment_profile_in_txn(txn, &fold, owner, request)?;
+        let act = OwnerAct::by_owner(
+            owner,
+            OwnerActKind::RestoredMachineJoin,
+            request.machine,
+            ActSurface::ThisInstall,
+            restored_machine_join_inline_seen(&profile)?,
+        );
+        let op = AuthorityOp::RestoredMachineJoin(RestoredMachineJoin {
+            act,
+            enrolment: RestoredJoinEnrolment::Inline(profile),
+        });
+        let by_key: &FoldSign<'_> = &|_, transcript| sign(transcript);
+        self.append_owner_signed_in_txn(txn, &fold, op, (signer, by_key))?;
+        let joined = self
+            .authority_view_readonly_in_txn(txn)?
+            .machine(request.machine)
+            .is_some_and(|folded| stands_as_this_install(folded, request));
+        if !joined {
+            return Err(authority_refused(JOIN_NOT_COUNTED));
+        }
+        Ok(true)
+    }
+
+    /// [`Self::join_restored_install_by_key_in_txn`]'s refusal, read before
+    /// a kit restore mints this install's identity: this install was born
+    /// of a restore, no machine of it stands in `fold`, and `signer`, the
+    /// kit's R, gives no owner's proof there.
+    ///
+    /// # Errors
+    /// [`crate::error::RecordError::AuthorityRefused`] naming the refusal;
+    /// storage faults.
+    pub(crate) fn restored_join_by_key_precheck(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        signer: &AuthorityKey,
+    ) -> Result<()> {
+        if crate::identity::read_restored_from_image_in_txn(self, txn)?.is_none() {
+            return Ok(());
+        }
+        let stands = crate::identity::read_machine_id_in_txn(self, txn)?
+            .is_some_and(|machine| fold.machine(machine).is_some());
+        if !stands && !self.key_proves_owner_word(fold, signer) {
+            return Err(authority_refused(KEY_PROVES_NO_JOIN));
+        }
+        Ok(())
+    }
+
+    /// Whether `fold` takes `key` as the owner's proof on this install
+    /// ([`AuthorityFold::proves_owner_acts`], the writer's side of the
+    /// fold's `gives_owner_proof`), in the one suite a proof is made in.
+    fn key_proves_owner_word(&self, fold: &AuthorityFold, key: &AuthorityKey) -> bool {
+        let hosted = self.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
+        matches!(key, AuthorityKey::Ed25519(_)) && fold.proves_owner_acts(key, hosted)
+    }
+
+    /// Appends `op`, signed alone by the owner key `key` behind `sign` over
+    /// the authority transcript, on `fold`'s main-log heads (joined first
+    /// when wider than one entry names, in the host family, whose rule is a
+    /// live owner roster key: FIX 7908, 11867). The key signs each entry
+    /// through its own check, on the fold the entry is signed on: a join
+    /// carries no op, so every join's parent state is `fold`'s, and the
+    /// row's is the joined fold's.
     fn append_owner_signed_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
         op: AuthorityOp,
-        proof: &OwnerProofSigner<'_>,
+        (key, sign): (&AuthorityKey, &FoldSign<'_>),
     ) -> Result<()> {
-        let key = proof.key();
-        let sign = |transcript: &[u8]| proof.sign(fold, transcript);
-        let joiner = FrontierSigner::Callback(&key, &sign);
+        let frontier_sign = |transcript: &[u8]| sign(fold, transcript);
+        let joiner = FrontierSigner::Callback(key, &frontier_sign);
         let joined = self.prepare_authority_frontier_in_txn(txn, fold, joiner, MAX_PARENTS)?;
         let fold = joined.as_deref().unwrap_or(fold);
-        let seq = next_sequence(fold, &key)?;
+        let seq = next_sequence(fold, key)?;
         let parents = fold.append_heads.iter().copied().collect();
         let now = self.instant_in_txn(txn)?.secs();
-        let mut entry = unsigned_side_entry(fold, key, seq, parents, op, now)?;
-        entry.signer.signature = proof.sign(fold, &authority_transcript(&entry)?)?;
+        let mut entry = unsigned_side_entry(fold, key.clone(), seq, parents, op, now)?;
+        entry.signer.signature = sign(fold, &authority_transcript(&entry)?)?;
         let at = TimeRange {
             start: now,
             end: now,

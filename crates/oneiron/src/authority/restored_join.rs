@@ -27,8 +27,12 @@
 //! 15e): one [`RestoredMachineJoin`] row, signed alone by a key the vault
 //! trusts as the owner's ([`apply_owner_join`]), joins the one enrolment it
 //! names. Its door (`Vault::join_restored_install`) files this install's
-//! enrolment and that row in one transaction; it is the only door that
-//! writes a held enrolment.
+//! enrolment and that row in one transaction. A kit restore of such an
+//! install files and joins it in one row signed by the kit's root authority
+//! key R, a live owner key: the row's inline form carries the enrolment
+//! (Engine ANSWERs KIT-RESTORE-JOINS-RESTORED-COPY = A and
+//! KIT-JOIN-ONE-R-ROW = A). They are the only doors that write a held
+//! enrolment.
 //!
 //! A machine's origin is fixed by its first revision: a later revision of it
 //! that names another image, or none, is refused (`origin_differs`), so the
@@ -324,11 +328,22 @@ pub(super) fn witnessed(
 /// owner, of a machine no chain or held enrolment there removes, and the
 /// signer's sequence is above the one `state` holds for it. An enrolment an
 /// entry joined already keeps that entry; the act then changes nothing.
+///
+/// An inline enrolment ([`RestoredJoinEnrolment::Inline`]) is first filed
+/// by `file_inline` as the signer's own act-free roster revision under this
+/// entry, which holds it as any such enrolment is held, and then joined
+/// here: one row of the signer files and joins it (Engine ANSWER
+/// KIT-JOIN-ONE-R-ROW = A). One the fold does not hold, because the machine
+/// already stands, joins nothing and the row is invalid.
 pub(super) fn apply_owner_join(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
     record: &RestoredMachineJoin,
     hash: AuthorityEntryHash,
+    file_inline: impl FnOnce(
+        &mut FoldState,
+        &MachineProfile,
+    ) -> std::result::Result<(), AuthorityFoldIssue>,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     // The signer's sequence moves forward here as everywhere: a join never
     // rewinds it below what its parents hold (REVIEW-9510/9511 P1).
@@ -340,15 +355,6 @@ pub(super) fn apply_owner_join(
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
     let target = record.act.target;
-    // The enrolment is held for the act's target and names the act's owner:
-    // a join under another owner id never admits his machine (REVIEW-9510
-    // round 2 P1 :305).
-    let held = state
-        .restored_enrolments
-        .get(&record.enrolment)
-        .is_some_and(|enrolment| {
-            enrolment.machine == target && enrolment.chain.head.profile.owner == record.act.owner
-        });
     // A removal is terminal: once the parents hold one of the target, on a
     // chain that stands or one still held, no join brings it back
     // (REVIEW-9510 round 2 P1 :312).
@@ -360,14 +366,32 @@ pub(super) fn apply_owner_join(
             .restored_enrolments
             .values()
             .any(|enrolment| enrolment.machine == target && enrolment.chain.head.removed);
-    if !held
-        || removed
+    if removed
         || !super::owner_proof::gives_owner_proof(state, entry.signer_key())
         || !super::owner_act::owner_live_at(state, record.act.owner)
     {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    join(state, &[record.enrolment], hash);
+    let enrolment = match &record.enrolment {
+        RestoredJoinEnrolment::Held(enrolment) => *enrolment,
+        RestoredJoinEnrolment::Inline(profile) => {
+            file_inline(state, profile)?;
+            hash
+        }
+    };
+    // The enrolment is held for the act's target and names the act's owner:
+    // a join under another owner id never admits his machine (REVIEW-9510
+    // round 2 P1 :305).
+    let held = state
+        .restored_enrolments
+        .get(&enrolment)
+        .is_some_and(|enrolment| {
+            enrolment.machine == target && enrolment.chain.head.profile.owner == record.act.owner
+        });
+    if !held {
+        return Err(AuthorityFoldIssue::InvalidEntry(hash));
+    }
+    join(state, &[enrolment], hash);
     Ok(())
 }
 
