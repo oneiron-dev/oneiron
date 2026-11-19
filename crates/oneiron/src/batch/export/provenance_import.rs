@@ -310,7 +310,8 @@ pub(super) fn restore<R: Read + Seek>(
                 )?
                 .is_none()
             {
-                return keep_cohort_out(key, vault, txn, archive, &rows, secrets);
+                let own_link = own_history_link(vault, txn, &subject, &rows)?;
+                return keep_cohort_out(key, vault, txn, archive, &rows, secrets, own_link);
             }
             false
         }
@@ -323,6 +324,18 @@ pub(super) fn restore<R: Read + Seek>(
             true
         }
     };
+    // A link this vault holds with provenance of its own, a claim on it that
+    // this cohort does not carry, keeps that history as it is, as a held
+    // `same_as` does above (Engine ruling 19 Nov 13:46 on FIX
+    // WHOLE-VAULT-IMPORT-HELD-LINK-OLDER-PROVENANCE-ABORTS): the cohort stays
+    // archive data, so an archived annotation older than the vault's own
+    // never reaches the provenance writer's precedence check and aborts the
+    // import, and a newer one never closes the vault's own. The two histories
+    // never merge by learned-at. A link whose only history is this archive's
+    // own rows (an earlier import of the same source) takes the cohort.
+    if let Some(link) = own_history_link(vault, txn, &subject, &rows)? {
+        return keep_cohort_out(key, vault, txn, archive, &rows, secrets, Some(link));
+    }
     let new_ids = rows
         .iter()
         .filter_map(|(_, id, _)| {
@@ -393,9 +406,38 @@ pub(super) fn restore<R: Read + Seek>(
         kept_out: Vec::new(),
     })
 }
-/// Keeps the cohort queued under `key`, whose subject link is not here, as
-/// archive data: a row this vault already holds stays as it is, compared as
-/// [`restore_cohort`] compares it, and every other row is marked omitted.
+/// The subject link of a cohort when this vault holds provenance on it that
+/// the cohort does not carry: a claim on the link, of any lifecycle, that is
+/// none of `rows`. That is the vault's own history of a link it holds.
+fn own_history_link(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: &[u8],
+    rows: &[(ExportEntity, EntityId, ClaimBody)],
+) -> Result<Option<ClaimSubject>> {
+    if subject.len() != EDGE_KEY_LEN {
+        return Err(invalid("archive cohort subject is not an edge"));
+    }
+    let kind = crate::edge::EdgeKind::try_from_u8(subject[ENTITY_ID_LEN])
+        .ok_or_else(|| invalid("archive cohort subject is not an edge"))?;
+    let (source, target) = (id_at(subject, 0)?, id_at(subject, ENTITY_ID_LEN + 1)?);
+    let own = vault
+        .edge_provenance_audit_in_txn(txn, &crate::provenance::EdgeRef::new(source, kind, target))?
+        .cohort
+        .iter()
+        .any(|(claim, _)| !rows.iter().any(|(_, id, _)| *id == claim.id));
+    Ok(own.then_some(ClaimSubject::Edge {
+        source,
+        kind,
+        target,
+    }))
+}
+/// Keeps the cohort queued under `key`, whose subject link is not here or
+/// keeps its own history, as archive data: a row this vault already holds
+/// stays as it is, compared as [`restore_cohort`] compares it, and every
+/// other row is marked omitted. With `own_link`, the link's own history may
+/// have closed a row this vault took from an earlier archive, so a held row
+/// that differs is left as it is when it is a claim on that link.
 fn keep_cohort_out<R: Read + Seek>(
     key: EntityId,
     vault: &Vault,
@@ -403,6 +445,7 @@ fn keep_cohort_out<R: Read + Seek>(
     archive: &mut IndexedArchive<'_, R>,
     rows: &[(ExportEntity, EntityId, ClaimBody)],
     secrets: ExportSecrets,
+    own_link: Option<ClaimSubject>,
 ) -> Result<CohortRestore> {
     let mut unchanged = 0;
     let mut kept_out = Vec::new();
@@ -414,9 +457,17 @@ fn keep_cohort_out<R: Read + Seek>(
                     row.entity_type,
                     secrets,
                 );
-                if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live()
-                    || !matches_row(row, &existing, &expected, secrets)
-                {
+                if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live() {
+                    return Err(invalid("archive provenance ID collision"));
+                }
+                let held = matches_row(row, &existing, &expected, secrets)
+                    || match own_link {
+                        Some(link) => vault
+                            .get_claim_in_txn(txn, id)?
+                            .is_some_and(|stored| stored.subject == link),
+                        None => false,
+                    };
+                if !held {
                     return Err(invalid("archive provenance ID collision"));
                 }
                 unchanged += 1;
