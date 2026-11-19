@@ -185,6 +185,16 @@ fn rebind_owed_wake(
                 "this wake was admitted on another machine; rebind its try by attempt".to_owned(),
             ));
         }
+        // A wake this machine released as the home is admitted on its
+        // recording machine: a copy of it that a historical restore brought
+        // back is rebound by nothing here, and its admission drops it.
+        #[cfg(feature = "sync")]
+        if super::retraction::released_here_in_txn(vault, &*txn, actor, key, wake.admission_id())? {
+            return Err(Error::InvalidConfig(
+                "this machine released this wake to the machine that recorded it; rebind it there"
+                    .to_owned(),
+            ));
+        }
         // A wake this machine retracted is admitted here once the home
         // releases it, and nowhere before: its rebind waits for that.
         #[cfg(feature = "sync")]

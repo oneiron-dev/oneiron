@@ -17,7 +17,9 @@
 //! - The home answers in one writer ([`merge_retracted_in_txn`]). A decision
 //!   it holds stands, and its `Admitted` row consumes the wake on the
 //!   recording machine as before. Otherwise it drops the copy it took from the
-//!   window, keeps the release, and the window carries a `Released` row.
+//!   window, keeps the release, and the window carries a `Released` row. A
+//!   wake it released is admitted by nothing on the home afterwards: its
+//!   admission drops a copy that a historical restore brings back.
 //! - A `Released` row turns the mark `Released` ([`merge_released_in_txn`]):
 //!   the recording machine admits the wake, whatever rides by then.
 //!

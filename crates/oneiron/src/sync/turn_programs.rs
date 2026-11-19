@@ -312,11 +312,47 @@ pub(crate) fn mirror_turn_program_wakes(
         let rides = replica::mark_carried_wakes(vault, key, &owed)?;
         rows.retain(|(map_key, row)| replica::wake_row_decided(row) || rides.contains(map_key));
     }
+    // The window may have taken a later row for one of these keys since
+    // `carried` was read: the housekeeping pass writes a retraction from its
+    // own thread. An `Owed` row goes over none.
+    if holds_map(doc, TURN_PROGRAM_WAKES_MAP) {
+        let map = doc.get_map(TURN_PROGRAM_WAKES_MAP);
+        rows.retain(|(map_key, row)| {
+            replica::wake_row_decided(row)
+                || !map_get_bytes(&map, map_key)
+                    .is_some_and(|held| replica::wake_row_past_owed(&held))
+        });
+    }
     if rows.is_empty() {
         return Ok(false);
     }
     let wrote_armings = !armings.is_empty() && mirror_arming_rows(vault, doc, key, &armings)?;
-    Ok(write_rows(&doc.get_map(TURN_PROGRAM_WAKES_MAP), &rows)? || wrote_armings)
+    let map = doc.get_map(TURN_PROGRAM_WAKES_MAP);
+    let wrote = write_rows(&map, &rows)?;
+    // A later row this machine wrote between that look and this write lies
+    // under the `Owed` row now. The pass that wrote it committed this vault's
+    // mark first, so the latest row this vault knows for each `Owed` row just
+    // written goes back over it: this mirror never leaves the window on a row
+    // earlier than the one this vault's own state names as it returns. A
+    // later row an import brought in that gap is written again by the next
+    // pass, as any row a window lost is.
+    if wrote {
+        let later = {
+            let rtxn = vault.store.env.read_txn()?;
+            let mut later = Vec::new();
+            for (map_key, row) in &rows {
+                if !replica::wake_row_decided(row)
+                    && let Some(known) =
+                        replica::outranking_wake_row_in_txn(vault, &rtxn, map_key, row)?
+                {
+                    later.push((map_key.clone(), known));
+                }
+            }
+            later
+        };
+        write_rows(&map, &later)?;
+    }
+    Ok(wrote || wrote_armings)
 }
 
 /// Writes into `doc`, base window `key`'s, the latest wake row this vault
@@ -479,7 +515,11 @@ fn merge_wakes(vault: &Vault, window: &str, rows: Vec<(String, Option<Vec<u8>>)>
 /// knows for its key (a decision, a release or a retraction). A live doc keeps the old
 /// rows in its history, so `pin` names the window pinned history-free before
 /// an erased actor's row goes; the sweep, whose shallow cut drops that
-/// history, passes `None`. Returns whether a row went, committed.
+/// history, passes `None`. An egress, which names its window, also writes the
+/// row of each wake this vault retracted whose key the window does not hold,
+/// as [`mirror_turn_program_wake_answers`] does: an export between the pass's
+/// retraction and its mirror carries the retraction too. Returns whether a
+/// row went, committed.
 pub(crate) fn scrub_turn_programs(
     vault: &Vault,
     doc: &LoroDoc,
@@ -487,7 +527,8 @@ pub(crate) fn scrub_turn_programs(
 ) -> Result<bool> {
     let arms = holds_map(doc, TURN_PROGRAM_ARMS_MAP);
     let wakes = holds_map(doc, TURN_PROGRAM_WAKES_MAP);
-    if !arms && !wakes {
+    let base = pin.filter(|key| key.world().is_none());
+    if !arms && !wakes && base.is_none() {
         return Ok(false);
     }
     let mut doomed: Vec<(&'static str, String)> = Vec::new();
@@ -509,14 +550,23 @@ pub(crate) fn scrub_turn_programs(
                 }
             }
         }
+        let mut held = std::collections::BTreeSet::new();
         if wakes {
             for (map_key, bytes) in rows_of(&doc.get_map(TURN_PROGRAM_WAKES_MAP)) {
                 if erased(replica::wake_row_actor(&bytes))? {
                     erased_any = true;
-                    doomed.push((TURN_PROGRAM_WAKES_MAP, map_key));
+                    doomed.push((TURN_PROGRAM_WAKES_MAP, map_key.clone()));
                 } else if let Some(row) =
                     replica::outranking_wake_row_in_txn(vault, &rtxn, &map_key, &bytes)?
                 {
+                    decided.push((map_key.clone(), row));
+                }
+                held.insert(map_key);
+            }
+        }
+        if let Some(key) = base {
+            for (map_key, row) in replica::retracted_wake_rows_in_txn(vault, &rtxn, key)? {
+                if !held.contains(&map_key) {
                     decided.push((map_key, row));
                 }
             }
