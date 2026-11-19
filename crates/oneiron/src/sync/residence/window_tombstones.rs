@@ -12,17 +12,23 @@
 //! refused window hides. A world kept off the machine is withheld whole: its
 //! windows give no ids (Engine ANSWER FOLLOWED-WORLD-TOMBSTONE-IDS-FIX-OR-PARK
 //! = A, Thu 19 Nov 12:44).
+//!
+//! Only a delete the home admitted for the window itself leaves: one its own
+//! residence check places in that window, as its window replay judges it. A
+//! world window's ingress keeps a tombstone of an id it cannot place, which
+//! the replay never applies here, so the home does not vouch for it to a
+//! device (blind review 2 of #9593).
 
 use loro::LoroDoc;
 
 use crate::Vault;
-use crate::deletion::decode_tombstone_value;
+use crate::deletion::{TombstoneReason, decode_tombstone_value};
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::federation::FederationGrantScope;
 use crate::sync::loro_support::map_for_each_tombstone_value;
 use crate::sync::selector::{SyncSelector, filtered_window_doc_for};
-use crate::sync::types::WindowKey;
+use crate::sync::types::{TombstoneResidence, WindowKey, tombstone_residence_in};
 use crate::sync::window::Withhold;
 
 /// One tombstone of a window's id set: the deleted row's id and the raw value
@@ -35,11 +41,13 @@ pub struct WindowTombstoneEntry {
 }
 
 /// The tombstones of `source` that the selector's export carries to the
-/// machine `withhold` describes, in ascending id order. A key in another hex
-/// case names the same row (ONE-1158) and is answered under the row's
-/// canonical id. Where several casings carry one, a hard value wins over a
-/// soft one, as a window's replay holds any hard alias dominant, and the
-/// canonical key's value breaks a tie.
+/// machine `withhold` describes and the home admitted for `window`, in
+/// ascending id order. A key in another hex case names the same row
+/// (ONE-1158) and is answered under the row's canonical id. Where several
+/// casings carry one, a hard value wins over a soft one, as a window's replay
+/// holds any hard alias dominant; among hard ones, a reason that erases the
+/// row's checkpoint payloads wins, so the device erases what the home erased;
+/// and the canonical key's value breaks a tie.
 ///
 /// # Errors
 ///
@@ -55,17 +63,25 @@ pub fn window_tombstone_projection_with(
 ) -> Result<Vec<WindowTombstoneEntry>> {
     let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
     // Keyed by the canonical id: its hex order is the row order a cursor
-    // pages by. The rank is (hard, under the canonical key): a hard alias
-    // never yields to a soft value (blind review 1 of #9592), and an empty or
-    // unreadable value decodes hard, as the window's replay reads it.
+    // pages by. The rank is (hard, erases, under the canonical key): a hard
+    // alias never yields to a soft value (blind review 1 of #9592), an erase
+    // never yields to a plain hard delete (blind review 2 of #9592), and an
+    // empty or unreadable value decodes hard, as the window's replay reads it.
     let mut entries =
-        std::collections::BTreeMap::<String, (EntityId, (bool, bool), Vec<u8>)>::new();
+        std::collections::BTreeMap::<String, (EntityId, (bool, bool, bool), Vec<u8>)>::new();
     map_for_each_tombstone_value(&selected.get_map("tombstones"), |key, value| {
         let Ok(id) = EntityId::from_hex(key) else {
             return;
         };
         let canonical = id.to_hex();
-        let rank = (decode_tombstone_value(value).is_hard(), canonical == key);
+        let decoded = decode_tombstone_value(value);
+        let rank = (
+            decoded.is_hard(),
+            decoded
+                .reason
+                .is_some_and(TombstoneReason::erases_checkpoint_payloads),
+            canonical == key,
+        );
         if entries
             .get(&canonical)
             .is_some_and(|(_, held, _)| *held >= rank)
@@ -74,8 +90,33 @@ pub fn window_tombstone_projection_with(
         }
         entries.insert(canonical, (id, rank, value.to_vec()));
     });
-    Ok(entries
-        .into_values()
-        .map(|(entity_id, _, value)| WindowTombstoneEntry { entity_id, value })
-        .collect())
+    let txn = vault.store.env.read_txn()?;
+    let mut admitted = Vec::with_capacity(entries.len());
+    for (entity_id, _, value) in entries.into_values() {
+        if home_admitted_in(vault, &txn, &entity_id, window)? {
+            admitted.push(WindowTombstoneEntry { entity_id, value });
+        }
+    }
+    Ok(admitted)
+}
+
+/// Whether the home admitted the delete of `id` for `window`, as its window
+/// replay judges a tombstone: its residence check places the row in the
+/// window, or, in a base window, places it nowhere else. A world window's
+/// tombstone of an id with no trace here is one the replay skips. A row whose
+/// residence does not decode is withheld, as the replay withholds it.
+fn home_admitted_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    window: &WindowKey,
+) -> Result<bool> {
+    match tombstone_residence_in(vault, txn, id, window) {
+        Ok(TombstoneResidence::Match) => Ok(true),
+        Ok(TombstoneResidence::Unknown) => Ok(window.world().is_none()),
+        Ok(TombstoneResidence::Wrong) | Err(Error::CorruptedIndex(_) | Error::InvalidKey) => {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
 }

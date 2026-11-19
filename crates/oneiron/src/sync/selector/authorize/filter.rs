@@ -574,9 +574,13 @@ pub(in crate::sync::selector) fn filter_window_doc(
 
     let out_tombstones = out.get_map("tombstones");
     let open = facets.is_none() && band_filter(scope_position).is_none();
-    let all = matches!(selector.world, SyncSelectorWorld::All);
+    // A selector narrowed to some worlds takes the tombstone of a row it does
+    // not keep where its delete's captured position lies in them (blind
+    // review 2 of #9592): a hard delete took the row's carrier with it.
+    let worlds =
+        (!matches!(selector.world, SyncSelectorWorld::All)).then_some(&scope_position.worlds);
     let export =
-        super::super::tombstones::TombstoneExport::new(&grant.authority_scope, open && all);
+        super::super::tombstones::TombstoneExport::new(&grant.authority_scope, open, worlds);
     let ttxn = vault.store.env.read_txn()?;
     // The window's bodies of each tombstoned row, under every hex casing of
     // its key: a case-shifted alias still names the row (ONE-1158), so the

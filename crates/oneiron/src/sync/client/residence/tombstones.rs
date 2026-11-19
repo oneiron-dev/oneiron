@@ -12,9 +12,13 @@
 //! goes through the one replay primitive every sync route uses, so a hard
 //! delete purges the row and its thin copies and writes the permanent `dt:`
 //! marker even for an id this device never held, and a soft one stays soft.
-//! The home's answer is admitted per request by its own reader rule, so it
-//! is the residence witness for an id with no local trace; the guard that
-//! skips unknown ids in a peer's window document stays as it is.
+//! The home's answer is admitted per request by its own reader rule and
+//! names only deletes the home placed in the window, so it is the residence
+//! witness for an id with no local trace; the guard that skips unknown ids
+//! in a peer's window document stays as it is. A row this device places in
+//! another window keeps its residence veto, as a window replay keeps it, so
+//! an answer never deletes a row this device knows lives elsewhere (blind
+//! review 2 of #9593).
 
 use base64::Engine;
 use serde::Deserialize;
@@ -27,7 +31,7 @@ use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
 use crate::sync::selector::encode_sync_selector;
 use crate::sync::transport::TransportError;
-use crate::sync::types::WindowKey;
+use crate::sync::types::{TombstoneResidence, WindowKey, tombstone_residence_in};
 
 /// One page of a window's tombstone id set, as the home answers it.
 #[derive(Deserialize)]
@@ -74,8 +78,10 @@ impl SyncClient {
 
     /// Takes the tombstone id set of each of `windows` from the home and
     /// applies each tombstone here: the count applied. A tombstone that fails
-    /// to apply leaves the rest going, and the first failure is returned once
-    /// the set is done; the next pass asks again.
+    /// to apply, and a window the home refuses (it went unreadable to this
+    /// machine before its page was released), leave the rest going, and the
+    /// first failure is returned once the set is done; the next pass asks
+    /// again (blind review 2 of #9593).
     async fn fetch_tombstones_of(&self, windows: Vec<WindowKey>) -> Result<usize, TransportError> {
         if windows.is_empty() {
             return Ok(0);
@@ -104,8 +110,8 @@ impl SyncClient {
                 if pages % budgets.max_index_pages == 0 {
                     tokio::task::yield_now().await;
                 }
-                let value = rpc
-                    .request(
+                let answer = rpc
+                    .call(
                         "residence.tombstones",
                         json!({
                             "window": key, "selector": selector, "after": cursor,
@@ -113,6 +119,10 @@ impl SyncClient {
                         }),
                     )
                     .await?;
+                let Ok(value) = answer else {
+                    failed.get_or_insert_with(refused);
+                    break;
+                };
                 let reply: TombstonesReply =
                     serde_json::from_value(value).map_err(|_| refused())?;
                 if reply.window != key {
@@ -120,7 +130,7 @@ impl SyncClient {
                 }
                 let page = checked_page(&reply, cursor.as_deref())?;
                 for (id, value) in &page {
-                    match self.apply_followed_tombstone(*id, value) {
+                    match self.apply_followed_tombstone(&window, *id, value) {
                         Ok(true) => applied += 1,
                         Ok(false) => {}
                         Err(error) => {
@@ -146,21 +156,48 @@ impl SyncClient {
         failed.map_or(Ok(applied), Err)
     }
 
-    /// Applies one followed tombstone through the sync replay primitive:
-    /// whether it was applied. A hard one whose `dt:` marker this device
-    /// already holds is done, and so is a soft one with no full local row to
-    /// scrub (none here, or already its shell): neither is applied again.
-    fn apply_followed_tombstone(&self, id: EntityId, value: &[u8]) -> Result<bool, TransportError> {
+    /// Applies one followed tombstone of `window` through the sync replay
+    /// primitive: whether it was applied. A row this device places in
+    /// another window is not applied: the residence veto a window replay
+    /// keeps (blind review 2 of #9593). A hard one whose `dt:` marker this
+    /// device already holds is done, and so is a soft one with no full local
+    /// row to scrub (none here, or already its shell): neither is applied
+    /// again.
+    fn apply_followed_tombstone(
+        &self,
+        window: &WindowKey,
+        id: EntityId,
+        value: &[u8],
+    ) -> Result<bool, TransportError> {
         let storage = |error: crate::Error| TransportError::Storage(error.to_string());
-        let done = if decode_tombstone_value(value).is_hard() {
+        let (residence, marked) = {
             let txn = self
                 .vault
                 .store
                 .env
                 .read_txn()
                 .map_err(|error| TransportError::Storage(error.to_string()))?;
-            crate::deletion::hard_delete_marker_exists_in_txn(&self.vault.store, &txn, &id)
-                .map_err(storage)?
+            (
+                tombstone_residence_in(&self.vault, &txn, &id, window),
+                crate::deletion::hard_delete_marker_exists_in_txn(&self.vault.store, &txn, &id)
+                    .map_err(storage)?,
+            )
+        };
+        match residence {
+            Ok(TombstoneResidence::Match | TombstoneResidence::Unknown) => {}
+            Ok(TombstoneResidence::Wrong)
+            | Err(crate::Error::CorruptedIndex(_) | crate::Error::InvalidKey) => {
+                tracing::warn!(
+                    entity = %id.to_hex(),
+                    window = window.as_str(),
+                    "followed tombstone outside this device's residence for its window; not applied"
+                );
+                return Ok(false);
+            }
+            Err(error) => return Err(storage(error)),
+        }
+        let done = if decode_tombstone_value(value).is_hard() {
+            marked
         } else {
             self.vault
                 .get_raw(&id)
