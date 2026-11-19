@@ -472,15 +472,13 @@ impl Served {
         let receipt = self
             .vault
             .memory(self.owner, EdgeActorClass::Human)
-            .set_expression_preference(
-                &ExpressionPreferenceInput {
-                    subject_ref: person.to_hex(),
-                    value: ExpressionPreferenceValue::Language("en-US".to_owned()),
-                    origin: ExpressionPreferenceOrigin::ExplicitUser,
-                    valid_from: at,
-                },
-                at,
-            )
+            .set_expression_preference(&ExpressionPreferenceInput {
+                subject_ref: person.to_hex(),
+                value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+                origin: ExpressionPreferenceOrigin::ExplicitUser,
+                valid_from: at,
+                occurred_at: Some(at),
+            })
             .expect("the owner seeds an expression preference");
         assert_eq!(receipt.approval, "auto");
         let id = resolve_entity_ref(&self.vault, &receipt.claim_short_id).expect("preference id");
