@@ -13,14 +13,17 @@
 //! named engine-stack thread under such a runtime.
 //!
 //! The runtime is per test thread, not process-wide: sibling tests in one
-//! `cargo test --lib` process share no runtime, and a test's leftover tasks
-//! end with its thread.
+//! `cargo test --lib` process share no runtime. A test thread's exit starts
+//! its runtime's shutdown without waiting: async tasks are dropped at their
+//! next yield, but a `spawn_blocking` job that already started runs on until
+//! it returns (tokio neither cancels nor joins it).
 
 use std::future::Future;
 
-/// One test thread's runtime whose workers have the engine's stack. It shuts
-/// down with its thread through `shutdown_background`, which never blocks, so
-/// the drop is safe in a thread-local destructor and in an async context.
+/// One test thread's runtime whose workers have the engine's stack. Its
+/// thread's exit starts its shutdown through `shutdown_background`, which
+/// never blocks (and so never joins a started blocking job), so the drop is
+/// safe in a thread-local destructor and in an async context.
 struct EngineStackRuntime(Option<tokio::runtime::Runtime>);
 
 impl EngineStackRuntime {
