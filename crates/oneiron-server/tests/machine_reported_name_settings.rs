@@ -8,6 +8,9 @@
 //! `ServeConfig::base_vault_config`.
 #![allow(clippy::unwrap_used)]
 
+#[path = "support/owner_only_file.rs"]
+mod owner_only_file;
+
 use std::path::Path;
 
 use oneiron_server::config::{
@@ -29,7 +32,7 @@ fn resolve(path: &Path) -> ServeConfig {
 fn a_settings_file_naming_the_machine_reaches_the_vault_config() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("oneiron.toml");
-    std::fs::write(
+    crate::owner_only_file::write_owner_only_file(
         &config,
         "machine_reported_name = \"Maya's MacBook\"\n\
          machine_reported_model = \"MacBook Air\"\n",
@@ -47,7 +50,7 @@ fn a_settings_file_naming_the_machine_reaches_the_vault_config() {
 fn a_settings_file_without_the_keys_declares_no_name() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("oneiron.toml");
-    std::fs::write(&config, "").unwrap();
+    crate::owner_only_file::write_owner_only_file(&config, "").unwrap();
     let vault = resolve(&config).base_vault_config();
     assert_eq!(vault.machine_reported_name, None);
     assert_eq!(vault.machine_reported_model, None);
