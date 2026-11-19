@@ -34,6 +34,16 @@
 //! that commit). Guards: a human-class credential's saved lane still reads
 //! the claim no row binds its class from, and an agent-class lane still
 //! reads a claim its own row admits.
+//!
+//! A lane whose key held no Scope keeps none (FIX
+//! FROZEN-LANE-FREEZES-ABSENT-AUTHORITY-AS-TOP, Astra threats 1-2 on
+//! #8134). The classless key's base-world bound used to freeze as a top
+//! Scope, and the rebuild handed it to a caller's key that held none. Where
+//! no row binds a key's class, a key with no Scope reads nothing and a key
+//! with a Scope reads what it admits. So the same classless key, met with
+//! its own saved lane through the public rebuild, read the claim its live
+//! lane refused. It now refuses it, and so does that rebuild frozen again.
+//! Red at fcbc264c20c (#9583's head): the first rebuild reads the claim.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test saved_lane_actor_class`.
 #![cfg(oneiron_test_support)]
@@ -618,5 +628,46 @@ fn a_classless_saved_question_source_reads_no_claim_its_principals_human_class_r
     assert!(
         !read,
         "actor=a key of the owner's id that names no class; expected its saved question's source reader to read as the human class of the owner's PERSON row and refuse the claim the human-class receipt-bound row refused, not to read it with no class through its frozen Scope; seen {seen}"
+    );
+}
+
+/// What `frozen`, met with a key of the owner's id that names no class and
+/// holds no proof, floor or Scope, reads of `row`.
+fn classless_key_reads(
+    fixture: &Fixture,
+    frozen: &FrozenReadLane,
+    row: EntityId,
+) -> (bool, String) {
+    let key = ScopedReadActorKey::new(fixture.owner.to_hex()).expect("a key that names no class");
+    match frozen.narrow(&fixture.vault, key) {
+        Ok(key) => reads(&held_lane(fixture, key), row),
+        Err(error) => (false, format!("rebuild={error:?}")),
+    }
+}
+
+/// The classless lane, met with the same classless key through the public
+/// rebuild, reads what that key read live: nothing. It keeps no Scope the
+/// key lacked, so no top Scope stands as read authority where no row binds
+/// the key's class; and the key it rebuilds, frozen again, keeps none
+/// either (FIX FROZEN-LANE-FREEZES-ABSENT-AUTHORITY-AS-TOP, Astra threats
+/// 1-2 on #8134).
+#[test]
+fn a_classless_saved_lane_over_its_own_classless_key_reads_no_claim_its_live_lane_refused() {
+    let fixture = fixture(ReadRow::HumanHeldToReceipt);
+    let frozen = classless_saved_lane(&fixture);
+    let (read, seen) = classless_key_reads(&fixture, &frozen, fixture.claim);
+    assert!(
+        !read,
+        "actor=a key of the owner's id that names no class; expected its saved lane, met with the same key, to refuse the claim its live lane refused, not to read it through a top Scope the key never held; seen {seen}"
+    );
+    let key = ScopedReadActorKey::new(fixture.owner.to_hex()).expect("a key that names no class");
+    let rebuilt = frozen
+        .narrow(&fixture.vault, key)
+        .expect("the classless lane rebuilds over its own key");
+    let again = saved_lane(&fixture, rebuilt);
+    let (read, seen) = classless_key_reads(&fixture, &again, fixture.claim);
+    assert!(
+        !read,
+        "actor=a key of the owner's id that names no class; expected its saved lane, rebuilt over the same key and frozen again, to keep no Scope and refuse the claim; seen {seen}"
     );
 }
