@@ -169,6 +169,7 @@ fn deleting_project_removes_derived_room_and_member_access() -> Result<()> {
     for door in [0, 1, 2] {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let root = vault.root_project()?;
         let owner = vault
             .ensure_embedded_owner_actor()
@@ -276,6 +277,7 @@ fn erased_parent_is_invalid_not_a_pending_dependency() -> Result<()> {
     for hard in [false, true] {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let root = vault.root_project()?;
         let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
         let parent = EntityId::now();
@@ -1796,6 +1798,7 @@ fn project_body_updates_preserve_venture_org_edge_and_retire_only_old_project_pa
 fn updating_project_cannot_recreate_its_soft_deleted_home_room() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let root = vault.root_project()?;
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
     let id = EntityId::now();
@@ -1872,6 +1875,7 @@ fn a_project_whose_home_room_id_sorts_first_replays_without_a_stuck_window() -> 
     // source root's subtree, room included.
     let images = tempfile::tempdir()?;
     let image = images.path().join("before-child");
+    source.ensure_vault_key().expect("mint the vault data key");
     source.snapshot_checkpoint(&image, 5)?;
     let checkpoint_key = source.checkpoint_key()?;
     let (child_id, child) = child_project_whose_home_room_sorts_first(&source)?;
@@ -2158,6 +2162,7 @@ fn secondary_parent_rule_narrows_cross_project_leader_chat() -> Result<()> {
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut claim);
     claim.scope_project = right;
     vault.put_claim(&rule, &claim, TimeRange { start: 5, end: 5 }, 5)?;
     let refusal = vault

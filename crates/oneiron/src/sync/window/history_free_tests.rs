@@ -35,6 +35,8 @@ use crate::write_envelope::WriteActor;
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
     (dir, vault)
 }
 
