@@ -4564,7 +4564,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/device_succession.rs",
@@ -5443,7 +5443,7 @@
      "path": "src/authority/machine_profile/mod.rs",
      "purpose": "Folds `MachineProfile` entries into each physical machine's standing",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 24,
       "fn": 15,
       "re-export": 1,
       "struct": 2
@@ -5782,7 +5782,7 @@
      "path": "src/authority/owner_key_enrollment.rs",
      "purpose": "The fold's judge of the owner's enrollment of one of his devices' own owner signing keys (FIX 4920; Engine…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -73778,7 +73778,7 @@
      "path": "src/secret_custody/holder_export.rs",
      "purpose": "The holder's side of a holder-mediated export (FIX 4624(b)), and the owner's fetch and open of what it sealed",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2
      }
     },
@@ -73809,7 +73809,7 @@
      "path": "src/secret_custody/holder_export/relay.rs",
      "purpose": "An export secret request's sealed copy as it is kept and relayed (FIX 11843): a label, the second its holder…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -88143,7 +88143,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PeerSyncPart",
@@ -93591,6 +93591,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/carrier_proof.rs",
+     "purpose": "Door for `tests/doors_read_standing_heads.rs` (FIX [FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES]…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -95478,7 +95488,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 323,
+      "mod": 325,
       "re-export": 1
      }
     },
@@ -95841,6 +95851,16 @@
      "purpose": "Doors for the integration tests of the predicted residence level (census L7-46 + L10-14, ARCH-0023b…",
      "surface": {
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/profiles_other_machine.rs",
+     "purpose": "Door for `tests/doors_read_standing_heads.rs` (FIX [FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES]…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -103956,7 +103976,7 @@
      "path": "src/world_keys/bundle/admission.rs",
      "purpose": "A late joiner's access to kept pad objects (FIX 4271)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 5,
       "struct": 2
      }
@@ -104065,7 +104085,7 @@
      "path": "src/world_keys/bundle/publication.rs",
      "purpose": "Sealed bundle publication on the owner's ask (WILL L04 row 03): he asks on any surface he is authenticated…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2
      }
     },
@@ -106033,6 +106053,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/carrier_veto_ignores_stranger_marks.rs",
+     "purpose": "Only the roster's chain admits or removes the install that carries an owner act (FIX…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -107330,6 +107358,14 @@
      "notable": [],
      "path": "tests/do_not_contact_subject_reads.rs",
      "purpose": "L6-22 (ARCH-0057 H174: \"A synced multi-valued party-key index is a follow-up, so the scan reads every PERSON…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/doors_read_standing_heads.rs",
+     "purpose": "Red/green tests for FOREIGN-ANCHOR PR 2 (K2 of Fable design pass 29): the doors read the heads a machine…",
      "surface": {}
     },
     {
@@ -110061,6 +110097,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/kit_restore_reads_kit_root.rs",
+     "purpose": "A kit restore reads its publisher under the kit's own root (FIX…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -110752,6 +110796,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/owner_key_vouch_standing_heads.rs",
+     "purpose": "Red/green tests for the owner key vouch door's machine check (`require_holding_machine`…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/owner_lifetime_cap_keys.rs",
      "purpose": "The owner's four lifetime keys",
      "surface": {}
@@ -111050,6 +111102,14 @@
      "notable": [],
      "path": "tests/phonetic_stage_deadline.rs",
      "purpose": "The phonetic stage checks its deadline inside the stage (census L9-10; the retrieval hub's follow-up \"Two…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pinned_anchor_removal_narrows_install_read.rs",
+     "purpose": "Review #9496 P1 (round 2): the settings this install reads judge an owner act's carrier against the removal…",
      "surface": {}
     },
     {
@@ -112782,6 +112842,14 @@
      "notable": [],
      "path": "tests/shared_invitation_actor_erase.rs",
      "purpose": "A hard erase of a person leaves no trace of them in the shared vault's invitations…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/shared_judges_read_roster.rs",
+     "purpose": "Every fold judge all installs share reads a machine's roster chain alone, never an anchor's (Fable pass 29…",
      "surface": {}
     },
     {
@@ -115662,7 +115730,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 330,
+     "files": 332,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -115839,8 +115907,8 @@
    },
    "over_bar": 303,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8186,
-   "test_files": 1925
+   "source_files": 8188,
+   "test_files": 1931
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -165921,7 +165989,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/device_sync.rs",
@@ -179007,7 +179075,7 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 70,
+   "over_bar": 71,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2030,
    "test_files": 494
