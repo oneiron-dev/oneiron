@@ -83503,7 +83503,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 171,
+      "crate-vis": 172,
       "mod": 69,
       "re-export": 89
      }
@@ -84416,7 +84416,7 @@
      "path": "src/store/root_directory.rs",
      "purpose": "Core half of `store::root_directory`: its store-layer items live in `oneiron_store::root_directory` and are…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "re-export": 1
      }
@@ -159730,7 +159730,7 @@
      "path": "src/api/mcp_gateway/device_release.rs",
      "purpose": "What a gateway result may carry off this device once its call has nothing left to wait on (DEC-0005): a…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 18
      }
     },
     {
@@ -160168,7 +160168,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 81
+      "crate-vis": 82
      }
     },
     {
@@ -186360,7 +186360,7 @@
      "path": "src/root_directory.rs",
      "purpose": "Descriptor-bound directory identity shared by store opens and writer leases",
      "surface": {
-      "fn": 13,
+      "fn": 14,
       "static": 1,
       "struct": 2
      }

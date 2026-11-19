@@ -460,7 +460,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/retrieval_telemetry/types.rs` | src | s | 1 re-export | — | Retrieval-telemetry record, trace, signal, and blend-weight types |
 | `src/retrieval_values.rs` | src | s | 1 struct | PendingVectorEmbedding | Retrieval result values and transaction-local candidate admission contracts |
 | `src/revision_ref.rs` | src | s | 1 struct | RevisionRef | A retained document frontier's opaque reference (`RevisionRef`), the revision a manifest entry and a… |
-| `src/root_directory.rs` | src | m | 2 struct · 13 fn · 1 static | FileIdentity, SharedPath | Descriptor-bound directory identity shared by store opens and writer leases |
+| `src/root_directory.rs` | src | m | 2 struct · 14 fn · 1 static | FileIdentity, SharedPath | Descriptor-bound directory identity shared by store opens and writer leases |
 | `src/root_directory/extended_acl.rs` | src | s | 3 crate-vis | — | A macOS directory's extended access-control list, read without following a final link (ARCH-0038… |
 | `src/run_write_token.rs` | src | s | 1 struct · 5 fn | RunWriteToken | A leased agent run's write identity, as the engine's run-write envelope carries it with each write |
 | `src/sandbox_credential.rs` | src | s | 6 struct · 1 enum · 14 fn | SandboxCredentialCall, SandboxCredentialEffect, SandboxCredentialHandle, SandboxCredentialOperation, SandboxCredentialOutcome, SandboxFileRead, SandboxReadFile | Opaque credential handles and the read-only credential call ABI |
