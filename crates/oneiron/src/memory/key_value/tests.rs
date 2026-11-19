@@ -1,7 +1,9 @@
 //! Behavior proofs through the real facade and production gate.
 use super::*;
 use crate::edge::EdgeActorClass;
-use crate::memory::tests::{append_actor_ceiling_rows, open_vault, put_owner, put_person};
+use crate::memory::tests::{
+    append_actor_ceiling_rows, grant_reads, open_vault, put_owner, put_person,
+};
 use serde_json::json;
 
 fn address(namespace: &[&str], key: &str) -> KeyValueAddress {
@@ -26,6 +28,8 @@ fn exact_actor_keys_replace_replay_delete_without_resurrection() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 91);
     let other = put_person(&vault, 92);
+    grant_reads(&vault, actor);
+    grant_reads(&vault, other);
     let memory = vault.memory(actor, EdgeActorClass::Human);
     let outsider = vault.memory(other, EdgeActorClass::Human);
     let key = address(&["a", "b"], "k");
@@ -96,6 +100,7 @@ fn exact_actor_keys_replace_replay_delete_without_resurrection() {
 fn gate_refusal_preserves_current_value_and_never_parks_a_replacement() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 94);
+    grant_reads(&vault, actor);
     append_actor_ceiling_rows(
         &vault,
         vec![("agent".into(), actor.to_hex(), "auto".into())],
@@ -136,6 +141,8 @@ fn generic_claim_upsert_cannot_close_another_actors_key() {
     let (_dir, vault) = open_vault();
     let owner = put_person(&vault, 95);
     let other = put_person(&vault, 96);
+    grant_reads(&vault, owner);
+    grant_reads(&vault, other);
     let memory = vault.memory(owner, EdgeActorClass::Human);
     let receipt = memory
         .key_value_put(&input(&["private"], "k", "one", 1))
@@ -431,6 +438,8 @@ fn imported_claims_cannot_create_or_disguise_overwrites_of_keyed_revisions() {
     let (_dir, vault) = open_vault();
     let owner = put_person(&vault, 103);
     let other = put_person(&vault, 104);
+    grant_reads(&vault, owner);
+    grant_reads(&vault, other);
     let memory = vault.memory(owner, EdgeActorClass::Human);
     let receipt = memory
         .key_value_put(&input(&["private"], "k", "one", 1))
@@ -515,6 +524,7 @@ fn duplicate_actor_or_class_evidence_never_selects_an_owner() {
     let (_dir, vault) = open_vault();
     let owner = put_person(&vault, 105);
     let other = put_person(&vault, 106);
+    grant_reads(&vault, owner);
     let memory = vault.memory(owner, EdgeActorClass::Human);
     let receipt = memory
         .key_value_put(&input(&["private"], "k", "one", 1))
@@ -627,6 +637,7 @@ fn erased_shells_do_not_wedge_other_keys_or_replay_the_erased_request() {
 fn malformed_keyed_payloads_are_absent_without_fallback_to_superseded_values() {
     let (_dir, vault) = open_vault();
     let owner = put_person(&vault, 108);
+    grant_reads(&vault, owner);
     let memory = vault.memory(owner, EdgeActorClass::Human);
     memory
         .key_value_put(&input(&["private"], "broken", "old", 1))
@@ -717,6 +728,7 @@ fn malformed_keyed_payloads_are_absent_without_fallback_to_superseded_values() {
 fn competing_valid_heads_still_fail_loudly_without_picking_a_winner() {
     let (_dir, vault) = open_vault();
     let owner = put_person(&vault, 109);
+    grant_reads(&vault, owner);
     let memory = vault.memory(owner, EdgeActorClass::Human);
     let receipt = memory
         .key_value_put(&input(&["private"], "k", "one", 1))
@@ -762,6 +774,7 @@ fn replacement_keeps_source_trust_and_refuses_generated_over_user_truth_atomical
     use crate::claim::ClaimSource;
     let (_dir, vault) = open_vault();
     let owner = put_person(&vault, 110);
+    grant_reads(&vault, owner);
     // A real actor-bound generated auto permit lets the put reach the
     // supersession guard. It does not grant generated output user provenance.
     let mut manifest: rmpv::Value = rmpv::decode::read_value(&mut std::io::Cursor::new(

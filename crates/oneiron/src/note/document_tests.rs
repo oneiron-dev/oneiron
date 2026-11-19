@@ -398,6 +398,10 @@ fn shallow_note_admits_only_available_edit_and_citation_frontiers() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
     let author = person(&vault, 0x51);
+    crate::conversation_dag::fixtures::grant_reads(
+        &vault,
+        WriteActor::new(author, EdgeActorClass::Human),
+    );
     let claim = EntityId::now();
     let memory = vault.memory(author, EdgeActorClass::Human);
     memory
