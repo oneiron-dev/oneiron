@@ -413,6 +413,31 @@ fn a_stale_drain_never_restamps_a_newer_failure() {
         .expect("the attempt stands");
     assert_eq!(failed.state, AttemptState::Failed);
     assert_eq!(failed.settled_at, Some(t4));
+    let latest = vault
+        .store
+        .get_send_receipt_by_task(&task_ref)
+        .expect("read the TASK's latest send receipt")
+        .expect("the TASK holds a latest send receipt");
+    let (latest, latest_outcome) =
+        crate::Vault::decode_archived_send_receipt_for_restore(&task_ref, &latest)
+            .expect("the latest send receipt decodes");
+    assert_eq!(
+        latest.receipt_id, "outbound:newer-drain-failure",
+        "the stale drain's receipt must not replace the newer failure's as the TASK's latest"
+    );
+    assert_eq!(latest_outcome, SendReceiptOutcome::Failed);
+    let (trail, undecodable) =
+        crate::receipt::durable_send_receipts(&vault).expect("read the send receipt audit trail");
+    assert!(undecodable.is_empty());
+    for receipt_id in [
+        "outbound:newer-drain-failure",
+        "outbound:stale-drain-failure",
+    ] {
+        assert!(
+            trail.iter().any(|receipt| receipt.receipt_id == receipt_id),
+            "the audit trail keeps {receipt_id}"
+        );
+    }
 }
 
 #[test]

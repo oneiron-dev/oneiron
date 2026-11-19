@@ -171,7 +171,8 @@ pub(crate) use self::record::{validate_receipt_record_body, validate_receipt_rec
 #[cfg(test)]
 pub(crate) use self::send_receipt_txn::persist_send_receipt_in_txn;
 pub(crate) use self::send_receipt_txn::{
-    delivered_send_exists_in_txn, persist_admitted_send_receipt_in_txn,
+    append_superseded_send_receipt_in_txn, delivered_send_exists_in_txn,
+    persist_admitted_send_receipt_in_txn,
 };
 
 /// One pre-write check for the two receipt carrier families. Both are judged
