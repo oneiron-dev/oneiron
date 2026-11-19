@@ -16,6 +16,7 @@
 use loro::LoroDoc;
 
 use crate::Vault;
+use crate::deletion::decode_tombstone_value;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::FederationGrantScope;
@@ -36,8 +37,9 @@ pub struct WindowTombstoneEntry {
 /// The tombstones of `source` that the selector's export carries to the
 /// machine `withhold` describes, in ascending id order. A key in another hex
 /// case names the same row (ONE-1158) and is answered under the row's
-/// canonical id; where both casings carry one, the canonical key's value is
-/// kept.
+/// canonical id. Where several casings carry one, a hard value wins over a
+/// soft one, as a window's replay holds any hard alias dominant, and the
+/// canonical key's value breaks a tie.
 ///
 /// # Errors
 ///
@@ -53,21 +55,24 @@ pub fn window_tombstone_projection_with(
 ) -> Result<Vec<WindowTombstoneEntry>> {
     let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
     // Keyed by the canonical id: its hex order is the row order a cursor
-    // pages by. The flag says the value came under the canonical key.
-    let mut entries = std::collections::BTreeMap::<String, (EntityId, bool, Vec<u8>)>::new();
+    // pages by. The rank is (hard, under the canonical key): a hard alias
+    // never yields to a soft value (blind review 1 of #9592), and an empty or
+    // unreadable value decodes hard, as the window's replay reads it.
+    let mut entries =
+        std::collections::BTreeMap::<String, (EntityId, (bool, bool), Vec<u8>)>::new();
     map_for_each_tombstone_value(&selected.get_map("tombstones"), |key, value| {
         let Ok(id) = EntityId::from_hex(key) else {
             return;
         };
         let canonical = id.to_hex();
-        let exact = canonical == key;
+        let rank = (decode_tombstone_value(value).is_hard(), canonical == key);
         if entries
             .get(&canonical)
-            .is_some_and(|(_, held_exact, _)| *held_exact || !exact)
+            .is_some_and(|(_, held, _)| *held >= rank)
         {
             return;
         }
-        entries.insert(canonical, (id, exact, value.to_vec()));
+        entries.insert(canonical, (id, rank, value.to_vec()));
     });
     Ok(entries
         .into_values()
