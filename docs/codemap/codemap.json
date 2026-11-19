@@ -63378,7 +63378,7 @@
      "purpose": "The durable connector-send task substrate",
      "surface": {
       "const": 1,
-      "crate-vis": 45,
+      "crate-vis": 46,
       "fn": 4,
       "re-export": 2,
       "struct": 1
@@ -63799,7 +63799,7 @@
      "path": "src/outbound/retry_audit.rs",
      "purpose": "Atomic send-receipt retry and terminal settlement",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -64060,6 +64060,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "src/outbound/tests/owner_declined_resend_ack.rs",
+     "purpose": "An owner's no-resend answer settles the sender's failure acknowledgement, before and after the executor…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "src/outbound/tests/pipeline_contract.rs",
      "purpose": "Intent shape, verb capability contract, manifests and pipeline execute-and-receipt core",
      "surface": {}
@@ -64070,6 +64078,14 @@
      "notable": [],
      "path": "src/outbound/tests/quiet_window.rs",
      "purpose": "Quiet-window delivery, timezone fields, host refresh, human-explicit-instant override and APNS mapping",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/outbound/tests/refailed_send_settlement.rs",
+     "purpose": "A connector send that fails again keeps one settlement instant on every peer: the synced outcome's instant…",
      "surface": {}
     },
     {
@@ -92090,7 +92106,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 85,
+      "crate-vis": 86,
       "enum": 1,
       "fn": 2,
       "mod": 5,
@@ -92216,7 +92232,7 @@
      "path": "src/task_verb/query_facade.rs",
      "purpose": "Task descriptions, cancellation and proposals",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -92241,7 +92257,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/query_facade/read.rs",
@@ -115526,7 +115542,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 77,
+     "files": 79,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116222,7 +116238,7 @@
    "over_bar": 306,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8203,
-   "test_files": 1949
+   "test_files": 1951
   },
   "oneiron-agent-runtime": {
    "files": [
