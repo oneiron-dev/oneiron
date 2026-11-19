@@ -828,6 +828,10 @@ fn gmail_page_progress_survives_reopen_and_policy_change_restarts_scan() -> Resu
     cfg.dimensions = 4;
     cfg.embedding_model = None;
     let vault = Vault::open(tmp.path(), cfg)?;
+    // The reopen reseeds the built-in pack marker; the OF-519 gate is not under test here.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker the reopen reseeded");
     let second = adapter.run_mailbox_page(&vault, id, &wire, 1_800_000_005)?;
     assert_eq!(second.progress.pages_completed, 2);
     assert_eq!(second.progress.last_complete_at, Some(1_800_000_005));
