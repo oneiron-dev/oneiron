@@ -379,29 +379,35 @@ fn a_failed_programs_landed_check_yields_to_the_next_program_at_its_step() {
     );
 }
 
+/// The check of `program` at step `key` of a run whose rows are `vault`'s
+/// own.
+fn canonical_check_job(
+    vault: &Vault,
+    key: crate::code_run::StepKey,
+    program: &str,
+) -> crate::engine_executor::code_check::CheckJob {
+    crate::engine_executor::code_check::CheckJob {
+        key,
+        program: program.to_owned(),
+        language: oneiron_code_check::ProgramLanguage::JavaScript,
+        note: None,
+        actor: None,
+        source: None,
+        declarations: Vec::new(),
+        route: crate::code_run::ExecutorStorage::Canonical(vault).feedback_route(),
+    }
+}
+
 /// The write a check makes when it lands after its step: the check of a
 /// program that failed before its first host call, landing after the
 /// re-entry's program kept its own feedback at the same step, never takes
 /// that feedback's place.
 #[test]
 fn an_earlier_programs_check_landing_late_keeps_the_later_programs_row() {
-    use crate::code_run::ExecutorStorage;
-    use crate::engine_executor::code_check::CheckJob;
-    use oneiron_code_check::ProgramLanguage;
-
     let (_dir, vault) = open_test_vault();
     let vault = Arc::new(vault);
     let key = (entity(0x8F), 0, 0);
-    let job = |program: &str| CheckJob {
-        key,
-        program: program.to_owned(),
-        language: ProgramLanguage::JavaScript,
-        note: None,
-        actor: None,
-        source: None,
-        declarations: Vec::new(),
-        route: ExecutorStorage::Canonical(&vault).feedback_route(),
-    };
+    let job = |program: &str| canonical_check_job(&vault, key, program);
     // The failed program's check, then the re-entry's: each lands as it
     // starts, the first with the check mode off, the second with its
     // checker's load failed.
@@ -430,5 +436,152 @@ fn an_earlier_programs_check_landing_late_keeps_the_later_programs_row() {
         ),
         "the step's row holds the failed program's check: {:?}",
         feedback.type_diagnostics
+    );
+}
+
+/// Check ids order the checks of one checker incarnation only. A row a
+/// dead incarnation wrote names a check id minted ahead of this
+/// incarnation's (its clock ran ahead, or ids restarted lower with the
+/// process): it never holds off the check of the program that runs the
+/// step now.
+#[test]
+fn a_dead_incarnations_row_yields_to_the_current_check_at_its_step() {
+    let (_dir, vault) = open_test_vault();
+    let vault = Arc::new(vault);
+    let key = (entity(0x91), 0, 0);
+    let job = |program: &str| canonical_check_job(&vault, key, program);
+    // The current check starts first; the dead incarnation's row names a
+    // check minted after it.
+    let not_loaded = TypeFeedback::loading("fixture", Arc::clone(&vault));
+    not_loaded.loaded(Err(CheckFailure::Unavailable));
+    let current = not_loaded.start(job("const second = true;"));
+    let off = TypeFeedback::off();
+    let ahead = off.start(job("throw new Error('first');"));
+    let mut dead = ahead
+        .cell()
+        .claim_row()
+        .expect("the dead incarnation's row");
+    dead.incarnation = EntityId::now();
+    vault
+        .put_type_diagnostics(key, &dead)
+        .expect("the dead incarnation's row is kept");
+
+    let row = current.cell().claim_row().expect("the current check's row");
+    vault
+        .put_type_diagnostics(key, &row)
+        .expect("the current check's row is kept");
+    let feedback = kept_step_feedback(&vault, key);
+    assert!(
+        matches!(
+            &feedback.type_diagnostics,
+            TypeDiagnostics::Unavailable { reason, .. } if reason == TYPE_CHECK_NOT_LOADED
+        ),
+        "the dead incarnation's row holds the step: {:?}",
+        feedback.type_diagnostics
+    );
+}
+
+/// Every check of a step keeps a collection past one reply at the step's
+/// one body path. A row that takes another check's place releases the body
+/// the replaced row named, and a late row that does not take the held
+/// row's place releases its own, each in the same write: no body of the
+/// step stays held that no row names, for an erase of the run's actor to
+/// miss.
+#[test]
+fn a_step_body_no_feedback_row_names_is_released_in_the_write() {
+    use crate::code_run::{
+        DiagnosticMeasures, ProgramStepIdentity, StoredStepFeedback, TypeCheckFacts,
+    };
+    let (_dir, vault) = open_test_vault();
+    let run = entity(0x92);
+    let key = (run, 0, 0);
+    let earliest = EntityId::now();
+    let earlier = EntityId::now();
+    let later = EntityId::now();
+    let check = TypeCheckFacts {
+        language: "javascript".to_owned(),
+        file: "program.js".to_owned(),
+        backend: "fixture".to_owned(),
+        pin: "fixture-pin".to_owned(),
+        action_digest: None,
+        elapsed_us: None,
+        peak_memory_bytes: None,
+    };
+    let step = ProgramStepIdentity::of(run, 0, 0);
+    // A landed row of check `id` whose collection the run keeps in the
+    // step's body.
+    let landed_with_body = |id: EntityId, text: &str| {
+        let mut sink = vault.code_run_output_sink().expect("a body sink");
+        crate::engine_executor::store::write_json(&mut sink, &[text])
+            .expect("the collection is written");
+        let body = vault
+            .publish_code_run_output(
+                crate::engine_executor::store::type_diagnostics_output_path(0, 0),
+                sink,
+                true,
+                Some(run),
+            )
+            .expect("the run keeps the collection's body");
+        let feedback = ProgramStepFeedback::new(
+            step.clone(),
+            None,
+            TypeDiagnostics::Complete {
+                check: check.clone(),
+                measures: DiagnosticMeasures {
+                    count: 1,
+                    bytes: body.raw_len,
+                },
+                diagnostics: DiagnosticCollection::Stored {
+                    handle: body.handle.clone(),
+                    occurrence: String::new(),
+                    byte_len: body.raw_len,
+                },
+            },
+        );
+        StoredStepFeedback::of(None, id, &feedback, Some(body))
+    };
+    let bodies = || {
+        vault
+            .owned_bodies(&run)
+            .expect("the run's bodies read")
+            .len()
+    };
+
+    // The failed program's check landed with its collection in the body.
+    vault
+        .put_type_diagnostics(key, &landed_with_body(earlier, "the failed program's"))
+        .expect("the landed row is kept");
+    assert_eq!(bodies(), 1);
+
+    // The re-entry's check, pending, takes its place, and the body goes.
+    let pending = ProgramStepFeedback::new(
+        step.clone(),
+        None,
+        TypeDiagnostics::Pending {
+            check: check.clone(),
+        },
+    );
+    vault
+        .put_type_diagnostics(key, &StoredStepFeedback::of(None, later, &pending, None))
+        .expect("the re-entry's row is kept");
+    assert!(matches!(
+        kept_step_feedback(&vault, key).type_diagnostics,
+        TypeDiagnostics::Pending { .. }
+    ));
+    assert_eq!(bodies(), 0, "the replaced row's body is released with it");
+
+    // An earlier check landing late keeps its collection in the body, but
+    // its row never takes the re-entry's place, so its body goes too.
+    vault
+        .put_type_diagnostics(key, &landed_with_body(earliest, "an earlier program's"))
+        .expect("a refused late landing is no error");
+    assert!(matches!(
+        kept_step_feedback(&vault, key).type_diagnostics,
+        TypeDiagnostics::Pending { .. }
+    ));
+    assert_eq!(
+        bodies(),
+        0,
+        "the refused row's body is released in its write"
     );
 }
