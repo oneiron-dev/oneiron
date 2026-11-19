@@ -1225,6 +1225,60 @@ impl HeldMachineClaims {
     fn claim(&self, id: &EntityId) -> crate::claim::ClaimBody {
         self.vault.get_claim(id).unwrap().unwrap()
     }
+
+    /// The pending decision the tray row of `id` names.
+    fn asked(&self, id: &EntityId) -> crate::store::GateDecisionRecord {
+        let row = self.tray_row(id).expect("the claim is asked");
+        let txn = self.vault.store.env.read_txn().unwrap();
+        self.vault
+            .store
+            .gate_decision_in_txn(&txn, row.decision_id)
+            .unwrap()
+            .expect("the asked decision is recorded")
+    }
+
+    /// Parks the held row of `id` again on a pending decision whose receipt
+    /// also carries `reason`, the token a checker hold records for the owner.
+    fn hold_with_checker_reason(&self, id: &EntityId, reason: &str) {
+        let row = self.tray_row(id).expect("the claim is asked");
+        let asked = self.asked(id);
+        let mut wtxn = self.vault.store.env.write_txn().unwrap();
+        let mut receipt = crate::store::GateReceipt::with_reasons(
+            crate::store::gate_reason::GateReceiptOutcome::Pending,
+            "claim",
+            row.reason_codes.clone(),
+            crate::store::ReceiptActor::Verbatim {
+                class: asked.actor_class.clone(),
+                actor_ref: asked.actor_ref.clone(),
+            },
+            row.diff_handle.clone(),
+            crate::store::PolicyBasis::frontier(row.read_frontier_hash),
+        );
+        receipt.about = Some(*id);
+        receipt.receipt_reasons = asked
+            .receipt_reasons
+            .iter()
+            .cloned()
+            .chain([reason.to_owned()])
+            .collect();
+        let decision = self
+            .vault
+            .store
+            .record_gate_receipt_in_txn(&mut wtxn, receipt)
+            .unwrap();
+        self.vault
+            .store
+            .put_pending_gate_consent_in_txn(
+                &mut wtxn,
+                &crate::store::PendingGateConsentRecord {
+                    decision_id: decision.decision_id,
+                    created_at: decision.created_at,
+                    ..row
+                },
+            )
+            .unwrap();
+        wtxn.commit().unwrap();
+    }
 }
 
 // S17-1 = A (Engine 19 Nov 20:31): a decay rewrites the held claim in place,
@@ -1260,6 +1314,7 @@ fn dreamer_weakening_of_a_held_claim_moves_the_owner_question_to_its_successor()
     use crate::claim::{ClaimDemotionAction, ClaimDemotionRung, ClaimLifecycleStatus};
     let held = HeldMachineClaims::open(b"held-claim-weaken-root", 233);
     let id = held.propose("weakened proposal");
+    let opener = held.asked(&id);
     let later = held.vault.now_recorded_at() + 1;
     held.vault
         .apply_claim_demotion(
@@ -1294,6 +1349,12 @@ fn dreamer_weakening_of_a_held_claim_moves_the_owner_question_to_its_successor()
         .tray_row(&successor)
         .expect("the owner is asked about the weakened successor");
     assert_eq!(row.predicate.as_deref(), Some("profile.color"));
+    let restated = held.asked(&successor);
+    assert_eq!(
+        (restated.actor_class.as_str(), restated.actor_ref.as_deref()),
+        (opener.actor_class.as_str(), opener.actor_ref.as_deref()),
+        "the successor's question names the writer the owner was asked about"
+    );
     assert_eq!(
         held.claim(&successor).approval,
         ClaimApprovalStatus::Proposed
@@ -1325,6 +1386,51 @@ fn plain_supersession_of_a_held_claim_leaves_one_answerable_item() {
     held.approve_as_owner(new).unwrap();
     assert_eq!(held.claim(&new).approval, ClaimApprovalStatus::Approved);
     assert!(held.tray_row(&new).is_none());
+}
+
+// S17-1 = A, review round 1: a restated question is the same question. Its
+// receipt names the writer the asked decision named (the bundle settle door
+// reads it as the opener) and keeps the checker's explanation the owner reads.
+#[test]
+fn a_restated_owner_question_keeps_its_writer_and_checker_reasons() {
+    use crate::claim::ClaimDemotionAction;
+    let held = HeldMachineClaims::open(b"held-claim-restate-root", 235);
+    let id = held.propose("checked proposal");
+    held.hold_with_checker_reason(&id, "checker_hedged_low_confidence");
+    let before = held.asked(&id);
+    assert!(
+        before.actor_ref.is_some(),
+        "the MACHINE's held write names its writer"
+    );
+    let later = held.vault.now_recorded_at() + 1;
+    held.vault
+        .apply_claim_demotion(
+            &id,
+            ClaimDemotionAction::Decay {
+                new_claim_of_weight: 0.5,
+            },
+            later,
+        )
+        .unwrap();
+    let after = held.asked(&id);
+    assert_ne!(
+        after.decision_id, before.decision_id,
+        "the decay restates the question"
+    );
+    assert_eq!(
+        (after.actor_class.as_str(), after.actor_ref.as_deref()),
+        (before.actor_class.as_str(), before.actor_ref.as_deref()),
+        "the restated question names the asked writer"
+    );
+    assert!(
+        after
+            .receipt_reasons
+            .iter()
+            .any(|reason| reason == "checker_hedged_low_confidence"),
+        "the checker's explanation survives: {:?}",
+        after.receipt_reasons
+    );
+    assert_eq!(after.receipt_reasons, before.receipt_reasons);
 }
 
 #[test]
