@@ -248,8 +248,12 @@ pub(crate) fn door_refuses_retired_standing(
         return Ok(true);
     }
     for signer in entry_signer_keys(entry).filter(|key| fold.retired_keys.contains(*key)) {
+        // A door whose fold already counts the arriving row (a batch's or an
+        // import's preflight) holds it as a closed handoff in conflict with
+        // the real one. The refused row is never one of the handoffs this
+        // vault holds.
         let mut handoffs = BTreeSet::new();
-        for held in &fold.closed_handoffs {
+        for held in fold.closed_handoffs.iter().filter(|held| *held != hash) {
             if row(held)?
                 .is_some_and(|handoff| entry_signer_keys(&handoff).any(|key| key == signer))
             {

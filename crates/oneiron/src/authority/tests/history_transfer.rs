@@ -148,7 +148,7 @@ fn signed_pre_handoff_rotation_survives_hosted_transfer_and_cannot_be_reissued()
     let before = source.authority_fold().unwrap();
     assert!(!before.roster.contains_key(&next_key));
     mature_observed_widen(&source, &rotation);
-    let handoff = sign_ed(
+    let handoff_pure = sign_ed(
         unsigned_entry(
             Some(id),
             0,
@@ -165,7 +165,17 @@ fn signed_pre_handoff_rotation_survives_hosted_transfer_and_cannot_be_reissued()
         ),
         &next,
     );
-    source.apply_signed_re_root(&handoff).unwrap();
+    let handoff = source
+        .re_root_authority(
+            device(
+                host.public_key(),
+                ROLE_OWNER | ROLE_ADMIN,
+                AuthorityTier::Software,
+            ),
+            next_key.clone(),
+            |bytes| Ok(next.sign(bytes).to_bytes().to_vec()),
+        )
+        .unwrap();
     target
         .import_signed_authority_history(&source.export_signed_authority_history().unwrap())
         .unwrap();
@@ -240,10 +250,15 @@ fn signed_pre_handoff_rotation_survives_hosted_transfer_and_cannot_be_reissued()
         vec![
             genesis.clone(),
             rotation.clone(),
-            handoff.clone(),
+            handoff_pure.clone(),
             floor.clone(),
         ],
-        vec![floor.clone(), handoff.clone(), rotation.clone(), genesis],
+        vec![
+            floor.clone(),
+            handoff_pure.clone(),
+            rotation.clone(),
+            genesis,
+        ],
     ] {
         let folded = fold_authority_log_for_posture(
             &entries,
@@ -259,7 +274,7 @@ fn signed_pre_handoff_rotation_survives_hosted_transfer_and_cannot_be_reissued()
         assert!(
             folded
                 .valid_entries
-                .contains(&authority_entry_hash(&handoff).unwrap())
+                .contains(&authority_entry_hash(&handoff_pure).unwrap())
         );
         assert!(folded.roster[&old_key].revoked);
         assert!(folded.roster[&next_key].revoked);
@@ -685,8 +700,17 @@ fn a_key_rotated_out_before_the_handoff_forks_no_root() {
     store(&vault, &genesis);
     store(&vault, &rotation);
     mature_observed_widen(&vault, &rotation);
-    let handoff = re_root_to_host(id, &rotation, &next, 0, &host);
-    vault.apply_signed_re_root(&handoff).unwrap();
+    let handoff = vault
+        .re_root_authority(
+            device(
+                host.public_key(),
+                ROLE_OWNER | ROLE_ADMIN,
+                AuthorityTier::Software,
+            ),
+            authority_key_from_ed(&next),
+            |bytes| Ok(next.sign(bytes).to_bytes().to_vec()),
+        )
+        .unwrap();
     let forked = re_root_entry(id, &genesis, &old, 2, &fork);
     assert!(vault.apply_signed_re_root(&forked).is_err());
     assert!(!vault.authority_fold().unwrap().roster[&host.public_key()].revoked);
