@@ -555,9 +555,13 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
             timestamp: u64,
             nonce: &[u8],
             signature: &[u8],
-        ) -> Result<oneiron::authority::VerifiedSlip, ()> {
-            let fold = self.fixture.vault.authority_fold().map_err(drop)?;
-            let nonce = std::str::from_utf8(nonce).map_err(drop)?;
+        ) -> Result<oneiron::authority::VerifiedSlip, SlipVerifyError> {
+            let fold = self
+                .fixture
+                .vault
+                .authority_fold()
+                .map_err(|_| SlipVerifyError::Refused)?;
+            let nonce = std::str::from_utf8(nonce).map_err(|_| SlipVerifyError::Refused)?;
             let challenge = format!("oneiron-request:{timestamp}:{nonce}");
             slip.verify(
                 &self.fixture.issuer.public_key(),
@@ -566,7 +570,7 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
                 challenge.as_bytes(),
                 signature,
             )
-            .map_err(drop)
+            .map_err(|_| SlipVerifyError::Refused)
         }
     }
     let fixture = Fixture::new();
