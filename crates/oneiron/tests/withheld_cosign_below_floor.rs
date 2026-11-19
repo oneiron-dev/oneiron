@@ -264,17 +264,16 @@ fn put(rooted: &Rooted, row: &AuthorityLogEntry) -> String {
     }
 }
 
-/// C6 after K delivers the withheld row B.
+/// C6 after O2 revokes O on the fork B.
 struct Delivered {
+    revocation: AuthorityEntryHash,
     rooted: Rooted,
     withheld: AuthorityEntryHash,
-    /// R, O2's revocation of O.
-    revocation: AuthorityEntryHash,
     fold: AuthorityFold,
 }
 
 /// Builds C6 with `withheld_op` as B's op (given the owner, the admitted
-/// machine, T's key and the vault id) and delivers B last: C, R, then B.
+/// machine and T's key, and this vault's id): C, then B, then R on both.
 fn deliver_withheld(
     withheld_op: impl FnOnce(EntityId, EntityId, &SigningKey, AuthorityVaultId) -> AuthorityOp,
 ) -> Delivered {
@@ -311,16 +310,6 @@ fn deliver_withheld(
         parents.clone(),
         binding_of(&agent, EntityId::now()),
     );
-    let revocation = row_signed_by(
-        &rooted,
-        &revoking_owner,
-        &[],
-        1,
-        vec![hash_of(&published)],
-        AuthorityOp::RevokeDevice {
-            revoked_key: key_of(&revoked_owner),
-        },
-    );
     let withheld = row_signed_by(
         &rooted,
         &agent,
@@ -329,17 +318,24 @@ fn deliver_withheld(
         parents,
         withheld_op(rooted.owner, machine, &bound_agent, rooted.vault_id),
     );
-    let setup = [
-        &agent_enrolled,
-        &bound_agent_enrolled,
-        &published,
-        &revocation,
-    ];
+    // R names B: a revocation fences every row its key signed or cosigned
+    // outside R and its ancestry, so a B delivered only after a revocation
+    // that never saw it is refused outright and grants nothing on any head.
+    let revocation = row_signed_by(
+        &rooted,
+        &revoking_owner,
+        &[],
+        1,
+        vec![hash_of(&published), hash_of(&withheld)],
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&revoked_owner),
+        },
+    );
+    let setup = [&agent_enrolled, &bound_agent_enrolled, &published];
     let kept = setup.into_iter().map(hash_of).collect::<BTreeSet<_>>();
 
-    // The setup alone: before B arrives, every row is valid, O is revoked
-    // and K and T are live. A failure here is the test's setup, not the
-    // finding.
+    // The setup alone: before B arrives, every row is valid and O, K and T
+    // are live. A failure here is the test's setup, not the finding.
     let puts = setup.map(|row| put(&rooted, row));
     let fold = rooted.vault.authority_fold().expect("the fold");
     assert!(
@@ -348,10 +344,10 @@ fn deliver_withheld(
         fold.issues
     );
     assert!(
-        !is_live(&fold, &key_of(&revoked_owner))
+        is_live(&fold, &key_of(&revoked_owner))
             && is_live(&fold, &key_of(&agent))
             && is_live(&fold, &key_of(&bound_agent)),
-        "setup: before B, O is revoked and K and T are live; issues {:?}",
+        "setup: before B, O, K and T are live; issues {:?}",
         fold.issues
     );
 
@@ -369,16 +365,29 @@ fn deliver_withheld(
         fold.issues.iter().any(|issue| matches!(
             issue,
             AuthorityFoldIssue::SequenceFork(forked) if *forked == withheld
-        )),
-        "setup: the fold counts B and records its fork as SequenceFork; issues {:?}",
+        )) && applied(&fold).contains(&withheld),
+        "setup: the fold counts B while its cosigner O is live and records its fork as \
+         SequenceFork; issues {:?}",
         fold.issues
     );
+
+    let arrival = put(&rooted, &revocation);
+    let fold = rooted.vault.authority_fold().expect("the fold");
     assert!(
         kept.is_subset(&applied(&fold))
+            && applied(&fold).contains(&hash_of(&revocation))
             && !is_live(&fold, &key_of(&revoked_owner))
             && is_live(&fold, &key_of(&agent))
             && is_live(&fold, &key_of(&bound_agent)),
-        "setup: B leaves the other rows valid, O revoked and K and T live; issues {:?}",
+        "setup: R is valid, O revoked and K and T live; put {arrival}, issues {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.issues.iter().any(|issue| matches!(
+            issue,
+            AuthorityFoldIssue::SequenceFork(forked) if *forked == withheld
+        )),
+        "setup: after R the fold still counts B as K's fork; issues {:?}",
         fold.issues
     );
     Delivered {

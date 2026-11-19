@@ -176,8 +176,8 @@ impl SyncConnection {
     }
 
     /// Runs one directive and records its result. A mode switch, a world
-    /// pick and a prune commit with their result; an open and the index read
-    /// commit nothing a second run would change, then the result.
+    /// pick, a prune and an open commit with their result; the index read
+    /// commits nothing a second run would change, then the result.
     async fn apply_residence_directive(
         &self,
         pending: &ResidenceDirectiveState,
@@ -211,10 +211,11 @@ impl SyncConnection {
             ResidenceAct::Open { window, item } => {
                 let window = crate::sync::WindowKey::try_new(window.as_str())
                     .ok_or(TransportError::InvalidWindowKey)?;
-                self.open_item(&window, *item).await?;
-                vault
-                    .with_write_txn_grouped(|txn| applied(vault, txn, pending, 1))
-                    .map_err(storage)?;
+                // The result commits with the copy the open keeps, so no copy
+                // stays once the directive no longer counts (row
+                // SEQ-FLOOR-S-WITHHELD-COSIGN).
+                self.open_item_with(&window, *item, |txn| applied(vault, txn, pending, 1))
+                    .await?;
             }
             ResidenceAct::Index => {
                 let windows = self.residence_index()?;
