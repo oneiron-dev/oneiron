@@ -7,7 +7,8 @@
 //! step's `check_ref` after.
 use super::*;
 use crate::code_run::{
-    DiagnosticCollection, KeptProgramSteps, ProgramStepFeedback, TypeDiagnostics,
+    DiagnosticCollection, KeptProgramSteps, ProgramStepFeedback, TYPE_CHECK_NOT_LOADED,
+    TYPE_CHECK_OFF, TypeDiagnostics,
 };
 use crate::engine_executor::TypeFeedback;
 use oneiron_code_check::{
@@ -276,4 +277,158 @@ fn a_type_check_leaves_a_parked_step_parked() {
         assert_parked_step_feedback(&steps[0], &config.run_id, panics);
         assert_waiting_counts(&check, panics);
     }
+}
+
+/// The step feedback row at `key` as it stands.
+fn kept_step_feedback(vault: &Vault, key: crate::code_run::StepKey) -> ProgramStepFeedback {
+    vault
+        .type_diagnostics_row(key)
+        .expect("step feedback row reads")
+        .expect("the step kept its feedback")
+        .feedback(key)
+}
+
+/// A program that fails before its first host call commits no step, so the
+/// re-entry's program runs at the same step and keeps its feedback under
+/// the same row. The failed program's check, landed before the re-entry,
+/// never holds off the feedback of the program that ran the step: the row
+/// shows the re-entry's check, pending while it runs, and then its result.
+#[test]
+fn a_failed_programs_landed_check_yields_to_the_next_program_at_its_step() {
+    let (_dir, vault) = open_test_vault();
+    let vault = Arc::new(vault);
+    let lease = BudgetLease::for_test("executor-lease");
+    let gated_write = gated_actor_write(&vault, "run-uncommitted-then-rerun");
+    let config = executor_config(entity(0x8E), EngineExecutorLimits { soft_steps: 1 });
+    let key = (config.run_id, 0, 0);
+
+    // The first program fails before its first host call; its check has
+    // landed already (no checker serves it).
+    let off = TypeFeedback::off();
+    let failed_backend = FixtureBackend::new(["throw new Error('first');"]);
+    let mut failed_runtime = ErrorAfterCallsRuntime::new(Vec::new());
+    let mut failed = EngineNativeExecutor::new(
+        &vault,
+        &failed_backend,
+        &lease,
+        &mut failed_runtime,
+        &gated_write,
+    )
+    .with_code_check(&off);
+    block_on_ready(failed.run(&config)).expect_err("the program fails before any host call");
+    assert!(matches!(
+        kept_step_feedback(&vault, key).type_diagnostics,
+        TypeDiagnostics::Unavailable { ref reason, .. } if reason == TYPE_CHECK_OFF
+    ));
+
+    // The re-entry's program runs the same step while its check waits for
+    // its checker's load.
+    let loading = TypeFeedback::loading("fixture", Arc::clone(&vault));
+    let rerun_backend = FixtureBackend::new(["const second = true;"]);
+    let mut rerun_runtime = FixtureRuntime::new([JsCodeModeStepOutcome::complete("ran")]);
+    let mut rerun = EngineNativeExecutor::new(
+        &vault,
+        &rerun_backend,
+        &lease,
+        &mut rerun_runtime,
+        &gated_write,
+    )
+    .with_code_check(&loading);
+    let outcome = block_on_ready(rerun.run(&config)).expect("the re-entry runs the step");
+    assert_eq!(outcome.status, EngineExecutorStatus::Complete);
+    assert_eq!(rerun_runtime.seen.len(), 1);
+    assert_eq!(
+        rerun_runtime.seen[0].seq, 0,
+        "the re-entry runs the same step"
+    );
+    match &kept_step_feedback(&vault, key).type_diagnostics {
+        TypeDiagnostics::Pending { check } => assert_eq!(check.backend, "fixture"),
+        other => panic!("the step's row holds the failed program's check: {other:?}"),
+    }
+    let KeptProgramSteps::Kept(steps) = vault.kept_program_steps(config.run_id) else {
+        panic!("the run kept its feedback");
+    };
+    assert_eq!(steps.len(), 1);
+    assert!(
+        matches!(steps[0].type_diagnostics, TypeDiagnostics::Pending { .. }),
+        "the run's step shows the re-entry's check: {:?}",
+        steps[0].type_diagnostics
+    );
+
+    // The re-entry's check lands and takes its own pending row's place.
+    loading.loaded(Err(CheckFailure::Unavailable));
+    let mut landed = None;
+    for _ in 0..500 {
+        let feedback = kept_step_feedback(&vault, key);
+        if !matches!(feedback.type_diagnostics, TypeDiagnostics::Pending { .. }) {
+            landed = Some(feedback);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let landed = landed.expect("the re-entry's check lands within 5 s");
+    assert!(
+        matches!(
+            &landed.type_diagnostics,
+            TypeDiagnostics::Unavailable { reason, detail }
+                if reason == TYPE_CHECK_NOT_LOADED
+                    && detail.as_deref() == Some(CheckFailure::Unavailable.code())
+        ),
+        "{:?}",
+        landed.type_diagnostics
+    );
+}
+
+/// The write a check makes when it lands after its step: the check of a
+/// program that failed before its first host call, landing after the
+/// re-entry's program kept its own feedback at the same step, never takes
+/// that feedback's place.
+#[test]
+fn an_earlier_programs_check_landing_late_keeps_the_later_programs_row() {
+    use crate::code_run::ExecutorStorage;
+    use crate::engine_executor::code_check::CheckJob;
+    use oneiron_code_check::ProgramLanguage;
+
+    let (_dir, vault) = open_test_vault();
+    let vault = Arc::new(vault);
+    let key = (entity(0x8F), 0, 0);
+    let job = |program: &str| CheckJob {
+        key,
+        program: program.to_owned(),
+        language: ProgramLanguage::JavaScript,
+        note: None,
+        actor: None,
+        source: None,
+        declarations: Vec::new(),
+        route: ExecutorStorage::Canonical(&vault).feedback_route(),
+    };
+    // The failed program's check, then the re-entry's: each lands as it
+    // starts, the first with the check mode off, the second with its
+    // checker's load failed.
+    let off = TypeFeedback::off();
+    let earlier = off.start(job("throw new Error('first');"));
+    let not_loaded = TypeFeedback::loading("fixture", Arc::clone(&vault));
+    not_loaded.loaded(Err(CheckFailure::Unavailable));
+    let later = not_loaded.start(job("const second = true;"));
+
+    // The re-entry's step keeps its feedback; the failed program's check
+    // writes its landed result after it.
+    let row = later.cell().claim_row().expect("the later check's row");
+    vault
+        .put_type_diagnostics(key, &row)
+        .expect("the later program's feedback is kept");
+    let late = earlier.cell().claim_row().expect("the earlier check's row");
+    vault
+        .put_type_diagnostics(key, &late)
+        .expect("a refused late landing is no error");
+
+    let feedback = kept_step_feedback(&vault, key);
+    assert!(
+        matches!(
+            &feedback.type_diagnostics,
+            TypeDiagnostics::Unavailable { reason, .. } if reason == TYPE_CHECK_NOT_LOADED
+        ),
+        "the step's row holds the failed program's check: {:?}",
+        feedback.type_diagnostics
+    );
 }
