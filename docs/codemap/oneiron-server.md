@@ -267,7 +267,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/context_board/history.rs` | src | m | 8 crate-vis | — | Board history on the board's own surface (ARCH-0067 §3) |
 | `src/api/context_board/layout.rs` | src | s | 6 crate-vis | — | The actor's own board layout on the HTTP, chat and MCP boards (BOARD-LAYOUT = A, owner 2026-11-03 20:25) |
 | `src/api/context_board/mcp_self.rs` | src | s | 7 crate-vis | — | An MCP connection's own `describe(self)` (FIX 17594): the self brief of the agent a registered connector… |
-| `src/api/context_board/memories.rs` | src | m | 30 crate-vis | — | MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly |
+| `src/api/context_board/memories.rs` | src | m | 31 crate-vis | — | MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly |
+| `src/api/context_board/memories/replay.rs` | src | s | 1 crate-vis | — | Re-admit kept room pins through the same projection and P7 as fresh pins |
 | `src/api/context_board/mod.rs` | src | L | 31 crate-vis | — | The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional… |
 | `src/api/context_board/prefix.rs` | src | s | 7 crate-vis | — | Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter |
 | `src/api/context_board/reply.rs` | src | m | 1 crate-vis | — | The actual context-bearing text emit behind the generated `ai.reply` door |
@@ -276,13 +277,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/context_board/session.rs` | src | s | 3 crate-vis | — | Actor-bound session observations shared by core reads and board rendering |
 | `src/api/context_board/source_rows.rs` | src | s | 1 crate-vis | — | Board row references kept for read checks and complete model-input lineage |
 | `src/api/context_board/split.rs` | src | s | 5 crate-vis | — | A live chat turn's board in two parts (I1 = C, ARCH-0067 turn order: committed history, state-only board… |
-| `src/api/context_board/standing.rs` | src | s | 3 crate-vis | — | Standing blocks are pinned before Context Board retrieval can fill the session |
+| `src/api/context_board/standing.rs` | src | s | 4 crate-vis | — | Standing blocks are pinned before Context Board retrieval can fill the session |
 | `src/api/context_board/tasks_budget.rs` | src | s | 2 crate-vis | — | Post-hook TASKS-row allocation metadata, before whole-frame shedding |
 | `src/api/context_board/turn_actions.rs` | src | s | 2 crate-vis | — | The context board a queued Continue or Retry reads (FIX 6920), as a live chat turn reads its own… |
-| `src/api/context_pack/audience.rs` | src | s | 4 crate-vis | — | The audience an assembly reads for: the room a request names, and the caller's read narrowed to that room's… |
+| `src/api/context_pack/audience.rs` | src | s | 5 crate-vis | — | The audience an assembly reads for: the room a request names, and the caller's read narrowed to that room's… |
 | `src/api/context_pack/builder_controls.rs` | src | s | 12 crate-vis | — | Depth, policy, time and budget resolution for context-pack assembly |
 | `src/api/context_pack/companion_assembly.rs` | src | s | 1 crate-vis | — | Companion scope-resolution authorization for context-pack assembly |
-| `src/api/context_pack/controls.rs` | src | m | 22 crate-vis | — | Request DTOs, control structs, and shared limit constants for context-pack assembly |
+| `src/api/context_pack/controls.rs` | src | m | 23 crate-vis | — | Request DTOs, control structs, and shared limit constants for context-pack assembly |
 | `src/api/context_pack/input_worker.rs` | src | s | 4 crate-vis | — | Resolves a pack's reader, room and contacts on one admitted worker |
 | `src/api/context_pack/instruction_files.rs` | src | s | 1 crate-vis | — | The instruction-file handles a context-pack response carries |
 | `src/api/context_pack/interlocutor.rs` | src | m | 10 crate-vis | — | Interlocutor-set resolution and third-party party inputs for context-pack requests |
@@ -699,7 +700,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/verb_hooks/ceiling.rs` | src | s | 1 crate-vis | — | A paused MCP call stays within both its original and live registration |
 | `src/api/mcp_gateway/wakes.rs` | src | s | 1 crate-vis | — | The authenticated host handoff |
 | `src/api/mcp_gateway/wire.rs` | src | s | 3 crate-vis | — | What an MCP request counts as on the wire (FIX 1085) |
-| `src/api/memory/mod.rs` | src | L | 21 crate-vis | — | The `/v1/core/memory` routes: a memory timeline, its watch and the memory verbs |
+| `src/api/memory/mod.rs` | src | m | 21 crate-vis | — | The `/v1/core/memory` routes: a memory timeline, its watch and the memory verbs |
+| `src/api/memory/receipts.rs` | src | s | 3 crate-vis | — | Receipts for the named memory verbs on the caller's facade row |
 | `src/api/memory/timeline.rs` | src | s | 2 crate-vis | — | The memory timeline route: `GET /v1/core/memory/{id}/timeline`, through its verb-hook boundary (FIX 1435) |
 | `src/api/memory/watch.rs` | src | s | 4 crate-vis | — | — |
 | `src/api/memory_reason.rs` | src | m | 18 crate-vis | — | ONE-207: `POST /v1/companion/memory/reason` |
@@ -2139,7 +2141,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/system_one_leg.rs` | src | s | 1 fn | — | Doors for `tests/system_one_broker_budget.rs` (#7827 review round 2): the System One seat's transport over… |
 | `src/test_doors/system_one_rung.rs` | src | s | 1 re-export | — | Doors for `tests/systemone_pack_run_no_cancel.rs` (SYSTEMONE-PACK-RUN-NO-CANCEL): the System One rung bound… |
 | `src/test_doors/voice_call.rs` | src | s | 1 struct · 3 fn · 1 mod | StandaloneCall | Doors for `tests/voice_self_epoch.rs` (UNBUILT-02 PR 2): the brain of an owner's own standalone call on this… |
-| `src/test_doors/voice_call/room_turn.rs` | src | s | 1 struct · 3 fn | RoomTurnCall | Doors for `tests/voice_room_turn_off_record.rs` (row VOICE-ROOM-TURN-SOURCED-OFF-RECORD): the brain of a… |
+| `src/test_doors/voice_call/room_turn.rs` | src | s | 2 struct · 3 fn | HelloSlip, RoomTurnCall | Doors for `tests/voice_room_turn_off_record.rs` (row VOICE-ROOM-TURN-SOURCED-OFF-RECORD): the brain of a… |
 | `src/test_doors/web_search_count.rs` | src | s | 1 fn | — | Door for `tests/web_search_owner_max.rs` (restriction wave 19, C73 = B): the result count one web search… |
 | `src/test_doors/wire_health_sweep.rs` | src | s | 8 fn | — | Door for the health-check tests (`tests/own_rate_health_ask.rs`, `tests/wire_health_actor_erase.rs`): one… |
 | `src/test_doors/wire_thresholds.rs` | src | s | 1 fn | — | Door for `tests/esign_qr_refusals.rs` and the signing wire test in `tests/it_esign_public.rs`: the… |
@@ -2224,6 +2226,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/big_rung_written_reply.rs` | test | s | — | — | FIX 22368: the Big rung's written reply (`reply = "json"` or `"lines"`, the path without token scores)… |
 | `tests/board_child_release.rs` | test | s | — | — | Census L2-38, review round 1 of the ChildDone producer: a `children:` CARRIER line names only its child's… |
 | `tests/board_keyframe_child_release.rs` | test | s | — | — | BOARD-KEYFRAME-CHILD-RELEASE: a connector board's bare child row (a child of the actor that rides no TASK)… |
+| `tests/board_replay_conversation_home.rs` | test | m | — | — | A keyed board replay meets the home its kept retrieval named ([BOARD-REPLAY-CONVERSATION-HOME], DEC-0006… |
 | `tests/booking_cap_full_days.rs` | test | m | — | — | Meeting caps on the public booking page (BK-MEETING-CAPS; ARCH-0062 §7 "meeting caps surfaces"; Engine… |
 | `tests/booking_cap_override_owner_door.rs` | test | m | — | — | BK-MEETING-CAPS PR B: only the vault's owner books past a meeting cap (RULING BK-CAP-OVERRIDE-WHO = B, from… |
 | `tests/booking_turn_line.rs` | test | m | — | — | Census L3-11 (canon ARCH-0062 #booking-turn-divergence): an authenticated booking request past a window… |
@@ -2267,6 +2270,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/context_pack_room_standing.rs` | test | m | — | — | Room standing on the context-pack route (L5-02 PR 3 finding 3) |
 | `tests/core_batch_hosted_root_unbound_lane.rs` | test | s | — | — | [CORE-BATCH-HOSTED-ROOT-UNBOUND-LANE] (FIX-LIST:26197): the hosted operator's root acts as nobody, so its… |
 | `tests/core_job_read.rs` | test | m | — | — | L10-05: the generic job status and result read, canon's `GET /v1/core/jobs/{job_id}` (0002c §6.1.13) over… |
+| `tests/core_memory_retract_verb_hook.rs` | test | L | — | — | [CORE-MEMORY-VERB-SKIPS-FACADE-HOOKS] (FIX-LIST 25699): a token that is not owner-grade retracts through the… |
 | `tests/customer_gpu_job_maximum.rs` | test | L | — | — | Customer GPU jobs on the host (row L10-31; CROSS-ARCH-0023 lifecycle, C2): the `[gpu_jobs]` section, the… |
 | `tests/decision_bands_restart_doors.rs` | test | s | — | — | The `vault.decisions.bands.*` rows across a server restart, at the public door: arch-0076:275… |
 | `tests/decision_read_think_start.rs` | test | s | — | — | L2-33 (FIX 22360; lead ruling THINK-START = C, 13 Nov 2026): a served host's ThinkThreshold row starts at… |
@@ -2528,7 +2532,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/vault_voices_doors.rs` | test | XL | — | — | Public-door promise tests for the `vault.voices` family (ruling L4-23 = A: each test proves a promise at the… |
 | `tests/vault_weave_doors.rs` | test | L | — | — | The `vault.weave` doors: recipe admission and parking, schedule CRUD and its role gate, per-reader digests… |
 | `tests/vault_workflows_doors.rs` | test | XL | — | — | The saved-workflow doors (ARCH-0053), entered as the SDK enters them: HTTP `POST /v1/core/facade/<verb>`… |
-| `tests/voice_room_turn_off_record.rs` | test | s | — | — | Row VOICE-ROOM-TURN-SOURCED-OFF-RECORD (census L5-25): a room call's voice turn runs unsourced during an… |
+| `tests/voice_room_turn_off_record.rs` | test | m | — | — | Row VOICE-ROOM-TURN-SOURCED-OFF-RECORD (census L5-25): a room call's voice turn runs unsourced during an… |
 | `tests/voice_self_epoch.rs` | test | s | — | — | UNBUILT-02 PR 2: an owner's own voice call is an ordinary conversation (VOICE-EPOCH-SOURCE = B) |
 | `tests/voxcpm2_our_voice.rs` | test | m | — | — | — |
 | `tests/web_search_owner_max.rs` | test | s | — | — | The owner's `connectors.web.search_max_results` (restriction wave 19, C73 = B; Engine RULING 03:53 16 Nov)… |
