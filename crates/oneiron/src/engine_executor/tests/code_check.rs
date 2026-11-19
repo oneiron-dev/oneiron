@@ -585,3 +585,207 @@ fn a_step_body_no_feedback_row_names_is_released_in_the_write() {
         "the refused row's body is released in its write"
     );
 }
+
+/// A checker that finds one diagnostic in every program, its message the
+/// program's text padded past one reply, so its step keeps the collection
+/// in a body of the run: two checks of one program report the same bytes,
+/// checks of two programs other bytes.
+struct PastOneReplyCheck;
+
+impl CodeCheck for PastOneReplyCheck {
+    fn backend(&self) -> BackendId {
+        BackendId {
+            name: "fixture",
+            pin: "fixture".to_owned(),
+        }
+    }
+
+    fn check(&self, input: &CheckInput<'_>) -> std::result::Result<CheckReport, CheckFailure> {
+        Ok(CheckReport {
+            backend: self.backend(),
+            diagnostics: vec![Diagnostic {
+                file: Some("program.js".to_owned()),
+                line: 1,
+                column: 1,
+                category: "error".to_owned(),
+                code: 2551,
+                message: format!(
+                    "{}{}",
+                    input.program,
+                    "x".repeat(crate::engine_executor::store::RESULT_REPLY_INLINE_BYTES)
+                ),
+            }],
+            peak_memory_bytes: None,
+            incomplete: None,
+        })
+    }
+}
+
+/// The checks of `programs`, started in order at step `key` of `vault`'s
+/// run for `actor`, each landed with [`PastOneReplyCheck`]'s report. Their
+/// service's own vault is `service_vault`, another, so no check writes a
+/// row or keeps a body by itself: each check's collection waits inline for
+/// its step to place, as a check that lands before its step ends does. A
+/// check's pending row, claimed before it lands, comes back beside it.
+fn past_one_reply_checks(
+    service_vault: Arc<Vault>,
+    vault: &Vault,
+    key: crate::code_run::StepKey,
+    actor: EntityId,
+    programs: &[(&str, bool)],
+) -> Vec<(
+    crate::engine_executor::code_check::StepCheck,
+    Option<crate::code_run::StoredStepFeedback>,
+)> {
+    let service = TypeFeedback::loading("fixture", service_vault);
+    let checks: Vec<_> = programs
+        .iter()
+        .map(|(program, pending)| {
+            let check = service.start(crate::engine_executor::code_check::CheckJob {
+                actor: Some(actor),
+                ..canonical_check_job(vault, key, program)
+            });
+            let row = pending.then(|| check.cell().claim_row().expect("the pending row"));
+            (check, row)
+        })
+        .collect();
+    let checker: Arc<dyn CodeCheck> = Arc::new(PastOneReplyCheck);
+    service.loaded(Ok(Arc::new(FeedbackCheck::new(checker))));
+    for (check, _) in &checks {
+        let mut waited = 0;
+        while matches!(
+            check.cell().feedback().type_diagnostics,
+            TypeDiagnostics::Pending { .. }
+        ) {
+            assert!(waited < 500, "the check lands within 5 s");
+            waited += 1;
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    checks
+}
+
+/// The bodies `run` holds, as the descriptors its erase releases.
+fn run_bodies(vault: &Vault, run: EntityId) -> Vec<EntityId> {
+    vault
+        .owned_bodies(&run)
+        .expect("the run's bodies read")
+        .into_iter()
+        .map(|body| body.occurrence)
+        .collect()
+}
+
+/// The re-entry's check keeps its pending row at a step whose failed
+/// program's check is still running; both land with the same report past
+/// one reply and keep it in a body before either row is written. The
+/// failed program's row, refused, releases its own body only: the
+/// re-entry's landed row names a body the run still holds.
+#[test]
+fn a_refused_late_checks_body_leaves_the_later_checks_same_bytes_held() {
+    let (_dir, vault) = open_test_vault();
+    let (_service_dir, service_vault) = open_test_vault();
+    let run = entity(0x93);
+    let key = (run, 0, 0);
+    let program = "const same = 'report';";
+    let mut checks = past_one_reply_checks(
+        Arc::new(service_vault),
+        &vault,
+        key,
+        entity(0x94),
+        &[(program, false), (program, true)],
+    );
+    let (rerun, rerun_pending) = checks.pop().expect("the re-entry's check");
+    let (failed, _) = checks.pop().expect("the failed program's check");
+    vault
+        .put_type_diagnostics(key, &rerun_pending.expect("the re-entry's pending row"))
+        .expect("the re-entry's pending row is kept");
+
+    let storage = crate::code_run::ExecutorStorage::Canonical(&vault);
+    failed.cell().finalize(&storage);
+    rerun.cell().finalize(&storage);
+    let late = failed.cell().claim_row().expect("the failed program's row");
+    vault
+        .put_type_diagnostics(key, &late)
+        .expect("a refused late landing is no error");
+    let landed = rerun.cell().claim_row().expect("the re-entry's landed row");
+    vault
+        .put_type_diagnostics(key, &landed)
+        .expect("the re-entry's landed row is kept");
+
+    let row = vault
+        .type_diagnostics_row(key)
+        .expect("step feedback row reads")
+        .expect("the step kept its feedback");
+    let body = row.body().expect("the re-entry's row names its body");
+    let occurrence = crate::code_run::ResultOccurrence::of(Some(run), &body)
+        .expect("the body's occurrence")
+        .id();
+    assert_eq!(
+        run_bodies(&vault, run),
+        vec![occurrence],
+        "the run holds the body the re-entry's row names, and no other"
+    );
+}
+
+/// A failed program's check keeps its report past one reply in a body and
+/// its row; the re-entry's check at the same step lands another report
+/// past one reply. The re-entry's row keeps its own report in a body, takes
+/// the failed program's place and releases that row's body; the erase of
+/// the run's actor then releases the re-entry's: no body of the step stays
+/// held.
+#[test]
+fn a_later_checks_other_report_is_kept_and_erased_by_its_own_row() {
+    let (_dir, vault) = open_test_vault();
+    let (_service_dir, service_vault) = open_test_vault();
+    let run = entity(0x95);
+    let actor = entity(0x96);
+    let key = (run, 0, 0);
+    let mut checks = past_one_reply_checks(
+        Arc::new(service_vault),
+        &vault,
+        key,
+        actor,
+        &[
+            ("throw new Error('first');", false),
+            ("const second = true;", false),
+        ],
+    );
+    let (rerun, _) = checks.pop().expect("the re-entry's check");
+    let (failed, _) = checks.pop().expect("the failed program's check");
+    let storage = crate::code_run::ExecutorStorage::Canonical(&vault);
+
+    failed.cell().finalize(&storage);
+    vault
+        .put_type_diagnostics(key, &failed.cell().claim_row().expect("the failed row"))
+        .expect("the failed program's row is kept");
+    assert_eq!(run_bodies(&vault, run).len(), 1);
+
+    rerun.cell().finalize(&storage);
+    vault
+        .put_type_diagnostics(key, &rerun.cell().claim_row().expect("the re-entry's row"))
+        .expect("the re-entry's row is kept");
+    let row = vault
+        .type_diagnostics_row(key)
+        .expect("step feedback row reads")
+        .expect("the step kept its feedback");
+    let body = row
+        .body()
+        .expect("the re-entry's report is kept in a body of its own");
+    let occurrence = crate::code_run::ResultOccurrence::of(Some(run), &body)
+        .expect("the body's occurrence")
+        .id();
+    assert_eq!(
+        run_bodies(&vault, run),
+        vec![occurrence],
+        "the replaced row's body goes; the re-entry's stays"
+    );
+
+    let mut wtxn = vault.store.env.write_txn().expect("a write");
+    crate::code_run::erase_type_diagnostics_actor_in_txn(&vault, &mut wtxn, &actor)
+        .expect("the actor's step feedback goes");
+    wtxn.commit().expect("the erase commits");
+    assert!(
+        run_bodies(&vault, run).is_empty(),
+        "the erase releases the body the re-entry's row named"
+    );
+}
