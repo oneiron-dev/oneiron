@@ -728,14 +728,14 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
     permit_room_reads(&vault, &[owner, agent])?;
     let sdk_render = crate::task_verb::sdk::invoke(
         &human,
-        "rooms.render",
+        "vault.rooms.render",
         serde_json::json!({"room_ref":room.to_hex()}),
     )
     .unwrap();
     assert!(sdk_render.as_array().is_some());
     let sdk_find = crate::task_verb::sdk::invoke(
         &human,
-        "rooms.find",
+        "vault.rooms.find",
         serde_json::json!({"room_ref":room.to_hex(),"limit":1}),
     )
     .unwrap();
@@ -767,14 +767,14 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
     let folded = human.rooms_threads(room, policy).unwrap();
     let sdk_get = crate::task_verb::sdk::invoke(
         &human,
-        "rooms.get",
+        "vault.rooms.get",
         serde_json::json!({"room_ref":room.to_hex(),"turn_ref":root.to_hex()}),
     )
     .unwrap();
     assert_eq!(sdk_get["result_header"], serde_json::json!(result.to_hex()));
     let sdk_trunk = crate::task_verb::sdk::invoke(
         &human,
-        "rooms.trunk",
+        "vault.rooms.trunk",
         serde_json::json!({"room_ref":room.to_hex(),"turn_ref":trunk.to_hex()}),
     )
     .unwrap();
@@ -1581,14 +1581,14 @@ fn room_manifest_changes_selected_rows_and_cannot_be_widened_by_caller() -> Resu
     assert_eq!(memory.rooms_find_threads(room, None, 8).unwrap().len(), 2);
     let first = crate::task_verb::sdk::invoke(
         &memory,
-        "rooms.find",
+        "vault.rooms.find",
         serde_json::json!({"room_ref":room.to_hex(),"limit":1}),
     )
     .unwrap();
     let cursor = first["next_after"].as_str().unwrap();
     let last = crate::task_verb::sdk::invoke(
         &memory,
-        "rooms.find",
+        "vault.rooms.find",
         serde_json::json!({"room_ref":room.to_hex(),"after":cursor,"limit":1}),
     )
     .unwrap();

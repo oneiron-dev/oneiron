@@ -34,6 +34,8 @@ mod sealed_updates;
 mod search;
 mod secret_same_value;
 mod window_index;
+// FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS: a followed window's tombstone id set.
+mod window_tombstones;
 mod world_base_rows;
 mod world_eviction;
 pub(crate) use admission::admit_promoted_window_destination_in_txn;
@@ -98,7 +100,7 @@ pub use custody::{
 pub use directives::ResidenceDirectiveState;
 pub(crate) use directives::{
     directive_states_in_txn, finish_residence_directive_in_txn, pending_residence_directives,
-    residence_refusal_reason,
+    residence_directive_counts, residence_refusal_reason,
 };
 pub use discover::discover_local_window_keys;
 pub(crate) use discover::retry_pending_tombstones;
@@ -141,8 +143,8 @@ pub(crate) use prune::checkpoint_read_cache_keys;
 pub(crate) use prune::demote_resident_window;
 pub(crate) use prune::erase_item_caches_in_txn;
 pub(crate) use prune::prune_thin_items_in_txn;
-pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
+pub(crate) use prune::{record_item_touch_in_txn, record_item_touch_with};
 pub use publication_access::{
     PendingPublicationGrant, invalidate_publication_grant, offer_publication_grant,
     pending_publication_grants, publication_grant,
@@ -164,6 +166,7 @@ pub use window_index::{
     IndexPage, WindowIndexEntry, index_selection_revision, window_index_page,
     window_index_projection, window_index_projection_with,
 };
+pub use window_tombstones::{WindowTombstoneEntry, window_tombstone_projection_with};
 pub(crate) use world_base_rows::{discarded_rows_in, discarded_world_in, forget_discarded_in_txn};
 pub use world_eviction::{WorldEviction, discard_world_copy_as, evict_worlds_placed_elsewhere};
 pub(crate) use world_eviction::{

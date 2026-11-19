@@ -3,13 +3,16 @@
 //! turn runs unsourced during an off-record stretch, and sourced otherwise.
 //!
 //! One turn of a call heard in a room, driven through the room-turn door
-//! (`oneiron_server::test_doors::voice_call::room_turn::RoomTurnCall`), with the
-//! turn's run receipts going to an in-memory sink. (a) Control, no stretch in
-//! the room: the turn's run is sourced, and some `Admitted` receipt of it
-//! names the answering agent's row. (b) After a member starts an off-record
-//! stretch in that room: one more turn calls the model again, and every
-//! `Admitted` receipt recorded during it names no source rows and no source
-//! worlds. A second test closes the stretch and shows the next turn is
+//! (`oneiron_server::test_doors::voice_call::room_turn::RoomTurnCall`), with
+//! the turn's run receipts going to an in-memory sink. The call reads the room
+//! under the owner's hello slip, admitted as a call's hello admits it; a
+//! credential that names no principal reads no room, so every turn ended
+//! EntityNotFound (FIX VOICE-ROOM-TURN-PROOF-ENTITY-NOT-FOUND). (a) Control, no
+//! stretch in the room: the turn's run is sourced, and some `Admitted` receipt
+//! of it names the answering agent's row. (b) After a member starts an
+//! off-record stretch in that room: one more turn calls the model again, and
+//! every `Admitted` receipt recorded during it names no source rows and no
+//! source worlds. A second test closes the stretch and shows the next turn is
 //! sourced again.
 //!
 //! On the base the (b) turn's receipts still name the agent row, so the test
@@ -28,11 +31,13 @@ mod fake_llm;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::on_engine_stack;
 use fake_llm::{FakeLlm, Reply};
-use oneiron::authority::MachineRole;
+use oneiron::authority::{HostSlipIssuer, MachineRole, holder_proof_challenge};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::conversation::{ConversationBody, ConversationKind};
+use oneiron::federation::Scope;
 use oneiron::llm::run_admission::{MemoryReceipts, PermitFacts, RunEvent, RunReceipt};
 use oneiron::off_record::{OffRecordBackendClass, OffRecordMode};
 use oneiron::test_doors::label_writers::embedded_owner;
@@ -40,7 +45,7 @@ use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
 use oneiron_server::ai_host::AiHost;
 use oneiron_server::config::{SyncServerConfig, models::ModelsConfig};
 use oneiron_server::server::SyncServer;
-use oneiron_server::test_doors::voice_call::room_turn::RoomTurnCall;
+use oneiron_server::test_doors::voice_call::room_turn::{HelloSlip, RoomTurnCall};
 use serde_json::Value;
 
 type TestError = Box<dyn std::error::Error>;
@@ -72,11 +77,12 @@ fn models_text(base_url: &str) -> String {
     )
 }
 
-/// A served vault with its owner, the host that runs its turns, and the sink
-/// the turns' run receipts go to.
+/// A served vault with its owner, the host root its slips come from, the
+/// host that runs its turns, and the sink the turns' run receipts go to.
 struct Fixture {
     server: Arc<SyncServer>,
     vault: Arc<Vault>,
+    issuer: HostSlipIssuer,
     owner: EntityId,
     owner_proof: AuthenticatedOwner,
     receipts: Arc<MemoryReceipts>,
@@ -108,6 +114,7 @@ impl Fixture {
         Ok(Self {
             server: Arc::new(server),
             vault,
+            issuer,
             owner,
             owner_proof,
             receipts,
@@ -131,6 +138,37 @@ impl Fixture {
             self.vault.now_recorded_at(),
         )?;
         Ok(room)
+    }
+
+    /// The owner's hello slip for one call: a top-scope slip the host root
+    /// cuts for the owner as a human, bound to a holder key, with the fresh
+    /// binding proof the owner's device signs over it. A room call reads the
+    /// room under it as the owner, as the call's hello admits the owner.
+    fn hello_slip(&self) -> TestResult<HelloSlip> {
+        let holder = SigningKey::from_bytes(&[0x56; 32]);
+        let mut claims = self.vault.ensure_host_root_slip(&self.issuer)?.claims;
+        claims.slip_id = *blake3::hash(EntityId::now().to_hex().as_bytes()).as_bytes();
+        claims.parent_id = None;
+        claims.holder_ref = self.owner.to_hex();
+        claims.binding_key = holder.verifying_key().to_bytes();
+        claims.actor_class = Some("human".to_owned());
+        claims.scope = Scope::top();
+        let slip = self.vault.mint_capability_slip(&self.issuer, claims)?;
+        let timestamp = self.vault.now_recorded_at();
+        let nonce = EntityId::now().to_hex();
+        let challenge = holder_proof_challenge(timestamp, &nonce);
+        let signature = holder
+            .sign(&slip.binding_transcript(&challenge)?)
+            .to_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        Ok(HelloSlip {
+            token: slip.to_token()?,
+            timestamp,
+            nonce,
+            signature,
+        })
     }
 
     /// How many model calls the fake has answered so far.
@@ -164,7 +202,8 @@ fn a_room_call_turn_runs_unsourced_during_an_off_record_stretch() -> TestResult 
     on_engine_stack(|| async {
         let fixture = Fixture::new().await?;
         let room = fixture.make_room()?;
-        let mut call = RoomTurnCall::open(&fixture.server, fixture.owner, room)?;
+        let hello = fixture.hello_slip()?;
+        let mut call = RoomTurnCall::open(&fixture.server, fixture.owner, room, &hello)?;
         let agent = call.agent();
 
         // (a) Control: with no stretch in the room, the turn's run is
@@ -236,7 +275,8 @@ fn a_closed_stretch_leaves_the_next_turn_sourced_again() -> TestResult {
     on_engine_stack(|| async {
         let fixture = Fixture::new().await?;
         let room = fixture.make_room()?;
-        let mut call = RoomTurnCall::open(&fixture.server, fixture.owner, room)?;
+        let hello = fixture.hello_slip()?;
+        let mut call = RoomTurnCall::open(&fixture.server, fixture.owner, room, &hello)?;
         let agent = call.agent();
 
         let stretch = fixture.vault.off_record_session_vault().enter_in_room_as(

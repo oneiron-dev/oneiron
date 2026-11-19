@@ -7,6 +7,7 @@ use super::support::{
     RosterChain, authority_key_from_ed, cosign_ed, device, ed_key, genesis_entry, sign_ed,
     unsigned_entry,
 };
+use super::world_hosted::hosted_host;
 use super::*;
 use crate::registry::ENTITY_TYPE_MACHINE;
 
@@ -91,10 +92,12 @@ fn a_cloud_root_never_vouches_for_a_machine() {
 /// On a hosted vault the host's root is the provider's key: it registers its
 /// own node, but it never answers "yours" for the owner, whatever its labels.
 /// A self-hosted root is the owner's own process, and a peer reading that
-/// vault's log keeps its answer and everything after it.
+/// vault's log keeps its answer and everything after it. Custody is read from
+/// the log's cloud stamp alone (Engine ANSWER
+/// HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A, d3d2a2eacda).
 #[test]
 fn a_hosted_host_root_never_vouches_for_a_machine() {
-    let host = host();
+    let host = hosted_host();
     let node = request_for(host.vault_id, EntityId::now(), &ed_key(86));
     let yours = request_for(host.vault_id, EntityId::now(), &ed_key(87));
     let later = request_for(host.vault_id, EntityId::now(), &ed_key(88));
@@ -142,10 +145,11 @@ fn a_hosted_host_root_never_vouches_for_a_machine() {
 
 /// A key the host's root re-roots to stays in the host's custody whatever
 /// labels it carries: a provider never launders its root into an owner-held
-/// key that answers "yours".
+/// key that answers "yours" (Engine ANSWER
+/// HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A, d3d2a2eacda).
 #[test]
 fn a_hosted_roots_successor_never_vouches_for_a_machine() {
-    let host = host();
+    let host = hosted_host();
     let successor = ed_key(89);
     let fold = host.vault.authority_fold().unwrap();
     let re_root = host_entry(
@@ -482,6 +486,8 @@ fn a_retired_root_signs_no_machine_standing() {
     let removal = AuthorityOp::MachineProfile(MachineProfile {
         role: MachineRole::Removed,
         revision: 2,
+        carrier: None,
+        act: None,
         ..before
             .machine(kept.machine)
             .unwrap()
@@ -921,6 +927,8 @@ fn a_removal_holds_whichever_sibling_arrived_first() {
             AuthorityOp::MachineProfile(MachineProfile {
                 role: MachineRole::Removed,
                 revision: 2,
+                carrier: None,
+                act: None,
                 ..before
                     .machine(removed.machine)
                     .unwrap()
@@ -1005,6 +1013,8 @@ fn a_removal_holds_over_a_withdrawal_that_arrived_late() {
             AuthorityOp::MachineProfile(MachineProfile {
                 role: MachineRole::Removed,
                 revision: 2,
+                carrier: None,
+                act: None,
                 ..before
                     .machine(machine)
                     .unwrap()
@@ -1122,6 +1132,8 @@ fn a_removal_never_proves_below_its_ancestrys_sequence() {
         AuthorityOp::MachineProfile(MachineProfile {
             role: MachineRole::Removed,
             revision: 2,
+            carrier: None,
+            act: None,
             ..before
                 .machine(yours.machine)
                 .unwrap()
@@ -1199,6 +1211,8 @@ fn a_removal_never_proves_below_its_ancestrys_sequence() {
         AuthorityOp::MachineProfile(MachineProfile {
             role: MachineRole::Removed,
             revision: 2,
+            carrier: None,
+            act: None,
             ..fold
                 .machine(node.machine)
                 .unwrap()

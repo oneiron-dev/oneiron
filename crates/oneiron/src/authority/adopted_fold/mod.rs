@@ -173,6 +173,11 @@ pub(super) fn fold_adopted_checkpoint_tail(
     if view.rests_on_counting() && !super::install_fold::stale_chains(&view).is_empty() {
         return Ok(whole());
     }
+    // An image that dropped its residence bodies cannot show the keys a
+    // covered forked directive rests on (row SEQ-FLOOR-S-WITHHELD-COSIGN).
+    if context::dropped_body_fork_may_expire(image, &view) {
+        return Ok(whole());
+    }
     // The whole install fold's fold with no vouch folds as this one does
     // here, so its cap is the cap of this fold by itself (`NoVouchPast`).
     if no_vouch == NoVouchPast::Identical {

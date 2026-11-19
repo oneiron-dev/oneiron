@@ -11,7 +11,7 @@ use super::support::{
     unsigned_entry,
 };
 use super::world_privacy::{
-    edit_by, land, other_machine, read_of, settings, stored_entries, world_row,
+    answer_by, edit_by, land, next_seq, other_machine, read_of, settings, stored_entries, world_row,
 };
 use super::*;
 use crate::{Vault, VaultConfig};
@@ -74,7 +74,9 @@ fn a_machine_removed_while_it_widened_never_widens() {
     assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(laptop));
     assert!(!fold.world_readable_on(world, Destination::Unknown));
     assert_eq!(read_of(&host, kept), EffectiveRead::MyMachines);
-    // After the removal the laptop's edits are refused outright.
+    // After the removal the laptop's edits are valid but without effect
+    // (mesh PR1a: `apply_world_privacy` records them in `refused_world_edits`,
+    // world_strength.rs:405-413).
     let late = edit_by(
         &host,
         laptop,
@@ -83,14 +85,10 @@ fn a_machine_removed_while_it_widened_never_widens() {
         settings(ReadLocation::Everywhere),
     );
     land(&host, std::slice::from_ref(&late));
-    assert!(
-        !host
-            .vault
-            .authority_fold()
-            .unwrap()
-            .valid_entries
-            .contains(&authority_entry_hash(&late).unwrap())
-    );
+    let fold = host.vault.authority_fold().unwrap();
+    let late_hash = authority_entry_hash(&late).unwrap();
+    assert!(fold.valid_entries.contains(&late_hash));
+    assert!(fold.refused_world_edits.contains(&late_hash));
     assert_eq!(read_of(&host, kept), EffectiveRead::MyMachines);
 }
 
@@ -228,10 +226,12 @@ fn a_chain_of_raced_widens_never_widens() {
     }
 }
 
-/// The stolen laptop's widening raced its demotion, so it only narrows. A
-/// later revision of the laptop, the owner's removal or a demotion signed
-/// again, took nothing away and acknowledges nothing, whether the owner's door
-/// signed it or a peer listed the widening in it (Wonder P2 round 1, W2).
+/// The stolen laptop's widening raced its removal, so it only narrows (mesh
+/// PR1a, `owner_act_race`, machine_standing.rs:424-482: a removal outside the
+/// mark's past that never saw the act keeps it narrow). A later revision,
+/// the owner's removal carried on or a re-mark signed again, acknowledges
+/// nothing, whether it lists the widening or not (Wonder P2 round 1, W2, as
+/// re-cut around a removal: a demotion takes nothing away).
 #[test]
 fn a_later_revision_never_acknowledges_a_raced_widening() {
     for later in [
@@ -265,36 +265,34 @@ fn a_later_revision_never_acknowledges_a_raced_widening() {
                     &host.owner,
                     ActSurface::ThisInstall,
                     laptop,
-                    MachineRole::Owned(MachineOwnership::WorkSchool),
+                    MachineRole::Removed,
                     None,
                 )
                 .unwrap();
             land(&host, std::slice::from_ref(&widen));
             assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(laptop));
 
+            let fold = host.vault.authority_fold().unwrap();
+            let current = fold.machine(laptop).unwrap().head().profile.clone();
+            let mut seen_world_edits = current.seen_world_edits.clone();
             if listed {
-                let fold = host.vault.authority_fold().unwrap();
-                let current = fold.machine(laptop).unwrap().head().profile.clone();
-                let mut seen_world_edits = current.seen_world_edits.clone();
                 seen_world_edits.insert(authority_entry_hash(&widen).unwrap());
-                let profile = MachineProfile {
-                    role: later,
-                    revision: current.revision + 1,
-                    seen_world_edits,
-                    ..current
-                };
-                land(
-                    &host,
-                    &[
-                        next_entry(&host.issuer, &fold, AuthorityOp::MachineProfile(profile), 3)
-                            .unwrap(),
-                    ],
-                );
-            } else {
-                host.vault
-                    .set_machine_role(&host.owner, ActSurface::ThisInstall, laptop, later, None)
-                    .unwrap();
             }
+            let profile = MachineProfile {
+                role: later,
+                revision: current.revision + 1,
+                seen_world_edits,
+                carrier: None,
+                act: None,
+                ..current
+            };
+            land(
+                &host,
+                &[
+                    next_entry(&host.issuer, &fold, AuthorityOp::MachineProfile(profile), 3)
+                        .unwrap(),
+                ],
+            );
             let fold = host.vault.authority_fold().unwrap();
             assert_eq!(fold.machine(laptop).unwrap().head().profile.role, later);
             assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(laptop));
@@ -549,10 +547,9 @@ fn a_stale_machine_never_widens_a_world() {
     assert_eq!(after.world_privacy(world).read, EffectiveRead::MyMachines);
 }
 
-/// An edit refused because another machine held the world stays refused when
-/// that holder later goes stale here: the holder is still the owner's by the
-/// roster, so losing its standing on one install never accepts what every
-/// install refused (Sol P2 round 3, F1).
+/// Mesh PR1a (FIX-LIST 10-19 02:16): no holder rule, so the widening by a live
+/// admitted carrier is accepted and supersedes the holder's narrowing, reading
+/// `Everywhere` before and after the holder goes stale.
 #[test]
 fn a_holder_going_stale_never_accepts_a_refused_edit() {
     let old = ed_key(114);
@@ -639,12 +636,9 @@ fn a_holder_going_stale_never_accepts_a_refused_edit() {
     let first_seen: BTreeMap<_, _> = entries.iter().map(|entry| (hash(entry), 100)).collect();
     for now in [100, 100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1] {
         let fold = fold_authority_log_with_seen_times(&entries, &first_seen, now);
-        assert!(fold.refused_world_edits.contains(&hash(&refused)));
-        assert_eq!(
-            fold.world_privacy(world).read,
-            EffectiveRead::OneMachine(holder)
-        );
-        assert!(!fold.world_readable_on(world, Destination::Machine(other)));
+        assert!(!fold.refused_world_edits.contains(&hash(&refused)));
+        assert_eq!(fold.world_privacy(world).read, EffectiveRead::Everywhere);
+        assert!(fold.world_readable_on(world, Destination::Machine(other)));
     }
     let after = fold_authority_log_with_seen_times(
         &entries,
@@ -659,12 +653,9 @@ fn a_holder_going_stale_never_accepts_a_refused_edit() {
     assert!(after.machine(other).is_some_and(RosterHead::mine));
 }
 
-/// A refused edit stays refused when a machine whose edit it would have
-/// contended with goes stale here. B's pick of A replaced the conflict between
-/// B and C, so C's later widening is refused; weakening B's edits on one
-/// install brings the conflict back into the settings it reads, but who may
-/// edit is judged on the roster rule's read, so C never becomes a contender
-/// there (Sol P2 round 4, F1).
+/// Mesh PR1a (FIX-LIST 10-19 02:16): no holder or contender rule, so C's widening
+/// by a live admitted carrier is accepted and supersedes B's re-pick, reading
+/// `Everywhere` before and after B goes stale.
 #[test]
 fn a_conflict_weakened_back_never_accepts_a_refused_edit() {
     let old = ed_key(130);
@@ -756,14 +747,17 @@ fn a_conflict_weakened_back_never_accepts_a_refused_edit() {
     let first_seen: BTreeMap<_, _> = entries.iter().map(|entry| (hash(entry), 100)).collect();
     for now in [100, 100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1] {
         let fold = fold_authority_log_with_seen_times(&entries, &first_seen, now);
-        assert!(fold.refused_world_edits.contains(&hash(&refused)));
-        assert_eq!(fold.world_roster_read(world), EffectiveRead::OneMachine(a));
-        assert_eq!(fold.world_edit_standing(c, world), None);
+        assert!(!fold.refused_world_edits.contains(&hash(&refused)));
+        assert_eq!(fold.world_roster_read(world), EffectiveRead::Everywhere);
+        assert_eq!(
+            fold.world_edit_standing(c, world),
+            Some(WorldEditStanding::Holds)
+        );
         assert_eq!(
             fold.world_edit_standing(a, world),
             Some(WorldEditStanding::Holds)
         );
-        assert!(!fold.world_readable_on(world, Destination::Machine(c)));
+        assert!(fold.world_readable_on(world, Destination::Machine(c)));
     }
     let after = fold_authority_log_with_seen_times(
         &entries,
@@ -771,14 +765,7 @@ fn a_conflict_weakened_back_never_accepts_a_refused_edit() {
         100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1,
     );
     assert!(after.machine(b).is_some_and(|folded| folded.head().stale));
-    // Here B's edits only narrow, so the world reads as the conflict again:
-    // stricter than A alone, and readable nowhere.
-    assert_eq!(
-        after.world_privacy(world).read,
-        EffectiveRead::Conflicted {
-            contenders: BTreeSet::from([a, b, c]),
-        }
-    );
+    assert_eq!(after.world_privacy(world).read, EffectiveRead::Everywhere);
 }
 
 /// A narrowing made above a main-log row the fold later refuses stays. The
@@ -942,10 +929,14 @@ fn a_world_edit_above_a_two_vault_row_folds_closed() {
     assert!(!fold.valid_entries.contains(&hash(&edit)));
 }
 
-/// A mark that still says "yours" acknowledges no edit when its signer turns
-/// out to be in a host's custody: on a hosted fold the edit it lists raced
-/// that loss of standing, and only narrows (Sol P2 round 3, F2). The DAG is
-/// the custody one of `custody_marked_on_another_branch_reaches_the_successor`.
+/// A mark whose signer turns out to be in a host's custody is no owner's
+/// "yours", so the machine carries nothing once the custody is found: a
+/// widening it carried before only narrows while no revision has taken it
+/// away. A removal that lists the widening acknowledges it, whoever signed
+/// that removal, since the race reads what the removal saw, not its signer's
+/// custody (mesh PR1a, FIX-LIST 10-19 02:16; canon identity.md "the carrier's
+/// custody and placement do not decide it"). The DAG is the custody one of
+/// `custody_marked_on_another_branch_reaches_the_successor`.
 #[test]
 fn a_custodial_mark_acknowledges_no_widening() {
     let root = ed_key(120);
@@ -1097,9 +1088,9 @@ fn a_custodial_mark_acknowledges_no_widening() {
     assert_eq!(fold.world_privacy(world).read, EffectiveRead::MyMachines);
 
     // A removal on the marking branch, before that branch meets the custody,
-    // took away a mark that did not stand: once the custody is found it
-    // acknowledges nothing (Wonder P2 round 2, W2). The handoff that joins
-    // the branches takes the removal into its line (Sol P2 round 6, F1).
+    // lists the widening: it acknowledges it, so W reads `Everywhere`. The
+    // handoff that joins the branches takes the removal into its line (Sol P2
+    // round 6, F1).
     let removal = entry(
         3,
         &[&entries[7]],
@@ -1139,19 +1130,19 @@ fn a_custodial_mark_acknowledges_no_widening() {
         fold.machine(machine).unwrap().head().profile.role,
         MachineRole::Removed
     );
-    assert_eq!(fold.world_privacy(world).read, EffectiveRead::MyMachines);
-    assert!(!fold.world_readable_on(world, Destination::Unknown));
+    assert_eq!(fold.world_privacy(world).read, EffectiveRead::Everywhere);
+    assert!(fold.world_readable_on(world, Destination::Unknown));
 }
 
-/// A removal never acknowledges a widening through a "yours" revision that
-/// turns out to have a divergent sibling: neither one the widening was signed
-/// under nor one the removal took away (the widening signed before the
-/// siblings). It narrows whoever removes the machine and whatever the removal
-/// lists: the owner's door once both siblings are in, crafted on both, or
-/// signed on one sibling before the other arrives (Wonder P2 round 2, W2;
-/// round 3, W2; Sol P2 round 7, F2; round 8, F2).
+/// A removal that saw a widening keeps it when the merged head is
+/// uncontested (mesh PR1a, `owner_act_race`, machine_standing.rs:424-482): the
+/// owner's door once both siblings are in, or crafted on both, reads
+/// `Everywhere`. Signed on one sibling before the other arrives, concurrent
+/// different say-sos contest (mesh PR1b C5, FIX 4610, merge.rs:70-78,
+/// owner_answers.rs:347-367) and the widening stays narrow (Wonder P2 round
+/// 2, W2; round 3, W2; Sol P2 round 7, F2; round 8, F2, as re-cut).
 #[test]
-fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
+fn a_removal_of_a_conflicted_mark_keeps_a_seen_widening_unless_contested() {
     for (removal, widen_first) in ["door", "crafted", "on one sibling"]
         .into_iter()
         .flat_map(|removal| [(removal, false), (removal, true)])
@@ -1160,6 +1151,8 @@ fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
         let world = world_row(&host);
         let (laptop, laptop_key) =
             other_machine(&host, 86, MachineRole::Owned(MachineOwnership::Yours));
+        let (carrier, carrier_key) =
+            other_machine(&host, 87, MachineRole::Owned(MachineOwnership::Yours));
         let narrow = edit_by(
             &host,
             laptop,
@@ -1177,17 +1170,31 @@ fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
         );
         let fold = host.vault.authority_fold().unwrap();
         let current = fold.machine(laptop).unwrap().head().profile.clone();
-        let sibling = |seen_world_edits| {
-            let profile = MachineProfile {
-                revision: current.revision + 1,
-                seen_world_edits,
-                ..current.clone()
-            };
-            next_entry(&host.issuer, &fold, AuthorityOp::MachineProfile(profile), 3).unwrap()
-        };
+        let heads: Vec<_> = fold.append_heads.iter().copied().collect();
+        let base_seq = next_seq(&host, &carrier_key);
         let siblings = [
-            sibling(BTreeSet::new()),
-            sibling(BTreeSet::from([authority_entry_hash(&narrow).unwrap()])),
+            answer_by(
+                &host,
+                carrier,
+                &carrier_key,
+                &current,
+                current.role,
+                current.revision + 1,
+                BTreeSet::new(),
+                heads.clone(),
+                base_seq,
+            ),
+            answer_by(
+                &host,
+                carrier,
+                &carrier_key,
+                &current,
+                current.role,
+                current.revision + 1,
+                BTreeSet::from([authority_entry_hash(&narrow).unwrap()]),
+                heads,
+                base_seq + 1,
+            ),
         ];
         land(&host, &siblings);
         // The laptop widens before the siblings, or on one of them, where it
@@ -1235,12 +1242,6 @@ fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
 
         let fold = host.vault.authority_fold().unwrap();
         let current = fold.machine(laptop).unwrap().head().profile.clone();
-        let profile = AuthorityOp::MachineProfile(MachineProfile {
-            role: MachineRole::Removed,
-            revision: current.revision + 1,
-            seen_world_edits: seen,
-            ..current
-        });
         match removal {
             "door" => {
                 host.vault
@@ -1253,31 +1254,52 @@ fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
                     )
                     .unwrap();
             }
-            "crafted" => land(
-                &host,
-                &[next_entry(&host.issuer, &fold, profile, 4).unwrap()],
-            ),
-            _ => land(
-                &host,
-                &[host
-                    .issuer
-                    .sign_entry(
-                        fold.vault_id,
-                        fold.append_sequences[&host.issuer.public_key()] + 1,
+            "crafted" => {
+                let heads: Vec<_> = fold.append_heads.iter().copied().collect();
+                land(
+                    &host,
+                    &[answer_by(
+                        &host,
+                        carrier,
+                        &carrier_key,
+                        &current,
+                        MachineRole::Removed,
+                        current.revision + 1,
+                        seen.clone(),
+                        heads,
+                        next_seq(&host, &carrier_key),
+                    )],
+                );
+            }
+            _ => {
+                land(
+                    &host,
+                    &[answer_by(
+                        &host,
+                        carrier,
+                        &carrier_key,
+                        &current,
+                        MachineRole::Removed,
+                        current.revision + 1,
+                        seen.clone(),
                         vec![authority_entry_hash(&siblings[0]).unwrap()],
-                        profile,
-                        4,
-                    )
-                    .unwrap()],
-            ),
+                        next_seq(&host, &carrier_key),
+                    )],
+                );
+            }
         }
         let fold = host.vault.authority_fold().unwrap();
         assert_eq!(
             fold.machine(laptop).unwrap().head().profile.role,
             MachineRole::Removed
         );
-        assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(laptop));
-        assert!(!fold.world_readable_on(world, Destination::Unknown));
+        if removal == "on one sibling" {
+            assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(laptop));
+            assert!(!fold.world_readable_on(world, Destination::Unknown));
+        } else {
+            assert_eq!(read_of(&host, world), EffectiveRead::Everywhere);
+            assert!(fold.world_readable_on(world, Destination::Unknown));
+        }
     }
 }
 
@@ -1326,6 +1348,8 @@ fn a_removal_keeps_its_race_over_a_later_mark_it_never_saw() {
             let profile = MachineProfile {
                 role: yours,
                 revision: current.revision + 1,
+                carrier: None,
+                act: None,
                 ..current
             };
             land(
@@ -1345,12 +1369,16 @@ fn a_removal_keeps_its_race_over_a_later_mark_it_never_saw() {
         let current = before.machine(laptop).unwrap().head().profile.clone();
         let seen = BTreeSet::from([authority_entry_hash(&widen).unwrap()]);
         let mut branch = Vec::new();
+        // Roster-signed revisions carry no act (mesh PR1b, `kind_fits`,
+        // crates/oneiron-authority/src/authority/machine_profile.rs:281-287).
         for (revision, role) in (2..).zip(roles) {
             seq += 1;
             let profile = MachineProfile {
                 role,
                 revision,
                 seen_world_edits: seen.clone(),
+                carrier: None,
+                act: None,
                 ..current.clone()
             };
             let entry = host
@@ -1380,16 +1408,21 @@ fn a_removal_keeps_its_race_over_a_later_mark_it_never_saw() {
     }
 }
 
-/// A demotion the widening's mark never followed keeps it narrow, though the
-/// stolen laptop names that demotion among the widening's parents: one branch
-/// marks the laptop "yours" again, another demotes it, the thief widens on
-/// both, and the owner's removal lists the widening (Wonder P2 round 5, W1).
+/// A demotion the widening never saw leaves the carrier conflicted, so the
+/// widening is valid but without effect (mesh PR1b C5, FIX 4610: concurrent
+/// different say-sos contest; world_strength.rs:405-413), though the stolen
+/// laptop names that demotion among the widening's parents: one branch marks
+/// the laptop "yours" again, another demotes it, the thief widens on both,
+/// and the owner's removal lists only what was live (Wonder P2 round 5, W1,
+/// as re-cut).
 #[test]
 fn a_widening_never_exempts_a_demotion_its_mark_never_followed() {
     let host = host();
     let world = world_row(&host);
     let yours = MachineRole::Owned(MachineOwnership::Yours);
     let (laptop, laptop_key) = other_machine(&host, 91, yours);
+    let (carrier, carrier_key) =
+        other_machine(&host, 92, MachineRole::Owned(MachineOwnership::Yours));
     let narrow = edit_by(
         &host,
         laptop,
@@ -1399,30 +1432,42 @@ fn a_widening_never_exempts_a_demotion_its_mark_never_followed() {
     );
     land(&host, std::slice::from_ref(&narrow));
     let fold = host.vault.authority_fold().unwrap();
-    let mut seq = fold.append_sequences[&host.issuer.public_key()];
     let current = fold.machine(laptop).unwrap().head().profile.clone();
-    let mut sign = |parents: Vec<AuthorityEntryHash>, revision, role| {
-        seq += 1;
-        let profile = MachineProfile {
-            role,
-            revision,
-            seen_world_edits: BTreeSet::new(),
-            ..current.clone()
-        };
-        host.issuer
-            .sign_entry(
-                fold.vault_id,
-                seq,
-                parents,
-                AuthorityOp::MachineProfile(profile),
-                3,
-            )
-            .unwrap()
-    };
     let heads: Vec<_> = fold.append_heads.iter().copied().collect();
-    let marked = sign(heads.clone(), 2, yours);
-    let marked_again = sign(vec![authority_entry_hash(&marked).unwrap()], 3, yours);
-    let demoted = sign(heads, 2, MachineRole::Owned(MachineOwnership::WorkSchool));
+    let base_seq = next_seq(&host, &carrier_key);
+    let marked = answer_by(
+        &host,
+        carrier,
+        &carrier_key,
+        &current,
+        yours,
+        2,
+        BTreeSet::new(),
+        heads.clone(),
+        base_seq,
+    );
+    let marked_again = answer_by(
+        &host,
+        carrier,
+        &carrier_key,
+        &current,
+        yours,
+        3,
+        BTreeSet::new(),
+        vec![authority_entry_hash(&marked).unwrap()],
+        base_seq + 1,
+    );
+    let demoted = answer_by(
+        &host,
+        carrier,
+        &carrier_key,
+        &current,
+        MachineRole::Owned(MachineOwnership::WorkSchool),
+        2,
+        BTreeSet::new(),
+        heads,
+        base_seq + 2,
+    );
     land(&host, &[marked, marked_again.clone(), demoted.clone()]);
 
     let mut parents: Vec<_> = [&marked_again, &demoted, &narrow]
@@ -1446,13 +1491,10 @@ fn a_widening_never_exempts_a_demotion_its_mark_never_followed() {
         &laptop_key,
     );
     land(&host, std::slice::from_ref(&widen));
-    assert!(
-        host.vault
-            .authority_fold()
-            .unwrap()
-            .valid_entries
-            .contains(&authority_entry_hash(&widen).unwrap())
-    );
+    let fold = host.vault.authority_fold().unwrap();
+    let widen_hash = authority_entry_hash(&widen).unwrap();
+    assert!(fold.valid_entries.contains(&widen_hash));
+    assert!(fold.refused_world_edits.contains(&widen_hash));
     host.vault
         .set_machine_role(
             &host.owner,
@@ -1466,7 +1508,7 @@ fn a_widening_never_exempts_a_demotion_its_mark_never_followed() {
     let removal = fold.machine(laptop).unwrap().head();
     assert_eq!(removal.profile.role, MachineRole::Removed);
     assert!(
-        removal
+        !removal
             .profile
             .seen_world_edits
             .contains(&authority_entry_hash(&widen).unwrap())

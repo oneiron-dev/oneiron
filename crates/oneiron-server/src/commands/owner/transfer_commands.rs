@@ -145,6 +145,10 @@ struct ImportedArchive {
     unrestored_identity_topology_shells: usize,
     /// The owner's line for those rows, when there are any.
     identity_topology_status: Option<String>,
+    /// Archived `same_as` links that stayed out.
+    unrestored_same_as_links: usize,
+    /// The owner's line for those links, when there are any.
+    same_as_status: Option<String>,
     /// Secrets the archive carried as handles only: re-enter each one.
     missing_secrets: Vec<String>,
     /// Secrets the archive could not carry even as a handle, by id: each
@@ -191,6 +195,17 @@ fn identity_topology_status(rows: usize) -> Option<String> {
         format!(
             "{rows} merged or split rows came back as separate rows: their merges and splits \
              were not restored"
+        )
+    })
+}
+
+/// The owner's line for the archived `same_as` links an archive import left
+/// out, when there are any.
+fn same_as_status(links: usize) -> Option<String> {
+    (links > 0).then(|| {
+        format!(
+            "{links} identity links were not restored: only a link between two people this \
+             import brought back comes back"
         )
     })
 }
@@ -260,6 +275,8 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
         identity_topology_status: identity_topology_status(
             receipt.unrestored_identity_topology_shells,
         ),
+        unrestored_same_as_links: receipt.unrestored_same_as_links,
+        same_as_status: same_as_status(receipt.unrestored_same_as_links),
         missing_secrets: receipt
             .missing_secrets
             .into_iter()

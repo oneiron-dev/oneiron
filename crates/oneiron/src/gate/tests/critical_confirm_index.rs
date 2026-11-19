@@ -542,6 +542,9 @@ fn critical_confirm_sweep_preserves_ordinary_pending_rows() -> Result<()> {
     let ordinary = test_id(0x87);
     let mut pending = put_critical_auto_claim(&vault, critical)?;
     pending.created_at = 1;
+    // The attach froze the deadline beside the creation time; move it with
+    // the clock so the sweep reads this row as expired.
+    pending.expires_at = Some(1 + CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS);
     vault.with_write_txn(|wtxn| {
         vault
             .store
@@ -802,6 +805,8 @@ fn critical_confirm_timeout_sweep_ignores_a_later_fail_closed_manifest() -> Resu
     let claim = test_id(0x8e);
     let mut pending = put_critical_auto_claim(&vault, claim)?;
     pending.created_at = 1;
+    // Same frozen-deadline move as the sweep above.
+    pending.expires_at = Some(1 + CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS);
     vault.with_write_txn(|wtxn| vault.store.put_pending_gate_consent_in_txn(wtxn, &pending))?;
     let receipts_before = vault.store.gate_decisions(20)?;
     put_policy_manifest_bytes(&vault, test_id(0x8f), b"not-a-manifest")?;

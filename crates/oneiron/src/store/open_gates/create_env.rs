@@ -37,6 +37,9 @@ pub(super) fn create_env(
         // A leased open binds a directory that already exists: creating
         // by path could only touch a tree renamed in since the lease.
         if lease.is_none() {
+            #[cfg(unix)]
+            crate::store::make_vault_root_all(path.as_ref())?;
+            #[cfg(not(unix))]
             std::fs::create_dir_all(path.as_ref())?;
         }
         let canonical_path = path.as_ref().canonicalize()?;

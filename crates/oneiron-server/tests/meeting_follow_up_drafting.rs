@@ -308,7 +308,22 @@ fn a_landed_promise_becomes_one_owner_draft_after_one_model_call() {
             asked.contains("[T1] Owen: I will send you the slides tomorrow"),
             "the labelled transcript is the user message: {asked}"
         );
-        assert!(asked.contains("P1 \\\"Yuki\\\""), "Yuki is listed: {asked}");
+        // Yuki's name has no names-class claim, so it reads Sensitive, above
+        // the Dreamer's Names ceiling (Public): the model gets P1 by its bare
+        // handle, never the name (ARCH-0069 S9), beside the transcript's own
+        // spelling of it.
+        let listed = asked
+            .split("\\n")
+            .find(|line| line.starts_with("P1 "))
+            .unwrap_or_else(|| panic!("P1 is listed: {asked}"));
+        assert!(
+            listed.ends_with(", named in the transcript as \\\"yuki\\\""),
+            "P1 is the person the transcript calls yuki: {asked}"
+        );
+        assert!(
+            !listed.contains("Yuki"),
+            "the name above the ceiling is not printed: {asked}"
+        );
         fx.host.shutdown().await;
     });
 }
@@ -343,7 +358,11 @@ fn a_reply_outside_the_contract_completes_the_attempt_and_is_not_asked_again() {
 #[test]
 fn a_model_fault_is_tried_again_and_the_next_try_drafts() {
     run_on_engine_stack("follow-up-fault", || async {
-        let fx = fixture(vec![Reply::Status(500), contract_reply()], None).await;
+        // The provider refuses the request (422): that ends the model call
+        // at once, so the try fails and the worker tries again. A lone 5xx
+        // never fails a try: the ladder rests the rung and sends it again
+        // inside the same call (models/ladder/generation.rs, its pass loop).
+        let fx = fixture(vec![Reply::Status(422), contract_reply()], None).await;
         fx.name_the_owner("Owen");
         let yuki = fx.person("Yuki");
         fx.ingest(TRANSCRIPT);

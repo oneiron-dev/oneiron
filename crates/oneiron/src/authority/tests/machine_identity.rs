@@ -308,6 +308,8 @@ fn a_machine_never_changes_its_key() {
                 machine_key: request.machine_key,
                 machine_proof: request.machine_proof,
                 revision: 2,
+                carrier: None,
+                act: None,
                 ..fold
                     .machine(machine)
                     .unwrap()
@@ -528,6 +530,10 @@ fn a_restored_image_never_carries_the_machine_to_another_install() {
         200,
     )
     .unwrap();
+    replacement.install_device_keystore(HOST_KEYS.with(std::sync::Arc::clone));
+    replacement
+        .prepare_install_signing()
+        .expect("install signing");
     assert_eq!(
         replacement
             .local_machine()
@@ -589,6 +595,10 @@ fn an_activated_archive_joins_as_a_new_machine() {
         .unwrap();
     drop((vault, replacement));
     let replacement = Vault::open(&home, VaultConfig::default()).unwrap();
+    replacement.install_device_keystore(HOST_KEYS.with(std::sync::Arc::clone));
+    replacement
+        .prepare_install_signing()
+        .expect("install signing");
     Vault::activate_archived(
         &staged,
         VaultConfig::default(),
