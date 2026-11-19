@@ -21,6 +21,12 @@
 //!   of A's later label.rs change, so D's math.rs resolution still leaves
 //!   A and B queued: only a green batch accepted after a source carries
 //!   that source's unshared file.
+//! - Review round 2 of #8558: the carry-over works for every batch kind.
+//!   Owner-enqueued sources complete once a later green batch lands their
+//!   resolution and their unshared file, with their reconciliation TASK; an
+//!   owner-enqueued carrying batch fresher than the sources is accepted;
+//!   and an owner-enqueued green batch older than the sources still
+//!   carries none of their files.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test conflict_supersede_unshared_files`.
@@ -35,6 +41,8 @@ use fixture::{
 };
 use oneiron::agent_def::AgentCeiling;
 use oneiron::code_run::{RepoRequestWitness, SelfEffect};
+use oneiron::context_board::{TaskBoardStatus, TaskIntentPresence};
+use oneiron::memory::merge_queue_doors::MergeQueueEnqueueRequest;
 use oneiron::memory::repo_doors::{
     RepoMergeQueueEnqueueInput, RepoMergeQueueObserveInput, RepoProposalResolveInput,
     RepoProposalSubmitInput, RepoQueueEntryView,
@@ -43,6 +51,7 @@ use oneiron::merge_queue::{
     BatchState, QueueCheckStatus, QueueConflictLink, QueueDriveOutcome, QueueDrivePass,
     QueueDriveStatus, QueueWork,
 };
+use oneiron::task_verb::TaskTerminalDisposition;
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, EntityId, LlmRequest, ModelId, ModelLocality,
     ModelTierRef, ResponseFormat, TierPrecedence, Vault,
@@ -289,6 +298,21 @@ fn resolve_and_enqueue(
     content: &str,
     message: &str,
 ) -> TestResult<RepoQueueEntryView> {
+    let resolution = resolve_proposal(vault, run, link, branch, path, content, message)?;
+    enqueue_many(vault, run, vec![resolution])
+}
+
+/// `run` proposes `content` for `path` as the resolution of `link`'s
+/// conflict: the stored proposal.
+fn resolve_proposal(
+    vault: &Vault,
+    run: &AgentRun,
+    link: &QueueConflictLink,
+    branch: String,
+    path: &str,
+    content: &str,
+    message: &str,
+) -> TestResult<EntityId> {
     let witness = served_request_witness()?;
     let content_hash = *blake3::hash(content.as_bytes()).as_bytes();
     let resolution = vault
@@ -319,7 +343,7 @@ fn resolve_and_enqueue(
         )?
         .output
         .proposal;
-    enqueue_many(vault, run, vec![resolution])
+    Ok(resolution)
 }
 
 /// A and B handed to one reconciliation: A queues math.rs (and label.rs,
@@ -379,6 +403,94 @@ fn drive_handoff(vault: &Vault, batch: &str) -> TestResult<Option<QueueDriveOutc
     drive_next(vault, batch, |work| {
         matches!(work, QueueWork::HandoffOverlap { .. })
     })
+}
+
+/// The enrolled queue's current green commit.
+fn current_green(vault: &Vault) -> TestResult<String> {
+    let configs = vault.queue_driver_configurations()?;
+    let config = configs.first().ok_or("the queue is enrolled")?;
+    Ok(vault.queue_driver_open(config)?.pointers()?.green)
+}
+
+/// The owner queues stored `proposals` as one batch on the current green:
+/// an owner-enqueued batch, which keeps no run order. Answers its digest.
+fn enqueue_owner(repo: &RepoFixture, proposals: Vec<EntityId>) -> TestResult<String> {
+    let enqueued = repo.owner_memory().merge_queue_enqueue_as(
+        &repo.owner_proof,
+        MergeQueueEnqueueRequest {
+            repo: repo.repo,
+            proposals,
+            base_green: current_green(&repo.vault)?,
+        },
+    )?;
+    assert_eq!(enqueued.state, BatchState::Queued);
+    Ok(enqueued.batch_ref)
+}
+
+/// A and B handed to one reconciliation, owner-enqueued: A queues math.rs
+/// and label.rs, B queues math.rs, and staging A hands both off. The
+/// proposals are their runs' own; the batches keep no run order. Answers
+/// A's agent run, both batch digests and their shared link.
+fn handed_off_owner_pair(
+    repo: &RepoFixture,
+) -> TestResult<(AgentRun, String, String, QueueConflictLink)> {
+    let vault = &repo.vault;
+    let (agent_a, a) = repo_run(repo, "unshared-agent-a", 0x61, "unshared A")?;
+    let (_, b) = repo_run(repo, "unshared-agent-b", 0x62, "unshared B")?;
+    assert_ne!(A_MATH, MATH_RS);
+    assert_ne!(A_LABEL, LABEL_RS);
+
+    let a_math = submit_proposal(vault, &a, "math.rs", A_MATH, "add_one adds two")?;
+    let a_label = submit_proposal(vault, &a, "label.rs", A_LABEL, "label reads carried")?;
+    let batch_a = enqueue_owner(repo, vec![a_math, a_label])?;
+    let b_math = submit_proposal(vault, &b, "math.rs", B_MATH, "add_one adds three")?;
+    let batch_b = enqueue_owner(repo, vec![b_math])?;
+    let configs = vault.queue_driver_configurations()?;
+    let config = configs.first().ok_or("the queue is enrolled")?;
+    let queue = vault.queue_driver_open(config)?;
+    assert_eq!(
+        queue.batch(&batch_a)?.base_green,
+        queue.batch(&batch_b)?.base_green
+    );
+
+    // A's proposer mints the reconciliation TASK: its policy ceiling admits
+    // an agent's automatic write.
+    let _ceiling =
+        vault.grant_agent_principal(&repo.owner_proof, &agent_a.to_hex(), AgentCeiling::Auto)?;
+
+    let staged = drive_next(vault, &batch_a, |work| {
+        matches!(work, QueueWork::Stage { .. })
+    })?
+    .ok_or("the driver's next work stages A")?;
+    let link = read_link(vault, &batch_a).map_err(|_| format!("A is handed off: {staged:?}"))?;
+    assert_eq!(link, read_link(vault, &batch_b)?, "A and B carry one link");
+    assert!(
+        link.task.is_some(),
+        "the reconciliation TASK is minted: {link:?}"
+    );
+    assert!(!link.superseded && link.resolution_batch.is_none());
+    Ok((a, batch_a, batch_b, link))
+}
+
+/// The reconciliation TASK of `link`'s conflict, as the owner's board
+/// reads it, as in `repo_queue_supersede.rs`.
+fn reconciliation_row(
+    repo: &RepoFixture,
+    link: &QueueConflictLink,
+) -> TestResult<TaskIntentPresence> {
+    let task = link.task.ok_or("the reconciliation TASK is minted")?;
+    assert_eq!(
+        repo.vault.repo_reconciliation_task(link.conflict)?,
+        Some(task)
+    );
+    let hex = task.to_hex();
+    Ok(repo
+        .owner_memory()
+        .describe_rows()?
+        .intents
+        .into_iter()
+        .find(|row| row.id == hex)
+        .ok_or("the owner's board reads the reconciliation TASK")?)
 }
 
 /// The witness of a model request the host served, as in
@@ -559,6 +671,174 @@ fn a_green_batch_before_the_handoff_does_not_carry_an_unshared_file() -> TestRes
     assert_eq!(
         (seen_a.state, seen_a.drive),
         (BatchState::Queued, QueueDriveStatus::HeldOverlap)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_later_green_batch_landing_resolution_and_unshared_file_completes_owner_enqueued_sources()
+-> TestResult {
+    let repo = RepoFixture::enrolled()?;
+    let vault = &repo.vault;
+    let (_a, batch_a, batch_b, link) = handed_off_owner_pair(&repo)?;
+
+    // D, on a TASK of its own, queues one batch with the math.rs resolution
+    // and a fresh label.rs proposal, and lands it green.
+    let (_, d) = repo_run(&repo, "unshared-agent-d", 0x64, "unshared D")?;
+    let resolution = resolve_proposal(
+        vault,
+        &d,
+        &link,
+        driver_branch(vault)?,
+        "math.rs",
+        D_MATH,
+        "add_one adds five",
+    )?;
+    let carried = submit_proposal(vault, &d, "label.rs", A_LABEL, "label reads carried")?;
+    let entry_carrier = enqueue_many(vault, &d, vec![resolution, carried])?;
+    drive_to_green(vault, &entry_carrier.batch)?;
+
+    // The one later green batch landed both files of both sources: the
+    // hand-off ends A and B Superseded by the carrier, and the
+    // reconciliation TASK completes with the resolution that closed it.
+    let handed =
+        drive_handoff(vault, &batch_a)?.ok_or("the driver's next work on A is its hand-off")?;
+    assert_eq!(handed, QueueDriveOutcome::Changed);
+    assert_eq!(batch_state(vault, &batch_a)?, BatchState::Superseded);
+    assert_eq!(batch_state(vault, &batch_b)?, BatchState::Superseded);
+    let done = read_link(vault, &batch_a)?;
+    assert!(done.superseded, "both files landed: {done:?}");
+    assert_eq!(
+        done.resolution_batch.as_deref(),
+        Some(entry_carrier.batch.as_str())
+    );
+    let task = reconciliation_row(&repo, &done)?;
+    assert_eq!(
+        (task.terminal_disposition, task.status),
+        (
+            Some(TaskTerminalDisposition::Completed),
+            TaskBoardStatus::Done
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn an_owner_enqueued_carrying_batch_fresher_than_the_sources_is_accepted() -> TestResult {
+    let repo = RepoFixture::enrolled()?;
+    let vault = &repo.vault;
+    let (_a, entry_a, entry_b, link) = handed_off_pair(&repo, true)?;
+
+    // D resolves only the conflicted math.rs and lands green: the hand-off
+    // names D's batch but supersedes neither source, label.rs is uncarried.
+    let (_, d) = repo_run(&repo, "unshared-agent-d", 0x64, "unshared D")?;
+    let entry_d = resolve_and_enqueue(
+        vault,
+        &d,
+        &link,
+        driver_branch(vault)?,
+        "math.rs",
+        D_MATH,
+        "add_one adds five",
+    )?;
+    drive_to_green(vault, &entry_d.batch)?;
+    let handed = drive_handoff(vault, &entry_a.batch)?
+        .ok_or("the driver's next work on A is its hand-off")?;
+    assert_eq!(handed, QueueDriveOutcome::Changed);
+    let waiting = read_link(vault, &entry_a.batch)?;
+    assert_eq!(
+        waiting.resolution_batch.as_deref(),
+        Some(entry_d.batch.as_str())
+    );
+    assert!(
+        !waiting.superseded,
+        "label.rs is not carried yet: {waiting:?}"
+    );
+
+    // E's label.rs change is owner-enqueued and lands green on D's green.
+    // The carrying batch keeps no run order, but it is fresher than the
+    // sources, so the next hand-off ends A and B Superseded by D's batch.
+    let (_, e) = repo_run(&repo, "unshared-agent-e", 0x65, "unshared E")?;
+    let e_label = submit_proposal(vault, &e, "label.rs", A_LABEL, "label reads carried")?;
+    let batch_e = enqueue_owner(&repo, vec![e_label])?;
+    drive_to_green(vault, &batch_e)?;
+
+    let handed = drive_handoff(vault, &entry_a.batch)?
+        .ok_or("the driver's next work on A is its hand-off")?;
+    assert_eq!(handed, QueueDriveOutcome::Changed);
+    assert_eq!(batch_state(vault, &entry_a.batch)?, BatchState::Superseded);
+    assert_eq!(batch_state(vault, &entry_b.batch)?, BatchState::Superseded);
+    let done = read_link(vault, &entry_a.batch)?;
+    assert!(done.superseded, "both files landed: {done:?}");
+    assert_eq!(
+        done.resolution_batch.as_deref(),
+        Some(entry_d.batch.as_str())
+    );
+    Ok(())
+}
+
+#[test]
+fn an_owner_enqueued_green_batch_older_than_the_sources_does_not_carry_them() -> TestResult {
+    let repo = RepoFixture::enrolled()?;
+    let vault = &repo.vault;
+
+    // G's label.rs is owner-enqueued and lands green first: A and B queue
+    // on G's green.
+    let (_, g) = repo_run(&repo, "unshared-agent-g", 0x67, "unshared G")?;
+    assert_ne!(G_LABEL, LABEL_RS);
+    assert_ne!(G_LABEL, A_LABEL);
+    let g_label = submit_proposal(vault, &g, "label.rs", G_LABEL, "label reads landed first")?;
+    let batch_g = enqueue_owner(&repo, vec![g_label])?;
+    drive_to_green(vault, &batch_g)?;
+
+    let (_a, batch_a, batch_b, link) = handed_off_owner_pair(&repo)?;
+
+    // D resolves only the conflicted math.rs and lands green.
+    let (_, d) = repo_run(&repo, "unshared-agent-d", 0x64, "unshared D")?;
+    let entry_d = resolve_and_enqueue(
+        vault,
+        &d,
+        &link,
+        driver_branch(vault)?,
+        "math.rs",
+        D_MATH,
+        "add_one adds five",
+    )?;
+    drive_to_green(vault, &entry_d.batch)?;
+
+    // G's earlier label.rs is a green write of that path, but it landed
+    // before A and B: the hand-off names D's batch and supersedes neither
+    // source.
+    let handed =
+        drive_handoff(vault, &batch_a)?.ok_or("the driver's next work on A is its hand-off")?;
+    assert_eq!(handed, QueueDriveOutcome::Changed);
+    assert_eq!(batch_state(vault, &batch_a)?, BatchState::Queued);
+    assert_eq!(batch_state(vault, &batch_b)?, BatchState::Queued);
+    let waiting = read_link(vault, &batch_a)?;
+    assert_eq!(
+        waiting.resolution_batch.as_deref(),
+        Some(entry_d.batch.as_str())
+    );
+    assert!(
+        !waiting.superseded,
+        "G's earlier label.rs carries none of A's: {waiting:?}"
+    );
+
+    // E carries A's label.rs change green on D's green, and only then does
+    // the next hand-off end the owner-enqueued A and B Superseded.
+    let (_, e) = repo_run(&repo, "unshared-agent-e", 0x65, "unshared E")?;
+    let entry_e = submit_and_enqueue(vault, &e, "label.rs", A_LABEL, "label reads carried")?;
+    drive_to_green(vault, &entry_e.batch)?;
+    let handed =
+        drive_handoff(vault, &batch_a)?.ok_or("the driver's next work on A is its hand-off")?;
+    assert_eq!(handed, QueueDriveOutcome::Changed);
+    assert_eq!(batch_state(vault, &batch_a)?, BatchState::Superseded);
+    assert_eq!(batch_state(vault, &batch_b)?, BatchState::Superseded);
+    let done = read_link(vault, &batch_a)?;
+    assert!(done.superseded, "both files landed: {done:?}");
+    assert_eq!(
+        done.resolution_batch.as_deref(),
+        Some(entry_d.batch.as_str())
     );
     Ok(())
 }
