@@ -46,6 +46,8 @@ mod handoff_settlement;
 mod history_transfer;
 mod host_node;
 mod host_re_root;
+#[cfg(oneiron_test_support)]
+mod import_prelude_image_evidence;
 mod machine_fold;
 mod machine_identity;
 mod machine_write;
