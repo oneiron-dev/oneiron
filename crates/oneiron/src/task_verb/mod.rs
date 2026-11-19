@@ -122,6 +122,7 @@ mod runner_done;
 mod scheduling;
 pub(crate) mod setting_keys;
 pub(crate) mod settlement_anchor;
+pub(crate) mod speaker_entry_index;
 mod subproject;
 mod symbol_lease;
 mod task_actor;

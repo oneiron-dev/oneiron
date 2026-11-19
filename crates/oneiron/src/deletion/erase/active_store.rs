@@ -536,6 +536,7 @@ impl Vault {
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
         // The scrub below truncates a PERSON body in place: its party keys go first.
         crate::store::person_party_keys::reindex_person_party_keys(&self.store, wtxn, id, None)?;
+        crate::task_verb::speaker_entry_index::reindex_speaker_entry(&self.store, wtxn, id, None)?;
         // An epoch summary keeps its keyframe, so the next mint numbers above it.
         let scrubbed = crate::compaction::erased_form(&entity_record);
         self.store
