@@ -73,7 +73,7 @@ fn export(
     issuer: &HostSlipIssuer,
     input: &GuestDocumentShareRequest,
     admit: impl Fn(&Vault, &FederationGrant) -> Result<EntityId>,
-    readable: impl Fn(&Vault, &[EntityId]) -> Result<bool>,
+    readable: impl Fn(&Vault, &FederationGrant, &[EntityId]) -> Result<bool>,
 ) -> Result<(GuestDocumentEnvelope, Vec<EntityId>)> {
     let vault = manager.vault();
     let (grant, before) = context(vault, input)?;
@@ -101,7 +101,7 @@ fn export(
     )?;
     // A narrower credential never exports bytes around its own read lane.
     // If any selected row is withheld for this caller, the whole export refuses.
-    if !readable(vault, &rows)? {
+    if !readable(vault, &grant, &rows)? {
         return Err(refused());
     }
     let (current, after) = context(vault, input)?;
@@ -141,7 +141,7 @@ pub fn share_guest_document_as_owner(
             vault.recheck_owner(owner)?;
             owner.actor_for_read(vault)
         },
-        |_, _| Ok(true),
+        |_, _, _| Ok(true),
     )
 }
 
@@ -170,8 +170,15 @@ pub fn export_guest_document_for_guest(
             }
             Ok(grant.member_ref)
         },
-        |vault, rows| {
-            let key = vault.credential_read_key(proof)?.ok_or_else(refused)?;
+        |vault, grant, rows| {
+            // The fetch reads what the export selected under this Connect
+            // grant: its stamped claims up to the grant's own ceiling (ANSWER
+            // FED-CONNECT-STAMPED-HOME = A), which the credential's
+            // conversation home alone would withhold, refusing the fetch.
+            let key = vault
+                .credential_read_key(proof)?
+                .ok_or_else(refused)?
+                .home_cleared_to_connect_ceiling(grant.authority_scope.sensitivity);
             vault.scoped_read(key.at(locality)).all_refs_readable(rows)
         },
     )
