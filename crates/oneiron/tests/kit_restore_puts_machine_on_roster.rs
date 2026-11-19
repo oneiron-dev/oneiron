@@ -19,6 +19,12 @@
 //! private-world restore fails, the owner act refuses "no carrier", and the
 //! replaced kit restores. Red at R4 PR 2 alone: no roster row, and the
 //! replaced kit restores.
+//!
+//! REVIEW-9534 P1 (kit_restore.rs:190): a fresh machine born of a restore,
+//! which the kit's R joins and puts on the roster, still gets the kit
+//! anchor's own mark. Under R's roster row alone, a newer kit replacing R on
+//! another install before it saw the join would expire the copy's standing
+//! under its pinned anchor. Red at #9534 9810c3dc: no mark.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test kit_restore_puts_machine_on_roster`.
 #![cfg(oneiron_test_support)]
@@ -409,4 +415,33 @@ fn a_kit_a_newer_kit_replaced_is_refused_before_any_write() {
         .restore(&new_issued, new.activated.root)
         .expect("the newest kit restores");
     fresh.assert_on_roster_by(&r);
+}
+
+#[test]
+fn a_restored_machines_kit_restore_marks_it_in_the_kits_anchor_chain() {
+    let source = source();
+    let issued = source.issue();
+    let confirmed = source.confirm(&issued);
+    let r = source.live_r();
+    let fresh = source.fresh();
+
+    fresh
+        .restore(&issued, confirmed.activated.root)
+        .expect("the kit restores on the fresh machine");
+    fresh.assert_on_roster_by(&r);
+    let (machine, key) = fresh.me();
+    let fold = fresh.vault.authority_fold().expect("the fold");
+    let anchor = fold
+        .pinned_root
+        .as_ref()
+        .expect("the kit's root is pinned")
+        .anchor_key;
+    let mark = fold
+        .machine(machine)
+        .and_then(|folded| folded.anchored.get(&anchor))
+        .expect("the kit's anchor marks the restored machine in its own chain");
+    assert!(
+        mark.says_yours() && mark.profile.machine_key == key,
+        "the anchor's own mark stands live, Owned(Yours), under this install's key: {mark:?}"
+    );
 }

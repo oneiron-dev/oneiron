@@ -266,6 +266,22 @@ reaches the other's keys. If the directory cannot be synced after the swap,
 the restore still reports success, with a `durability_warning` that names the previous vault:
 the swap is done, but a crash before the disk flushes may undo it.
 
+A restore where no vault is makes a new machine of the vault, marked with the backup it came
+from. It carries nothing until it joins: a machine of the vault that has joined pairs it. When
+no such machine is left, say so on the restored install:
+
+```sh
+# stop `oneiron serve` first
+oneiron restore --join
+```
+
+The configured host root, your owner key on a self-host vault, files this install's enrolment
+and signs your word that no other machine is left. The output names the machine (`machine`),
+the backup's checkpoint image (`restored_from`), its role (`unanswered` until you answer whose
+machine it is) and the revision. On an install that has joined it changes nothing. It refuses,
+and writes nothing, on an install no restore made, on a vault that is not self-hosted, and
+where this install holds no host root: pair the install from a machine of the vault instead.
+
 A restore refuses, and changes nothing, when:
 
 - the vault is in use (stop `serve`);

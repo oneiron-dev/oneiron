@@ -290,6 +290,23 @@ pub(super) fn check_composed_append_policy(
     check_append_policy_labelled(vault, txn, id, input, bytes, composed_append_source())
 }
 
+/// The gate check of a record that holds no words, only the typed refs of
+/// what the engine observed under its writer's actor, labelled observed
+/// (ARCH-0040: witnessed behaviour): a plan run's result filed into its
+/// sub-session. Observed needs no explicit auto permit, so a person's filing
+/// meets the person's own ceiling, where a generated label would pend it on
+/// source trust (FIX PLAN-RUN-RESULT-NOT-FILED-IN-OWNER-ROOM). Generated
+/// words never take this label ([`check_composed_append_policy`]).
+pub(super) fn check_observed_append_policy(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    input: &AppendRecord,
+    bytes: &[u8],
+) -> Result<()> {
+    check_append_policy_labelled(vault, txn, id, input, bytes, ClaimSource::Observed)
+}
+
 /// The gate check of a Retry's assistant TURN: the transcript gate the
 /// witness gives the reply it answers again
 /// ([`crate::gate::check_witness_turn_ceiling`]). The witness mints the first

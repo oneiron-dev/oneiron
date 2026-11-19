@@ -139,7 +139,7 @@ pub struct MaintainArgs {
 #[derive(Args, Clone, Debug)]
 pub struct RestoreArgs {
     /// The backup file.
-    #[arg(required_unless_present = "activate")]
+    #[arg(required_unless_present_any = ["activate", "join"])]
     pub backup: Option<PathBuf>,
 
     /// Activate the previous vault a restore set aside at this path, which
@@ -234,6 +234,21 @@ pub struct RestoreArgs {
     /// with the kit alone, in place of the folder beside the backup.
     #[arg(long, value_name = "URL", conflicts_with_all = ["activate", "rehearse", "inspect"])]
     pub custody_home: Option<String>,
+
+    /// Restore nothing: join this install, which a restore where no vault was
+    /// made, to its vault, as the owner's word that no other machine of the
+    /// vault is left to pair it. The configured host root, an owner key on a
+    /// self-host vault, files the install's enrolment and signs the word.
+    /// While a machine of the vault that has joined is left, pair this
+    /// install from it instead. Stop `serve` first.
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "backup", "activate", "rehearse", "inspect", "open_pads", "pad_machine",
+            "custody_home", "trust", "capsule", "wrap_to",
+        ]
+    )]
+    pub join: bool,
 
     #[command(flatten)]
     pub wrap: RestoreWrapArgs,

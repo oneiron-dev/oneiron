@@ -65,6 +65,7 @@ pub(super) fn anchor_on(host: &Host, seed: &RecoveryRootSeed, request: &MachineE
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     });
     let entry = anchor_signed_entry(&fold, &seed.anchor(), mark, 2).unwrap();
     host.vault

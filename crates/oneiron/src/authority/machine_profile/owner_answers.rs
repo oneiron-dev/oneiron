@@ -125,6 +125,11 @@ impl MachineRevision {
 /// `needs_proof_off_the_line`: the answer lies outside a proving owner-key
 /// enrolment's line ([`super::super::owner_key_line`]), so a carrier that is
 /// not the owner's needs the proof whatever the parents hold.
+/// `proof_parents`: the parents as they were before a restored target's held
+/// chains were laid under `state` (row RESTORED-COPIES-ENROL-EACH-OTHER);
+/// whether the answer needs the proof is judged on them, so a held chain
+/// never makes its target read as already the owner's (REVIEW-9509 round 2
+/// P1). `None`: `state` is the parents'.
 pub(in crate::authority) fn apply_owner_answer(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -132,7 +137,7 @@ pub(in crate::authority) fn apply_owner_answer(
     hash: AuthorityEntryHash,
     (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
-    needs_proof_off_the_line: bool,
+    (needs_proof_off_the_line, proof_parents): (bool, Option<&FoldState>),
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let (Some(carrier), Some(act)) = (profile.carrier, profile.act) else {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
@@ -195,15 +200,21 @@ pub(in crate::authority) fn apply_owner_answer(
     // Outside a proving owner-key enrolment's line (row
     // CARRIER-PROOF-OLD-PARENTS), a carrier that is not the owner's needs the
     // proof as if the parents held that key.
-    if proof.is_none()
-        && ((needs_proof_off_the_line && !carrier_is_mine)
-            || super::super::owner_proof::machine_answer_needs_proof(
-                state,
-                profile,
-                carrier_is_mine,
-                target_key,
-            ))
-    {
+    let needs_proof = || match proof_parents {
+        Some(parents) => super::super::owner_proof::machine_answer_needs_proof(
+            parents,
+            profile,
+            carrier_is_mine,
+            Standing::new(parents, pin, counted).trusted_key(profile.machine, roster),
+        ),
+        None => super::super::owner_proof::machine_answer_needs_proof(
+            state,
+            profile,
+            carrier_is_mine,
+            target_key,
+        ),
+    };
+    if proof.is_none() && ((needs_proof_off_the_line && !carrier_is_mine) || needs_proof()) {
         super::super::owner_proof::hold_answer(state, hash, folded);
         return Ok(());
     }
