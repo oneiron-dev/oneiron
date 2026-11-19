@@ -73107,7 +73107,7 @@
      "path": "src/schedule/mod.rs",
      "purpose": "The Schedule primitive (DESIGN 15-setting-primitive, stage 0.2): one record that a job is due at a time, in…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 4,
       "fn": 2,
       "re-export": 4,
@@ -73125,7 +73125,7 @@
      "path": "src/schedule/run.rs",
      "purpose": "The one runner: every armed job that is due, in due order, within the pass's budget",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 2,
       "struct": 2
