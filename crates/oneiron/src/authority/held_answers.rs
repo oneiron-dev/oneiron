@@ -291,9 +291,9 @@ impl Vault {
                     entry: *entry,
                     answer: answer.clone(),
                     standing: role_of(*machine),
-                    revision: fold
-                        .machine(*machine)
-                        .map_or([0; 32], FoldedMachine::answer_revision),
+                    revision: fold.machine(*machine).map_or([0; 32], |folded| {
+                        folded.answer_revision(fold.pinned_root.as_ref())
+                    }),
                     carrier_reading,
                     carrier_role: carrier_reading.and_then(|reading| reading.role),
                     carrier_is_mine: carrier_reading.is_some_and(|reading| reading.is_mine),

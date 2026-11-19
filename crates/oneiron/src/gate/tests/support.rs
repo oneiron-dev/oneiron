@@ -23,6 +23,21 @@ pub(super) fn temp_vault() -> (tempfile::TempDir, crate::Vault) {
     (tmp, vault)
 }
 
+/// Opens a temporary vault that keeps the seeded default policy manifest.
+///
+/// A pipeline run reads claim-aging profiles from that row before any channel
+/// and fails closed with `EntityNotFound` when it is gone (cause P, FIX row
+/// PIPELINE-LIBTEST-CLEARED-MANIFEST-ENTITYNOTFOUND). Only the scoped-read
+/// tests that run the pipeline use this opener; every other gate test stays on
+/// [`temp_vault`], which clears all manifests for the policy, default-deny and
+/// legacy paths they pin.
+pub(super) fn temp_vault_with_manifest() -> (tempfile::TempDir, crate::Vault) {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let vault =
+        crate::Vault::open(tmp.path(), crate::config::VaultConfig::default()).expect("open vault");
+    (tmp, vault)
+}
+
 pub(super) fn clear_policy_manifests_for_test(vault: &crate::Vault) {
     vault
         .with_write_txn(|wtxn| {

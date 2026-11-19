@@ -468,6 +468,7 @@ fn unanswered_profile(vault_id: &[u8; 32], owner: EntityId) -> MachineProfile {
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     }
 }
 

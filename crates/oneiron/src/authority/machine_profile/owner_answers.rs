@@ -69,13 +69,20 @@ impl SaySo {
 }
 
 impl FoldedMachine {
-    /// This machine's revision as a deciding surface shows the owner (C5):
-    /// the digest of its live chains' heads, the roster's and every
-    /// anchor's, zero for none. The writer compares an answer's `seen` with
-    /// it; replicas derive what an answer supersedes from its parents.
+    /// This machine's revision as a deciding surface shows the owner (C5) on
+    /// an install with `pin`: the digest of the heads it stands under there
+    /// ([`Self::standing_heads`]), the roster's and the pinned anchor's,
+    /// zero for none. Another anchor's mark never moves it (FIX
+    /// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES). The writer
+    /// compares an answer's `seen` with it; replicas derive what an answer
+    /// supersedes from its parents.
     #[must_use]
-    pub fn answer_revision(&self) -> [u8; 32] {
-        machine_answer_revision(self.chains().map(|(_, chain)| chain.entry))
+    pub fn answer_revision(&self, pin: Option<&PinnedRoot>) -> [u8; 32] {
+        machine_answer_revision(
+            self.standing_heads(pin)
+                .into_iter()
+                .map(|chain| chain.entry),
+        )
     }
 }
 
@@ -262,11 +269,14 @@ pub(in crate::authority) fn apply_owner_answer(
     Ok(())
 }
 
-/// Whether an admitted answer still stands in `state`: its carrier is still
-/// admitted under the key that signed it, or every chain that admitted it at
-/// the act's parents and no longer does lost it only by revisions that saw
-/// the act (FIX 2998's removal race, mesh contract §4). Read off the raw
-/// chains, so judging one machine never folds another's answers. A role
+/// Whether an admitted answer still stands in `state`: its carrier's roster
+/// chain still names the key that signed it live, or that chain lost it at
+/// the act's parents only by revisions that saw the act (FIX 2998's removal
+/// race, mesh contract §4). The one carrier rule's reading
+/// (`owner_act_signer_admits`): an anchor's chain
+/// neither removes the carrier here nor keeps its answer standing (RULING
+/// FOREIGN-ANCHOR-ADMIT-SIDE-P1 = B; Astra T1 and T5 on #8673). Read off the
+/// raw chain, so judging one machine never folds another's answers. A role
 /// change between linked roles takes nothing away: only a removal or a new
 /// key does.
 pub(in crate::authority) fn act_stands(
@@ -274,40 +284,32 @@ pub(in crate::authority) fn act_stands(
     proof: &ActProof,
     act: &AuthorityEntryHash,
 ) -> bool {
-    let Some(chains) = state.machines.get(&proof.carrier) else {
+    let Some(chain) = state
+        .machines
+        .get(&proof.carrier)
+        .and_then(|chains| chains.get(&MachineAdmitter::Roster))
+    else {
         return false;
     };
-    let names_key = |chain: &MachineChain| {
-        !chain.head.removed && !chain.head.conflicted && chain.head.profile.machine_key == proof.key
-    };
-    if chains.values().all(|chain| !chain.head.removed) && chains.values().any(names_key) {
+    if !chain.head.removed && !chain.head.conflicted && chain.head.profile.machine_key == proof.key
+    {
         return true;
     }
-    let mut reasons = false;
-    for (admitter, mark) in &proof.marks {
-        let Some(chain) = chains.get(admitter) else {
-            return false;
-        };
-        if names_key(chain) {
-            continue;
-        }
-        reasons = true;
-        let mut takers = chain
-            .revisions
-            .iter()
-            .filter(|(hash, revision)| {
-                !mark.prior.contains(*hash)
-                    && (revision.profile().role == MachineRole::Removed
-                        || revision.profile().machine_key != proof.key)
-            })
-            .peekable();
-        let saw = takers.peek().is_some()
-            && takers.all(|(_, revision)| revision.profile().seen_world_edits.contains(act));
-        if chain.head.conflicted || !saw {
-            return false;
-        }
-    }
-    reasons
+    let Some(mark) = proof.marks.get(&MachineAdmitter::Roster) else {
+        return false;
+    };
+    let mut takers = chain
+        .revisions
+        .iter()
+        .filter(|(hash, revision)| {
+            !mark.prior.contains(*hash)
+                && (revision.profile().role == MachineRole::Removed
+                    || revision.profile().machine_key != proof.key)
+        })
+        .peekable();
+    let saw = takers.peek().is_some()
+        && takers.all(|(_, revision)| revision.profile().seen_world_edits.contains(act));
+    !chain.head.conflicted && saw
 }
 
 /// The heads of `T(X)` that count for the owner's say-so: each head another

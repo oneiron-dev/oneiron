@@ -2,6 +2,7 @@
 
 use super::support::*;
 use super::*;
+use crate::registry::ENTITY_TYPE_RELATIONSHIP;
 
 /// T9: on a ROOTED vault the three owner verbs demand a folded ACTIVE
 /// human-class binding. This is the ESB-C fix: asserting `human` at the
@@ -630,6 +631,17 @@ fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
     use crate::federation::ScopeAxis;
     let (_dir, vault) = open_vault();
     let owner = put_owner(&vault);
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &EntityId::from_bytes([0x6E; 16]).unwrap(),
+            ENTITY_TYPE_RELATIONSHIP,
+            test_time(1),
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let (spaced, unscoped) = (EntityId::now(), EntityId::now());
     let mut messages = Vec::new();
     for (order, (id, content, rel)) in [
@@ -748,6 +760,17 @@ fn narrower_embedded_owner_reads_past(reason: crate::deletion::DeleteReason) {
         .ensure_embedded_owner_actor()
         .expect("the embedded owner");
     let author = put_person(&vault, 0x6C);
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &EntityId::from_bytes([0x6B; 16]).unwrap(),
+            ENTITY_TYPE_RELATIONSHIP,
+            test_time(1),
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let (spaced, unscoped) = (EntityId::now(), EntityId::now());
     let mut messages = Vec::new();
     for (order, (id, content, rel)) in [
