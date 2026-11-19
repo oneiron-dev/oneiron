@@ -15,6 +15,7 @@ fn owner_verbs_require_active_owner_binding_when_rooted() {
     let subject = put_person(&vault, 0x60);
     let owner_facade = facade_for(&vault, owner);
     let agent_facade = vault.memory(agent, EdgeActorClass::Agent);
+    grant_reads(&vault, agent);
     let agent_claim = agent_facade
         .claim_upsert(&claim_input(
             "profile.mood",
@@ -118,6 +119,7 @@ fn owner_verbs(facade: &Memory<'_>, claim: &str, subject: EntityId) -> [MemoryRe
 
 /// An agent's claim about `subject`, for an owner to retract.
 fn agent_claim(vault: &crate::Vault, agent: EntityId, subject: EntityId, seed: u8) -> String {
+    grant_reads(vault, agent);
     vault
         .memory(agent, EdgeActorClass::Agent)
         .claim_upsert(&claim_input(
@@ -1530,6 +1532,7 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
     let facade = facade_for(&vault, owner);
 
     let agent = put_person(&vault, 0x6D);
+    grant_reads(&vault, agent);
     let claim = vault
         .memory(agent, EdgeActorClass::Agent)
         .claim_upsert(&claim_input(
@@ -1625,6 +1628,7 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
     let facade = facade_for(&vault, attacker);
 
     let agent = put_person(&vault, 0x7A);
+    grant_reads(&vault, agent);
     let claim = vault
         .memory(agent, EdgeActorClass::Agent)
         .claim_upsert(&claim_input(

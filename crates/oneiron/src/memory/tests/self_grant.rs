@@ -90,6 +90,7 @@ fn foreign_claim_upsert_retract_and_same_id_put_cannot_erase_history() {
     let (_dir, vault) = open_vault();
     let author = put_person(&vault, 0x31);
     let subject = put_person(&vault, 0x32);
+    grant_reads(&vault, author);
     let mut first = claim_input(
         "profile.name",
         &subject,
@@ -159,6 +160,8 @@ fn runtime_supersede_trap_refuses_foreign_authored_head_before_receipts() {
     let author = put_person(&vault, 0x41);
     let attacker = put_person(&vault, 0x42);
     let subject = put_person(&vault, 0x43);
+    grant_reads(&vault, author);
+    grant_reads(&vault, attacker);
     for (actor, claim_id, value) in [
         (author, id(0x44), "original"),
         (attacker, id(0x45), "other"),
@@ -269,6 +272,8 @@ fn conflict(vault: &crate::Vault) -> ConflictFixture {
 fn conflict_bound_to(vault: &crate::Vault, owner: EntityId) -> ConflictFixture {
     let author = put_person(vault, 0x62);
     let subject = put_person(vault, 0x63);
+    grant_reads(vault, author);
+    grant_reads(vault, subject);
     root_vault_binding(vault, 0x64, owner, "human");
     let mut input = claim_input(
         "profile.reliability",
