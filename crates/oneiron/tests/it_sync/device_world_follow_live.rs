@@ -99,6 +99,9 @@ pub(super) struct TombstoneHome {
     pub(super) served: Mutex<HashMap<String, Vec<(String, Vec<u8>)>>>,
     /// The windows of the `residence.tombstones` asks, in order.
     pub(super) asks: Mutex<Vec<String>>,
+    /// The windows whose `residence.tombstones` asks the home refuses, as
+    /// its send door refuses a window gone unreadable to the machine.
+    pub(super) refused_windows: Vec<String>,
     /// Whether the home refuses every followed window (`FOLLOW_REFUSED`).
     pub(super) refuse_follows: bool,
 }
@@ -291,7 +294,8 @@ impl FakeHome {
         if let Some(tombstones) = &self.tombstones
             && request.method == "residence.tombstones"
         {
-            return answer_tombstones(tombstones, &request);
+            return refuse_tombstones(tombstones, &request)
+                .unwrap_or_else(|| answer_tombstones(tombstones, &request));
         }
         if let Some(predicted) = &self.predicted
             && request.method != "residence.index"
@@ -374,6 +378,25 @@ fn answer_tombstones(home: &TombstoneHome, request: &RpcRequest) -> Vec<Vec<u8>>
         request.id,
         Value::Binary(rmp_serde::to_vec_named(&page).expect("encode the tombstone page")),
     )]
+}
+
+/// The home's refusal of a `residence.tombstones` ask for a window named in
+/// `refused_windows` (`RESULT_CHANGED`, the send door's answer for a window
+/// gone unreadable to the machine), recording the ask; `None` for any other
+/// window.
+fn refuse_tombstones(home: &TombstoneHome, request: &RpcRequest) -> Option<Vec<Vec<u8>>> {
+    if !home.refused_windows.contains(&request.window) {
+        return None;
+    }
+    home.asks
+        .lock()
+        .expect("the recorded tombstone asks")
+        .push(request.window.clone());
+    Some(vec![rpc_envelope(
+        "rpc.err",
+        request.id,
+        Value::Map(vec![(Value::from("code"), Value::from("RESULT_CHANGED"))]),
+    )])
 }
 
 /// Answers one predicted residence RPC: `residence.predict` records the ask and answers

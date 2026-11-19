@@ -351,6 +351,136 @@ async fn empty_tombstone_value_lands_hard_beside_the_others() {
     );
 }
 
+/// Case 6: the device follows world P, whose old window A and current window
+/// B the home lists. The home refuses A's tombstone ask, as its send door
+/// refuses a window gone unreadable to this machine before the page is
+/// released, and answers B with a hard delete of item E. The device still
+/// writes `dt:E` (blind review 2 of #9593). Before, A's refusal ended the
+/// whole pass: B was never asked, and E stayed unapplied on the connection.
+#[test]
+fn a_refused_window_leaves_the_next_windows_deletes_going() {
+    on_engine_stack(
+        "a_refused_window_leaves_the_next_windows_deletes_going",
+        refused_window_leaves_the_next_windows_deletes_going,
+    );
+}
+
+async fn refused_window_leaves_the_next_windows_deletes_going() {
+    let device = Device::open();
+    let at = now_secs();
+    let old = WindowKey::for_world(at - TWO_YEARS_SECS, device.founder);
+    let current = WindowKey::for_world(at, device.founder);
+    let item = EntityId::now();
+    let tombstones = Arc::new(TombstoneHome {
+        refused_windows: vec![old.as_str().to_owned()],
+        ..TombstoneHome::default()
+    });
+    tombstones
+        .served
+        .lock()
+        .expect("the served tombstones")
+        .insert(
+            current.as_str().to_owned(),
+            vec![(item.to_hex(), hard_tombstone(at))],
+        );
+    let (url, home, release_index) = FakeHome::start_tombstones(
+        root_listing(&[WindowKey::from_timestamp(at), old.clone(), current.clone()]),
+        Arc::clone(&tombstones),
+    )
+    .await;
+    release_index.send(()).expect("the index read is not held");
+    let connection = opened_connection(&device, url);
+    connection
+        .set_followed_worlds([device.founder].into_iter().collect())
+        .expect("the owner's pick");
+    let _watch = sync_once(&connection, home).await;
+
+    let asks = tombstones.asks.lock().expect("the recorded asks").clone();
+    assert_eq!(
+        asks.first(),
+        Some(&old.as_str().to_owned()),
+        "FIXTURE: the refused window is asked first ({asks:?})",
+    );
+    assert!(
+        marked(&device, item),
+        "a later window's delete lands after an earlier window's refusal ({asks:?})",
+    );
+}
+
+/// Case 7: the device holds a live PERSON row E, which lives in base
+/// reality's windows, never in world P's. The home answers P's window with a
+/// hard delete of E, a tombstone this device's own window replay refuses as
+/// outside the window's residence. The device keeps E and writes no `dt:E`
+/// (blind review 2 of #9593). Before, the answer purged E and wrote the
+/// global marker.
+#[test]
+fn a_row_held_in_another_window_keeps_its_residence_veto() {
+    on_engine_stack(
+        "a_row_held_in_another_window_keeps_its_residence_veto",
+        row_held_in_another_window_keeps_its_residence_veto,
+    );
+}
+
+async fn row_held_in_another_window_keeps_its_residence_veto() {
+    let device = Device::open();
+    let at = now_secs();
+    let founder = WindowKey::for_world(at, device.founder);
+    let item = EntityId::now();
+    device
+        .vault
+        .put_entity(
+            &item,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::temporal::TimeRange { start: at, end: at },
+            at,
+            b"a base-reality row",
+        )
+        .expect("FIXTURE: the device's live row");
+    let tombstones = Arc::new(TombstoneHome::default());
+    tombstones
+        .served
+        .lock()
+        .expect("the served tombstones")
+        .insert(
+            founder.as_str().to_owned(),
+            vec![(item.to_hex(), hard_tombstone(at))],
+        );
+    let (url, home, release_index) = FakeHome::start_tombstones(
+        root_listing(&[WindowKey::from_timestamp(at), founder.clone()]),
+        Arc::clone(&tombstones),
+    )
+    .await;
+    release_index.send(()).expect("the index read is not held");
+    let connection = opened_connection(&device, url);
+    connection
+        .set_followed_worlds([device.founder].into_iter().collect())
+        .expect("the owner's pick");
+    let _watch = sync_once(&connection, home).await;
+
+    assert!(
+        tombstones
+            .asks
+            .lock()
+            .expect("the recorded asks")
+            .contains(&founder.as_str().to_owned()),
+        "FIXTURE: the device asks for its followed window's tombstones",
+    );
+    assert!(
+        !marked(&device, item),
+        "WRONG DELETE: a row this device places in another window takes a delete marker from P's answer",
+    );
+    assert!(
+        device
+            .vault
+            .get_raw(&item)
+            .expect("read the row")
+            .is_some_and(
+                |raw| raw.len() > oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN
+            ),
+        "WRONG DELETE: the row this device places in another window stays live",
+    );
+}
+
 /// Case 3: the owner picked worlds P and K, but K's read setting keeps it on
 /// the owner's machines, which this device is not. The device asks for P's
 /// tombstones and never for K's, and takes no marker from K's window, even
