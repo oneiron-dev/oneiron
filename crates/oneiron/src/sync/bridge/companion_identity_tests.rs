@@ -236,11 +236,17 @@ fn replica_of(host: &Host) -> (tempfile::TempDir, Vault) {
 
 /// One type-74 row a peer minted, delivered as its replicated blob.
 fn deliver_row(vault: &Vault, id: EntityId, row: &StoredIdentityOpEvent) {
-    let mut blob = vec![ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT];
-    for stamp in [row.at; 3] {
-        blob.extend_from_slice(&stamp.to_be_bytes());
-    }
-    blob.extend_from_slice(&encode_identity_topology_event_body(row).unwrap());
+    // Fresh test carrier: row_version 0, the value base writes for a new row.
+    let blob = crate::test_util::entity_record(
+        ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        TimeRange {
+            start: row.at,
+            end: row.at,
+        },
+        row.at,
+        0,
+        &encode_identity_topology_event_body(row).unwrap(),
+    );
     deliver_blob(vault, &id, &blob).unwrap();
     assert!(vault.get_raw(&id).unwrap().is_some(), "stored, not refused");
 }

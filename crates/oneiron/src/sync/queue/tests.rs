@@ -39,10 +39,11 @@ impl Drop for ReceiverScrubFailureReset {
     }
 }
 
-fn test_vault() -> Arc<Vault> {
+fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
     let config = VaultConfig::device();
-    Arc::new(Vault::open(dir.path(), config).unwrap())
+    let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
+    (dir, vault)
 }
 
 fn arm_purge_failures(count: u32) -> PurgeFailureReset {
@@ -160,7 +161,7 @@ fn assert_receiver_outbox_intact(vault: &Vault, outbox: &ReceiverOutboxFixture) 
 
 #[test]
 fn push_rejects_invalid_window_key_without_burning_sequence() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let queue = SyncQueue::new(vault).unwrap();
 
     let err = queue
@@ -195,7 +196,7 @@ fn push_rejects_invalid_window_key_without_burning_sequence() {
 
 #[test]
 fn clear_all_preserves_hard_erase_sweeps_and_metadata_counters() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let queue = SyncQueue::new(vault.clone()).unwrap();
 
     let update_seq = queue.push("2026-03", &[1]).unwrap();
@@ -364,7 +365,7 @@ fn clear_all_preserves_hard_erase_sweeps_and_metadata_counters() {
 /// encoder.
 #[test]
 fn push_delete_bearing_writes_literal_sidecar_marker() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let queue = SyncQueue::new(vault.clone()).unwrap();
 
     queue.push("2026-03", &[1]).unwrap();
@@ -398,7 +399,7 @@ fn push_delete_bearing_writes_literal_sidecar_marker() {
 /// lost offline GDPR delete.
 #[test]
 fn clear_through_keeps_delete_bearing_until_confirmed() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let queue = SyncQueue::new(vault.clone()).unwrap();
 
     queue.push("2026-03", &[1]).unwrap();
@@ -455,7 +456,7 @@ fn clear_through_keeps_delete_bearing_until_confirmed() {
 #[test]
 fn bulk_clears_preserve_delete_bearing_rows() {
     for clear in ["clear_updates", "clear_all"] {
-        let vault = test_vault();
+        let (_dir_vault, vault) = test_vault();
         let queue = SyncQueue::new(vault.clone()).unwrap();
 
         queue.push("2026-03", &[1]).unwrap();
@@ -490,7 +491,7 @@ fn bulk_clears_preserve_delete_bearing_rows() {
 /// exemptions to a future unrelated row at a reused sequence.
 #[test]
 fn prune_removes_sidecar_marker_with_its_malformed_q_row() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let queue = SyncQueue::new(vault.clone()).unwrap();
 
     queue.push("2026-03", &[1]).unwrap();
@@ -541,7 +542,7 @@ fn prune_removes_sidecar_marker_with_its_malformed_q_row() {
 /// but its presence keeps the seq out of circulation — fail closed).
 #[test]
 fn orphan_sidecar_marker_never_poisons_a_reused_seq() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let queue = SyncQueue::new(vault.clone()).unwrap();
 
     // Inject an orphan d:1 with NO q: rows and NO metadata cursor —
@@ -586,7 +587,7 @@ fn orphan_sidecar_marker_never_poisons_a_reused_seq() {
 /// families are untouched.
 #[test]
 fn scrub_window_updates_drops_only_target_window_payload_rows() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let queue = SyncQueue::new(vault.clone()).unwrap();
 
     let target_payload = queue.push("2026-02", &[0xAA]).unwrap();
@@ -682,7 +683,7 @@ fn scrub_window_updates_drops_only_target_window_payload_rows() {
 
 #[test]
 fn receiver_live_hard_tombstone_scrubs_window_outbox_and_sets_fr() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let outbox = seed_receiver_outbox(&vault);
     let victim = EntityId::now();
     put_receiver_entity(&vault, &victim, b"payload to erase");
@@ -707,7 +708,7 @@ fn receiver_live_hard_tombstone_scrubs_window_outbox_and_sets_fr() {
 
 #[test]
 fn receiver_forward_remat_hard_tombstone_scrubs_window_outbox_and_sets_fr() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let outbox = seed_receiver_outbox(&vault);
     let victim = EntityId::now();
     put_receiver_entity(&vault, &victim, b"payload to erase");
@@ -732,7 +733,7 @@ fn receiver_forward_remat_hard_tombstone_scrubs_window_outbox_and_sets_fr() {
 
 #[test]
 fn receiver_forward_remat_scrub_failure_keeps_outbox_and_sets_rm_retry() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let outbox = seed_receiver_outbox(&vault);
     let victim = EntityId::now();
     put_receiver_entity(&vault, &victim, b"payload purged before scrub failure");
@@ -766,7 +767,7 @@ fn receiver_forward_remat_scrub_failure_keeps_outbox_and_sets_rm_retry() {
 
 #[test]
 fn receiver_live_failed_hard_apply_keeps_outbox_and_sets_rm_retry() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let outbox = seed_receiver_outbox(&vault);
     let victim = EntityId::now();
     put_receiver_entity(&vault, &victim, b"payload still live on injected failure");
@@ -807,7 +808,7 @@ fn receiver_live_failed_hard_apply_keeps_outbox_and_sets_rm_retry() {
 /// healed by the full resync; leaking is not healable).
 #[test]
 fn scrub_window_updates_drops_malformed_rows() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let queue = SyncQueue::new(vault.clone()).unwrap();
     queue.push("2026-03", &[1]).unwrap();
 
@@ -869,7 +870,7 @@ fn scrub_window_updates_drops_malformed_rows() {
 /// permanent re-bootstrap loop.
 #[test]
 fn is_full_excludes_delete_bearing_rows_from_capacity() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let queue = SyncQueue::new(vault.clone()).unwrap();
 
     // Seed MAX_QUEUE_SIZE delete-bearing rows in ONE txn (the public
@@ -935,7 +936,7 @@ fn is_full_excludes_delete_bearing_rows_from_capacity() {
 /// malformed-row pruning) never touch quarantine rows or counters.
 #[test]
 fn clear_updates_and_clear_through_preserve_quarantine_rows() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let queue = SyncQueue::new(vault.clone()).unwrap();
 
     let quarantine_seq = quarantine::quarantine_rejected_op(
@@ -1012,7 +1013,7 @@ fn clear_updates_and_clear_through_preserve_quarantine_rows() {
 
 #[test]
 fn multiple_handles_allocate_distinct_sequences() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let queue_a = SyncQueue::new(vault.clone()).unwrap();
     let queue_b = SyncQueue::new(vault).unwrap();
 
@@ -1070,7 +1071,7 @@ fn sequence_metadata_self_heals() {
     ];
 
     for (case_name, corruption, entry, existing_seq, expected_next) in cases {
-        let vault = test_vault();
+        let (_dir_vault, vault) = test_vault();
         let queue = SyncQueue::new(vault.clone()).unwrap();
 
         let mut wtxn = vault.store.env.write_txn().unwrap();
@@ -1126,7 +1127,7 @@ fn decode_last_update_seq_metadata_rejects_bad_len_without_panic() {
 
 #[test]
 fn clear_all_preserves_sequence_generation_for_stale_clear_through() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let queue = SyncQueue::new(vault).unwrap();
 
     for seq in 1..=5u8 {
@@ -1148,7 +1149,7 @@ fn clear_all_preserves_sequence_generation_for_stale_clear_through() {
 
 #[test]
 fn stale_but_parseable_metadata_repairs_upward_before_push() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let queue = SyncQueue::new(vault.clone()).unwrap();
 
     for seq in 1..=5u8 {
@@ -1207,7 +1208,7 @@ fn drain_updates_prunes_corrupt_rows() {
     ];
 
     for (case_name, bad_key, bad_value) in cases {
-        let vault = test_vault();
+        let (_dir_vault, vault) = test_vault();
         let queue = SyncQueue::new(vault.clone()).unwrap();
 
         queue.push("2026-03", &[1]).unwrap();
@@ -1266,7 +1267,7 @@ fn drain_embed_jobs_prunes_corrupt_rows() {
     ];
 
     for (case_name, bad_key, bad_value) in &cases {
-        let vault = test_vault();
+        let (_dir_vault, vault) = test_vault();
         let queue = SyncQueue::new(vault).unwrap();
         let initial_count = queue.drain_embed_jobs().unwrap().len();
 
@@ -1310,7 +1311,7 @@ fn drain_embed_jobs_prunes_corrupt_rows() {
 
 #[test]
 fn prune_malformed_rows_keeps_repaired_embed_row() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let queue = SyncQueue::new(vault).unwrap();
     let initial_count = queue.drain_embed_jobs().unwrap().len();
 
