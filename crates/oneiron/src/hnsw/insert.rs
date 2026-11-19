@@ -573,7 +573,7 @@ fn attach_backlinks_symmetric(
     selected: &[EntityId],
     ops: &mut u64,
 ) -> Result<()> {
-    for neighbor_id in selected {
+    for (position, neighbor_id) in selected.iter().enumerate() {
         let mut neighbors = load_neighbors(store, &*wtxn, neighbor_id)?;
         *ops += 1;
         if !neighbors.contains(id) {
@@ -615,6 +615,7 @@ fn attach_backlinks_symmetric(
                 neighbor_id,
                 pruned,
                 &neighbors,
+                &selected[position + 1..],
                 &lists,
                 config.hnsw.m_max_0,
             );

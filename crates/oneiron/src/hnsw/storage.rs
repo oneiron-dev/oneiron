@@ -245,15 +245,19 @@ pub(super) fn prune_neighbors_for_node(
 /// in. Such a candidate takes the place of a kept entry only when that entry
 /// stays joined to `node` both ways through another kept entry (`entry <->
 /// bridge <-> node`), so the swap never cuts the only path between two parts
-/// of the graph (review 9631 round 1). `pruned` is nearest-first and kept
-/// entries are tried farthest first; a sole-link entry is never swapped out.
-/// A sole-link candidate with no such swap falls to the one-way detach
-/// fallback. `lists` holds the current list of each candidate; a candidate
-/// missing from it counts as having no links.
+/// of the graph (review 9631 round 1). Neither the entry nor the bridge may be
+/// in `pending`, the nodes whose own backlink prune is still to run in this
+/// insert: that prune could drop the detour's edge after the swap relied on it
+/// (review 9631 round 2). `pruned` is nearest-first and kept entries are tried
+/// farthest first; a sole-link entry is never swapped out. A sole-link
+/// candidate with no such swap falls to the one-way detach fallback. `lists`
+/// holds the current list of each candidate; a candidate missing from it
+/// counts as having no links.
 pub(super) fn keep_sole_link_candidates(
     node: &EntityId,
     mut pruned: Vec<EntityId>,
     candidates: &[EntityId],
+    pending: &[EntityId],
     lists: &HashMap<EntityId, Vec<EntityId>>,
     max_neighbors: usize,
 ) -> Vec<EntityId> {
@@ -273,8 +277,10 @@ pub(super) fn keep_sole_link_candidates(
         }
         let swap = pruned.iter().rposition(|entry| {
             !is_sole_link(entry)
+                && !pending.contains(entry)
                 && pruned.iter().any(|bridge| {
                     bridge != entry
+                        && !pending.contains(bridge)
                         && neighbor_list_in(lists, entry).contains(bridge)
                         && neighbor_list_in(lists, bridge).contains(entry)
                         && neighbor_list_in(lists, bridge).contains(node)

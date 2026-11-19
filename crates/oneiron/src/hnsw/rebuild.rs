@@ -64,7 +64,7 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
         let selected: Vec<EntityId> = nearest.into_iter().map(|entry| entry.id).collect();
         neighbors_by_id.insert(*id, selected.clone());
 
-        for neighbor_id in &selected {
+        for (position, neighbor_id) in selected.iter().enumerate() {
             let mut neighbor_neighbors = neighbors_by_id.remove(neighbor_id).unwrap_or_default();
             if !neighbor_neighbors.contains(id) {
                 neighbor_neighbors.push(*id);
@@ -86,6 +86,7 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
                         neighbor_id,
                         pruned,
                         &neighbor_neighbors,
+                        &selected[position + 1..],
                         &neighbors_by_id,
                         config.hnsw.m_max_0,
                     );
