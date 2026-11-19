@@ -1,10 +1,12 @@
 use super::*;
 
+use crate::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
 use crate::attempt_queue::{
     AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
     EnqueueOutcome, ManifestEntry, ManifestKind,
 };
 use crate::config::VaultConfig;
+use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::receipt::attempt_pack_receipt_id;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::skill::SkillLifecycle;
@@ -110,18 +112,15 @@ fn stamped_receipt_for_as_model(
     model: Option<&str>,
 ) -> String {
     let queue = AttemptQueue::new(vault);
-    let EnqueueOutcome::Enqueued(attempt) = queue
-        .enqueue(EnqueueAttempt {
-            kind: "sk05.attempt".to_owned(),
-            payload: Vec::new(),
-            dedupe_key: None,
-            run_id: None,
-            now: 10,
-        })
-        .expect("enqueue")
+    let dispatcher = AgentDispatcher::new(vault);
+    let now = vault.now_recorded_at();
+    let AgentDispatchOutcome::Dispatched(dispatched) = dispatcher
+        .dispatch_default_base(None, None, None, now)
+        .expect("enqueue typed agent dispatch")
     else {
-        panic!("a fresh dedupe-free enqueue is never Existing");
+        panic!("a fresh dedupe-free dispatch is never Existing");
     };
+    let attempt = dispatched.attempt;
     if let Some(actor) = actor {
         vault
             .bind_actor_attempt(attempt.id, &actor)
@@ -130,21 +129,22 @@ fn stamped_receipt_for_as_model(
     queue
         .append_manifest_entry(
             attempt.id,
-            ManifestEntry::new(ManifestKind::Skill, skill_id, version, 11),
+            ManifestEntry::new(ManifestKind::Skill, skill_id, version, now),
         )
         .expect("manifest append");
     let ClaimOutcome::Claimed(leased) = queue
         .claim_kind(
-            "sk05.attempt",
+            DREAMER_RUNNER_ATTEMPT_KIND,
             ClaimAttempt {
                 lease_owner: "sk05-worker".to_owned(),
-                now: 12,
+                now: vault.now_recorded_at(),
             },
         )
         .expect("claim")
     else {
         panic!("the enqueued attempt is claimable");
     };
+    assert_eq!(leased.id, attempt.id);
     queue
         .set_executor_model(
             attempt.id,
@@ -158,17 +158,25 @@ fn stamped_receipt_for_as_model(
             id: attempt.id,
             lease_owner: "sk05-worker".to_owned(),
             attempt_count: leased.attempt_count,
-            now: 13,
+            now: vault.now_recorded_at(),
         })
         .expect("complete")
     else {
         panic!("a leased attempt completes exactly once");
     };
     let receipt_id = attempt_pack_receipt_id(&attempt.id);
-    if model.is_none() {
-        crate::receipt::make_attempt_receipt_legacy_for_tests(vault, &receipt_id)
-            .expect("emulate older receipt without executor stamp");
-    }
+    // The projector mints numerical claims only for anchored outcomes
+    // (projector.rs:535-548): stamp the harness's held-out score beside the
+    // executor revision, so the credited outcome below moves the posterior.
+    let mut receipt = crate::receipt::attempt_pack_receipt(vault, &receipt_id)
+        .expect("read stamped pack receipt")
+        .expect("stamped pack receipt");
+    receipt.fields.insert(
+        FIELD_SKILL_LEARNING_ANCHOR.to_owned(),
+        serde_json::to_string(&crate::learning::Anchor::HeldOut).expect("anchor encodes"),
+    );
+    crate::receipt::overwrite_attempt_pack_receipt_for_test(vault, &receipt)
+        .expect("stamp fixture performance anchor");
     receipt_id
 }
 
@@ -200,6 +208,9 @@ fn route(
 ///
 /// `vault_meta` never travels, so this is exactly what device B sees after
 /// device A projects — the posterior arrives, the ledger under it does not.
+/// The value is a current-format typed estimate (claim/core_types.rs:140-141
+/// requires it via validate_learning_claim_structure); a bare {alpha,beta} map
+/// is refused at the write door.
 fn plant_synced_claim(
     vault: &Vault,
     skill: &EntityId,
@@ -207,11 +218,55 @@ fn plant_synced_claim(
     cited: &[&str],
     at: u64,
 ) -> EntityId {
+    use crate::learning::{
+        Estimate, EstimateForm, EstimateLabels, EstimateValue, LearningCell, Prior, PriorOrigin,
+        Window,
+    };
+    // The cell the local loss lands on: the root placement at the seeded tree
+    // version, the skill-outcome axis, and the vault's root project the typed
+    // dispatch froze (agent_dispatch/dispatch.rs:850).
+    let cell = LearningCell::new(crate::learning::LearningPredicate::Reliability, *skill)
+        .executor("fixture/model@1")
+        .type_ref(crate::receipt::task_type_ref::TypeRef::root(1))
+        .axis(SKILL_OUTCOME_AXIS.to_owned())
+        .project(Some(vault.root_project().expect("root project")));
+    let estimate = Estimate {
+        value: EstimateValue::Beta {
+            alpha: f64::from(posterior.alpha),
+            beta: f64::from(posterior.beta),
+        },
+        runs: f64::from(posterior.alpha + posterior.beta),
+        prior: Prior {
+            origin: PriorOrigin::Provenance,
+            value: EstimateValue::Beta {
+                alpha: 1.0,
+                beta: 1.0,
+            },
+            weight_runs: 2.0,
+            from: None,
+        },
+        of: "won".to_owned(),
+        labels: EstimateLabels::default(),
+        window: Window {
+            half_life: 7_776_000,
+        },
+        ver: crate::learning::ESTIMATOR_VERSION,
+    };
+    let untested = estimate.untested();
+    let stored = crate::learning::project::StoredEstimateClaim {
+        kind: "estimate".to_owned(),
+        form: EstimateForm::Beta,
+        cell,
+        estimate,
+        untested,
+        donor_tally: None,
+        frozen: None,
+    };
     let claim_id = EntityId::now();
     let mut body = ClaimBody::new(
         PREDICATE_SKILL_RELIABILITY,
         ClaimSubject::Entity(*skill),
-        posterior.to_value(),
+        stored.to_value().expect("typed estimate encodes"),
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
@@ -298,6 +353,42 @@ fn reliability_query() -> SkillReliabilityQuery {
         axis: SKILL_OUTCOME_AXIS.to_owned(),
         type_parents: Vec::new(),
         project: None,
+    }
+}
+
+// The typed read: the coordinates the dispatch froze beside the receipt's
+// typeRef (agent_dispatch/dispatch.rs:850, receipt/ledgers.rs:191), as the
+// projector cells evidence (projector.rs:53-82). A vault query (project None)
+// never borrows from a project cell (learning/read.rs:217-256,
+// learning/cell.rs:284), so a typed fixture reads its own runs only through
+// the receipt's coordinates.
+fn reliability_query_for_receipt(vault: &Vault, receipt_id: &str) -> SkillReliabilityQuery {
+    let receipt = crate::receipt::attempt_pack_receipt(vault, receipt_id)
+        .expect("read stamped receipt")
+        .expect("stamped receipt");
+    let type_ref = serde_json::from_str(
+        receipt
+            .fields
+            .get(FIELD_SKILL_TYPE_REF)
+            .expect("stamped typeRef"),
+    )
+    .expect("typeRef decodes");
+    let type_parents = receipt
+        .fields
+        .get("typeParents")
+        .map(|raw| serde_json::from_str(raw).expect("type parents decode"))
+        .unwrap_or_default();
+    let axis = receipt
+        .fields
+        .get("axis")
+        .cloned()
+        .unwrap_or_else(|| SKILL_OUTCOME_AXIS.to_owned());
+    let project = receipt.task_project().expect("project stamp decodes");
+    SkillReliabilityQuery {
+        type_ref,
+        axis,
+        type_parents,
+        project,
     }
 }
 
@@ -487,7 +578,8 @@ fn contributing_wins_raise_the_posterior_and_are_grounded_at_the_door() {
 
     let receipt = stamped_receipt(&vault, "sk05.skill.win");
     record_skill_contributing_win(&vault, &skill, &receipt, 20).expect("credit win");
-    let posterior = project_skill_reliability_for(&vault, &skill, 21).expect("project");
+    let posterior = project_skill_reliability_for_executor(&vault, &skill, "fixture/model@1", 21)
+        .expect("project");
     assert!(
         (posterior.alpha - 2.0).abs() < 1e-6,
         "unvetted prior α=1 + one win"
@@ -496,7 +588,8 @@ fn contributing_wins_raise_the_posterior_and_are_grounded_at_the_door() {
 
     // Same receipt twice = one win.
     record_skill_contributing_win(&vault, &skill, &receipt, 22).expect("re-credit");
-    let replayed = project_skill_reliability_for(&vault, &skill, 23).expect("re-project");
+    let replayed = project_skill_reliability_for_executor(&vault, &skill, "fixture/model@1", 23)
+        .expect("re-project");
     assert_eq!(replayed, posterior);
 
     // A skill the pack never loaded cannot claim the win.
@@ -580,21 +673,23 @@ fn the_reliability_claim_carries_exactly_the_posterior_and_cites_its_receipts() 
         "projector-written"
     );
     assert_eq!(body.subject, ClaimSubject::Entity(skill));
-    let posterior = body.value.as_map().expect("posterior map");
-    assert_eq!(
-        posterior.len(),
-        2,
-        "the value is {{alpha, beta}} and nothing else"
+    // The projector writes a typed StoredEstimateClaim (learning/project.rs:415-416),
+    // not a two-key {alpha,beta} map.
+    let stored = crate::learning::project::StoredEstimateClaim::from_value(&body.value)
+        .expect("typed estimate claim");
+    let crate::learning::EstimateValue::Beta { alpha, beta } = &stored.estimate.value else {
+        panic!("reliability is a Beta estimate");
+    };
+    assert!(
+        (alpha - 1.0).abs() < 1e-6,
+        "unvetted prior α=1 survives one loss"
     );
-    for key in [KEY_ALPHA, KEY_BETA] {
-        assert_eq!(
-            posterior
-                .iter()
-                .filter(|(k, _)| k.as_str() == Some(key))
-                .count(),
-            1
-        );
-    }
+    assert!((beta - 2.0).abs() < 1e-6, "unvetted prior β=1 + one loss");
+    assert_eq!(
+        stored.cell.executor.as_deref(),
+        Some("fixture/model@1"),
+        "the claim cells the executor that ran it"
+    );
     let cited = body
         .evidence
         .as_ref()
@@ -678,7 +773,8 @@ fn a_win_receipt_must_name_the_revision_it_credits() {
 
     let v2_receipt = stamped_receipt_for_revision(&vault, "sk05.skill.rev", "2.0.0");
     record_skill_contributing_win(&vault, &v2, &v2_receipt, 21).expect("the revision matches");
-    let posterior = project_skill_reliability_for(&vault, &v2, 22).expect("project");
+    let posterior = project_skill_reliability_for_executor(&vault, &v2, "fixture/model@1", 22)
+        .expect("project");
     assert!((posterior.alpha - 2.0).abs() < 1e-6);
 }
 
@@ -721,7 +817,8 @@ fn a_synced_posterior_is_the_base_a_local_loss_folds_onto() {
     );
 
     // Re-projecting must not fold the imported base a second time…
-    let replayed = project_skill_reliability_for(&vault, &skill, 31).expect("re-project");
+    let replayed = project_skill_reliability_for_executor(&vault, &skill, "fixture/model@1", 31)
+        .expect("re-project");
     assert_eq!(replayed, after, "the base is imported once, not per pass");
 
     // …and a second local loss still moves β by exactly one.
@@ -857,7 +954,8 @@ fn a_late_outcome_on_a_frozen_revision_keeps_its_outcome_and_claim() {
 
     let receipt = stamped_receipt_for_revision(&vault, "sk05.skill.frozen", "1.0.0");
     record_skill_contributing_win(&vault, &v1, &receipt, 22).expect("credit the frozen revision");
-    let posterior = project_skill_reliability_for(&vault, &v1, 23).expect("the projection lands");
+    let posterior = project_skill_reliability_for_executor(&vault, &v1, "fixture/model@1", 23)
+        .expect("the projection lands");
 
     assert!((posterior.alpha - 2.0).abs() < 1e-6);
     assert_eq!(
@@ -935,7 +1033,7 @@ fn archived_reliability_does_not_seed_a_posterior_cache_or_local_projection() ->
             at,
         )?;
     }
-    let native = project_skill_reliability_for(&source, &skill, 30)?;
+    let native = project_skill_reliability_for_executor(&source, &skill, "fixture/model@1", 30)?;
     assert_eq!(skill_reliability_posterior(&source, &skill)?, Some(native));
     let id = source
         .claims_for_subject(&skill)?
@@ -962,10 +1060,12 @@ fn archived_reliability_does_not_seed_a_posterior_cache_or_local_projection() ->
         rebuild_skill_confidence_cache(&target, &skill, 80)?,
         prior.mean()
     );
-    let projected = project_skill_reliability_for(&target, &skill, 81)?;
+    let projected = project_skill_reliability_for_executor(&target, &skill, "fixture/model@1", 81)?;
     assert_eq!(projected, prior);
     assert_eq!(target.get_claim(&id)?, Some(imported.clone()));
-    assert_eq!(skill_reliability_posterior(&target, &skill)?, Some(prior));
+    // Zero local runs mint no measured head (projector.rs:930-936): the archived
+    // proposal stays inert (archive.rs:13-44) and the diagnostic read stays None.
+    assert_eq!(skill_reliability_posterior(&target, &skill)?, None);
     for approval in [ClaimApprovalStatus::Auto, ClaimApprovalStatus::Approved] {
         let mut forged = imported.clone();
         forged.approval = approval;
@@ -1008,19 +1108,44 @@ fn swapping_executor_forks_statistics_without_retiring_skill() -> crate::error::
     let old_posterior = skill_reliability_posterior_for_executor(&vault, &skill, "old@1")?.unwrap();
     assert_eq!(old_posterior.alpha, prior.alpha + 1.0);
     assert_eq!(
-        skill_executor_reliability(&vault, &skill, "new@2", &reliability_query())?.posterior,
+        skill_executor_reliability(
+            &vault,
+            &skill,
+            "new@2",
+            &reliability_query_for_receipt(&vault, &old)
+        )?
+        .posterior,
         prior
     );
     assert_eq!(
-        skill_executor_reliability(&vault, &skill, "new@2", &reliability_query())?.runs,
+        skill_executor_reliability(
+            &vault,
+            &skill,
+            "new@2",
+            &reliability_query_for_receipt(&vault, &old)
+        )?
+        .runs,
         0.0
     );
-    assert!(skill_executor_reliability(&vault, &skill, "new@2", &reliability_query())?.new_model);
+    assert!(
+        skill_executor_reliability(
+            &vault,
+            &skill,
+            "new@2",
+            &reliability_query_for_receipt(&vault, &old)
+        )?
+        .new_model
+    );
     assert_eq!(
         skill_reliability_posterior_for_executor(&vault, &skill, "new@2")?,
         None
     );
-    assert_eq!(skill_reliability_posterior(&vault, &skill)?, None);
+    // The unqualified diagnostic read has no executor filter for None
+    // (read.rs:294-302), so it returns the existing old@1 head.
+    assert_eq!(
+        skill_reliability_posterior(&vault, &skill)?,
+        Some(old_posterior)
+    );
     assert_eq!(
         vault.get_skill_record(&skill)?.unwrap().lifecycle_status,
         SkillLifecycle::Active
@@ -1039,7 +1164,12 @@ fn swapping_executor_forks_statistics_without_retiring_skill() -> crate::error::
         record_skill_contributing_win(&vault, &skill, &new_receipt, 22)?;
         project_skill_reliability_for_executor(&vault, &skill, "new@2", 23)?;
     }
-    let new = skill_executor_reliability(&vault, &skill, "new@2", &reliability_query())?;
+    let new = skill_executor_reliability(
+        &vault,
+        &skill,
+        "new@2",
+        &reliability_query_for_receipt(&vault, &old),
+    )?;
     assert_eq!(new.runs, 2.0);
     assert!(!new.new_model);
     assert_eq!(new.posterior.alpha, prior.alpha + 2.0);
@@ -1052,7 +1182,13 @@ fn swapping_executor_forks_statistics_without_retiring_skill() -> crate::error::
         None
     );
     assert_eq!(
-        skill_selection_score_for_executor(&vault, &skill, "new@3", &reliability_query(), 8)?,
+        skill_selection_score_for_executor(
+            &vault,
+            &skill,
+            "new@3",
+            &reliability_query_for_receipt(&vault, &old),
+            8
+        )?,
         prior.ucb(8)
     );
 
@@ -1181,7 +1317,13 @@ fn displaced_judge_marks_receipt_and_supersedes_weight_without_erasing() -> crat
     let judgments = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
     project_skill_reliability(&vault, &judgments)?;
     assert_eq!(
-        skill_executor_reliability(&vault, &skill, "executor@1", &reliability_query())?.runs,
+        skill_executor_reliability(
+            &vault,
+            &skill,
+            "executor@1",
+            &reliability_query_for_receipt(&vault, &receipt)
+        )?
+        .runs,
         1.0
     );
     let marked = crate::skill_attribution::supersede_displaced_judge_receipts(
@@ -1193,7 +1335,13 @@ fn displaced_judge_marks_receipt_and_supersedes_weight_without_erasing() -> crat
     assert_eq!(marked.len(), 1);
     assert_eq!(marked[0].receipt_ref, receipt);
     assert_eq!(
-        skill_executor_reliability(&vault, &skill, "executor@1", &reliability_query())?.runs,
+        skill_executor_reliability(
+            &vault,
+            &skill,
+            "executor@1",
+            &reliability_query_for_receipt(&vault, &receipt)
+        )?
+        .runs,
         0.0
     );
     assert_eq!(
@@ -1213,7 +1361,13 @@ fn displaced_judge_marks_receipt_and_supersedes_weight_without_erasing() -> crat
     );
     project_skill_reliability(&vault, &judgments)?;
     assert_eq!(
-        skill_executor_reliability(&vault, &skill, "executor@1", &reliability_query())?.runs,
+        skill_executor_reliability(
+            &vault,
+            &skill,
+            "executor@1",
+            &reliability_query_for_receipt(&vault, &receipt)
+        )?
+        .runs,
         0.0
     );
     Ok(())
@@ -1291,7 +1445,13 @@ fn replay_cannot_reassign_an_unknown_judgment_to_a_new_judge() -> crate::error::
         .is_empty()
     );
     assert_eq!(
-        skill_executor_reliability(&vault, &skill, "model@1", &reliability_query())?.runs,
+        skill_executor_reliability(
+            &vault,
+            &skill,
+            "model@1",
+            &reliability_query_for_receipt(&vault, &receipt)
+        )?
+        .runs,
         1.0
     );
     Ok(())
@@ -1335,7 +1495,13 @@ fn displacement_between_batch_read_and_writer_cannot_restore_loss() -> crate::er
         Ok(())
     })?;
     assert_eq!(
-        skill_executor_reliability(&vault, &skill, "model@1", &reliability_query())?.runs,
+        skill_executor_reliability(
+            &vault,
+            &skill,
+            "model@1",
+            &reliability_query_for_receipt(&vault, &receipt)
+        )?
+        .runs,
         0.0
     );
     assert_eq!(
@@ -1477,7 +1643,13 @@ fn displacement_scan_cannot_miss_a_judgment_committed_before_its_writer() -> cra
         Ok(())
     })?;
     assert_eq!(
-        skill_executor_reliability(&vault, &skill, "model@1", &reliability_query())?.runs,
+        skill_executor_reliability(
+            &vault,
+            &skill,
+            "model@1",
+            &reliability_query_for_receipt(&vault, &receipt)
+        )?
+        .runs,
         0.0
     );
     assert!(
