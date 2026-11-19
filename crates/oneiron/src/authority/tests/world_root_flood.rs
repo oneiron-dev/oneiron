@@ -61,6 +61,7 @@ fn mark_entry(
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     };
     let op = AuthorityOp::MachineProfile(profile);
     let entry = anchor_signed_entry(&fold, &seed.anchor(), op, 2).unwrap();

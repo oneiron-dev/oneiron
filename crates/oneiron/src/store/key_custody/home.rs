@@ -22,6 +22,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::EntityId;
 use crate::error::{Error, Result};
 use crate::store::Store;
@@ -166,7 +168,7 @@ impl Store {
             })
         };
         Ok(Some(CustodyHomePage {
-            head_object_id: *blake3::hash(&head).as_bytes(),
+            head_object_id: *ContentHash::of(&head).as_bytes(),
             head_len,
             head_seq,
             head_offset,
@@ -259,7 +261,7 @@ impl Store {
         let staged = dir.join(format!("{STAGE_PREFIX}{operation}"));
         let head =
             read_whole(&staged)?.ok_or_else(|| refused("nothing is staged for this operation"))?;
-        let head_object_id = *blake3::hash(&head).as_bytes();
+        let head_object_id = *ContentHash::of(&head).as_bytes();
         if head_object_id != commit.head_object_id
             || head_position(&head)? != commit.position
             || operation_id(&commit.position, &head_object_id) != commit.operation_id

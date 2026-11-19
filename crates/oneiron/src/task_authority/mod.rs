@@ -31,6 +31,9 @@
 //! (FIX TASK-FACT-FROM-FEDERATION-PEER). The ask records share role 6 under
 //! their own subkinds and proofs, and still cross.
 
+use std::cmp::Ordering;
+use std::collections::BTreeSet;
+
 use crate::ports::EdgeStoreRead;
 
 use rmpv::Value;
@@ -77,16 +80,21 @@ const BODY_KEY_ASSIGNED_REF: &str = "assigned_ref";
 const BODY_KEY_ACTOR_GENERATION: &str = "actor_generation";
 const BODY_KEY_ASSIGNED_GENERATION: &str = "assigned_generation";
 const BODY_KEY_OCCURRED_AT: &str = "occurred_at";
+const BODY_KEY_ANSWERED_HEADS: &str = "answered_heads";
 const BODY_KEY_CARRIER_MACHINE: &str = "carrier_machine";
 const BODY_KEY_CARRIER_KEY: &str = "carrier_key";
 const BODY_KEY_CARRIER_SIGNATURE: &str = "carrier_signature";
 
 /// Base key count, without a carrier. HumanAssigned carries one additional
 /// assigned_ref; ConsultAssignee carries each of assigned_ref and the two
-/// generations when it has one.
+/// generations when it has one; an Acked fact carries answered_heads when it
+/// was written with them.
 const FACT_BODY_KEY_COUNT: usize = 7;
 /// The keys a carried fact adds: its carrier's machine, key and signature.
 const CARRIER_KEY_COUNT: usize = 3;
+
+/// Hex digits of one answered head: an attempt id's 16 bytes.
+const ANSWERED_HEAD_HEX_LEN: usize = 32;
 
 /// Contract stored-weight prior for `scoped_to` edges (contracts.ts
 /// `edgeKinds.pprWeight` = 0.7), unwrapped at COMPILE time exactly like
@@ -175,6 +183,14 @@ pub struct TaskAuthorityFact {
     pub actor_generation: Option<BindingGeneration>,
     /// ConsultAssignee only: the same for `assigned_ref`.
     pub assigned_generation: Option<BindingGeneration>,
+    /// Acked only: the projected failed heads (attempt ids, lowercase hex)
+    /// the acknowledgement saw settled in its own second `occurred_at`. A
+    /// head that fails later in that second is not among them, so the board
+    /// keeps it listed. Every Acked fact the ack door writes names them, an
+    /// empty set included; one written before the field has none and answers
+    /// every settlement of its second, as it always did. Absent on every
+    /// other kind.
+    pub answered_heads: Option<BTreeSet<String>>,
     pub occurred_at: u64,
 }
 
@@ -201,9 +217,9 @@ pub(crate) struct TaskAuthorityFacts {
     pub(crate) owner_ref: Option<EntityId>,
     pub(crate) cancelled: bool,
     pub(crate) acked: bool,
-    /// The newest Acked fact's time: an acknowledgement answers the
-    /// settlement that stood when it was made (FIX 3694).
-    pub(crate) acked_at: Option<u64>,
+    /// The newest acknowledgement: it answers the settlement that stood
+    /// when it was made (FIX 3694).
+    pub(crate) ack: Option<TaskAck>,
     pub(crate) human_assigner: Option<(EntityId, EntityId)>,
     pub(crate) consult_parties: ConsultParties,
     /// Set once any interruption of the consult asked for a human verdict.
@@ -212,6 +228,59 @@ pub(crate) struct TaskAuthorityFacts {
     pub(crate) assigned: Option<(EntityId, EntityId)>,
     /// The latest taker an Accepted fact names.
     pub(crate) accepted: Option<TaskTaker>,
+}
+
+/// A TASK's newest acknowledgement: its recorded second, and the failed
+/// heads its Acked facts of that second saw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TaskAck {
+    pub(crate) at: u64,
+    /// `None` when an Acked fact of that second was written before
+    /// `answered_heads`: it answers every settlement of its second.
+    answered_heads: Option<BTreeSet<String>>,
+}
+
+impl TaskAck {
+    /// Folds one Acked fact into the newest acknowledgement. The newer second
+    /// wins; facts of one second (two devices acknowledging at once) answer
+    /// every head any of them saw, and one written before the field answers
+    /// the whole second. The result does not depend on fold order.
+    fn absorb(held: Option<Self>, fact: &TaskAuthorityFact) -> Self {
+        let fresh = Self {
+            at: fact.occurred_at,
+            answered_heads: fact.answered_heads.clone(),
+        };
+        match held {
+            Some(held) if held.at > fresh.at => held,
+            Some(held) if held.at == fresh.at => Self {
+                at: held.at,
+                answered_heads: match (held.answered_heads, fresh.answered_heads) {
+                    (Some(mut held), Some(fresh)) => {
+                        held.extend(fresh);
+                        Some(held)
+                    }
+                    _ => None,
+                },
+            },
+            _ => fresh,
+        }
+    }
+
+    /// Whether this acknowledgement answers a settlement at `settled_at` whose
+    /// failed heads settled at that instant are `failed_heads`. One before
+    /// its second is answered (both clocks are recorded seconds, FIX 3694);
+    /// one in its own second only when it saw each of those heads, so a head
+    /// that fails later in that second stays listed; a later one never.
+    pub(crate) fn answers(&self, settled_at: u64, failed_heads: &BTreeSet<String>) -> bool {
+        match settled_at.cmp(&self.at) {
+            Ordering::Less => true,
+            Ordering::Equal => self
+                .answered_heads
+                .as_ref()
+                .is_none_or(|answered| failed_heads.is_subset(answered)),
+            Ordering::Greater => false,
+        }
+    }
 }
 
 /// One taker of a TASK: who accepted it, the binding generation it held,
@@ -308,7 +377,7 @@ impl TaskAuthorityFacts {
             TaskAuthorityFactKind::Cancelled => self.cancelled = true,
             TaskAuthorityFactKind::Acked => {
                 self.acked = true;
-                self.acked_at = self.acked_at.max(Some(fact.occurred_at));
+                self.ack = Some(TaskAck::absorb(self.ack.take(), fact));
             }
             TaskAuthorityFactKind::HumanAssigned => {
                 let assigned = fact.assigned_ref.ok_or(Error::InvariantViolation(
@@ -525,6 +594,17 @@ fn fact_body_entries(fact: &TaskAuthorityFact) -> Vec<(Value, Value)> {
             entries.push((Value::from(key), generation.encode()));
         }
     }
+    if let Some(heads) = &fact.answered_heads {
+        entries.push((
+            Value::from(BODY_KEY_ANSWERED_HEADS),
+            Value::Array(
+                heads
+                    .iter()
+                    .map(|head| Value::from(head.as_str()))
+                    .collect(),
+            ),
+        ));
+    }
     entries
 }
 
@@ -581,9 +661,10 @@ fn decode_carried_task_authority_fact_body(bytes: &[u8]) -> Result<CarriedTaskAu
         )))?;
     // The key set is EXACT: a base fact has seven keys, HumanAssigned
     // carries exactly one additional agent id, ConsultAssignee carries
-    // exactly the optional party and generation keys it has, and a carried
-    // fact exactly the three carrier keys more, so no unread field can ride
-    // along in a body two decoders would disagree about.
+    // exactly the optional party and generation keys it has, Acked carries
+    // its answered heads when it was written with them, and a carried fact
+    // exactly the three carrier keys more, so no unread field can ride along
+    // in a body two decoders would disagree about.
     let carrier = carrier_fields(entries)?;
     let own_keys = entries.len()
         - if carrier.is_some() {
@@ -631,14 +712,14 @@ fn decode_carried_task_authority_fact_body(bytes: &[u8]) -> Result<CarriedTaskAu
             .map(BindingGeneration::decode)
             .transpose()
     };
-    let (assigned_ref, actor_generation, assigned_generation) = match kind {
+    let (assigned_ref, actor_generation, assigned_generation, answered_heads) = match kind {
         TaskAuthorityFactKind::HumanAssigned | TaskAuthorityFactKind::Assigned => {
             if own_keys != FACT_BODY_KEY_COUNT + 1 {
                 return Err(Error::Record(RecordError::InvalidTaskBody(
                     "task human assignment key set",
                 )));
             }
-            (Some(entity_ref(BODY_KEY_ASSIGNED_REF)?), None, None)
+            (Some(entity_ref(BODY_KEY_ASSIGNED_REF)?), None, None, None)
         }
         TaskAuthorityFactKind::Accepted => {
             let actor_generation = generation(BODY_KEY_ACTOR_GENERATION)?;
@@ -647,7 +728,7 @@ fn decode_carried_task_authority_fact_body(bytes: &[u8]) -> Result<CarriedTaskAu
                     "task acceptance key set",
                 )));
             }
-            (None, actor_generation, None)
+            (None, actor_generation, None, None)
         }
         TaskAuthorityFactKind::ConsultAssignee => {
             let assigned_ref = optional_fact_body_field(entries, BODY_KEY_ASSIGNED_REF)?
@@ -667,18 +748,28 @@ fn decode_carried_task_authority_fact_body(bytes: &[u8]) -> Result<CarriedTaskAu
                     "task consult party key set",
                 )));
             }
-            (assigned_ref, actor_generation, assigned_generation)
+            (assigned_ref, actor_generation, assigned_generation, None)
+        }
+        TaskAuthorityFactKind::Acked => {
+            let answered_heads = optional_fact_body_field(entries, BODY_KEY_ANSWERED_HEADS)?
+                .map(decode_answered_heads)
+                .transpose()?;
+            if own_keys != FACT_BODY_KEY_COUNT + usize::from(answered_heads.is_some()) {
+                return Err(Error::Record(RecordError::InvalidTaskBody(
+                    "task acknowledgement key set",
+                )));
+            }
+            (None, None, None, answered_heads)
         }
         TaskAuthorityFactKind::Owner
         | TaskAuthorityFactKind::Cancelled
-        | TaskAuthorityFactKind::Acked
         | TaskAuthorityFactKind::ConsentRequired => {
             if own_keys != FACT_BODY_KEY_COUNT {
                 return Err(Error::Record(RecordError::InvalidTaskBody(
                     "task authority fact key set",
                 )));
             }
-            (None, None, None)
+            (None, None, None, None)
         }
     };
     let fact = TaskAuthorityFact {
@@ -688,6 +779,7 @@ fn decode_carried_task_authority_fact_body(bytes: &[u8]) -> Result<CarriedTaskAu
         assigned_ref,
         actor_generation,
         assigned_generation,
+        answered_heads,
         occurred_at: fact_body_field(entries, BODY_KEY_OCCURRED_AT)?
             .as_u64()
             .ok_or(Error::Record(RecordError::InvalidTaskBody(
@@ -728,6 +820,28 @@ fn exact_binary<const N: usize>(value: &Value) -> Option<[u8; N]> {
         Value::Binary(bytes) => <[u8; N]>::try_from(bytes.as_slice()).ok(),
         _ => None,
     }
+}
+
+/// An Acked fact's answered heads, STRICTLY: an array of attempt ids, each
+/// exactly 32 lowercase hex digits, in strictly ascending order, so one set
+/// has one encoding and no duplicate rides along.
+fn decode_answered_heads(value: &Value) -> Result<BTreeSet<String>> {
+    let refused = || Error::Record(RecordError::InvalidTaskBody("task acknowledgement heads"));
+    let mut heads = BTreeSet::new();
+    for head in value.as_array().ok_or_else(refused)? {
+        let head = head
+            .as_str()
+            .filter(|head| oneiron_hex::is_lower_hex(head, Some(ANSWERED_HEAD_HEX_LEN)))
+            .ok_or_else(refused)?;
+        if heads
+            .last()
+            .is_some_and(|last: &String| last.as_str() >= head)
+        {
+            return Err(refused());
+        }
+        heads.insert(head.to_owned());
+    }
+    Ok(heads)
 }
 
 /// The single value stored under `name`, refusing a duplicated key — the same

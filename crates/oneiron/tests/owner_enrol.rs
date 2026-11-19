@@ -31,7 +31,13 @@
 //! 16:23; KEY-ORIGIN = A, the lead 16:2x). Red before it:
 //! `an_added_owners_first_owner_key_binds_them` (the added Owner's owner verb
 //! answers OWNER_BINDING_REQUIRED). Guard: an Owner a binding names already,
-//! the embedded owner included, gains no second one.
+//! the embedded owner included, gains no second one. That binding is the
+//! last-owner delete guard's second way out (FIX OWNER-DELETE-GUARD-RECOVERY):
+//! `a_co_owners_first_owner_key_lifts_the_last_owner_delete_guard`, a guard
+//! that passes on its base too. With the co-Owner bound, the owner deletes
+//! their own PERSON through their own door, whose writes re-prove the owner
+//! census with that PERSON taken as live (#7900 after main's census, a guard):
+//! `with_a_co_owner_bound_the_owner_deletes_their_own_person`.
 //!
 //! Part 3 (REVOKED-OWNER-ROOT-SIBLING-ENROL, Engine RULING 14 Nov 19:50): a
 //! revoked key's rows count only inside its revocation's own ancestry. A
@@ -343,6 +349,64 @@ fn an_added_owners_first_owner_key_binds_them() {
         shared.bound_to(second),
         None,
         "an Owner a live binding names gains no second one"
+    );
+}
+
+/// The way out the last-owner delete guard names: while the owner holds the
+/// vault's only `human` binding, their PERSON is not deleted; once the
+/// co-Owner's first owner key binds them, the same delete passes.
+#[test]
+fn a_co_owners_first_owner_key_lifts_the_last_owner_delete_guard() {
+    let shared = shared();
+    let refused = shared
+        .vault
+        .delete_entity(&shared.owner)
+        .expect_err("the owner holds the vault's last owner binding");
+    assert_eq!(refused.kind(), ErrorKind::LastBoundOwnerDelete, "{refused}");
+
+    shared.bound_co_owner_key();
+    assert!(
+        shared.passes_owner_verbs(shared.owner),
+        "the owner keeps their own binding, so the co-Owner's is the second one"
+    );
+
+    assert!(
+        shared
+            .vault
+            .delete_entity(&shared.owner)
+            .expect("with the co-Owner bound, the owner's person is deleted"),
+        "the owner's person existed"
+    );
+    assert!(
+        shared
+            .vault
+            .is_deleted_shell(&shared.owner)
+            .expect("shell read"),
+        "the owner's person is a deleted shell"
+    );
+}
+
+/// The owner's own delete of their PERSON re-proves its authority in its
+/// writes after its own scrub: the binding, and the owner census with that
+/// PERSON taken as live, so the scrub does not refuse the delete it made.
+#[test]
+fn with_a_co_owner_bound_the_owner_deletes_their_own_person() {
+    let shared = shared();
+    shared.bound_co_owner_key();
+    shared
+        .vault
+        .memory(shared.owner, EdgeActorClass::Human)
+        .safe_delete(
+            &shared.owner.to_hex(),
+            oneiron::memory::SafeDeleteReason::UserDelete,
+        )
+        .expect("with the co-Owner bound, the owner deletes their own person");
+    assert!(
+        shared
+            .vault
+            .is_deleted_shell(&shared.owner)
+            .expect("shell read"),
+        "the owner's person is a deleted shell"
     );
 }
 

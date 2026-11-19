@@ -98,8 +98,10 @@ pub(super) const CLEANUP_CHECKS: [(u8, CleanupKind, EmptinessPredicate); 4] = [
 /// `Ok(None)` for a row that is not a candidate — wrong type, absent,
 /// already archived or deleted, kept by the owner at this revision, or simply
 /// not empty. Closed-form: the answer is a function of the row's type byte,
-/// its liveness, the owner's kept mark, its inbound claims and its edges, and
-/// nothing else. There is no score anywhere on this path.
+/// its liveness, the owner's kept mark, its inbound claims and its edges,
+/// and, for a PERSON an attempt minted, whether a try of that attempt's retry
+/// lineage is pending, and nothing else. There is no score anywhere on this
+/// path.
 ///
 /// # Errors
 ///
@@ -159,8 +161,16 @@ pub(crate) fn zero_live_members_in_txn(
 
 /// A PERSON needs positive mint-time provenance AND no live claims.
 /// ONE live claim of ANY source disqualifies even an extraction-minted row.
+/// A PERSON an attempt minted is spared while a try of that attempt's retry
+/// lineage is pending: its claims land in a later write, of that try or of a
+/// retry (FIX CLEANUP-ARCHIVES-MINTED-PERSON-BETWEEN-TRIES). A derivation
+/// batch's revert reads [`person_mint_unclaimed_in_txn`] and is not held by
+/// this: it archives its own mint while its run is live.
 fn person_is_claimless(vault: &Vault, rtxn: &heed::RoTxn<'_>, person: &EntityId) -> Result<bool> {
-    person_mint_unclaimed_in_txn(vault, rtxn, person, &std::collections::BTreeSet::new())
+    Ok(
+        person_mint_unclaimed_in_txn(vault, rtxn, person, &std::collections::BTreeSet::new())?
+            && !person_provenance::minting_lineage_pending_in_txn(vault, rtxn, person)?,
+    )
 }
 
 /// Whether the PERSON `person` is an extraction mint with no live claim

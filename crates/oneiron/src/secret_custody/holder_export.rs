@@ -48,6 +48,8 @@ use zeroize::Zeroizing;
 pub(crate) use self::part_signature::OutputPartBinding;
 use self::part_signature::sign_parts;
 pub(crate) use self::relay::KeptExportOutput;
+#[cfg(all(feature = "sync", oneiron_test_support))]
+pub(crate) use self::relay::carrier_proof;
 use self::relay::kept_output_in_txn;
 pub(crate) use self::relay::witnessed_output;
 #[cfg(feature = "sync")]

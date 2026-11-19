@@ -150,12 +150,18 @@ impl<'a> RowMeta<'a> {
 
 /// Whether a fold past the base reads `op`'s row whole: the approvals and
 /// revocations stale-roster expiry and renewal weigh (`stale_roster`; a
-/// root appointment revokes every old roster key, OWNER-ANCHOR-ROOT-RECOVERY),
+/// root appointment revokes every old roster key, OWNER-ANCHOR-ROOT-RECOVERY;
+/// an owner handover or a residence directive that forked its signer's
+/// sequence expires once a key it rests on is revoked, row
+/// SEQ-FLOOR-S-WITHHELD-COSIGN, and so does a federation lifecycle row, whose
+/// pact the expiry holds suspended while the row still shapes it),
 /// the world-key records whose envelopes a folded key carries
 /// (`world_key_fold::folded_world_keys`), and the owner work requests,
 /// results, cancels and import marks an executor, a receipt and a relay
 /// read past the base. Every other row's summary is all a later fold reads
-/// of it.
+/// of it. Every row that files a machine profile is read whole: a profile
+/// row, and an owner's join that carries its enrolment inline (REVIEW-9539
+/// round 2 P1).
 pub(super) fn is_projected(op: &AuthorityOp) -> bool {
     matches!(
         op,
@@ -163,7 +169,9 @@ pub(super) fn is_projected(op: &AuthorityOp) -> bool {
             | AuthorityOp::RebindActor { .. }
             | AuthorityOp::FederationConfirm(_)
             | AuthorityOp::CriticalWriteConfirm(_)
-            | AuthorityOp::MachineProfile(_)
+            | AuthorityOp::OwnerHandover(_)
+            | AuthorityOp::ResidenceDirective(_)
+            | AuthorityOp::FederationLifecycle(_)
             | AuthorityOp::RevokeDevice { .. }
             | AuthorityOp::RotateKey { .. }
             | AuthorityOp::ReRoot { .. }
@@ -173,7 +181,7 @@ pub(super) fn is_projected(op: &AuthorityOp) -> bool {
             | AuthorityOp::OwnerWorkResult(_)
             | AuthorityOp::OwnerWorkCancel(_)
             | AuthorityOp::ExportSupplementImported(_)
-    )
+    ) || super::stale_roster::filed_machine_profile(op).is_some()
 }
 
 /// A stored log's fold, and what a resumed fold needs to carry it on.
@@ -618,6 +626,7 @@ impl FoldBase {
             pre_handoff_entries: Some(&no_handoff_line),
             memory_floor_bytes,
             pin: inputs.pin.as_ref(),
+            owner_key_lines: None,
             appointments: None,
         };
         // The new rows: main rows one chain off the head, and world key
@@ -682,6 +691,7 @@ impl FoldBase {
         );
         if rows.missed.get()
             || fold.machines != once.fold.machines
+            || fold.restored_enrolments != once.fold.restored_enrolments
             || !super::world_privacy::worlds_unmoved_past(
                 &fold,
                 &once.fold,
@@ -742,7 +752,9 @@ impl FoldBase {
                 head: tail.tip,
                 frontier,
                 merged,
-                revocations: final_merged?.actor_revocation_hashes,
+                revocations: crate::authority::fold_state::to_btree_set_map(
+                    &final_merged?.actor_revocation_hashes,
+                ),
                 settlement: Arc::clone(settlement),
                 issuers: once.issuers.clone(),
                 uncounted: tail.uncounted,

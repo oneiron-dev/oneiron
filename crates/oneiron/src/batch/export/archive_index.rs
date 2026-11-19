@@ -135,6 +135,10 @@ pub(crate) enum Tag {
     /// CONVERSATION id → (): a TURN no archived MESSAGE joins speaks in it,
     /// so a foreign archive's import marks it as one (FIX 15412).
     InlineSpeechConversation,
+    /// A `core.coreference.status` claim's subject link source, kind,
+    /// target, claim id → (): the status claims the archive carries for a
+    /// `same_as` link.
+    CoreferenceStatus,
 }
 
 /// The import's disk index: one LMDB database in the scratch environment,
