@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
+import { PublicHttpClient } from "./support/clients.ts";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { loadFixtures } from "./support/fixtures.ts";
 import { defineFile, expect, redactor, secretHex } from "./support/run.ts";
@@ -200,6 +201,8 @@ suite.todo(test, "PORTABILITY-04", "waits on typed import stage acknowledgement,
 // this into an old-format migration test. No on-disk fake snapshot is supplied.
 suite.todo(test, "PORTABILITY-05", "waits on authorized supplied canonical snapshot input and destination for recover-window");
 
+/** Request and CLI limit for a backup or restore of the whole vault on the dev-build E2E set. */
+const CHECKPOINT_MS = 60_000;
 suite.test(test, "PORTABILITY-06", "Encrypted backup and wrong-key refusal should work", async () => {
   const catalog = await loadFixtures();
   const facts = await catalog.readJson<Facts>("portability-facts");
@@ -233,7 +236,11 @@ suite.test(test, "PORTABILITY-06", "Encrypted backup and wrong-key refusal shoul
   const signer = (await engine.client.request<SignerPin>("GET", "/v1/owner/vault-key/signer")).body;
   const trustFile = resolve(engine.root, "checkpoint-signers.json");
   await writeFile(trustFile, JSON.stringify(signer), { mode: 0o600 });
-  const backup = (await engine.client.request<BackupOutcome>("POST", "/v1/owner/backups")).body;
+  // A backup writes and seals a checkpoint of the whole vault, and the E2E set is a dev
+  // (unoptimized) build: on nelly (19 Nov) the snapshot took 10.3 s, past the 10 s request
+  // limit. The backup request and the restores below get a minute each; nothing else changes.
+  const backupClient = new PublicHttpClient(engine.url, { ...engine.client.options, timeoutMs: CHECKPOINT_MS });
+  const backup = (await backupClient.request<BackupOutcome>("POST", "/v1/owner/backups")).body;
   expect(backup.backup.bytes).toBeGreaterThan(0);
   const carrier = await readFile(backup.backup.path);
   expect(carrier.includes(Buffer.from(facts.owner.query))).toBe(false);
@@ -250,7 +257,7 @@ suite.test(test, "PORTABILITY-06", "Encrypted backup and wrong-key refusal shoul
   const unlockArgs = ["--unlock", "passkey", "--credential", credential, "--trust", trustFile];
   const refused = await engine.cli.run([
     "restore", backup.backup.path, ...unlockArgs, ...ownerArgs(engine),
-  ], wrongKey, undefined, true);
+  ], wrongKey, CHECKPOINT_MS, true);
   expect(refused.exitCode).not.toBe(0);
   expect(refused.signal).toBeNull();
   await engine.restart();
@@ -262,12 +269,12 @@ suite.test(test, "PORTABILITY-06", "Encrypted backup and wrong-key refusal shoul
   const destination = resolve(engine.root, "restored-vault");
   const restoreArgs = ["restore", backup.backup.path, ...unlockArgs,
     "--vault-path", destination, ...ownerArgs(engine)];
-  const refusedFresh = await engine.cli.run(restoreArgs, wrongKey, undefined, true);
+  const refusedFresh = await engine.cli.run(restoreArgs, wrongKey, CHECKPOINT_MS, true);
   expect(refusedFresh.exitCode).not.toBe(0);
   expect(refusedFresh.signal).toBeNull();
   expect(await readdir(engine.root)).not.toContain("restored-vault");
   // Identical command and destination, only the private PRF input changes.
-  const restored = await engine.cli.run(restoreArgs, key, undefined, true);
+  const restored = await engine.cli.run(restoreArgs, key, CHECKPOINT_MS, true);
   expect(restored.exitCode).toBe(0);
   expect(restored.signal).toBeNull();
   const receipt = JSON.parse(restored.stdout) as FreshRestore;
@@ -295,7 +302,7 @@ suite.test(test, "PORTABILITY-06", "Encrypted backup and wrong-key refusal shoul
   ]));
   expect(createHash("sha256").update(await readFile(backup.backup.path)).digest("hex")).toBe(carrierDigest);
   await engine.close();
-});
+}, 120_000);
 
 suite.test(test, "PORTABILITY-07", "Folder source rescan lifecycle should work", async () => {
   const catalog = await loadFixtures();
