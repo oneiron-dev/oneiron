@@ -172,7 +172,13 @@ fn pending_cancel_proposes_without_intervening_realization() {
 /// `manual` stays a proposal for the owner too.
 #[test]
 fn owner_soft_cancel_of_own_task_is_auto_without_grant() {
-    let (_dir, vault) = open_vault();
+    let _dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open_owned(_dir.path(), VaultConfig::default()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    // These tests cover task lifecycle behavior, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let facade = vault.memory(owner, EdgeActorClass::Human);
     let task_ref = facade
