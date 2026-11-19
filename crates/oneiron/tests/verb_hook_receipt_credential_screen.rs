@@ -75,6 +75,19 @@
 //!   call, whose binding, CODE and run rows its hooks' view shows, stay. Red
 //!   on main and at b9e0829d (2: the tail shows the other actor's), green
 //!   on the head.
+//! - (j) `a_later_hook_sees_no_tail_payload_an_erase_scrubbed_after_its_chain_began`
+//!   (review round 2 of #9643): a post hook copies a result row's words into
+//!   its Annotate receipt. While the next call's first post hook runs, a
+//!   permanent erase scrubs that row's run and receipt. The second hook's
+//!   tail shows none of those words, even though its chain cached the tail
+//!   before the erase. Red at b9e0829d (the cached note stays, judged on the
+//!   erased run's now-empty rows), green on the head (read again or withheld).
+//! - (k) `a_later_hook_whose_grant_shows_no_binding_or_code_reads_no_hook_receipt_in_its_tail`
+//!   (review round 2 of #9643): after a plain call, the owner gives only
+//!   the first post hook a predicate grant that shows neither binding nor
+//!   CODE. Its next tail holds none of the plain call's receipts; the
+//!   unrestricted second hook keeps both. Red at b9e0829d (the empty run
+//!   rows show both to the restricted hook), green on the head.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::BTreeSet;
@@ -86,8 +99,8 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::runtime_hooks::{
-    FactHookRunner, HookBodyRun, HookBodyRuntime, HookRunContext, InvocationId, VerbCall,
-    VerbDomain,
+    FactHookRunner, HookBodyRun, HookBodyRuntime, HookGrant, HookRunContext, InvocationId,
+    VerbCall, VerbDomain,
 };
 use oneiron::skill_hub::HubFile;
 use oneiron::skill_hub::pack_catalog::{HookActorClass, PackHookBinding, PackInstallDisposition};
@@ -254,6 +267,57 @@ impl HookBodyRuntime for RedactRuntime {
             fuel_used: None,
             host_calls: 1,
         })
+    }
+}
+
+/// Copies the named result row's words into `post-first`'s receipt. Once
+/// armed, pauses a later `post-first` after its input (and tail) was built,
+/// without holding either this mutex or [`HOOK_INPUTS`] across the pause.
+struct EraseTailRuntime {
+    pause: Mutex<
+        Option<(
+            std::sync::mpsc::Sender<serde_json::Value>,
+            std::sync::mpsc::Receiver<()>,
+        )>,
+    >,
+}
+
+impl HookBodyRuntime for EraseTailRuntime {
+    fn run_hook(
+        &self,
+        body: &str,
+        input_json: &str,
+        context: &mut HookRunContext,
+        read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
+    ) -> oneiron::Result<HookBodyRun> {
+        let mut ran = ContinueRuntime.run_hook(body, input_json, context, read)?;
+        let input: serde_json::Value =
+            serde_json::from_str(input_json).expect("FIXTURE: a verb body's input is JSON");
+        if input
+            .pointer("/hook/name")
+            .and_then(serde_json::Value::as_str)
+            != Some("post-first")
+        {
+            return Ok(ran);
+        }
+        if let Some(words) = input
+            .pointer("/result/rows/0/value")
+            .and_then(serde_json::Value::as_str)
+        {
+            ran.outcome_json = serde_json::json!({"kind": "annotate", "note": words}).to_string();
+        }
+        let pause = self
+            .pause
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some((reached, resume)) = pause {
+            reached
+                .send(input)
+                .expect("FIXTURE: signal the paused hook");
+            resume.recv().expect("FIXTURE: resume after the erase");
+        }
+        Ok(ran)
     }
 }
 
@@ -1179,4 +1243,164 @@ fn a_later_hook_reads_no_receipt_of_another_actors_call_in_its_tail() {
             "LEAK: a later hook's tail shows the receipts of another actor's call, which the receipt screen keeps to that actor: {tail:?}"
         );
     }
+}
+
+#[test]
+fn a_later_hook_sees_no_tail_payload_an_erase_scrubbed_after_its_chain_began() {
+    const WORDS: &str = "words copied from C before its permanent erase";
+    let runtime = Arc::new(EraseTailRuntime {
+        pause: Mutex::new(None),
+    });
+    let fixture = Fixture::with_runtime(runtime.clone());
+    let first_hook_md = POST_FIRST_HOOK_MD.replace(
+        "outcomes: [\"continue\"]",
+        "outcomes: [\"continue\", \"annotate\"]",
+    );
+    fixture.put_verb_pack_with(&first_hook_md);
+    let source = put_person(&fixture, WORDS.as_bytes());
+    // As in (g) and (i), keep the call's receipts newer than the install's.
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    let call0 = fixture.run_verb_call_with(
+        fixture.owner,
+        serde_json::json!({"rows": [{"claim_ref": source.to_hex(), "value": WORDS}]}),
+    );
+    let before = fixture.hook_runs(call0);
+    assert_eq!(before.len(), 2, "FIXTURE: call 0 records both post hooks");
+    assert!(
+        before
+            .iter()
+            .any(|receipt| receipt.fields.get("note").map(String::as_str) == Some(WORDS)),
+        "FIXTURE: call 0's first hook copied C's words from its result into an Annotate receipt: {before:?}"
+    );
+
+    let call1 = std::thread::scope(|scope| {
+        let (reached, paused) = std::sync::mpsc::channel();
+        let (resume, resumed) = std::sync::mpsc::channel();
+        *runtime
+            .pause
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((reached, resumed));
+        let later = scope.spawn(|| fixture.run_verb_call());
+        // Bound a missing-hook fixture failure, not the engine's hook budget.
+        // `resume` drops on an assertion failure, so the worker can unwind.
+        let first = paused
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("FIXTURE: call 1's first post hook paused after its tail was built");
+        let first_tail = first
+            .get("receipt_tail")
+            .and_then(serde_json::Value::as_array)
+            .expect("FIXTURE: the paused first hook has a receipt tail");
+        assert_eq!(
+            receipts_of_call(first_tail, call0),
+            2,
+            "FIXTURE: call 1 cached both of call 0's receipts before the erase"
+        );
+        assert!(
+            first_tail
+                .iter()
+                .any(|receipt| receipt.to_string().contains(WORDS)),
+            "FIXTURE: the first hook's pre-erase tail still carries C's words: {first_tail:?}"
+        );
+        let erased = fixture
+            .vault
+            .delete_entity_with_reason(&source, oneiron::deletion::DeleteReason::UserHardDelete)
+            .expect("FIXTURE: permanently erase C while call 1's first hook waits");
+        assert!(erased.existed, "FIXTURE: the permanent erase found C");
+        fixture
+            .vault
+            .maintain()
+            .run_hard_erase_sweep()
+            .run()
+            .expect("FIXTURE: the public hard-erase sweep scrubs hook sources");
+        let scrubbed = fixture.hook_runs(call0);
+        assert_eq!(
+            scrubbed.len(),
+            2,
+            "FIXTURE: the erase keeps both receipt identities"
+        );
+        assert!(
+            scrubbed
+                .iter()
+                .all(|receipt| !serde_json::to_string(receipt).unwrap().contains(WORDS)),
+            "FIXTURE: the stored call 0 receipts lost C's words before the second hook runs: {scrubbed:?}"
+        );
+        resume
+            .send(())
+            .expect("FIXTURE: let call 1's first hook finish");
+        let invocation = later
+            .join()
+            .expect("FIXTURE: call 1 finishes after the erase");
+        assert_eq!(
+            first.get("invocation").and_then(serde_json::Value::as_str),
+            Some(invocation.to_hex().as_str()),
+            "FIXTURE: the paused body belongs to call 1"
+        );
+        invocation
+    });
+    let tails = tails_of(call1);
+    assert_eq!(
+        tails.len(),
+        2,
+        "FIXTURE: both post hooks of call 1 kept their input"
+    );
+    // The fixture's priority-10 post-first runs before priority-0 post-second.
+    let second_tail = &tails[1];
+    assert!(
+        second_tail
+            .iter()
+            .all(|receipt| !receipt.to_string().contains(WORDS)),
+        "LEAK: call 1's second post hook reads C's words from a cached tail receipt after a permanent erase scrubbed its stored payload: {second_tail:?}"
+    );
+}
+
+#[test]
+fn a_later_hook_whose_grant_shows_no_binding_or_code_reads_no_hook_receipt_in_its_tail() {
+    let fixture = Fixture::new();
+    let bindings = fixture.put_verb_pack();
+    let first = bindings
+        .iter()
+        .find(|(_, binding)| binding.hook == "post-first")
+        .map(|(id, _)| *id)
+        .expect("FIXTURE: the first post hook is bound");
+    // As in (g) and (i), keep the call's receipts newer than the install's.
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    let plain = fixture.run_verb_call();
+    assert_eq!(
+        fixture.hook_runs(plain).len(),
+        2,
+        "FIXTURE: the plain call records two receipts"
+    );
+    fixture
+        .vault
+        .set_hook_grant(
+            &fixture.owner_proof,
+            first,
+            HookGrant {
+                reader: fixture.owner,
+                reader_class: HookActorClass::Human,
+                predicates: vec!["example.hookscreen.allowed".to_owned()],
+                worlds: Vec::new(),
+            },
+        )
+        .expect("FIXTURE: the owner narrows only post-first's grant");
+    let next = fixture.run_verb_call();
+    let tails = tails_of(next);
+    assert_eq!(
+        tails.len(),
+        2,
+        "FIXTURE: both post hooks of the next call kept their input"
+    );
+    // The fixture's priority-10 post-first is restricted; post-second is not.
+    assert_eq!(
+        receipts_of_call(&tails[0], plain),
+        0,
+        "LEAK: a hook whose predicate grant shows neither the binding CLAIM nor the CODE row reads the plain call's Hook receipts in its tail: {:?}",
+        tails[0]
+    );
+    assert_eq!(
+        receipts_of_call(&tails[1], plain),
+        2,
+        "MISSING: the unrestricted post hook's tail keeps both of the plain call's receipts, whose binding, CODE and empty run rows its view shows: {:?}",
+        tails[1]
+    );
 }
