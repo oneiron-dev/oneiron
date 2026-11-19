@@ -183,7 +183,7 @@ fn a_restore_keeps_the_refusal_of_a_task_deleted_since() {
     let (_dir_vault, vault) = test_vault();
     let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
     let (task, other) = (tasks[0].0, tasks[1].0);
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100).unwrap();

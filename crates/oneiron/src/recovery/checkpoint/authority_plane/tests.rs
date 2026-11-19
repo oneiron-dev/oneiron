@@ -244,7 +244,15 @@ fn a_refused_restore_removes_only_the_copy_it_made() {
         root.path().join("foreign"),
         root.path().join("staged"),
     );
-    std::fs::create_dir(&made).unwrap();
+    // The restore's copy goes under `made`, so it is owner-only whatever
+    // the umask (a directory another user could write is refused first).
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&made)
+            .unwrap();
+    }
     std::fs::create_dir_all(foreign.join("restored")).unwrap();
     std::fs::write(foreign.join("restored/keep.txt"), b"not the restore's").unwrap();
     std::os::unix::fs::symlink(&made, &link).unwrap();
