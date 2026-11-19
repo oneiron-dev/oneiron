@@ -2049,6 +2049,10 @@ fn guest_fixture(
             )?,
         )?;
     }
+    // The companion reads the question like any holder. Without this grant the
+    // scoped-read lane refuses every companion answer first, so the callers'
+    // refusal asserts (undisclosed fact, revoked disclosure) would never reach
+    // the guest grant and the revocation check they test.
     super::tests::support::grant_ask_read(&fixture.vault, &[companion])?;
     Ok(TaskAskGuest {
         companion_ref: companion,
