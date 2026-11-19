@@ -1,8 +1,8 @@
 //! Atomic send-receipt retry and terminal settlement.
 
 use super::connector_task::{
-    ConnectorSendTaskOutcome, project_connector_send_task_outcome_in_txn,
-    renew_send_executor_lease_in_txn,
+    ConnectorSendTaskOutcome, project_connector_send_task_attempt_failure_in_txn,
+    project_connector_send_task_outcome_in_txn, renew_send_executor_lease_in_txn,
 };
 use super::executor::CONNECTOR_TASK_EXECUTOR_LEASE_OWNER;
 use crate::Vault;
@@ -160,7 +160,7 @@ pub(super) fn persist_terminal_send_receipt_and_fail_in_txn(
         )?;
         return Ok(false);
     }
-    project_connector_send_task_outcome_in_txn(vault, wtxn, task_ref, task_outcome, now)?;
+    project_connector_send_task_attempt_failure_in_txn(vault, wtxn, task_ref, task_outcome, now)?;
     queue.fail_in_txn(
         wtxn,
         FailAttempt {
@@ -397,18 +397,32 @@ pub(super) fn reconcile_connector_task(
             transport_dispatched,
             idempotency,
         )?;
-        project_connector_send_task_outcome_in_txn(
-            vault,
-            wtxn,
-            task.task_ref,
-            if wrote {
-                task_outcome
-            } else {
-                ConnectorSendTaskOutcome::Delivered
-            },
-            now,
-        )?;
-        if !wrote || task_outcome == ConnectorSendTaskOutcome::Delivered || deferred {
+        // The attempt fails below exactly when the stop stands as a failure,
+        // and that failure is the outcome's instant.
+        let fails_attempt =
+            wrote && task_outcome != ConnectorSendTaskOutcome::Delivered && !deferred;
+        if fails_attempt {
+            project_connector_send_task_attempt_failure_in_txn(
+                vault,
+                wtxn,
+                task.task_ref,
+                task_outcome,
+                now,
+            )?;
+        } else {
+            project_connector_send_task_outcome_in_txn(
+                vault,
+                wtxn,
+                task.task_ref,
+                if wrote {
+                    task_outcome
+                } else {
+                    ConnectorSendTaskOutcome::Delivered
+                },
+                now,
+            )?;
+        }
+        if !fails_attempt {
             queue.complete_in_txn(
                 wtxn,
                 CompleteAttempt {

@@ -265,7 +265,14 @@ impl Memory<'_> {
                 Some(false) => return Err(not_the_task_owner()),
                 None => return Err(MemoryError::from(Error::EntityNotFound)),
             }
-            ack_task_in_txn(self.vault(), wtxn, task_ref, self.actor(), now)
+            // The acknowledgement answers the settlement it was made on, so
+            // it is never stamped before that settlement: one a peer stamped
+            // on a clock ahead of this device's stays answered, as the board
+            // fence compares the two instants.
+            let settled = crate::task_verb::task_settled_at_in(self.vault(), &*wtxn, task_ref)
+                .map_err(MemoryError::from)?;
+            let acked_at = settled.map_or(now, |settled| settled.max(now));
+            ack_task_in_txn(self.vault(), wtxn, task_ref, self.actor(), acked_at)
                 .map_err(MemoryError::from)?;
             witness(wtxn)
         })?;

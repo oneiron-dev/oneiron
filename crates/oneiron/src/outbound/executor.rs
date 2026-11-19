@@ -7,7 +7,7 @@ use super::connector_task::{
     ConnectorSendAttemptPayload, ConnectorSendTask, ConnectorSendTaskOutcome,
     SEND_EXECUTOR_FENCE_FIELD, SEND_EXECUTOR_STOOD_DOWN, SendExecutorFence, SendExecutorLease,
     SendExecutorLeaseTake, log_send_executor_stand_down, mark_send_lookup_cleared,
-    project_connector_send_task_outcome, project_connector_send_task_outcome_in_txn,
+    project_connector_send_task_attempt_failure_in_txn, project_connector_send_task_outcome,
     renew_send_executor_lease_in_txn, send_receipt_exists_for_task, take_send_executor_lease,
 };
 use super::dispatch_pipeline::{
@@ -720,7 +720,7 @@ fn fail_connector_task_attempt_and_project(
     outcome: ConnectorSendTaskOutcome,
 ) -> Result<(), Error> {
     vault.with_write_txn_grouped(|wtxn| {
-        project_connector_send_task_outcome_in_txn(vault, wtxn, task_ref, outcome, now)?;
+        project_connector_send_task_attempt_failure_in_txn(vault, wtxn, task_ref, outcome, now)?;
         queue.fail_in_txn(
             wtxn,
             FailAttempt {

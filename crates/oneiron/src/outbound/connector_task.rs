@@ -1207,8 +1207,11 @@ pub(super) fn project_connector_send_task_suppression_in_txn(
             body.outcome = Some(ConnectorSendTaskOutcome::Delivered);
             body.suppression = None;
         } else {
+            // The caller fails the attempt in this write: that failure is the
+            // outcome's instant, as for any failed attempt.
             body.outcome = Some(ConnectorSendTaskOutcome::Failed);
             body.suppression = Some("dedupe".to_owned());
+            body.outcome_at = Some(now);
         }
         Ok(())
     })
@@ -1297,6 +1300,34 @@ pub(super) fn project_connector_send_task_outcome_in_txn(
     outcome: ConnectorSendTaskOutcome,
     now: u64,
 ) -> Result<(), Error> {
+    project_outcome_in_txn(vault, wtxn, task_ref, outcome, now, false)
+}
+
+/// [`project_connector_send_task_outcome_in_txn`] in the write that also
+/// fails one of the TASK's attempts at `now`. That failure is the outcome's
+/// instant even when the outcome stands as it was (a send that fails again,
+/// on this machine or on the one that took it over), so every peer's
+/// acknowledgement fence answers the newest failure, as the failed head does
+/// on the machine that holds it. A write that fails no attempt (a replay, a
+/// cleanup) keeps the stamp.
+pub(super) fn project_connector_send_task_attempt_failure_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    outcome: ConnectorSendTaskOutcome,
+    now: u64,
+) -> Result<(), Error> {
+    project_outcome_in_txn(vault, wtxn, task_ref, outcome, now, true)
+}
+
+fn project_outcome_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    outcome: ConnectorSendTaskOutcome,
+    now: u64,
+    attempt_failed: bool,
+) -> Result<(), Error> {
     #[cfg(test)]
     if matches!(
         outcome,
@@ -1315,6 +1346,9 @@ pub(super) fn project_connector_send_task_outcome_in_txn(
     update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
         body.outcome = Some(outcome);
         body.suppression = None;
+        if attempt_failed {
+            body.outcome_at = Some(now);
+        }
         Ok(())
     })
 }
@@ -1333,9 +1367,10 @@ fn update_connector_send_task_body_in_txn(
     let mut body = decode_connector_send_task_body(raw.entity_type, &raw.body)?;
     let outcome_before = body.outcome;
     update(&mut body)?;
-    // The outcome's instant moves only with the outcome: a write that leaves
-    // it as it stood keeps the instant its first writer stamped, so an
-    // acknowledgement of that outcome stays answered.
+    // The outcome's instant moves with the outcome, and with a write that
+    // fails an attempt (its closure stamps that failure): any other write
+    // that leaves the outcome as it stood keeps the instant already stamped,
+    // so an acknowledgement of that outcome stays answered.
     if body.outcome != outcome_before {
         body.outcome_at = body.outcome.map(|_| now);
     }
