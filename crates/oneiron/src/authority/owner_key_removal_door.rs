@@ -267,14 +267,22 @@ impl Vault {
                 return Ok(MachineRemoval::LastDeviceKey(remaining));
             }
         }
-        let removed = fold
-            .machine(machine)
-            .filter(|folded| folded.chains().any(|(_, head)| head.removed));
+        // Removed in a head the machine stands under here, the roster's or
+        // the pinned anchor's, as `set_machine_role` reads it: the mark of an
+        // anchor this install does not pin removes nothing here.
+        let pin = fold.pinned_root.as_ref();
+        let removed = fold.machine(machine).filter(|folded| {
+            folded
+                .standing_heads(pin)
+                .into_iter()
+                .any(|head| head.removed)
+        });
         if let Some(standing) = removed
             && !ending.is_empty()
         {
-            let receipt =
-                self.end_keys_of_removed_machine_in_txn(&mut txn, machine, standing, seen, ending)?;
+            let receipt = self.end_keys_of_removed_machine_in_txn(
+                &mut txn, machine, standing, pin, seen, ending,
+            )?;
             let rows = self.mark_rows_counted_since_in_txn(&mut txn, &fold)?;
             txn.commit()?;
             self.note_committed_authority_rows(rows);
@@ -321,9 +329,10 @@ impl Vault {
     }
 
     /// The second removal of `machine`, which the fold already holds removed
-    /// as `standing`: it writes no answer. The owner key this install holds
-    /// ends `ending`, the live device keys that still name the machine, and
-    /// the receipt gives the removal as it stands.
+    /// as `standing` in a head it stands under here (the roster's, or the
+    /// anchor `pin` names): it writes no answer. The owner key this install
+    /// holds ends `ending`, the live device keys that still name the machine,
+    /// and the receipt gives the removal as it stands.
     ///
     /// # Errors
     /// A concurrent write when `seen` is not the machine's answer revision;
@@ -333,10 +342,11 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         machine: EntityId,
         standing: &FoldedMachine,
+        pin: Option<&PinnedRoot>,
         seen: Option<[u8; 32]>,
         ending: Vec<EnrolledOwnerKey>,
     ) -> Result<MachineRemovalReceipt> {
-        if seen.is_some_and(|seen| seen != standing.answer_revision()) {
+        if seen.is_some_and(|seen| seen != standing.answer_revision(pin)) {
             return Err(Error::ConcurrentWrite(
                 "the machine's answer changed since it was read",
             ));
