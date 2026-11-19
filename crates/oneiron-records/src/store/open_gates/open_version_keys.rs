@@ -12,8 +12,11 @@ pub const MAX_DBS: u32 = 32;
 /// federation confirm other than a revoke and a critical-write clearance
 /// leave the live fold, and an owner handover or a residence directive
 /// leaves the valid rows, so it is no handover evidence and no machine lists
-/// it. Before, a binding or a confirm counted until the stale-roster window
-/// ended, and a handover or a directive for ever. A stored checkpoint image
+/// it. A federation pact's Connect, Rescope or Promote leaves the valid rows
+/// too, and the pact it still shapes (its ceiling, or a narrowing that
+/// stands) is held suspended, its grant still bound to it. Before, a binding
+/// or a confirm counted until the stale-roster window ended, and a handover,
+/// a directive or a pact's row for ever. A stored checkpoint image
 /// keeps its bytes and still decodes: it holds the fold before this
 /// projection, which its adopter applies over the rows it carries whole, so
 /// the authority fold schema stays 51. No old-meaning reader or migration is
