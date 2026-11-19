@@ -57,7 +57,7 @@ mod fetch;
 mod poll;
 pub(in crate::calendar) mod property_claims;
 mod turn;
-pub(in crate::calendar) use turn::{AdmissionTurn, admission_turn};
+pub(in crate::calendar) use turn::{ADMISSION_WRITE_TURN, AdmissionTurn, admission_turn};
 
 // Moved bodies still spell `super::ics`, `super::passport`, and
 // `super::safeguard` (their `super` used to be `calendar`); these aliases keep

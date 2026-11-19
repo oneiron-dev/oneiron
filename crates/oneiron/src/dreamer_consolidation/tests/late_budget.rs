@@ -58,7 +58,7 @@ fn run_case(case: LateCall) -> Result<()> {
     let conversation = seed_session(&vault, 0x7a, 1);
     let turns = [
         seed_turn(&vault, &conversation, "user", "call me Owen", 10),
-        seed_turn(&vault, &conversation, "user", "or Alex", 11),
+        seed_turn(&vault, &conversation, "user", "or Alex Owen", 11),
     ];
     let watermark = read_watermark(&vault, DreamerConsolidationScope::Micro)?;
     let dirty = scan_dirty_turns(&vault, DreamerConsolidationScope::Micro, &watermark, 10)?;
@@ -78,7 +78,9 @@ fn run_case(case: LateCall) -> Result<()> {
         | crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Existing(row) => row.attempt.id,
     };
     let subject = EntityId::now();
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    let named =
+        super::super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, &named)?;
     let first_response = match case {
         LateCall::ExtractionOnly => extraction_response(&subject, &turns[0]),
         LateCall::ExtractionThenMerge

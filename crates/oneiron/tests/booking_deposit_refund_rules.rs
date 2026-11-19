@@ -117,6 +117,7 @@ fn fixture_config() -> EventTypeConfig {
     EventTypeConfig {
         key: event_type(),
         duration_min: DEFAULT_INTRO_DURATION_MIN,
+        allowed_durations_min: Vec::new(),
         slot_step_min: 30,
         pre_buffer_min: 0,
         post_buffer_min: 0,

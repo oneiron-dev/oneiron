@@ -65,6 +65,7 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
     };
     let originator = own_agent(&vault);
     let origin_question = consult_turn(&vault, 0xAC);
+    super::support::grant_ask_read(&vault, &[originator, lead]).unwrap();
     let origin = vault
         .memory(originator, EdgeActorClass::Agent)
         .tasks_ask(&TaskAskSpec {
@@ -137,6 +138,7 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
         .into_iter()
         .map(|seed| consult_peer(&vault, seed))
         .collect();
+    super::support::grant_ask_read(&vault, &peers).unwrap();
     let responder = |i: usize| TaskAssignee::Peer {
         actor_ref: peers[i],
     };

@@ -64,6 +64,11 @@ fn temp_vault() -> (tempfile::TempDir, TimedVault) {
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
     let vault = Vault::open(tmp.path(), config).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    // Keep seeded policy rows; these tests cover outbound behavior, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     (tmp, TimedVault { vault, clock })
 }
 

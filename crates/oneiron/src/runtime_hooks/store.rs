@@ -542,25 +542,35 @@ pub(super) fn receipt_id(key: &RunKey) -> String {
     ReceiptRef::hook(*key).to_string()
 }
 
-/// The rows the run a Hook receipt names (`run_key`, 64 hex) read: a fact
-/// run's memo's reads and the rows each of its verdicts' evidence resolved
-/// to (FIX 5459), every verdict's included, whether or not its pin fit the
-/// byte bound (FIX 5764), else a verb run's saved record's reads. `None`
-/// when the key names no kept run, or a fact run heard a verdict without its
-/// evidence rows. The receipt family screens a Hook receipt on them for a
-/// caller off this device (FIX 1119).
+/// The rows the run a Hook receipt names (`run_key`, 64 hex) stands on: a
+/// fact run's memo's reads and the rows each of its verdicts' evidence
+/// resolved to (FIX 5459), every verdict's included, whether or not its pin
+/// fit the byte bound (FIX 5764); else a verb run's saved record's reads,
+/// the rows whose content its input showed, and each row this vault holds
+/// that the call's args and result named as its hook saw them (review round
+/// 2 of #9535): its body can copy any of them into the receipt's `note` or
+/// `reason`. `None` when the key names no kept run, a fact run heard a
+/// verdict without its evidence rows, or a verb run's input showed a host
+/// verb's free text, whose rows no host names. The receipt family screens a
+/// Hook receipt on them for a caller off this device (FIX 1119) and for a
+/// credential-bound reader (HOOKS-04).
 pub(crate) fn hook_run_read_rows(vault: &Vault, run_key: &str) -> Result<Option<Vec<EntityId>>> {
     let rtxn = vault.store.env.read_txn()?;
-    hook_run_read_rows_in(&vault.store, &rtxn, run_key)
+    let holds =
+        |row: &EntityId| -> Result<bool> { Ok(vault.entity_header_in_txn(&rtxn, row)?.is_some()) };
+    hook_run_read_rows_in(&vault.store, &rtxn, run_key, holds)
 }
 
 /// [`hook_run_read_rows`] read in `dbs` within `rtxn`, an explicit read
 /// target: the vault's store here, and a room's composed view for a reader of
-/// the Hook receipts a room keeps (WILL L11-01 S01-2c).
+/// the Hook receipts a room keeps (WILL L11-01 S01-2c). A row a verb run's
+/// call named counts when `holds` answers true for it: a 32-hex value that
+/// names no row (a nonce, a foreign id) withholds nothing.
 fn hook_run_read_rows_in(
     dbs: &impl SideTableDbs,
     rtxn: &heed::RoTxn<'_>,
     run_key: &str,
+    holds: impl Fn(&EntityId) -> Result<bool>,
 ) -> Result<Option<Vec<EntityId>>> {
     let Some(key) = crate::deletion::parse_hex::<32>(run_key) else {
         return Ok(None);
@@ -571,7 +581,19 @@ fn hook_run_read_rows_in(
         Some(memo) if !memo.verdict_evidence_known => return Ok(None),
         Some(memo) => (memo.reads, memo.derivation.verdict_evidence),
         None => match super::verb::VERB_RUNS.get(dbs, rtxn, &key)? {
-            Some(run) => (run.reads, Vec::new()),
+            // An erased run's payload is gone from its record and its
+            // receipt alike (FIX 10080).
+            Some(run) if run.history_erased => (run.reads, Vec::new()),
+            Some(run) if run.unattributed && run.verb.starts_with("host.") => return Ok(None),
+            Some(run) => {
+                let mut input = run.dependencies;
+                for row in run.named_rows {
+                    if holds(&row)? {
+                        input.push(row);
+                    }
+                }
+                (run.reads, input)
+            }
             None => return Ok(None),
         },
     };

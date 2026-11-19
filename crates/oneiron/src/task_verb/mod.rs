@@ -68,6 +68,8 @@ mod highway;
 mod highway_accept;
 mod highway_block;
 mod highway_post;
+#[cfg(oneiron_test_support)]
+pub(crate) use highway_post::post_request_digest_for_test;
 mod highway_redo;
 mod highway_report;
 pub(crate) mod highway_runner;
@@ -130,6 +132,8 @@ mod task_continuation;
 mod terminal_state;
 mod training_offer_ask;
 mod training_swap_ask;
+#[cfg(oneiron_test_support)]
+pub(crate) use training_swap_ask::swap_question_digest_for_test;
 mod verb_kind;
 mod watch_task;
 pub(crate) use watch_task::{settle_watch_task_in_txn, tick_due_at_in_txn};

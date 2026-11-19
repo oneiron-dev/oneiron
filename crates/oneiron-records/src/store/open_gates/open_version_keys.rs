@@ -3,6 +3,39 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v40 (row RESTORED-COPIES-ENROL-EACH-OTHER; RULING RESTORED-COPIES-JOIN-SCOPE
+/// = A): a restore that drops its image's machine identity on a vault the
+/// owner roots, and an archived vault's activation, write the install-local
+/// row `m:restored_from`, and the install's machine profiles name that image
+/// (a new optional `restored_from` key, signed under the v2 machine proof).
+/// The authority fold holds such a machine's act-free enrolment, standing
+/// for nothing, until an entry signed by a joined machine descends from it.
+/// Stored authority-log rows keep their bytes and their meaning: a profile
+/// without the key reads as a machine that never restored, as before. A
+/// stored checkpoint image written before it no longer decodes (the
+/// authority fold schema moves 50 -> 51 with it). No old-meaning reader or
+/// migration is provided (the lead's M-1 stored-change rule, path "loud").
+///
+/// v39 (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES, site S1,
+/// and FIX FOREIGN-ANCHOR-ADMIT-SIDE): stored authority-log rows keep their
+/// bytes and change meaning. Only the roster's chain admits or removes an
+/// owner act's carrier: an act whose carrier an anchor chain, and not the
+/// roster's, marked removed at the act's parents was refused and now
+/// stands, and an act whose carrier only an anchor chain admitted stood and
+/// is now refused. Every other judge all installs share reads the roster's
+/// chain alone too (Fable pass 29, step K3): an owner key's enrolment, a
+/// residence result's signer, a one-machine read pick, and the ten owner-act
+/// gates that ask whether a machine's chain names the signing key no longer
+/// count an anchor's chain, so such a row that only an anchor's chain
+/// supported is now refused, and one an anchor's removal mark refused now
+/// stands. A one-machine read pick now needs the target's live roster head
+/// in any role, not "yours" in some chain: a pick of a linked machine the
+/// owner has not answered "yours" was refused and now stands ("yours" is
+/// the writer's check under its pin). A stored checkpoint image written
+/// before it holds the old answers and no longer decodes (the authority fold
+/// schema moves 49 -> 50 with it). No old-meaning reader or migration is
+/// provided (the lead's M-1 stored-change rule, path "loud").
+///
 /// v37 (row OWNER-ANCHOR-ROOT-RECOVERY, FIX OWNER-ANCHOR-NO-ROOT-RECOVERY): the
 /// authority fold schema moves 44 -> 45, and a stored checkpoint image
 /// written before it no longer decodes. The fold names a roster with no live
@@ -212,7 +245,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 37;
+pub const STORAGE_ABI_VERSION: u16 = 40;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

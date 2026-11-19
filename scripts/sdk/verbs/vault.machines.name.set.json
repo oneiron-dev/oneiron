@@ -1,0 +1,16 @@
+{
+  "name": "vault.machines.name.set",
+  "description": "The owner sets or clears his own one-line name for one of his machines; null or blank clears it. Display only: no profile, revision, role or reach moves.",
+  "input": "crate::task_verb::sdk::MachineNameSetRequest",
+  "output": "crate::task_verb::sdk::MachineNameSetReply",
+  "call": "crate::task_verb::sdk::set_machine_name_as(memory.vault(), &memory.embedded_owner(\"vault.machines.name.set\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

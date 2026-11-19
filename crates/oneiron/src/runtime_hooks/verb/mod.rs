@@ -53,6 +53,7 @@ pub use credential::{
 };
 pub(crate) use held_member::hold_member;
 pub use held_member::with_held_member;
+pub(crate) use paced::PACED_VERB_LINE_JOB;
 pub(super) use paced::scrub_erased_paced_in_txn;
 pub use paced::{PACED_VERB_WAIT_DEFAULT_SECS, is_paced_verb};
 pub(crate) use paced::{

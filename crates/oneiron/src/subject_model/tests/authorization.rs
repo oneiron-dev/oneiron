@@ -247,7 +247,7 @@ pub(crate) fn set_project_depth_with_host(
 #[test]
 fn unauthorized_initial_anchor_and_non_actor_targets_are_rejected() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let actor = seed(&vault, entity(0x77), ENTITY_TYPE_AGENT_DEF);
+    let actor = seed_unanchored_agent_definition(&vault, entity(0x77), "subject_model");
     let person = seed(&vault, entity(0x78), ENTITY_TYPE_PERSON);
     let outsider = WriteActor::new(person, EdgeActorClass::Human);
     assert!(anchor_actor_subject(&vault, actor, person, outsider, 100).is_err());
@@ -273,6 +273,9 @@ fn public_reanchor_observes_revocation_committed_after_preflight() -> Result<()>
     let other = seed(&vault, entity(0x7B), ENTITY_TYPE_PERSON);
     let claim = anchor_actor_subject(&vault, actor, first, writer(), 100)?;
     let before = vault.get_claim(&claim)?;
+    // The creation door already anchored the house to its model PERSON; the
+    // revoked reanchor must leave that history unchanged.
+    let baseline = vault.claims_for_subject(&actor)?;
     let mut revocation_txn = vault.store.env.write_txn()?;
     vault.put_authority_log_entries_in_txn(
         &mut revocation_txn,
@@ -307,7 +310,7 @@ fn public_reanchor_observes_revocation_committed_after_preflight() -> Result<()>
     );
     assert_eq!(vault.get_claim(&claim)?, before);
     assert_eq!(actor_subject_anchor(&vault, &actor, 103)?, Some(first));
-    assert_eq!(vault.claims_for_subject(&actor)?.len(), 1);
+    assert_eq!(vault.claims_for_subject(&actor)?, baseline);
     drop(vault);
     drop(dir);
     Ok(())

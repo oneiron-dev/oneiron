@@ -6,7 +6,9 @@
 //! confirmed from the words of a relationship R, then reacts 👍 to an open
 //! MESSAGE in a room the outsider (outside R) and a member of R both sit in.
 //! The outsider reads the room MESSAGE and the reaction claim, but not Mirela's
-//! PERSON row; the member of R reads all three.
+//! PERSON row; the member of R reads all three. Both read the room's MESSAGEs on a
+//! grant over the room. The Memory view tests stamp a birth naming Mirela on her
+//! claim, which `Vault::react` does not.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test reaction_claim_reactor_withheld`.
@@ -19,7 +21,6 @@ use oneiron::access_grant::AccessGrantStatus;
 use oneiron::access_grant::{AccessGrant, AccessGrantCapability, AccessGrantScope};
 use oneiron::claim::{ClaimBody, ScopedReadActorKey, decode_claim_body};
 use oneiron::conversation::{ConversationBody, ConversationKind, HistoryChoice};
-use oneiron::deletion::{MemoryTimelineRecord, MemoryTimelineRecordState};
 use oneiron::embed::EmbedderLocality;
 use oneiron::memory::extraction::{EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder};
 use oneiron::memory::extraction::{ExtractionWork, NerSpan};
@@ -28,7 +29,9 @@ use oneiron::reaction::ReactionInput;
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use oneiron::tagging::{MentionLink, TaggingMarkerConfig, TaggingMode, TaggingReconciler};
 use oneiron::temporal::TimeRange;
+use oneiron::test_doors::house_link::stamp_stated_birth;
 use oneiron::test_doors::label_writers::open_member_vault;
+use oneiron::write_envelope::provenance::made_by::{MadeBy, MadeByClass, MadeByProcess};
 use oneiron::{EdgeActorClass, EntityId, ModelId, Vault, VaultConfig, WriteActor};
 use oneiron_authority::federation::scope_codec::read_preset;
 use rmpv::Value;
@@ -241,6 +244,26 @@ fn fixture() -> Fixture {
             .join_member(room, member, acting, at, HistoryChoice::Share)
             .expect("a member joins the room");
     }
+    // The room's MESSAGEs name no relationship, so an access-gated key reads
+    // them only on a grant over the room (FIX 10895); its seat alone opens none.
+    for principal in [outsider, insider] {
+        let grant = AccessGrant {
+            principal_ref: principal,
+            scope: AccessGrantScope::ConversationMessages {
+                conversation_ref: room,
+            },
+            capability: AccessGrantCapability::MessagesRead,
+            status: AccessGrantStatus::Active,
+            created_at: 1,
+            revoked_at: None,
+            expires_at: None,
+            authority_scope: read_preset(),
+            companion_bounds: None,
+        };
+        vault
+            .create_access_grant(&EntityId::now(), &grant)
+            .expect("a member’s grant on the room’s MESSAGEs");
+    }
     let room_message = EntityId::now();
     let open = message(room_message, ROOM_WORDS, None);
     vault
@@ -314,6 +337,14 @@ impl Fixture {
             self.reads(self.insider, &self.reaction),
             "FIXTURE: the member of R reads the reaction claim"
         );
+        assert!(
+            self.reads(self.outsider, &self.room_message),
+            "FIXTURE: the outsider reads the room MESSAGE"
+        );
+        assert!(
+            self.reads(self.insider, &self.room_message),
+            "FIXTURE: the member of R reads the room MESSAGE"
+        );
     }
 
     /// The reaction claim's body bytes `reader` gets from a point read.
@@ -331,18 +362,16 @@ impl Fixture {
 
     /// The reaction claim's body bytes `reader` gets from its timeline parts.
     fn timeline_body(&self, reader: EntityId) -> Vec<u8> {
-        let record = MemoryTimelineRecord {
-            id: self.reaction,
-            state: MemoryTimelineRecordState::Live,
-            entity_type: None,
-            occurred_start: None,
-            occurred_end: None,
-            learned_at: None,
-            body_bytes: None,
-            deletion: None,
-            supersedes: Vec::new(),
-            superseded_by: Vec::new(),
-        };
+        // The door rechecks each record's metadata against the stored row, so
+        // the record comes from the vault's own timeline of the claim.
+        let record = self
+            .vault
+            .memory_timeline(&self.reaction)
+            .expect("the reaction claim’s timeline")
+            .records
+            .into_iter()
+            .find(|record| record.id == self.reaction)
+            .expect("FIXTURE: the timeline holds the reaction claim’s own record");
         let (kind, _, body) = self
             .vault
             .scoped_read(key(reader))
@@ -520,6 +549,28 @@ fn the_outsiders_context_pack_keeps_the_reaction_claim() {
     );
 }
 
+/// [`fixture`] with a stated birth on the reaction claim naming the reactor as its
+/// writer. `Vault::react` stamps no birth, so the Memory view's `made_by` has nothing to
+/// gate until one is stamped.
+fn fixture_with_birth() -> Fixture {
+    let fixture = fixture();
+    let made_by = MadeBy {
+        inputs: Vec::new(),
+        process: MadeByProcess {
+            actor: fixture.reactor,
+            class: MadeByClass::Stated,
+            identity: "reaction-claim-reactor-withheld-fixture".to_owned(),
+            version: "1".to_owned(),
+            params_hash: "fixture".to_owned(),
+        },
+        at: fixture.vault.now_recorded_at(),
+        trigger: None,
+    };
+    stamp_stated_birth(&fixture.vault, fixture.reaction, made_by)
+        .expect("FIXTURE: the reaction claim’s birth names the reactor");
+    fixture
+}
+
 impl Fixture {
     /// The reaction claim's typed view `reader` gets from its Memory read.
     fn view(&self, reader: EntityId) -> oneiron::EntityView {
@@ -536,7 +587,7 @@ impl Fixture {
 /// body, and not as the writer of its birth.
 #[test]
 fn a_memory_view_of_the_reaction_claim_withholds_a_reactor_the_reader_may_not_read() {
-    let fixture = fixture();
+    let fixture = fixture_with_birth();
     let view = fixture.view(fixture.outsider);
     assert!(
         view.made_by.is_none(),
@@ -552,7 +603,7 @@ fn a_memory_view_of_the_reaction_claim_withholds_a_reactor_the_reader_may_not_re
 /// A member of R reads the reactor, and the same view names them as the writer of its birth.
 #[test]
 fn a_relationship_member_reads_the_reaction_claims_birth_whole() {
-    let fixture = fixture();
+    let fixture = fixture_with_birth();
     let view = fixture.view(fixture.insider);
     assert_eq!(
         view.made_by.map(|made_by| made_by.process.actor),

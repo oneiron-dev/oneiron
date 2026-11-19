@@ -11,7 +11,7 @@ use crate::temporal::TimeRange;
 
 fn fixture() -> (tempfile::TempDir, Vault, EntityId) {
     let (dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        crate::test_util::open_test_vault_with_manifest(crate::test_util::embedding_test_config());
     let subject = crate::test_util::entity(0xE2);
     vault
         .put_entity(

@@ -1,6 +1,7 @@
 //! An erased actor keeps no trigger index row (FIX-LIST L23270): a timer arming whose row
-//! does not decode keeps no due row past the erase, and an idle arming whose row does not
-//! decode keeps no trigger row. A decodable arming's rows go as before, and another actor's
+//! does not decode keeps no timer row of its actor past the erase (one Schedule row of
+//! `dreamer_runner.program_timer` per actor, setting stage 5b-3), and an idle arming whose row
+//! does not decode keeps no trigger row. A decodable arming's rows go as before, and another actor's
 //! rows are left alone.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -15,6 +16,7 @@ use oneiron::federation::ScopeAxis;
 use oneiron::skill::{
     SkillCallContract, SkillLifecycle, SkillRecord, SkillRole, canonical_skill_tree_hash,
 };
+use oneiron::test_doors::schedule::due_at;
 use oneiron::test_doors::turn_programs as doors;
 use oneiron::test_support::test_host_issuer;
 use oneiron::{
@@ -23,6 +25,14 @@ use oneiron::{
 
 /// A due time well past any clock the vault records in a test.
 const T0: u64 = 4_000_000_000;
+/// The job an actor's timer programs arm: one row per actor, due at its timers' earliest due
+/// time (setting stage 5b-3).
+const TIMER_JOB: &str = "dreamer_runner.program_timer";
+
+/// When `actor`'s timer row is due, or `None` when it has none.
+fn timer_row_due(vault: &Vault, actor: EntityId) -> Option<u64> {
+    due_at(vault, TIMER_JOB, Some(actor)).expect("the timer row")
+}
 
 fn open() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -139,8 +149,8 @@ fn agent_slip(
     (agent, verified, binding)
 }
 
-/// A damaged timer arming keeps no due row past its actor's erase: the erase takes the due
-/// index row it cannot read the due time from.
+/// A damaged timer arming keeps no timer row past its actor's erase: the erase disarms the
+/// actor's timer row, whose due time it cannot read from the arming.
 #[test]
 fn a_damaged_timer_keeps_no_due_row_past_its_actors_erase() {
     let (_dir, vault) = open();
@@ -152,10 +162,7 @@ fn a_damaged_timer_keeps_no_due_row_past_its_actors_erase() {
             every_secs: 0,
         },
     );
-    assert_eq!(
-        doors::timer_due_rows_for_actor(&vault, fixture.owner).expect("due rows"),
-        vec![(T0, registration)]
-    );
+    assert_eq!(timer_row_due(&vault, fixture.owner), Some(T0));
 
     doors::damage_arming_row(&vault, fixture.owner, registration).expect("damage the arming");
     doors::erase_actor_programs(&vault, fixture.owner).expect("erase");
@@ -164,10 +171,10 @@ fn a_damaged_timer_keeps_no_due_row_past_its_actors_erase() {
         !doors::program_armed_here(&vault, fixture.owner, registration).expect("armed read"),
         "the erase takes the damaged arming"
     );
-    let rows = doors::timer_due_rows_for_actor(&vault, fixture.owner).expect("due rows");
+    let due = timer_row_due(&vault, fixture.owner);
     assert!(
-        rows.is_empty(),
-        "the damaged timer's due row lingers past the erase: {rows:?}"
+        due.is_none(),
+        "the damaged timer's row lingers past the erase: {due:?}"
     );
 }
 
@@ -195,7 +202,7 @@ fn a_damaged_idle_program_keeps_no_trigger_row_past_its_actors_erase() {
     );
 }
 
-/// An erase still drops a decodable arming's trigger rows: the timer's due row and the idle
+/// An erase still drops a decodable arming's trigger rows: the actor's timer row and the idle
 /// program's trigger row go with their armings.
 #[test]
 fn an_erase_drops_a_decodable_armings_trigger_rows() {
@@ -209,10 +216,7 @@ fn an_erase_drops_a_decodable_armings_trigger_rows() {
         },
     );
     let idle = fixture.arm(&vault, ProgramTrigger::Idle { quiet_secs: 600 });
-    assert_eq!(
-        doors::timer_due_rows_for_actor(&vault, fixture.owner).expect("due rows"),
-        vec![(T0, timer)]
-    );
+    assert_eq!(timer_row_due(&vault, fixture.owner), Some(T0));
     assert_eq!(
         doors::trigger_rows_for_actor(&vault, fixture.owner)
             .expect("trigger rows")
@@ -222,11 +226,7 @@ fn an_erase_drops_a_decodable_armings_trigger_rows() {
 
     doors::erase_actor_programs(&vault, fixture.owner).expect("erase");
 
-    assert!(
-        doors::timer_due_rows_for_actor(&vault, fixture.owner)
-            .expect("due rows")
-            .is_empty()
-    );
+    assert_eq!(timer_row_due(&vault, fixture.owner), None);
     assert!(
         doors::trigger_rows_for_actor(&vault, fixture.owner)
             .expect("trigger rows")
@@ -255,14 +255,11 @@ fn an_erase_leaves_another_actors_trigger_rows() {
 
     doors::erase_actor_programs(&vault, fixture.owner).expect("erase");
 
-    assert!(
-        doors::timer_due_rows_for_actor(&vault, fixture.owner)
-            .expect("due rows")
-            .is_empty(),
-        "the erased actor's damaged timer keeps its due row"
-    );
     assert_eq!(
-        doors::timer_due_rows_for_actor(&vault, bystander).expect("due rows"),
-        vec![(T0 + 3_600, kept)]
+        timer_row_due(&vault, fixture.owner),
+        None,
+        "the erased actor's damaged timer keeps its row"
     );
+    assert_eq!(timer_row_due(&vault, bystander), Some(T0 + 3_600));
+    assert!(doors::program_armed_here(&vault, bystander, kept).expect("armed read"));
 }

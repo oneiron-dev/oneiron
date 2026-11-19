@@ -36,6 +36,7 @@
 
 mod reads;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 pub(crate) use self::reads::{
@@ -299,7 +300,7 @@ impl StepContextCommit {
     /// The BLAKE3 of the context's body as captured: what the step's
     /// checkpoint binds.
     pub(crate) fn digest(&self) -> [u8; 32] {
-        *blake3::hash(&self.bytes).as_bytes()
+        *ContentHash::of(&self.bytes).as_bytes()
     }
 }
 

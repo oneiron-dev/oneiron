@@ -73,16 +73,17 @@ impl Caller {
             request,
         );
         request.extensions_mut().insert(ConnectInfo(from.peer));
-        let response = crate::build_app(Arc::clone(&self.server))
-            .oneshot(request)
-            .await
-            .unwrap();
-        let status = response.status();
-        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        (
-            status,
-            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-        )
+        let app = crate::build_app(Arc::clone(&self.server));
+        crate::test_engine_stack::on_engine_stack(async move {
+            let response = app.oneshot(request).await.unwrap();
+            let status = response.status();
+            let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            (
+                status,
+                serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+            )
+        })
+        .await
     }
 
     /// A query or pack's whole answer, so an id anywhere in it (a result, an
@@ -1013,7 +1014,7 @@ async fn outcomes_off_this_device_pair_no_device_local_row() {
     assert_eq!(here.tasks_ask_outcomes(&handle).unwrap().len(), 2);
 }
 
-/// Astra F3: a direct `claim_upsert` receipt names the claim it wrote by
+/// Astra F3: a direct `vault.claims.upsert` receipt names the claim it wrote by
 /// short ref alone, and that claim is the receipt's producer. Flagged after
 /// the write and before the result is released, the claim's world keeps the
 /// receipt on this device: the caller reads that its result changed. While
@@ -1051,7 +1052,12 @@ async fn a_claim_receipt_off_this_device_names_no_claim_its_world_made_device_lo
                 "value": "orchid",
                 "confidence": 1.0,
                 "source": "user_stated",
-                "world_ref": world.to_hex(),
+                "scope": {
+                    "world_id": world.to_hex(),
+                    "scope_facet_id": server.vault.default_facet().expect("default facet").to_hex(),
+                    "scope_relationship_id": "all",
+                    "scope_project_id": oneiron::claim::default_project_id().to_hex(),
+                },
             }}}),
         );
         async move {
@@ -1059,7 +1065,7 @@ async fn a_claim_receipt_off_this_device_names_no_claim_its_world_made_device_lo
                 MCP_TOOL_FIRST_PATH,
                 "receipts",
                 "claim_upsert",
-                "claim_upsert",
+                "vault.claims.upsert",
                 arguments,
             );
             route_json(server, request).await.1
@@ -1108,7 +1114,7 @@ async fn a_refusal_off_this_device_states_no_scope_a_device_local_world_narrows(
                 MCP_TOOL_FIRST_PATH,
                 "narrowed",
                 "narrowed-subscribe",
-                "board.subscribe",
+                "self.focus.subscribe",
                 mcp_merge_args(
                     mcp_scoped_envelope(actor, "read_board", &scope),
                     json!({"arguments": {"scopes": ["memories"]}}),
