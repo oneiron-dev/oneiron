@@ -268,29 +268,34 @@ fn production_socket_reads_and_subscribes_then_receives_materialized_engine_chan
     )
 }
 
-#[tokio::test]
-async fn production_read_socket_closes_after_bound_jti_revocation() {
-    let f = fixture().await;
-    let mut socket = connect(&f, "agent").await;
-    send(
-        &mut socket,
-        TAG_RPC,
-        json!({"requestId":7,"method":"vault.hydrate","params":{"refs":[ACTOR]}}),
+#[test]
+fn production_read_socket_closes_after_bound_jti_revocation() {
+    run_on_engine_stack(
+        "production_read_socket_closes_after_bound_jti_revocation",
+        || async move {
+            let f = fixture().await;
+            let mut socket = connect(&f, "agent").await;
+            send(
+                &mut socket,
+                TAG_RPC,
+                json!({"requestId":7,"method":"vault.hydrate","params":{"refs":[ACTOR]}}),
+            )
+            .await;
+            let read = app(&mut socket, TAG_RPC).await;
+            assert_eq!(read["result"]["value"][0]["id_hex"], ACTOR);
+            assert_eq!(read["last"], true);
+            // Revoke the BOUND credential: each class mints a distinct slip, so
+            // revoking a sibling class must not close this socket.
+            crate::test_credentials::revoke(&f.server, &token("agent"));
+            send(
+                &mut socket,
+                TAG_RPC,
+                json!({"requestId":8,"method":"vault.hydrate","params":{"refs":[ACTOR]}}),
+            )
+            .await;
+            revoked_close(&mut socket).await;
+        },
     )
-    .await;
-    let read = app(&mut socket, TAG_RPC).await;
-    assert_eq!(read["result"]["value"][0]["id_hex"], ACTOR);
-    assert_eq!(read["last"], true);
-    // Revoke the BOUND credential: each class mints a distinct slip, so
-    // revoking a sibling class must not close this socket.
-    crate::test_credentials::revoke(&f.server, &token("agent"));
-    send(
-        &mut socket,
-        TAG_RPC,
-        json!({"requestId":8,"method":"vault.hydrate","params":{"refs":[ACTOR]}}),
-    )
-    .await;
-    revoked_close(&mut socket).await;
 }
 
 #[test]
