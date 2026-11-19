@@ -6,11 +6,12 @@
 //! signal door compared the held answer with the raw one as written and
 //! refused the identical answer as "ask already answered".
 //!
-//! The raw answer is now planned with the values the writer reads, as
-//! `open_ask` plans its questions (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS):
-//! the identical answer under a new key is taken, and an answer holding a
-//! passphrase another custody record holds reads as another handle and
-//! still refuses.
+//! An answer given again under a new key is now the same answer when it is
+//! the first answer exactly as given: the fingerprint kept beside the first
+//! answer's signal meets it restated under that signal's key and actor. The
+//! identical answer under a new key is taken, and any other answer refuses,
+//! even one the side-row wall would hold under the same handle (blind
+//! review round 2 of #9531).
 //!
 //! `cargo test --locked -p oneiron --all-features --test
 //! signal_ask_answer_known_value`.
@@ -39,6 +40,17 @@ const OTHER_HELD_PASSPHRASE: &str = "autumn meadow candle ribbon";
 /// An answer holding the held passphrase and a word after it.
 const HELD_PASSPHRASE_AND_WORD: &str = "winter orchard notebook lantern twice";
 
+/// Values custody holds that one percent escape tells apart: admission
+/// gives the escaped one its own handle, an exact hit, over the first
+/// one's percent-decoded hit of the same span.
+const MARBLE_VALUE: &str = "Marble~quartz~tulip";
+const ESCAPED_MARBLE_VALUE: &str = "%4Darble~quartz~tulip";
+/// A value custody holds that starts inside a two-byte character, and an
+/// answer holding that character: the mask widens the match to the
+/// character's first byte.
+const PARTIAL_CHARACTER_VALUE: &[u8] = b"\xa9~orb:";
+const PARTIAL_CHARACTER_ANSWER: &str = "\u{e9}~orb:";
+
 const RUN: &str = "known-answer-run";
 const LEASE: &str = "known-answer-worker";
 const ASK_HANDLE: &str = "archive-unlock";
@@ -49,22 +61,21 @@ const SECOND_KEY: &str = "answer-2";
 
 /// A vault whose custody holds two passphrases, each in its own record.
 fn vault() -> TestResult<(tempfile::TempDir, Vault)> {
+    vault_holding(&[
+        ("orchard passphrase", HELD_PASSPHRASE.as_bytes()),
+        ("meadow passphrase", OTHER_HELD_PASSPHRASE.as_bytes()),
+    ])
+}
+
+/// A vault whose custody holds each named value in its own record.
+fn vault_holding(values: &[(&str, &[u8])]) -> TestResult<(tempfile::TempDir, Vault)> {
     let directory = tempfile::tempdir()?;
     let vault = Vault::open(directory.path(), VaultConfig::device())?;
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     vault.prepare_install_signing()?;
-    vault.register_test_secret(
-        "orchard passphrase",
-        HELD_PASSPHRASE.as_bytes(),
-        Vec::new(),
-        1,
-    )?;
-    vault.register_test_secret(
-        "meadow passphrase",
-        OTHER_HELD_PASSPHRASE.as_bytes(),
-        Vec::new(),
-        1,
-    )?;
+    for &(name, value) in values {
+        vault.register_test_secret(name, value, Vec::new(), 1)?;
+    }
     Ok((directory, vault))
 }
 
@@ -231,13 +242,7 @@ fn an_answer_under_a_new_key_with_another_passphrase_custody_holds_refuses() -> 
         [FIRST_KEY, SECOND_KEY],
     )?;
     first.map_err(|error| format!("the first answer was refused: {error:?}"))?;
-    match second {
-        Err(oneiron::Error::InvalidConfig(reason)) if reason == "ask already answered" => Ok(()),
-        other => Err(format!(
-            "an answer with another held passphrase under a new key refuses, got {other:?}"
-        )
-        .into()),
-    }
+    refused_as_answered(second, "an answer with another held passphrase")
 }
 
 /// Guard: an answer holding a passphrase no custody record holds, given
@@ -253,13 +258,7 @@ fn an_answer_under_a_new_key_with_a_passphrase_no_custody_holds_after_a_held_one
         [FIRST_KEY, SECOND_KEY],
     )?;
     first.map_err(|error| format!("the first answer was refused: {error:?}"))?;
-    match second {
-        Err(oneiron::Error::InvalidConfig(reason)) if reason == "ask already answered" => Ok(()),
-        other => Err(format!(
-            "an answer with an unheld passphrase under a new key refuses, got {other:?}"
-        )
-        .into()),
-    }
+    refused_as_answered(second, "an answer with an unheld passphrase")
 }
 
 /// Turns the owner's secret scan off: the wall then stores a row as given.
@@ -346,4 +345,72 @@ fn an_answer_given_again_under_a_new_key_after_custody_took_it_whole_carries_the
             Ok(())
         },
     )?)
+}
+
+/// The answer the receipt of an ask answer holds.
+fn held_answer(receipt: &RunBranchSignal) -> TestResult<&str> {
+    match &receipt.kind {
+        RunSignalKind::AskAnswer { answer, .. } => Ok(answer),
+        other => Err(format!("an ask answer's receipt, got {other:?}").into()),
+    }
+}
+
+/// Checks that an answer given under a new key refused as an answer to an
+/// ask already answered.
+fn refused_as_answered(signal: oneiron::Result<RunBranchSignal>, what: &str) -> TestResult {
+    match signal {
+        Err(oneiron::Error::InvalidConfig(reason)) if reason == "ask already answered" => Ok(()),
+        other => Err(format!("{what} under a new key refuses, got {other:?}").into()),
+    }
+}
+
+/// An answer holding a value a second custody record holds, which reads as
+/// the first record's value once percent-decoded, is another answer: under
+/// a new key it refuses. Red at 3b82998278d (blind review round 2 of #9531):
+/// the held comparison left the exact record out, met the first value by
+/// its percent-decoded match, and stored the first answer's handle under
+/// the new key.
+#[test]
+fn an_answer_under_a_new_key_with_a_value_one_escape_apart_refuses() -> TestResult {
+    let (_directory, vault) = vault_holding(&[
+        ("marble value", MARBLE_VALUE.as_bytes()),
+        ("escaped marble value", ESCAPED_MARBLE_VALUE.as_bytes()),
+    ])?;
+    let [first, second] = answered_twice(
+        &vault,
+        [MARBLE_VALUE, ESCAPED_MARBLE_VALUE],
+        [FIRST_KEY, SECOND_KEY],
+    )?;
+    let first = first.map_err(|error| format!("the first answer was refused: {error:?}"))?;
+    assert_ne!(
+        held_answer(&first)?,
+        MARBLE_VALUE,
+        "the wall holds the first answer under its record's handle"
+    );
+    refused_as_answered(second, "an answer with a value one escape apart")
+}
+
+/// The answer starts with a two-byte character whose second byte opens a
+/// value custody holds, so the mask widens its match to the character; the
+/// identical answer under a new key is taken. Red at 3b82998278d (blind
+/// review round 2 of #9531): the held comparison matched only the bytes
+/// the value covers and refused it as "ask already answered".
+#[test]
+fn an_answer_given_again_under_a_new_key_with_a_mask_widened_to_a_character_is_taken() -> TestResult
+{
+    let (_directory, vault) =
+        vault_holding(&[("partial character value", PARTIAL_CHARACTER_VALUE)])?;
+    let signals = answered_twice(
+        &vault,
+        [PARTIAL_CHARACTER_ANSWER, PARTIAL_CHARACTER_ANSWER],
+        [FIRST_KEY, SECOND_KEY],
+    )?;
+    if let Ok(first) = &signals[0] {
+        assert_ne!(
+            held_answer(first)?,
+            PARTIAL_CHARACTER_ANSWER,
+            "the wall holds the first answer under its record's handle"
+        );
+    }
+    answer_again_is_taken(signals)
 }
