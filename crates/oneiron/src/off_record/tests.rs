@@ -1389,7 +1389,7 @@ fn a_room_retrieval_queues_no_embed_job_once_its_saver_left() -> Result<()> {
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
     // A claim owes its vector from the write that put it.
     let claim = EntityId::now();
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         "test.status",
         ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16]).expect("subject id")),
         rmpv::Value::from("v"),
@@ -1398,6 +1398,7 @@ fn a_room_retrieval_queues_no_embed_job_once_its_saver_left() -> Result<()> {
         ClaimLifecycleStatus::Active,
     )
     .expect("claim body");
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     vault
         .batch()
         .put(
@@ -1475,7 +1476,7 @@ fn a_room_read_that_keeps_its_embed_jobs_out_still_stops_once_its_saver_left() -
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
     // A claim owes its vector from the write that put it.
     let claim = EntityId::now();
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         "test.status",
         ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16]).expect("subject id")),
         rmpv::Value::from("v"),
@@ -1484,6 +1485,7 @@ fn a_room_read_that_keeps_its_embed_jobs_out_still_stops_once_its_saver_left() -
         ClaimLifecycleStatus::Active,
     )
     .expect("claim body");
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     vault
         .batch()
         .put(

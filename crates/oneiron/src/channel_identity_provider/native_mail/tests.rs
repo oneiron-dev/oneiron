@@ -278,6 +278,7 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
             continue;
         }
         body.source = Some(ClaimSource::Observed);
+        crate::test_util::stamp_vault_default_facet(&vault, &mut body);
         let claim_id = EntityId::now();
         if body.predicate == crate::identity_reputation::PREDICATE_IDENTITY_REPUTATION_WARMUP_STAGE
         {
@@ -561,7 +562,9 @@ fn held_reputation_vetoes_the_ramp_but_never_earns_it() -> Result<()> {
     };
     let put = |body: &crate::claim::ClaimBody, at: u64| -> Result<EntityId> {
         let claim = EntityId::now();
-        vault.put_claim(&claim, body, TimeRange { start: at, end: at }, at)?;
+        let mut stamped = body.clone();
+        crate::test_util::stamp_vault_default_facet(&vault, &mut stamped);
+        vault.put_claim(&claim, &stamped, TimeRange { start: at, end: at }, at)?;
         Ok(claim)
     };
     let heads = IdentityReputation {

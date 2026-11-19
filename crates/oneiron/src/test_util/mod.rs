@@ -25,6 +25,7 @@ pub(crate) use vault_open::{
     embedding_test_config, open_test_vault_with_manifest, pinned_store_clock,
 };
 
+use crate::claim::ClaimBody;
 use crate::config::VaultConfig;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError};
@@ -357,6 +358,12 @@ pub(crate) fn open_test_vault_with(cfg: VaultConfig) -> (tempfile::TempDir, Vaul
         oneiron_keystore::MemoryKeystore::default(),
     ));
     (dir, vault)
+}
+
+/// Re-stamps a fixture CLAIM body with the vault default facet.
+/// `ClaimBody::new` stamps the subject's derived substrate id, which the #4389 CLAIM birth gate refuses unless it is a stored FACET.
+pub(crate) fn stamp_vault_default_facet(vault: &Vault, body: &mut ClaimBody) {
+    body.scope_facet = vault.default_facet().expect("the vault default facet");
 }
 
 /// Signs a MACHINE writer's candidate with the signer the host retained for

@@ -2162,6 +2162,7 @@ fn secondary_parent_rule_narrows_cross_project_leader_chat() -> Result<()> {
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut claim);
     claim.scope_project = right;
     vault.put_claim(&rule, &claim, TimeRange { start: 5, end: 5 }, 5)?;
     let refusal = vault
