@@ -468,23 +468,29 @@ fn invalid_body() -> OwnerError {
 /// see that it went through [`wipe`].
 #[cfg(test)]
 pub(crate) mod wiped {
-    use std::cell::RefCell;
+    use std::sync::{Mutex, PoisonError};
 
-    thread_local! {
-        // Per thread: a request read on a current-thread test runtime wipes
-        // on the test's own thread.
-        static SEEN: RefCell<Vec<blake3::Hash>> = const { RefCell::new(Vec::new()) };
-    }
+    // Process-wide: a lib test's request runs on its engine-stack runtime's
+    // workers (`crate::test_engine_stack`), not on the test's own thread, so
+    // a per-thread record never sees the wipe. A test names its buffer by
+    // bytes no other lib test sends.
+    static SEEN: Mutex<Vec<blake3::Hash>> = Mutex::new(Vec::new());
 
     pub(super) fn saw(buffer: &[u8]) {
-        SEEN.with_borrow_mut(|seen| seen.push(blake3::hash(buffer)));
+        SEEN.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(blake3::hash(buffer));
     }
 
-    /// How many buffers this thread wiped that held exactly `bytes` just
-    /// before the wipe.
+    /// How many buffers were wiped that held exactly `bytes` just before the
+    /// wipe.
     pub(crate) fn count(bytes: &[u8]) -> usize {
         let held = blake3::hash(bytes);
-        SEEN.with_borrow(|seen| seen.iter().filter(|seen| **seen == held).count())
+        SEEN.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|seen| **seen == held)
+            .count()
     }
 }
 
