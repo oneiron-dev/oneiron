@@ -18,7 +18,10 @@ use std::sync::Arc;
 
 fn test_vault() -> Arc<Vault> {
     let dir = tempfile::tempdir().unwrap();
-    Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap())
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
+    vault
 }
 
 /// One peer entity blob through the shared ingest ladder inside `wtxn`, keyed
@@ -6089,6 +6092,8 @@ fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
     }
     let root = tempfile::tempdir().unwrap();
     let vault = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
     let (loser, survivor, own, other) = (
         EntityId::now(),
         EntityId::now(),
@@ -6116,6 +6121,7 @@ fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
         .and_then(|key| EntityId::from_hex(&key["it:authored:".len()..]).ok())
         .unwrap();
     let image = root.path().join("image");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 300).unwrap();
     let (later, head, author) = (EntityId::now(), EntityId::now(), EntityId::now());
     for id in [&later, &head, &author] {

@@ -87,6 +87,7 @@ pub(super) fn witness(vault: &Vault, room: EntityId, author: EntityId, text: &st
 pub(super) fn room_with(external_id: Option<&str>) -> Room {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     if external_id.is_some() {
         crate::test_util::provision_engine_machines(&vault);
     }

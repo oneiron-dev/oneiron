@@ -397,6 +397,7 @@ fn private_diary_and_foreign_scope_are_not_admitted() -> TestResult {
 fn removed_evidence_and_landed_claim_cannot_be_replayed_from_cache() -> TestResult {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let owner = EntityId::now();
     let unit = EntityId::now();
     let evidence = EntityId::now();

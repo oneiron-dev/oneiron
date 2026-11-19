@@ -8,25 +8,49 @@
 //! integration tests share that shape through
 //! `tests/support/engine_stack.rs` (#7320); this module is the same shape
 //! for the lib tests, which cannot use that file. [`on_engine_stack`] hops
-//! one request future onto a process-wide runtime whose workers have the
-//! engine stack; [`run_on_engine_stack`] runs a whole test body on a named
-//! engine-stack thread under such a runtime.
+//! one request future onto the calling test thread's runtime whose workers
+//! have the engine stack; [`run_on_engine_stack`] runs a whole test body on a
+//! named engine-stack thread under such a runtime.
+//!
+//! The runtime is per test thread, not process-wide: sibling tests in one
+//! `cargo test --lib` process share no runtime. A test thread's exit starts
+//! its runtime's shutdown without waiting: async tasks are dropped at their
+//! next yield, but a `spawn_blocking` job that already started runs on until
+//! it returns (tokio neither cancels nor joins it).
 
 use std::future::Future;
-use std::sync::OnceLock;
 
-/// The process-wide runtime whose workers have the engine's stack.
-fn runtime() -> &'static tokio::runtime::Runtime {
-    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-    RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .thread_stack_size(crate::ENGINE_THREAD_STACK_BYTES)
-            .thread_name("engine-test-worker")
-            .enable_all()
-            .build()
-            .expect("engine-sized test runtime")
-    })
+/// One test thread's runtime whose workers have the engine's stack. Its
+/// thread's exit starts its shutdown through `shutdown_background`, which
+/// never blocks (and so never joins a started blocking job), so the drop is
+/// safe in a thread-local destructor and in an async context.
+struct EngineStackRuntime(Option<tokio::runtime::Runtime>);
+
+impl EngineStackRuntime {
+    fn build() -> Self {
+        Self(Some(
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .thread_stack_size(crate::ENGINE_THREAD_STACK_BYTES)
+                .thread_name("engine-test-worker")
+                .enable_all()
+                .build()
+                .expect("engine-sized test runtime"),
+        ))
+    }
+}
+
+impl Drop for EngineStackRuntime {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.0.take() {
+            runtime.shutdown_background();
+        }
+    }
+}
+
+thread_local! {
+    /// The calling test thread's runtime whose workers have the engine's stack.
+    static RUNTIME: EngineStackRuntime = EngineStackRuntime::build();
 }
 
 /// Polls `future` on the engine's stack and answers its output. A failed
@@ -36,7 +60,14 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    match runtime().spawn(future).await {
+    let task = RUNTIME.with(|runtime| {
+        runtime
+            .0
+            .as_ref()
+            .expect("the engine-stack runtime lives as long as its thread")
+            .spawn(future)
+    });
+    match task.await {
         Ok(output) => output,
         // A failed assertion fails the test with its own message.
         Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),

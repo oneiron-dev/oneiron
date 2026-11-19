@@ -62,6 +62,10 @@ fn admitted_sender_replays_after_new_facet_without_another_effect_or_debit()
         // Prove the choice survives a restart, not just a cached request.
         drop(vault);
         let vault = Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
+        // This reopen restores the seed marker; the built-in pack gate is not under test.
+        vault.remove_builtin_pack_seed_marker_for_test().expect(
+            "FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)",
+        );
         if !with_sender {
             put_sending_identity(&vault, first, ChannelIdentityBinding::actor(actor_ref))?;
         }
@@ -162,6 +166,10 @@ fn pending_sender_retry_rechecks_policy_without_changing_frozen_admission()
 
         drop(vault);
         let vault = Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
+        // This reopen restores the seed marker; the built-in pack gate is not under test.
+        vault.remove_builtin_pack_seed_marker_for_test().expect(
+            "FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)",
+        );
         put_sending_identity(
             &vault,
             entity(0x94),

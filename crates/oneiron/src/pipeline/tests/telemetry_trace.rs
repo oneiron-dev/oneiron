@@ -820,6 +820,7 @@ fn retrieval_trace_fork_hash_uses_effective_trace_candidate_set() -> Result<()> 
             TimeRange { start: 1, end: 1 },
             1,
             &claim_body_bytes(
+                &vault,
                 crate::claim::ClaimApprovalStatus::Auto,
                 crate::claim::ClaimLifecycleStatus::Active,
                 false,
@@ -842,6 +843,7 @@ fn retrieval_trace_fork_hash_uses_effective_trace_candidate_set() -> Result<()> 
             TimeRange { start: 1, end: 1 },
             1,
             &claim_body_bytes(
+                &vault,
                 crate::claim::ClaimApprovalStatus::Auto,
                 crate::claim::ClaimLifecycleStatus::Retracted,
                 false,

@@ -473,6 +473,8 @@ fn replayed_goal_tombstone_retains_no_dangling_pointer() -> Result<()> {
     ] {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+        vault.prepare_install_signing().expect("install signing");
         let project = vault.root_project()?;
         let human = vault.ensure_embedded_owner_actor().unwrap();
         let owner = vault.authenticate_owner(
