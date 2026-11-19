@@ -283,9 +283,29 @@ pub fn make_directory(path: &Path) -> Result<File> {
             .map_err(std::io::Error::from)?,
     );
     rustix::fs::mkdirat(&parent, name, Mode::from_raw_mode(0o700)).map_err(std::io::Error::from)?;
+    #[cfg(any(test, feature = "test-support"))]
+    if let Some(mut callback) = AFTER_DIRECTORY_MADE.with(|slot| slot.borrow_mut().take()) {
+        callback(path);
+    }
     let made = openat(&parent, name, flags | OFlags::NOFOLLOW, Mode::empty())
         .map_err(std::io::Error::from)?;
     Ok(File::from(made))
+}
+
+#[cfg(any(test, feature = "test-support"))]
+type DirectoryMadeCallback = Box<dyn FnMut(&Path)>;
+
+#[cfg(any(test, feature = "test-support"))]
+thread_local! {
+    static AFTER_DIRECTORY_MADE: std::cell::RefCell<Option<DirectoryMadeCallback>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Runs `callback` once, with the path, when this thread's next
+/// [`make_directory`] has made its directory and not yet opened it.
+#[cfg(any(test, feature = "test-support"))]
+pub fn arm_after_directory_made(callback: impl FnMut(&Path) + 'static) {
+    AFTER_DIRECTORY_MADE.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
 }
 
 /// `parent`, or the working directory when a relative path has none.
