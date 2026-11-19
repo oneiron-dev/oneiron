@@ -751,6 +751,12 @@ impl PollAdmission<'_> {
         status_ref: EntityId,
         observed_at: u64,
     ) -> Result<(), CalendarError> {
+        #[cfg(oneiron_test_support)]
+        if crate::test_doors::host_cancel_refund::take_stop_before_cancel_outcome() {
+            return Err(ingest(
+                "stopped before the cancellation's CAL-07 outcome (test door)",
+            ));
+        }
         let Some(header) = self.vault.read_entity_header(&event_ref)? else {
             return Ok(());
         };

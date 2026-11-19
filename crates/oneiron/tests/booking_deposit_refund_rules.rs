@@ -1466,3 +1466,287 @@ fn a_host_tombstone_on_record_refunds_when_another_calendar_concludes_the_cancel
         "the host's tombstone on record refunds once the cancellation concludes"
     );
 }
+
+/// Review round 2 of #9472: a host who shows the booking again takes back
+/// their tombstone. The booking was written to the host's calendar (an
+/// Outbound passport, which is no absence vote) and the visitor's calendar
+/// shows it. At 08:02 the host's provider reports it deleted, and at 08:03
+/// the host's calendar returns the written booking unchanged. At 09:01 the
+/// visitor's calendar leaves it out: the booking reads cancelled by that
+/// omission alone, which moves no money.
+#[test]
+fn a_host_tombstone_the_host_took_back_moves_no_money_when_another_calendar_concludes() {
+    let fixture = Fixture::open();
+    let booked = captured_booking(&fixture, "pi_tombstone_taken_back", 9);
+    let host = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let wrote = host.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    let visitor = Seat::install(&fixture.vault, VISITOR_SEAT_SYSTEM);
+    read_booking_on_seat(&visitor, &fixture, &booked, slot_at(9).start, NOW + 56);
+    seat_tombstone(&host, &fixture, &booked, NOW + 120).expect("the host's tombstone");
+    host.pull_own_write(&fixture.vault, &wrote, NOW + 180)
+        .expect("the host's calendar shows the booking again");
+    visitor
+        .pull(
+            &fixture.vault,
+            &[SeatChange::omitted(&booked.calendar.uid)],
+            slot_at(9).start + 60,
+        )
+        .expect("the visitor calendar's omission");
+    assert_eq!(
+        fixture.state_of("pi_tombstone_taken_back"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a tombstone the host took back dates no host cancel"
+    );
+}
+
+/// Review round 2 of #9472: a cancellation's CAL-07 evidence survives a stop
+/// after its status. The host's cancellation at 08:02 commits its passport,
+/// refund and status, and the pull stops before its CAL-07 outcome; the next
+/// read of the same version records the outcome, dated 08:02.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_host_cancel_stopped_before_its_outcome_records_it_on_the_next_read() {
+    let fixture = Fixture::open();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let booked = captured_booking(&fixture, "pi_cancel_outcome_stop", 9);
+    let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    pull_seat(
+        &seat,
+        &fixture,
+        &wrote,
+        slot_at(9).start,
+        0,
+        false,
+        NOW + 60,
+    )
+    .expect("the seat's first pull");
+    oneiron::test_doors::host_cancel_refund::stop_before_next_cancel_outcome();
+    assert!(
+        pull_seat(
+            &seat,
+            &fixture,
+            &wrote,
+            slot_at(9).start,
+            1,
+            true,
+            NOW + 120
+        )
+        .is_err(),
+        "the door stops the pull"
+    );
+    assert!(
+        read_event_outcome(&fixture.vault, booked.calendar.event_ref)
+            .expect("read the CAL-07 outcome")
+            .is_none(),
+        "the pull stopped before the outcome"
+    );
+    pull_seat(
+        &seat,
+        &fixture,
+        &wrote,
+        slot_at(9).start,
+        1,
+        true,
+        NOW + 180,
+    )
+    .expect("the next read of the same version");
+    assert_eq!(
+        fixture.state_of("pi_cancel_outcome_stop"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        }
+    );
+    let outcome = read_event_outcome(&fixture.vault, booked.calendar.event_ref)
+        .expect("read the CAL-07 outcome")
+        .expect("the next read records the cancellation's CAL-07 outcome");
+    assert_eq!(outcome.outcome, EventOutcome::CancelledPreStart);
+    assert_eq!(
+        outcome.recorded_at,
+        NOW + 120,
+        "CAL-07 dates the cancellation by its first sighting"
+    );
+}
+
+/// Review round 2 of #9472, on the tombstone's path: the host's tombstone at
+/// 08:02 cancels the booking, and the pull stops after its status and before
+/// its CAL-07 outcome; the same tombstone sent again records the outcome,
+/// dated 08:02.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_host_tombstone_stopped_before_its_outcome_records_it_when_sent_again() {
+    let fixture = Fixture::open();
+    let booked = captured_booking(&fixture, "pi_tombstone_outcome_stop", 9);
+    let host = host_seat_reading_and_written(&fixture, &booked, slot_at(9).start, NOW + 54);
+    oneiron::test_doors::host_cancel_refund::stop_before_next_cancel_outcome();
+    assert!(
+        seat_tombstone(&host, &fixture, &booked, NOW + 120).is_err(),
+        "the door stops the pull"
+    );
+    seat_tombstone(&host, &fixture, &booked, NOW + 180).expect("the tombstone sent again");
+    assert_eq!(
+        fixture.state_of("pi_tombstone_outcome_stop"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        }
+    );
+    let outcome = read_event_outcome(&fixture.vault, booked.calendar.event_ref)
+        .expect("read the CAL-07 outcome")
+        .expect("the tombstone sent again records the cancellation's CAL-07 outcome");
+    assert_eq!(outcome.outcome, EventOutcome::CancelledPreStart);
+    assert_eq!(
+        outcome.recorded_at,
+        NOW + 120,
+        "CAL-07 dates the cancellation by the tombstone's first arrival"
+    );
+}
+
+/// Review round 2 of #9472: a status written earlier in the same second is no
+/// fact recorded after the host's cancellation. The booking was written to
+/// the host's calendar. At 08:02:00 the visitor's calendar, the last one that
+/// showed it, leaves it out, and in that same second the host's calendar
+/// carries the cancellation, whose pull stops after its passport and before
+/// its refund and status. The same version read at 08:03 writes both, and
+/// CAL-07 dates the cancellation at 08:02.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_host_cancel_stopped_in_the_second_another_calendar_concluded_records_its_cancellation() {
+    let fixture = Fixture::open();
+    let booked = captured_booking(&fixture, "pi_same_second", 9);
+    let host = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let wrote = host.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    let visitor = Seat::install(&fixture.vault, VISITOR_SEAT_SYSTEM);
+    read_booking_on_seat(&visitor, &fixture, &booked, slot_at(9).start, NOW + 56);
+    pull_seat(
+        &host,
+        &fixture,
+        &wrote,
+        slot_at(9).start,
+        0,
+        false,
+        NOW + 60,
+    )
+    .expect("the host seat's first pull");
+    visitor
+        .pull(
+            &fixture.vault,
+            &[SeatChange::omitted(&booked.calendar.uid)],
+            NOW + 120,
+        )
+        .expect("the visitor calendar's omission");
+    oneiron::test_doors::host_cancel_refund::stop_before_next_host_cancel_refund();
+    assert!(
+        pull_seat(
+            &host,
+            &fixture,
+            &wrote,
+            slot_at(9).start,
+            1,
+            true,
+            NOW + 120
+        )
+        .is_err(),
+        "the door stops the pull"
+    );
+    pull_seat(
+        &host,
+        &fixture,
+        &wrote,
+        slot_at(9).start,
+        1,
+        true,
+        NOW + 180,
+    )
+    .expect("the repair pull");
+    assert_eq!(
+        fixture.state_of("pi_same_second"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        }
+    );
+    let outcome = read_event_outcome(&fixture.vault, booked.calendar.event_ref)
+        .expect("read the CAL-07 outcome")
+        .expect("the repair records the host's cancellation and its CAL-07 outcome");
+    assert_eq!(outcome.outcome, EventOutcome::CancelledPreStart);
+    assert_eq!(
+        outcome.recorded_at,
+        NOW + 120,
+        "CAL-07 dates the cancellation by its first sighting"
+    );
+}
+
+/// Review round 2 of #9472: an omission that concludes the cancellation while
+/// the host's cancellation waits on its repair does not hide it. The host's
+/// cancellation at 08:02 stops after its passport and before its refund and
+/// status; at 08:03 the visitor's calendar, the last one that showed the
+/// booking, leaves it out, and the host's cancellation on record refunds. The
+/// host's version read at 08:04 records the cancellation, and CAL-07 dates it
+/// at 08:02.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_host_cancel_repaired_after_an_omission_concluded_records_its_cancellation() {
+    let fixture = Fixture::open();
+    let booked = captured_booking(&fixture, "pi_omission_meanwhile", 9);
+    let host = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let wrote = host.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    let visitor = Seat::install(&fixture.vault, VISITOR_SEAT_SYSTEM);
+    read_booking_on_seat(&visitor, &fixture, &booked, slot_at(9).start, NOW + 56);
+    pull_seat(
+        &host,
+        &fixture,
+        &wrote,
+        slot_at(9).start,
+        0,
+        false,
+        NOW + 60,
+    )
+    .expect("the host seat's first pull");
+    oneiron::test_doors::host_cancel_refund::stop_before_next_host_cancel_refund();
+    assert!(
+        pull_seat(
+            &host,
+            &fixture,
+            &wrote,
+            slot_at(9).start,
+            1,
+            true,
+            NOW + 120
+        )
+        .is_err(),
+        "the door stops the pull"
+    );
+    visitor
+        .pull(
+            &fixture.vault,
+            &[SeatChange::omitted(&booked.calendar.uid)],
+            NOW + 180,
+        )
+        .expect("the visitor calendar's omission");
+    assert_eq!(
+        fixture.state_of("pi_omission_meanwhile"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the host's cancellation on record refunds once the cancellation concludes"
+    );
+    pull_seat(
+        &host,
+        &fixture,
+        &wrote,
+        slot_at(9).start,
+        1,
+        true,
+        NOW + 240,
+    )
+    .expect("the repair pull");
+    let outcome = read_event_outcome(&fixture.vault, booked.calendar.event_ref)
+        .expect("read the CAL-07 outcome")
+        .expect("the repair records the host's cancellation and its CAL-07 outcome");
+    assert_eq!(outcome.outcome, EventOutcome::CancelledPreStart);
+    assert_eq!(
+        outcome.recorded_at,
+        NOW + 120,
+        "CAL-07 dates the cancellation by its first sighting"
+    );
+}
