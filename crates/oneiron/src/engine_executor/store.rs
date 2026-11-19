@@ -633,30 +633,25 @@ impl ImplicitSpeechIntent {
     }
 }
 
-/// The attachment of run `record`'s `output` as its result MESSAGE carries
+/// The attachment of run `run_id`'s `output` as its result MESSAGE carries
 /// it: the preview its card shows now, withheld while the body is not
-/// clean, and the facets that read the rest.
+/// clean, and the facets that read the rest. A large trailing answer and a
+/// plain `say(result)` (L8-25) carry the same.
 pub(super) fn message_result_attachment(
     storage: &ExecutorStorage<'_>,
-    record: &CodeRunReplayRecord,
+    run_id: EntityId,
     output: &CodeRunRawOutput,
 ) -> Result<crate::memory::MessageResultAttachment> {
-    let read = crate::code_run::ResultRead::new(
-        storage,
-        record.run_id,
-        output.clone(),
-        None,
-        None,
-        false,
-    )?
-    .map_err(|_| Error::InvariantViolation("a whole result read is refused"))?;
+    let read =
+        crate::code_run::ResultRead::new(storage, run_id, output.clone(), None, None, false)?
+            .map_err(|_| Error::InvariantViolation("a whole result read is refused"))?;
     let card = read.card(storage)?;
     let preview = card["preview"]
         .as_str()
         .unwrap_or(CODE_RUN_OUTPUT_PREVIEW_WITHHELD)
         .to_owned();
     let truncated = output.preview.truncated || preview != output.preview.text;
-    crate::memory::MessageResultAttachment::of(record.run_id, output, preview, truncated)
+    crate::memory::MessageResultAttachment::of(run_id, output, preview, truncated)
 }
 
 /// The durable "this step already spoke its last word" marker (ONE-1686).
@@ -741,9 +736,20 @@ pub(crate) fn store_result_output_path(digest: &[u8; 32], ordinal: usize) -> Str
     )
 }
 
+/// A NOTE's text a summarize call read, named by the NOTE and the text's
+/// digest: the same NOTE with the same words is one output of the run.
+pub(crate) fn summarize_note_output_path(note: EntityId, digest: &[u8; 32]) -> String {
+    format!(
+        "{SCRIPT_OUTPUT_DIR}/summarize/{}.{}.md",
+        note.to_hex(),
+        crate::entity_id::bytes_to_hex_lower(digest)
+    )
+}
+
 /// Whether `path` names a result of the run the guest may read back: a
-/// stored bridge result, a stored value, the reply a parked call resumed
-/// with, a step's observation, or a file a step wrote.
+/// stored bridge result, a stored value, a NOTE's text a summarize call
+/// read, the reply a parked call resumed with, a step's observation, or a
+/// file a step wrote.
 pub(crate) fn is_result_output_path(path: &str) -> bool {
     let Some(rest) = path.strip_prefix(SCRIPT_OUTPUT_DIR) else {
         return false;
@@ -753,6 +759,9 @@ pub(crate) fn is_result_output_path(path: &str) -> bool {
         || rest
             .strip_prefix("/store/")
             .is_some_and(|rest| rest.ends_with(".result"))
+        || rest
+            .strip_prefix("/summarize/")
+            .is_some_and(|rest| rest.ends_with(".md"))
         || resumed_output_wait(path).is_some()
         || is_observation_output_path(path)
         || is_runtime_output_path(path)

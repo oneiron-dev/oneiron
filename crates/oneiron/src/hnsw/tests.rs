@@ -588,6 +588,7 @@ fn delete_purges_orphan_protected_one_way_backlink() -> Result<()> {
 fn deleting_a_one_way_holder_drops_it_from_the_exception_record() -> Result<()> {
     let temp_dir = tempdir()?;
     let vault = Vault::open(temp_dir.path(), small_graph_config(4, 1, 8))?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let target = id_from_u64(1);
     let holder = id_from_u64(2); // keeps a one-way link `holder -> target`
     let near = id_from_u64(3);

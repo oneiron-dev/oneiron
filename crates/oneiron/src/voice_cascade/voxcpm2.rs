@@ -109,7 +109,7 @@ pub struct RenderTarget {
 }
 
 impl RenderTarget {
-    fn with_current<T>(
+    pub(crate) fn with_current<T>(
         &self,
         vault: &Vault,
         operation: impl FnOnce(&VoiceRegisterClip) -> Result<T>,
@@ -520,12 +520,9 @@ impl Vault {
     }
 }
 
-pub mod http;
 mod pcm;
 use pcm::PCM_WINDOW_BYTES;
 pub use pcm::{PcmSpool, VoxCpm2PcmBody};
 
-// FIX [LIBTEST-QUARANTINE-VOICE-CASCADE-VOXCPM2-TESTS]: the lib test target's type check fails here (9 errors: E0560 x4, E0061 x3, E0533 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

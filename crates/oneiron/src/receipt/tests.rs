@@ -127,6 +127,7 @@ fn append_gate_decision_for_claim(
                 grant_ref: None,
                 diff_handle: vec![0xA5],
                 read_frontier_hash: [0xB6; 32],
+                context: Default::default(),
                 redacted_at: None,
             },
         )
@@ -171,6 +172,8 @@ fn append_pending_gate_consent(
                 read_frontier_hash: [0xB6; 32],
                 reason_codes: vec![reason.to_owned()],
                 dreamer_run_id: dreamer_run_id.map(str::to_owned),
+                predicate: None,
+                expires_at: None,
             },
         )
     })?;
@@ -193,6 +196,7 @@ fn put_federation_grant(vault: &Vault, id: EntityId, learned_at: u64) -> Result<
                 end: learned_at,
             },
             learned_at,
+            0,
             &body,
         );
         vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
@@ -217,6 +221,7 @@ fn put_redaction_floor_receipt(vault: &Vault, id: EntityId, learned_at: u64) -> 
             end: learned_at,
         },
         learned_at,
+        0,
         b"seal",
     );
     vault.with_write_txn(|wtxn| {
@@ -376,12 +381,14 @@ fn outbound_intent_receipt_propagates_job_ref() {
         verb: "send".to_owned(),
         channel: "email".to_owned(),
         target: "kenji@example.com".to_owned(),
+        recipients: Vec::new(),
         content_ref: None,
         idempotency_key: None,
         dedupe_key: None,
         intent_source: "brief_run".to_owned(),
         trigger_ref: "intent:invite-kenji".to_owned(),
         job_ref: Some("brief:party".to_owned()),
+        mention: None,
     };
 
     let receipt = outbound_intent_receipt(
@@ -419,7 +426,7 @@ fn receipt_query_returns_mixed_kinds_and_filters() -> Result<()> {
     )?;
 
     let access_grant =
-        AccessGrant::companion_profile_read(entity(0x60), entity(0x62), entity(0x63), 30);
+        AccessGrant::companion_profile_read(entity(0x60), entity(0x62), Some(entity(0x63)), 30);
     vault.create_access_grant(&entity(0x64), &access_grant)?;
     put_federation_grant(&vault, entity(0x65), 40)?;
 
@@ -482,6 +489,7 @@ fn gate_receipt_query_paginates_past_legacy_scan_window() -> Result<()> {
             grant_ref: None,
             diff_handle: vec![0xA5],
             read_frontier_hash: [0xB6; 32],
+            context: Default::default(),
             redacted_at: None,
         };
         for _ in 0..MAX_RECEIPT_QUERY_SCAN {
@@ -547,6 +555,7 @@ fn gate_receipt_system_notice_selection_is_order_independent() {
         grant_ref: None,
         diff_handle: vec![0xA5],
         read_frontier_hash: [0xB6; 32],
+        context: Default::default(),
         redacted_at: None,
     };
 
@@ -674,7 +683,7 @@ fn let_go_pending_ask_emits_receipt_before_clearing_tray() -> Result<()> {
     )?;
 
     let emitted = vault
-        .let_go_pending_ask_at(&claim_id, 99)?
+        .let_go_pending_ask(&claim_id)?
         .expect("age-out must emit a receipt");
     assert_eq!(emitted.receipt_kind, ReceiptKind::Gate);
     assert_eq!(emitted.outcome, "let_go");
@@ -694,7 +703,7 @@ fn let_go_pending_ask_emits_receipt_before_clearing_tray() -> Result<()> {
     assert_eq!(let_go.len(), 1);
     assert_eq!(let_go[0], emitted);
 
-    assert!(vault.let_go_pending_ask_at(&claim_id, 120)?.is_none());
+    assert!(vault.let_go_pending_ask(&claim_id)?.is_none());
     let still_one = vault.receipts(ReceiptQuery::new(10).with_outcome("let_go"))?;
     assert_eq!(still_one.len(), 1);
     Ok(())
@@ -1263,14 +1272,20 @@ fn test_memory_board(claim_score: f32) -> MemoriesSection {
         score,
         claim_source: None,
         world: None,
+        world_unproven: false,
         tier: crate::context_board::MemoryTier::Snippet,
         snippet: None,
+        hook: None,
+        room_pin: None,
         source_revision: None,
+        question: None,
+        fiction: false,
+        constraint: false,
     };
 
     MemoriesSection {
         version: MEMORIES_SECTION_VERSION_V4.to_owned(),
-        budget: MemoriesBudget::new(2, 0, 1, 0, 0, 0),
+        budget: MemoriesBudget::new(2, 0, 1, 0, 0),
         rows: vec![
             row(0, 0x21, MemorySlot::Claims, claim_score),
             row(1, 0x22, MemorySlot::Claims, 0.25),
@@ -1541,22 +1556,22 @@ fn disclosure_stamp_rides_emit_receipts_and_reads_optionally() {
     assert_eq!(read_back.disclosure_stamp, None);
 }
 
-/// MS-01 (ARCH-0055) SPEC-CONTRADICTION: the earlier perimeter regression
-/// claimed out-of-window rows must not charge the cap. That contract was the
-/// bug: it capped candidates, not WORK, and allowed an unbounded ledger walk.
-/// The ruled security property caps every visited row. Because UUID mint
-/// order is not `at` order, the bounded scan can starve the older-minted
-/// in-window receipt below; an `at`-ordered index or cursor pagination is a
-/// separate deferred design item.
+/// MS-01 (ARCH-0055), FIX 3582 (rule 5): the identity-topology receipt scan
+/// reads the whole type-76 family newest-first, out-of-window rows included,
+/// with no row cap. A flood of newer-minted, backdated events therefore
+/// cannot starve the older-minted in-window receipt (UUID mint order is not
+/// `at` order); a cap here once hid it.
 #[test]
-fn identity_topology_receipt_scan_caps_visited_rows() -> Result<()> {
+fn identity_topology_receipt_scan_finds_an_older_receipt_past_a_flood() -> Result<()> {
     use crate::identity_topology::{
         IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
     };
 
-    const SCAN_CAP: usize = 8;
+    const FLOOD_EVENTS: usize = 9;
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), embedding_test_config())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
     for seed in [0x61_u8, 0x62, 0x63, 0x64] {
         vault.put_entity(
             &entity(seed),
@@ -1575,23 +1590,21 @@ fn identity_topology_receipt_scan_caps_visited_rows() -> Result<()> {
         })
     };
 
-    // The in-window receipt has the OLDEST mint id (scanned LAST).
-    vault.apply_identity_topology_op(
-        &merge(vec![entity(0x62)], entity(0x61)),
-        &IdentityOpWrite::auto(ClaimSource::Inferred),
-        1_000,
-    )?;
-
-    // Newer-minted, BACKDATED, parked events — more than the scan cap.
+    // Parked events project a receipt without a seal (H161 binds only
+    // applied decisions), so the test needs no seal fixture.
     let proposed = IdentityOpWrite {
         source: ClaimSource::Inferred,
         approval: ClaimApprovalStatus::Proposed,
         confidence: 1.0,
         actor: None,
     };
+    // The in-window receipt has the OLDEST mint id (scanned LAST).
+    vault.apply_identity_topology_op(&merge(vec![entity(0x62)], entity(0x61)), &proposed, 1_000)?;
+
+    // Newer-minted, BACKDATED (out-of-window) parked events.
     let flood = merge(vec![entity(0x64)], entity(0x63));
     vault.with_write_txn(|wtxn| {
-        for _ in 0..=SCAN_CAP {
+        for _ in 0..FLOOD_EVENTS {
             vault.apply_identity_topology_op_in_txn(wtxn, &flood, &proposed, 10)?;
         }
         Ok(())
@@ -1604,11 +1617,11 @@ fn identity_topology_receipt_scan_caps_visited_rows() -> Result<()> {
         &ReceiptQuery::new(10)
             .with_kind(ReceiptKind::IdentityLifecycle)
             .with_time_bounds(Some(500), Some(2_000)),
-        SCAN_CAP,
     )?;
-    assert!(
-        receipts.is_empty(),
-        "the visited-row work cap must stop before an older-minted receipt hidden by the flood"
+    assert_eq!(
+        receipts.len(),
+        1,
+        "the older-minted in-window receipt must survive a newer out-of-window flood"
     );
     Ok(())
 }
@@ -1938,6 +1951,7 @@ fn brief_share_preserves_legacy_share_receipt_bytes_and_namespaces() -> Result<(
         included_row_ids: vec!["row:one".to_owned()],
         struck_row_ids: vec!["row:two".to_owned()],
         artifact_fingerprint: "cd".repeat(32),
+        omitted_refs: Vec::new(),
     };
     vault.put_persona_snapshot_export(&snapshot_id, &snapshot)?;
     let query = ReceiptQuery::new(20).with_kind(ReceiptKind::Share);

@@ -476,12 +476,14 @@ pub(crate) fn scrub_turn_programs(
 /// owed wake in its actor's compartment, held while the turn or
 /// conversation it names is, so the actor's erase retires it; a decided
 /// wake is ids alone under its turn. A row that does not decode is
-/// undecodable.
-pub(in crate::sync) fn checkpoint_entry(root: &str, value: &[u8]) -> Placement {
+/// undecodable; one filed under a key other than its own is a key mismatch
+/// (FIX SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW). Neither is placed under an
+/// owner.
+pub(in crate::sync) fn checkpoint_entry(root: &str, key: &str, value: &[u8]) -> Placement {
     let placement = if root == TURN_PROGRAM_ARMS_MAP {
-        replica::arming_row_placement(value)
+        replica::arming_row_placement(key, value)
     } else {
-        replica::wake_row_placement(value)
+        replica::wake_row_placement(key, value)
     };
     let entities = |ids: Vec<EntityId>| ids.iter().map(OwnerRef::entity).collect::<Vec<_>>();
     match placement {
@@ -492,6 +494,9 @@ pub(in crate::sync) fn checkpoint_entry(root: &str, value: &[u8]) -> Placement {
         Some(RowPlacement::Structure { dependencies }) => Placement::Structure {
             dependencies: entities(dependencies),
         },
+        Some(RowPlacement::KeyMismatch) => {
+            Placement::unclassified(None, SyncUnclassified::KeyMismatch)
+        }
         None => Placement::unclassified(None, SyncUnclassified::Undecodable),
     }
 }

@@ -22,12 +22,17 @@
 //! shares), and its owner must be live at the act's causal point. A choice
 //! this install does not count at full strength (its carrier raced its
 //! removal, it landed restriction only, or it is disputed) counts as not
-//! made: the choice it replaced stays in force. Choices are main-log
-//! entries, so every machine the owner admits folds them, and the fold reads
-//! the log alone.
+//! made: the choice it replaced stays in force. A carrier that is not the
+//! owner's machine needs an owner key's proof where such a carrier must
+//! prove its acts ([`super::owner_proof`], row CARRIER-OWNER-PROOF); with
+//! none its choice waits, in no frontier, until the owner carries it again
+//! from an owner device. Choices are main-log entries, so every machine the
+//! owner admits folds them, and the fold reads the log alone.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
 
 use crate::entity_id::EntityId;
 
@@ -56,31 +61,51 @@ type ChoiceFrontier<P> = WorldFrontier<SignedOwnerChoice<P>>;
 
 /// One kind's choices in one fold state: the frontier of each target (only
 /// the vault's own for a vault-wide kind, which the record's shape check
-/// pins; each acting PERSON's own for a person's kind), and every
-/// well-signed choice whose carrier the one rule did not admit.
+/// pins; each acting PERSON's own for a person's kind), every well-signed
+/// choice whose carrier the one rule did not admit, and every choice that
+/// waits for the owner's proof (row CARRIER-OWNER-PROOF).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct OwnerChoiceState<P> {
-    frontiers: BTreeMap<EntityId, ChoiceFrontier<P>>,
-    refused: BTreeSet<AuthorityEntryHash>,
+    frontiers: PersistentMap<EntityId, ChoiceFrontier<P>>,
+    refused: PersistentSet<AuthorityEntryHash>,
+    /// Each target's admitted choices that a carrier that is not the owner's
+    /// machine delivered with no owner key's proof, where such a carrier
+    /// needs one ([`super::owner_proof::not_mine_carriers_need_proof`]):
+    /// valid, in no frontier, so they supersede nothing and no `seen` covers
+    /// them. The owner confirms one by carrying the choice again from an
+    /// owner device. Each is true once the owner chose for its target since:
+    /// a recorded choice that is the owner's own, whose parents held it,
+    /// ends its ask.
+    waiting: PersistentMap<EntityId, BTreeMap<AuthorityEntryHash, bool>>,
 }
 
 impl<P> Default for OwnerChoiceState<P> {
     fn default() -> Self {
         Self {
-            frontiers: BTreeMap::new(),
-            refused: BTreeSet::new(),
+            frontiers: PersistentMap::new(),
+            refused: PersistentSet::new(),
+            waiting: PersistentMap::new(),
         }
     }
 }
 
 /// Joins two states' choices: a choice superseded on either side is
-/// superseded, and two copies of one choice meet.
+/// superseded, two copies of one choice meet, and a waiting choice the owner
+/// answered on either side stays answered. A target the merge leaves as it
+/// was is not written.
 pub(super) fn merge_owner_choices<P: Clone + PartialEq>(
     merged: &mut OwnerChoiceState<P>,
     right: &OwnerChoiceState<P>,
 ) {
     merge_world_frontiers(&mut merged.frontiers, &right.frontiers);
     merged.refused.extend(right.refused.iter().copied());
+    for (target, waiting) in &right.waiting {
+        merged.waiting.modify_or_default(*target, |merged_waiting| {
+            for (hash, answered) in waiting {
+                *merged_waiting.entry(*hash).or_default() |= *answered;
+            }
+        });
+    }
 }
 
 #[doc(hidden)]
@@ -137,6 +162,20 @@ pub(super) struct OwnerChoiceOp<'a, P> {
     pub(super) choice: Option<&'a P>,
     /// The kind's revision domain, which `seen` is under.
     pub(super) context: &'static [u8],
+    /// The choice lies outside a proving owner-key enrolment's line (row
+    /// CARRIER-PROOF-OLD-PARENTS, [`super::owner_key_line`]): it needs the
+    /// owner's proof as if its parents held that key.
+    pub(super) needs_proof_off_the_line: bool,
+    /// The act is a person's own narrowing of their own row (a person's
+    /// kind, whose act names its own person as owner and target, and whose
+    /// choice takes something of theirs away: an opt-out). It is that
+    /// person's act, never the vault owner's, and it lands on the carrying
+    /// machine's sign-in check, so it never waits for an owner key's proof
+    /// (ruling CARRIER-PERSON-OPT-OUT = A). A person's widening of their own
+    /// row (an opt back in) is not one: a carrier proves only itself, so it
+    /// goes through the gate as every act does (ruling
+    /// CARRIER-PERSON-OPT-BACK-IN = A, AUTH-4 PERSON-PROOF-RUNG = A).
+    pub(super) persons_own_narrowing: bool,
 }
 
 /// What a valid choice does to its register ([`OwnerChoiceState::land`]).
@@ -144,6 +183,13 @@ pub(super) enum OwnerChoiceLanding<P> {
     /// Valid without effect: its carrier was not admitted, or its owner not
     /// live, at its parents.
     Refused(AuthorityEntryHash),
+    /// Valid, and waiting for the owner's proof: an admitted carrier that is
+    /// not the owner's machine delivered it with none, where such a carrier
+    /// needs one (row CARRIER-OWNER-PROOF). It supersedes nothing.
+    Waiting {
+        target: EntityId,
+        hash: AuthorityEntryHash,
+    },
     /// It supersedes exactly the live choices of its target.
     Recorded {
         target: EntityId,
@@ -154,19 +200,30 @@ pub(super) enum OwnerChoiceLanding<P> {
         narrow_only: bool,
         marks: BTreeMap<MachineAdmitter, Mark>,
         restriction_only: bool,
+        /// The owner's own choice: an owner key proved it, or one of the
+        /// owner's machines carried it. It ends the ask of every waiting
+        /// choice of its target that its parents held.
+        owners: bool,
     },
 }
 
 /// An owner choice transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
 /// check: its signer is a machine's install key, never a roster key (FIX
-/// 2222: the host root acts as nobody). Some chain of the machine must name
+/// 2222: the host root acts as nobody). The machine's roster chain must name
 /// the key, and the act's `seen` must be the live choices its parents carry.
 /// A choice carried while the machine was not admitted, or by an owner the
 /// parents hold removed, is valid and without effect, so it never stalls
 /// what descends from it. `pin` and `counted` only weaken a choice this
 /// install does not count. Reads only; the kind's adapter lands the result
 /// into its own register.
+///
+/// One cosign is an owner key's proof or a forged entry
+/// ([`super::owner_proof::owner_proof_key`]). A proof never lifts a refusal.
+/// An admitted choice from a carrier that is not the owner's machine (its
+/// signing key is not its trusted mine key, pin-free) waits with no proof
+/// where such a carrier needs one, unless it is a person's own narrowing of
+/// their own row.
 pub(super) fn owner_choice_landing<P: Clone>(
     state: &FoldState,
     register: &OwnerChoiceState<P>,
@@ -176,9 +233,7 @@ pub(super) fn owner_choice_landing<P: Clone>(
     (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
 ) -> std::result::Result<OwnerChoiceLanding<P>, AuthorityFoldIssue> {
-    if !entry.cosigns.is_empty() {
-        return Err(AuthorityFoldIssue::InvalidEntry(hash));
-    }
+    let proof = super::owner_proof::owner_proof_key(state, entry, hash)?;
     let signer = entry.signer_key();
     let AuthorityKey::Ed25519(key) = signer else {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
@@ -207,9 +262,33 @@ pub(super) fn owner_choice_landing<P: Clone>(
     let admitted = standing.admits_owner_act_signer(op.machine, &key, roster);
     let marks = standing.live_signing_chains(op.machine, signer);
     let narrow_only = !standing.admits_owner_act_signer(op.machine, &key, StandingView::Install);
+    let carrier_is_mine = standing.trusted_key(op.machine, roster) == Some(key);
     drop(standing);
     if !admitted || !super::owner_act::owner_live_at(state, op.act.owner) {
         return Ok(OwnerChoiceLanding::Refused(hash));
+    }
+    // Outside a proving owner-key enrolment's line (row
+    // CARRIER-PROOF-OLD-PARENTS), a not-mine carrier's unproven choice waits
+    // as it would on parents that hold the key.
+    if proof.is_none()
+        && op.needs_proof_off_the_line
+        && !carrier_is_mine
+        && !op.persons_own_narrowing
+    {
+        return Ok(OwnerChoiceLanding::Waiting {
+            target: op.act.target,
+            hash,
+        });
+    }
+    if proof.is_none()
+        && !carrier_is_mine
+        && !op.persons_own_narrowing
+        && super::owner_proof::not_mine_carriers_need_proof(state)
+    {
+        return Ok(OwnerChoiceLanding::Waiting {
+            target: op.act.target,
+            hash,
+        });
     }
     Ok(OwnerChoiceLanding::Recorded {
         target: op.act.target,
@@ -223,6 +302,7 @@ pub(super) fn owner_choice_landing<P: Clone>(
         narrow_only,
         marks,
         restriction_only,
+        owners: proof.is_some() || carrier_is_mine,
     })
 }
 
@@ -240,15 +320,32 @@ impl<P> OwnerChoiceState<P> {
     /// Whether no choice of the kind was ever folded: a register an image
     /// need not carry (FIX 4624).
     pub(super) fn is_empty(&self) -> bool {
-        self.frontiers.is_empty() && self.refused.is_empty()
+        self.frontiers.is_empty() && self.refused.is_empty() && self.waiting.is_empty()
     }
 
-    /// Lands a valid choice: a refused one is kept without effect; a
-    /// recorded one supersedes the live choices of its target.
+    /// The waiting choices that still ask the owner: the ones the owner has
+    /// not chosen over since.
+    pub(super) fn asking(&self) -> impl Iterator<Item = AuthorityEntryHash> + '_ {
+        self.waiting
+            .values()
+            .flatten()
+            .filter(|(_, answered)| !**answered)
+            .map(|(hash, _)| *hash)
+    }
+}
+
+impl<P: Clone + PartialEq> OwnerChoiceState<P> {
+    /// Lands a valid choice: a refused one is kept without effect, a
+    /// waiting one is kept for the owner's confirm, and a recorded one
+    /// supersedes the live choices of its target; the owner's own also ends
+    /// the ask of the target's waiting choices.
     pub(super) fn land(&mut self, landing: OwnerChoiceLanding<P>) {
         match landing {
             OwnerChoiceLanding::Refused(hash) => {
                 self.refused.insert(hash);
+            }
+            OwnerChoiceLanding::Waiting { target, hash } => {
+                self.waiting.entry(target).or_default().insert(hash, false);
             }
             OwnerChoiceLanding::Recorded {
                 target,
@@ -259,7 +356,13 @@ impl<P> OwnerChoiceState<P> {
                 narrow_only,
                 marks,
                 restriction_only,
+                owners,
             } => {
+                if owners && let Some(waiting) = self.waiting.get_mut(&target) {
+                    for answered in waiting.values_mut() {
+                        *answered = true;
+                    }
+                }
                 let frontier = self.frontiers.entry(target).or_default();
                 let seen = std::mem::take(&mut frontier.live);
                 let replaced = seen.keys().copied().collect();
@@ -419,7 +522,7 @@ pub(super) fn folded_owner_choice<P: Clone + PartialEq>(
     counted: InstallCounted<'_>,
 ) -> FoldedOwnerChoice<P> {
     let mut folded = FoldedOwnerChoice {
-        refused: register.refused.clone(),
+        refused: register.refused.to_btree_set(),
         ..FoldedOwnerChoice::default()
     };
     let Some(frontier) = register.frontiers.values().next() else {
@@ -460,7 +563,7 @@ pub(super) fn folded_owner_choices<P: Clone + PartialEq>(
 /// admit, or whose owner was not live, at its parents.
 pub(super) fn refused_owner_choices<P>(
     register: &OwnerChoiceState<P>,
-) -> &BTreeSet<AuthorityEntryHash> {
+) -> &PersistentSet<AuthorityEntryHash> {
     &register.refused
 }
 

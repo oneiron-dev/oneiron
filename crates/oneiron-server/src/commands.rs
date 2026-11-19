@@ -34,11 +34,14 @@ use crate::skills_pack::{self, OutputMode};
 pub(crate) mod api;
 pub(crate) mod credential_file;
 mod credential_helper;
+pub(crate) mod oauth_sign_in;
 pub use self::credential_helper::credential_helper;
 mod host_init;
 pub use self::host_init::host_init;
 mod host_re_root;
 pub use self::host_re_root::host_re_root;
+mod host_recover_root;
+pub use self::host_recover_root::host_recover_root;
 mod host_recover_owner;
 pub use self::host_recover_owner::host_recover_shared_owner;
 mod token_operator;
@@ -55,6 +58,12 @@ mod hook;
 mod local_servers;
 #[cfg(unix)]
 pub use self::hook::{hook, hosted};
+// The user service runs the local vault the hook binds through its runtime
+// file, so it is Unix-only too.
+#[cfg(unix)]
+pub(crate) mod user_service;
+#[cfg(unix)]
+pub use self::user_service::user_service;
 
 /// `oneiron hook` binds through runtime files and queues through the import
 /// queue, both Unix-only: elsewhere it does nothing, and exits 0.
@@ -66,6 +75,13 @@ pub fn hook(_: crate::cli::HookArgs) {}
 #[cfg(not(unix))]
 pub fn hosted(_: crate::cli::HostedCommand) -> anyhow::Result<()> {
     anyhow::bail!("`oneiron hosted` publishes what `oneiron hook` binds, on Unix alone")
+}
+
+/// `oneiron user-service` keeps running the local vault `oneiron hook`
+/// binds, and the hook runs on Unix alone.
+#[cfg(not(unix))]
+pub fn user_service(_: crate::cli::UserServiceCommand) -> anyhow::Result<()> {
+    anyhow::bail!("`oneiron user-service` runs the vault `oneiron hook` binds, on Unix alone")
 }
 
 pub const NO_CJK_DICT_WARNING: &str = "NO CJK DICTIONARY FOUND: Japanese, Chinese, and Korean text will use portable n-gram tokenization. Install dictionaries under an XDG oneiron dict root or set --dict-search-paths.";
@@ -121,6 +137,8 @@ pub use files::files;
 mod history_import;
 #[cfg(unix)]
 pub(crate) use self::history_import::hosted_import;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::history_import::own_second;
 mod init;
 pub use init::init;
 pub(crate) use init::{ModelSetupAnswers, ModelSetupOutcome, setup_models_on_open_vault};
@@ -292,6 +310,11 @@ struct PairedCredential {
     /// The slip's signed comm reach (FIX 3899): `--comm`, or `vault` when
     /// the owner named none.
     comm: oneiron::agent_dispatch::CommReach,
+    /// The default read Grant the link minted for a named agent, when it
+    /// minted one: a mint that fails after the link takes it back beside
+    /// the slip. Never printed with the credential.
+    #[serde(skip_serializing)]
+    default_grant_ref: Option<oneiron::EntityId>,
     credential: String,
     token: String,
     binding_key: String,
@@ -513,8 +536,8 @@ fn mint_agent_credential(
     // then the grant: the latest mint is the agent's one credential, so no
     // earlier slip keeps a verb this tier lacks. A mint that fails anywhere
     // leaves the standing ceiling as it was, and one that fails after the
-    // slip takes the new slip back, so a failure leaves the agent with less,
-    // never more.
+    // slip takes the new slip and the default Grant its link minted back,
+    // so a failure leaves the agent with less, never more.
     let credential = mint_paired_credential(
         &vault,
         &issuer,
@@ -566,6 +589,27 @@ fn mint_agent_credential(
                         credential.slip_id
                     )
                 })?;
+            // The link already minted the agent's default read Grant in its
+            // writer; a failed mint takes it back beside the slip, so no
+            // failed mint keeps a Grant (AGENT-PAIR-GRANT-ORPHAN).
+            if let Some(grant) = credential.default_grant_ref {
+                let grant_hex = grant.to_hex();
+                oneiron::task_verb::sdk::revoke_agent_grant_as(
+                    &vault,
+                    &owner,
+                    oneiron::authority::ActSurface::ThisInstall,
+                    oneiron::task_verb::sdk::AgentGrantRevokeRequest {
+                        grant_ref: grant,
+                        seen: None,
+                    },
+                )
+                .map_err(|revoke| {
+                    anyhow::anyhow!(
+                        "agent {}: {error}; then revoking its default grant {grant_hex}: {revoke}",
+                        args.name
+                    )
+                })?;
+            }
             Err(error)
         }
     }
@@ -680,6 +724,7 @@ fn mint_paired_credential(
         expires_at: slip.claims.expires_at,
         slip_id: hex(&slip.claims.slip_id),
         comm: oneiron::authority::effective_slip_comm(slip.claims.comm),
+        default_grant_ref: link.default_grant_ref,
         credential,
         token,
         binding_key: seed,
@@ -687,7 +732,7 @@ fn mint_paired_credential(
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 /// Creates a pairing link on the running server and prints it.
@@ -749,7 +794,7 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
 /// revoking an already-revoked id succeeds and reports `false`.
 pub fn token_revoke(args: TokenRevokeArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
-    init_tracing(&config.log_level);
+    init_tracing_stderr(&config.log_level);
 
     let dicts = resolve_dict_search_paths(&config.dict_search_paths);
     let mut vault_config = config.vault_config();
@@ -955,7 +1000,7 @@ fn claim_subject_json(subject: &oneiron::ClaimSubject) -> JsonValue {
 pub async fn revoke(args: RevokeArgs) -> anyhow::Result<()> {
     let client_id = parse_client_id_hex(&args.client)?;
     let config = resolve_serve_config(&args.serve)?;
-    init_tracing(&config.log_level);
+    init_tracing_stderr(&config.log_level);
 
     let dicts = resolve_dict_search_paths(&config.dict_search_paths);
     if let Some(warning) = dicts.warning {
@@ -1028,6 +1073,15 @@ pub(crate) fn init_tracing(log_level: &str) {
     use tracing_subscriber::util::SubscriberInitExt as _;
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
     let _ = crate::logging::subscriber(filter, io::stdout).try_init();
+}
+
+/// [`init_tracing`] for the commands whose stdout is their JSON answer
+/// (`token revoke`, `revoke`): the log lines go to stderr, so a caller
+/// parsing stdout reads JSON alone (FIX-LIST 23427).
+pub(crate) fn init_tracing_stderr(log_level: &str) {
+    use tracing_subscriber::util::SubscriberInitExt as _;
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
+    let _ = crate::logging::subscriber(filter, io::stderr).try_init();
 }
 
 pub fn resolve_dict_search_paths(configured_paths: &[PathBuf]) -> DictSearchResolution {

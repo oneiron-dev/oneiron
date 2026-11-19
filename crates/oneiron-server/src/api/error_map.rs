@@ -121,6 +121,16 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         | ErrorKind::AgentDefinitionDisabled => ApiError::bad_request(error.to_string(), None),
         ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => ApiError::not_found("entity", None),
         ErrorKind::ConsentOwnerNotAuthenticated => ApiError::forbidden_scope("owner"),
+        // An owner choice this install could not prove the owner's (row
+        // CARRIER-OWNER-PROOF): a conflict under its own state, with the
+        // engine's words, on every route.
+        ErrorKind::OwnerKeyRequired => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some(oneiron::error::OWNER_KEY_REQUIRED.to_owned()),
+            },
+            ["Make this choice on an owner device: a machine that holds the vault's owner key."],
+        ),
         // FIX 2222: a host credential where no host acts as a person, under
         // the engine's own code (FIX 6032).
         ErrorKind::HostActionRequiresSupportGrant => {
@@ -152,6 +162,16 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
                 "Remove public access, preserve evidence, and follow the known-CSAM hosted media runbook.",
             ],
         ),
+        ErrorKind::LastBoundOwnerDelete => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("last_bound_owner_delete".to_owned()),
+            },
+            [
+                "Erase the vault if ending it is the goal.",
+                "To keep the vault, bind another owner first: have another Owner enrol an owner signing key of their own, which binds them (to add an Owner, share the vault first if it is not shared yet); then this person can be deleted.",
+            ],
+        ),
         ErrorKind::GateWriteRejected => ApiError::new(
             error.to_string(),
             ApiErrorDetails::InvalidState {
@@ -165,6 +185,17 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
                 state: Some("gate_consent_stale".to_owned()),
             },
             ["Restart policy review from the current diff and read frontier."],
+        ),
+        // L3-39: a memory fork names a revision this machine holds no bytes
+        // of; the reader may read the row now.
+        ErrorKind::HistoryNotHeld => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("history_not_held".to_owned()),
+            },
+            [
+                "Read the row at the live head, or read this frontier where the row's history is held.",
+            ],
         ),
         // FIX 10011: the owner's model pin stands and no offered seat
         // serves it; no other model is put in its place.

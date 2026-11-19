@@ -210,6 +210,7 @@ fn admit_federated_entity_blob_graded(
             &blob[ENTITY_METADATA_HEADER_LEN..],
         )?;
         refuse_peer_agent_definition_widening(&vault.store, txn, &here, blob)?;
+        refuse_peer_task_authority_fact(blob)?;
         if matches!(grading, ImportGrading::Imported { .. })
             && matches!(
                 header.entity_type,
@@ -255,6 +256,52 @@ fn admit_federated_entity_blob_graded(
     admitted.extend_from_slice(&blob[..ENTITY_METADATA_HEADER_LEN]);
     admitted.extend_from_slice(&encoded);
     Ok((id, admitted))
+}
+
+/// Refuses a peer's TASK authority fact in one entity blob
+/// ([`crate::task_authority::is_task_authority_fact_body`]). Who owns, took,
+/// cancelled or acknowledged a task is read from these facts, and the task
+/// fold believes every fact it holds: a fact carries no proof of who made it
+/// until it carries its carrier's signature (pass 28 R5). So a federation
+/// peer sends none (an export to another vault withholds every fact), or its
+/// Owner or Cancelled fact would decide a task here. A peer's ask record
+/// shares role 6 and carries its own proof, so it is not refused here. Typed
+/// as the peer's bytes, so the frame quarantines; a staged import's
+/// confirmation runs it again (FIX TASK-FACT-FROM-FEDERATION-PEER).
+#[cfg(feature = "sync")]
+pub(super) fn refuse_peer_task_authority_fact(blob: &[u8]) -> Result<()> {
+    let header =
+        EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_TASK {
+        return Ok(());
+    }
+    let body = blob
+        .get(ENTITY_METADATA_HEADER_LEN..)
+        .ok_or(Error::CorruptedIndex("entity metadata"))?;
+    if crate::task_authority::is_task_authority_fact_body(body) {
+        return Err(RecordError::InvalidTaskBody(PEER_TASK_AUTHORITY_FACT_REFUSAL).into());
+    }
+    Ok(())
+}
+
+/// The verdict [`refuse_peer_task_authority_fact`] refuses with.
+#[cfg(feature = "sync")]
+const PEER_TASK_AUTHORITY_FACT_REFUSAL: &str =
+    "a federation peer cannot send a task authority fact";
+
+/// Whether `error` is [`refuse_peer_task_authority_fact`]'s refusal. A staged
+/// import holding such a fact is a defect of the artifact, not of local
+/// policy: the predicate reads only the digest-pinned bytes, so no later
+/// policy admits them. Its stage and its confirmation therefore settle the
+/// receipt `Failed(AdmissionRejected)` instead of leaving it to retry
+/// (FIX TASK-FACT-STAGED-CONFIRM-NEVER-SETTLES).
+#[cfg(feature = "sync")]
+pub(crate) fn is_peer_task_authority_fact_refusal(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Record(RecordError::InvalidTaskBody(verdict))
+            if *verdict == PEER_TASK_AUTHORITY_FACT_REFUSAL
+    )
 }
 
 /// The source a foreign TURN or CONVERSATION is stamped with (OF-149).

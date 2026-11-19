@@ -12,9 +12,10 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::gate::{POLICY_SCHEMA_VERSION, resolve_policy_manifest};
+use crate::gate::policy_basis_in_txn;
 use crate::side_table::{self, Named, Raw, SideTable};
-use crate::store::{GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, GateDecisionRecord, GateReceipt, ReceiptActor};
 use crate::write_envelope::claim_body::ClaimBody;
 use crate::write_envelope::{
     WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WriteActor,
@@ -89,29 +90,43 @@ pub(super) fn record_owner_archive_restore_in_txn(
     manifest_digest: [u8; 32],
 ) -> Result<GateDecisionId> {
     let digest = blake3::Hash::from_bytes(manifest_digest).to_hex();
-    let mut receipt = GateDecisionRecord {
-        version: crate::store::GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::from_bytes(vault.store.clock.ulid()?),
-        created_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
-        outcome: "allow".to_owned(),
-        reason_codes: vec!["gate.allow".to_owned()],
-        receipt_reasons: vec![format!("gate.allow.owner_archive_restore.{digest}")],
-        system_notices: Vec::new(),
-        actor_class: actor.actor_class().gate_actor_class().to_owned(),
-        actor_ref: Some(actor.entity_ref().to_hex()),
-        content_kind: OWNER_ARCHIVE_RESTORE_CONTENT_KIND.to_owned(),
-        policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: None,
-        grant_ref: Some(format!("archive_restore:{digest}")),
-        diff_handle: manifest_digest.to_vec(),
-        read_frontier_hash: resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?,
-        context: Default::default(),
-        redacted_at: None,
-    };
-    vault
+    let mut receipt = GateReceipt::new(
+        GateReceiptOutcome::Approved,
+        OWNER_ARCHIVE_RESTORE_CONTENT_KIND,
+        "gate.allow",
+        ReceiptActor::Row(actor),
+        manifest_digest.to_vec(),
+        policy_basis_in_txn(&vault.store, txn)?,
+    );
+    receipt.receipt_reasons = vec![format!("gate.allow.owner_archive_restore.{digest}")];
+    receipt.grant_ref = Some(format!("archive_restore:{digest}"));
+    Ok(vault
         .store
-        .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
-    Ok(receipt.decision_id)
+        .record_gate_receipt_in_txn(txn, receipt)?
+        .decision_id)
+}
+
+/// Whether a stored owner archive-restore receipt records the owner's yes. A receipt written
+/// since UC-03 PR 5 says `approved` (D2: an owner's answer is never a rule's `allow`); one
+/// written before it says `allow`, and a vault keeps those rows as they are (M-1), so a restore
+/// approved before PR 5 still settles.
+fn owner_restore_answered_yes(outcome: Option<GateReceiptOutcome>) -> bool {
+    match outcome {
+        Some(GateReceiptOutcome::Approved | GateReceiptOutcome::Allow) => true,
+        Some(
+            GateReceiptOutcome::Pending
+            | GateReceiptOutcome::Deny
+            | GateReceiptOutcome::ApprovedAmended
+            | GateReceiptOutcome::Rejected
+            | GateReceiptOutcome::LetGo
+            | GateReceiptOutcome::Superseded
+            | GateReceiptOutcome::Retracted
+            | GateReceiptOutcome::Invalidated
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => false,
+    }
 }
 
 /// Digest of the parsed full document manifest, which lists every member's digest;
@@ -245,8 +260,8 @@ pub(super) fn without_owner_restore_receipt(body: &[u8]) -> Result<Vec<u8>> {
 
 /// Whether the owner's whole-vault restore opened the proposal `body`, whose envelope
 /// names `actor` (D5): the claim is Imported, and its evidence's
-/// [`OWNER_RESTORE_RECEIPT_KEY`] names a stored, allowed owner archive-restore receipt
-/// whose actor is `actor`. Settle then leaves `actor` out of the proposal's openers: the
+/// [`OWNER_RESTORE_RECEIPT_KEY`] names a stored owner archive-restore receipt that
+/// records the owner's yes, whose actor is `actor`. Settle then leaves `actor` out of the proposal's openers: the
 /// restore act opened it, not the owner. No agent can forge this: the receipt is a gate
 /// row only the owner door mints, for the bound owner, and an agent's write stamps the
 /// agent as its actor. The owner gains nothing new, since the owner may write the claim
@@ -282,7 +297,7 @@ pub(crate) fn owner_restore_opened_claim_in_txn(
         .gate_decision_in_txn(txn, decision)?
         .is_some_and(|record| {
             record.content_kind == OWNER_ARCHIVE_RESTORE_CONTENT_KIND
-                && record.outcome == "allow"
+                && owner_restore_answered_yes(record.gate_outcome())
                 && record.actor_ref.as_deref() == Some(actor.to_hex().as_str())
         }))
 }
@@ -297,11 +312,19 @@ const RESTORE_MEMBERS: SideTable<String, (), Raw> =
 const RESTORE_GROUPS: SideTable<String, OwnerRestoreGroupHead, Named> =
     SideTable::new(&side_table::OWNER_RESTORE_GROUP);
 
-/// What an owner restore's inbox group card names beside its receipt.
+/// What an owner restore's inbox group card names beside its receipt: the source vault id
+/// and the archived hook grants this restore brought, which the owner's accept-all installs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OwnerRestoreGroupHead {
     /// The source vault id the restored archive's manifest names.
     pub(crate) source_vault: Option<String>,
+    /// The retained-row key of each HOOKS_GRANT tuple this restore brought that the source
+    /// held live. The owner's accept of the group installs them (OPUS-MAP-5B2); refused or
+    /// partly accepted, they stay retained. Empty on old rows, and omitted from the bytes
+    /// when empty, so a stored head without the field still decodes and an empty list
+    /// encodes to the old bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) deferred_hook_grants: Vec<[u8; 32]>,
 }
 
 impl OwnerRestore<'_> {
@@ -339,6 +362,7 @@ pub(super) fn record_restored_member_in_txn(
             &receipt,
             &OwnerRestoreGroupHead {
                 source_vault: restore.source_vault.map(str::to_owned),
+                deferred_hook_grants: Vec::new(),
             },
         )?;
     }
@@ -350,8 +374,8 @@ pub(super) fn record_restored_member_in_txn(
     )
 }
 
-/// The owner restore receipt `group_key` (32 hex) names: a stored, allowed owner
-/// archive-restore receipt; `None` for anything else.
+/// The owner restore receipt `group_key` (32 hex) names: a stored owner
+/// archive-restore receipt that records the owner's yes; `None` for anything else.
 pub(crate) fn owner_restore_receipt_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -367,7 +391,7 @@ pub(crate) fn owner_restore_receipt_in_txn(
         .gate_decision_in_txn(txn, GateDecisionId::from_bytes(*id.as_bytes()))?
         .filter(|record| {
             record.content_kind == OWNER_ARCHIVE_RESTORE_CONTENT_KIND
-                && record.outcome == "allow"
+                && owner_restore_answered_yes(record.gate_outcome())
                 && record.redacted_at.is_none()
         }))
 }
@@ -410,6 +434,47 @@ pub(crate) fn owner_restore_group_head_in_txn(
     group_key: &str,
 ) -> Result<Option<OwnerRestoreGroupHead>> {
     RESTORE_GROUPS.get(&vault.store, txn, &group_key.to_owned())
+}
+
+/// Records `retained_key`, the retained-row key of one HOOKS_GRANT tuple this restore
+/// brought that the source held live, on the group head of the restore receipt
+/// `receipt_hex` (32 hex). An absent head returns Ok: no member was recorded, so there
+/// is no group to accept. A key already listed is not added twice.
+pub(crate) fn record_deferred_hook_grant_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    receipt_hex: &str,
+    retained_key: [u8; 32],
+) -> Result<()> {
+    let receipt = receipt_hex.to_owned();
+    let Some(mut head) = RESTORE_GROUPS.get(&vault.store, txn, &receipt)? else {
+        return Ok(());
+    };
+    if !head.deferred_hook_grants.contains(&retained_key) {
+        head.deferred_hook_grants.push(retained_key);
+        RESTORE_GROUPS.put(&vault.store, txn, &receipt, &head)?;
+    }
+    Ok(())
+}
+
+/// Takes the deferred hook-grant keys of the restore `group_key` (32 hex) names: returns
+/// the list and stores the head with the list empty, so one accept installs each once.
+/// An absent head reads as no keys, and a head with no key is not written again.
+pub(crate) fn take_deferred_hook_grants_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    group_key: &str,
+) -> Result<Vec<[u8; 32]>> {
+    let receipt = group_key.to_owned();
+    let Some(mut head) = RESTORE_GROUPS.get(&vault.store, txn, &receipt)? else {
+        return Ok(Vec::new());
+    };
+    if head.deferred_hook_grants.is_empty() {
+        return Ok(Vec::new());
+    }
+    let taken = std::mem::take(&mut head.deferred_hook_grants);
+    RESTORE_GROUPS.put(&vault.store, txn, &receipt, &head)?;
+    Ok(taken)
 }
 
 /// A member key's restore receipt (32 hex) and claim.

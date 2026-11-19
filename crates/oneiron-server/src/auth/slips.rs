@@ -94,7 +94,7 @@ impl CoreAuth {
             return Err(ApiError::unauthorized());
         }
         let mut auth = Self::from_verified(verified, slip.caveats.is_empty())?;
-        auth.instrument = Some(*blake3::hash(token.as_bytes()).as_bytes());
+        auth.instrument = Some(Self::token_instrument(token));
         // The work this request queues carries the slip it was admitted on,
         // judged again when that work runs. A registry that keeps none
         // leaves the request nothing to queue slip-bound work with.
@@ -166,6 +166,12 @@ impl CoreAuth {
     /// The exact instrument this credential was authenticated on, if any.
     pub(crate) const fn instrument(&self) -> Option<[u8; 32]> {
         self.instrument
+    }
+    /// The instrument `token` is authenticated on: BLAKE3 of its text. A
+    /// request's slip and the held root's boot caller name their token by
+    /// it, so one token is one instrument on every path.
+    pub(crate) fn token_instrument(token: &str) -> [u8; 32] {
+        *blake3::hash(token.as_bytes()).as_bytes()
     }
     /// BLAKE3 of the authority this credential projects: its principal, its
     /// scopes and its exact instrument. A verb hook's ask saves it as the
@@ -265,11 +271,11 @@ impl CoreAuth {
             && claims.channels.is_empty()
             && !claims.single_use;
         Ok(Self {
-            principal: format!("slip:{}", hex_id(&claims.slip_id)),
+            principal: format!("slip:{}", oneiron_hex::encode(&claims.slip_id)),
             principal_ref,
             scopes,
             implicit_all_scopes: owner_grade,
-            jti: Some(hex_id(&claims.slip_id)),
+            jti: Some(oneiron_hex::encode(&claims.slip_id)),
             actor_class: claims.actor_class.clone(),
             org_ref: claims.org_ref.clone(),
             // Local host proofs have no caveats. Their logged mint id is stable.
@@ -496,10 +502,6 @@ fn managed_owner_is_live(vault: &oneiron::Vault, holder: oneiron::EntityId) -> b
         .flatten()
         .is_some_and(|owner| vault.is_live_vault_owner(&owner).unwrap_or(false))
 }
-fn hex_id(bytes: &[u8; 32]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
 pub(crate) fn parse_slip_id(value: &str) -> Result<[u8; 32], ApiError> {
     if value.len() != 64
         || !value

@@ -6,7 +6,7 @@ use oneiron::origin::smart_http::ScanBounds;
 fn resolve(body: &str) -> anyhow::Result<ServeConfig> {
     let dir = tempfile::tempdir().expect("config dir");
     let path = dir.path().join("oneiron.toml");
-    std::fs::write(&path, body).expect("write config");
+    crate::owner_only_file::write_owner_only_file(&path, body).expect("write config");
     let args = ServeArgs {
         config: Some(path),
         ..Default::default()
@@ -48,7 +48,7 @@ fn the_push_scan_floors_resolve_into_the_server_and_are_bounded() {
         format!("[limits]\ngit_scan_blob_bytes = {past}\n"),
         format!("[limits]\ngit_scan_disk_floor_bytes = {past}\n"),
     ] {
-        let refused = resolve(&body).expect_err(&body).to_string();
+        let refused = format!("{:#}", resolve(&body).expect_err(&body));
         assert!(refused.contains("limits.git_scan_"), "{refused}");
     }
 }

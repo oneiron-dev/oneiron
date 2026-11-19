@@ -352,8 +352,7 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
     authority.roster = Some(BTreeSet::from([leader.to_hex(), z.to_hex()]));
     let base = head_of(id, &s2)?;
     let (issuer, slip) = host_slip(&vault)?;
-    let wire = slip.to_token()?;
-    let signer = |challenge: &[u8]| issuer.binding_proof(&slip, challenge);
+    let signer = crate::workspace_roster::OwnerProjectSigner::new(&issuer, slip)?;
     let seal_clock = || -> Result<u64> {
         let txn = vault.store.env.read_txn()?;
         let floor = crate::authority::AUTHORITY_FIRST_SEEN
@@ -375,9 +374,8 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
         while seal_clock()? == start {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        first =
-            Some(vault.seal_project(&sealer, id, authority.clone(), base, wire.clone(), signer)?);
-        match vault.seal_project(&sealer, id, authority.clone(), base, wire.clone(), signer) {
+        first = Some(vault.seal_project(&sealer, &signer, id, authority.clone(), base)?);
+        match vault.seal_project(&sealer, &signer, id, authority.clone(), base) {
             Err(error) => {
                 assert_eq!(error.kind(), ErrorKind::ProjectAuthorityUnresolved);
                 break;
@@ -387,7 +385,7 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
     }
     let first = first.ok_or_else(invalid)?;
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    let second = vault.seal_project(&sealer, id, authority, base, wire, signer)?;
+    let second = vault.seal_project(&sealer, &signer, id, authority, base)?;
     assert_ne!(first, second);
 
     // (h) Both replicas serve the sealed view; raising the policy clears a

@@ -4,6 +4,7 @@
 pub use crate::blob_artifact::esign::door::preview::EsignSigningPreviewRequest;
 pub use crate::blob_artifact::esign::door::preview::EsignSigningPreviewView;
 use crate::blob_artifact::esign::model::EsignDocument;
+use oneiron_store::blob_artifact::esign::model::EsignField;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -26,6 +27,20 @@ pub struct EsignCreateRequest {
     /// owner turns it on; the owner can turn it off again at any time.
     #[serde(default)]
     pub qr_pdf_download: bool,
+}
+
+/// The fields to place on a signing document still in draft
+/// (`vault.esign.fields.place`), in the shape the owner's field editor
+/// exports.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignFieldsPlaceRequest {
+    /// The artifact the signing overlay lives on.
+    pub document_ref: String,
+    /// Every field of the draft, in place of the fields it holds: each on an
+    /// item and page the draft pins, for one of its recipients, in percent of
+    /// the page as the editor shows it.
+    pub fields: Vec<EsignField>,
 }
 
 /// A signing document to read.
@@ -70,6 +85,29 @@ pub struct EsignDispatchRequest {
     pub idempotency_key: Option<String>,
 }
 
+/// One extension of a pending signing document's window through the
+/// dispatch gate (`vault.esign.extend`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignExtendRequest {
+    /// The pending signing document.
+    pub document_ref: String,
+    /// The recipient count the caller reviewed.
+    pub recipient_count: usize,
+    /// The new deadline, Unix seconds: later than the document's own. The
+    /// document and every recipient window not yet finished move to it; no
+    /// link lives past its own cap.
+    pub expires_at: u64,
+    /// The signing principal an agent acts for: its autonomy dial must be
+    /// `autonomous_in_envelope` for an agent's extension to land.
+    #[serde(default)]
+    pub on_behalf_of: Option<String>,
+    /// A retry under the same key answers the first dispatch's receipt, as
+    /// for [`EsignDispatchRequest`].
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
 /// One void of a signing document through the dispatch gate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -93,8 +131,8 @@ pub struct EsignVoidRequest {
 
 /// One ceremony document item to download (`vault.esign.signing.pdf`):
 /// the pinned original while signing, the sealed output after sealing.
-/// The public `POST /sign/pdf` door takes the item alone, under the
-/// `x-oneiron-esign-capability` header.
+/// The public `POST /sign/pdf` door takes the item alone, under the signing
+/// session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EsignSigningPdfRequest {
@@ -116,7 +154,7 @@ pub struct EsignSigningPdfView {
 /// One signature image to upload for a signature field
 /// (`vault.esign.signing.image`), bound to the capability's recipient.
 /// The public `POST /sign/image` door takes the raw PNG or JPEG bytes as
-/// its body, under the `x-oneiron-esign-capability` header.
+/// its body, under the signing session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EsignSigningImageRequest {
@@ -135,8 +173,7 @@ pub struct EsignSigningImageView {
 
 /// One stored signature image to read back (`vault.esign.signing.signature`),
 /// under the capability that uploaded it. The public `POST /sign/signature`
-/// door takes the image ref alone, under the `x-oneiron-esign-capability`
-/// header.
+/// door takes the image ref alone, under the signing session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EsignSigningSignatureRequest {

@@ -382,6 +382,7 @@ fn public_actor_retype_is_immutable_and_preserves_lifecycle_authority() -> Resul
 fn unbound_source_less_claims_keep_default_local_lifecycle_contract() -> Result<()> {
     let dir = tempfile::tempdir().expect("temporary vault");
     let vault = Vault::open(dir.path(), crate::config::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let subject = entity(0x62);
     vault.put_entity(
         &subject,

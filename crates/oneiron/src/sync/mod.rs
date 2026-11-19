@@ -46,6 +46,7 @@ pub(crate) mod custody;
 pub(crate) mod document_pins;
 pub mod documents;
 pub mod federation_burst;
+mod fetch_conditions;
 pub(crate) mod home_handoff;
 pub mod home_proof;
 mod ingest;
@@ -102,8 +103,8 @@ pub use client::{
     SyncTransportCredential, ThinItem,
 };
 pub use connection::{
-    ConnectionConfig, DeviceResidence, HomeNodeTopology, HomeRoute, HomeSearch, LocalUpdate,
-    ResidenceModeChange, SyncConnection,
+    ConnectionConfig, DeviceResidence, FetchConditions, HomeNodeTopology, HomeRoute, HomeSearch,
+    LocalUpdate, ResidenceModeChange, SyncConnection,
 };
 pub(crate) use ingest::VerifiedOwnDeviceLane;
 pub(crate) use ingest::forget_stale_peer_origins;
@@ -141,11 +142,12 @@ pub use selector::GuestDocumentShareRequest;
 #[cfg(feature = "test-hooks")]
 pub use selector::put_selector_test_federation_grant;
 pub use selector::{
-    DEFAULT_FEDERATED_CONFIDENCE_SCALE, FederationAdmissionRole, PeerConfidence, RequestedAxis,
-    SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector, SyncSelectorWorld,
+    CoreferenceDisclosure, DEFAULT_FEDERATED_CONFIDENCE_SCALE, FederationAdmissionRole,
+    PeerConfidence, RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorReaderReach,
+    SelectorReleaseBasis, SelectorVvRequest, SyncSelector, SyncSelectorWorld,
     admit_federated_window_update, authorize_sync_selector, decode_selector_vv_request,
     decode_sync_selector, encode_selector_vv_request, encode_sync_selector, filtered_window_doc,
-    filtered_window_doc_for, filtered_window_doc_for_peer,
+    filtered_window_doc_for, filtered_window_doc_for_peer, recording_coreference_disclosure,
 };
 pub use transport::{
     EphemeralWireState, LEGACY_FULL_WINDOW_PROTOCOL_VERSION, MAX_DECODED_PAYLOAD_BYTES,
@@ -156,3 +158,6 @@ pub use transport::{
     encode_legacy_full_window_protocol_hello, encode_protocol_hello, encode_window_sync,
 };
 pub use types::{MessagePresenceScope, ScopedPresenceFrame, SyncConfig, WindowKey};
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::ingest::asset_digest_for_test;

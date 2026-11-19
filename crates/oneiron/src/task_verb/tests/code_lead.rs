@@ -65,6 +65,7 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
     };
     let originator = own_agent(&vault);
     let origin_question = consult_turn(&vault, 0xAC);
+    super::support::grant_ask_read(&vault, &[originator, lead]).unwrap();
     let origin = vault
         .memory(originator, EdgeActorClass::Agent)
         .tasks_ask(&TaskAskSpec {
@@ -98,13 +99,14 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
     let worker = routable_agent_def(&vault, 0xB1);
     let child = match dispatcher
         .dispatch(SelfCall::AgentsSpawn(Box::new(SelfAgentSpawnCall {
-            target: AgentDispatchTarget::Custom(worker),
+            target: Some(AgentDispatchTarget::Custom(worker)),
             context: AgentSpawnContext::default(),
             intent_key: "worker".to_owned(),
+            ask: None,
         })))
         .unwrap()
     {
-        SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued { attempt_ref }) => {
+        SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued { attempt_ref, .. }) => {
             attempt_ref
         }
         other => panic!("{other:?}"),
@@ -124,9 +126,10 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
     assert!(
         worker_dispatcher
             .dispatch(SelfCall::AgentsSpawn(Box::new(SelfAgentSpawnCall {
-                target: AgentDispatchTarget::Custom(worker),
+                target: Some(AgentDispatchTarget::Custom(worker)),
                 context: AgentSpawnContext::default(),
                 intent_key: "too-deep".to_owned(),
+                ask: None,
             })))
             .is_err()
     );
@@ -135,6 +138,7 @@ fn code_mode_lead_spawns_bounded_worker_then_blind_panel_judge_synthesis() {
         .into_iter()
         .map(|seed| consult_peer(&vault, seed))
         .collect();
+    super::support::grant_ask_read(&vault, &peers).unwrap();
     let responder = |i: usize| TaskAssignee::Peer {
         actor_ref: peers[i],
     };

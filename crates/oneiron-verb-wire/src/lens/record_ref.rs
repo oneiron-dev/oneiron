@@ -43,8 +43,9 @@ pub struct RecordLinksRequest {
     /// the turn's messages after it. `None` reads the first page.
     #[serde(default)]
     pub after: Option<String>,
-    /// The most messages the page holds, 1 to
-    /// [`RECORD_LINKS_TURN_PAGE_MAX`] (also the default).
+    /// The most messages the page holds, 1 to the owner's
+    /// `refs.links.page_max` (also the default;
+    /// [`RECORD_LINKS_TURN_PAGE_MAX`] while the key is unset).
     #[serde(default)]
     pub limit: Option<u32>,
     /// The caller's retrieval filter (FIX 3977): the turn's messages and

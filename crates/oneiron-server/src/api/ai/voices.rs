@@ -261,6 +261,10 @@ pub(super) async fn provision(
         target: &target,
         include_generated: body.include_generated,
         language: body.language.as_deref(),
+        off_record: server.vault.model_call_keeps_no_record_for(
+            auth.off_record_session(),
+            crate::api::call_receipt::request_principal(&auth),
+        ),
     };
     match provision_record(&server, None, clone_payer(), request).await {
         Ok(record) => Json(target_receipt(&record)).into_response(),
@@ -325,6 +329,9 @@ pub(crate) async fn provision_clone(
         target,
         include_generated,
         language,
+        // A caller in an off-record session goes through a door that judges
+        // it ([`provision_clone_funded`]'s); this entry names none.
+        off_record: false,
     };
     provision_clone_funded(server, actor, None, request).await
 }
@@ -340,12 +347,16 @@ pub(crate) fn clone_payer() -> Option<oneiron::llm::run_admission::PayerPerson> 
 }
 
 /// One clone a door asks for: the voice, the target, whether generated refs
-/// count, and the clips' language when the target needs it.
+/// count, the clips' language when the target needs it, and whether the
+/// door's caller is verified in an off-record session that keeps no
+/// model-call record, judged at arrival: then the clone's run names no rows
+/// (census L5-25).
 pub(crate) struct CloneRequest<'a> {
     pub(crate) voice_id: &'a str,
     pub(crate) target: &'a str,
     pub(crate) include_generated: bool,
     pub(crate) language: Option<&'a str>,
+    pub(crate) off_record: bool,
 }
 
 /// [`provision_clone`], its vendor calls billed to `payer` when the acting
@@ -378,6 +389,7 @@ async fn provision_record(
         target,
         include_generated,
         language,
+        off_record,
     } = request;
     if let Some(actor) = actor {
         server
@@ -423,6 +435,7 @@ async fn provision_record(
         .map(|identity| vec![identity.owner]);
     let created = match media
         .clone_run_funded(payer, person)
+        .map(|run| if off_record { run.off_record() } else { run })
         .map(|run| run.initiated_by(initiator))
     {
         Ok(run) => cloner
@@ -629,5 +642,5 @@ fn target_receipt(record: &VoiceTargetRecord) -> VoiceTargetReceipt {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }

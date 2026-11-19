@@ -2,7 +2,8 @@
 
 use super::{Bridge, StreamTarget, failure};
 use crate::code_run::{
-    ResultFacet, SelfAskCall, SelfCall, SelfDispatchOutcome, SelfDurableWait, SelfSpeechCall,
+    ResultFacet, SelfAskCall, SelfCall, SelfDispatchOutcome, SelfDurableWait, SelfSayResultCall,
+    SelfSpeechCall,
     blocked::{BlockedCategory, SelfReportBlockedCall},
 };
 use crate::code_sandbox::{
@@ -13,6 +14,7 @@ use crate::engine_executor::SelfDispatchResponse;
 use crate::engine_executor::{
     JsCodeModeOutput, JsCodeModeStepOutcome, JsResultCall, JsResultTarget, StepCancellation,
 };
+use crate::serialize::json_to_msgpack_value;
 use crate::task_verb::sdk::{AgentVerb, RunVerb};
 use crate::{EntityId, Result};
 use describe::{names_one_target, result_ref, secret_handle};
@@ -205,7 +207,7 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
             let call = SandboxCredentialCall::read_only(
                 args.operation,
                 SandboxCredentialHandle::new(args.credential_handle)?,
-                json_value(args.args),
+                json_to_msgpack_value(&args.args),
             )?;
             let result = admitted(cancel, || service.call_credential(call))?;
             Ok(json!({"operation": result.operation().as_str(), "credentialHandle": result.credential().as_str()}).to_string())
@@ -342,6 +344,27 @@ fn wrong_root_call(name: &str, input: &str) -> Option<crate::memory::MemoryError
     crate::task_verb::sdk::wrong_root(&args.verb)
 }
 
+/// What a plain `say` speaks where the run speaks: a `say` input that names
+/// its text or its result and nothing else.
+enum PlainSay {
+    Text(String),
+    Result(String),
+}
+
+/// The plain `say` an input is, if it is one: its text alone, or its result
+/// alone. One that names a destination, a kind or refs is the `say` row's.
+fn plain_say(input: &Value) -> Option<PlainSay> {
+    let request: crate::memory::SayRequest = serde_json::from_value(input.clone()).ok()?;
+    if request.to.is_some() || request.kind.is_some() || !request.refs.is_empty() {
+        return None;
+    }
+    match (request.text, request.result) {
+        (Some(text), None) => Some(PlainSay::Text(text)),
+        (None, Some(result)) => Some(PlainSay::Result(result)),
+        _ => None,
+    }
+}
+
 fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
     Ok(match name {
         "self.verbs.call" => {
@@ -383,6 +406,19 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                 return Ok(SelfCall::Fold(crate::compaction::SelfFoldCall::Describe {
                     fold: crate::compaction::parse_fold_handle(fold)?,
                 }));
+            }
+            // A plain `say(text)` speaks where the run speaks: it is exactly
+            // `self.speak` (L8-25). A plain `say(result)` is that `self.speak`
+            // with one of the run's results for its words, which only the
+            // run's host resolves. A say that names a destination, a kind or
+            // refs is the `say` row's, served by its own door.
+            if verb == AgentVerb::Say
+                && let Some(plain) = plain_say(&args.input)
+            {
+                return Ok(match plain {
+                    PlainSay::Text(text) => SelfCall::Speak(SelfSpeechCall::new(text)),
+                    PlainSay::Result(result) => SelfCall::SayResult(SelfSayResultCall::new(result)),
+                });
             }
             if verb == AgentVerb::Ask {
                 let request: crate::task_verb::TaskAskRequest = decode(args.input)?;
@@ -479,6 +515,7 @@ const GUEST_FAILURE_CODES: &[&str] = &[
     "finding_not_own",
     "finding_tainted",
     "finding_not_json",
+    "finding_source_gone",
     "reader_task_settled",
     "task_wait_unbound",
     "task_wait_invalid",
@@ -698,29 +735,6 @@ fn reply_body(outcome: &SelfDispatchOutcome, park: ParkReply) -> Result<Value> {
     })
 }
 
-fn json_value(value: Value) -> rmpv::Value {
-    match value {
-        Value::Null => rmpv::Value::Nil,
-        Value::Bool(v) => rmpv::Value::Boolean(v),
-        Value::Number(v) => {
-            if let Some(v) = v.as_u64() {
-                rmpv::Value::from(v)
-            } else if let Some(v) = v.as_i64() {
-                rmpv::Value::from(v)
-            } else {
-                rmpv::Value::F64(v.as_f64().unwrap_or_default())
-            }
-        }
-        Value::String(v) => rmpv::Value::from(v),
-        Value::Array(v) => rmpv::Value::Array(v.into_iter().map(json_value).collect()),
-        Value::Object(v) => rmpv::Value::Map(
-            v.into_iter()
-                .map(|(k, v)| (rmpv::Value::from(k), json_value(v)))
-                .collect(),
-        ),
-    }
-}
-
 /// What a step returns beside its streamed result: whether it finished. A
 /// component that does not stream may still return its observation and
 /// files here.
@@ -860,6 +874,7 @@ fn owner_policy_action_is_unreachable_from_the_guest_imports() {
             idle_secs: 1,
             quiet_weave_secs: 3_600,
             weave_recipe_priority: crate::dreamer_wake::WeaveRecipePriority::BeforeConnectorEvent,
+            surprise_permille: 500,
         }),
         budget: None,
         view: None,

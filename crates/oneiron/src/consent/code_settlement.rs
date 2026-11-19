@@ -5,7 +5,9 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::gate::ExternalEffectGateInput;
-use crate::gate::code_consent_settlement::ResolvedCodeConsentSettlement;
+use crate::gate::code_consent_settlement::{
+    CodeConsentSettlementEligibility, ResolvedCodeConsentSettlement,
+};
 use crate::{EntityId, Error, Result, Vault};
 
 use super::{ActionClass, ActionEnvelope, ActorBound, BoundClass, BoundEnvelope, GrantBound};
@@ -27,6 +29,25 @@ pub(super) struct FrozenCodeConsentBrowserScope {
 }
 
 impl FrozenCodeConsentSettlement {
+    /// A frozen settlement naming exactly `holders`, for the test door
+    /// (`test_doors::ask_answer_proof::mint_code_consent_ask`): the policy
+    /// admits every power holder, with no sources, no conflict, no bound
+    /// action and no browser scope. A test double only: it never settles a
+    /// code wait, it only asks the holders it names.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn with_holders_for_test(holders: BTreeSet<EntityId>) -> Self {
+        Self {
+            policy: ResolvedCodeConsentSettlement {
+                eligible: CodeConsentSettlementEligibility::AllPowerHolders,
+                sources: Vec::new(),
+                conflicting_authored_rows: false,
+            },
+            effect_bound: Vec::new(),
+            holders,
+            browser_scope: None,
+        }
+    }
+
     pub(crate) fn action_requirement(&self) -> Result<GrantBound> {
         let mut cursor = std::io::Cursor::new(&self.effect_bound);
         let value = rmpv::decode::read_value(&mut cursor)
@@ -265,25 +286,17 @@ impl Vault {
                 source.version,
             ));
         }
-        let record = crate::store::GateDecisionRecord {
-            version: crate::store::GATE_DECISION_LEDGER_VERSION,
-            decision_id: receipt.decision_id(),
-            created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
-            outcome: receipt.gate_outcome().to_owned(),
+        let mut gate_receipt = crate::store::GateReceipt::with_reasons(
+            receipt.gate_outcome(),
+            super::grant::CONSENT_CONTENT_KIND,
             reason_codes,
-            receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
-            actor_class: "human".to_owned(),
-            actor_ref: Some(attribution.actor.to_hex()),
-            content_kind: super::grant::CONSENT_CONTENT_KIND.to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            grant_ref: Some(attribution.grant_ref.clone()),
-            diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
-            read_frontier_hash: attribution.policy_frontier,
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store.append_gate_decision_in_txn(txn, &record)
+            crate::store::ReceiptActor::human(attribution.actor),
+            crate::consent::consent_receipt_diff_handle(receipt),
+            crate::store::PolicyBasis::frontier(attribution.policy_frontier),
+        );
+        gate_receipt.id = Some(receipt.decision_id());
+        gate_receipt.grant_ref = Some(attribution.grant_ref.clone());
+        self.store.record_gate_receipt_in_txn(txn, gate_receipt)?;
+        Ok(())
     }
 }

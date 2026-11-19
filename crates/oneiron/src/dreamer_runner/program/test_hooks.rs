@@ -7,13 +7,22 @@
 //! a machine holds and decided.
 
 use super::authority::TurnProgramAuthority;
+use super::resume::ProgramHold;
 use super::types::{
     LandedTurnRef, OwedWakeHold, ProgramRecipePin, ProgramTrigger, TurnProgramArming,
+    TurnProgramAttemptStamp,
 };
-use super::{ADMISSION, ARM, DISARMED, WAKE};
+use super::{ADMISSION, ARM, ATTEMPT, DECIDED, DISARMED, WAKE};
 use crate::authority::{InvocationSlipBinding, VerifiedSlip};
+use crate::dreamer_runner::{
+    DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
+};
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::{EdgeActorClass, EntityId, Vault};
+
+// The K-proof door's reach into the step digests (PLAN-UC-04 stage 7).
+pub(crate) use super::run::{outbound_result_digest_for_test, step_id_for_test};
 
 /// Arms a program for the agent `actor` in `conversation` at `armed_at`,
 /// sealed by the verified slip `proof` and the instrument `binding`, then
@@ -263,6 +272,51 @@ pub(crate) fn plant_timer_arming(
     Ok(registration)
 }
 
+/// Claims one real admission's program try through the same point claim the
+/// program kind uses, then writes the runtime's unfinished hold. No pass
+/// reservation is made, so the settlement fixture owns its only reserve.
+pub(crate) fn hold_admitted_program_try(
+    vault: &Vault,
+    registration: EntityId,
+    now: u64,
+) -> Result<(
+    crate::attempt_queue::AttemptId,
+    crate::dreamer_runner::DreamerParkedAttemptRecord,
+)> {
+    let attempt = vault.with_write_txn_grouped(|txn| {
+        let attempt = ADMISSION
+            .scan(vault, &*txn)?
+            .into_iter()
+            .find(|(_, record)| record.wake.registration == registration)
+            .and_then(|(_, record)| record.attempt)
+            .ok_or(Error::EntityNotFound)?;
+        let claim = crate::ports::JobQueue::port_job_claim_id(
+            vault,
+            txn,
+            attempt,
+            crate::attempt_queue::ClaimAttempt {
+                lease_owner: "program-hold-fixture".to_owned(),
+                now,
+            },
+        )?;
+        match claim {
+            crate::attempt_queue::ClaimOutcome::Claimed(record)
+                if record.kind == crate::dreamer_runner::DREAMER_TURN_PROGRAM_ATTEMPT_KIND =>
+            {
+                Ok(record.id)
+            }
+            _ => Err(Error::InvalidConfig(
+                "the admitted program try was not ready to lease".into(),
+            )),
+        }
+    })?;
+    vault.hold_turn_program(attempt, super::resume::ProgramHold::Unfinished, now)?;
+    let parked = crate::dreamer_runner::DreamerRunnerStore::new(vault)
+        .parked_attempt(attempt)?
+        .ok_or(Error::EntityNotFound)?;
+    Ok((attempt, parked))
+}
+
 /// Whether a disarm row for this registration is kept here.
 pub(crate) fn disarm_kept_here(
     vault: &Vault,
@@ -271,6 +325,63 @@ pub(crate) fn disarm_kept_here(
 ) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
     DISARMED.contains(vault, &txn, &(actor, registration))
+}
+
+/// Plants a Diverged-held turn-program attempt for release tests: a Dreamer
+/// attempt stamped as `actor`'s program try (class `actor_class`), held by
+/// the program runtime. Answers the attempt's hex, the hold's exact reason
+/// and its park time, as a release request names them. The planted try has
+/// no admission row, run or checkpoint: only what a Stop reads.
+pub(crate) fn plant_held_program_attempt(
+    vault: &Vault,
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+) -> Result<(String, String, u64)> {
+    let now = vault.now_recorded_at();
+    let store = DreamerRunnerStore::new(vault);
+    let status = match store.enqueue(EnqueueDreamerAttempt {
+        attempt_type: "test.held_program".to_owned(),
+        input: rmpv::Value::Nil,
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: None,
+        now,
+    })? {
+        EnqueueDreamerAttemptOutcome::Enqueued(status) => status,
+        EnqueueDreamerAttemptOutcome::Existing(status) => status,
+    };
+    let attempt = status.attempt.id;
+    vault.with_write_txn_grouped(|txn| {
+        ATTEMPT.put(
+            vault,
+            txn,
+            &attempt,
+            &TurnProgramAttemptStamp {
+                attempt_id: *attempt.as_bytes(),
+                admission: [0; 32],
+                actor,
+                actor_class: actor_class as u8,
+                receipt_id: [0; 16],
+            },
+        )
+    })?;
+    vault.hold_turn_program(attempt, ProgramHold::Diverged, now)?;
+    Ok((
+        bytes_to_hex_lower(attempt.as_bytes()),
+        ProgramHold::Diverged.reason().to_owned(),
+        now,
+    ))
+}
+
+/// Whether a carried decision for the wake TURN `turn` owes `registration`
+/// is kept here.
+pub(crate) fn decision_kept_here(
+    vault: &Vault,
+    turn: EntityId,
+    registration: EntityId,
+) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    DECIDED.contains(vault, &txn, &(turn, registration))
 }
 
 /// Encodes the mirror's externally tagged `ArmingRow::Armed` envelope directly,
@@ -286,4 +397,63 @@ pub(crate) fn arming_row_bytes(
         .ok_or(Error::EntityNotFound)?;
     serde_json::to_vec(&std::collections::BTreeMap::from([("armed", arming)]))
         .map_err(|_| Error::InvalidConfig("the arming row does not encode".into()))
+}
+
+/// Overwrites the ARM row (`actor`, `registration`) with bytes that decode as no arming,
+/// as a damaged row sits.
+pub(crate) fn damage_arming_row(
+    vault: &Vault,
+    actor: EntityId,
+    registration: EntityId,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        ARM.put_undecodable(
+            vault,
+            txn,
+            &(actor, registration),
+            b"not a turn program arming",
+        )
+    })
+}
+
+/// Erases `actor`'s turn programs as the owner's erase does, in one writer.
+pub(crate) fn erase_actor_programs(vault: &Vault, actor: EntityId) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        super::arm::erase_turn_program_actor_in_txn(vault, txn, &actor)
+    })
+}
+
+/// Each idle or feed row one of `actor`'s programs keeps: its kind tag and registration.
+pub(crate) fn trigger_rows_for_actor(
+    vault: &Vault,
+    actor: EntityId,
+) -> Result<Vec<(u8, EntityId)>> {
+    super::trigger::trigger_rows_for_actor(vault, actor)
+}
+
+/// The `Admitted` row a linked machine would carry for the owed wake of
+/// `registration`: its turn, its map key, and its bytes as the decision
+/// mirror encodes them.
+#[cfg(feature = "sync")]
+pub(crate) fn admitted_row_bytes(
+    vault: &Vault,
+    actor: EntityId,
+    registration: EntityId,
+) -> Result<(EntityId, String, Vec<u8>)> {
+    let txn = vault.store.env.read_txn()?;
+    let key = super::index::actor_wakes_in_txn(vault, &txn, &actor)?
+        .into_iter()
+        .find(|(_, owed)| *owed == registration)
+        .ok_or(Error::EntityNotFound)?;
+    let wake = WAKE.get(vault, &txn, &key)?.ok_or(Error::EntityNotFound)?;
+    let (map_key, bytes) = super::replica::admitted_row_for_test(&wake)?;
+    Ok((key.0, map_key, bytes))
+}
+
+/// How many `Admitted` rows TURN `turn` owes the window from this machine's
+/// decisions.
+#[cfg(feature = "sync")]
+pub(crate) fn decided_rows_for_turn(vault: &Vault, turn: EntityId) -> Result<usize> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(super::replica::turn_decided_rows_in_txn(vault, &txn, &turn)?.len())
 }

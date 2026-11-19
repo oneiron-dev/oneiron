@@ -42,7 +42,7 @@ use crate::store::Store;
 pub use crate::store::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};
 
 pub use self::actors_memory::ActorBound;
-pub(crate) use self::actors_memory::is_named_agent_principal_body;
+pub(crate) use self::actors_memory::{is_named_agent_principal_body, named_agent_principal_name};
 #[cfg(test)]
 pub(crate) use self::database_digests::{mask_embed_job_stamps, mask_unrepeatable_stamps};
 pub use self::doctor_manifest::{
@@ -71,7 +71,8 @@ pub(crate) use self::entities::{
 pub(crate) use self::identity::VaultId;
 pub use self::identity::{OpenOptions, VaultStorageId};
 pub(crate) use self::open::{
-    EngineSeedIdentities, embedded_owner_actor_id, encode_embedded_owner_actor_body,
+    EMBEDDED_OWNER_ACTOR_NAME, EngineSeedIdentities, embedded_owner_actor_id,
+    encode_embedded_owner_actor_body,
 };
 pub use self::raw_writes::{RawEntityPut, SafeDeleteRequest};
 pub use self::reader_table::ReaderTableShortfall;
@@ -265,6 +266,10 @@ pub struct Vault {
     /// ([`Vault::set_lfs_read_room`]); none until it lends one.
     pub(crate) lfs_read_room:
         std::sync::RwLock<Option<std::sync::Arc<dyn crate::origin::lfs::LfsReadRoom>>>,
+    /// The text embedder this vault's live pending-text reconciler runs, which
+    /// `vault.worlds.vectors` judges each world by (FIX [WORLD-VECTORS-FACT]).
+    /// In memory only; none until a host builds a reconciler.
+    pub(crate) host_text_embedder: crate::embed::world_vectors::HostTextEmbedderSlot,
     /// Each published LFS object's verdict for a peer no read authority
     /// admits, by its OID and its manifest's BLAKE3 (EXPORTDOORS Q3). In
     /// memory only: what the object's bytes release, never who may read.
@@ -315,6 +320,11 @@ pub struct Vault {
     /// ([`Vault::install_served_transports`]). In memory only.
     pub(crate) served_transports:
         std::sync::OnceLock<std::sync::Arc<crate::outbound::ServedTransports>>,
+    /// The serving host's public https origin its bulk campaign email's
+    /// one-click unsubscribe links name (ARCH-0059 #opt-out), installed once
+    /// per open vault ([`Vault::install_one_click_unsubscribe_origin`]); none
+    /// on a vault no host serves, which mints no link. In memory only.
+    pub(crate) one_click_unsubscribe_origin: std::sync::OnceLock<String>,
     /// The host's isolated inspection of e-sign original PDFs, reached before
     /// a field save's or a sign act's writer (FIX 9609,
     /// [`Vault::install_esign_page_inspector`]). In memory only.
@@ -374,8 +384,6 @@ impl Vault {
 }
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-VAULT-TESTS]: the lib test target's type check fails here (3 errors: E0639 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

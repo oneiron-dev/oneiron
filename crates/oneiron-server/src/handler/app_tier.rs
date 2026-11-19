@@ -119,7 +119,9 @@ pub(super) async fn handle_sync_message(
             &payload,
             direct_tx,
             None,
-        )? {
+        )
+        .await?
+        {
             None => Ok(ControlFlow::Continue(())),
             Some(_) => Err(ProtocolError::InvalidPayload(
                 "a verb RPC is answered on its socket's loop",
@@ -133,6 +135,7 @@ pub(super) async fn handle_sync_message(
             direct_tx,
             None,
         )
+        .await
         .map(|_| ControlFlow::Continue(())),
         SyncMessage::RootUpdate(_update_bytes) => {
             // Root doc is server-authoritative — reject client updates silently
@@ -275,7 +278,7 @@ pub(super) async fn handle_sync_message(
 /// The synchronous door: a verb runs here, through the blocking bridge
 /// ([`crate::livequery::bound_rpc_reply`]), not off a socket's loop.
 #[cfg(test)]
-pub(super) fn handle_app_message(
+pub(super) async fn handle_app_message(
     server: &SyncServer,
     state: &mut ConnState,
     tag: u8,
@@ -283,7 +286,7 @@ pub(super) fn handle_app_message(
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 ) -> Result<(), ProtocolError> {
     let Some(call) =
-        handle_app_message_with_connection(server, state, tag, payload, direct_tx, None)?
+        handle_app_message_with_connection(server, state, tag, payload, direct_tx, None).await?
     else {
         return Ok(());
     };
@@ -353,7 +356,7 @@ impl VerbCall {
 /// run off the caller's loop. A frame the socket refuses (no live bound
 /// principal, an older protocol, a malformed envelope) closes it with no
 /// reply to carry a ref; its receipt names the connection (FIX 811).
-pub(super) fn handle_app_message_with_connection(
+pub(super) async fn handle_app_message_with_connection(
     server: &SyncServer,
     state: &mut ConnState,
     tag: u8,
@@ -361,7 +364,7 @@ pub(super) fn handle_app_message_with_connection(
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     connection: Option<&mut crate::livequery::connection::Connection>,
 ) -> Result<Option<VerbCall>, ProtocolError> {
-    let answered = answer_app_message(server, state, tag, payload, direct_tx, connection);
+    let answered = answer_app_message(server, state, tag, payload, direct_tx, connection).await;
     if let Err(error) = &answered {
         let call = (tag == protocol::TAG_RPC)
             .then(|| crate::livequery::decode_rpc_call(payload).ok())
@@ -412,7 +415,7 @@ pub(super) fn handle_app_message_with_connection(
     answered
 }
 
-fn answer_app_message(
+async fn answer_app_message(
     server: &SyncServer,
     state: &mut ConnState,
     tag: u8,
@@ -471,13 +474,16 @@ fn answer_app_message(
                     .map_err(|_| ProtocolError::RpcNoPrincipal)?;
                 Ok(auth)
             })();
-            let actor = binding.as_ref().map_or("unauthenticated", |auth| {
-                auth.principal_ref().unwrap_or(auth.principal())
-            });
-            let _ =
-                server
-                    .wire_telemetry
-                    .record("auth.bind", actor, oneiron_vault_contract::now_ts());
+            let actor = binding
+                .as_ref()
+                .map_or("unauthenticated", |auth| {
+                    auth.principal_ref().unwrap_or(auth.principal())
+                })
+                .to_owned();
+            crate::wire_telemetry::record_on_blocking_pool(server, move |telemetry, now| {
+                telemetry.record("auth.bind", &actor, now)
+            })
+            .await;
             state.bound_auth = Some(binding?.at(state.locality));
             // FIX 811: the bind is the connection's reply, and its receipt
             // digests none of the credential.
@@ -512,11 +518,11 @@ fn answer_app_message(
                 oneiron::authority::PeerMachine::Proven { machine, .. } => machine.to_hex(),
                 oneiron::authority::PeerMachine::Unknown => "unauthenticated".to_owned(),
             };
-            let _ = server.wire_telemetry.record(
-                &request.method,
-                &actor,
-                oneiron_vault_contract::now_ts(),
-            );
+            let verb = request.method.clone();
+            crate::wire_telemetry::record_on_blocking_pool(server, move |telemetry, now| {
+                telemetry.record(&verb, &actor, now)
+            })
+            .await;
             let conn = connection
                 .as_deref()
                 .map_or(0, crate::livequery::connection::Connection::conn_id);
@@ -538,11 +544,11 @@ fn answer_app_message(
                 oneiron::authority::PeerMachine::Proven { machine, .. } => machine.to_hex(),
                 oneiron::authority::PeerMachine::Unknown => "unauthenticated".to_owned(),
             };
-            let _ = server.wire_telemetry.record(
-                &request.method,
-                &actor,
-                oneiron_vault_contract::now_ts(),
-            );
+            let verb = request.method.clone();
+            crate::wire_telemetry::record_on_blocking_pool(server, move |telemetry, now| {
+                telemetry.record(&verb, &actor, now)
+            })
+            .await;
             let conn = connection
                 .as_deref()
                 .map_or(0, crate::livequery::connection::Connection::conn_id);
@@ -557,11 +563,14 @@ fn answer_app_message(
             return Ok(None);
         }
         let auth = require_bound_app_auth(server, state)?;
-        let _ = server.wire_telemetry.record(
-            &request.method,
-            auth.principal_ref().unwrap_or(auth.principal()),
-            oneiron_vault_contract::now_ts(),
+        let (verb, actor) = (
+            request.method.clone(),
+            auth.principal_ref().unwrap_or(auth.principal()).to_owned(),
         );
+        crate::wire_telemetry::record_on_blocking_pool(server, move |telemetry, now| {
+            telemetry.record(&verb, &actor, now)
+        })
+        .await;
         // A call context rides a facade verb RPC only (FIX 2059): a ping is
         // the connection's, and a residence read the proved machine's.
         if context.is_some()
@@ -612,7 +621,7 @@ fn answer_app_message(
                     ),
                 )));
             }
-            crate::livequery::residence_rpc(
+            let (reply, basis) = crate::livequery::residence_rpc(
                 server,
                 &bound,
                 peer,
@@ -620,8 +629,11 @@ fn answer_app_message(
                 &mut state.residence_index,
                 &mut state.authority_append_stage,
                 &mut state.residence_touch,
-            )?
-            .queued(conn)
+            )?;
+            match basis {
+                Some(basis) => state.selector_answers.queue(basis, reply.queued(conn)),
+                None => reply.queued(conn),
+            }
         } else {
             // FIX 2059: the call context is taken here, before the call
             // leaves the loop: its session judged for the bound principal
@@ -649,11 +661,11 @@ fn answer_app_message(
     } else {
         let auth = require_bound_app_auth(server, state)?;
         let request = crate::livequery::decode_sub(payload)?;
-        let _ = server.wire_telemetry.record(
-            "subscribe",
-            auth.principal_ref().unwrap_or(auth.principal()),
-            oneiron_vault_contract::now_ts(),
-        );
+        let actor = auth.principal_ref().unwrap_or(auth.principal()).to_owned();
+        crate::wire_telemetry::record_on_blocking_pool(server, move |telemetry, now| {
+            telemetry.record("subscribe", &actor, now)
+        })
+        .await;
         let connection =
             connection.ok_or(ProtocolError::InvalidPayload("subscription owner missing"))?;
         for frame in connection.control(auth, request)? {

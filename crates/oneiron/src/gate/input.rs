@@ -64,7 +64,10 @@ pub(crate) struct GateProvenanceHandles {
     pub(crate) mail_recipients: Vec<crate::outbound::OutboundRecipient>,
     /// FIX 6424: the one send a non-mail approve-once press on this effect
     /// approves, supplied by its canonical producer and hashed into that
-    /// one-shot digest only. Never an authority source; no Grant reads it.
+    /// one-shot digest; a scoped-MCP target is also hashed into the Gate's
+    /// binding of the call's decision (FIX
+    /// [GATE-EFFECT-BINDING-NO-CALL-IDENTITY]). Never an authority source; no
+    /// Grant reads it.
     pub(crate) approval_target: Option<super::effect::ApprovalTarget>,
     pub(crate) dreamer_run_id: Option<String>,
     /// Whether the write is a `vault.derive` commit's (untangle 6.7a): the
@@ -269,6 +272,10 @@ pub(crate) struct ExternalEffectGateContext {
     /// A matching contact is owner-revoked. GATE-INTERNAL like the override:
     /// hydration fills it at the same seam.
     pub(crate) counterparty_contact_revoked: bool,
+    /// The registry ids of the overridable claim classes whose heads hold the
+    /// send, so the evaluator reads each class's posture (ARCH-0057 §3.1).
+    /// GATE-INTERNAL like the override: hydration fills it at the same seam.
+    pub(crate) counterparty_hold_classes: Vec<EntityId>,
     pub(crate) has_opted_in: bool,
     pub(crate) has_permission: bool,
     pub(crate) policy_risk: ExternalEffectPolicyRisk,
@@ -335,6 +342,7 @@ impl ExternalEffectGateInput {
                 counterparty_opt_out_receipt_reason: self.counterparty_opt_out_receipt_reason,
                 counterparty_send_override: None,
                 counterparty_contact_revoked: false,
+                counterparty_hold_classes: Vec::new(),
                 has_opted_in: self.has_opted_in,
                 has_permission: self.has_permission,
                 policy_risk: self.policy_risk,

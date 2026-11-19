@@ -142,6 +142,7 @@ fn save_as(vault: &Vault, author: EntityId, text: &str, name: &str) -> (EntityId
         conversation_ref: ROOM.into(),
         turn_ref: Some(TURN.to_owned()),
         thread_audience: None,
+        project: None,
         occurred_at: now_seconds(),
         messages: vec![WitnessMessage {
             id: None,
@@ -168,6 +169,7 @@ fn save_as(vault: &Vault, author: EntityId, text: &str, name: &str) -> (EntityId
         vad: None,
         context_links: Vec::new(),
         speaker_links: Vec::new(),
+        relations: None,
         stack_sha16: None,
         mood_parts: Vec::new(),
     };
@@ -1066,6 +1068,7 @@ impl ExtractionEncoder for Owens {
                 context_links: Vec::new(),
                 speaker_links: Vec::new(),
                 mood_parts: Vec::new(),
+                relations: None,
                 stack_sha16: None,
             }),
         }
@@ -1133,6 +1136,7 @@ fn witness_then_embed(vault: &Vault, owner: EntityId, text: &str) -> EntityId {
             conversation_ref: ROOM.into(),
             turn_ref: Some(TURN.to_owned()),
             thread_audience: None,
+            project: None,
             occurred_at: now_seconds(),
             messages: vec![WitnessMessage {
                 id: None,
@@ -1378,6 +1382,7 @@ impl ExtractionEncoder for ManagerAfterOrg {
                 context_links: Vec::new(),
                 speaker_links: Vec::new(),
                 mood_parts: Vec::new(),
+                relations: None,
                 stack_sha16: None,
             }),
         }

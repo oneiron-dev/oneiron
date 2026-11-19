@@ -105,10 +105,10 @@ impl OfferLadder {
             };
             match answered {
                 Ok(mut response) => {
-                    warmth.answered(&self.rests, &response.usage);
+                    let horizon = warmth.answered(&self.rests, &response.usage);
                     self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                     permit.settle(CallOutcome::Answered(&response.usage))?;
-                    response.usage = self.answered(index, walk, response.usage);
+                    response.usage = self.answered(index, walk, response.usage, horizon);
                     if prompt.noted() {
                         rung.note_answered(call.request);
                     }
@@ -188,6 +188,15 @@ impl OfferLadder {
             context
         });
         loop {
+            // The caller's deadline is judged again right before the rung
+            // goes out: the wait for the worker's lease, or for the stream's
+            // first poll, may have outlasted it. Its permit settles unsent,
+            // so no reservation is kept as spend (review round 2 of #7831).
+            if context.deadline.expired() {
+                settle_failed(permit);
+                let _ = events.send(Err(CallDeadline::expiry())).await;
+                return Flow::Ended;
+            }
             let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
             let warmth = cache_warmth::Sending::of(&self.rests, &rung, &call);
             let ended = match gate.stream(call, permit.lease()) {
@@ -207,7 +216,7 @@ impl OfferLadder {
                     finish_reason,
                     reply_assertions,
                 } => {
-                    warmth.answered(&self.rests, &usage);
+                    let horizon = warmth.answered(&self.rests, &usage);
                     self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                     let done = match permit.settle(CallOutcome::Answered(&usage)) {
                         Ok(_) => {
@@ -224,7 +233,7 @@ impl OfferLadder {
                             }
                             Ok(LlmStreamEvent::Done {
                                 message,
-                                usage: self.answered(index, walk, usage),
+                                usage: self.answered(index, walk, usage, horizon),
                                 finish_reason,
                                 reply_assertions,
                             })

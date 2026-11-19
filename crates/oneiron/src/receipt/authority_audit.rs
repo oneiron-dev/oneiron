@@ -37,7 +37,7 @@ use std::ops::Bound;
 use super::kernel::hex_lower;
 use crate::Vault;
 use crate::authority::{
-    AuthorityCheckpointRow, AuthorityFold, VerifiedAuthorityCheckpoint,
+    AuthorityCheckpointRow, AuthorityFold, RestoredJoinEnrolment, VerifiedAuthorityCheckpoint,
     cached_adopted_authority_checkpoint_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
@@ -46,9 +46,11 @@ use crate::error::{Error, Result};
 use crate::memory::Memory;
 use crate::ports::{EntityRecord, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+use crate::request_limits::page_limit_zero_as_one;
 use oneiron_authority::authority::{
-    AuthorityKey, AuthorityLogEntry, AuthorityOp, FederationLifecycleKind, OwnerWorkKind,
-    authority_entry_hash, authority_log_entity_id_from_hash, decode_authority_log_entry_body,
+    AuthorityKey, AuthorityLogEntry, AuthorityOp, FederationLifecycleKind, FullCopyMark,
+    OwnerWorkKind, authority_entry_hash, authority_log_entity_id_from_hash,
+    decode_authority_log_entry_body,
 };
 use oneiron_contracts::authority::{AUTHORITY_HASH_LEN, AuthorityEntryHash};
 use oneiron_contracts::memory::MemoryResult;
@@ -97,10 +99,12 @@ impl Vault {
         owner: &AuthenticatedOwner,
         query: &AuthorityAuditQuery,
     ) -> Result<AuthorityAuditPage> {
-        let limit = query
-            .limit
-            .unwrap_or(AUTHORITY_AUDIT_DEFAULT_LIMIT)
-            .clamp(1, AUTHORITY_AUDIT_MAX_LIMIT);
+        let limit = page_limit_zero_as_one(
+            query.limit,
+            AUTHORITY_AUDIT_DEFAULT_LIMIT,
+            AUTHORITY_AUDIT_MAX_LIMIT,
+        )
+        .rows;
         let scan_cap = limit.saturating_mul(AUTHORITY_AUDIT_SCAN_PER_ROW);
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
@@ -362,7 +366,31 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
         ),
         AuthorityOp::Genesis { .. } => (Other, "genesis", OpFields::default()),
         AuthorityOp::EnrollDevice { .. } => (Other, "enroll_device", OpFields::default()),
-        AuthorityOp::OwnerKeyEnroll(_) => (Other, "owner_key_enroll", OpFields::default()),
+        // A key change names its key, its machine and its shape (pass 27
+        // section 4.4; row WEB-PASSKEY-OWNER-KEY): the subject is the
+        // enrolled key, the holder the machine that holds it (for a passkey,
+        // the carrier that served its ceremony), the detail `device_key` or
+        // `passkey`. The proof that vouched is the row's signer key. A
+        // confirmation of a key only a passkey vouched for (lead ruling
+        // WEBPASSKEY-BLIND-SIGNATURE = B) is the same op, so it reads as a
+        // second row for that key, its signer the confirming key.
+        AuthorityOp::OwnerKeyEnroll(enroll) => (
+            Other,
+            "owner_key_enroll",
+            OpFields {
+                detail: Some(
+                    if enroll.is_passkey() {
+                        "passkey"
+                    } else {
+                        "device_key"
+                    }
+                    .to_owned(),
+                ),
+                subject_ref: Some(key_hex(&enroll.device.key)),
+                holder_ref: Some(enroll.machine.to_hex()),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::FrontierJoin(_) => (Other, "frontier_join", OpFields::default()),
         AuthorityOp::RevokeDevice { .. } => (Other, "revoke_device", OpFields::default()),
         AuthorityOp::RotateKey { .. } => (Other, "rotate_key", OpFields::default()),
@@ -372,6 +400,32 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
         AuthorityOp::RevokeActor { .. } => (Other, "revoke_actor", OpFields::default()),
         AuthorityOp::MachineProfile(_) => (Other, "machine_profile", OpFields::default()),
         AuthorityOp::OwnerRoot(_) => (Other, "owner_root", OpFields::default()),
+        // The appointed successor root key, and the root whose anchor
+        // appoints it (OWNER-ANCHOR-ROOT-RECOVERY).
+        AuthorityOp::RootAppointment(appointment) => (
+            Other,
+            "root_appointment",
+            OpFields {
+                detail: Some(hex_lower(&appointment.root.0)),
+                subject_ref: Some(key_hex(&appointment.successor.key)),
+                ..OpFields::default()
+            },
+        ),
+        // The owner's word that no other machine is left: its subject is the
+        // machine it joins, its detail the held enrolment it names (row
+        // RESTORED-COPIES-ENROL-EACH-OTHER).
+        AuthorityOp::RestoredMachineJoin(join) => (
+            Other,
+            "restored_machine_join",
+            OpFields {
+                detail: match &join.enrolment {
+                    RestoredJoinEnrolment::Held(enrolment) => Some(hex_lower(enrolment)),
+                    RestoredJoinEnrolment::Inline(_) => Some("inline enrolment".to_owned()),
+                },
+                subject_ref: Some(join.act.target.to_hex()),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::WorldPrivacy(_) => (Other, "world_privacy", OpFields::default()),
         AuthorityOp::WorldKeyWraps(_) => (Other, "world_key_wraps", OpFields::default()),
         AuthorityOp::OwnerHandover(action) => (
@@ -514,6 +568,17 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                     declaration.cloud
                 )),
                 subject_ref: Some(declaration.machine.to_hex()),
+                ..OpFields::default()
+            },
+        ),
+        // A machine's full-copy mark (L7-47): its subject is the machine,
+        // and its detail says held or not.
+        AuthorityOp::FullCopyMark(FullCopyMark { machine, held }) => (
+            Other,
+            "full_copy_mark",
+            OpFields {
+                detail: Some(format!("held {held}")),
+                subject_ref: Some(machine.to_hex()),
                 ..OpFields::default()
             },
         ),

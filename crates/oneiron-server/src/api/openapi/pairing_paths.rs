@@ -44,7 +44,7 @@ const PAIRING_ROUTES: &[PairingRoute] = &[
         refusals: &[
             (
                 "400",
-                "The scope the vault refuses (InvalidPairingScope on scope.facets, pairing.rs with_issuer).",
+                "The scope the vault refuses (InvalidPairingScope on scope.facets; AppBackendGrantRequired on scope.verbs, verbs for an app backend no Grant row names; pairing.rs with_issuer).",
             ),
             (
                 "401",
@@ -67,8 +67,12 @@ const PAIRING_ROUTES: &[PairingRoute] = &[
         answer: paired_answer,
         refusals: &[
             (
+                "400",
+                "The link's scope the vault refuses for this holder, judged again at redemption (InvalidPairingScope on scope.facets; AppBackendGrantRequired on scope.verbs, verbs for an app backend no Grant row names, as when an open link is redeemed as one; pairing.rs with_issuer).",
+            ),
+            (
                 "401",
-                "No such holder, or the code, binding key, signature, machine enrolment or possession proof does not verify (every redeem check refuses unauthenticated).",
+                "No such holder, or the code, binding key, signature, machine enrolment or possession proof does not verify (every other redeem check refuses unauthenticated).",
             ),
             (
                 "429",
@@ -374,7 +378,8 @@ fn redeem_body() -> Value {
 }
 
 /// The joining machine's enrolment on the wire: `MachineEnrolment`
-/// (`pairing.rs:200-209`, seven required fields, denied unknown fields
+/// (`pairing.rs:200-209`, seven required fields and an optional
+/// `restored_from`, denied unknown fields
 /// `pairing.rs:199`). Vault and machine-key ids are 64 hex, the machine is
 /// an entity id in hex, the device class is required, the encryption key is
 /// base64 and the proof is 128 hex (`MachineEnrolment::request`,
@@ -391,7 +396,8 @@ fn machine_enrolment_schema() -> Value {
             "device_class": {"type": "string", "enum": ["phone", "computer"], "description": "What kind of machine it is, as its host declares it (MachineDeviceClass, machine_profile.rs:94-97)."},
             "encryption_suite": {"type": "integer", "minimum": 0, "maximum": 65535, "description": "The encryption suite number."},
             "encryption_key": {"type": "string", "description": "The machine's public encryption key in standard base64."},
-            "machine_proof": {"type": "string", "description": "The enrolment proof, 128 lower hex."}
+            "machine_proof": {"type": "string", "description": "The enrolment proof, 128 lower hex."},
+            "restored_from": {"type": "string", "description": "The checkpoint image a restore made the joining install from, 64 lower hex; present only for such an install, whose proof then signs the restored transcript (row RESTORED-COPIES-ENROL-EACH-OTHER)."}
         }
     })
 }
@@ -411,6 +417,7 @@ fn paired_answer() -> Value {
             "pin": checkpoint_pin_schema(),
             "home": paired_home_schema(),
             "re_paired": {"type": "boolean", "description": "True when the link re-paired an already held machine credential only; omitted otherwise."},
+            "answer_held": {"type": "boolean", "description": "True when the link's machine answer is stored and waits for the owner's confirm on an owner device: this home carried it with no owner key, so the machine is not the owner's yet. The token stands. Omitted otherwise."},
             "comm": comm_reach_schema()
         }
     })

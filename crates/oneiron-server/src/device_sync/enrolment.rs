@@ -253,7 +253,7 @@ pub(crate) fn enrol(
     )?;
     let possession = vault.machine_possession_proof(&request, &transcript)?;
     let mesh = mesh_identity(vault);
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "code": code,
         "holder_ref": holder_ref,
         "binding_key": hex(&binding_key),
@@ -271,6 +271,12 @@ pub(crate) fn enrol(
         "machine_possession": hex(&possession),
         "mesh": mesh,
     });
+    // Only a restored install names its image (row
+    // RESTORED-COPIES-ENROL-EACH-OTHER), so every other request keeps its
+    // seven keys.
+    if let Some(image) = &request.restored_from {
+        body["machine"]["restored_from"] = serde_json::Value::from(hex(image));
+    }
     let response = reqwest::blocking::Client::builder()
         // A redirect would send the code and the signed request on to
         // another origin, so none is followed, as renewal follows none
@@ -421,5 +427,5 @@ fn write_new(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }

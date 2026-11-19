@@ -6,6 +6,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::write_envelope::coping_outcome::{
     COPING_OUTCOME_PREDICATE, CopingOutcomeValue, coping_outcome_value, decode_coping_outcome_claim,
 };
@@ -13,9 +14,18 @@ use crate::{EntityId, Error};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::coping_doors::{
-    CopingAggregate, CopingAggregateRequest, CopingOutcomeReceipt, CopingOutcomeRecordRequest,
-    CopingOutcomeUpdateRequest, CopingOutcomeView, CopingVadDelta,
+    CopingAggregate, CopingAggregateRequest, CopingLookup, CopingLookupBasis, CopingLookupOutcome,
+    CopingLookupRequest, CopingOutcomeReceipt, CopingOutcomeRecordRequest,
+    CopingOutcomeUpdateRequest, CopingOutcomeView, CopingPrior, CopingVadDelta,
 };
+
+/// One coping head the aggregate and the lookup read, with the learned-at
+/// stamp of its row.
+pub(super) struct AdmittedCopingHead {
+    pub(super) strategy_ref: EntityId,
+    pub(super) learned_at: u64,
+    pub(super) outcome: CopingOutcomeView,
+}
 
 impl Memory<'_> {
     pub fn coping_outcome_record_as_owner(
@@ -50,7 +60,7 @@ impl Memory<'_> {
                 value: crate::serialize::msgpack_value_to_json(&coping_outcome_value(&value)),
                 confidence: input.confidence,
                 source: "observed".to_owned(),
-                scope: input.scope.clone(),
+                scope: input.scope.clone().into(),
                 sensitivity: input.sensitivity,
                 evidence_turn_refs: vec![baseline.to_hex(), later.to_hex()],
                 valid_from: Some(now),
@@ -74,13 +84,16 @@ impl Memory<'_> {
             },
         )?;
         let claim = self.resolve_ref(&receipt.claim_short_id)?;
+        // The lane opens its own read transaction, so it is built before this
+        // one: LMDB keeps one reader per thread (COPING-LOOKUP-PROOF-SETUP-MDB-BAD-RSLOT).
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         let body = self
             .vault
             .get_claim_in_txn(&txn, &claim)?
             .ok_or(Error::EntityNotFound)?;
         Ok(CopingOutcomeReceipt {
-            outcome: self.coping_outcome_view_in_txn(&txn, claim, &body)?,
+            outcome: self.coping_outcome_view_in_txn(&txn, &lane, claim, &body)?,
             superseded_claim_refs: Vec::new(),
             receipt_ref: receipt.receipt_ref,
         })
@@ -151,28 +164,30 @@ impl Memory<'_> {
                 .vault
                 .get_claim_in_txn(txn, &result.active_claim_id)?
                 .ok_or(Error::EntityNotFound)?;
-            let decision = super::authorship::decision(
+            let receipt = super::authorship::decision(
                 self.write_actor(),
                 "coping_outcome",
-                "approved",
+                GateReceiptOutcome::Approved,
                 "gate.affect.coping.turn_vad",
                 Some(result.active_claim_id),
                 blake3::hash(&crate::claim::encode_claim_body(&active)?)
                     .as_bytes()
                     .to_vec(),
-                now,
             );
-            self.vault
-                .store
-                .append_gate_decision_in_txn(txn, &decision)?;
+            let record = self.vault.store.record_gate_receipt_in_txn(txn, receipt)?;
             Ok(CopingOutcomeReceipt {
-                outcome: self.coping_outcome_view_in_txn(txn, result.active_claim_id, &active)?,
+                outcome: self.coping_outcome_view_in_txn(
+                    txn,
+                    &lane,
+                    result.active_claim_id,
+                    &active,
+                )?,
                 superseded_claim_refs: result
                     .superseded_claim_ids
                     .iter()
                     .map(EntityId::to_hex)
                     .collect(),
-                receipt_ref: format!("gate:{}", decision.decision_id.to_hex()),
+                receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
             })
         })
     }
@@ -183,9 +198,11 @@ impl Memory<'_> {
         input: &CopingAggregateRequest,
     ) -> MemoryResult<CopingAggregate> {
         let person = self.resolve_ref(&input.affected_person_ref)?;
+        // Built before the read transaction: the lane opens its own.
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         self.affect_owner_in_txn(&txn, owner)?;
-        self.coping_aggregate_in_txn(&txn, person, input.scope.as_ref())
+        self.coping_aggregate_in_txn(&txn, &lane, person, input.scope.as_ref())
     }
 
     pub(super) fn affect_owner_in_txn(
@@ -246,14 +263,17 @@ impl Memory<'_> {
         Ok(())
     }
 
+    /// The coping aggregate of `person`, read on `lane`, which the caller
+    /// builds before it opens `txn`: building a lane opens a read
+    /// transaction, and LMDB keeps one reader per thread.
     pub(super) fn coping_aggregate_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
+        lane: &crate::claim::ScopedRead<'_>,
         person: EntityId,
         scope: Option<&ClaimScope>,
     ) -> MemoryResult<CopingAggregate> {
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        require_readable(&lane, txn, &[person])?;
+        require_readable(lane, txn, &[person])?;
         if self.vault.get_entity_type_in_txn(txn, &person)? != Some(ENTITY_TYPE_PERSON) {
             return Err(MemoryError::bad_request(
                 "coping aggregate requires a PERSON",
@@ -261,8 +281,37 @@ impl Memory<'_> {
         }
         let mut outcomes = Vec::new();
         let mut observed_n = 0_u64;
+        for head in self.admitted_coping_heads_in_txn(txn, lane, person, scope)? {
+            observed_n = observed_n
+                .checked_add(head.outcome.observed_n)
+                .ok_or_else(|| MemoryError::bad_request("coping observation count overflow"))?;
+            outcomes.push(head.outcome);
+        }
+        outcomes.sort_by(|a, b| a.claim_ref.cmp(&b.claim_ref));
+        self.produced_from([person]);
+        Ok(CopingAggregate {
+            affected_person_ref: person.to_hex(),
+            outcomes,
+            observed_n,
+        })
+    }
+
+    /// The active, consolidatable `coping.outcome` heads on `person` (in
+    /// `scope` when one is named) that the coping reader may consolidate,
+    /// each with its evidence readable on `lane`. The aggregate reads
+    /// exactly these; the lookup takes them as candidates and keeps only
+    /// the heads whose baseline turn has a live VAD.
+    pub(super) fn admitted_coping_heads_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        lane: &crate::claim::ScopedRead<'_>,
+        person: EntityId,
+        scope: Option<&ClaimScope>,
+    ) -> MemoryResult<Vec<AdmittedCopingHead>> {
+        let mut heads = Vec::new();
         for id in self.vault.claims_for_subject_in_txn(txn, &person)? {
-            let Some((_, _, bytes)) = lane.get_entities_parts_in_txn(txn, &[id])?.pop().flatten()
+            let Some((_, learned_at, bytes)) =
+                lane.get_entities_parts_in_txn(txn, &[id])?.pop().flatten()
             else {
                 continue;
             };
@@ -280,24 +329,25 @@ impl Memory<'_> {
             {
                 continue;
             }
-            let outcome = self.coping_outcome_view_in_txn(txn, id, &body)?;
-            observed_n = observed_n
-                .checked_add(outcome.observed_n)
-                .ok_or_else(|| MemoryError::bad_request("coping observation count overflow"))?;
-            outcomes.push(outcome);
+            let outcome = self.coping_outcome_view_in_txn(txn, lane, id, &body)?;
+            let strategy_ref = decode_coping_outcome_claim(&body)?
+                .ok_or_else(|| MemoryError::bad_request("claim must be coping.outcome"))?
+                .strategy_ref();
+            heads.push(AdmittedCopingHead {
+                strategy_ref,
+                learned_at,
+                outcome,
+            });
         }
-        outcomes.sort_by(|a, b| a.claim_ref.cmp(&b.claim_ref));
-        self.produced_from([person]);
-        Ok(CopingAggregate {
-            affected_person_ref: person.to_hex(),
-            outcomes,
-            observed_n,
-        })
+        Ok(heads)
     }
 
+    /// The view of the coping outcome claim `id`, its evidence readable on
+    /// `lane` (built by the caller before `txn`).
     fn coping_outcome_view_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
+        lane: &crate::claim::ScopedRead<'_>,
         id: EntityId,
         body: &ClaimBody,
     ) -> MemoryResult<CopingOutcomeView> {
@@ -324,7 +374,7 @@ impl Memory<'_> {
         let producers = std::iter::once(id)
             .chain(evidence.iter().copied())
             .collect::<Vec<_>>();
-        require_readable(&self.read_lane(ClaimReadStatus::Recorded)?, txn, &producers)?;
+        require_readable(lane, txn, &producers)?;
         self.produced_from(producers);
         let delta = value.vad_delta();
         Ok(CopingOutcomeView {

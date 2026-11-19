@@ -2,8 +2,8 @@
 //! #plugin-start-order step 2, #plugin-agent-plugins): one package for the
 //! clients that read Agent Plugins 1.0 (Codex, Cursor, VS Code with
 //! Copilot). It carries the vault's tools over MCP and the skill. Hooks are
-//! per client, so none ship here yet; they join later under each client's
-//! own reverse-domain folder (spec §8).
+//! per client: Codex's and Copilot's sit under their own reverse-domain
+//! folders (spec §8.2), and `agent_plugins_hooks.rs` checks them.
 //!
 //! The package is checked against Agent Plugins 1.0.0 as published at
 //! <https://raw.githubusercontent.com/agentplugins/agent-plugins-spec/main/spec/1.0.0.md>
@@ -14,6 +14,12 @@
 //! binary's own CLI, and the entry launched the way a client launches it,
 //! before any credential is minted, fails with a message that names the
 //! file and the command that mints it.
+//!
+//! Cursor loads the package but expands neither placeholder in its
+//! `mcp.json` (cursor.com/docs/reference/plugins.md#mcp-servers, sha256
+//! 3bbf36f3320382ad…, read 2026-11-17), so the package's entry
+//! cannot start there. Cursor's tools come from its own Cursor plugin
+//! (`plugins/cursor/mcp.json`), which is checked here the same two ways.
 //!
 //! Run with: `cargo test --locked -p oneiron-server --test agent_plugins_package`.
 #![allow(
@@ -56,6 +62,11 @@ const TEST_PLUGIN_DATA: &str = "/home/plugin-test/.agents/plugins/data/oneiron";
 const CREDENTIAL_FILE_NAME: &str = "agent.cred";
 /// The clients this package is for. The skill names them only as a list.
 const CLIENTS: [&str; 3] = ["Codex", "Cursor", "Copilot"];
+/// What `$HOME` stands for in the parse check of Cursor's entry.
+const TEST_HOME: &str = "/home/plugin-test";
+/// The file Cursor's MCP entry reads its credential from, under `$HOME`:
+/// the agent's own, apart from the hooks' read-only `cursor-hooks.cred`.
+const CURSOR_CREDENTIAL: &str = ".config/oneiron/cursor.cred";
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -63,6 +74,11 @@ fn repo_root() -> PathBuf {
 
 fn plugin_root() -> PathBuf {
     repo_root().join("plugins/agent-plugins")
+}
+
+/// Cursor's own plugin: its MCP entry and its hooks.
+fn cursor_plugin_root() -> PathBuf {
+    repo_root().join("plugins/cursor")
 }
 
 fn read_text(path: &Path) -> String {
@@ -265,9 +281,10 @@ fn the_package_is_an_agent_plugins_1_0_package() {
         assert!(!is_plugin_name(name), "{name:?}");
     }
 
-    // The root holds the manifest, the MCP configuration and the skills, and
-    // no other format's manifest, so a client that detects formats by their
-    // files (VS Code) reads this one as Agent Plugins.
+    // The root holds the manifest, the MCP configuration, the skills and one
+    // folder per client namespace (§8.2), and no other format's manifest, so
+    // a client that detects formats by their files (VS Code) reads this one
+    // as Agent Plugins.
     let entries: BTreeSet<String> = std::fs::read_dir(plugin_root())
         .expect("the package folder exists")
         .map(|entry| {
@@ -280,7 +297,16 @@ fn the_package_is_an_agent_plugins_1_0_package() {
         .collect();
     assert_eq!(
         entries,
-        BTreeSet::from(["mcp.json", "plugin.json", "skills"].map(String::from)),
+        BTreeSet::from(
+            [
+                "com.github.copilot",
+                "com.openai",
+                "mcp.json",
+                "plugin.json",
+                "skills"
+            ]
+            .map(String::from)
+        ),
     );
 
     // plugin.json: closed, and naming the 1.0.0 schema (§5.2-§5.4).
@@ -312,6 +338,17 @@ fn the_package_is_an_agent_plugins_1_0_package() {
                 "author.{key}"
             );
             assert!(value.is_string(), "author.{key}");
+        }
+    }
+    // `extensions` maps each client namespace to an object (§8.1), and each
+    // namespace's files sit in the top-level folder named for it (§8.2).
+    if let Some(extensions) = fields.get("extensions") {
+        for (namespace, data) in object(extensions, "extensions") {
+            object(data, namespace);
+            assert!(
+                plugin_root().join(namespace).is_dir(),
+                "{namespace} has no folder of its own"
+            );
         }
     }
     if let Some(keywords) = fields.get("keywords") {
@@ -563,6 +600,102 @@ fn a_client_launch_before_the_mint_fails_naming_the_file_and_the_mint_command() 
     assert!(!credential.exists());
     // The client shows this stderr: it names the full path to mint to, and
     // the command that mints it.
+    assert!(
+        stderr.contains(&credential.display().to_string()),
+        "stderr names no {}: {stderr}",
+        credential.display()
+    );
+    assert!(
+        stderr.contains("oneiron token agent"),
+        "stderr names no mint command: {stderr}"
+    );
+}
+
+/// Cursor's `mcpServers.oneiron`.
+fn cursor_server_entry() -> Value {
+    let config = read_json(&cursor_plugin_root().join("mcp.json"));
+    config["mcpServers"]["oneiron"].clone()
+}
+
+#[test]
+fn cursor_runs_its_own_entry_with_no_placeholder_and_the_credential_under_home() {
+    // Cursor reads every `${...}` in a Cursor plugin's `mcp.json` as its own
+    // variable: the plugin root, or a plugin variable whose value is set in
+    // Cursor's dashboard (cursor.com/docs/reference/plugins.md#variables).
+    // So the entry holds none and leaves `$HOME` to the shell, as the Cursor
+    // hooks do.
+    let text = read_text(&cursor_plugin_root().join("mcp.json"));
+    assert!(!text.contains("${"), "{text}");
+    let config: Value = serde_json::from_str(&text).expect("parse plugins/cursor/mcp.json");
+    assert_eq!(
+        keys(object(&config, "mcp.json")),
+        BTreeSet::from(["mcpServers"])
+    );
+    assert_eq!(
+        keys(object(&config["mcpServers"], "mcpServers")),
+        BTreeSet::from(["oneiron"])
+    );
+    let server = cursor_server_entry();
+    assert_eq!(
+        keys(object(&server, "the oneiron entry")),
+        BTreeSet::from(["args", "command"])
+    );
+    assert_eq!(server["command"], "/bin/sh");
+    let args = entry_args(&server);
+    assert_eq!(args.len(), 2, "{args:?}");
+    assert_eq!(args[0], "-c");
+    let words_run = shell_words(&args[1].replace("$HOME", TEST_HOME));
+    // `exec`: the process Cursor started and stops is `oneiron mcp` itself.
+    assert_eq!(words_run[0], "exec", "{words_run:?}");
+    let argv = &words_run[1..];
+    if let Err(error) = parse(argv) {
+        panic!("{argv:?} does not parse: {error}");
+    }
+
+    // The shared package's entry, its credential aside, so the two cannot
+    // drift: the same surface, and no `--url` or `--auth-mode` of its own.
+    let mut expected = vec!["oneiron".to_owned()];
+    expected.extend(entry_args(&oneiron_server_entry()));
+    let at = expected
+        .iter()
+        .position(|word| word == "--credential-file")
+        .expect("the shared entry reads a credential file");
+    expected[at + 1] = format!("{TEST_HOME}/{CURSOR_CREDENTIAL}");
+    assert_eq!(argv, expected.as_slice());
+}
+
+#[test]
+fn a_cursor_launch_before_the_mint_fails_naming_the_file_under_home() {
+    // Cursor starts the entry as written, `command` with `args`, with the
+    // user's HOME and PATH. Here the home is empty and PATH holds this
+    // build's `oneiron` alone.
+    let home = tempfile::tempdir().expect("a temporary folder");
+    let binary = Path::new(env!("CARGO_BIN_EXE_oneiron"));
+    let bin_dir = binary.parent().expect("the binary's folder");
+    assert_eq!(binary.file_name(), Some(std::ffi::OsStr::new("oneiron")));
+    let server = cursor_server_entry();
+    let output = Command::new(server["command"].as_str().expect("a command"))
+        .args(entry_args(&server))
+        .current_dir(cursor_plugin_root())
+        .env("HOME", home.path())
+        .env("PATH", bin_dir)
+        .env_remove("ONEIRON_URL")
+        .env_remove("ONEIRON_SECRET")
+        .env_remove("ONEIRON_BINDING_KEY")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run the entry");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "stderr: {stderr}");
+    assert!(
+        output.stdout.is_empty(),
+        "stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    // The shell put the home in the path, and `oneiron mcp` names it and
+    // the command that mints it.
+    let credential = home.path().join(CURSOR_CREDENTIAL);
+    assert!(!credential.exists());
     assert!(
         stderr.contains(&credential.display().to_string()),
         "stderr names no {}: {stderr}",

@@ -1,9 +1,11 @@
+use std::borrow::Cow;
 #[cfg(test)]
 use std::cell::Cell;
 use std::sync::atomic::Ordering as AtomicOrdering;
 
 use crate::counterparty_contact::CounterpartyFirstTouch;
 use crate::entity_id::EntityId;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::write_envelope::communication::SendOverrideMatch;
 
 use super::input::ExternalEffectGateContext;
@@ -214,6 +216,29 @@ impl GateDecision {
     #[must_use]
     pub(crate) fn receipt_reasons(&self) -> &[&'static str] {
         &self.receipt_reasons
+    }
+
+    /// This verdict as a Gate receipt draft: its outcome and its reason
+    /// codes, in order. Each door adds the receipt reasons it records.
+    #[must_use]
+    pub(crate) fn gate_receipt(
+        &self,
+        kind: impl Into<Cow<'static, str>>,
+        actor: ReceiptActor,
+        handle: impl Into<Vec<u8>>,
+        basis: PolicyBasis,
+    ) -> GateReceipt {
+        GateReceipt::with_reasons(
+            self.outcome().into(),
+            kind,
+            self.reason_codes()
+                .iter()
+                .map(|code| code.as_str().to_owned())
+                .collect(),
+            actor,
+            handle,
+            basis,
+        )
     }
 }
 

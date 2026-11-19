@@ -1,0 +1,12 @@
+{
+  "name": "oneiron-cursor",
+  "description": "Oneiron for Cursor: the vault's tools over MCP, under the agent credential at ~/.config/oneiron/cursor.cred, and the hook lanes that bind your vault and recall for the project when a conversation starts, and hand its transcript to the vault. Install it beside the Oneiron Agent Plugins package, which carries the skill.",
+  "author": {
+    "name": "Oneiron"
+  },
+  "homepage": "https://github.com/oneiron-dev/oneiron",
+  "repository": "https://github.com/oneiron-dev/oneiron",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "mcp", "hooks", "oneiron"],
+  "hooks": "./hooks/hooks.json"
+}

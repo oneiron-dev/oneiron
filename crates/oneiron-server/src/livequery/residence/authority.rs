@@ -188,6 +188,43 @@ pub(super) fn authority_checkpoint(
     ))
 }
 
+/// The own-device grants the proved machine's live slips name, each as this
+/// home holds it (FIX 23747): the stored row while it stands, or the hard
+/// tombstone of its withdrawal. Only a machine of the owner's is served; any
+/// other looks missing. A grant no live slip here names as a person's, and a
+/// member's or a guest's grant, is left out. Nothing here is trusted there:
+/// the machine takes only grants its own live slips name, lands each row
+/// through its entity ingest and replays each tombstone itself.
+pub(super) fn authority_grants(
+    server: &SyncServer,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    let input: AuthorityGrantsRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    if input.grants.len() > OWN_DEVICE_GRANTS_PAGE_MAX {
+        return Err(AppError::invalid_params());
+    }
+    let asked = input
+        .grants
+        .iter()
+        .map(|id| EntityId::from_hex(id).map_err(|_| AppError::invalid_params()))
+        .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+    let served = own_device_grants_for(&server.vault, peer, &asked)
+        .map_err(|_| AppError::not_found("authority grants", None))?;
+    let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    let grants: Vec<Value> = served
+        .iter()
+        .map(|(id, state)| match state {
+            OwnDeviceGrantState::Live(row) => json!({ "id": id.to_hex(), "row": encode(row) }),
+            OwnDeviceGrantState::Withdrawn(tombstone) => {
+                json!({ "id": id.to_hex(), "tombstone": encode(tombstone) })
+            }
+        })
+        .collect();
+    Ok((json!({ "grants": grants }), Some(Vec::new())))
+}
+
 /// Imports the signed authority entries the proved machine appends, through
 /// the signed-history door (OF-469), every one of them in work slices: an
 /// append is never refused for its length (FIX 8887). Only a machine of the

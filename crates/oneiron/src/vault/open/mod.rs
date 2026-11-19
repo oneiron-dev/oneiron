@@ -27,7 +27,7 @@ pub(crate) use self::engine_seed_identities::EngineSeedIdentities;
 
 /// `name` of the embedded owner PERSON — the one field the PERSON projection
 /// profile reads at every profile level.
-const EMBEDDED_OWNER_ACTOR_NAME: &str = "Vault owner";
+pub(crate) const EMBEDDED_OWNER_ACTOR_NAME: &str = "Vault owner";
 
 /// The hooks every open door below passes to its store: the one place the
 /// vault names the engine's implementation.
@@ -675,6 +675,7 @@ impl Vault {
             home_search: Default::default(),
             speculative_passes: Default::default(),
             lfs_read_room: Default::default(),
+            host_text_embedder: Default::default(),
             #[cfg(feature = "sync")]
             lfs_release_verdicts: Default::default(),
             host_net_floor: Default::default(),
@@ -688,6 +689,7 @@ impl Vault {
             code_consent_host: Default::default(),
             managed_owner_check: Default::default(),
             served_transports: Default::default(),
+            one_click_unsubscribe_origin: Default::default(),
             esign_page_inspector: Default::default(),
             xlsx_precision_recalc: Default::default(),
             coach_weave_digest_host: Default::default(),
@@ -719,9 +721,14 @@ impl Vault {
         // The companion profile grants by principal and PERSON, for a vault
         // older than their index (ARCH-0044 H424).
         vault.backfill_companion_grant_index(false)?;
+        // The lexical query hints by target, for a vault older than their
+        // index (FIX-LIST row 24676).
+        vault.backfill_lexical_query_hint_index(false)?;
         // The agents owner-agent Grant mints have ever named, for a vault
         // older than their index (PAIR-GRANT-DESIGN Q2 = A).
         crate::federation::backfill_agent_grant_member_index(&vault, false)?;
+        // The PERSON party-key index, for a vault older than it (L6-22).
+        crate::store::person_party_keys::backfill_person_party_key_index(&vault, false)?;
         vault.backfill_widen_contact_verdict_index(false)?;
         vault.backfill_standing_outbound_grant_index(false)?;
         crate::counterparty_contact::backfill_counterparty_identity_index(&vault, false)?;
@@ -729,6 +736,9 @@ impl Vault {
         vault.backfill_mesh_machine_endpoint_index(false)?;
         vault.backfill_row_deletion_fences_on_open()?;
         vault.backfill_origin_cas_intents_on_open()?;
+        // The campaign.member claims by campaign and query, for a vault older
+        // than their index (ARCH-0044 H202).
+        vault.backfill_campaign_member_index(false)?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
             if seed_content {
                 // The seeded births below stamp the owner's `substrate` FACET,

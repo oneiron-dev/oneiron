@@ -8,6 +8,8 @@
 //! row are `GuestViewCaptureMissing`: the guest never reads the bare
 //! outcome in its place.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{Outcome, PreparedShadowStep, Reason, unavailable};
 use crate::EntityId;
 use crate::code_run::{
@@ -63,7 +65,7 @@ pub(super) fn freeze_context(
     }
     Ok(ArmContext::Captured {
         context,
-        digest: *blake3::hash(&bytes).as_bytes(),
+        digest: *ContentHash::of(&bytes).as_bytes(),
     })
 }
 

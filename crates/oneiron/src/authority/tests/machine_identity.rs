@@ -28,6 +28,14 @@ pub(super) fn host() -> Host {
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
         .unwrap();
     let vault_id = vault.authority_fold().unwrap().vault_id.unwrap();
+    // The handle holds the host's root as a serving host does, so the owner
+    // acts it carries are proven (row CARRIER-OWNER-PROOF).
+    vault.hold_checkpoint_root_signer(std::sync::Arc::new(issuer.duplicate().unwrap()));
+    vault.install_device_keystore(HOST_KEYS.with(std::sync::Arc::clone));
+    vault.prepare_install_signing().expect("install signing");
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("serving install profile");
     Host {
         _dir: dir,
         vault,
@@ -52,6 +60,7 @@ thread_local! {
 /// `vault`'s own encryption key for `vault_id`, from this test's host keystore.
 pub(super) fn own_encryption_key(vault: &Vault, vault_id: [u8; 32]) -> MachineEncryptionKey {
     vault.install_device_keystore(HOST_KEYS.with(std::sync::Arc::clone));
+    vault.prepare_install_signing().expect("install signing");
     vault.machine_encryption_key(vault_id).unwrap()
 }
 
@@ -93,6 +102,7 @@ pub(super) fn request_for(
                 &encryption_key(),
             ))
             .to_bytes(),
+        restored_from: None,
     }
 }
 
@@ -118,6 +128,8 @@ fn only_the_owners_yours_makes_a_machine_mine() {
         let folded = host
             .vault
             .enroll_machine(&host.owner, ActSurface::ThisInstall, &request, role, None)
+            .unwrap()
+            .into_standing()
             .unwrap();
         assert_eq!(folded.is_mine(None), mine, "{role:?}");
         assert_eq!(is_mine(&host.vault, request.machine), mine, "{role:?}");
@@ -224,6 +236,8 @@ fn a_removed_machine_never_comes_back() {
             MachineRole::Removed,
             None,
         )
+        .unwrap()
+        .into_standing()
         .unwrap();
     assert!(removed.roster_chain().removed && !removed.roster_chain().is_live());
     assert!(!is_mine(&host.vault, request.machine));
@@ -351,6 +365,7 @@ fn a_forged_mark_never_makes_a_machine_mine() {
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     };
     let forge = |signer: &SigningKey| {
         let fold = host.vault.authority_fold().unwrap();
@@ -449,10 +464,10 @@ fn enrolled_machine(host: Host) -> (tempfile::TempDir, Vault, MachineEnrolmentRe
         .machine_enrolment_request(vault_id, own_encryption_key(&vault, vault_id))
         .unwrap();
     vault
-        .enroll_machine(
+        .set_machine_role(
             &owner,
             ActSurface::ThisInstall,
-            &request,
+            request.machine,
             MachineRole::Owned(MachineOwnership::Yours),
             None,
         )
@@ -500,6 +515,7 @@ fn a_restored_image_never_carries_the_machine_to_another_install() {
     let (_dir, vault, request) = enrolled_machine(host());
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("image");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100).unwrap();
     let checkpoint_key = vault.checkpoint_key().unwrap();
 
@@ -555,6 +571,7 @@ fn an_activated_archive_joins_as_a_new_machine() {
     let home = vault.store.env.path().to_path_buf();
     let backups = crate::test_support::restore_tempdir();
     let (image, staged) = (backups.path().join("image"), backups.path().join("staged"));
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100).unwrap();
     let checkpoint_key = vault.checkpoint_key().unwrap();
     let (replacement, _) = Vault::restore_checkpoint_replacing(
@@ -638,6 +655,7 @@ fn pair_and_bind(
             request,
         )
         .unwrap();
+    let folded = folded.into_standing().unwrap();
     assert!(folded.is_mine(None));
     let address = MeshMachineAddress {
         endpoint_key: transport.verifying_key().to_bytes(),

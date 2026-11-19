@@ -19,19 +19,23 @@
 //! by its identity alone: a hit answers with the call's own recorded
 //! outcome, and every other call drifts. It is never a wildcard and never
 //! a spawn's miss, so no fresh effect runs in its place. A live request
-//! keeps its full value and its `admitted_from` matching.
+//! keeps its full value and its `admitted_from_known` matching.
+
+use std::borrow::Cow;
+use std::sync::Arc;
 
 use rmpv::Value;
 
 use super::super::spawn_replay::{
-    ReplayRequestMatch, ask_of, is_barrier_ask, is_erased_ask, without_ask,
+    CompareKnown, ReplayRequestMatch, ask_of, is_barrier_ask, is_erased_ask, without_ask,
 };
 use super::super::support::{invalid_code_run_replay, request_map};
 use super::super::types::SelfEffect;
 use super::CodeRunBridgeCall;
 use crate::Result;
-use crate::batch::secret_scan::admission_form;
+use crate::batch::secret_scan::{MapOrder, admission_form, held_row_meets};
 use crate::code_run::RESPONSE_ERASED;
+use crate::store::known_value_index::KnownValues;
 use crate::task_verb::sdk::AgentVerb;
 
 /// The domain of a bridge request's identity digest.
@@ -102,18 +106,43 @@ impl<'a> ErasedRequest<'a> {
     /// that asks something and has its identity in every other field, as
     /// its live row's match did.
     ///
+    /// The side-row wall admitted the row in a scope that decides with
+    /// custody (FIX REPLAY-COMPARE-KNOWN-MATCHER), so `offered` meets the
+    /// identity in either form. Its admission form first, as the
+    /// identity of a row erased while it held a value as written (a row
+    /// stored before that value entered custody) was taken; then, once that
+    /// misses, with each value base custody holds now as the stand-in too,
+    /// as the identity of a row erased while it held that value's handle was
+    /// taken. An erased row's identity is never taken again, so a row erased
+    /// while it held one value as written beside the handle of another meets
+    /// neither form and drifts (FIX-LIST [REPLAY-COMPARE-MIXED-ERA]).
+    ///
     /// # Errors
     ///
-    /// A request the side-row wall cannot read, or one that does not encode.
-    pub(in crate::code_run) fn meets(&self, offered: &Value) -> Result<ReplayRequestMatch> {
-        let identity = match (self.ask, offered) {
-            (None, _) => canonical_digest(offered)?,
+    /// A request the side-row wall cannot read, one that does not encode,
+    /// or the read of base custody's values.
+    pub(in crate::code_run) fn meets_known(
+        &self,
+        offered: &Value,
+        known: &CompareKnown<'_>,
+    ) -> Result<ReplayRequestMatch> {
+        let identity_meets = |request: &Value| -> Result<bool> {
+            if canonical_digest(request, None)? == self.identity {
+                return Ok(true);
+            }
+            Ok(match known.get()? {
+                Some(known) => canonical_digest(request, Some(known))? == self.identity,
+                None => false,
+            })
+        };
+        let hit = match (self.ask, offered) {
+            (None, _) => identity_meets(offered)?,
             (Some(_), Value::Map(fields)) if ask_of(fields).is_some_and(Value::is_str) => {
-                canonical_digest(&without_ask(fields))?
+                identity_meets(&without_ask(fields))?
             }
             (Some(_), _) => return Ok(ReplayRequestMatch::Drift),
         };
-        Ok(if identity == self.identity {
+        Ok(if hit {
             ReplayRequestMatch::Hit
         } else {
             ReplayRequestMatch::Drift
@@ -178,29 +207,64 @@ impl CodeRunBridgeCall {
     /// identity alone (FIX 6534): how a row an erase took the words of
     /// meets the call made again, and a live row by the identity it has.
     ///
+    /// As `admitted_from_known` does, a live row that is not `offered` as
+    /// written is read, once base custody knows a value, through `known`,
+    /// as a template ([`held_row_meets`], FIX
+    /// REPLAY-COMPARE-KNOWN-OTHER-CALLERS, FIX
+    /// RECEIPT-RECORDS-CALL-HELD-INPUT): each handle the row holds that
+    /// names a record custody knows meets the same handle or one value of
+    /// that record, and every other byte meets only itself, so a value
+    /// another record holds, shaped or not, stays another request, and text
+    /// the row holds as written never reads as a handle. A custody that
+    /// knows no value holds no record a handle names, so the two meet only
+    /// as written: never by a digest that reads two shaped tokens, or two
+    /// keys the row kept as written with the switch off, as one stand-in.
+    /// An erased row meets `offered` as [`ErasedRequest::meets_known`]
+    /// reads it.
+    ///
     /// # Errors
     ///
-    /// A request the side-row wall cannot read, or one that does not encode.
-    pub(crate) fn request_identity_is(&self, offered: &Value) -> Result<bool> {
-        Ok(match ErasedRequest::of(&self.request) {
-            Some(erased) => erased.meets(offered)?.is_hit(),
-            None => {
-                live_identity(self.effect, &self.request)? == live_identity(self.effect, offered)?
-            }
-        })
+    /// A request the side-row wall cannot read, one that does not encode,
+    /// or the read of base custody's values.
+    pub(crate) fn request_identity_is(
+        &self,
+        offered: &Value,
+        known: &CompareKnown<'_>,
+    ) -> Result<bool> {
+        if let Some(erased) = ErasedRequest::of(&self.request) {
+            return Ok(erased.meets_known(offered, known)?.is_hit());
+        }
+        let (held, again) = (
+            identity_part(self.effect, &self.request),
+            identity_part(self.effect, offered),
+        );
+        if held == again {
+            return Ok(true);
+        }
+        match known.get()? {
+            Some(known) => held_row_meets(&held, &again, &known, MapOrder::Written),
+            None => Ok(false),
+        }
     }
 
     /// Whether this call dispatched `offered`, a kept or an erased row read
     /// one way (FIX 6534): the very value while its words are kept, and its
-    /// identity once an erase took them.
+    /// identity once an erase took them, read with each value base custody
+    /// holds, through `known`, as [`ErasedRequest::meets_known`] reads it
+    /// (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS).
     ///
     /// # Errors
     ///
-    /// A request the side-row wall cannot read, or one that does not encode.
-    pub(crate) fn dispatched_request_is(&self, offered: &Value) -> Result<bool> {
+    /// A request the side-row wall cannot read, one that does not encode,
+    /// or the read of base custody's values.
+    pub(crate) fn dispatched_request_is(
+        &self,
+        offered: &Value,
+        known: &CompareKnown<'_>,
+    ) -> Result<bool> {
         let dispatched = self.rewritten_request.as_ref().unwrap_or(&self.request);
         match ErasedRequest::of(dispatched) {
-            Some(erased) => Ok(erased.meets(offered)?.is_hit()),
+            Some(erased) => Ok(erased.meets_known(offered, known)?.is_hit()),
             None => Ok(dispatched == offered),
         }
     }
@@ -268,13 +332,19 @@ fn typed_ask(effect: SelfEffect, request: &Value) -> Option<&Value> {
     ask_of(fields).filter(|ask| effect == SelfEffect::AgentsSpawn && typed(ask))
 }
 
-/// The identity of the live `request` a call of `effect` made: over the
-/// whole request, or, for a spawn whose ask is a typed marker, over every
-/// field but its ask.
+/// The identity of the live `request` a call of `effect` made: over its
+/// [`identity_part`].
 fn live_identity(effect: SelfEffect, request: &Value) -> Result<[u8; 32]> {
+    canonical_digest(&identity_part(effect, request), None)
+}
+
+/// What the identity of the live `request` a call of `effect` made reads:
+/// the whole request, or, for a spawn whose ask is a typed marker, every
+/// field but its ask.
+fn identity_part(effect: SelfEffect, request: &Value) -> Cow<'_, Value> {
     match (typed_ask(effect, request), request) {
-        (Some(_), Value::Map(fields)) => canonical_digest(&without_ask(fields)),
-        _ => canonical_digest(request),
+        (Some(_), Value::Map(fields)) => Cow::Owned(without_ask(fields)),
+        _ => Cow::Borrowed(request),
     }
 }
 
@@ -299,9 +369,9 @@ fn erased_value(effect: SelfEffect, request: &Value) -> Result<Value> {
 
 /// The BLAKE3 digest of `request`'s canonical MessagePack, read in its
 /// admission form: each secret the side-row wall places, and each handle
-/// it placed, as one stand-in.
-fn canonical_digest(request: &Value) -> Result<[u8; 32]> {
-    let admitted = admission_form(request)?;
+/// it placed, as one stand-in; with `known`, each value it holds too.
+fn canonical_digest(request: &Value, known: Option<Arc<KnownValues>>) -> Result<[u8; 32]> {
+    let admitted = admission_form(request, known)?;
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &admitted)
         .map_err(|_| invalid_code_run_replay("a bridge request does not encode"))?;

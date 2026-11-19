@@ -58,6 +58,8 @@ mod writer;
 pub use crate::gate::DreamerWeaveReach;
 pub use attempt_sink::AttemptPromotionSink;
 pub(crate) use imported_keep::KeptConflictLink;
+#[cfg(oneiron_test_support)]
+pub(crate) use scoped::attachment_digests_for_test;
 pub use scoped::promote_scoped_consolidation;
 pub(crate) use scoped::{AssertedEvidence, EvidenceAssertion, assert_evidence_in_txn};
 pub(crate) use settlement::{KeptLanding, land_kept_alternative_in_txn};
@@ -96,7 +98,19 @@ pub struct DreamerRunContext {
     pub attempt_id: AttemptId,
     /// The vault Dreamer authority (`Vault::dreamer_authority`), never a facet actor.
     pub agent_actor: WriteActor,
+    /// The run's clock in Unix milliseconds (`Vault::now_recorded_at` times
+    /// 1,000). A seconds parameter takes [`Self::now_secs`].
     pub now_ms: u64,
+}
+
+impl DreamerRunContext {
+    /// The run's clock in whole Unix seconds, for every parameter that takes
+    /// seconds: a Gate row's or a tray row's `created_at`, a notification's,
+    /// a grant's `now` (FIX GATE-ROW-CREATED-AT-MILLISECONDS). `now_ms` stays
+    /// for the millisecond readers (strength observations).
+    pub(crate) const fn now_secs(&self) -> u64 {
+        self.now_ms / 1_000
+    }
 }
 
 /// Per-candidate outcome of one promotion pass.
@@ -403,8 +417,6 @@ fn verify_landed(
         .map_err(|rejection| rejection.reason)
 }
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-PROMOTION-TESTS]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

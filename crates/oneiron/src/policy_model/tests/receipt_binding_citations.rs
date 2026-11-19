@@ -196,7 +196,7 @@ fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()>
             verify_at: None,
         },
         &verdict,
-        "relay_boundary_allow",
+        crate::store::gate_reason::GateReceiptOutcome::Allow,
         vec!["gate.relay.classify.ran".to_owned()],
         Vec::new(),
         super::relay::RelayReceiptRow::Always,
@@ -212,14 +212,16 @@ fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()>
         "the row records the degrade rather than the dead binding"
     );
     assert_eq!(
-        receipts[0].outcome, "relay_boundary_skipped",
+        receipts[0].outcome, "noted",
         "H122: the row of a halted, unexamined pass recorded an Allow outcome"
     );
 
     // The row is only half of it. A receipt that says the relay stopped, on a
     // pass that says it may proceed, is a record nobody honours — so the write
     // hands BACK the degraded pass and the caller relays that one.
-    let replacement = replacement.expect("a moved binding replaces the caller's pass");
+    let replacement = replacement
+        .0
+        .expect("a moved binding replaces the caller's pass");
     assert_eq!(
         replacement.degraded(),
         Some(RelayBoundaryDegrade::PolicyBindingMovedMidPass)
@@ -276,7 +278,7 @@ fn a_pass_with_no_hosted_policy_skips_the_receipt_time_recheck() -> Result<()> {
             verify_at: None,
         },
         &verdict,
-        "relay_boundary_allow",
+        crate::store::gate_reason::GateReceiptOutcome::Allow,
         vec![
             "gate.relay.classify.ran".to_owned(),
             "gate.relay.vault_receipt_untrusted.missing".to_owned(),
@@ -291,7 +293,7 @@ fn a_pass_with_no_hosted_policy_skips_the_receipt_time_recheck() -> Result<()> {
     // must come back exactly as it went in, never as a halting replacement for
     // a hosted plane that was never in play.
     assert!(
-        replacement.is_none(),
+        replacement.0.is_none(),
         "no hosted policy means no re-check, so no replacement"
     );
 
@@ -354,11 +356,12 @@ fn a_replacement_row_keeps_the_breach_that_caused_the_fallback() -> Result<()> {
                 verify_at: None,
             },
             &verdict,
-            "relay_boundary_allow",
+            crate::store::gate_reason::GateReceiptOutcome::Allow,
             vec!["gate.relay.classify.ran".to_owned()],
             Vec::new(),
             super::relay::RelayReceiptRow::Always,
         )?
+        .0
         .expect("a hosted pass whose binding moved is replaced");
     assert_eq!(
         replacement.degraded(),
@@ -602,7 +605,7 @@ fn a_manifest_that_will_not_settle_fails_the_owner_plane_open_with_a_receipt() -
     assert!(outcome.custom_tier_skipped);
     assert!(outcome.receipt_ref.is_some());
     let receipts = gate_receipts(&vault)?;
-    assert_eq!(receipts[0].outcome, "owner_plane_stale_fail_open");
+    assert_eq!(receipts[0].outcome, "noted");
     assert!(has_trace(&receipts[0], "gate.policy_model.stale_manifest"));
     assert!(has_trace(
         &receipts[0],
@@ -675,7 +678,10 @@ fn a_clean_allow_keeps_the_rationale_for_the_pattern_that_fired() -> Result<()> 
     assert_eq!(verdict.category, PolicyVerdictCategory::None);
     assert_eq!(verdict.plane(), None);
 
+    let rtxn = vault.store.env.read_txn()?;
     let notice = super::notice::policy_model_rationale_notice(
+        &vault.store,
+        &rtxn,
         verdict,
         PolicyPlane::HostedLegal,
         Some(HOSTED_VERSION),

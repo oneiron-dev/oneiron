@@ -94,7 +94,35 @@ pub(in crate::api::facade) fn door_admits(
                     crate::api::facade::FacadeApiError::from(error).into_memory_error()
                 })
         }
-        Proof::Owner => owner_proof(auth, server, verb).map(drop),
+        Proof::Owner => {
+            // Restriction wave 7 (C28, C41): the run-review and hook-regen
+            // reads an agent's own Grant may open under the owner's Setting.
+            // An agent credential passes the preflight with its bound actor
+            // on these rows alone; the engine door judges its Grant and the
+            // key. Every other caller keeps the owner's proof.
+            if matches!(
+                verb,
+                "vault.runs.review"
+                    | "vault.runs.settlement"
+                    | "vault.runs.changes.get"
+                    | "vault.hooks.regen.due"
+                    | "vault.hooks.regen.get"
+                    | "vault.hooks.regen.adopt"
+            ) && auth.actor_class() == Some("agent")
+                && !auth.is_owner_grade()
+            {
+                return crate::api::facade::facade_actor(server, auth)
+                    .map(drop)
+                    .map_err(crate::api::facade::FacadeApiError::into_memory_error);
+            }
+            owner_proof(auth, server, verb).map(drop)
+        }
+        // An owner door that also admits the owner's delegate (restriction wave 11): the owner's
+        // proof, or an agent on its own live credential whose Setting key and one live Grant the
+        // engine admits in a read transaction. The door admits again in its own transaction.
+        Proof::OwnerDelegate => {
+            crate::api::facade::owner_binding::owner_delegate_admits(server, auth, verb)
+        }
         // `vault.consent.revoke` (FIX 23149): the owner's proof, or a credential bound to an actor,
         // which the door then admits only on a Grant that actor holds. A caller with neither keeps
         // the owner refusal.
@@ -147,6 +175,12 @@ pub(in crate::api::facade) fn door_admits(
         Proof::VoiceBank => {
             crate::api::facade::voice_bank_doors::voice_bank_admits(server, auth, verb)
         }
+        // The recognition consent and withdrawal doors (VOICE-CONSENT-LOG-WHO = A,
+        // VOICE-WITHDRAW-AGENT-ON-CALL): a person's proof as `SharedPerson`, or an
+        // agent whose own Grant naming the consent-log verb the engine's recorder admits.
+        Proof::RecognitionRecorder => {
+            crate::api::facade::voice_recognition_doors::recorder_admits(server, auth, verb)
+        }
         // The exact publish rows (FIX 6866): the owner, or a bound principal
         // whose one Grant the engine door admits in its own snapshot.
         Proof::OriginPublish => {
@@ -170,20 +204,29 @@ pub(in crate::api::facade) fn door_admits(
         Proof::ViewEditor => {
             crate::api::facade::code_view_doors::view_editor_admits(server, auth, verb)
         }
-        // The vault's review policy rows (FIX 8268): a live Owner, or a bound
-        // principal whose one Grant the engine door admits.
-        Proof::ReviewPolicy => {
-            crate::api::facade::merge_queue_checker_doors::review_policy_admits(server, auth, verb)
-        }
         // A member's own TASK-bound workflow run (FIX 5316): a live person on
         // their own slip, bound to it, as the door acts under.
         Proof::WorkflowMember => {
+            crate::api::facade::agent_definition_doors::member_proof(server, auth, verb).map(drop)
+        }
+        // A drafted reply's approval (FIX 18868): the mailbox's own person on
+        // their own slip, member or owner, as the door acts under; the door
+        // then admits only the person whose mailbox the draft is from.
+        Proof::MailboxPerson => {
             crate::api::facade::agent_definition_doors::member_proof(server, auth, verb).map(drop)
         }
         // A check-in holder's answer (ROLES-CHECKIN P2.3c): a live person on
         // their own slip, bound to it, as the door answers under.
         Proof::CheckInHolder => {
             crate::api::facade::check_in_doors::holder_proof(server, auth, verb).map(drop)
+        }
+        // `vault.cleanup.decide` (RESTRICTION-WAVE-10 C43): the owner's proof, or a credential
+        // bound to an agent, which the door admits only while the owner's
+        // vault_cleanup.decide.owner_only is off, on a Grant naming the verb, and when the
+        // credential is bound to no invitation, record or channel. Any other caller keeps the
+        // owner refusal.
+        Proof::CleanupDecider => {
+            crate::api::facade::cleanup_doors::decider(server, auth, verb).map(drop)
         }
         // The off-record session rows admit their session's manager: the
         // owner, or a person or agent who starts and keeps their own
@@ -225,6 +268,9 @@ pub(in crate::api::facade) fn door_admits(
         // or an agent acting for the owner (an agent puts `local` alone).
         Proof::PacksSetup => super::packs::setup_admits(server, auth, verb),
         Proof::MediaOwnerGrade => owner_grade(auth, MEDIA_OWNERS),
+        // The customer GPU job rows (row L10-31): the owner's own proof, or an agent's own Grant naming the
+        // verb; `allow` is the owner's act alone, and start and cancel judge the agent again in their write.
+        Proof::GpuJobCaller => super::gpu_jobs::gpu_job_caller_admits(server, auth, verb),
         Proof::VideoJobOwnerGrade => owner_grade(auth, VIDEO_JOB_OWNERS),
         // A person's own trusted-contact acts (FIX 8169): the live person whose own slip the engine door
         // revalidates.
@@ -282,5 +328,10 @@ pub(in crate::api::facade) fn door_admits(
         // A requested eval-authoring pass (LEARNING-06): the owner's own proof or an agent's own Grant
         // naming the verb, as the writer that admits the Coach attempt checks it.
         Proof::EvalAuthoring => crate::api::facade::eval_doors::execute_admits(server, auth),
+        // A requested training run step (ROLE-TRAINING-RUN, LEARN-TRAIN Q4): the owner's own proof or an
+        // agent's own Grant naming the verb, as each read of the run checks it again.
+        Proof::TrainingRunExecutor => {
+            crate::api::facade::training_run_doors::training_run_executor_admits(server, auth)
+        }
     }
 }
