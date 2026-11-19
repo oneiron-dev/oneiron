@@ -370,21 +370,8 @@ fn leased_door_checkout_build_captures_exhaust_and_reclaims_fail_closed() {
         )
         .unwrap();
     assert!(dir.path().join("build.rmeta").exists());
-    let terminal = dispatcher
-        .capture_terminal_exhaust(CaptureByoaExhaust {
-            attempt_id: attempt.id,
-            lease_owner: "builder".into(),
-            attempt_count: attempt.attempt_count,
-            disposition: ByoaTerminalDisposition::Completed,
-            exhaust,
-            reason: None,
-            now: now + 4,
-        })
-        .unwrap();
-    let (_, _, stored) =
-        decode_byoa_exhaust(&vault, &terminal.artifact_id, terminal.artifact_version).unwrap();
-    assert!(stored.stdout.is(b"checkout build succeeded"));
-
+    // FIX 7130: a BYOA-bound checkout epoch stands only while its attempt
+    // runs, so the build result is pushed before the terminal capture.
     git(&tree, &["add", "--", "lib.rs"]);
     git(
         &tree,
@@ -404,6 +391,20 @@ fn leased_door_checkout_build_captures_exhaust_and_reclaims_fail_closed() {
         git(&repo_dir, &["rev-parse", "refs/heads/checkout-build"]),
         pushed
     );
+    let terminal = dispatcher
+        .capture_terminal_exhaust(CaptureByoaExhaust {
+            attempt_id: attempt.id,
+            lease_owner: "builder".into(),
+            attempt_count: attempt.attempt_count,
+            disposition: ByoaTerminalDisposition::Completed,
+            exhaust,
+            reason: None,
+            now: now + 4,
+        })
+        .unwrap();
+    let (_, _, stored) =
+        decode_byoa_exhaust(&vault, &terminal.artifact_id, terminal.artifact_version).unwrap();
+    assert!(stored.stdout.is(b"checkout build succeeded"));
     let fence = CheckoutLeaseFence {
         checkout_id,
         epoch: first.epoch,
