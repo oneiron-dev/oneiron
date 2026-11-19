@@ -373,6 +373,20 @@ pub(crate) fn pinned_store_clock(now: u64) -> crate::ports::StoreClock {
     crate::ports::StoreClock::new(pinned.clone(), pinned)
 }
 
+/// Opens a temporary vault while keeping the seeded default policy manifest.
+/// Pipeline runs read claim-aging profiles and fail closed without that row
+/// (PIPELINE-LIBTEST-CLEARED-MANIFEST-ENTITYNOTFOUND). #7822 kept it for two
+/// pipeline tests; consuming fixtures share that opener here.
+pub(crate) fn open_test_vault_with_manifest(cfg: VaultConfig) -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), cfg).expect("open vault");
+    // Signing doors load this install's keys from a keystore (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    (dir, vault)
+}
+
 /// Opens a temporary vault with the supplied config. Returns the
 /// `TempDir` so callers keep the directory alive for the vault's lifetime.
 pub(crate) fn open_test_vault_with(cfg: VaultConfig) -> (tempfile::TempDir, Vault) {

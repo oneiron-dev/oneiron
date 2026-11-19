@@ -192,7 +192,7 @@ fn persistent_adapter_observes_grant_revocation_and_narrowing() {
 #[test]
 fn finish_post_filter_scrubs_all_durable_trace_stages_and_fork_index() {
     for remove_all in [false, true] {
-        let (_dir, vault) = open_test_vault_with(telemetry_config());
+        let (_dir, vault) = crate::test_util::open_test_vault_with_manifest(telemetry_config());
         let (admitted_id, denied_id) = seed_scoped_pack_vault(&vault);
         let mut assembly = vault
             .context_pack()
@@ -336,7 +336,7 @@ fn provisional_context_pack_run(vault: &Vault) -> (Vec<u8>, RetrievalRunRecord) 
 
 #[test]
 fn finish_post_filter_propagates_finalize_failure_and_discards_trace() {
-    let (_dir, vault) = open_test_vault_with(telemetry_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with_manifest(telemetry_config());
     seed_scoped_pack_vault(&vault);
     let mut assembly = vault
         .context_pack()

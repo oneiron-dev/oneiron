@@ -12,7 +12,7 @@ use std::sync::Arc;
 use ed25519_dalek::SigningKey;
 use oneiron::EntityId;
 use oneiron::authority::{
-    ActSurface, HostSlipIssuer, MachineDeviceClass, MachineOwnership, MachineRole,
+    ActAuthority, ActSurface, HostSlipIssuer, MachineDeviceClass, MachineOwnership, MachineRole,
     PredictedResidenceSet, ResidenceAct, ResidenceResultStatus,
 };
 use oneiron::consent::AuthenticatedOwner;
@@ -62,6 +62,12 @@ impl Device {
             .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
             .expect("authenticated owner");
         vault
+            .enrol_device_owner_signing_key(
+                &ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall),
+                &issuer,
+            )
+            .expect("the owner enrols this install's owner signing key");
+        let landing = vault
             .set_machine_role(
                 &owner,
                 ActSurface::ThisInstall,
@@ -70,6 +76,10 @@ impl Device {
                 None,
             )
             .expect("the owner answers the device's machine");
+        assert!(
+            landing.held().is_none(),
+            "FIXTURE: the owner key this install holds proves the work-or-school answer"
+        );
         let founder = vault
             .create_world(&owner, "Founder world", vault.now_recorded_at())
             .expect("founder world");

@@ -15,8 +15,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{
-    ActSurface, HostSlipIssuer, MachineOwnership, MachineRole, PeerMachine, PredictedResidenceSet,
-    ReadLocation, ResidenceAct, WorldPrivacy,
+    ActAuthority, ActSurface, HostSlipIssuer, MachineOwnership, MachineRole, PeerMachine,
+    PredictedResidenceSet, ReadLocation, ResidenceAct, WorldPrivacy,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::entity_doc::{DocAuthorization, TextField};
@@ -76,6 +76,12 @@ impl Fixture {
             .expect("a minted machine")
             .id;
         vault
+            .enrol_device_owner_signing_key(
+                &ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall),
+                &issuer,
+            )
+            .expect("the owner enrols this install's owner signing key");
+        let landing = vault
             .set_machine_role(
                 &owner,
                 ActSurface::ThisInstall,
@@ -84,6 +90,10 @@ impl Fixture {
                 None,
             )
             .expect("the owner answers the device's machine");
+        assert!(
+            landing.held().is_none(),
+            "FIXTURE: the owner key this install holds proves the work-or-school answer"
+        );
         let world = vault
             .create_world(&owner, "World", vault.now_recorded_at())
             .expect("world");
