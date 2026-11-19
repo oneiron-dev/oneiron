@@ -42,7 +42,8 @@
 //!
 //! Cost per entry: one pass over the enrolments the parents hold (none on a
 //! vault no restore marked), and, while one waits, one key-claim lookup and
-//! one carrier check on the signer.
+//! one carrier check on the signer. A merge and a join each make one more
+//! pass, for the held restrictions of machines that stand.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -105,13 +106,12 @@ pub(super) fn listed(state: &FoldState) -> BTreeMap<AuthorityEntryHash, Restored
 }
 
 /// Two branches' enrolments: a union by entry, where one that either branch
-/// joined is joined, by the entry that sorts first when both did.
-pub(super) fn merge(
-    merged: &mut BTreeMap<AuthorityEntryHash, RestoredEnrolment>,
-    right: &BTreeMap<AuthorityEntryHash, RestoredEnrolment>,
-) {
-    for (hash, enrolment) in right {
-        match merged.get_mut(hash) {
+/// joined is joined, by the entry that sorts first when both did. `merged`
+/// already holds both branches' machine chains; a machine that stands there
+/// takes the restrictions held for it ([`stand_held_restrictions`]).
+pub(super) fn merge(merged: &mut FoldState, right: &FoldState) {
+    for (hash, enrolment) in &right.restored_enrolments {
+        match merged.restored_enrolments.get_mut(hash) {
             Some(kept) => {
                 kept.joined_by = match (kept.joined_by, enrolment.joined_by) {
                     (Some(left), Some(right)) => Some(left.min(right)),
@@ -119,9 +119,66 @@ pub(super) fn merge(
                 };
             }
             None => {
-                merged.insert(*hash, enrolment.clone());
+                merged.restored_enrolments.insert(*hash, enrolment.clone());
             }
         }
+    }
+    stand_held_restrictions(merged);
+}
+
+/// A carried answer the fold holds because it landed restriction only: the
+/// owner's answer, carried while its machine waited, whose head landed past
+/// this install's floor ([`super::machine_standing::Revision::past_floor`]).
+/// An act-free revision (the root's enrolment, an anchor's mark) is not one:
+/// it waits for an entry that witnesses it, on every install alike.
+fn held_restriction(enrolment: &RestoredEnrolment) -> bool {
+    enrolment.joined_by.is_none()
+        && enrolment.chain.head.profile.act.is_some()
+        && enrolment
+            .chain
+            .revisions
+            .get(&enrolment.chain.head.entry)
+            .is_some_and(|revision| revision.past_floor)
+}
+
+/// The held restrictions of every machine that stands in `state` (row
+/// RESTORED-HELD-RESTRICTION-SIBLING-JOIN). A machine that stands by another
+/// way than the restriction's own entry (a sibling branch's join of an older
+/// enrolment, met on merge, or the owner's join of one enrolment) takes each
+/// [`held_restriction`] of it as a joined machine takes a floored revision:
+/// its chain merges into the machine's chains, where its head holds its chain
+/// on this install ([`super::machine_claims::floor_hold`]) and the roster
+/// view reads the revision an install without that floor stands. Before, the
+/// machine stood at the older, wider revision. Its key claims stay out and
+/// it still waits, as a floored removal's chain stands ([`fold_revision`]);
+/// an entry that witnesses it later joins it as before. A chain that holds
+/// its head already is not merged again.
+fn stand_held_restrictions(state: &mut FoldState) {
+    let restrictions: Vec<_> = state
+        .restored_enrolments
+        .values()
+        .filter(|enrolment| held_restriction(enrolment))
+        .filter(|enrolment| {
+            state
+                .machines
+                .get(&enrolment.machine)
+                .is_some_and(|chains| {
+                    !chains.is_empty()
+                        && !chains.get(&enrolment.admitter).is_some_and(|chain| {
+                            chain.revisions.contains_key(&enrolment.chain.head.entry)
+                        })
+                })
+        })
+        .map(|enrolment| {
+            (
+                enrolment.machine,
+                enrolment.admitter,
+                enrolment.chain.clone(),
+            )
+        })
+        .collect();
+    for (machine, admitter, chain) in restrictions {
+        super::machine_profile::merge_machine_chain(state, machine, admitter, &chain);
     }
 }
 
@@ -224,7 +281,8 @@ pub(super) fn origins_disagree(
 /// machine's first revision and nothing was held before it: the roster view
 /// reads no floor, so a first pairing that stood there would make the copy a
 /// carrier that joins the enrolments its own entries name (REVIEW-9524
-/// round 2 P1 :236).
+/// round 2 P1 :236). Once the machine stands by another way, the held
+/// answer's chain lands on its chains ([`stand_held_restrictions`]).
 ///
 /// A revision that folds to a removal is the exception to holding: a removal
 /// is terminal and grants nothing, so its chain stands, removed, where a
@@ -431,7 +489,9 @@ pub(super) fn apply_owner_join(
 
 /// Joins the `witnessed` enrolments in `state`, the state after the entry
 /// `by`: each one's chain and key claims stand from there on, merged as any
-/// branch's chain merges.
+/// branch's chain merges. A machine that stands then takes the restrictions
+/// held for it that `by` did not join ([`stand_held_restrictions`]): the
+/// owner's join names one enrolment.
 pub(super) fn join(
     state: &mut FoldState,
     witnessed: &[AuthorityEntryHash],
@@ -458,6 +518,7 @@ pub(super) fn join(
             .or_default()
             .extend(enrolment.claims);
     }
+    stand_held_restrictions(state);
 }
 
 impl AuthorityFold {
