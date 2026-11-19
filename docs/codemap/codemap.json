@@ -162274,11 +162274,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/mcp_code_check.rs",
-     "purpose": "Done-means (TSC-WIRE): shadow mode changes no program's behaviour or result",
+     "purpose": "Done-means (TSC-WIRE): feedback mode changes no program's behaviour or result",
      "surface": {}
     },
     {

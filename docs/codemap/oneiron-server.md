@@ -943,7 +943,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/mcp_body_budget.rs` | test | s | — | — | Native MCP `memory.query` and `memory.hydrate_many` decode bodies under the `/v1` doors' one… |
 | `src/api/tests/mcp_booking_publication.rs` | test | s | — | — | engine-prs-15: a propose-only slip cannot take a public booking page offline through MCP `claim_upsert` |
 | `src/api/tests/mcp_code_admission.rs` | test | m | 1 crate-vis | — | `execute_code` admission (C10, under the rate law of ARCH-0044 C5): a burst of runs on one credential all… |
-| `src/api/tests/mcp_code_check.rs` | test | s | — | — | Done-means (TSC-WIRE): shadow mode changes no program's behaviour or result |
+| `src/api/tests/mcp_code_check.rs` | test | m | — | — | Done-means (TSC-WIRE): feedback mode changes no program's behaviour or result |
 | `src/api/tests/mcp_memory.rs` | test | s | — | — | Memory tool projections exercise the same scoped reads as native clients |
 | `src/api/tests/mcp_paging_cursors.rs` | test | m | — | — | Setup page budgets/end-markers, one-time bound cursors, mutating-use refusal, concurrent continuations |
 | `src/api/tests/mcp_quickjs.rs` | test | L | 2 crate-vis | — | Production execute_code uses real JS through the vault-owned host and wire |
