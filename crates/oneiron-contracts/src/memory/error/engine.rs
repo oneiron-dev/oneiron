@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::{OWNER_PRESENCE_HERE_REASON_PREFIX, OWNER_PRESENCE_REQUIRED, RecordError};
 
 impl From<Error> for MemoryError {
     fn from(err: Error) -> Self {
@@ -55,6 +56,19 @@ impl From<Error> for MemoryError {
                     MEMORY_CODE_INVALID_STATE,
                     err.to_string(),
                     &[step.suggestion()],
+                )
+            };
+        }
+        if let Error::Record(RecordError::OwnerPresenceRequired { here }) = &err {
+            return Self {
+                reason_codes: vec![
+                    OWNER_PRESENCE_REQUIRED.to_owned(),
+                    format!("{OWNER_PRESENCE_HERE_REASON_PREFIX}{}", here.as_str()),
+                ],
+                ..Self::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    err.to_string(),
+                    &[here.suggestion()],
                 )
             };
         }
