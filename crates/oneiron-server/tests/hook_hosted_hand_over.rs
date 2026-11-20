@@ -208,7 +208,22 @@ impl Bench {
     /// Runs `oneiron hook --host <host> <event> <args>` with `payload` on
     /// stdin and `env` set, which exits 0; what it printed.
     fn hook(&self, host: &str, event: &[&str], env: &[(&str, &str)], payload: &Value) -> String {
+        self.hook_in(None, host, event, env, payload)
+    }
+
+    /// [`Bench::hook`], run in the folder `cwd` when one is named.
+    fn hook_in(
+        &self,
+        cwd: Option<&Path>,
+        host: &str,
+        event: &[&str],
+        env: &[(&str, &str)],
+        payload: &Value,
+    ) -> String {
         let mut command = Command::new(env!("CARGO_BIN_EXE_oneiron"));
+        if let Some(cwd) = cwd {
+            command.current_dir(cwd);
+        }
         command
             .args(["hook", "--host", host])
             .args(event)
@@ -1297,6 +1312,10 @@ fn a_codex_cursor_or_copilot_hand_over_sends_its_log_to_the_selected_hosted_vaul
         }),
         ("Codex below $CODEX_HOME/sessions", |bench| {
             let codex_home = bench.path("codex-home");
+            std::fs::create_dir(&codex_home).expect("test fixture");
+            // Codex names its rollouts below `CODEX_HOME` made absolute,
+            // its links resolved.
+            let codex_home = std::fs::canonicalize(codex_home).expect("test fixture");
             let rollout = codex_home
                 .join("sessions")
                 .join("2026")
@@ -1373,7 +1392,9 @@ fn another_hosts_log_not_named_for_its_session_or_outside_its_hosts_folder_is_ne
     // The log goes only where it is its own session's, named as its host
     // names it, and below the folder its host keeps its logs in: else no
     // bridge starts and nothing is queued, as for a Claude Code log. On the
-    // PR's base each is queued locally.
+    // PR's base each is queued locally. A rollout of a session whose id ends
+    // in this one's is another session's (REVIEW-9914,
+    // hosted_hand_over.rs:148).
     let bench = Bench::new();
     bench.select_hosted(
         &answering_vault(),
@@ -1388,6 +1409,9 @@ fn another_hosts_log_not_named_for_its_session_or_outside_its_hosts_folder_is_ne
     let other_sessions = bench
         .codex_rollout()
         .with_file_name("rollout-2026-11-20T01-00-00-019a7c2e-5555-4666-8777-000000000000.jsonl");
+    let ending_in_its_id = bench.codex_rollout().with_file_name(format!(
+        "rollout-2026-11-20T01-00-00-0000aaaa-{CODEX_SESSION}.jsonl"
+    ));
     let outside = bench
         .path("outside")
         .join(bench.codex_rollout().file_name().expect("a rollout's name"));
@@ -1400,6 +1424,11 @@ fn another_hosts_log_not_named_for_its_session_or_outside_its_hosts_folder_is_ne
         .join(format!("{COPILOT_SESSION}.jsonl"));
     for (name, session, log) in [
         ("another session's rollout", &codex, other_sessions),
+        (
+            "the rollout of a session whose id ends in this one's",
+            &codex,
+            ending_in_its_id,
+        ),
         ("a rollout outside ~/.codex/sessions", &codex, outside),
         ("a Copilot log in no transcripts folder", &copilot, loose),
     ] {
@@ -1477,4 +1506,139 @@ fn another_hosts_resumed_session_with_no_record_sends_nowhere_and_a_pinned_one_k
         ]),
         "a Codex session that bound a pin"
     );
+}
+
+/// Another Claude Code session, whose start removes the records of
+/// sessions that wrote nothing for 30 days.
+const OTHER_SESSION: &str = "0b5e55e0-3333-4444-8555-a66677779999";
+
+impl Bench {
+    /// Makes every file of the record of the Claude Code session `SESSION`
+    /// 31 days old.
+    fn age_record(&self) {
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(31 * 24 * 60 * 60);
+        let record = self.run_dir().join("hook-sessions").join(SESSION);
+        for entry in std::fs::read_dir(record).expect("the session's record") {
+            std::fs::File::options()
+                .write(true)
+                .open(entry.expect("test fixture").path())
+                .and_then(|file| file.set_modified(old))
+                .expect("test fixture");
+        }
+    }
+
+    /// Starts the Claude Code session `OTHER_SESSION` with no recall.
+    fn other_session_start(&self) {
+        let payload = json!({
+            "hook_event_name": "SessionStart",
+            "session_id": OTHER_SESSION,
+            "transcript_path": self.projects().join("-tmp-heron-lantern").join(format!("{OTHER_SESSION}.jsonl")),
+            "cwd": "/tmp/heron-lantern",
+            "source": "startup",
+        });
+        self.hook(
+            "claude-code",
+            &["session-start", "--query", ""],
+            &[],
+            &payload,
+        );
+    }
+}
+
+#[test]
+fn a_session_whose_record_was_removed_as_old_sends_its_log_nowhere_and_a_hand_over_keeps_it() {
+    // REVIEW-9914, session_binding.rs:268: a session whose record another
+    // session's start removed as old may still hand over; its log goes
+    // nowhere, never to the local queue. On the PR's base it is queued
+    // locally.
+    let bench = Bench::new();
+    let origin = answering_vault();
+    bench.select_hosted(&origin, VAULT_ID, "slip", &bench.path("slip-credential"));
+    let log = bench.session_log();
+    bench.session_start(&[], &log);
+    bench.age_record();
+    bench.other_session_start();
+    assert!(
+        !bench.run_dir().join("hook-sessions").join(SESSION).exists(),
+        "the old record stays"
+    );
+    bench.forget_runs();
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    assert!(
+        bench.ran_nothing(),
+        "the session whose record went sent its log: {:?}",
+        bench.recorded("argv")
+    );
+
+    // A hand-over keeps its session's record, so a session that hands over
+    // goes on sending to the vault it bound. On the PR's base the record
+    // goes, and the next hand-over queues locally.
+    let bench = Bench::new();
+    let origin = answering_vault();
+    bench.select_hosted(&origin, VAULT_ID, "slip", &bench.path("slip-credential"));
+    let log = bench.session_log();
+    bench.session_start(&[], &log);
+    bench.age_record();
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    bench.other_session_start();
+    bench.forget_runs();
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    assert_eq!(
+        bench.argv().get(..3),
+        Some(&words(&["mcp", "--url", &origin])[..]),
+        "the record of a session that hands over went"
+    );
+}
+
+#[test]
+fn a_codex_hand_over_finds_its_rollout_below_a_relative_or_linked_codex_home() {
+    // REVIEW-9914, hosted_hand_over.rs:103: Codex makes `CODEX_HOME`
+    // absolute, its links resolved, and names its rollouts below that; the
+    // hand-over finds them there. On the PR's base a relative or linked
+    // `CODEX_HOME` names another folder, and nothing is sent.
+    for linked in [false, true] {
+        let bench = Bench::new();
+        let origin = answering_vault();
+        bench.select_hosted(&origin, VAULT_ID, "slip", &bench.path("slip-credential"));
+        let real = bench.path("codex-home");
+        std::fs::create_dir(&real).expect("test fixture");
+        let codex_home = if linked {
+            let link = bench.path("codex-link");
+            std::os::unix::fs::symlink(&real, &link).expect("test fixture");
+            link.to_str().expect("UTF-8 path").to_owned()
+        } else {
+            "codex-home".to_owned()
+        };
+        let rollout = std::fs::canonicalize(&real)
+            .expect("test fixture")
+            .join("sessions")
+            .join("2026")
+            .join("11")
+            .join("20")
+            .join(format!("rollout-2026-11-20T01-00-00-{CODEX_SESSION}.jsonl"));
+        let codex = bench.codex_session(rollout);
+        bench.start(&codex);
+        let said = bench.hook_in(
+            Some(bench.dir.path()),
+            "codex",
+            &["hand-over"],
+            &[("CODEX_HOME", &codex_home)],
+            &codex.stop,
+        );
+        assert!(said.is_empty(), "a hand-over prints nothing");
+        assert!(
+            bench.called(),
+            "CODEX_HOME={codex_home}: the rollout was not sent"
+        );
+        assert_eq!(
+            bench.argv().get(..3),
+            Some(&words(&["mcp", "--url", &origin])[..]),
+            "CODEX_HOME={codex_home}"
+        );
+        assert_eq!(
+            bench.sent_spec()["session"],
+            codex.stem.as_str(),
+            "CODEX_HOME={codex_home}"
+        );
+    }
 }
