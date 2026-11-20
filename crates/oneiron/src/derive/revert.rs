@@ -55,6 +55,11 @@ pub struct DeriveRevertReceipt {
     pub left: Vec<(String, String)>,
     /// The revert's receipt in the gate decision ledger.
     pub receipt: [u8; 16],
+    /// Each claim an undone item had replaced that stands again as a fresh
+    /// copy written as its original author: the item's local name, the
+    /// replaced claim, which stays closed, and the copy's id.
+    #[serde(default)]
+    pub copied: Vec<(String, EntityId, EntityId)>,
 }
 
 /// The revision of `row`, as an item of `kind` landed it, in `txn`: a digest
@@ -213,6 +218,7 @@ impl Vault {
             reverted,
             left,
             receipt,
+            copied: Vec::new(),
         })
     }
 
