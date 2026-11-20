@@ -63,6 +63,8 @@ pub(super) fn core_memory_retract_by_facade(
 /// once the Owner approves it, the same call naming it as `check_in_ref`
 /// deletes and spends it, and the receipt's `check_in` names it
 /// (ROLES-CHECKIN 2k5; FIX-LIST CHECK-IN-CORE-DELETE-ROUTE-NO-CHECK-IN-REF).
+/// A delete that goes at once spends none, so a check-in it names is refused
+/// `BAD_REQUEST` and nothing is deleted.
 ///
 /// An account API key (OF-448) names its person and no actor class: it is
 /// judged as that person, a human (Engine rulings 13 Nov 08:20 and 08:30 =
