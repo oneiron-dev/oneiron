@@ -48,8 +48,9 @@ use crate::{EntityId, Result, Vault};
 /// once its owner row says so, or once the actor that row, `stamped` (the
 /// run and actor this writer stamped it for, which the writer's view does
 /// not show yet) or its live run binding names is gone in the vault. The caller puts
-/// what this returns: the view reads the snapshot before this writer's
-/// own puts, so the record is fenced as supplied, never read back.
+/// what this returns with [`replay_rows::put_fenced`]: the view reads the
+/// snapshot before this writer's own puts, so the record is fenced as
+/// supplied, never read back.
 ///
 /// # Errors
 ///
@@ -59,7 +60,7 @@ pub(super) fn fence_overlay_replay_in_txn<'r>(
     txn: &mut heed::RwTxn<'_>,
     mut record: Cow<'r, CodeRunReplayRecord>,
     stamped: Option<(EntityId, EntityId)>,
-) -> Result<Cow<'r, CodeRunReplayRecord>> {
+) -> Result<replay_rows::FencedReplay<'r>> {
     let base = canonical_store(dbs);
     let owner = response_owner_in_txn(dbs, txn, &record.run_id)?;
     let live = record.live_run.as_ref().map(|live| live.actor);
@@ -73,7 +74,7 @@ pub(super) fn fence_overlay_replay_in_txn<'r>(
             .chain(live)
             .any(|actor| actor_gone_in_store(base, read, &actor));
     if !erased {
-        return Ok(record);
+        return Ok(replay_rows::FencedReplay::kept(record));
     }
     let run = owner.as_ref().map_or_else(
         || stamped.map_or(record.run_id, |(run, _)| run),
@@ -81,9 +82,9 @@ pub(super) fn fence_overlay_replay_in_txn<'r>(
     );
     // A room decides with its base's custody (FIX 2329): each request keeps
     // the custody records it names (FIX ERASED-IDENTITY-ONE-STAND-IN).
-    erase_replies_in_writer(base, txn, record.to_mut())?;
+    let written = erase_replies_in_writer(base, txn, record.to_mut())?;
     mark_response_erased_in_txn(dbs, txn, record.run_id, run)?;
-    Ok(record)
+    Ok(replay_rows::FencedReplay::erased(record, written))
 }
 
 /// Erases, in every live room's overlay, what it holds of the runs of each

@@ -22,6 +22,7 @@
 //! this retires every image's copy beside it.
 
 use std::cell::OnceCell;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use super::replay_rows;
@@ -168,6 +169,8 @@ pub(crate) fn replay_owners(
 /// and a call that meets an erased request by its identity takes its
 /// recorded answer.
 ///
+/// Returns the calls it wrote ([`ErasedReplies`]).
+///
 /// # Errors
 ///
 /// An outcome that does not encode, or a request the side-row wall cannot
@@ -175,8 +178,8 @@ pub(crate) fn replay_owners(
 pub(crate) fn erase_replies(
     record: &mut CodeRunReplayRecord,
     custody: &CompareKnown<'_>,
-) -> Result<()> {
-    let retained_calls: std::collections::BTreeSet<usize> = record
+) -> Result<ErasedReplies> {
+    let retained_calls: BTreeSet<usize> = record
         .bridge_calls
         .iter()
         .enumerate()
@@ -188,8 +191,11 @@ pub(crate) fn erase_replies(
         })
         .map(|(index, _)| index)
         .collect();
+    let mut written = ErasedReplies::default();
     for (index, call) in record.bridge_calls.iter_mut().enumerate() {
-        call.erase_request(custody)?;
+        if call.erase_request(custody)? {
+            written.requests.insert(index);
+        }
         if retained_calls.contains(&index) {
             continue;
         }
@@ -213,8 +219,9 @@ pub(crate) fn erase_replies(
             keep_erased_answer_rows(&mut call.outcome, rows.as_deref());
         }
         keep_erased_fold_words(&mut call.outcome, &words);
+        written.outcomes.insert(index);
     }
-    let retained: std::collections::BTreeSet<String> = record
+    let retained: BTreeSet<String> = record
         .outputs
         .iter()
         .filter(|output| record.output_is_retained_receipt(output))
@@ -225,7 +232,18 @@ pub(crate) fn erase_replies(
             output.preview.text = CODE_RUN_OUTPUT_PREVIEW_ERASED.to_owned();
         }
     }
-    Ok(())
+    Ok(written)
+}
+
+/// The calls of a record one [`erase_replies`] wrote, by position: those
+/// whose request words it took, and those whose outcome it replaced (FIX
+/// FENCE-ERASED-FORM-THROUGH-WALL). What it wrote there holds the erase's
+/// own words alone, so a fenced put lands it past the side-row wall
+/// ([`super::replay_rows::put_fenced`]).
+#[derive(Debug, Default)]
+pub(crate) struct ErasedReplies {
+    pub(super) requests: BTreeSet<usize>,
+    pub(super) outcomes: BTreeSet<usize>,
 }
 
 /// The values base custody holds in one writer, read once for every record
@@ -248,7 +266,7 @@ impl WriterCustody {
         store: &Store,
         wtxn: &heed::RwTxn<'_>,
         record: &mut CodeRunReplayRecord,
-    ) -> Result<()> {
+    ) -> Result<ErasedReplies> {
         let read: BaseKnownRead<'_> = &|| self.known(store, wtxn);
         erase_replies(record, &CompareKnown::new(Some(read)))
     }
@@ -272,7 +290,7 @@ pub(crate) fn erase_replies_in_writer(
     store: &Store,
     wtxn: &heed::RwTxn<'_>,
     record: &mut CodeRunReplayRecord,
-) -> Result<()> {
+) -> Result<ErasedReplies> {
     WriterCustody::default().erase_replies(store, wtxn, record)
 }
 

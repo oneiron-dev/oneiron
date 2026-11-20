@@ -4,8 +4,9 @@
 //! erase and the row it scrubs. What this put writes is restricted by its
 //! argument: an [`Erased`] value, made only by the row type's actor-erasure
 //! transform ([`ErasedForm::into_erased`]) or a concrete content-removal
-//! projection, from a row as it was stored, admitted then. Every other put
-//! keeps the wall.
+//! projection, from a row as it was stored, admitted then; or a put fence's
+//! record, whose every part but its erase's own the wall admitted
+//! ([`Erased::code_run_fenced`]). Every other put keeps the wall.
 
 use heed::RwTxn;
 
@@ -94,6 +95,15 @@ impl Erased<crate::code_run::CodeRunReplayRecord> {
             }
         }
         Self(record)
+    }
+
+    /// A fenced replay record (FIX FENCE-ERASED-FORM-THROUGH-WALL): the wall
+    /// admitted every part of it but its erase's own, which are as the
+    /// erase wrote them.
+    pub(crate) fn code_run_fenced(
+        admitted: crate::code_run::replay_rows::AdmittedFencedReplay,
+    ) -> Self {
+        Self(admitted.into_record())
     }
 
     /// Takes the named fold answers from the stored replay record (FIX

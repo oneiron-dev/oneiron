@@ -200,7 +200,8 @@ fn scrub_actor_responses_in_txn(
 /// bodies released all the same, and a Deleted row of it turns Erased here;
 /// an erased row stays erased. A removed row or a pending `df:` or `pt:`
 /// fence without that marker is no completed erasure: the row stays
-/// Deleted, with its bodies, for the retirement still to come.
+/// Deleted, with its bodies, for the retirement still to come. The caller
+/// lands what this returns with [`replay_rows::put_fenced`].
 ///
 /// # Errors
 ///
@@ -209,7 +210,7 @@ pub(crate) fn fence_replay_in_txn<'r>(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     mut record: Cow<'r, CodeRunReplayRecord>,
-) -> Result<Cow<'r, CodeRunReplayRecord>> {
+) -> Result<replay_rows::FencedReplay<'r>> {
     // A spawn whose target an erase took keeps no ask, whether or not its
     // run's replies are erased (FIX 9180).
     record = fence_spawn_targets_in_txn(&vault.store, wtxn, record)?;
@@ -225,11 +226,11 @@ pub(crate) fn fence_replay_in_txn<'r>(
         .chain(live)
         .find(|actor| actor_gone_in_txn(vault, txn, actor));
     if gone.is_none() && !owner.as_ref().is_some_and(ResponseOwner::erased) {
-        return Ok(record);
+        return Ok(replay_rows::FencedReplay::kept(record));
     }
     let run = owner.as_ref().map_or(record.run_id, |owner| owner.run);
     let released = release_reply_outputs_in_txn(&vault.store, wtxn, run, &record)?;
-    erase_replies_in_writer(&vault.store, wtxn, record.to_mut())?;
+    let written = erase_replies_in_writer(&vault.store, wtxn, record.to_mut())?;
     let kept = owner
         .as_ref()
         .and_then(ResponseOwner::retirement_actor)
@@ -240,7 +241,7 @@ pub(crate) fn fence_replay_in_txn<'r>(
         }
         _ => mark_response_erased_in_txn(&vault.store, wtxn, record.run_id, run)?,
     }
-    Ok(record)
+    Ok(replay_rows::FencedReplay::erased(record, written))
 }
 
 /// Whether `actor` is gone here (FIX 5718), in a read transaction of its
