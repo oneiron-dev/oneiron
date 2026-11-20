@@ -342,19 +342,29 @@ impl TestNode {
         &mut self,
         snapshot: &[u8],
     ) -> Vec<window::ReplacementConflict> {
-        let key = WindowKey::new(WINDOW);
+        self.install_replacement_of(WINDOW, snapshot)
+    }
+
+    /// [`Self::install_replacement`] of the window `key`.
+    pub(crate) fn install_replacement_of(
+        &mut self,
+        key: &str,
+        snapshot: &[u8],
+    ) -> Vec<window::ReplacementConflict> {
+        let window_key = WindowKey::new(key);
         let prepared = window::prepare_replacement(
             &self.vault,
             &self.materializer,
-            &key,
-            self.doc(WINDOW),
+            &window_key,
+            self.doc(key),
             snapshot,
             &std::collections::HashMap::new(),
         )
         .unwrap();
-        self.windows.remove(WINDOW);
-        let window = LoadedWindow::from_doc(prepared.doc, key, &self.vault, &self.materializer);
-        self.windows.insert(WINDOW.to_owned(), window);
+        self.windows.remove(key);
+        let window =
+            LoadedWindow::from_doc(prepared.doc, window_key, &self.vault, &self.materializer);
+        self.windows.insert(key.to_owned(), window);
         prepared.conflicts
     }
 

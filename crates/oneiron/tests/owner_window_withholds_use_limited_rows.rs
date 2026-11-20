@@ -22,9 +22,17 @@
 //!   insert the row's carrier, queued before the keep and released after it, are withheld at the
 //!   door that sends them; the hub's scrubbed export, which carries the withholding marker,
 //!   still sends.
-//! * `an_edge_naming_a_kept_row_carried_elsewhere_leaves_the_window` (REVIEW-9846 P1 5): a window
-//!   carries an edge to the kept row, whose own carrier rides in another month's window. The
-//!   hub's next export of it takes the edge out and files the marker there too.
+//! * `an_edge_naming_a_kept_row_carried_elsewhere_leaves_the_window` (REVIEW-9846 P1 5, round 2
+//!   P1 2): a window carries an edge to the kept row, whose own carrier rides in another month's
+//!   window. The hub's next export of it takes the edge out and files no marker there, since a
+//!   marker in a window that never carries the row would hold it back again after the limit
+//!   lifts; the row's own window loses its carrier and carries the marker.
+//! * `an_already_synced_device_installs_a_replacement_without_the_kept_row` (round 2 P1 1): a
+//!   device that still stores the kept row installs the hub's replacement, which names the row by
+//!   its marker alone; the installed window does not carry the row back from the device's store.
+//! * `a_device_holding_a_kept_note_back_never_packs_it_again` (round 2 P1 4): a device that landed
+//!   the marker for a kept NOTE still stores the NOTE and holds no use limit; its own NOTE refresh
+//!   never packs the NOTE into its window again.
 //! * `a_kept_notes_pending_fork_text_leaves_the_window` (REVIEW-9846 P1 3): before the keep, the
 //!   window packs a NOTE's undecided fork text; after it, the export carries no byte of that text
 //!   and no carrier of the NOTE, and files the marker.
@@ -34,8 +42,16 @@
 //! audience hold); the hosted vault's sync ingest asks no use limit, so a carrier a device sent
 //! before it landed the marker still lands on the hosted copy, as it does today.
 //!
-//! All six run red at main f75de13fe4c, whose owner window and owner lane ask no use limit, and
-//! green at the fix; the last three also run red at the first head 3629c6dd410.
+//! Named limit of round 2 P1 3: a use limit that takes effect between a window's NOTE refresh
+//! and its withholding pass is a race no public door can stage; the pass drops a limited NOTE's
+//! workflow rows itself (`note::drop_workflows`), so the export carries no fork text either way.
+//! Round 2 P1 5 (a live send the release door withholds asks the socket's peer for a fresh
+//! exchange) is server code, outside this crate's test.
+//!
+//! All nine run red at main f75de13fe4c, whose owner window and owner lane ask no use limit, and
+//! green at the fix. The three round-1 tests also run red at the first head 3629c6dd410; the edge
+//! test (at its marker line) and the two new round-2 tests run red at the round-1 fix head
+//! a020635561b.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test owner_window_withholds_use_limited_rows`.
 
 #![cfg(all(feature = "sync", feature = "test-support", oneiron_test_support))]
@@ -365,6 +381,140 @@ fn the_owner_lane_sends_no_text_of_a_kept_note() {
     );
 }
 
+#[test]
+fn an_already_synced_device_installs_a_replacement_without_the_kept_row() {
+    let Shared {
+        hub,
+        mut device,
+        kept,
+        other,
+    } = shared_then_kept();
+    let key = WindowKey::new(WINDOW);
+    let snapshot = window::export_window_replacement(&hub.vault, &key, hub.doc(WINDOW), None)
+        .expect("the hub's replacement door answers")
+        .expect("the hub withholds no window from its own device");
+    assert!(
+        carries(&device, &kept),
+        "FIXTURE: the device's window carries the kept row until the replacement"
+    );
+
+    device.install_replacement(&snapshot);
+
+    assert!(
+        !carries(&device, &kept),
+        "the installed window does not carry the kept row back from the device's store"
+    );
+    assert!(
+        withheld_marker(&device, &kept),
+        "the installed window carries the hub's withholding marker"
+    );
+    let device_owner = device
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("the device owner");
+    assert!(
+        !source_audience_binding::reads(&device.vault, kept, &[device_owner]).expect("read walk"),
+        "the kept row reads to no one on the device"
+    );
+    assert!(carries(&device, &other), "the other row rides as before");
+}
+
+/// The hub's export door answers the device's version of window `key`, and the device lands it:
+/// an update it imports, a replacement it installs.
+fn deliver_window(hub: &TestNode, device: &mut TestNode, key: &str) {
+    let window_key = WindowKey::new(key);
+    let device_vv = device.doc(key).oplog_vv().encode();
+    match window::export_window_updates_since(&hub.vault, &window_key, hub.doc(key), &device_vv)
+        .expect("the hub's export door answers")
+    {
+        WindowExport::Update(update) => {
+            device
+                .doc(key)
+                .import(&update)
+                .expect("the device lands the hub's update");
+        }
+        WindowExport::Replacement(snapshot) => {
+            device.install_replacement_of(key, &snapshot);
+        }
+    }
+}
+
+#[test]
+fn a_device_holding_a_kept_note_back_never_packs_it_again() {
+    let mut hub = TestNode::with_config("hub", 2, hosted_config());
+    mint_machine_id(&hub.vault);
+    let mut device = TestNode::new("device", 1);
+    mint_machine_id(&device.vault);
+    let author = WriteActor::new(
+        hub.vault
+            .ensure_embedded_owner_actor()
+            .expect("FIXTURE: the hub names its embedded owner actor"),
+        EdgeActorClass::Human,
+    );
+    let note = hub
+        .vault
+        .create_note("research", NOTE_TEXT, author)
+        .expect("FIXTURE: the hub writes a NOTE");
+    let key = WindowKey::from_timestamp(hub.vault.now_recorded_at());
+    let month = key.as_str().to_owned();
+    hub.open_window(&month);
+    device.open_window(&month);
+    deliver_window(&hub, &mut device, &month);
+    let carries_note =
+        |node: &TestNode| map_get_bytes(&node.doc(&month).get_map("entities"), &note.to_hex());
+    assert!(
+        carries_note(&device).is_some()
+            && device
+                .vault
+                .get_raw(&note)
+                .expect("FIXTURE: read the device's NOTE")
+                .is_some(),
+        "FIXTURE: the device's window carries the NOTE and the device stores it before the keep"
+    );
+
+    keep_use_limited(&hub.vault, note);
+    deliver_window(&hub, &mut device, &month);
+    let device_owner = device
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("the device owner");
+    assert!(
+        carries_note(&device).is_none()
+            && !source_audience_binding::reads(&device.vault, note, &[device_owner])
+                .expect("read walk"),
+        "FIXTURE: the device landed the marker: its window lost the NOTE, which reads to no one"
+    );
+
+    let nothing = VersionVector::default().encode();
+    let sent = match window::export_window_updates_since(
+        &device.vault,
+        &key,
+        device.doc(&month),
+        &nothing,
+    )
+    .expect("the device's export door answers")
+    {
+        WindowExport::Update(update) => update,
+        WindowExport::Replacement(snapshot) => snapshot,
+    };
+    assert!(
+        carries_note(&device).is_none(),
+        "the device's NOTE refresh never packs the held-back NOTE into its window again"
+    );
+    assert!(
+        !holds_text(device.doc(&month), NOTE_TEXT),
+        "the device's window carries no byte of the held-back NOTE's text"
+    );
+    let alone = LoroDoc::new();
+    alone
+        .import(&sent)
+        .expect("the device's export imports on its own");
+    assert!(
+        map_get_bytes(&alone.get_map("entities"), &note.to_hex()).is_none(),
+        "the device's export ships no carrier of the held-back NOTE"
+    );
+}
+
 fn hosted_vault_with_manager(dir: &tempfile::TempDir) -> (Arc<Vault>, Arc<WindowManager>) {
     let mut config = VaultConfig::default();
     config.privacy.posture = HostingPrivacyPosture::Hosted;
@@ -498,12 +648,28 @@ fn an_edge_naming_a_kept_row_carried_elsewhere_leaves_the_window() {
         "the window no longer carries the edge to the kept row"
     );
     assert!(
-        withheld_marker(&hub, &kept),
-        "the window carries a withholding marker for the kept row its edge named"
+        !withheld_marker(&hub, &kept),
+        "a window that names the kept row only in an edge files no marker for it, so it never \
+         holds the row back once the limit lifts"
     );
     assert!(
         carries(&hub, &other),
         "the edge's other row rides as before"
+    );
+    let next = WindowKey::new(NEXT_WINDOW);
+    window::export_window_updates_since(&hub.vault, &next, hub.doc(NEXT_WINDOW), &nothing)
+        .expect("the hub's export door answers");
+    assert!(
+        map_get_bytes(&hub.doc(NEXT_WINDOW).get_map("entities"), &kept.to_hex()).is_none(),
+        "the kept row's own window no longer carries it"
+    );
+    assert!(
+        map_get_bytes(
+            &hub.doc(NEXT_WINDOW).get_map("source_audiences"),
+            &format!("withheld/{}", kept.to_hex()),
+        )
+        .is_some(),
+        "the kept row's own window carries its withholding marker"
     );
 }
 
