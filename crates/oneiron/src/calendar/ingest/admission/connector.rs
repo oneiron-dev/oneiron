@@ -120,9 +120,10 @@ pub(in crate::calendar) fn admit_connector_event<'a>(
 /// live passport, already carries its SEQUENCE and content hash, so nothing
 /// of it is admitted again.
 ///
-/// An uncancelled resource whose passport dates a cancellation
-/// (`cancelled_since`, a held sighting, or the owner's cancelled write) is
-/// the calendar showing the EVENT again: that report is withdrawn
+/// An uncancelled resource at the version of a passport that dates a
+/// cancellation (`cancelled_since`, a held sighting, or the owner's
+/// cancelled write) is the calendar showing the EVENT again: that report is
+/// withdrawn
 /// ([`withdraw_tombstone_report`]).
 ///
 /// For a cancellation, when an admission of pulled bytes committed that
@@ -195,6 +196,12 @@ pub(in crate::calendar) fn defer_connector_cancel<'a>(
 /// (BK-ECHO-DEFERRED-SIGHTING-OUTLIVES-ECHO-RESTORE), and so does a mark of
 /// the owner's cancelled write, which no later cancellation of the shown
 /// EVENT inherits.
+///
+/// Only the passport's own version (its SEQUENCE and content hash) shows the
+/// EVENT again. A version below it is a stale replay, which never regresses
+/// passport state: a live copy a pull read before the owner's cancelled
+/// write settled leaves that write's mark, so the provider's later rewrite
+/// of the cancellation still reads as the owner's own write.
 fn withdraw_tombstone_report(
     admission: &mut PollAdmission<'_>,
     event_ref: EntityId,
@@ -204,7 +211,9 @@ fn withdraw_tombstone_report(
     let dated = passport.cancelled_since.is_some()
         || passport.deferred_cancel_seen_at.is_some()
         || passport.written_cancelled;
-    if !dated || passport.presence != CalendarPassportPresence::Live {
+    let same_version =
+        event.sequence == passport.last_sequence && event.content_hash == passport.content_hash;
+    if !dated || !same_version || passport.presence != CalendarPassportPresence::Live {
         return Ok(());
     }
     let mut next = passport.clone();

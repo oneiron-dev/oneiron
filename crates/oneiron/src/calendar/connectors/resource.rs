@@ -27,6 +27,33 @@ pub(super) fn master_for(
     }
     Ok(master.unwrap_or(event))
 }
+
+/// The RECURRENCE-ID the render gives `member` of `master`'s resource: none
+/// for the master, and for a series exception the original start its
+/// exception claim names. A stored copy's VEVENT is matched to the staged
+/// member by this identity and its UID, so a copy of a resource whose UID
+/// no passport resolves yet (a first write under a locally minted UID) is
+/// still read as the write's own.
+pub(super) fn recurrence_identity(
+    vault: &Vault,
+    master: EntityId,
+    member: EntityId,
+) -> Result<Option<u64>, CalendarConnectorError> {
+    if member == master {
+        return Ok(None);
+    }
+    for id in vault.claims_for_subject(&member)? {
+        if let Some(body) = vault.get_claim(&id)?
+            && body.lifecycle == ClaimLifecycleStatus::Active
+            && body.predicate == PREDICATE_CALENDAR_SERIES_EXCEPTION
+        {
+            return Ok(Some(
+                decode_series_exception_value(&body.value)?.original_start_utc,
+            ));
+        }
+    }
+    Ok(None)
+}
 pub(super) fn members(
     vault: &Vault,
     master: EntityId,
