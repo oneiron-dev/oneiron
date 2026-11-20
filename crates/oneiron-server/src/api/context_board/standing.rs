@@ -82,36 +82,7 @@ pub(super) async fn standing_prefix(
         None if blocks.len() == 1 => &blocks[0],
         None => return Err(bad()),
     };
-    // A credential reads its own standing block as it reads anything else,
-    // through the one credential key: a relationship claim needs a live grant.
-    // A caller with no credential reads under its grants, as the facade does.
-    let reader = match auth.verified_slip() {
-        Some(proof) => crate::api::credential_read_key(server.vault(), proof)?,
-        None => oneiron::claim::ScopedReadActorKey::with_actor_class(actor_ref, "agent")
-            .ok_or_else(bad)?
-            .require_access_grants(Some(actor)),
-    }
-    .for_destination(&destination);
-    // A room's block is compiled inside the room's audience, as every read a
-    // room turn makes is (ARCH-0067 §8): that read, narrowed to the room as
-    // its pins are, and the clamp its members' clearance makes. The agent's
-    // own read and a live owner add no term, as in the room's own meet.
-    // With no room the block reads under the agent's own read, homed as its
-    // pack is (DEC-0006 `#home-clearance`): an outside agent is homed in the
-    // unnamed vault, so a stamped persona CLAIM stays out of its block.
-    let read = server.vault.scoped_read(reader);
-    let (read, disclosure) = match room_id {
-        Some(room) => {
-            let audience =
-                crate::api::resolve_core_audience(&server.vault, auth, read, Some(room))?;
-            (audience.read, audience.disclosure)
-        }
-        None => {
-            let home = crate::api::core_conversation_home(&server.vault, auth, None, None)?;
-            let disclosure = crate::api::resolve_core_disclosure(&server.vault, None, None, home)?;
-            (read, disclosure)
-        }
-    };
+    let (read, disclosure) = standing_authority(&server.vault, auth, room_id)?;
     let mut cache = server.standing_block_cache.lock().await;
     let pinned = server
         .vault
@@ -140,4 +111,51 @@ pub(super) async fn standing_prefix(
             .collect(),
     };
     Ok((Some(prefix), pinned.retained_claims))
+}
+
+/// The standing producer's read and clamp, also used to re-admit its kept
+/// CLAIM sources. A retrieval's independently named home never applies here.
+pub(super) fn standing_authority<'a>(
+    vault: &'a oneiron::Vault,
+    auth: &CoreAuth,
+    room_id: Option<oneiron::EntityId>,
+) -> Result<
+    (
+        oneiron::claim::ScopedRead<'a>,
+        Option<oneiron::DisclosureContext>,
+    ),
+    ApiError,
+> {
+    let actor_ref = auth.principal_ref().unwrap_or(auth.principal());
+    let actor = oneiron::EntityId::from_hex(actor_ref).map_err(|_| bad())?;
+    let destination = auth.destination();
+    // A credential reads its own standing block as it reads anything else,
+    // through the one credential key: a relationship claim needs a live grant.
+    // A caller with no credential reads under its grants, as the facade does.
+    let reader = match auth.verified_slip() {
+        Some(proof) => crate::api::credential_read_key(vault, proof)?,
+        None => oneiron::claim::ScopedReadActorKey::with_actor_class(actor_ref, "agent")
+            .ok_or_else(bad)?
+            .require_access_grants(Some(actor)),
+    }
+    .for_destination(&destination);
+    // A room's block is compiled inside the room's audience, as every read a
+    // room turn makes is (ARCH-0067 §8): that read, narrowed to the room as
+    // its pins are, and the clamp its members' clearance makes. The agent's
+    // own read and a live owner add no term, as in the room's own meet.
+    // With no room the block reads under the agent's own read, homed as its
+    // pack is (DEC-0006 `#home-clearance`): an outside agent is homed in the
+    // unnamed vault, so a stamped persona CLAIM stays out of its block.
+    let read = vault.scoped_read(reader);
+    Ok(match room_id {
+        Some(room) => {
+            let audience = crate::api::resolve_core_audience(vault, auth, read, Some(room), None)?;
+            (audience.read, audience.disclosure)
+        }
+        None => {
+            let home = crate::api::core_conversation_home(vault, auth, None, None)?;
+            let disclosure = crate::api::resolve_core_disclosure(vault, None, None, home)?;
+            (read, disclosure)
+        }
+    })
 }

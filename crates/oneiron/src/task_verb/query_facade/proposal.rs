@@ -116,23 +116,20 @@ impl Memory<'_> {
         };
         self.with_verified_actor_write_txn(|wtxn| {
             witness(wtxn, proposal_ref)?;
-            apply_ops_with_gate_mode(
-                &self.vault().store,
-                &self.vault().config,
-                &self.vault().analyzer,
-                wtxn,
-                vec![BatchOp::ClaimCandidate {
-                    id: proposal_ref,
-                    candidate: Box::new(candidate),
-                    envelope,
-                    occurred,
-                    learned_at: now,
-                    internal_lexical_query_hint: false,
-                }],
-                self.vault().text_index_trusted.load(Ordering::Acquire),
-                ApplyOpsGateMode::new(true, true),
-            )
-            .map_err(MemoryError::from)?;
+            self.vault()
+                .apply_ops_restoring_claim_subjects_in_txn(
+                    wtxn,
+                    vec![BatchOp::ClaimCandidate {
+                        id: proposal_ref,
+                        candidate: Box::new(candidate),
+                        envelope,
+                        occurred,
+                        learned_at: now,
+                        internal_lexical_query_hint: false,
+                    }],
+                    ApplyOpsGateMode::new(true, true),
+                )
+                .map_err(MemoryError::from)?;
             landed(wtxn, proposal_ref)
         })?;
         Ok(proposal_ref)

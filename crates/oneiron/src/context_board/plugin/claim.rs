@@ -9,7 +9,7 @@ use super::manifest::{
     SectionVerbAllowlist,
 };
 use super::validate::validate_manifest_for_proposal;
-use crate::batch::{ApplyOpsGateMode, BatchOp, apply_ops_with_gate_mode};
+use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::store::GateDecisionId;
@@ -18,7 +18,6 @@ use crate::vault::Vault;
 use crate::write_envelope::skill_source::{HubPin, HubRef};
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 use rmpv::Value;
-use std::sync::atomic::Ordering;
 
 /// Pinned schema version of the install claim's typed payload.
 pub const PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION: u16 = 1;
@@ -421,10 +420,7 @@ pub(super) fn land_proposed_install(
     );
 
     vault.with_write_txn_grouped(|wtxn| {
-        apply_ops_with_gate_mode(
-            &vault.store,
-            &vault.config,
-            &vault.analyzer,
+        vault.apply_ops_restoring_claim_subjects_in_txn(
             wtxn,
             vec![BatchOp::ClaimCandidate {
                 id: claim_id,
@@ -437,7 +433,6 @@ pub(super) fn land_proposed_install(
                 learned_at: now,
                 internal_lexical_query_hint: false,
             }],
-            vault.text_index_trusted.load(Ordering::Acquire),
             ApplyOpsGateMode::new(true, true),
         )
     })?;

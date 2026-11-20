@@ -45,6 +45,7 @@ mod resolution;
 mod result_header;
 mod revision;
 mod room_facet_set;
+mod room_narrowing;
 mod roster;
 mod validity;
 mod widen;
@@ -57,7 +58,8 @@ pub(crate) use capture::{
 pub(crate) use capture::{
     exportable_revisions_in_txn, forged_revision_in_txn, inadmissible_revision_carriers,
 };
-pub(crate) use deletion::deindex_project_room;
+pub(crate) use deletion::reject_project_with_live_children;
+pub(crate) use deletion::{deindex_project_room, reject_root_project_delete};
 pub(crate) use edges::{
     validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
 };
@@ -104,11 +106,11 @@ pub use room_facet_set::{
     ProjectRoomFacetsSetRequest, ProjectRoomFacetsState, set_project_room_facets_from_request_as,
 };
 pub use roster::{ProjectRosterWriteOutcome, ProjectRosterWriteRequest};
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-REVIEW-TESTS]: the lib test target's type check fails here (6 errors: E0061 x4, E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod review_tests;
 pub(crate) use leader_chat::CHAT_FIELD as LEADER_CHAT_FIELD;
+#[cfg(oneiron_test_support)]
+pub(crate) use leader_chat::bind_leader_chat_in_txn;
 pub use leader_chat::{LEADER_CHAT_RULE_PREDICATE, LeaderChat};
 pub(crate) use leader_chat::{
     admit_turn as admit_leader_chat_turn, admit_witness as admit_leader_chat_witness,
@@ -128,12 +130,12 @@ pub(crate) use projection::{
     normalize_project_body, project_room_dependency, reconcile_project_rooms,
     validate_project_body, validate_room_body,
 };
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-SUPPORT-ITEMS]: re-exports create_project_signed_for_test, gated for the lib test target's type check; port it with that item, then drop this gate
-#[cfg(any())]
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use tests::create_project_signed_for_test;
 #[cfg(test)]
 pub(crate) use tests::set_project_depth_signed_for_test;
+#[cfg(test)]
+pub(crate) use tests::{sign_project_with_for_scan_tests, spawn_signed_project_for_scan_tests};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, RecordError, Result};
@@ -601,6 +603,7 @@ pub(crate) fn seeded_root_home_room(root: EntityId) -> Result<Option<(EntityId, 
         claims_scope_ref: root.to_hex(),
         origin: None,
         pins: Vec::new(),
+        unpinned: Vec::new(),
         pin_policy: Default::default(),
     };
     Ok(Some((home_room_id(root)?, encode(&room)?)))
@@ -625,6 +628,24 @@ pub(super) fn record<T: for<'a> Deserialize<'a>>(
     #[cfg(feature = "sync")]
     let body = crate::entity_doc::resolve_record_body(store, txn, &id, body)?;
     decode(&body).map(Some)
+}
+/// Whether a stored row of `kind` with a body exists at `id`: the header
+/// check [`record`] makes, with no decode. A read path that must still see the
+/// body asks the read fold.
+pub(super) fn record_present(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+) -> Result<bool> {
+    let present = store.port_entity_with_raw(txn, &id, |raw| {
+        let header = EntityMetadataHeader::parse(raw).ok_or_else(invalid)?;
+        if header.entity_type != kind {
+            return Err(invalid());
+        }
+        Ok(raw.len() > ENTITY_METADATA_HEADER_LEN)
+    })?;
+    Ok(present == Some(true))
 }
 
 pub(crate) use crate::store::project_kind::is_project_type;

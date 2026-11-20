@@ -156,18 +156,22 @@ pub(super) fn blended_retrieval_scores(
             input.recency = 2.0_f64.powf(-age_secs / seconds_per_half_life);
         }
 
-        if needs_claim_body
-            && let Some(raw) = store
-                .port_entity_record(rtxn, &input.id)?
-                .map(|row| row.encode())
-        {
+        if needs_claim_body && let Some(row) = store.port_entity_record(rtxn, &input.id)? {
+            #[cfg(oneiron_test_support)]
+            fusion::body_parse_work::record_scalar_read(&row.body);
+            // One parse of the body reads both scalars, each by the rule a
+            // lone read of it keeps.
+            let [salience, confidence] = fusion::decode_msgpack_body_floats(
+                &row.body,
+                [crate::claim::KEY_SAL, crate::claim::KEY_CONF],
+            );
             if config.salience
-                && let Some(salience) = fusion::decode_msgpack_float(&raw, crate::claim::KEY_SAL)
+                && let Some(salience) = salience
             {
                 input.salience = salience;
             }
             if config.confidence
-                && let Some(confidence) = fusion::decode_msgpack_float(&raw, crate::claim::KEY_CONF)
+                && let Some(confidence) = confidence
             {
                 input.confidence = confidence;
             }
@@ -194,7 +198,6 @@ pub(super) fn blended_retrieval_scores(
         )?;
     }
 
-    let blend_components = fusion::retrieval_blend_score_components(&inputs);
     let access_factors = if applies {
         inputs
             .iter()
@@ -213,7 +216,7 @@ pub(super) fn blended_retrieval_scores(
             .collect(),
         access_factors,
         cosine_ghosts_dampened: dampened,
-        components: blend_components,
+        components: blended.components,
     })
 }
 

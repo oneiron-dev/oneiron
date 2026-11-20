@@ -83,9 +83,10 @@ pub(crate) use self::base_apply::{
 pub(crate) use self::builder::BatchOp;
 pub(crate) use self::claim_materialization::{
     ClaimMaterialization, SuccessionWriter, apply_owner_bound_claim_puts,
-    apply_owner_bound_claim_puts_with_transitions, authenticated_claim_author_in_txn,
+    apply_owner_bound_claim_puts_with_transitions, apply_provenance_claim_puts,
+    authenticated_claim_author_in_txn,
 };
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) use self::deindex::deindex_entity_for_test;
 pub(crate) use self::deindex::{
     deindex_entity, deindex_entity_with_machine_history, deindex_lexical_query_hints_for_target,

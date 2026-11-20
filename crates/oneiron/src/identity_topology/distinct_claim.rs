@@ -60,6 +60,12 @@ impl DistinctClaimPlace {
     }
 }
 
+/// The provenance a topology decision's `entity.distinct_from` write
+/// carries on its caller envelope: the family door attributes an effective
+/// write to its deciding actor, so the write rides that actor's
+/// actor-bound `generated` permit instead of reading unattributed.
+const ASSERT_DISTINCT_PROVENANCE: &str = "oneiron.identity_topology.assert_distinct.v1";
+
 impl Vault {
     /// The CLAIM one `assert_distinct` op asserts through: the live row for
     /// the pair when there already is one, a freshly minted row otherwise.
@@ -112,12 +118,7 @@ impl Vault {
             .find(|row| row.pair == pair);
         if let Some(row) = live {
             if write.is_effective() && !is_effective_approval(row.approval) {
-                self.promote_distinct_claim_approval_in_txn(
-                    wtxn,
-                    &row.claim,
-                    write.approval,
-                    place,
-                )?;
+                self.promote_distinct_claim_approval_in_txn(wtxn, &row.claim, write, place)?;
             }
             return Ok(row.claim);
         }
@@ -140,7 +141,7 @@ impl Vault {
             body.scope_project = place.project;
             body.world = (place.world != crate::claim::base_world_id()).then_some(place.world);
         }
-        self.put_reserved_claim_in_txn(
+        self.put_distinct_claim_in_txn(
             wtxn,
             &claim,
             &body,
@@ -149,8 +150,42 @@ impl Vault {
                 end: now,
             },
             now,
+            write,
         )?;
         Ok(claim)
+    }
+
+    /// Puts the family's `entity.distinct_from` claim: an effective write a
+    /// deciding actor made rides that actor's caller envelope, so the
+    /// source-trust check reads the actor-bound `generated` permit the
+    /// owner's policy holds for it; a proposal, or an engine write with no
+    /// deciding actor, keeps the unattributed reserved put.
+    fn put_distinct_claim_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        claim: &EntityId,
+        body: &ClaimBody,
+        occurred: TimeRange,
+        learned_at: u64,
+        write: &IdentityOpWrite,
+    ) -> Result<()> {
+        if !write.is_effective() {
+            return self.put_reserved_claim_in_txn(wtxn, claim, body, occurred, learned_at);
+        }
+        let Some(actor) = write.actor else {
+            return self.put_reserved_claim_in_txn(wtxn, claim, body, occurred, learned_at);
+        };
+        let envelope = crate::write_envelope::WriteEnvelope::new(
+            actor,
+            write.source,
+            crate::write_envelope::WriteProvenance::new(rmpv::Value::from(
+                ASSERT_DISTINCT_PROVENANCE,
+            ))?,
+            write.approval,
+        );
+        self.put_reserved_claim_attributed_in_txn(
+            wtxn, claim, body, occurred, learned_at, &envelope,
+        )
     }
 
     /// Rules a parked `entity.distinct_from` row effective, in place: the
@@ -175,15 +210,15 @@ impl Vault {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         claim: &EntityId,
-        approval: ClaimApprovalStatus,
+        write: &IdentityOpWrite,
         place: Option<&DistinctClaimPlace>,
     ) -> Result<()> {
         let (mut body, occurred, learned_at) = self.stored_distinct_claim_in_txn(wtxn, claim)?;
-        body.approval = approval;
+        body.approval = write.approval;
         if let Some(place) = place {
             place.narrow_audience(&mut body);
         }
-        self.put_reserved_claim_in_txn(wtxn, claim, &body, occurred, learned_at)
+        self.put_distinct_claim_in_txn(wtxn, claim, &body, occurred, learned_at, write)
     }
 
     /// A stored `entity.distinct_from` claim's body, occurred window and

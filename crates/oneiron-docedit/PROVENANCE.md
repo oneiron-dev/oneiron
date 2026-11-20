@@ -938,3 +938,60 @@ each prefixed attribute and each `mc:Choice` `Requires` token now costs one
 hash, not a scan of the tag's declarations and of every open frame: one tag with
 d declarations and a prefixed attributes cost O(a*d). The innermost binding
 still wins, and the built tree, the refusals and their order are unchanged.
+
+
+## Main part with no relationships part (FIX DOCX-READER-REFUSES-A-DOCUMENT-WITH-NO-RELATIONSHIPS-PART, 2026-11-20)
+
+`src/import.rs`, `src/docx_package.rs` and `src/runtime.rs`. A package whose
+main document part has no relationships part (`word/_rels/document.xml.rels` in
+the usual layout) is read as a main part with no outgoing relationships.
+`parse_document_relationships` returns the empty `DocumentRelationships`, and
+`DocxPackage::from_archive` starts from an empty `RelationshipSet` based at the
+main part's directory, so a relationship the writer adds later resolves its
+relative target beside the main part. Both refused before (`missing
+word/_rels/document.xml.rels`, `missing package part: ...`), while the linker
+took the same bytes. A part that is present must still parse and carry `Id`,
+`Type` and `Target`. The package relationships part `_rels/.rels` and
+`[Content_Types].xml` stay required. A main part that references a relationship
+(`r:id`, `r:embed`, `r:link`, as the linker's I-REL-001 counts them) still needs
+its relationships part: `src/runtime.rs` (`import_and_anchor`, the import under
+`Document::parse`) refuses such a package when the part is absent, as before.
+The reference would dangle, and the writer numbers the relationships it adds
+from `rId1`, so one could take the dangling id. The read-only canonical build
+in `src/import.rs` does not refuse it; the linker reports each such reference.
+`DocxPackage::into_archive` in `src/docx_package.rs` now gives every
+relationships part it writes a content type: where the package has no `rels`
+Default and no Override for the part, it adds the Override, so the part it
+creates for a main part that had none is typed. A package with the correct
+`rels` Default and no conflicting Override is written as before. The fork's
+unit test of the absent case
+(`parse_document_relationships_missing_rels_file_returns_empty`) is rewritten to
+the new rule; no workspace run compiles it, and the wrapper's
+`tests/contract.rs` holds the rule. `tests/stress_manifest.rs` names the text
+`missing word/_rels/document.xml.rels` as a failure class; the refusal of a
+referencing main part still starts with it.
+
+`src/runtime.rs` and `src/import.rs` own the revision identities part through
+an internal relationship of the main part. The writer reuses that target or
+chooses the first free name starting at `word/stemmaRevisionIds.xml`, then
+`word/stemmaRevisionIds2.xml` and onward. The reader adopts only the related
+part. Another producer's part at the conventional name stays untouched.
+
+`src/docx_package.rs`, `src/runtime.rs` and `src/package_ops/generated_people.rs`
+relate the generated people and revision identities parts by a bare name when
+beside the main part and a package-absolute name otherwise. The parts stay
+under `word/` when generated at their default names.
+
+`src/docx_package.rs` gives every relationships part it writes the relationships
+content type. It adds or replaces a part's Override when its declared type
+(the Override or `rels` Default) differs, ignoring ASCII case.
+
+`src/runtime.rs` and `src/docx_validate.rs` check every nonempty attribute in
+the relationships namespace when the main part has no relationships part.
+The linker's and writer's shared collector still knows only `id`, `embed` and
+`link`.
+
+`src/docx_validate.rs` trusts an attribute's resolved namespace over its
+prefix. The prefix and legacy qualified local name are fallbacks only when
+no namespace is recorded. The header/footer and hyperlink id checks use the
+same rule.

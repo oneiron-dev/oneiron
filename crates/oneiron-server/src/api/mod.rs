@@ -149,13 +149,17 @@ pub(crate) use self::facade::{
     AsrSessions, DoorClaim, ExportTransfers, FacadeApiError, FacadeCall, INVOCATION_CONFLICT,
     INVOCATION_IN_FLIGHT, INVOCATION_RESPONSE_ERASED, ModelStreams, admission_observer,
     ai_speech_for_run, call_verb as facade_call_verb, claim_door_invocation, connector_answer_as,
-    connector_call_listing_as, connector_call_listing_on, invocation_body, self_use_as,
+    connector_call_listing_as, connector_call_listing_on, invocation_body,
+    released_reply as facade_released_reply, self_use_as,
 };
 // FIX 11190, FIX 11201: the binding door's decision on a call over a damaged
 // authority clock floor.
 pub(crate) use self::facade::clock_ingress;
 // FIX 12323: a facade route's caller, as its receipt layer resolved it.
 pub(crate) use self::facade::resolved_facade_caller;
+// Fix list row 17645: each served vault's mail pack runs its blocking mail
+// work on this server's runner, under the host's `[mail]` settings.
+pub(crate) use self::facade::install_mail_host;
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
 // ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —
@@ -172,6 +176,8 @@ mod linear_push;
 mod llm;
 #[cfg(feature = "mesh")]
 pub(crate) use llm::MeshLlm;
+#[cfg(oneiron_test_support)]
+pub(crate) use llm::raw_stream_opened_unpolled;
 pub(crate) use llm::record_raw_response;
 mod mcp_gateway;
 mod memory;
@@ -200,6 +206,8 @@ pub(crate) use self::owner_routes::engine_refusal_statuses_for_test;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::owner_routes::owner_route_refusals_for_test;
 pub(crate) use owner_routes::owner;
+#[cfg(oneiron_test_support)]
+pub(crate) use owner_routes::owner_check_failure;
 // FIX 5911: an owner's own program proves its waking person the live
 // recorded owner, and takes the owner's media and hook-replay doors; its
 // media spends on its run's line (FIX 6083).
@@ -226,7 +234,7 @@ pub(crate) use context_board::{action_board, freeze_chat_context, record_action_
 mod reactive;
 mod report;
 // ABC transport rows T1, T3, T4: the API's request floor.
-mod request_floor;
+pub(crate) mod request_floor;
 mod routes;
 mod run_tree;
 mod saved_query;
@@ -266,6 +274,9 @@ pub(crate) use self::mcp_gateway::draft_checked_span;
 // The integration tests' door to the carrier release check (census L2-38).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::carrier_releases_for_test;
+// The engine-stack test runtime's door to the device-release test hook.
+#[cfg(test)]
+pub(crate) use self::mcp_gateway::release_hook;
 // The integration tests' door to the keyframe bare-child judgment
 // (BOARD-KEYFRAME-CHILD-RELEASE).
 #[cfg(oneiron_test_support)]
@@ -275,6 +286,9 @@ pub(crate) use self::mcp_gateway::run_board_pins_for_test;
 // The integration tests' door to the gateway's facade refusal vocabulary (UC-11).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::mcp_refusal_for_test;
+// The integration tests' door to a run call's admitted lane (FIX-LIST 25102).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::admit_run_call_for_test;
 // The signing session door's read of what a signing router holds (L3-22).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::esign::{SigningRegistry, public_routes_with_registry};

@@ -30,8 +30,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/host_adapters.rs` | src | s | 2 struct · 2 trait · 2 fn · 5 re-export | EdgeBackend, MicroVmHost, SandboxBackend, WasmHost | Host adapters |
 | `src/lib/host_adapters/desktop.rs` | src | s | 4 re-export | — | The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started… |
 | `src/lib/host_adapters/desktop/hosts.rs` | src | m | 2 struct · 3 enum · 10 fn | ActivatedListener, DesktopHost, LaunchdHost, SecretSource, SystemdHost | — |
-| `src/lib/host_adapters/desktop/keep_awake.rs` | src | s | 2 struct · 1 enum · 4 fn | AwakeGuard, AwakePolicy, KeepAwake | — |
-| `src/lib/host_adapters/desktop/keep_awake/power.rs` | src | s | 5 crate-vis | — | The power source a PluggedIn wake assertion follows (FIX 9547) |
+| `src/lib/host_adapters/desktop/keep_awake.rs` | src | s | 2 struct · 1 enum · 4 fn · 1 re-export | AwakeGuard, AwakePolicy, KeepAwake | — |
+| `src/lib/host_adapters/desktop/keep_awake/power.rs` | src | s | 1 fn · 5 crate-vis | — | The power source a PluggedIn wake assertion follows (FIX 9547) |
 | `src/lib/host_adapters/desktop/sleep_watch.rs` | src | s | 1 struct · 1 trait · 1 fn · 1 re-export | SleepHooks, SleepWatch | Watches this machine's sleep and wake so the host releases its executor leases before it sleeps and takes… |
 | `src/lib/host_adapters/desktop/sleep_watch/iokit.rs` | src | s | 2 crate-vis | — | IOKit's system power notifications, on a thread of its own running a run loop |
 | `src/lib/host_adapters/desktop/sleep_watch/logind.rs` | src | s | 1 fn · 2 crate-vis | — | logind's sleep signals: a delay lock the thread holds while awake and a signal monitor it reads line by line |

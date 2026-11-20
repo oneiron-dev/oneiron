@@ -55,7 +55,10 @@ impl PipelineBuilder<'_> {
     // Implicit seed selection reads the PRELIMINARY blend above,
     // whose scores are decay-free, so seed choice depends only on
     // relevance. The D19 gate has already run, so a dead claim
-    // still never seeds; decay simply does not participate.
+    // still never seeds; decay simply does not participate. Every
+    // list that blend fused holds only the call's made_by slice, so
+    // a row the call drops never seeds implicitly; an explicit seed
+    // is the caller's own and stays.
     //
     // Returns `None` when `expand_ppr` is not configured.
     pub(super) fn expand_ppr_stage(
@@ -97,6 +100,10 @@ impl PipelineBuilder<'_> {
             // specificity weighting is search_ppr-only. A narrowed walk is
             // compute-only and takes no shared cache; its community prior,
             // when configured, comes from the admitted scope alone.
+            // The walk alone, for `oneiron-bench ppr-walk-share`
+            // (UNBUILT3-06): a span no subscriber listens to costs a level
+            // check and changes no output.
+            let walk = tracing::trace_span!("ppr_expand_walk").entered();
             let ppr = match pipeline_ppr_visibility(self, inputs.filter_config, &*claim_gate) {
                 Some(visibility) if self.ppr_community.beta != 0.0 && !self.read.is_union() => {
                     // A hidden seed takes no place in the evidence order:
@@ -208,6 +215,7 @@ impl PipelineBuilder<'_> {
                     result
                 }
             };
+            drop(walk);
             if !state.diagnostics.succeeded.contains(&RetrievalSignal::Ppr) {
                 state.diagnostics.succeeded.push(RetrievalSignal::Ppr);
             }
@@ -230,6 +238,7 @@ impl PipelineBuilder<'_> {
                 metadata_cache,
                 claim_gate,
             )?;
+            self.retain_made_by_slice(rtxn, &mut ppr_results, metadata_cache, claim_gate)?;
             state
                 .blend_allowed_ids
                 .extend(ppr_results.iter().map(|scored| scored.id));

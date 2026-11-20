@@ -150,6 +150,9 @@ pub struct HookRunContext {
     /// How the runtime prepared the body it ran (FIX 9208): `None` until a
     /// runtime that prepares reports it.
     preparation: Option<HookPreparation>,
+    /// Whether the runtime never started the body because it could not
+    /// take the input ([`Self::report_input_not_taken`]).
+    input_not_taken: bool,
 }
 
 impl HookRunContext {
@@ -167,6 +170,7 @@ impl HookRunContext {
             verdict_overruns: 0,
             usage: HookBodyUsage::NOT_RUN,
             preparation: None,
+            input_not_taken: false,
         }
     }
 
@@ -252,6 +256,21 @@ impl HookRunContext {
     #[must_use]
     pub const fn preparation(&self) -> Option<&HookPreparation> {
         self.preparation.as_ref()
+    }
+
+    /// The runtime never started the body because it could not take the
+    /// input: larger than its memory holds, so the body never judged it.
+    /// The post chain's skill-answer refusal reads it
+    /// ([SKILL-POST-HOOK-INPUT-BODY-CHANNEL]).
+    pub fn report_input_not_taken(&mut self) {
+        self.input_not_taken = true;
+    }
+
+    /// Whether the runtime never started the body because it could not
+    /// take the input, so the body never judged it.
+    #[must_use]
+    pub const fn input_not_taken(&self) -> bool {
+        self.input_not_taken
     }
 
     /// The run's overrun, read once its body has ended (its worker joined,

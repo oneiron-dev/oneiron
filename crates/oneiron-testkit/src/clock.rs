@@ -5,12 +5,16 @@
 //! [`ManualClock`] with arithmetic on top: a test opens its vault with
 //! [`FakeClock::store_clock`] (or [`FakeClock::vault_config`]) and passes
 //! [`FakeClock::now`] wherever a public call takes an explicit `now`. No test
-//! reads the wall clock, so no test depends on when it runs.
+//! reads the wall clock, so no test depends on when it runs. The vault's
+//! elapsed-time clock (the authority log's observation clock) measures on the
+//! fake time too ([`Clock::monotonic_now`]), so authority times move only
+//! when the test moves the clock.
 
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use oneiron::VaultConfig;
-use oneiron::store::ports::{ManualClock, StoreClock};
+use oneiron::store::ports::{Clock, IdGen, ManualClock, StoreClock};
 
 /// The second every fake clock starts at unless the test names another:
 /// 2027-01-15T08:00:00Z. Fixed, so ids and stamps repeat from run to run.
@@ -24,8 +28,30 @@ pub const FAKE_EPOCH: u64 = 1_800_000_000;
 /// the floor again.
 #[derive(Clone)]
 pub struct FakeClock {
-    source: Arc<ManualClock>,
+    source: Arc<FakeSource>,
     now: Arc<Mutex<u64>>,
+}
+
+/// The source a [`FakeClock`] gives its vaults: the [`ManualClock`]'s time
+/// and ids, and that time as the monotonic reading as well.
+struct FakeSource {
+    manual: Arc<ManualClock>,
+}
+
+impl Clock for FakeSource {
+    fn now_recorded_at(&self) -> u64 {
+        self.manual.now_recorded_at()
+    }
+
+    fn monotonic_now(&self) -> Option<Duration> {
+        Some(Duration::from_secs(self.manual.now_recorded_at()))
+    }
+}
+
+impl IdGen for FakeSource {
+    fn ulid(&self) -> [u8; 16] {
+        self.manual.ulid()
+    }
 }
 
 impl std::fmt::Debug for FakeClock {
@@ -47,7 +73,9 @@ impl FakeClock {
     #[must_use]
     pub fn at(secs: u64) -> Self {
         Self {
-            source: ManualClock::new(secs),
+            source: Arc::new(FakeSource {
+                manual: ManualClock::new(secs),
+            }),
             now: Arc::new(Mutex::new(secs)),
         }
     }
@@ -68,7 +96,7 @@ impl FakeClock {
     pub fn advance(&self, secs: u64) -> u64 {
         let mut now = self.now.lock().unwrap_or_else(PoisonError::into_inner);
         *now = now.saturating_add(secs);
-        self.source.set(*now);
+        self.source.manual.set(*now);
         *now
     }
 
@@ -76,14 +104,14 @@ impl FakeClock {
     pub fn set(&self, secs: u64) {
         let mut now = self.now.lock().unwrap_or_else(PoisonError::into_inner);
         *now = secs;
-        self.source.set(secs);
+        self.source.manual.set(secs);
     }
 
     /// The clock and id source to put in `VaultConfig::store_clock`. Ids come
     /// from a counter, so they repeat from run to run as the time does.
     #[must_use]
     pub fn store_clock(&self) -> StoreClock {
-        self.source.bundle()
+        StoreClock::new(self.source.clone(), self.source.clone())
     }
 
     /// `VaultConfig::device()` reading this clock.

@@ -25,6 +25,7 @@ use super::executor::{ConsolidationExecutor, Decider, ExtractionPrompt, ScopedRe
 use super::extracted_people::MintNamespace;
 use super::failure_rules::{FailureRules, Stage};
 use super::provenance::KeptDecision;
+use super::resources::PagePastRoom;
 use super::roles::{DREAMER_EXTRACTION_ROLE, RoleCall};
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
@@ -241,6 +242,8 @@ pub(in crate::dreamer_consolidation) struct SliceCall<'a> {
     pub(in crate::dreamer_consolidation) labels: &'a CallLabelMap,
     pub(in crate::dreamer_consolidation) scope: &'a Scope,
     pub(in crate::dreamer_consolidation) sources: &'a [EntityId],
+    /// Set when its page fills the lent window's room: no model call.
+    pub(in crate::dreamer_consolidation) page_past_room: Option<PagePastRoom>,
 }
 
 /// One slice's extraction step: its request hash and its outcome.
@@ -438,6 +441,13 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
             requests.push((request.canonical_hash()?, request));
             authored.push(Some(reply.backend()));
             continue;
+        }
+        // A slice whose listing page fills the extraction model's lent
+        // window is refused before any request goes out; a relation reply
+        // above calls no model, so it ran (FIX
+        // DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW).
+        if let Some(past) = slice.page_past_room {
+            return Err(DurableStepError::Engine(past.refusal()));
         }
         let mut request = ConsolidationExecutor::extraction_request(
             &child.call,

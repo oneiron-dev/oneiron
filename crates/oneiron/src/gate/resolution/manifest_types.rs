@@ -348,6 +348,7 @@ pub(crate) struct PolicyManifestResolution {
         Option<std::collections::BTreeMap<String, crate::federation::SharedActPolicy>>,
     pub(crate) owner_change_wait_secs: Option<u64>,
     pub(super) inquiry_policy: Option<crate::inquiry::InquiryPolicy>,
+    pub(super) erase_request_reply_policy: Option<crate::deletion::EraseRequestReplyPolicy>,
     pub(super) catastrophe_floor: Option<crate::consent::CatastropheFloor>,
     pub(super) check_in_policy: Option<crate::check_in::CheckInPolicy>,
     pub(crate) code_consent_settlement:
@@ -410,6 +411,32 @@ impl PolicyManifestResolution {
                 receipted: true,
                 warned: true,
                 actor_ref: Some(permit.owner()),
+                auto_checker: None,
+            },
+        );
+        self
+    }
+
+    /// [`Self::with_owner_archive_restore_permit`] for the edge provenance
+    /// writer of that same restore (Engine ANSWER
+    /// PROVENANCE-RESTORE-UNDER-TRUSTED-MANIFEST = A, 20 Nov 09:26). The gate
+    /// judges an edge provenance claim as its annotator's, so the restore's
+    /// Imported Auto row binds `annotator`, the archived row's own, for the
+    /// write of that row only: the writer's own check and the claim check of
+    /// its batch (`batch::apply_provenance_claim_puts`) bind it alike. Only
+    /// the in-memory copy changes.
+    pub(crate) fn with_owner_archive_restore_permit_for_annotator(
+        mut self,
+        _permit: &OwnerArchiveRestorePermit,
+        annotator: crate::EntityId,
+    ) -> Self {
+        self.source_trust.bind_actor_row(
+            ClaimSource::Imported,
+            SourceTrustRow {
+                max_auto_sensitivity: Some(UNSTAMPED_CLAIM_SENSITIVITY_BAND),
+                receipted: true,
+                warned: true,
+                actor_ref: Some(annotator),
                 auto_checker: None,
             },
         );

@@ -221,6 +221,11 @@ pub(super) enum SessionFault {
     /// for its URL (FIX 22217), a read or write of its store or queue, its
     /// full-resync markers, an encode, or the recovery it needs first.
     Local(String),
+    /// The home's HTTP 403 to the session's upgrade: it accepted the
+    /// credential and refuses that credential this socket, so no redial on
+    /// it opens one (MEMBER-SELECTOR-SOCKET). The far end's answer, yet no
+    /// outage: it counts the home neither served nor unserved.
+    Forbidden(String),
 }
 
 impl SessionFault {
@@ -261,12 +266,19 @@ impl SessionFault {
     pub(super) const fn is_local(&self) -> bool {
         matches!(self, Self::Local(_))
     }
+
+    /// Whether the home refused this credential the socket.
+    pub(super) const fn is_forbidden(&self) -> bool {
+        matches!(self, Self::Forbidden(_))
+    }
 }
 
 impl std::fmt::Display for SessionFault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Remote(message) | Self::Local(message) => f.write_str(message),
+            Self::Remote(message) | Self::Local(message) | Self::Forbidden(message) => {
+                f.write_str(message)
+            }
         }
     }
 }

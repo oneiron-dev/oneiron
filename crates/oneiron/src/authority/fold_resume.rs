@@ -37,7 +37,7 @@ mod side_tail;
 
 use capture::Once;
 pub(super) use capture::{
-    ConfirmKeys, FoldCapture, OnceParts, add_bound_keys, add_writers, admits_past,
+    ConfirmKeys, FoldCapture, OnceParts, ProofParts, add_bound_keys, add_writers, admits_past,
 };
 pub(super) use image::ImageFold;
 use receipts::BaseReceipts;
@@ -149,12 +149,19 @@ impl<'a> RowMeta<'a> {
 }
 
 /// Whether a fold past the base reads `op`'s row whole: the approvals and
-/// revocations stale-roster expiry and renewal weigh (`stale_roster`), the
-/// world-key records whose envelopes a folded key carries
+/// revocations stale-roster expiry and renewal weigh (`stale_roster`; a
+/// root appointment revokes every old roster key, OWNER-ANCHOR-ROOT-RECOVERY;
+/// an owner handover or a residence directive that forked its signer's
+/// sequence expires once a key it rests on is revoked, row
+/// SEQ-FLOOR-S-WITHHELD-COSIGN, and so does a federation lifecycle row, whose
+/// pact the expiry holds suspended while the row still shapes it),
+/// the world-key records whose envelopes a folded key carries
 /// (`world_key_fold::folded_world_keys`), and the owner work requests,
 /// results, cancels and import marks an executor, a receipt and a relay
 /// read past the base. Every other row's summary is all a later fold reads
-/// of it.
+/// of it. Every row that files a machine profile is read whole: a profile
+/// row, and an owner's join that carries its enrolment inline (REVIEW-9539
+/// round 2 P1).
 pub(super) fn is_projected(op: &AuthorityOp) -> bool {
     matches!(
         op,
@@ -162,16 +169,19 @@ pub(super) fn is_projected(op: &AuthorityOp) -> bool {
             | AuthorityOp::RebindActor { .. }
             | AuthorityOp::FederationConfirm(_)
             | AuthorityOp::CriticalWriteConfirm(_)
-            | AuthorityOp::MachineProfile(_)
+            | AuthorityOp::OwnerHandover(_)
+            | AuthorityOp::ResidenceDirective(_)
+            | AuthorityOp::FederationLifecycle(_)
             | AuthorityOp::RevokeDevice { .. }
             | AuthorityOp::RotateKey { .. }
             | AuthorityOp::ReRoot { .. }
+            | AuthorityOp::RootAppointment(_)
             | AuthorityOp::WorldKeyWraps(_)
             | AuthorityOp::OwnerWorkRequest(_)
             | AuthorityOp::OwnerWorkResult(_)
             | AuthorityOp::OwnerWorkCancel(_)
             | AuthorityOp::ExportSupplementImported(_)
-    )
+    ) || super::stale_roster::filed_machine_profile(op).is_some()
 }
 
 /// A stored log's fold, and what a resumed fold needs to carry it on.
@@ -493,6 +503,71 @@ pub(in crate::authority) fn fold_stored_log(
     (fold, base)
 }
 
+/// The stored-log fold of `entries` on a self-hosted install that pins
+/// `pin`, each row first seen at second 1 and folded at second 2 under a
+/// stale-roster window of `window_secs`: whole, and resumed past the base
+/// the fold of the first `base_len` rows keeps (None where the resumed fold
+/// declines the rest). For the integration tests' door
+/// (OWNER-ANCHOR-ROOT-RECOVERY).
+#[cfg(oneiron_test_support)]
+pub(crate) fn whole_and_resumed_folds_for_test(
+    entries: &[AuthorityLogEntry],
+    base_len: usize,
+    pin: Option<&PinnedRoot>,
+    window_secs: u64,
+) -> (AuthorityFold, Option<AuthorityFold>) {
+    let first_seen: BTreeMap<_, _> = entries
+        .iter()
+        .filter_map(|entry| Some((authority_entry_hash(entry).ok()?, 1)))
+        .collect();
+    let peers = BTreeMap::new();
+    let observations = AuthorityLocalObservations {
+        vouched: BTreeSet::new(),
+        unvouched: false,
+        policy: AuthorityObservationPolicy {
+            stale_roster_window_secs: window_secs,
+            ..AuthorityObservationPolicy::default()
+        },
+    };
+    let whole_log = StoredLog {
+        entries,
+        first_seen_at_secs: &first_seen,
+        now_secs: 2,
+        peer_consent_roots: &peers,
+        observations: &observations,
+        posture: crate::HostingPrivacyPosture::SelfHostLocal,
+        pin,
+    };
+    let (whole, _) = fold_stored_log(whole_log, None);
+    let (_, base) = fold_stored_log(
+        StoredLog {
+            entries: &entries[..base_len],
+            ..whole_log
+        },
+        None,
+    );
+    let tail: Vec<_> = entries[base_len..]
+        .iter()
+        .filter_map(|entry| Some((authority_entry_hash(entry).ok()?, entry)))
+        .collect();
+    let resumed = base.and_then(|base| {
+        fold_stored_tail(
+            StoredTail {
+                tail: &tail,
+                first_seen_at_secs: &first_seen,
+                now_secs: 2,
+                peer_consent_roots: &peers,
+                observations: &observations,
+                pinned: &BTreeSet::new(),
+                posture: crate::HostingPrivacyPosture::SelfHostLocal,
+                pin,
+            },
+            &base,
+        )
+    });
+    (whole, resumed.map(|(fold, _)| fold))
+}
+
 impl FoldBase {
     /// The fold of the base's log and the tail, the new rows on its frontier
     /// ([`side_tail`]), as the reference reaches it; None wherever a guard
@@ -551,6 +626,8 @@ impl FoldBase {
             pre_handoff_entries: Some(&no_handoff_line),
             memory_floor_bytes,
             pin: inputs.pin.as_ref(),
+            owner_key_lines: None,
+            appointments: None,
         };
         // The new rows: main rows one chain off the head, and world key
         // records on the kept frontier, each on its own parents' states.
@@ -604,7 +681,11 @@ impl FoldBase {
                 by_hash: &projected,
                 revoke_facts: &settlement.revoke_facts,
                 retired_keys: settlement.retired_keys.clone(),
+                handoff_or_appointment_retired_keys: settlement
+                    .handoff_or_appointment_retired_keys
+                    .clone(),
                 closed_handoffs: settlement.closed_handoffs.clone(),
+                crossed_revocations: settlement.crossed_revocations.clone(),
                 unsettled: settlement.unsettled,
                 counted_ancestor_pairs: tail.counted_pairs,
                 issues: settlement.issues.clone(),
@@ -614,6 +695,7 @@ impl FoldBase {
         );
         if rows.missed.get()
             || fold.machines != once.fold.machines
+            || fold.restored_enrolments != once.fold.restored_enrolments
             || !super::world_privacy::worlds_unmoved_past(
                 &fold,
                 &once.fold,
@@ -674,7 +756,9 @@ impl FoldBase {
                 head: tail.tip,
                 frontier,
                 merged,
-                revocations: final_merged?.actor_revocation_hashes,
+                revocations: crate::authority::fold_state::to_btree_set_map(
+                    &final_merged?.actor_revocation_hashes,
+                ),
                 settlement: Arc::clone(settlement),
                 issuers: once.issuers.clone(),
                 uncounted: tail.uncounted,

@@ -279,7 +279,12 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
 // -------------------------------------------------------------- vault fixtures
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
-    open_test_vault_with(VaultConfig::default())
+    let (tmp, vault) = open_test_vault_with(VaultConfig::default());
+    // These tests cover feedback consent and delivery, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
+    (tmp, vault)
 }
 
 fn policy_manifest(actor_ref: &str, channel: &str, verbs: &[&str]) -> Vec<u8> {

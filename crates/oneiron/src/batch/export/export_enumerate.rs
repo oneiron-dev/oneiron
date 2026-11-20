@@ -19,7 +19,7 @@ impl Vault {
         let mut rows = Vec::new();
         for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
             let (entity_id, raw) = row?;
-            if whole_vault_export_excludes_entity_in_txn(&self.store, &txn, &entity_id)? {
+            if whole_vault_export_excludes_entity_in_txn(self, &txn, &entity_id)? {
                 continue;
             }
             let header = EntityMetadataHeader::parse(&raw)

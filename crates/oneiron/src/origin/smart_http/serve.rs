@@ -524,7 +524,7 @@ pub(super) fn serve_request(
 /// itself otherwise. Canonicalized, that is the same path
 /// [`GitWire::open_repo`] resolves for the same directory, which is what makes
 /// this guard and the landing's guard the SAME guard rather than two locks.
-pub(super) fn repo_common_dir(repo_dir: &Path) -> Result<PathBuf> {
+pub(in crate::origin) fn repo_common_dir(repo_dir: &Path) -> Result<PathBuf> {
     let pointer = repo_dir.join("commondir");
     let common = match fs::read_to_string(&pointer) {
         Ok(text) => {

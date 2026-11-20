@@ -15,6 +15,7 @@ use crate::llm::decision::{
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result, Vault, store::RetrievalRunRecord};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
@@ -121,12 +122,7 @@ impl DetectorPolicy {
                 wording: None,
             });
         }
-        let mut hasher = blake3::Hasher::new();
-        for part in [self.prompt.as_str(), self.rubric.as_str()] {
-            hasher.update(&(part.len() as u64).to_be_bytes());
-            hasher.update(part.as_bytes());
-        }
-        let digest = hasher.finalize();
+        let digest = wording_digest(&self.prompt, &self.rubric);
         let text = format!(
             "Does this telemetry show the anomaly the detector's prompt describes, judged by \
              its rubric? The prompt and the rubric are the state's `detector` field, whole.\
@@ -137,7 +133,7 @@ impl DetectorPolicy {
                 &[
                     tier.token().as_bytes(),
                     self.family.as_bytes(),
-                    digest.as_bytes().as_slice(),
+                    digest.as_slice(),
                 ],
                 text,
                 AnswerContract::Noul,
@@ -148,6 +144,23 @@ impl DetectorPolicy {
             })),
         })
     }
+}
+
+/// The digest a question past the text room is keyed by: the prompt, then the rubric, each
+/// length-prefixed (`purposes::self_heal::DETECTOR_WORDING`).
+fn wording_digest(prompt: &str, rubric: &str) -> [u8; 32] {
+    let mut hasher = LegacyDigest::new(purposes::self_heal::DETECTOR_WORDING);
+    for part in [prompt, rubric] {
+        hasher.len_u64_be(part.len()).raw(part.as_bytes());
+    }
+    hasher.finish()
+}
+
+/// [`wording_digest`] for the K door (`test_doors::fingerprint_keep_self_heal_digests`). Not
+/// API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn wording_digest_for_test(prompt: &str, rubric: &str) -> [u8; 32] {
+    wording_digest(prompt, rubric)
 }
 
 /// A detector's question as asked: the typed question and, for wording past the question's
@@ -245,10 +258,21 @@ fn with_wording<'s>(
     Ok(Cow::Owned(state))
 }
 
-/// Folds one asked state's exact bytes into a window's context digest (OF-418 L3).
-fn read_state(context: &mut blake3::Hasher, bytes: &[u8]) {
-    context.update(&(bytes.len() as u64).to_be_bytes());
-    context.update(bytes);
+/// Folds one asked state's exact bytes into a window's context digest (OF-418 L3;
+/// `purposes::self_heal::WINDOW_CONTEXT`).
+fn read_state(context: &mut LegacyDigest, bytes: &[u8]) {
+    context.len_u64_be(bytes.len()).raw(bytes);
+}
+
+/// A window's context digest over `states` asked in order, as [`WindowGrade`] folds it, for
+/// the K door (`test_doors::fingerprint_keep_self_heal_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn window_context_for_test(states: &[&[u8]]) -> [u8; 32] {
+    let mut context = LegacyDigest::new(purposes::self_heal::WINDOW_CONTEXT);
+    for bytes in states {
+        read_state(&mut context, bytes);
+    }
+    context.finish()
 }
 
 /// A proposed-only output. No conversion from this type to SignedDetectorRun exists.
@@ -278,15 +302,15 @@ pub(crate) struct FindingBasis {
 
 /// The revision of the recipe a finding runs under (OF-418 L3): its tier, family, class, whole
 /// prompt and rubric, consecutive count, the reviewed positive and negative examples it asks
-/// with, and a T2a corpus's revision. A changed recipe is a new revision, never an equivalent.
+/// with, and a T2a corpus's revision. A changed recipe is a new revision, never an equivalent
+/// (`purposes::self_heal::FINDING_RECIPE`).
 pub(super) fn recipe_revision(
     policy: &DetectorPolicy,
     tier: ProposedTier,
     examples: (&[EntityId], &[EntityId]),
     corpus: Option<&[u8; 32]>,
 ) -> [u8; 32] {
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.self_heal.finding_recipe.v1\0");
+    let mut hash = LegacyDigest::new(purposes::self_heal::FINDING_RECIPE);
     for part in [
         tier.token(),
         policy.family.as_str(),
@@ -294,26 +318,62 @@ pub(super) fn recipe_revision(
         policy.prompt.as_str(),
         policy.rubric.as_str(),
     ] {
-        hash.update(&(part.len() as u64).to_be_bytes());
-        hash.update(part.as_bytes());
+        hash.len_u64_be(part.len()).raw(part.as_bytes());
     }
-    hash.update(&(policy.consecutive as u64).to_be_bytes());
+    hash.raw(&(policy.consecutive as u64).to_be_bytes());
     for ids in [examples.0, examples.1] {
-        hash.update(&(ids.len() as u64).to_be_bytes());
+        hash.len_u64_be(ids.len());
         for id in ids {
-            hash.update(id.as_bytes());
+            hash.raw(id.as_bytes());
         }
     }
     match corpus {
         Some(revision) => {
-            hash.update(&[1]);
-            hash.update(revision);
+            hash.raw(&[1]).raw(revision);
         }
         None => {
-            hash.update(&[0]);
+            hash.raw(&[0]);
         }
     }
-    *hash.finalize().as_bytes()
+    hash.finish()
+}
+
+/// [`recipe_revision`] for the K door (`test_doors::fingerprint_keep_self_heal_digests`). Not
+/// API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn recipe_revision_for_test(
+    policy: &DetectorPolicy,
+    tier: ProposedTier,
+    examples: (&[EntityId], &[EntityId]),
+    corpus: Option<&[u8; 32]>,
+) -> [u8; 32] {
+    recipe_revision(policy, tier, examples, corpus)
+}
+
+/// A model finding's replay hash over `runs`, each run's record length-prefixed
+/// (`purposes::self_heal::RETRIEVAL_WINDOW`), and its evidence: the runs' ids, sorted and
+/// deduplicated.
+fn window_evidence(runs: &[RetrievalRunRecord]) -> Result<([u8; 32], Vec<EntityId>)> {
+    let mut digest = LegacyDigest::new(purposes::self_heal::RETRIEVAL_WINDOW);
+    let mut evidence = Vec::new();
+    for run in runs {
+        let bytes = rmp_serde::to_vec_named(run)
+            .map_err(|_| Error::InvariantViolation("retrieval telemetry encode"))?;
+        digest.len_u64_be(bytes.len()).raw(&bytes);
+        evidence.push(EntityId::from_bytes(run.run_id.as_bytes())?);
+    }
+    evidence.sort();
+    evidence.dedup();
+    Ok((digest.finish(), evidence))
+}
+
+/// [`window_evidence`] for the K door (`test_doors::fingerprint_keep_self_heal_digests`). Not
+/// API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn window_evidence_for_test(
+    runs: &[RetrievalRunRecord],
+) -> Result<([u8; 32], Vec<EntityId>)> {
+    window_evidence(runs)
 }
 
 /// Emits a positive finding and files its Coach issue, keyed by `basis`, in the same write
@@ -334,19 +394,9 @@ pub(super) fn propose(
     let Some(first) = runs.first() else {
         return Ok(None);
     };
-    let mut digest = blake3::Hasher::new();
-    let mut evidence = Vec::new();
-    for run in runs {
-        let bytes = rmp_serde::to_vec_named(run)
-            .map_err(|_| Error::InvariantViolation("retrieval telemetry encode"))?;
-        digest.update(&(bytes.len() as u64).to_be_bytes());
-        digest.update(&bytes);
-        evidence.push(EntityId::from_bytes(run.run_id.as_bytes())?);
-    }
-    evidence.sort();
-    evidence.dedup();
+    let window = window_evidence(runs)?;
     let centroid_snapshot = centroid.as_ref().map(|(hash, _)| *hash);
-    let (digest, evidence) = centroid.unwrap_or((*digest.finalize().as_bytes(), evidence));
+    let (digest, evidence) = centroid.unwrap_or(window);
     let event = DiagnosticEvent {
         detector_id: format!("{}.{}", tier.token(), policy.family),
         event_class: policy.class,
@@ -440,7 +490,7 @@ pub struct WindowGrade<'w> {
     /// What its questions read: the question, then each reviewed example (OF-418 L3).
     pins: Vec<String>,
     /// Every asked part's exact state, in order (OF-418 L3).
-    context: blake3::Hasher,
+    context: LegacyDigest,
 }
 
 impl Vault {
@@ -556,7 +606,7 @@ impl Vault {
             answers: Vec::new(),
             recipe: recipe_revision(policy, tier, examples, None),
             pins,
-            context: blake3::Hasher::new(),
+            context: LegacyDigest::new(purposes::self_heal::WINDOW_CONTEXT),
         })
     }
 
@@ -658,7 +708,7 @@ impl Vault {
         let basis = FindingBasis {
             recipe_revision: grade.recipe,
             source_pins: grade.pins,
-            context_digest: *grade.context.finalize().as_bytes(),
+            context_digest: grade.context.finish(),
         };
         propose(self, grade.tier, grade.policy, runs, None, decisions, basis)
     }

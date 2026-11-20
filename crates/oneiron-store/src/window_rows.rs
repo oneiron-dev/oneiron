@@ -70,7 +70,10 @@ pub enum CarrierRemoval {
     /// The egress scrub of the carriers at an id whose stored row is a CLAIM
     /// held back from sync, such as a soft-deleted CLAIM's shell.
     LocalClaimScrub,
-    /// The local delete's tombstone publication, live and transient.
+    /// The local delete's tombstone publication, live and transient. Only
+    /// its suppression commits first: the records of who brought or wrote
+    /// the carrier leave in its publish transaction, once that transaction's
+    /// refusals have passed.
     LocalPublication,
     /// The sweep's compaction of a hard-erased id's residue.
     HardEraseSweep,

@@ -11,7 +11,11 @@
 //! - the records and MESSAGEs a summary, a merge header or a copied reply
 //!   carries words from ([`crate::scope_summary::word_sources_in`]), and a
 //!   scope summary's covers;
-//! - a CLAIM's entity subject.
+//! - a CLAIM's entity subject, and for a machine birth control also the
+//!   entity subject of the signed initial body it embeds (FIX
+//!   MACHINE-HISTORY-SOURCE-LINEAGE-SUBJECT-MOVE);
+//! - for the hold walk ([`lineage_held_in`]) alone, the records a
+//!   PSYCH_PROFILE's typed sources name.
 //!
 //! Each of those must read: a summary of a private thread is as private as
 //! the thread. A CLAIM is the one union: its supporting sources (`Supports`
@@ -44,7 +48,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::EdgeKind;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_TURN,
+};
 use crate::{EntityId, Vault};
 
 /// Whether the row bytes `raw` are one a source audience landed: its OWN
@@ -108,17 +114,59 @@ fn word_sources(
     {
         every.extend(covers);
     }
+    // A reply TURN or a merge header carries a summary's words: the summary
+    // is one more word source, as the disclosure walk takes it, so a held
+    // summary holds the copy too (REVIEW-9874 P1 1).
+    if let Ok(Some(summary)) = crate::scope_summary::carried_summary(bytes) {
+        every.push(summary);
+    }
     let mut supports = Vec::new();
     if header.entity_type == ENTITY_TYPE_CLAIM {
-        if let Ok(claim) = crate::claim::decode_claim_body(body, true)
-            && let crate::claim::ClaimSubject::Entity(subject) = claim.subject
-        {
-            every.push(subject);
+        if let Ok(claim) = crate::claim::decode_claim_body(body, true) {
+            // A machine birth control carries the birth's signed body, whose
+            // subject a same-id successor of the target may have left (FIX
+            // MACHINE-HISTORY-SOURCE-LINEAGE-SUBJECT-MOVE): that subject's
+            // words are the control's too, beside the target's.
+            if let Some(Ok(initial)) =
+                crate::claim::history_store::machine_birth_initial_body(&claim)
+                && let Ok(birth) = crate::claim::decode_claim_body(&initial, true)
+                && let crate::claim::ClaimSubject::Entity(subject) = birth.subject
+            {
+                every.push(subject);
+            }
+            if let crate::claim::ClaimSubject::Entity(subject) = claim.subject {
+                every.push(subject);
+            }
         }
         supports =
             crate::conversation_dag::counted_edge_ids(dbs, txn, &id, EdgeKind::Supports, true)?;
     }
     Ok((every, supports))
+}
+
+/// The records a PSYCH_PROFILE row `bytes` read its words from: each typed
+/// source's record and revision. Profile landing names them in the body and
+/// the dependency index, never as a `DerivedFrom` edge, so a profile that
+/// copies a held CLAIM's prose is held with it (REVIEW-9874 round 2). Any
+/// other row, and a profile of an earlier schema, whose sources name no
+/// record, names none.
+fn profile_sources(bytes: &[u8]) -> Vec<EntityId> {
+    let Some(header) = EntityMetadataHeader::parse(bytes) else {
+        return Vec::new();
+    };
+    if header.entity_type != ENTITY_TYPE_PSYCH_PROFILE {
+        return Vec::new();
+    }
+    let body = bytes.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+    crate::psych_profile::decode_psych_profile_body(body)
+        .map(|profile| {
+            profile
+                .sources
+                .iter()
+                .flat_map(|source| [source.document_ref, source.revision_ref])
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The lane a row would leave this vault on.
@@ -148,8 +196,8 @@ pub(crate) fn withheld_from_replication_in(
 }
 
 /// Whether the row `id`, or any row its words came from (every support of a
-/// CLAIM included), is held back here. A vault that holds no row back
-/// answers at once.
+/// CLAIM and every typed source of a PSYCH_PROFILE included), is held back
+/// here. A vault that holds no row back answers at once.
 ///
 /// # Errors
 ///
@@ -169,7 +217,11 @@ pub(crate) fn lineage_held_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityI
             continue;
         };
         let (every, supports) = word_sources(vault, &dbs, txn, row, &bytes)?;
-        for source in every.into_iter().chain(supports) {
+        for source in every
+            .into_iter()
+            .chain(supports)
+            .chain(profile_sources(&bytes))
+        {
             if seen.insert(source) {
                 pending.push(source);
             }

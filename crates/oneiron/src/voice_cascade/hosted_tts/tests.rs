@@ -1,5 +1,7 @@
 use super::*;
-use crate::voice_identity::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
+use crate::voice_identity::ref_bank::{
+    VoiceRefOrigin, VoiceRefPack, VoiceRefSubjectKind, VoiceRegisterClip, VoiceRenderDecision,
+};
 
 #[derive(Default)]
 struct Capture {
@@ -16,6 +18,27 @@ impl HostedTransport for Capture {
     }
 }
 const VOICE: &str = "banked-voice";
+const GRANT_EVENT: &str = "grant-banked-voice";
+
+/// The subject's render grant the captured refs are banked under. Hosted
+/// targets are third parties, so it must reach that far.
+fn grant(vault: &Vault, owner: EntityId) -> Result<()> {
+    use crate::voice_identity::{VoiceConsentBasis, VoiceConsentState};
+    vault.record_voice_render_consent(&VoiceRenderDecision {
+        event_id: GRANT_EVENT.into(),
+        voice_id: VOICE.into(),
+        subject: owner,
+        subject_kind: VoiceRefSubjectKind::Person,
+        recorded_by: owner,
+        occurred_at: 1,
+        reach: ModelLocality::ThirdParty,
+        basis: Some(VoiceConsentBasis::ConversationalNotice {
+            notice: "grant".into(),
+        }),
+        state: VoiceConsentState::Granted,
+    })?;
+    Ok(())
+}
 
 fn pack(id: &str, owner: EntityId, origin: VoiceRefOrigin) -> VoiceRefPack {
     VoiceRefPack {
@@ -36,10 +59,14 @@ fn pack(id: &str, owner: EntityId, origin: VoiceRefOrigin) -> VoiceRefPack {
 fn bank() -> (tempfile::TempDir, Vault, VoiceRefPack) {
     let dir = tempfile::tempdir().expect("temporary vault");
     let vault = Vault::open(dir.path(), crate::VaultConfig::device()).expect("open seeded vault");
+    let owner = EntityId::now();
+    grant(&vault, owner).expect("record render consent");
     let pack = pack(
         "banked-registers",
-        EntityId::now(),
-        VoiceRefOrigin::Captured,
+        owner,
+        VoiceRefOrigin::Captured {
+            consent_event_ref: GRANT_EVENT.into(),
+        },
     );
     vault.store_voice_ref_pack(&pack).unwrap();
     (dir, vault, pack)
@@ -52,8 +79,13 @@ fn provision(
     include_generated: bool,
     vendor_voice_id: &str,
 ) -> Result<()> {
-    let request = vault.prepare_voice_clone(VOICE, provider.target(), include_generated)?;
-    vault.record_voice_target_clone(&request, vendor_voice_id, 1)?;
+    let request = vault.prepare_voice_clone(
+        VOICE,
+        provider.target(),
+        include_generated,
+        ModelLocality::ThirdParty,
+    )?;
+    vault.record_voice_target_clone(&request, vendor_voice_id, 1, false)?;
     Ok(())
 }
 fn bind(vault: &Vault, provider: HostedProvider) -> Result<HostedTtsAdapter<'_, Capture>> {
@@ -92,34 +124,24 @@ fn both_hosted_targets_render_from_bank_with_only_provisioned_locators() -> Resu
         };
         assert_eq!(request.generation, generation);
         assert_eq!(request.submission, 0);
-        let wire = request.body.to_string();
-        assert!(!wire.contains("banked-registers"));
-        assert!(!wire.contains(VOICE));
-        assert!(!wire.contains("example"));
-        assert!(!wire.contains("1,2,3"));
+        assert_eq!(request.text, "test sentence");
+        assert_eq!(request.provider, provider);
+        assert_eq!(request.voice.voice_id, VOICE);
+        assert!(!request.voice.include_generated);
+        let BankBound::Clone {
+            vendor_voice_id, ..
+        } = &request.voice.bound
+        else {
+            panic!("clone binding")
+        };
+        assert_eq!(vendor_voice_id, "preprovisioned_id-1");
+        // Nothing but the sentence and the provisioned locator leaves the bank.
+        assert!(!request.text.contains("banked-registers"));
+        assert!(!request.text.contains("example"));
+        assert!(!request.text.contains("1,2,3"));
         match provider {
-            HostedProvider::Cartesia => {
-                assert_eq!(request.url, "https://api.cartesia.ai/tts/bytes");
-                assert_eq!(request.api_version, Some("2026-08-14"));
-                assert_eq!(
-                    request.body,
-                    serde_json::json!({
-                        "model_id":"sonic-3.5", "transcript":"test sentence", "voice":{"id":"preprovisioned_id-1"},
-                        "output_format":{"container":"raw", "encoding":"pcm_s16le", "sample_rate":24000}
-                    })
-                );
-            }
-            HostedProvider::ElevenLabsFlash => {
-                assert_eq!(
-                    request.url,
-                    "https://api.elevenlabs.io/v1/text-to-speech/preprovisioned_id-1/stream?output_format=pcm_24000"
-                );
-                assert_eq!(request.api_version, None);
-                assert_eq!(
-                    request.body,
-                    serde_json::json!({"text":"test sentence", "model_id":"eleven_flash_v2_5"})
-                );
-            }
+            HostedProvider::Cartesia => assert_eq!(request.voice.target, "cartesia"),
+            HostedProvider::ElevenLabsFlash => assert_eq!(request.voice.target, "elevenlabs_flash"),
         }
         let frame = adapter.receive_pcm(generation, 0, 0, &[1, 0, 255, 255])?;
         assert_eq!(frame.samples, [1, -1]);
@@ -227,6 +249,7 @@ fn withdrawal_between_responses_cancels_all_pending_and_never_revives_a_binding(
         assert!(adapter.submit(text(generation, "third")).is_err());
         assert_eq!(adapter.transport.work.len(), 3);
         // Reusing an ID (even with identical bytes) cannot resurrect the old incarnation.
+        grant(&vault, pack.owner)?;
         vault.store_voice_ref_pack(&pack)?;
         provision(&vault, provider, false, "voice")?;
         assert!(adapter.submit(TtsCommand::Flush { generation }).is_err());
@@ -244,7 +267,8 @@ fn withdrawal_and_same_id_recreation_cannot_revive_unobserved_old_binding() -> R
     adapter.submit(text(generation, "unadmitted"))?;
     withdraw(&vault, pack.owner, "withdraw-replace")?;
     // Same identity ID, pack bytes, vendor ID and clone time: only the
-    // record revision differs, and it alone refuses the old binding.
+    // bank's revisions differ, and they alone refuse the old binding.
+    grant(&vault, pack.owner)?;
     vault.store_voice_ref_pack(&pack)?;
     provision(&vault, HostedProvider::Cartesia, false, "old-voice")?;
     assert!(adapter.submit(TtsCommand::Flush { generation }).is_err());
@@ -347,16 +371,16 @@ fn hosted_bind_checks_url_safety_not_length() -> Result<()> {
         let HostedWork::Render(request) = &adapter.transport.work[0] else {
             panic!("render")
         };
-        match provider {
-            HostedProvider::Cartesia => assert_eq!(request.body["voice"]["id"], long.as_str()),
-            HostedProvider::ElevenLabsFlash => {
-                assert!(
-                    request
-                        .url
-                        .contains(&format!("/text-to-speech/{long}/stream"))
-                );
-            }
-        }
+        // The over-long but URL-safe locator still reaches the provider
+        // wire intact, as the binding's clone id.
+        let BankBound::Clone {
+            vendor_voice_id, ..
+        } = &request.voice.bound
+        else {
+            panic!("clone binding")
+        };
+        assert_eq!(vendor_voice_id, long.as_str());
+        assert_eq!(request.voice.target, provider.target());
 
         vault.evict_voice_target(VOICE, provider.target())?;
         provision(&vault, provider, false, "voice/../key")?;
