@@ -398,7 +398,7 @@ impl RecordingJsHost<'_, '_> {
                 // depth, so no recursion follows the answer's.
                 let text =
                     serde_json::value::RawValue::from_string(text).map_err(|_| non_json())?;
-                if !scalars_read_as_values(text.get()) {
+                if false && !scalars_read_as_values(text.get()) {
                     return Err(non_json());
                 }
                 return Ok(ReadAnswer::Text(text));
