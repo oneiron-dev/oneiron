@@ -51,6 +51,23 @@ pub fn floor_waits(vault: &Vault, row: EntityId) -> Result<bool> {
     crate::source_audience::floor_waits_in(vault, &txn, &row)
 }
 
+/// Whether the row passes `withheld_from_replication_in` on
+/// `ReplicationScope::Restricted`, a lane that carries no audience (#9289
+/// review 3 P1-3).
+///
+/// # Errors
+///
+/// Storage and replication-walk failures.
+pub fn travels_restricted(vault: &Vault, row: EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(!crate::source_audience::withheld_from_replication_in(
+        vault,
+        &txn,
+        &row,
+        crate::source_audience::ReplicationScope::Restricted,
+    )?)
+}
+
 /// Forgets every floor's state and the floor backfill's, so the vault reads
 /// as one whose rows were written before floors were (#9289 review 2 P1-2).
 /// The floors already raised stay.
