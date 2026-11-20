@@ -9,6 +9,10 @@
 //! every vector put with the engine's typed reason, so the gate that every
 //! vector names its model stays visible.
 //!
+//! Review of #7638, round 1: a mark whose bytes are not UTF-8 is
+//! `InvalidArg`, as the header promises; and a host-root open the profile
+//! refuses pins no model on a vault that held none.
+//!
 //! Run: `cargo test --locked -p oneiron-ffi --test vector_device_mark`.
 
 use std::ptr;
@@ -141,6 +145,16 @@ fn put_marked(
     entity: &[u8; 16],
     device: &str,
     runtime: &str,
+) -> OneironStatus {
+    put_marked_bytes(vault, entity, device.as_bytes(), runtime.as_bytes())
+}
+
+/// [`put_marked`] with the mark's raw bytes, UTF-8 or not.
+fn put_marked_bytes(
+    vault: *mut OneironVault,
+    entity: &[u8; 16],
+    device: &[u8],
+    runtime: &[u8],
 ) -> OneironStatus {
     // SAFETY: `vault` is live and every pointer names a local that outlives the call.
     unsafe {
@@ -342,4 +356,91 @@ fn a_host_open_refuses_a_malformed_model_and_the_host_root_open_names_one() {
             "host-embedder 2.1"
         ))
     );
+}
+
+/// A mark whose bytes are not UTF-8 is an invalid mark: `InvalidArg`, as the
+/// header promises, never `Utf8`, and no vector is stored.
+#[test]
+fn a_mark_that_is_not_utf8_is_an_invalid_argument() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().to_str().expect("utf8 temp path");
+    let entity = id(9);
+    let vault = open(path);
+    put_entity(vault, &entity);
+
+    for (device, runtime) in [
+        (&b"cpu"[..], &[0xff_u8][..]),
+        (&[0xff_u8][..], &b"host-embedder 2.1"[..]),
+    ] {
+        assert_eq!(
+            put_marked_bytes(vault, &entity, device, runtime),
+            OneironStatus::InvalidArg,
+            "device {device:?}, runtime {runtime:?}"
+        );
+    }
+    free(vault);
+
+    let vault = reopen(path, Some(MODEL));
+    let stored = vault
+        .get_vector(&EntityId::from_bytes(entity).expect("entity id"))
+        .expect("read the vector");
+    assert_eq!(stored, None, "a refused mark stored a vector");
+}
+
+/// A host-root open whose profile is refused pins no model on a vault that
+/// held none: a later open may name another model.
+#[test]
+fn a_refused_host_root_open_pins_no_embedding_model() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().to_str().expect("utf8 temp path");
+    // An unrooted vault that holds no model and no vector.
+    free(open_without_model(path));
+    assert_eq!(
+        Vault::stored_embedding_model(path).expect("read the vault's model"),
+        None
+    );
+
+    // A secret over this unrooted vault, which may not be rooted here and
+    // names no issuer, cannot profile the install.
+    let secret = [7_u8; 32];
+    let model = "test/first@v1";
+    let mut vault = ptr::null_mut();
+    let mut wrong_root = 0_u8;
+    // SAFETY: every pointer names a local that outlives the call.
+    let status = unsafe {
+        oneiron_vault_open_with_host_root_and_embedding_model(
+            path.as_ptr(),
+            path.len(),
+            DIMENSIONS,
+            ptr::null(),
+            0,
+            0,
+            model.as_ptr(),
+            model.len(),
+            secret.as_ptr(),
+            secret.len(),
+            0,
+            &mut vault,
+            &mut wrong_root,
+        )
+    };
+    assert_ne!(
+        status,
+        OneironStatus::Ok,
+        "FIXTURE: the profile refuses a secret over an unrooted vault with no issuer"
+    );
+    assert!(vault.is_null());
+
+    assert_eq!(
+        Vault::stored_embedding_model(path).expect("read the vault's model"),
+        None,
+        "the refused open pinned its model"
+    );
+    let (status, vault) = open_with_model(path, "test/second@v1");
+    assert_eq!(
+        status,
+        OneironStatus::Ok,
+        "a later open names another model"
+    );
+    free(vault);
 }
