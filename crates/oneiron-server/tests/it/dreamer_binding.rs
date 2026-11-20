@@ -496,7 +496,9 @@ async fn a_vault_seeded_before_the_critical_classes_holds_that_correction_too() 
 /// item, the same answer lands Lisbon. The vault configures no reasoning
 /// level, so every extraction call to this local server names `medium`, in
 /// the effort field and in the chat template's arguments, with a 4,096-token
-/// thinking budget.
+/// thinking budget. It names `max_tokens` 12,288, that budget plus an 8,192
+/// answer cap, so a full thought leaves the answer its room, and the
+/// RESEARCH-1232 sampling, so no server default picks it.
 #[tokio::test]
 async fn an_off_contract_answer_is_refused_with_no_schema_on_any_wire() {
     let none = "response_format = \"none\"\n";
@@ -567,6 +569,18 @@ async fn an_off_contract_answer_is_refused_with_no_schema_on_any_wire() {
                 "{body}"
             );
             assert_eq!(body["reasoning_budget_tokens"], 4_096, "{body}");
+            assert_eq!(body["max_tokens"], 12_288, "{body}");
+            for (field, value) in [
+                ("temperature", json!(0.7)),
+                ("top_p", json!(0.8)),
+                ("top_k", json!(20)),
+                ("min_p", json!(0.0)),
+                ("presence_penalty", json!(1.5)),
+                ("frequency_penalty", json!(0.0)),
+                ("repetition_penalty", json!(1.0)),
+            ] {
+                assert_eq!(body[field], value, "{field}: {body}");
+            }
         }
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
         // The engine mints the person the pass met (FIX 7506 P1): its id is
