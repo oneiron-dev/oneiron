@@ -45,7 +45,8 @@ pub fn person_body(vault: &Vault, id: EntityId) -> Result<Option<PersonBody>> {
 }
 
 /// Whether the vault cleanup lists `id` as an empty row to archive: for a
-/// PERSON, an extraction mint at its stored revision with no live claim.
+/// PERSON, an extraction mint at its stored revision with no live claim and
+/// no pending try of the retry lineage its mint recorded.
 ///
 /// # Errors
 ///

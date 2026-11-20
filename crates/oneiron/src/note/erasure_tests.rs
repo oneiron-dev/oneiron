@@ -112,6 +112,10 @@ fn pending_citation_erasure_fences_reads_without_deleting_document() {
 
 #[cfg(feature = "sync")]
 fn claim(vault: &Vault, person: EntityId) -> EntityId {
+    crate::conversation_dag::fixtures::grant_reads(
+        vault,
+        crate::WriteActor::new(person, EdgeActorClass::Human),
+    );
     let id = EntityId::now();
     vault
         .memory(person, EdgeActorClass::Human)

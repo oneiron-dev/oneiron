@@ -2,11 +2,13 @@
 
 mod closer;
 mod decision_context;
+mod owner_revision;
 mod record_inner;
 mod reference_hook;
 mod reference_read;
 mod stored_close;
 
+use owner_revision::redeem_held_row_by_owner_revision;
 use record_inner::check_claim_policy_for_write_with_record_inner;
 pub(crate) use reference_hook::check_claim_policy_for_write_with_record_with_reader_reference_probe;
 pub(crate) use reference_read::unresolved_claim_reference;

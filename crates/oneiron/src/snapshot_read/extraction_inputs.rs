@@ -26,6 +26,7 @@ use crate::dreamer_runner::{
 use crate::federation::Scope;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// The cursor prefix naming the last TURN a page served.
 const EXTRACTION_TURNS_CURSOR_PREFIX: &str = "extraction-turns:";
@@ -392,10 +393,25 @@ pub(crate) fn extraction_turn_in_txn(
 pub(crate) fn extraction_policy_pin(policy: &ExtractionPolicy) -> Result<String> {
     let encoded =
         serde_json::to_vec(policy).map_err(|error| Error::InvalidConfig(error.to_string()))?;
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.dreamer.extraction.policy.v1");
-    hash.update(&encoded);
-    Ok(hash.finalize().to_hex().to_string())
+    Ok(pin_of_encoded_policy(&encoded))
+}
+
+/// Hashes the encoded policy right after the policy tag, with no separator. The tag is a
+/// legacy purpose: the inputs and observations pages already send these bytes, so they
+/// are kept (K, PLAN-UC-04).
+fn pin_of_encoded_policy(encoded: &[u8]) -> String {
+    oneiron_hex::encode(
+        &LegacyDigest::new(purposes::dreamer::EXTRACTION_POLICY)
+            .raw(encoded)
+            .finish(),
+    )
+}
+
+/// [`pin_of_encoded_policy`] for the K door
+/// (`test_doors::fingerprint_keep_extraction_read_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pin_of_encoded_policy_for_test(encoded: &[u8]) -> String {
+    pin_of_encoded_policy(encoded)
 }
 
 /// Decodes the attempt identifier in its one lowercase hexadecimal spelling.

@@ -50,6 +50,10 @@ fn fixture() -> (Fixture, tempfile::TempDir) {
     vault
         .ensure_serving_install_profile(&issuer, MachineRole::Owned(MachineOwnership::Yours))
         .expect("FIXTURE: this install's serving profile");
+    // The handle holds the host's root as a self-host server does, so the
+    // owner's answers it carries are proven and each enrolled peer stands
+    // (row CARRIER-OWNER-PROOF).
+    vault.hold_checkpoint_root_signer(Arc::new(issuer));
     let local = vault
         .local_machine()
         .expect("FIXTURE: this install's machine reads")

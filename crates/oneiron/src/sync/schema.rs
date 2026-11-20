@@ -185,17 +185,23 @@ mod tests {
     #[test]
     fn root_doc_schema() {
         // Single root doc creation must populate every meta field:
-        //   - vault_id (raw bytes)
-        //   - schema_version (i64 LE = 1)
+        //   - vault_id (native Loro String)
+        //   - schema_version (native Loro I64 = SCHEMA_VERSION)
         // Verified together to keep this as one creation-time invariant.
         let doc = create_root_doc("user1", "vault-abc", &[]);
         let meta = doc.get_map("meta");
 
-        let vid = map_get_bytes(&meta, "vault_id").unwrap();
-        assert_eq!(vid, b"vault-abc", "vault_id mismatch");
+        let vid = match meta.get("vault_id") {
+            Some(loro::ValueOrContainer::Value(loro::LoroValue::String(s))) => s.to_string(),
+            other => panic!("vault_id must be native String, got {other:?}"),
+        };
+        assert_eq!(vid, "vault-abc", "vault_id mismatch");
 
-        let sv = map_get_bytes(&meta, "schema_version").unwrap();
-        assert_eq!(sv, [1, 0, 0, 0, 0, 0, 0, 0], "schema_version mismatch");
+        let sv = match meta.get("schema_version") {
+            Some(loro::ValueOrContainer::Value(loro::LoroValue::I64(v))) => v,
+            other => panic!("schema_version must be native I64, got {other:?}"),
+        };
+        assert_eq!(sv, SCHEMA_VERSION, "schema_version mismatch");
     }
 
     #[test]

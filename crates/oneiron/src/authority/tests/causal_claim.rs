@@ -2,7 +2,6 @@
 use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
 use crate::edge::EdgeActorClass;
-use crate::error::{ClaimError, Error};
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{EntityId, TimeRange, Vault, VaultConfig};
 use rmpv::Value;
@@ -115,22 +114,26 @@ fn concurrent_claim_quarantines_at_replay_and_later_read_while_regrant_descendan
     );
     assert!(!claim_causal_admitted(&vault.store, &txn, &cached, &early, &early_body).unwrap());
     drop(txn);
+    // A replicated claim is stored as it came (FIX 7925): the write-window
+    // check covers only a batch's local claim writes, and the read predicate
+    // quarantines a replayed claim the revocation window holds.
     let concurrent = EntityId::now();
-    assert!(matches!(
-        vault
-            .batch()
-            .put_replicated(
-                &concurrent,
-                crate::registry::ENTITY_TYPE_CLAIM,
-                at,
-                1,
-                None,
-                &body(bind_hash),
-            )
-            .commit(),
-        Err(Error::Claim(ClaimError::WriteConcurrentWithRevocation))
-    ));
-    assert!(vault.get(&concurrent).unwrap().is_none());
+    vault
+        .batch()
+        .put_replicated(
+            &concurrent,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            at,
+            1,
+            None,
+            &body(bind_hash),
+        )
+        .commit()
+        .unwrap();
+    assert_eq!(
+        vault.claim_write_disposition(&concurrent).unwrap(),
+        Some(CausalWriteDisposition::Quarantined)
+    );
     let descendant = EntityId::now();
     vault
         .batch()
@@ -153,6 +156,13 @@ fn concurrent_claim_quarantines_at_replay_and_later_read_while_regrant_descendan
     assert!(
         reader
             .read(&[crate::claim::PointRead::id(early)], None)
+            .unwrap()
+            .single()
+            .is_none()
+    );
+    assert!(
+        reader
+            .read(&[crate::claim::PointRead::id(concurrent)], None)
             .unwrap()
             .single()
             .is_none()

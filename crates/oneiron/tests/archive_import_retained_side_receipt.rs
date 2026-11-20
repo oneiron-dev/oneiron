@@ -5,7 +5,7 @@
 //! live and reports three inert inserted rows (the standing grant, the
 //! grant's gate receipt, and the source root's birth row of `test.born_depth`,
 //! whose scope this vault maps onto its own root) plus one installed row; it
-//! names each table's counts and the manifest's 23 omitted tables. A repeat
+//! names each table's counts and the manifest's 22 omitted tables. A repeat
 //! import reports nothing inserted, three inert unchanged rows and one
 //! unchanged live row. The fixture
 //! is shared from `archive_import_retained_side_rows.rs`, whose tests also
@@ -101,8 +101,8 @@ fn the_import_receipt_counts_retained_rows_and_names_omitted_tables() {
     );
     assert_eq!(
         summary.omissions.len(),
-        23,
-        "the receipt names 23 omitted tables: {:?}",
+        22,
+        "the receipt names 22 omitted tables: {:?}",
         summary.omissions
     );
     let healer = summary

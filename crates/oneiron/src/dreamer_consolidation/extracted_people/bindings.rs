@@ -42,6 +42,9 @@ const LINEAGE_ORIGIN: SideTable<AttemptId, AttemptId, Named> =
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::dreamer_consolidation) struct MintNamespace {
     extraction: AttemptId,
+    /// The first try of the attempt's own retry lineage, whichever attempt
+    /// its ids are derived under: each mint records it.
+    lineage: AttemptId,
     world: Option<EntityId>,
     facet: Option<EntityId>,
     relationship: crate::claim::RelationshipScope,
@@ -60,6 +63,7 @@ impl MintNamespace {
     ) -> Self {
         Self {
             extraction: parent.unwrap_or(attempt),
+            lineage: attempt,
             world,
             facet,
             relationship,
@@ -175,6 +179,10 @@ pub(in crate::dreamer_consolidation) struct BoundPerson {
     pub(in crate::dreamer_consolidation) name: String,
     /// The sources its declaration names, in id order.
     pub(in crate::dreamer_consolidation) sources: Vec<EntityId>,
+    /// The first try of the retry lineage of the attempt whose reply
+    /// declared it. Its mint records it, and the cleanup spares the PERSON
+    /// while a try of that lineage is pending.
+    pub(in crate::dreamer_consolidation) lineage: AttemptId,
 }
 
 /// Every person one reply declares, by its `new:P<n>` number.
@@ -277,6 +285,7 @@ fn bind_one(
             id,
             name: name.to_owned(),
             sources: named.iter().map(|(id, _)| *id).collect(),
+            lineage: namespace.lineage,
         }),
         Err(_) => PersonBinding::Unavailable,
     }

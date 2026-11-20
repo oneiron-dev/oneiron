@@ -2,6 +2,7 @@ use uuid::Uuid;
 
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::HexId;
@@ -11,7 +12,8 @@ use crate::store::legal_hold::HoldActor;
 use super::super::erase::{ProvenanceCapture, sweep_extras};
 use super::super::gate::{
     GatedDeletion, claim_in_txn, journal_deletion_in_txn,
-    reverify_deletion_authority_when_unpublished, revoke_guest_grants_in_txn,
+    reverify_deletion_authority_when_unpublished, reverify_owner_proof_when_unpublished,
+    revoke_guest_grants_in_txn,
 };
 use super::super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::super::tombstone::{DeleteReason, HARD_DELETE_MARKER, TombstoneValueV2};
@@ -30,6 +32,7 @@ impl Vault {
         gate: &Option<GatedDeletion<'_>>,
         allow_replay_test: bool,
         due: Option<&PendingConfirmedErase>,
+        owner: Option<&AuthenticatedOwner>,
         requested_at: u64,
         header: EntityMetadataHeader,
         request_uuid: Uuid,
@@ -61,6 +64,15 @@ impl Vault {
         // FORBIDDEN to the caller with the tombstone already on the wire and
         // peers tearing.
         reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
+        reverify_owner_proof_when_unpublished(self, owner, authority_settled, &wtxn)?;
+        // The last-bound-owner guard under the same conditional law (round-1
+        // P1 of #7900): only when nothing settled this delete yet does this
+        // purge linearize it. Once the tombstone published, the publish
+        // transaction already decided the guard; re-deciding here would refuse
+        // a call peers already obey.
+        if !authority_settled {
+            self.refuse_last_bound_owner_delete_in(&wtxn, id)?;
+        }
         // A due confirmed erase nothing has published re-proves here that it
         // still waits, before any marker, scrub or purge (FIX 6337).
         let requester = due
@@ -160,6 +172,10 @@ impl Vault {
             )?;
             self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
             rekeys.finish(&self.store, &mut wtxn)?;
+            // With nothing published, this commit linearizes the delete: its
+            // brief fence settles under this writer (a published one settled
+            // at its publication).
+            self.store.brief_delete_fences.settle(id);
             wtxn.commit()?;
             effects.committed(self);
             pending_cloud_revokes.publish();
@@ -302,6 +318,10 @@ impl Vault {
         self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
 
         rekeys.finish(&self.store, &mut wtxn)?;
+        // With nothing published, this purge linearizes the delete: its brief
+        // fence settles under this writer (a published one settled at its
+        // publication).
+        self.store.brief_delete_fences.settle(id);
         wtxn.commit()?;
         effects.committed(self);
         pending_cloud_revokes.publish();

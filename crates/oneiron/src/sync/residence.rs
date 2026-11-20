@@ -22,10 +22,12 @@ mod discover;
 mod home_handoff;
 mod kit_fetch;
 mod machine_history;
+mod machine_names;
 mod own_device_grants;
 mod pad_custody;
 mod policy;
 mod predict;
+mod promoted_window_rows;
 mod prune;
 mod publication_access;
 mod recall_scope;
@@ -33,6 +35,8 @@ mod sealed_updates;
 mod search;
 mod secret_same_value;
 mod window_index;
+// FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS: a followed window's tombstone id set.
+mod window_tombstones;
 mod world_base_rows;
 mod world_eviction;
 pub(crate) use admission::admit_promoted_window_destination_in_txn;
@@ -97,7 +101,7 @@ pub use custody::{
 pub use directives::ResidenceDirectiveState;
 pub(crate) use directives::{
     directive_states_in_txn, finish_residence_directive_in_txn, pending_residence_directives,
-    residence_refusal_reason,
+    residence_directive_counts, residence_refusal_reason,
 };
 pub use discover::discover_local_window_keys;
 pub(crate) use discover::retry_pending_tombstones;
@@ -116,6 +120,7 @@ pub use kit_fetch::{
 pub use machine_history::{
     MACHINE_HISTORY_PAGE_ROWS, MachineHistoryCursor, MachineHistoryPage, machine_history_page,
 };
+pub use machine_names::machine_names_residence_exchange;
 pub use own_device_grants::{
     OWN_DEVICE_GRANTS_PAGE_MAX, OwnDeviceGrantAdmission, OwnDeviceGrantState,
     admit_own_device_grants, own_device_grant_refs, own_device_grant_states, own_device_grants_for,
@@ -132,15 +137,24 @@ pub use policy::{
 pub(crate) use policy::{
     device_world_pick_in, set_device_sync_preference_in_txn, set_device_world_pick_in_txn,
 };
+pub(crate) use predict::PredictedPushes;
 pub use predict::PredictedResidenceAnswer;
 #[cfg(oneiron_test_support)]
 pub(crate) use predict::WithholdingNodes;
+pub(crate) use predict::live_prediction_in_txn;
+pub(in crate::sync) use promoted_window_rows::admit_promoted_window_update_then;
+pub(crate) use promoted_window_rows::promoted_window_update_rows;
+pub use promoted_window_rows::{
+    PromotedWindowRows, admit_promoted_window_rows_in_txn, admit_promoted_window_update,
+    promoted_window_rows_may_leave_in_txn,
+};
 pub(crate) use prune::checkpoint_read_cache_keys;
+pub(crate) use prune::clear_thin_item_cache_in_txn;
 pub(crate) use prune::demote_resident_window;
 pub(crate) use prune::erase_item_caches_in_txn;
 pub(crate) use prune::prune_thin_items_in_txn;
-pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
+pub(crate) use prune::{record_item_touch_in_txn, record_item_touch_with};
 pub use publication_access::{
     PendingPublicationGrant, invalidate_publication_grant, offer_publication_grant,
     pending_publication_grants, publication_grant,
@@ -162,6 +176,7 @@ pub use window_index::{
     IndexPage, WindowIndexEntry, index_selection_revision, window_index_page,
     window_index_projection, window_index_projection_with,
 };
+pub use window_tombstones::{WindowTombstoneEntry, window_tombstone_projection_with};
 pub(crate) use world_base_rows::{discarded_rows_in, discarded_world_in, forget_discarded_in_txn};
 pub use world_eviction::{WorldEviction, discard_world_copy_as, evict_worlds_placed_elsewhere};
 pub(crate) use world_eviction::{
@@ -170,8 +185,7 @@ pub(crate) use world_eviction::{
 
 #[cfg(test)]
 use loro::ExportMode;
-use loro::json::{JsonOpContent, MapOp};
-use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
+use loro::{LoroDoc, LoroValue};
 
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
@@ -363,117 +377,6 @@ pub(crate) fn require_promoted_for_cached_id(
         ));
     }
     Ok(())
-}
-
-/// Inspect every incoming operation before an opened-item update reaches
-/// the observed home document. Only writes to EXISTING selected items with
-/// a stable birth scope can run on the thin residence lane. Other operation
-/// families use their own admitted doors; they are not smuggled as item edits.
-pub fn admit_promoted_window_update(
-    vault: &Vault,
-    source: &LoroDoc,
-    scope: FederationGrantScope,
-    selector: &SyncSelector,
-    proof: &crate::authority::VerifiedSlip,
-    update: &[u8],
-) -> Result<()> {
-    let malformed = || Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied);
-    let metadata = LoroDoc::decode_import_blob_meta(update, true).map_err(|_| malformed())?;
-    if metadata.mode.is_snapshot() {
-        return Err(malformed());
-    }
-    let candidate = source.fork();
-    let status = candidate.import(update).map_err(|_| malformed())?;
-    if status.pending.is_some() {
-        return Err(malformed());
-    }
-    let operations =
-        candidate.export_json_updates(&metadata.partial_start_vv, &metadata.partial_end_vv);
-    if !super::loro_support::json_covers_blob(&operations, &metadata) {
-        return Err(malformed());
-    }
-    let entities = ContainerID::new_root("entities", ContainerType::Map);
-    let births = ContainerID::new_root(super::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
-    let txn = vault.store.env.read_txn()?;
-    for op in operations.changes.into_iter().flat_map(|change| change.ops) {
-        let JsonOpContent::Map(MapOp::Insert {
-            key,
-            value: LoroValue::Binary(blob),
-        }) = op.content
-        else {
-            return Err(malformed());
-        };
-        // A row is born once, never on this lane: a birth write here may
-        // only restate the carrier the home window already holds.
-        if op.container == births {
-            let held = super::loro_support::map_get_bytes(
-                &source.get_map(super::row_birth::ROW_BIRTHS_MAP),
-                &key,
-            );
-            if held.as_deref() != Some(&blob[..]) {
-                return Err(malformed());
-            }
-            continue;
-        }
-        if op.container != entities {
-            return Err(malformed());
-        }
-        let id = EntityId::from_hex(&key).map_err(|_| malformed())?;
-        if key != id.to_hex() {
-            return Err(malformed());
-        }
-        super::selector::admit_promoted_entity_write_in_txn(
-            vault, &txn, id, &blob, scope, selector, proof,
-        )?;
-    }
-    Ok(())
-}
-
-/// The entities a promoted window's update lands, read from the update's own
-/// operations on a fork of `source`: every binary insert into the entities
-/// map with a well-formed id. Anything else the update carries (a birth
-/// restatement, an engine-translated hold) names no landed row and is not
-/// listed. An update that does not decode, arrives as a snapshot, or leaves
-/// pending dependencies is refused, as admission refuses it.
-pub(crate) fn promoted_window_update_rows(
-    source: &LoroDoc,
-    update: &[u8],
-) -> Result<Vec<EntityId>> {
-    let malformed = || Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied);
-    let metadata = LoroDoc::decode_import_blob_meta(update, true).map_err(|_| malformed())?;
-    if metadata.mode.is_snapshot() {
-        return Err(malformed());
-    }
-    let candidate = source.fork();
-    let status = candidate.import(update).map_err(|_| malformed())?;
-    if status.pending.is_some() {
-        return Err(malformed());
-    }
-    let operations =
-        candidate.export_json_updates(&metadata.partial_start_vv, &metadata.partial_end_vv);
-    if !super::loro_support::json_covers_blob(&operations, &metadata) {
-        return Err(malformed());
-    }
-    let entities = ContainerID::new_root("entities", ContainerType::Map);
-    let mut rows = std::collections::BTreeSet::new();
-    for op in operations.changes.into_iter().flat_map(|change| change.ops) {
-        if op.container != entities {
-            continue;
-        }
-        let JsonOpContent::Map(MapOp::Insert {
-            key,
-            value: LoroValue::Binary(_),
-        }) = op.content
-        else {
-            continue;
-        };
-        let id = EntityId::from_hex(&key).map_err(|_| malformed())?;
-        if key != id.to_hex() {
-            return Err(malformed());
-        }
-        rows.insert(id);
-    }
-    Ok(rows.into_iter().collect())
 }
 
 /// Export the canonical window, not the selector's synthetic document.

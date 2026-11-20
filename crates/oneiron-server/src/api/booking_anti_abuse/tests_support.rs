@@ -128,6 +128,7 @@ pub(crate) mod tests {
                 }],
                 flex_with_ordinary: false,
                 flex_windows: Vec::new(),
+                allowed_durations_min: Vec::new(),
             },
         };
         let mut body = ClaimBody::new(

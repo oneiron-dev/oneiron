@@ -359,6 +359,11 @@ fn routed_ask_spec(fixture: &HumanFixture) -> crate::task_verb::TaskAskSpec {
             &body,
         )
         .expect("question turn");
+    crate::task_verb::tests::support::grant_ask_read(
+        &fixture.vault,
+        &[fixture.owner, fixture.person],
+    )
+    .expect("grant ask read");
     TaskAskSpec::shorthand(
         Some(TaskAskTarget::People([fixture.person].into())),
         TaskAskQuestion::new(ConsultPayloadRef::Turn(question)),
@@ -573,6 +578,8 @@ fn token_answer_completes_its_member_and_suppresses_due_reminder_while_group_wai
     add_owner_route(&fixture);
     let other = crate::test_util::entity(0xD6);
     put_person(&fixture.vault, other);
+    crate::task_verb::tests::support::grant_ask_read(&fixture.vault, &[other])
+        .expect("grant other read");
     let mut spec = routed_ask_spec(&fixture);
     spec.intent_key = "linked-member-followup".into();
     spec.who = Some(TaskAskTarget::People([fixture.person, other].into()));

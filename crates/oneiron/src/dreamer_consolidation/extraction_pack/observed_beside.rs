@@ -161,7 +161,7 @@ fn qualifying_candidates(
         .map(|(checked, operand)| {
             let candidate = bound.verify_observation_evidence_in_txn(
                 context.memory,
-                context.turn_read,
+                (context.read, context.turn_read),
                 context.txn,
                 operand,
                 checked,

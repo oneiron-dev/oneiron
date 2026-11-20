@@ -145,5 +145,15 @@ pub(super) fn source_in_txn(
         scope,
         &[&lane.actor_key().world_ceiling().worlds],
     );
-    Source::fitted(kind, &raw, &scope).map(Some)
+    Source::fitted(
+        lane.vault(),
+        &lane.store_read(),
+        txn,
+        shown.id,
+        kind,
+        &raw,
+        &scope,
+        &[lane.actor_key()],
+    )
+    .map(Some)
 }

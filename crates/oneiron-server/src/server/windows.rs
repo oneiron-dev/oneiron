@@ -171,6 +171,8 @@ impl SyncServer {
     /// mark in the same transaction (FIX 10732). `inserts`, the entity ids
     /// its history inserts as admission read them, owe the erasure sweep a
     /// compaction in it when one names a row hard-deleted here (census L6-05).
+    /// A member lane's write (`member_write`) has its rows judged again there
+    /// too (MEMBER-SYNC threat F3).
     pub(crate) fn persist_imported_update(
         &self,
         key: &WindowKey,
@@ -178,6 +180,7 @@ impl SyncServer {
         inserts: &oneiron::sync::window::UpdateInserts,
         landings: &oneiron::sync::selector::RepoSyncLandings,
         auth: Option<&crate::auth::CoreAuth>,
+        member_write: Option<&crate::handler::member_lane::MemberPromotedWrite>,
     ) -> Result<u64, oneiron::Error> {
         server_state::persist_admitted_window_update(
             &self.vault,
@@ -185,7 +188,12 @@ impl SyncServer {
             update_bytes,
             inserts,
             landings,
-            |txn| auth.is_none_or(|auth| auth.credential_is_live_in_write_txn(&self.vault, txn)),
+            |txn| {
+                auth.is_none_or(|auth| {
+                    auth.credential_is_live_in_write_txn(&self.vault, txn)
+                        && member_write.is_none_or(|write| write.stands_in(&self.vault, txn, auth))
+                })
+            },
         )
     }
 
@@ -212,6 +220,51 @@ impl SyncServer {
             |txn| auth.is_none_or(|auth| auth.credential_is_live_in_write_txn(&self.vault, txn)),
             peer,
             source,
+        )
+    }
+
+    /// [`Self::persist_imported_update`] for an own device's retained update
+    /// that the home's drain replays (L7-41). No socket sent it, so no Write
+    /// credential is rechecked: the writer requires instead that `work` still
+    /// stands as the burst core handed it back
+    /// ([`DeviceBurstWork::stands_in_txn`]): still held, its device's
+    /// authority unchanged. A batch that no longer stands persists nothing,
+    /// and the drain's next pass ends it (#9226 review). One a residence
+    /// socket sent ([`DeviceBurstWork::promoted`]) is judged as
+    /// [`Self::persist_promoted_imported_update`] judges the socket's own:
+    /// the entities it lands on `source` must still reach the device's
+    /// machine, in the same writer (#9226 review round 2).
+    ///
+    /// [`DeviceBurstWork::stands_in_txn`]: oneiron::sync::federation_burst::DeviceBurstWork::stands_in_txn
+    /// [`DeviceBurstWork::promoted`]: oneiron::sync::federation_burst::DeviceBurstWork::promoted
+    pub(crate) fn persist_retained_device_update(
+        &self,
+        key: &WindowKey,
+        update_bytes: &[u8],
+        inserts: &oneiron::sync::window::UpdateInserts,
+        landings: &oneiron::sync::selector::RepoSyncLandings,
+        work: &oneiron::sync::federation_burst::DeviceBurstWork,
+        source: &loro::LoroDoc,
+    ) -> Result<u64, oneiron::Error> {
+        if work.promoted() {
+            return server_state::persist_promoted_window_update(
+                &self.vault,
+                key,
+                update_bytes,
+                inserts,
+                landings,
+                |txn| retained_work_stands(&self.vault, work, txn),
+                work.peer().machine(),
+                source,
+            );
+        }
+        server_state::persist_admitted_window_update(
+            &self.vault,
+            key,
+            update_bytes,
+            inserts,
+            landings,
+            |txn| retained_work_stands(&self.vault, work, txn),
         )
     }
 
@@ -342,6 +395,20 @@ pub(super) fn spawn_local_change_producer(
             }
         }
     });
+}
+
+/// Whether `work` still stands in `txn`
+/// ([`oneiron::sync::federation_burst::DeviceBurstWork::stands_in_txn`]); a
+/// standing that does not read does not stand.
+fn retained_work_stands(
+    vault: &oneiron::Vault,
+    work: &oneiron::sync::federation_burst::DeviceBurstWork,
+    txn: &heed::RoTxn<'_>,
+) -> bool {
+    work.stands_in_txn(vault, txn).unwrap_or_else(|error| {
+        tracing::warn!(%error, "a retained device batch's standing did not read");
+        false
+    })
 }
 
 #[cfg(test)]

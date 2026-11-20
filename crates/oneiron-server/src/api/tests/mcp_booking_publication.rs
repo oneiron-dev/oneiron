@@ -40,6 +40,7 @@ fn config(host: oneiron::EntityId) -> EventTypeConfig {
         }],
         flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 
@@ -59,6 +60,7 @@ fn publication(config: &EventTypeConfig, owner_display: &str) -> serde_json::Val
             deposit: None,
             duration_min: 30,
             description: "A first call".to_owned(),
+            allowed_durations_min: Vec::new(),
         }],
         constraint_field: ConstraintFieldConfig {
             enabled: false,
@@ -142,11 +144,11 @@ async fn public_page_status(server: &Arc<SyncServer>, page: oneiron::EntityId) -
         ))
         .body(Body::empty())
         .expect("request");
-    crate::build_app(Arc::clone(server))
-        .oneshot(request)
-        .await
-        .expect("response")
-        .status()
+    let app = crate::build_app(Arc::clone(server));
+    crate::test_engine_stack::on_engine_stack(async move {
+        app.oneshot(request).await.expect("response").status()
+    })
+    .await
 }
 
 /// The owner's own slip, attenuated to read and propose, under a `proposed`

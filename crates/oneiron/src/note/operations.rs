@@ -419,7 +419,30 @@ impl Memory<'_> {
         lane: crate::core_write::CoreWriteLaneRef<'_>,
         landing: super::NoteEditLanding<'_>,
     ) -> MemoryResult<NoteOperationReceipt> {
-        self.apply_note_candidate_in_lane(txn, note, operation, grant, None, lane, landing)
+        self.apply_note_candidate_in_lane(txn, note, operation, grant, None, None, lane, landing)
+    }
+
+    /// [`Self::apply_note_operation_in_txn`] for the text a merge of the
+    /// pending `fork` lands from (`NoteFork::recovery_merge`): once the write
+    /// gate admits it, the fork's found keys move to `note` before the text
+    /// is stored (REVIEW-9471 F2).
+    pub(super) fn apply_fork_merge_text_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        note: EntityId,
+        fork: EntityId,
+        operation: &NoteOperation,
+    ) -> MemoryResult<NoteOperationReceipt> {
+        self.apply_note_candidate_in_lane(
+            txn,
+            note,
+            operation,
+            None,
+            None,
+            Some(fork),
+            crate::core_write::CoreWriteLaneRef::Unbound,
+            super::NoteEditLanding::Grant,
+        )
     }
 
     /// Loads the actual native fork under the same writer as admission. There
@@ -445,6 +468,13 @@ impl Memory<'_> {
             &candidate.doc,
             &super::documents::snapshot(&proposed.doc)?,
         )?;
+        super::found_key_restore::restore_kept_handles_in_candidate_in_txn(
+            self.vault(),
+            txn,
+            &candidate,
+            &fork,
+            self.write_actor(),
+        )?;
         let operation = NoteOperation {
             request_id: self.vault().store.clock.entity_id()?,
             change: NoteChange::Edit {
@@ -461,6 +491,7 @@ impl Memory<'_> {
             &operation,
             None,
             Some(candidate),
+            Some(fork.fork),
             crate::core_write::CoreWriteLaneRef::Unbound,
             super::NoteEditLanding::Grant,
         )
@@ -477,6 +508,7 @@ impl Memory<'_> {
         operation: &NoteOperation,
         grant: Option<EntityId>,
         native: Option<NoteDocument>,
+        custody_from: Option<EntityId>,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
         landing: super::NoteEditLanding<'_>,
     ) -> MemoryResult<NoteOperationReceipt> {
@@ -573,6 +605,19 @@ impl Memory<'_> {
         let outcome = match outcome {
             Some(proposed) => proposed,
             None => {
+                // A landing fork's found keys and their rulings go to the
+                // NOTE once the gate admits its text, before the text is
+                // stored: a value ruled in the fork is admitted kept, and a
+                // key still open is answered on the NOTE. A landing the gate
+                // holds moves none (REVIEW-9471 F2).
+                if let Some(fork) = custody_from {
+                    crate::secret_custody::move_side_row_custody_in_txn(
+                        &self.vault().store,
+                        txn,
+                        &fork,
+                        &note,
+                    )?;
+                }
                 let applied = if let Some(candidate) = &native {
                     candidate
                 } else {

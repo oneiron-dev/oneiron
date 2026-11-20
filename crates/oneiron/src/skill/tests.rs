@@ -1298,6 +1298,7 @@ fn a_restore_never_lifts_a_quarantine_placed_since() -> Result<()> {
     let active = activate(&vault, &id, &candidate)?;
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100)?;
     let mut quarantined = active;
     quarantined.lifecycle_status = SkillLifecycle::Quarantined;
@@ -1362,6 +1363,7 @@ fn a_restore_never_returns_a_withdrawn_approval_or_a_lifted_governance_tier() ->
     };
 
     let before_withdrawal = backups.path().join("before-withdrawal");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&before_withdrawal, 100)?;
     let mut withdrawn = active.clone();
     withdrawn.approval_status = ClaimApprovalStatus::Proposed;

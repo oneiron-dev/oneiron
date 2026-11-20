@@ -10,6 +10,7 @@ use crate::{EntityId, TimeRange, Vault, VaultConfig};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn spec(vault: &Vault, holder: EntityId) -> TaskAskSpec {
+    super::tests::support::grant_ask_read(vault, &[holder]).expect("grant holder read");
     TaskAskSpec {
         intent_key: "bound-ask".into(),
         ..crate::task_verb::TaskAskSpec::shorthand(
@@ -283,6 +284,7 @@ fn bound_ask_first_answer_cas_has_one_version_claim_and_resolved_result() -> Res
         envelope.clone(),
     )?;
     vault.create_standing_grant(&auth, bound)?;
+    super::tests::support::grant_ask_read(&vault, &[two])?;
     ask.who = Some(TaskAskTarget::Authority(AskAuthorityScope {
         class,
         envelope,

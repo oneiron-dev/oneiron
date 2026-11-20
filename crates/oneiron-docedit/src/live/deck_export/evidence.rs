@@ -34,10 +34,7 @@ pub fn relationship_changes(
             out.push(RelationshipChange {
                 source: source.clone(),
                 id: id.clone(),
-                kind: now
-                    .or(was)
-                    .map(|(kind, _)| kind.clone())
-                    .unwrap_or_default(),
+                kind: now.or(was).map_or_default(|(kind, _)| kind.clone()),
                 before: was.map(|(_, target)| target.clone()),
                 after: now.map(|(_, target)| target.clone()),
             });

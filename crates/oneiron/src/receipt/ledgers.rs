@@ -567,24 +567,3 @@ pub(crate) fn attempt_pack_receipt_in_txn(
     }
     Ok(Some(receipt))
 }
-
-/// Test fixture only: emulate a pack receipt imported from the pre-model wire.
-/// Production never removes the immutable executor stamp.
-#[cfg(test)]
-pub(crate) fn make_attempt_receipt_legacy_for_tests(vault: &Vault, receipt_id: &str) -> Result<()> {
-    let key = receipt_id.to_owned();
-    vault.with_write_txn_grouped(|txn| {
-        let mut receipt =
-            PACK_RECEIPT
-                .get(&vault.store, txn, &key)?
-                .ok_or(Error::InvalidClaimBody(
-                    "legacy fixture needs an attempt receipt",
-                ))?;
-        if receipt.fields.remove("model").is_none() {
-            return Err(Error::InvalidClaimBody(
-                "legacy fixture needs a stamped model",
-            ));
-        }
-        PACK_RECEIPT.put(&vault.store, txn, &key, &receipt)
-    })
-}

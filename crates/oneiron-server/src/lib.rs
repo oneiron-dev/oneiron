@@ -63,6 +63,7 @@ pub mod error;
 pub mod feedback_delivery;
 mod feedback_redaction;
 mod files_intake;
+mod gpu_host;
 mod handler;
 mod home_candidacy;
 mod hook_decisions;
@@ -83,6 +84,7 @@ pub mod logging;
 #[cfg(target_os = "macos")]
 mod mac_worker_bootstrap;
 mod machine;
+pub mod machine_capacity;
 mod mail_host;
 pub mod managed;
 mod managed_owner_check;
@@ -101,6 +103,7 @@ mod residence_machines;
 pub mod runtime;
 mod sandbox_vendor;
 mod saved_query_sweep;
+mod selector_release;
 pub mod server;
 mod shared_envs;
 mod skills_pack;
@@ -241,4 +244,9 @@ pub fn build_artifact_app(server: Arc<SyncServer>) -> Router {
 #[path = "../tests/support/fake_llm.rs"]
 mod fake_llm;
 #[cfg(test)]
+#[path = "../tests/support/owner_only_file.rs"]
+mod owner_only_file;
+#[cfg(test)]
 mod test_credentials;
+#[cfg(test)]
+mod test_engine_stack;
