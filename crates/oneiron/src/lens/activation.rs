@@ -159,17 +159,8 @@ impl SlotDecider {
         let Ok(proposer) = EntityId::from_hex(&proposal.proposed_by) else {
             return Err(refused());
         };
-        let mut proposer_starts = vec![LineageStart::Actor(proposer)];
-        if let Some(attempt) = proposal.proposed_by_run_attempt.as_deref() {
-            let Some(attempt) = oneiron_hex::decode::<16>(attempt)
-                .and_then(|bytes| AttemptId::from_bytes(&bytes).ok())
-            else {
-                return Err(refused());
-            };
-            proposer_starts.push(LineageStart::Attempt(attempt));
-        }
-        let mut starts = vec![LineageStart::Actor(self.actor)];
-        starts.extend(self.run_attempt.map(LineageStart::Attempt));
+        let proposer_starts = vec![LineageStart::Actor(proposer)];
+        let starts = vec![LineageStart::Actor(self.actor)];
         let decider = settling_lineage_in_txn(vault, txn, &starts)?;
         let proposer = settling_lineage_in_txn(vault, txn, &proposer_starts)?;
         match (decider, proposer) {
