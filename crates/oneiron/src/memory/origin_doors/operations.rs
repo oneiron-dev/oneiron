@@ -52,6 +52,7 @@ impl Memory<'_> {
             input.residence,
             writer,
             input.mirror,
+            input.writer_door.as_deref(),
         )?;
         Ok(OriginAuthorityView {
             repo: input.repo,

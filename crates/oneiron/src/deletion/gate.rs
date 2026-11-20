@@ -122,6 +122,11 @@ impl<'a> GatedDeletion<'a> {
         self.context.actor
     }
 
+    /// The actor this delete runs as, as a write names it: the revoker of a share it retracts.
+    pub(super) fn write_actor(&self) -> crate::write_envelope::WriteActor {
+        crate::write_envelope::WriteActor::new(self.context.actor, self.context.actor_class)
+    }
+
     /// The owner act the delete carries out, when its door bound one.
     pub(super) fn owner_act(&self) -> Option<&'a crate::secret_custody::EraseOwnerAct<'a>> {
         self.owner_act
@@ -374,6 +379,75 @@ pub(super) fn reverify_deletion_authority_when_unpublished(
         return Ok(());
     }
     reverify_deletion_authority_before_publication(gate, txn)
+}
+
+/// Re-proves `owner`, the proof the vault owner's own delete carries
+/// ([`crate::Vault::delete_entity_with_reason_as_owner`]), against `txn`'s
+/// view: the owner's credential is still live and its person still owns this
+/// vault, so a request admitted on an owner credential that is revoked, or
+/// whose person stops owning the vault, while it waits on a writer tears and
+/// publishes nothing (FIX MEMORY-DELETE-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
+/// It runs beside [`reverify_deletion_authority_before_publication`], at the
+/// same pre-publication call sites and under the same rule. `None`, every
+/// other delete, re-proves nothing here.
+pub(super) fn reverify_owner_proof_before_publication(
+    vault: &crate::Vault,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+    txn: &heed::RoTxn<'_>,
+) -> Result<()> {
+    owner.map_or(Ok(()), |owner| {
+        owner.revalidate_in_txn(vault, txn).map(drop)
+    })
+}
+
+/// [`reverify_owner_proof_before_publication`] IF AND ONLY IF this delete
+/// published nothing, as [`reverify_deletion_authority_when_unpublished`]
+/// re-runs a gate's check.
+pub(super) fn reverify_owner_proof_when_unpublished(
+    vault: &crate::Vault,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+    crdt_persisted: bool,
+    txn: &heed::RoTxn<'_>,
+) -> Result<()> {
+    if crdt_persisted {
+        return Ok(());
+    }
+    reverify_owner_proof_before_publication(vault, owner, txn)
+}
+
+/// The owner's proof a delete's publication re-proves, and whether this
+/// delete's own scrub committed before it: a soft delete scrubs and then
+/// publishes, every other delete publishes before it tears.
+#[derive(Clone, Copy)]
+pub(crate) enum OwnerAtPublication<'a> {
+    /// Published before this delete tore anything: re-proved as each
+    /// pre-publication writer re-proves it
+    /// ([`reverify_owner_proof_before_publication`]).
+    BeforeScrub(&'a crate::consent::AuthenticatedOwner),
+    /// Published after this delete's own soft scrub committed: the owner's
+    /// delete of their own PERSON re-proves with that PERSON taken as live
+    /// ([`crate::consent::AuthenticatedOwner::revalidate_after_own_scrub_in_txn`]).
+    AfterOwnScrub(&'a crate::consent::AuthenticatedOwner),
+}
+
+/// Re-proves `owner` in the publish transaction of the delete of `id`
+/// ([`OwnerAtPublication`]). `None`, every other delete, re-proves nothing.
+#[cfg(feature = "sync")]
+pub(super) fn reverify_owner_at_publication(
+    vault: &crate::Vault,
+    owner: Option<OwnerAtPublication<'_>>,
+    id: &EntityId,
+    txn: &heed::RoTxn<'_>,
+) -> Result<()> {
+    match owner {
+        None => Ok(()),
+        Some(OwnerAtPublication::BeforeScrub(owner)) => {
+            reverify_owner_proof_before_publication(vault, Some(owner), txn)
+        }
+        Some(OwnerAtPublication::AfterOwnScrub(owner)) => owner
+            .revalidate_after_own_scrub_in_txn(vault, txn, id)
+            .map(drop),
+    }
 }
 
 impl DeletionGateContext {

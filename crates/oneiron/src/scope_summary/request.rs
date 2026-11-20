@@ -25,7 +25,8 @@ use rmpv::Value;
 mod editor_sources;
 mod remake;
 mod requester_lane;
-pub(super) use requester_lane::inherit_note_requester_lane;
+use requester_lane::require_sources_in_declared_lane;
+pub(super) use requester_lane::{declared_lane, inherit_requester_lane};
 
 pub(super) const REQUEST_VERSION: u64 = 2;
 /// The declaration key an explicit source set rides under (FIX 3198).
@@ -136,7 +137,7 @@ impl ScopeSummaryPlan {
     }
 
     /// The plan's evidence read in `txn`; a sitting's TURNs under the per-call
-    /// labels its lines cite (FIX 7509).
+    /// labels its lines cite (FIX 7509); its MESSAGEs judged in the declared lane.
     pub(crate) fn evidence_in_txn(
         &self,
         vault: &Vault,
@@ -155,7 +156,7 @@ impl ScopeSummaryPlan {
             evidence.editor_sources =
                 editor_sources::editor_sources_in_txn(vault, txn, &previous, &evidence)?;
         }
-        Ok(evidence)
+        requester_lane::evidence_in_declared_lane(vault, txn, self, evidence)
     }
 
     /// The requester's surface a landing's reply is checked and receipted on
@@ -322,6 +323,10 @@ pub(super) fn plan_in_txn(
             )?
         }
     };
+    // A narrowed requester's lane judges these sources at every plan (review P1 of #9583).
+    if scope.is_some() || session.is_some() {
+        require_sources_in_declared_lane(vault, txn, input, request.requester, &sources)?;
+    }
     // A sitting that retained no turns has no summary: its attempt completes
     // with none (FIX 7509), never with invented prose.
     if sources.is_empty() && session.is_none() {

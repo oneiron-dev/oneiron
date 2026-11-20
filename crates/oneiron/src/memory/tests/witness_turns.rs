@@ -39,6 +39,8 @@ fn witness_writes_turn_messages_edges_and_text() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
+            thread_audience: None,
+            project: None,
             // ONE-1767: one call = ONE non-system speaker. Mixed-author turns
             // are witnessed as consecutive single-speaker turns, so this row
             // set is all `User` (a `Companion` row here is a bad request).
@@ -48,6 +50,7 @@ fn witness_writes_turn_messages_edges_and_text() {
                 witness_message(2, WitnessAuthor::User, "closing note"),
             ],
             occurred_at: 500,
+            assertions: Default::default(),
         })
         .expect("witness turn");
 
@@ -149,8 +152,11 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex.clone(),
             turn_ref: Some(turn_hex.clone()),
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "first half")],
             occurred_at: 600,
+            assertions: Default::default(),
         })
         .expect("first witness");
     let turn_id = EntityId::from_hex(&turn_hex).unwrap();
@@ -170,8 +176,11 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex,
             turn_ref: Some(turn_hex.clone()),
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(1, WitnessAuthor::System, "system row")],
             occurred_at: 601,
+            assertions: Default::default(),
         })
         .expect("second witness");
     assert_eq!(first.turn_short_id, second.turn_short_id);
@@ -237,8 +246,11 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
         .witness(&WitnessTurn {
             conversation_ref: turn_hex,
             turn_ref: None,
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "x")],
             occurred_at: 602,
+            assertions: Default::default(),
         })
         .expect_err("turn id passed as conversation must fail");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
@@ -261,12 +273,15 @@ fn witness_facade_turn_enqueues_meso_on_session_close() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::Companion,
                 "companion turn headed for the close",
             )],
             occurred_at: 500,
+            assertions: Default::default(),
         })
         .expect("witness turn");
 
@@ -339,6 +354,8 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
+            thread_audience: None,
+            project: None,
             messages: vec![
                 witness_message(0, WitnessAuthor::User, "owner row in the ledger"),
                 witness_message(
@@ -348,6 +365,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
                 ),
             ],
             occurred_at: 500,
+            assertions: Default::default(),
         })
         .expect_err("a mixed non-system mint is a bad request");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
@@ -375,8 +393,9 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
         vault.search_text("ledger", 10).expect("search").is_empty(),
         "the refused mint left no text postings"
     );
+    let key = vault.local_session_key(actor).expect("session key");
     let open = vault
-        .open_session()
+        .open_session(key)
         .expect("open session read")
         .expect("session open");
     assert_eq!(
@@ -390,12 +409,15 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::User,
                 "owner holds the turn alone",
             )],
             occurred_at: 500,
+            assertions: Default::default(),
         })
         .expect("mint a user turn");
     let turn = facade
@@ -415,12 +437,15 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex,
             turn_ref: Some(turn.id_hex),
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 1,
                 WitnessAuthor::Companion,
                 "companion usurps the owner turn",
             )],
             occurred_at: 600,
+            assertions: Default::default(),
         })
         .expect_err("a cross-speaker append is a bad request");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
@@ -458,7 +483,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
         "the refused append left no text postings"
     );
     let open = vault
-        .open_session()
+        .open_session(key)
         .expect("open session read")
         .expect("session open");
     assert_eq!(
@@ -495,8 +520,11 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
             &WitnessTurn {
                 conversation_ref: conversation_hex,
                 turn_ref: Some(turn_id.to_hex()),
+                thread_audience: None,
+                project: None,
                 messages: vec![witness_message(0, WitnessAuthor::Companion, "late joiner")],
                 occurred_at: 750,
+                assertions: Default::default(),
             },
             || {
                 let empty_body = encode_rmpv(&Value::Map(Vec::new())).expect("container body");
@@ -581,8 +609,11 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
             &WitnessTurn {
                 conversation_ref: conversation2_hex,
                 turn_ref: Some(turn2_id.to_hex()),
+                thread_audience: None,
+                project: None,
                 messages: vec![witness_message(0, WitnessAuthor::Companion, "speaker grab")],
                 occurred_at: 850,
+                assertions: Default::default(),
             },
             || {
                 vault
@@ -652,8 +683,11 @@ fn witness_concurrent_wrong_type_conversation_refuses_without_rows_or_edges() {
             &WitnessTurn {
                 conversation_ref: conversation.to_hex(),
                 turn_ref: Some(turn_id.to_hex()),
+                thread_audience: None,
+                project: None,
                 messages: vec![message],
                 occurred_at: 750,
+                assertions: Default::default(),
             },
             || {
                 vault
@@ -715,8 +749,11 @@ fn witness_concurrent_soft_erased_conversation_refuses_without_a_turn() {
             &WitnessTurn {
                 conversation_ref: conversation.to_hex(),
                 turn_ref: Some(turn_id.to_hex()),
+                thread_audience: None,
+                project: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "after erasure")],
                 occurred_at: 750,
+                assertions: Default::default(),
             },
             || {
                 vault
@@ -746,8 +783,11 @@ fn witness_append_redirties_the_same_turn() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex.clone(),
             turn_ref: Some(turn_id.to_hex()),
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "the original turn")],
             occurred_at: 1_000,
+            assertions: Default::default(),
         })
         .expect("mint the turn");
     let minted_raw = vault.get_raw(&turn_id).expect("turn raw").expect("turn");
@@ -775,11 +815,14 @@ fn witness_append_redirties_the_same_turn() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex,
             turn_ref: Some(turn_id.to_hex()),
+            thread_audience: None,
+            project: None,
             messages: vec![
                 witness_message(1, WitnessAuthor::User, "the turn continues"),
                 witness_message(2, WitnessAuthor::System, "tool row in between"),
             ],
             occurred_at: 900,
+            assertions: Default::default(),
         })
         .expect("backdated same-speaker append");
 
@@ -862,12 +905,15 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex.clone(),
             turn_ref: Some(turn_id.to_hex()),
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::Companion,
                 "the assistant turn",
             )],
             occurred_at: 600,
+            assertions: Default::default(),
         })
         .expect("mint an assistant turn");
 
@@ -879,8 +925,11 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex,
             turn_ref: Some(turn_id.to_hex()),
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(1, WitnessAuthor::System, "tool result row")],
             occurred_at: 601,
+            assertions: Default::default(),
         })
         .expect("system interleave on an established turn is permitted");
     let raw = vault.get_raw(&turn_id).expect("turn raw").expect("turn");
@@ -918,12 +967,15 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
                     .expect("fresh conv")
                     .to_hex(),
                 turn_ref,
+                thread_audience: None,
+                project: None,
                 messages: vec![witness_message(
                     0,
                     WitnessAuthor::System,
                     "orphan system rows",
                 )],
                 occurred_at: 700,
+                assertions: Default::default(),
             })
             .expect_err("a system-only mint has no grouping speaker");
         assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
@@ -944,7 +996,8 @@ fn witness_bumps_open_session_activity_atomically() {
     let actor = put_person(&vault, 0x71);
     let facade = facade_for(&vault, actor);
 
-    let session = match vault.mint_session(400).expect("mint session") {
+    let key = vault.local_session_key(actor).expect("session key");
+    let session = match vault.mint_session(key, 400).expect("mint session") {
         crate::session_lifecycle::SessionMintOutcome::Minted(id) => id,
         other => panic!("expected fresh mint, got {other:?}"),
     };
@@ -954,13 +1007,16 @@ fn witness_bumps_open_session_activity_atomically() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "hello again")],
             occurred_at: 500,
+            assertions: Default::default(),
         })
         .expect("witness turn");
 
     let open = vault
-        .open_session()
+        .open_session(key)
         .expect("open session read")
         .expect("session still open");
     assert_eq!(open.session, session);
@@ -974,12 +1030,15 @@ fn witness_bumps_open_session_activity_atomically() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex,
             turn_ref: None,
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "backfilled note")],
             occurred_at: 450,
+            assertions: Default::default(),
         })
         .expect("witness backfill turn");
     let open = vault
-        .open_session()
+        .open_session(key)
         .expect("open session read")
         .expect("session still open");
     assert_eq!(open.last_activity, 500, "activity clock is monotonic");
@@ -998,11 +1057,15 @@ fn witness_without_an_open_session_stays_valid() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex,
             turn_ref: None,
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "sessionless turn")],
             occurred_at: 600,
+            assertions: Default::default(),
         })
         .expect("witness sessionless turn");
-    assert_eq!(vault.open_session().expect("open session read"), None);
+    let key = vault.local_session_key(actor).expect("session key");
+    assert_eq!(vault.open_session(key).expect("open session read"), None);
 }
 
 #[test]
@@ -1036,8 +1099,11 @@ fn witnessed_person_turn_obeys_room_delete_and_erasure_fence_without_blocking_ot
             .witness(&WitnessTurn {
                 conversation_ref: room.to_hex(),
                 turn_ref: None,
+                thread_audience: None,
+                project: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, content)],
                 occurred_at: 10,
+                assertions: Default::default(),
             })
     };
     let first = witness(alice, "owner room turn").expect("owner witness");
@@ -1066,6 +1132,7 @@ fn witnessed_person_turn_obeys_room_delete_and_erasure_fence_without_blocking_ot
         vault
             .erase_room_person(room, alice, owner)
             .expect("erase owner")
+            .outcomes
             .iter()
             .any(|result| result.existed)
     );
@@ -1110,12 +1177,15 @@ fn witness_author_cannot_be_replaced_or_removed_by_raw_turn_reput() {
         .witness(&WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: None,
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::User,
                 "keep original author",
             )],
             occurred_at: 10,
+            assertions: Default::default(),
         })
         .expect("witness");
     let turn =
@@ -1148,7 +1218,14 @@ fn witness_author_cannot_be_replaced_or_removed_by_raw_turn_reput() {
         assert_eq!(
             vault
                 .batch()
-                .put_replicated(&turn, ENTITY_TYPE_TURN, occurred, h.learned_at, &forged)
+                .put_replicated(
+                    &turn,
+                    ENTITY_TYPE_TURN,
+                    occurred,
+                    h.learned_at,
+                    None,
+                    &forged
+                )
                 .commit()
                 .unwrap_err()
                 .kind(),
@@ -1169,7 +1246,8 @@ fn witness_author_cannot_be_replaced_or_removed_by_raw_turn_reput() {
     );
     let erased = vault
         .erase_room_person(room, alice, owner)
-        .expect("original author's erasure");
+        .expect("original author's erasure")
+        .outcomes;
     assert!(erased.iter().any(|outcome| outcome.existed));
     assert!(vault.get(&turn).unwrap().is_none());
 }
@@ -1212,8 +1290,11 @@ fn mixed_room_messages() -> (
         .witness(&WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: None,
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "cedarwax")],
             occurred_at: 10,
+            assertions: Default::default(),
         })
         .expect("first witness");
     let turn = EntityId::from_hex(first.receipt_ref.strip_prefix("witness:").unwrap()).unwrap();
@@ -1232,8 +1313,11 @@ fn mixed_room_messages() -> (
         .witness(&WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(1, WitnessAuthor::User, "orchidwax")],
             occurred_at: 11,
+            assertions: Default::default(),
         })
         .expect("second actor appends to the first TURN");
     // Bob is not the vault's owner (H149), and the room's rows carry no
@@ -1284,7 +1368,8 @@ fn per_person_room_erasure_sweeps_messages_inside_another_persons_turn() {
     let actor = crate::WriteActor::new(bob, EdgeActorClass::Human);
     let outcomes = vault
         .erase_room_person(room, bob, actor)
-        .expect("erase second author");
+        .expect("erase second author")
+        .outcomes;
     assert_eq!(outcomes.len(), 1);
     assert!(outcomes[0].receipt_id.is_some());
     assert!(vault.get(&b_message).unwrap().is_none());
@@ -1398,6 +1483,7 @@ fn persist_received_turn_tombstone(vault: &crate::Vault, turn: EntityId, raw_val
 fn persisted_personal_turn_tombstone_erases_only_its_authored_messages_on_receiver() {
     for soft_first in [false, true] {
         let (_dir, vault, alice, _bob, _room, turn, a_message, b_message) = mixed_room_messages();
+        vault.prepare_install_signing().expect("install signing");
         let request_id = *uuid::Uuid::now_v7().as_bytes();
         if soft_first {
             let soft = crate::deletion::TombstoneValueV2 {
@@ -1523,12 +1609,15 @@ fn non_person_witness_author_does_not_block_another_persons_room_erasure() {
         .witness(&WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: None,
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::Companion,
                 "agentwitnessneedle",
             )],
             occurred_at: 10,
+            assertions: Default::default(),
         })
         .expect("admitted AGENT_DEF witness");
     let agent_turn =
@@ -1548,12 +1637,15 @@ fn non_person_witness_author_does_not_block_another_persons_room_erasure() {
         .witness(&WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: None,
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::User,
                 "alicewitnessneedle",
             )],
             occurred_at: 11,
+            assertions: Default::default(),
         })
         .expect("Alice witness");
     let alice_message = EntityId::from_hex(
@@ -1568,7 +1660,8 @@ fn non_person_witness_author_does_not_block_another_persons_room_erasure() {
     .unwrap();
     let erased = vault
         .erase_room_person(room, alice, owner)
-        .expect("unrelated author cannot block erasure");
+        .expect("unrelated author cannot block erasure")
+        .outcomes;
     assert!(erased.iter().any(|outcome| outcome.existed));
     assert!(vault.get(&alice_message).unwrap().is_none());
     assert!(vault.get(&agent_message).unwrap().is_some());
@@ -1601,27 +1694,25 @@ fn non_person_witness_author_does_not_block_another_persons_room_erasure() {
 #[test]
 fn a_turn_fill_leased_before_the_owner_binding_does_not_land() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = crate::Vault::open(
-        dir.path(),
-        VaultConfig {
-            embedding_model: Some("test/model@v1".to_owned()),
-            dimensions: 4,
-            ..VaultConfig::default()
-        },
-    )
-    .expect("open vault");
+    let mut config = VaultConfig::device();
+    config.embedding_model = Some("test/model@v1".to_owned());
+    config.dimensions = 4;
+    let vault = crate::Vault::open(dir.path(), config).expect("open vault");
     let receipt = facade_for(&vault, put_person(&vault, 0xD1))
         .witness(&WitnessTurn {
             conversation_ref: EntityId::from_bytes([0xD2; 16])
                 .expect("conversation id")
                 .to_hex(),
             turn_ref: None,
+            thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::User,
                 "The mechanic says the car needs new brakes.",
             )],
             occurred_at: 500,
+            assertions: Default::default(),
         })
         .expect("witness turn");
     let turn = EntityId::from_hex(
@@ -1682,8 +1773,11 @@ fn witness_refuses_a_future_occurrence_that_would_strand_later_turns() {
             .expect("conversation id")
             .to_hex(),
         turn_ref: None,
+        thread_audience: None,
+        project: None,
         messages: vec![witness_message(0, WitnessAuthor::User, "a plain turn")],
         occurred_at,
+        assertions: Default::default(),
     };
 
     let refused = facade

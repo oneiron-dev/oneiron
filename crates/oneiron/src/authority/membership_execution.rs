@@ -37,7 +37,7 @@ const NOT_COUNTED: &str =
 /// The `MembershipExecution` transition, after the shape, signature,
 /// retired, sequence-floor, parent-merge and vault checks and before any
 /// roster check: its signer is a machine's install key, never a roster key
-/// (FIX 2222), and some chain of the machine must name the key. While
+/// (FIX 2222), and the machine's roster chain must name the key. While
 /// that machine is a live carrier at the record's parents, under the one
 /// carrier rule in the roster view, it withdraws every slip minted under
 /// each Grant the record names, in `state.slips`, one merged in later

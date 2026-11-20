@@ -28,7 +28,7 @@ impl Vault {
         let record = CodeRunReplayRecord::new(run, CodeRunDeterminism::new(0, [0; 32]));
         stamp_response_owner_in_txn(self, &mut wtxn, run, run, actor)?;
         let record = fence_replay_in_txn(self, &mut wtxn, Cow::Owned(record))?;
-        replay_rows::put(self, &mut wtxn, &run, &record)?;
+        replay_rows::put_fenced(self, &mut wtxn, &record)?;
         Ok(wtxn.commit()?)
     }
 
@@ -84,7 +84,7 @@ impl Vault {
             stamp_response_owner_in_txn(self, &mut wtxn, run, run, actor)?;
         }
         let record = fence_replay_in_txn(self, &mut wtxn, Cow::Owned(record))?;
-        replay_rows::put(self, &mut wtxn, &run, &record)?;
+        replay_rows::put_fenced(self, &mut wtxn, &record)?;
         let output = record
             .outputs
             .iter()

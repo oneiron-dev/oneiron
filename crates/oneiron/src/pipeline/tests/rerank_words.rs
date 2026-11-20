@@ -74,6 +74,7 @@ fn claim_body_at(value: &str, approval: ClaimApprovalStatus) -> Vec<u8> {
 fn a_binding_reranker_is_handed_the_claim_its_pin_holds() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = entity_id(0x6A);
+    put_subject(&vault)?;
     put_twice(
         &vault,
         id,

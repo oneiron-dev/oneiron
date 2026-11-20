@@ -7,8 +7,8 @@ use super::document::{
 use super::pin_index::NOTE_PIN_SOURCE;
 use super::{NoteCore, NoteKind, encode_note_core};
 use crate::batch::secret_scan::{
-    Lifted, Part, SecretScanMode, admit_parts_in_txn, scan_content_in_txn, scan_write_payload,
-    secret_scan_mode_in_txn,
+    Lifted, Part, SecretScanMode, admit_parts_in_txn, admit_tracked_parts_in_txn,
+    scan_content_in_txn, scan_write_payload, secret_scan_mode_in_txn, tracked_replacements,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_doc::{DocActor, PurgeReceipt};
@@ -103,6 +103,74 @@ pub(super) fn persist_recovered_document(
     persist_structural(vault, txn, doc, false)
 }
 
+/// The frontier a NOTE history purge runs through: `requested`, or, without
+/// it, the causal floor shared by every pin and the seal, or the head when
+/// nothing pins the note. A frontier that would pass a cited one is refused.
+/// The purge and the owner's confirm of it both read it here, so the confirm
+/// binds the range the purge erases.
+fn purge_frontier_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    doc: &NoteDocument,
+    requested: Option<&[u8]>,
+) -> MemoryResult<loro::Frontiers> {
+    let key_prefix = format!("{}:", note.to_hex()).into_bytes();
+    let mut pins = Vec::new();
+    for (_, pin) in NOTE_PIN_SOURCE.scan_from(&vault.store, txn, &key_prefix)? {
+        pin.validate()?;
+        pins.push(frontier(&pin.frontier)?);
+    }
+    // A seal pins its frontier too (ARCH-0032 #pins).
+    if let Some(seal) = super::lifecycle::note_seal_in_txn(&vault.store, txn, note)? {
+        pins.push(frontier(&seal.frontier)?);
+    }
+    let at_or_before = |a: &loro::Frontiers, b: &loro::Frontiers| {
+        matches!(
+            doc.doc.cmp_frontiers(a, b),
+            Ok(Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal))
+        )
+    };
+    let through = match requested {
+        Some(bytes) => frontier(bytes)?,
+        None if pins.is_empty() => doc.doc.oplog_frontiers(),
+        None => {
+            let oldest = pins
+                .iter()
+                .find(|oldest| pins.iter().all(|pin| at_or_before(*oldest, pin)));
+            match oldest {
+                Some(oldest) => oldest.clone(),
+                None => {
+                    let mut allowed = doc.doc.oplog_vv();
+                    for pin in &pins {
+                        let vv = doc
+                            .doc
+                            .frontiers_to_vv(pin)
+                            .ok_or_else(|| invalid("NOTE pin frontier unavailable"))?;
+                        allowed = allowed.intersection(&vv);
+                    }
+                    doc.doc.vv_to_frontiers(&allowed)
+                }
+            }
+        }
+    };
+    if !pins.iter().all(|pin| at_or_before(&through, pin)) {
+        return Err(invalid("NOTE purge would pass a cited frontier").into());
+    }
+    Ok(through)
+}
+
+impl Vault {
+    /// The encoded frontier a history purge of NOTE `note` that names none
+    /// runs through now, as [`purge_frontier_in_txn`] reads it: what the
+    /// owner's confirm of that purge binds.
+    pub(crate) fn note_purge_frontier(&self, note: EntityId) -> MemoryResult<Vec<u8>> {
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        let doc = load(self, &txn, note)?;
+        Ok(purge_frontier_in_txn(self, &txn, note, &doc, None)?.encode())
+    }
+}
+
 /// `masks`: this host's own write, whose live text a mask on write may
 /// rewrite. A replica's or a recovered document's text keeps the plain door.
 fn persist_structural(
@@ -184,13 +252,21 @@ fn admit_body(
     if let Some(admitted) = &mut admitted {
         parts.push((TITLE_PLACE, Part::Text(admitted)));
     }
-    if !admit_parts_in_txn(vault, txn, doc.id, &mut parts, &mut Lifted::default())? {
+    let Some(replaced) =
+        admit_tracked_parts_in_txn(vault, txn, doc.id, &mut parts, &mut Lifted::default())?
+    else {
         return Ok(false);
-    }
+    };
     drop(parts);
     let [body_masked, title_masked] = [text != markdown, admitted != title];
     if body_masked {
-        doc.mask_body(&text)?;
+        // Where the mask put each handle in the body as read (FIX 6144):
+        // the body takes them at their spans, with no diff over it (FIX
+        // LORO-TEXT-UPDATE-UNBOUNDED-DIFF-CALLERS).
+        let spans = tracked_replacements(&replaced, &markdown).ok_or(
+            crate::error::Error::InvariantViolation("a masked NOTE body has no spans"),
+        )?;
+        doc.mask_body(spans, &text)?;
     }
     if let Some(admitted) = admitted.as_deref().filter(|_| title_masked) {
         doc.mask_title(admitted)?;
@@ -478,7 +554,7 @@ impl Memory<'_> {
     /// Discarding history is the ladder's erase (ARCH-0038): an Owner's own
     /// act, so writing the note is not enough.
     pub fn purge_note_history(&self, note: EntityId, through: &[u8]) -> MemoryResult<()> {
-        self.purge_note_history_with(None, note, Some(through), None)
+        self.purge_note_history_with(None, note, Some(through), None, None)
             .map(|_| ())
     }
 
@@ -495,28 +571,36 @@ impl Memory<'_> {
         note: EntityId,
         through: Option<&[u8]>,
     ) -> MemoryResult<PurgeReceipt> {
-        self.purge_note_history_with(Some(owner), note, through, None)
+        self.purge_note_history_with(Some(owner), note, through, None, None)
     }
 
     /// [`Self::purge_note_history_as`], claiming the completed `erase` act
-    /// `act` in its writer.
+    /// `act` in its writer. With `confirmed`, the frontier the owner's
+    /// confirm bound, an act that names no frontier of its own runs through
+    /// that one, never through a later head.
     pub(crate) fn purge_note_history_for_act(
         &self,
         owner: &AuthenticatedOwner,
         note: EntityId,
         through: Option<&[u8]>,
         act: &str,
+        confirmed: Option<&[u8]>,
     ) -> MemoryResult<PurgeReceipt> {
-        self.purge_note_history_with(Some(owner), note, through, Some(act))
+        self.purge_note_history_with(Some(owner), note, through, Some(act), confirmed)
     }
 
+    /// The purge. `requested` is the frontier the act or the caller names,
+    /// which an act must match; the purge runs through it, or through
+    /// `confirmed` when it names none.
     fn purge_note_history_with(
         &self,
         owner: Option<&AuthenticatedOwner>,
         note: EntityId,
         requested: Option<&[u8]>,
         act: Option<&str>,
+        confirmed: Option<&[u8]>,
     ) -> MemoryResult<PurgeReceipt> {
+        let bound = requested.or(confirmed);
         self.with_actor_content_write_txn(|content| {
             content.update_note(note, |txn, _lane| {
                 if let Some(owner) = owner
@@ -549,50 +633,7 @@ impl Memory<'_> {
                     &receipt_id,
                 )?;
                 let doc = load(self.vault(), txn, note)?;
-                let key_prefix = format!("{}:", note.to_hex()).into_bytes();
-                let mut pins = Vec::new();
-                for (_, pin) in NOTE_PIN_SOURCE.scan_from(&self.vault().store, txn, &key_prefix)? {
-                    pin.validate()?;
-                    pins.push(frontier(&pin.frontier)?);
-                }
-                // A seal pins its frontier too (ARCH-0032 #pins).
-                if let Some(seal) =
-                    super::lifecycle::note_seal_in_txn(&self.vault().store, txn, note)?
-                {
-                    pins.push(frontier(&seal.frontier)?);
-                }
-                let at_or_before = |a: &loro::Frontiers, b: &loro::Frontiers| {
-                    matches!(
-                        doc.doc.cmp_frontiers(a, b),
-                        Ok(Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal))
-                    )
-                };
-                let through = match requested {
-                    Some(bytes) => frontier(bytes)?,
-                    None if pins.is_empty() => doc.doc.oplog_frontiers(),
-                    None => {
-                        let oldest = pins
-                            .iter()
-                            .find(|oldest| pins.iter().all(|pin| at_or_before(*oldest, pin)));
-                        match oldest {
-                            Some(oldest) => oldest.clone(),
-                            None => {
-                                let mut allowed = doc.doc.oplog_vv();
-                                for pin in &pins {
-                                    let vv = doc
-                                        .doc
-                                        .frontiers_to_vv(pin)
-                                        .ok_or_else(|| invalid("NOTE pin frontier unavailable"))?;
-                                    allowed = allowed.intersection(&vv);
-                                }
-                                doc.doc.vv_to_frontiers(&allowed)
-                            }
-                        }
-                    }
-                };
-                if !pins.iter().all(|pin| at_or_before(&through, pin)) {
-                    return Err(invalid("NOTE purge would pass a cited frontier").into());
-                }
+                let through = purge_frontier_in_txn(self.vault(), txn, note, &doc, bound)?;
                 let live_text_hash = *blake3::hash(doc.view()?.markdown.as_bytes()).as_bytes();
                 let snapshot = doc
                     .doc
@@ -681,10 +722,35 @@ pub(super) fn validate_pin_source(
     Ok(())
 }
 
-pub(super) fn require_note_writer(
+/// The reason code of a NOTE edit the Grant does not land at a door that has
+/// no fork to open: the scalar NOTE doors and the NOTE socket (RULING
+/// NOTE-SCALAR-NO-GRANT = A). The writer proposes the edit through
+/// `Vault::edit_note`, which opens a fork for review.
+pub(crate) const NOTE_EDIT_NEEDS_GRANT: &str = "note.edit.needs_grant";
+
+/// Whether `memory`'s actor may write NOTE `id` now by the Grant's answer
+/// alone: [`require_note_writer_with_landing`] for a door that holds no
+/// landing proof of its own.
+fn require_note_writer(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
+) -> MemoryResult<()> {
+    require_note_writer_with_landing(memory, txn, id, super::NoteEditLanding::Grant)
+}
+
+/// Whether `memory`'s actor may write NOTE `id` now, through `landing`: the
+/// Grant's answer for this actor and this NOTE, or the door's own landing
+/// proof ([`super::proposals::landing_proves`]). The NOTE's authorship never
+/// decides it (DEC-0006 #10, ARCH-0032 #forks-proposals): an author with no
+/// Grant is refused here as any other writer is, and the refusal names
+/// [`NOTE_EDIT_NEEDS_GRANT`]; a person who is not the owner keeps the owner
+/// binding refusal's code.
+pub(super) fn require_note_writer_with_landing(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    landing: super::NoteEditLanding<'_>,
 ) -> MemoryResult<()> {
     if memory
         .vault()
@@ -692,17 +758,26 @@ pub(super) fn require_note_writer(
     {
         return Err(invalid("NOTE was erased").into());
     }
-    let (_, body) = super::verbs::note_core(memory.vault(), txn, id)?;
-    if !body.author_ref.is(memory.actor())
-        && !super::proposals::automatic_edit_grant(memory.vault(), txn, id, memory.write_actor())?
+    super::verbs::note_core(memory.vault(), txn, id)?;
+    let actor = memory.write_actor();
+    if !super::proposals::grant_allows(memory.vault(), txn, id, actor)?
+        && !super::proposals::landing_proves(memory.vault(), txn, id, actor, landing)?
     {
         if memory.actor_class() != EdgeActorClass::Human {
-            return Err(MemoryError::bad_request_with(
-                "NOTE edit requires its author or a bound owner",
-                &[],
-            ));
+            let mut refused = MemoryError::bad_request_with(
+                "NOTE edit has no Grant that lands it",
+                &["Propose it through the program NOTE edit, which opens a fork for review."],
+            );
+            refused.reason_codes = vec![NOTE_EDIT_NEEDS_GRANT.to_owned()];
+            return Err(refused);
         }
-        crate::memory::verify_owner_actor_binding_in_txn(memory.vault(), txn, memory.actor())?;
+        crate::memory::verify_owner_actor_binding_in_txn(memory.vault(), txn, memory.actor())
+            .map_err(|mut refused| {
+                if refused.code == crate::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED {
+                    refused.reason_codes.push(NOTE_EDIT_NEEDS_GRANT.to_owned());
+                }
+                refused
+            })?;
     }
     Ok(())
 }

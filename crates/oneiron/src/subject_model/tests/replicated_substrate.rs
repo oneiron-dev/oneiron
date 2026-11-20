@@ -15,12 +15,20 @@ use std::sync::Arc;
 pub(super) const WINDOW: &str = "2026-03";
 
 pub(super) fn blob(kind: u8, data: &[u8]) -> Vec<u8> {
-    let mut blob = vec![kind];
-    for stamp in [100_u64; 3] {
-        blob.extend_from_slice(&stamp.to_be_bytes());
-    }
-    blob.extend_from_slice(data);
-    blob
+    // The full 33-byte header (row_version included), as the claim decoder
+    // reads the body from ENTITY_METADATA_HEADER_LEN. Non-CLAIM rows carry
+    // row_version zero; a CLAIM carries its origin-write version.
+    let row_version = if kind == ENTITY_TYPE_CLAIM { 1 } else { 0 };
+    crate::test_util::entity_record(
+        kind,
+        crate::temporal::TimeRange {
+            start: 100,
+            end: 100,
+        },
+        100,
+        row_version,
+        data,
+    )
 }
 
 #[test]

@@ -203,6 +203,8 @@ fn signer_hwm_survives_reopen_without_rejecting_original_withdrawals() {
     let high = slip_withdrawal(vault_id, &first, &owner, 10, 2);
     let old = slip_withdrawal(vault_id, &genesis, &owner, 5, 3);
     let old_hash = authority_entry_hash(&old).unwrap();
+    let rollback = slip_withdrawal(vault_id, &high, &owner, 5, 4);
+    let rollback_hash = authority_entry_hash(&rollback).unwrap();
     assert!(
         fold_authority_log(&[genesis.clone(), old.clone()])
             .valid_entries
@@ -222,12 +224,19 @@ fn signer_hwm_survives_reopen_without_rejecting_original_withdrawals() {
         vault.get_authority_log_entry(&id).unwrap(),
         Some(old.clone())
     );
+    put_replay(&vault, &rollback, u64::MAX);
     let fold = vault.authority_fold().unwrap();
     assert!(
-        fold.issues
+        !fold
+            .issues
             .contains(&AuthorityFoldIssue::NonMonotonicSeq(old_hash))
     );
-    assert!(!fold.valid_entries.contains(&old_hash));
+    assert!(fold.valid_entries.contains(&old_hash));
+    assert!(
+        fold.issues
+            .contains(&AuthorityFoldIssue::NonMonotonicSeq(rollback_hash))
+    );
+    assert!(!fold.valid_entries.contains(&rollback_hash));
     for entry in [&genesis, &first, &high] {
         assert!(
             fold.valid_entries
@@ -236,6 +245,7 @@ fn signer_hwm_survives_reopen_without_rejecting_original_withdrawals() {
         put_replay(&vault, entry, 999);
     }
     put_replay(&vault, &old, 999);
+    put_replay(&vault, &rollback, 999);
     assert_eq!(vault.authority_fold().unwrap(), fold);
     drop(vault);
     let reopened = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
@@ -250,8 +260,14 @@ fn late_causal_withdrawal_ancestors_heal_without_unrelated_rollback() {
     let middle = slip_withdrawal(vault_id, &genesis, &owner, 5, 11);
     let tip = slip_withdrawal(vault_id, &middle, &owner, 10, 12);
     let old = slip_withdrawal(vault_id, &genesis, &owner, 4, 13);
+    let old_hash = authority_entry_hash(&old).unwrap();
+    let rollback = slip_withdrawal(vault_id, &tip, &owner, 4, 15);
+    let rollback_hash = authority_entry_hash(&rollback).unwrap();
     let mut outputs = Vec::new();
-    for order in [[&genesis, &middle, &tip], [&genesis, &tip, &middle]] {
+    for order in [
+        [&genesis, &middle, &tip, &rollback],
+        [&genesis, &rollback, &tip, &middle],
+    ] {
         let dir = tempfile::tempdir().unwrap();
         {
             let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
@@ -289,9 +305,17 @@ fn late_causal_withdrawal_ancestors_heal_without_unrelated_rollback() {
                     .contains(&authority_entry_hash(entry).unwrap())
             );
         }
-        assert!(fold.issues.contains(&AuthorityFoldIssue::NonMonotonicSeq(
-            authority_entry_hash(&old).unwrap()
-        )));
+        assert!(fold.valid_entries.contains(&old_hash));
+        assert!(
+            !fold
+                .issues
+                .contains(&AuthorityFoldIssue::NonMonotonicSeq(old_hash))
+        );
+        assert!(
+            fold.issues
+                .contains(&AuthorityFoldIssue::NonMonotonicSeq(rollback_hash))
+        );
+        assert!(!fold.valid_entries.contains(&rollback_hash));
         outputs.push(fold);
     }
     assert_eq!(outputs[0], outputs[1]);

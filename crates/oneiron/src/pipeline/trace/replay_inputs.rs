@@ -160,6 +160,10 @@ pub(in crate::pipeline) fn capture_replay_inputs(
                 "vector_limit": builder.vector_search.as_ref().map(|(_, limit)| limit),
                 "text_limit": builder.text_search.as_ref().map(|(_, limit)| limit),
                 "phonetic_code_count": builder.phonetic_search.as_ref().map(Vec::len),
+                "phonetic_vector_limit": builder
+                    .phonetic_vector_search
+                    .as_ref()
+                    .map(|query| query.limit),
                 "temporal": temporal,
                 "ppr_search": seed_shape(&builder.ppr_search),
                 "ppr_expand": seed_shape(&builder.ppr_expand),

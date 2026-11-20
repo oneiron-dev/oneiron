@@ -36,8 +36,6 @@ mod text;
 mod tree;
 mod workspace_facet;
 
-// FIX [LIBTEST-QUARANTINE-INGEST-HISTORY-TESTS]: the lib test target's type check fails here (4 errors: E0063 x4); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -58,6 +56,8 @@ pub use hosted_verbs::{
 };
 pub use land::HistoryImportReport;
 pub(crate) use ledger::erase_message_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use ledger::history_message_hashes_for_test;
 #[cfg(oneiron_test_support)]
 pub(crate) use ledger::landed_rows_in;
 pub use members::HistoryMemberAddress;

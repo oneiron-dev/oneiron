@@ -268,8 +268,11 @@ impl Totals {
 }
 
 /// The second this import lands at, a second of its own
-/// ([`oneiron::Vault::own_import_second`]).
-fn own_second(vault: &oneiron::Vault) -> anyhow::Result<u64> {
+/// ([`oneiron::Vault::own_import_second`]). The CLI, the queue pass and the
+/// hosted-import worker all own their second through here, and the engine
+/// holds its one import-second lock for the whole wait, so two imports that
+/// start in the same second own different seconds.
+pub(crate) fn own_second(vault: &oneiron::Vault) -> anyhow::Result<u64> {
     vault
         .own_import_second()
         .map_err(|error| anyhow::anyhow!(error.message))

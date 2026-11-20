@@ -18,6 +18,13 @@
 //! his key, and dismisses an ask on this install alone. The list shows each
 //! machine's revision, and a confirm presents it back as that entry's
 //! `seen`, as the answer routes do.
+//!
+//! `GET /machines` lists every machine with the name it is shown by, and
+//! `POST /machines/name` sets or clears the owner's own name for one (FIX
+//! [DEVICE-DISPLAY-NAME]). Each runs its SDK row (`vault.machines.list`,
+//! `vault.machines.name.set`) inside the row's verb hooks, as the owner in
+//! person. A name is display only: it is outside the signed profile, and no
+//! revision, role or reach moves with it.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -28,20 +35,42 @@ use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{
-    ActSurface, AuthorityFold, FoldedMachine, HeldAnswerListing, MachineOwnership, MachineRole,
+    ActSurface, AuthorityFold, HeldAnswerListing, MachineOwnership, MachineRole,
     OwnerDeviceRenewalProof, PeerMachine,
 };
+use oneiron::task_verb::sdk::{self, EmptyRequest, MachineNameSetRequest};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, hooked_owner, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
-use crate::owner::{OwnerError, OwnerResult, entity_id};
+use crate::owner::{OwnerError, OwnerResult, entity_id, hooked_row, memory_refusal};
 use crate::server::SyncServer;
 
 pub(super) fn owner_table() -> OwnerTable {
     vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/machines",
+                summary: "Every machine of the vault, this install first (FIX DEVICE-DISPLAY-NAME): `machines`, each with its class, role, whether it stands live, its revision (`seen` for an answer or a removal) and the name it is shown by, with `name_source` (`owner`, `reported`, `model` or `class`).",
+                row: Some("vault.machines.list"),
+                shape: None,
+            },
+            get(list_machines),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/machines/name",
+                summary: "The owner sets or clears his own one-line name for one of his machines (`machine`, 32 hex; `name`, or null or blank to clear it). Display only: its revision, role and reach do not move. Answers the machine as the list shows it now and the act's Gate receipt.",
+                row: Some("vault.machines.name.set"),
+                shape: None,
+            },
+            post(set_name),
+        ),
         (
             OwnerRoute {
                 method: "get",
@@ -290,7 +319,9 @@ fn answer_of(machine: oneiron::EntityId, fold: &AuthorityFold) -> MachineAnswer 
     MachineAnswer {
         machine: machine.to_hex(),
         role: roster.map(|roster| role_name(roster.profile.role)),
-        revision: revision_hex(&folded.map_or([0; 32], FoldedMachine::answer_revision)),
+        revision: revision_hex(&folded.map_or([0; 32], |folded| {
+            folded.answer_revision(fold.pinned_root.as_ref())
+        })),
         carrier: roster
             .and_then(oneiron::authority::MachineRevision::carrier)
             .map(|carrier| carrier.to_hex()),
@@ -528,13 +559,36 @@ struct ListedHeldAnswer {
     revision: String,
     /// The machine whose install key carried the answer, as hex.
     carrier: Option<String>,
-    /// The role the carrier stands in; none when no revision names it.
+    /// The role this install's records give the key that signed the answer
+    /// on that machine; none when they tie the two to no profile, and the
+    /// machine id is then the answer's word alone.
     carrier_role: Option<&'static str>,
-    /// Whether this install trusts the carrier as one of the owner's
-    /// machines.
+    /// Whether this install trusts the key that signed the answer as one of
+    /// the owner's machines.
     carrier_is_yours: bool,
     /// Whether the owner dismissed this ask on this install.
     dismissed: bool,
+    /// The question a surface asks about this answer before the owner
+    /// confirms or dismisses it, composed by the engine: what the answer
+    /// asks for, then on the last line who carried it by this install's
+    /// reading of the key that signed it
+    /// ([`oneiron::authority::held_answer_prompt`]). Its lines are
+    /// separated by a line feed.
+    prompt: String,
+    /// `machine_key` as a code, 26 symbols, in the form of a recovery kit's
+    /// code ([`oneiron::authority::machine_key_code`]): what the owner
+    /// compares with the code that machine shows. `machine_key` in full
+    /// stays the detail.
+    machine_code: String,
+    /// What a surface shows under the question: "Code shown on that
+    /// phone: " (or computer) and `machine_code`
+    /// ([`oneiron::authority::machine_code_line`]).
+    machine_code_text: String,
+    /// What a surface shows, quiet, under `machine_code_text`: that the code
+    /// should match the one the device shows, and to dismiss this answer
+    /// when the two differ
+    /// ([`oneiron::authority::machine_code_check_line`]).
+    machine_code_check_text: String,
 }
 
 /// The list as the wire spells it.
@@ -556,6 +610,19 @@ fn held_answers_of(listing: &HeldAnswerListing) -> HeldAnswers {
                 carrier_role: listed.carrier_role.map(role_name),
                 carrier_is_yours: listed.carrier_is_mine,
                 dismissed: listed.dismissed,
+                prompt: listed.prompt(),
+                machine_code: oneiron::authority::machine_key_code(
+                    &listed.answer.profile.machine_key,
+                ),
+                machine_code_text: oneiron::authority::machine_code_line(
+                    &listed.answer.profile.machine_key,
+                    listed.answer.profile.device_class,
+                    oneiron::authority::PromptDeviceName::NotHeld,
+                ),
+                machine_code_check_text: oneiron::authority::machine_code_check_line(
+                    listed.answer.profile.device_class,
+                    oneiron::authority::PromptDeviceName::NotHeld,
+                ),
             })
             .collect(),
         waiting_choices: listing.waiting_choices.iter().map(revision_hex).collect(),
@@ -648,4 +715,43 @@ async fn dismiss_held(
     })
     .await?;
     Ok(Json(held))
+}
+
+/// `GET /v1/owner/machines`: every machine of the vault, with the name each
+/// is shown by.
+async fn list_machines(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
+    let response = blocking(move || {
+        let vault = server.vault();
+        hooked_row(vault, actor, "vault.machines.list", EmptyRequest {}, |_| {
+            sdk::list_machines_as(vault, &owner).map_err(memory_refusal)
+        })
+    })
+    .await?;
+    Ok(Json(response))
+}
+
+/// `POST /v1/owner/machines/name`: the owner's own name for one of his
+/// machines, set or cleared.
+async fn set_name(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<MachineNameSetRequest>,
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let response = blocking(move || {
+        let vault = server.vault();
+        hooked_row(
+            vault,
+            actor,
+            "vault.machines.name.set",
+            request,
+            |request: MachineNameSetRequest| {
+                sdk::set_machine_name_as(vault, &owner, request).map_err(memory_refusal)
+            },
+        )
+    })
+    .await?;
+    Ok(Json(response))
 }

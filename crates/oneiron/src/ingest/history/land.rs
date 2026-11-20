@@ -20,20 +20,15 @@
 //! counted and the import goes on; the next import tries it again.
 
 use std::cell::Cell;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use rmpv::Value as Msgpack;
-use serde::Serialize;
-use serde_json::{Map, Value};
 
 use super::hook_transcript::HistoryImportCaller;
 use super::ledger::{self, LedgerRow, content_hash};
 use super::sharing;
-use super::{
-    HistoryConversation, HistoryMessage, HistoryRole, HistorySharingCounts, HistorySkips,
-    HistorySource, HistoryThreadKind,
-};
+use super::{HistoryConversation, HistoryMessage, HistoryRole, HistorySource};
 use crate::TimeRange;
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
@@ -42,8 +37,8 @@ use crate::entity_id::{EntityId, derived_domains};
 use crate::error::Result;
 use crate::memory::{
     IMPORTED_SOURCE_KEY, ImportedTurnStamp, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE,
-    Memory, MemoryError, MemoryResult, SourceAttribution, WitnessAuthor, WitnessMessage,
-    WitnessTurn, next_witness_message_order, stored_witness_turn_author,
+    Memory, MemoryError, MemoryResult, SourceAttribution, WitnessAuthor, WitnessTurn,
+    next_witness_message_order, stored_witness_turn_author,
 };
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CONVERSATION;
@@ -51,12 +46,15 @@ use crate::side_table::SideTableDbs;
 use crate::source_audience::{self, SourceAudienceBirth};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
+mod message;
+mod report;
+
+pub(super) use message::{conversation_body, imported_message};
+pub use report::HistoryImportReport;
+
 /// The most messages one TURN holds; a longer run of one side (an agent's long
 /// unattended stretch) continues in the next turn.
 const TURN_MESSAGE_CAP: usize = 256;
-
-/// Tool names one message's metadata lists; the rest are counted.
-const MAX_TOOL_LABELS: usize = 64;
 
 /// Bytes of an id or a label kept in metadata.
 const MAX_LABEL_BYTES: usize = 512;
@@ -75,61 +73,6 @@ thread_local! {
     /// test can land a concurrent import there.
     pub(super) static BETWEEN_READ_AND_WRITE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
-}
-
-/// One conversation's import, in counts. It names the conversation by the
-/// source's id and carries no text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct HistoryImportReport {
-    pub conversation: String,
-    pub kind: HistoryThreadKind,
-    /// Messages the reader kept.
-    pub messages: u32,
-    /// Not imported before: landed, or in a dry run would land.
-    pub new: u32,
-    /// Imported before and unchanged: nothing written.
-    pub skipped: u32,
-    /// Imported before with other text: landed as a revision.
-    pub changed: u32,
-    /// Refused at the write door; nothing written, and the next import tries
-    /// again.
-    pub refused: u32,
-    /// Not landed because other imports kept landing the same messages until
-    /// [`LEDGER_RACE_WINDOW`] passed; nothing written, and the next import
-    /// lands them.
-    pub pending: u32,
-    /// Why, as reason codes.
-    pub refusal_reasons: BTreeSet<String>,
-    /// What the reader did not keep.
-    pub not_kept: HistorySkips,
-    /// Who reads a conversation the source shared, in counts; absent for
-    /// one the source did not share, and in a dry run.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sharing: Option<HistorySharingCounts>,
-    /// The TURNs that took the messages landed new or as a revision, each
-    /// once, in landing order: what a hosted import's progress counts for
-    /// embeddings. Not part of the report's wire form.
-    #[serde(skip)]
-    pub turns: Vec<EntityId>,
-}
-
-impl HistoryImportReport {
-    pub(super) fn new(conversation: &HistoryConversation) -> Self {
-        Self {
-            conversation: conversation.native_id.clone(),
-            kind: conversation.kind,
-            messages: 0,
-            new: 0,
-            skipped: 0,
-            changed: 0,
-            refused: 0,
-            pending: 0,
-            refusal_reasons: BTreeSet::new(),
-            not_kept: conversation.skipped,
-            sharing: None,
-            turns: Vec::new(),
-        }
-    }
 }
 
 /// Where one message stands against the ledger.
@@ -221,120 +164,6 @@ pub(super) fn conversation_id(source: HistorySource, native_id: &str) -> Result<
         derived_domains::HISTORY_CONVERSATION,
         &[source.source_id(), native_id],
     )
-}
-
-/// The MESSAGE an imported message lands as. The dry run builds the same one
-/// to scan exactly the bytes the write door would.
-pub(super) fn imported_message(
-    source: HistorySource,
-    conversation: &HistoryConversation,
-    message: &HistoryMessage,
-    previous: Option<&LedgerRow>,
-    id: Option<EntityId>,
-    order: u32,
-) -> WitnessMessage {
-    WitnessMessage {
-        id: id.map(|id| id.to_hex()),
-        author: witness_author(message),
-        message_type: format!("import.{}", source.source_id()),
-        content: message.text.clone(),
-        parts: None,
-        metadata: Some(provenance(source, conversation, message, previous)),
-        is_visible: true,
-        order,
-        quote: None,
-    }
-}
-
-/// The imported CONVERSATION's body: its source, the source's id for it and,
-/// for a branch or subagent thread, the conversation it belongs to.
-pub(super) fn conversation_body(
-    source: HistorySource,
-    conversation: &HistoryConversation,
-) -> MemoryResult<Vec<u8>> {
-    let mut fields = vec![
-        (
-            Msgpack::from(IMPORTED_SOURCE_KEY),
-            Msgpack::from(source.source_id()),
-        ),
-        (
-            Msgpack::from("import_conversation"),
-            Msgpack::from(label(&conversation.native_id)),
-        ),
-        (
-            Msgpack::from("import_kind"),
-            Msgpack::from(conversation.kind.as_str()),
-        ),
-    ];
-    if let Some(parent) = &conversation.parent {
-        fields.push((Msgpack::from("import_parent"), Msgpack::from(label(parent))));
-    }
-    if let Some(title) = &conversation.title {
-        fields.push((Msgpack::from("title"), Msgpack::from(label(title))));
-    }
-    if let Some(cwd) = &conversation.cwd {
-        fields.push((Msgpack::from(IMPORT_CWD_KEY), Msgpack::from(label(cwd))));
-    }
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &Msgpack::Map(fields))
-        .map_err(|_| MemoryError::bad_request("imported conversation body is not encodable"))?;
-    Ok(out)
-}
-
-/// A message's provenance, as its MESSAGE metadata: who said it in the
-/// source, where it sat, when, and what it went on to call.
-fn provenance(
-    source: HistorySource,
-    conversation: &HistoryConversation,
-    message: &HistoryMessage,
-    revises: Option<&LedgerRow>,
-) -> Value {
-    let mut fields = Map::new();
-    fields.insert("source".into(), Value::from(source.source_id()));
-    fields.insert(
-        "conversation".into(),
-        Value::from(label(&conversation.native_id)),
-    );
-    fields.insert("id".into(), Value::from(label(&message.native_id)));
-    let role = match message.role {
-        HistoryRole::User => "user",
-        HistoryRole::Assistant => "assistant",
-    };
-    fields.insert("role".into(), Value::from(role));
-    if let Some(parent) = &message.parent_id {
-        fields.insert("parent".into(), Value::from(label(parent)));
-    }
-    if let Some(at) = message.at_ms {
-        fields.insert("at_ms".into(), Value::from(at));
-    }
-    if let Some(said_by) = &message.said_by {
-        fields.insert("said_by".into(), Value::from(said_by.as_str()));
-    }
-    if !message.tools.is_empty() {
-        let tools: Vec<Value> = message
-            .tools
-            .iter()
-            .take(MAX_TOOL_LABELS)
-            .map(|tool| Value::from(label(tool)))
-            .collect();
-        fields.insert("tools".into(), Value::from(tools));
-        if message.tools.len() > MAX_TOOL_LABELS {
-            fields.insert(
-                "tools_more".into(),
-                Value::from(message.tools.len() - MAX_TOOL_LABELS),
-            );
-        }
-    }
-    if let Some(previous) = revises {
-        fields.insert("revision".into(), Value::from(previous.next_revision()));
-        // The latest text still in the vault; an erased one is never named.
-        if let Some(latest) = previous.messages.last() {
-            fields.insert("revises".into(), Value::from(latest.to_hex()));
-        }
-    }
-    let mut metadata = Map::new();
-    metadata.insert("import".into(), Value::Object(fields));
-    Value::Object(metadata)
 }
 
 /// A refusal the import counts and goes past: the write door or a gate said
@@ -765,6 +594,7 @@ impl Import<'_> {
             conversation_ref: self.conversation_id.to_hex(),
             turn_ref: Some(turn_id.to_hex()),
             thread_audience: None,
+            project: None,
             messages,
             occurred_at: occurred[0],
             assertions: Default::default(),
@@ -856,7 +686,5 @@ impl Import<'_> {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-INGEST-HISTORY-LAND-TESTS]: the lib test target's type check fails here (3 errors: E0063 x2, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

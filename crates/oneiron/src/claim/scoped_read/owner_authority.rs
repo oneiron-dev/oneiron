@@ -10,7 +10,8 @@
 //! and only while the key's own actor is a live owner of this vault in the
 //! read's snapshot (`policy_model::is_live_vault_owner_in_txn`). The owner's
 //! key keeps everything the lane's key bounds its read by: its destination,
-//! worlds, room turn, channel, relationship principal and owner exemption;
+//! worlds, room turn, channel, relationship principal, owner exemption and
+//! conversation home with its named room;
 //! the lane keeps its audience, peers, session view, room ceiling and claim
 //! status; the request a read asked is met as the Grant alternative meets
 //! it. It never stands for a key that supplies a proof, carries a Scope, is
@@ -98,7 +99,13 @@ impl<'v> ScopedRead<'v> {
 
     /// The reader the owner alternative may stand for: this opted-in lane's
     /// own actor, while its key supplies no proof, carries no Scope, is not
-    /// already the owner's and is held to no host action or owner proof.
+    /// already the owner's, is held to no host action or owner proof and
+    /// admits the owner's floor beside it
+    /// ([`ScopedReadActorKey::admits_owner_alternative`]): a key rebuilt
+    /// under a saved lane's grant basis does not (Sol F3 on #8065), save one
+    /// rebuilt under a floor's basis and held to no named records, as that
+    /// saved key held the owner's floor and the owner lane keeps this key's
+    /// gate (blind review round 1 P1 on #8065).
     fn owner_reader(&self) -> Option<EntityId> {
         let key = &self.actor_key;
         if !self.own_owner_authority
@@ -107,6 +114,7 @@ impl<'v> ScopedRead<'v> {
             || key.vault_owner_ref().is_some()
             || key.host_action_guard().is_some()
             || key.owner_proof_guard().is_some()
+            || !key.admits_owner_alternative()
         {
             return None;
         }
@@ -145,22 +153,12 @@ impl<'v> ScopedRead<'v> {
             .then_some(lane))
     }
 
-    /// This lane read by `owner`, its own reader, under the owner's key: the
-    /// key keeps this key's destination, worlds, room turn, channel,
-    /// relationship principal and owner exemption, and the lane keeps this
-    /// lane's audience, peers, session view, room ceiling and claim status.
+    /// This lane read by `owner`, its own reader, under the owner's key held
+    /// to this key's bounds ([`ScopedReadActorKey::bounded_owner_key`]), and
+    /// the lane keeps this lane's audience, peers, session view, room
+    /// ceiling and claim status.
     fn as_owner(&self, owner: EntityId) -> Result<ScopedRead<'v>> {
-        let key = &self.actor_key;
-        let mut owner_key =
-            ScopedReadActorKey::vault_owner(owner).for_destination(key.destination());
-        owner_key.principal_ref = key.principal_ref;
-        owner_key.enforce_access_grants = key.enforce_access_grants;
-        owner_key.unscoped_rows_open = key.unscoped_rows_open;
-        owner_key.channel.clone_from(&key.channel);
-        owner_key.owner_exemption = key.owner_exemption;
-        owner_key.room_turn.clone_from(&key.room_turn);
-        owner_key.phone_lines.clone_from(&key.phone_lines);
-        owner_key.worlds.clone_from(&key.worlds);
+        let owner_key = self.actor_key.bounded_owner_key(owner);
         let room_ceiling = self
             .room_ceiling
             .lock()
@@ -175,6 +173,7 @@ impl<'v> ScopedRead<'v> {
             room_ceiling: Mutex::new(room_ceiling),
             room_ceilings_built: AtomicUsize::new(0),
             session_view: self.session_view,
+            stretch: self.stretch,
             claim_status: self.claim_status,
             recall_authority: Mutex::new(None),
             room_peer: self.room_peer,
@@ -183,5 +182,39 @@ impl<'v> ScopedRead<'v> {
             judged_at: self.judged_at,
             read_filter: self.read_filter.clone(),
         })
+    }
+}
+
+impl ScopedReadActorKey {
+    /// The key of `owner`, this key's own reader, held to this key's bounds:
+    /// the owner's floor, with this key's destination, worlds, room turn,
+    /// channel, grant gate and its principal, owner exemption, saved
+    /// credentials (a rebuilt saved lane's, FIX
+    /// OWN-DEVICE-GRANT-NOT-RECHECKED), and its conversation home with the
+    /// room it reads inside and stands in, so the owner's key reads no
+    /// stamped claim the home withheld (round 2 review P1 of #9590). The
+    /// lane's owner alternative reads under it, and so does a question's
+    /// reader beside a key rebuilt under a saved lane's floor basis (blind
+    /// review round 2 on #8065).
+    pub(crate) fn bounded_owner_key(&self, owner: EntityId) -> Self {
+        let mut owner_key = Self::vault_owner(owner).for_destination(self.destination());
+        owner_key.principal_ref = self.principal_ref;
+        owner_key.enforce_access_grants = self.enforce_access_grants;
+        owner_key.unscoped_rows_open = self.unscoped_rows_open;
+        owner_key.channel.clone_from(&self.channel);
+        owner_key.owner_exemption = self.owner_exemption;
+        owner_key.relationship_gate_owner = self.relationship_gate_owner;
+        owner_key.room_turn.clone_from(&self.room_turn);
+        owner_key.phone_lines.clone_from(&self.phone_lines);
+        owner_key.worlds.clone_from(&self.worlds);
+        owner_key
+            .saved_credentials
+            .clone_from(&self.saved_credentials);
+        owner_key.room_facets = self.room_facets;
+        owner_key.standing_room = self.standing_room;
+        if self.is_homed_unnamed() {
+            owner_key = owner_key.homed_unnamed();
+        }
+        owner_key
     }
 }
