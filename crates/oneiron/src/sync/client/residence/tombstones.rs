@@ -7,8 +7,9 @@
 //! tombstones of every window of every world it follows, of every month,
 //! whether or not the home grants it the window's full exchange. The
 //! residence upkeep asks again, every pass, for each followed window this
-//! device holds no rows of, so a delete the home makes during a session
-//! reaches a window the home refuses to it. Each one
+//! device holds no rows of, or whose follow the home refused on the live
+//! socket, so a delete the home makes during a session reaches a window the
+//! home refuses to it (FOLLOWED-TOMBSTONE-HELD-WINDOW-REFUSED-LIVE). Each one
 //! goes through the one replay primitive every sync route uses, so a hard
 //! delete purges the row and its thin copies and writes the permanent `dt:`
 //! marker even for an id this device never held, and a soft one stays soft.
@@ -215,8 +216,11 @@ impl SyncClient {
 
 /// Takes again, from the residence upkeep, the tombstone id set of each
 /// followed window this device holds no rows of (a follow the home refused
-/// or has not answered): the count applied. A window held here takes its
-/// deletes through its own exchange. An opened-item device lane only.
+/// or has not answered), and of each held one whose follow the home refused
+/// on the live socket: the count applied. A held window the home grants
+/// takes its deletes through its own exchange; a refused one has none
+/// (FOLLOWED-TOMBSTONE-HELD-WINDOW-REFUSED-LIVE). An opened-item device
+/// lane only.
 pub(crate) async fn refresh_followed_tombstones(
     manager: &std::sync::Arc<WindowManager>,
     config: &SyncClientConfig,
@@ -226,15 +230,16 @@ pub(crate) async fn refresh_followed_tombstones(
     }
     let (client, _events) = SyncClient::new(std::sync::Arc::clone(manager), config.clone())
         .map_err(|error| TransportError::Storage(error.to_string()))?;
-    let mut unheld = Vec::new();
+    let mut asked = Vec::new();
     for window in client.followed_tombstone_windows()? {
-        if !window_rows_held(&client.vault, &window)
-            .map_err(|error| TransportError::Storage(error.to_string()))?
+        if manager.follow_refused(&window)
+            || !window_rows_held(&client.vault, &window)
+                .map_err(|error| TransportError::Storage(error.to_string()))?
         {
-            unheld.push(window);
+            asked.push(window);
         }
     }
-    client.fetch_tombstones_of(unheld).await
+    client.fetch_tombstones_of(asked).await
 }
 
 /// Whether `config` is an opened-item device lane, the one lane that takes

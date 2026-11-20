@@ -27,12 +27,13 @@ mod wire;
 pub(in crate::dreamer_consolidation) use cited::CitationCheck;
 use corrections::Correction;
 pub(in crate::dreamer_consolidation) use quote_binding::{QuoteBinding, bind_quote};
+pub(crate) use wire::entity_id_from_hex;
+use wire::parse_candidate;
 pub(in crate::dreamer_consolidation) use wire::{
     CallPins, ExtractedPerson, ExtractionReply, ReplyContext, authored_fallback,
     check_extraction_reply, contract_reply, decode_ref, disagreeing_child_hashes, extraction_reply,
     prospective_queries, reply_json, resolve_subject,
 };
-use wire::{entity_id_from_hex, parse_candidate};
 
 impl ConsolidationExecutor<'_> {
     /// The extraction request over one child's `transcript`, rendered with

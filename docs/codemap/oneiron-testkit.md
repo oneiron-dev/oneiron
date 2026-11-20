@@ -20,12 +20,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/canary/point_doors.rs` | src | s | 1 crate-vis | — | The scan's point and ledger doors ([CANARY-SCAN-COVERAGE] step 1 and 3): the keyed value at the canary… |
 | `src/clock.rs` | src | s | 1 struct · 7 fn · 1 const | FakeClock | The fake clock: time that moves only when the test moves it |
 | `src/door.rs` | src | s | 2 fn | — | The in-process verb door: a public verb, by name, with JSON in and JSON out, through… |
-| `src/dreamer.rs` | src | L | 6 struct · 2 enum · 15 fn · 3 const | DreamerAttemptRun, DreamerPass, DreamerPassError, DreamerPassFailure, DreamerPassReport, PassBudget, QueueRow, WakeKind | One in-process Dreamer wake pass on the kit's fake clock, its model calls answered by a [`ScriptedBackend`]… |
+| `src/dreamer.rs` | src | L | 6 struct · 3 enum · 16 fn · 3 const | DreamerAttemptRun, DreamerPass, DreamerPassError, DreamerPassFailure, DreamerPassReport, PassBudget, PassStack, QueueRow +1 | One in-process Dreamer wake pass on the kit's fake clock, its model calls answered by a [`ScriptedBackend`]… |
 | `src/embedder.rs` | src | s | 1 struct · 5 fn · 1 const | HashingEmbedder | The hashing embedder: stable pseudo-vectors with no model |
 | `src/fault.rs` | src | s | 5 fn | — | Fault injection through doors the engine already has |
 | `src/fixture.rs` | src | m | 4 struct · 1 enum · 19 fn · 1 type | FixtureCache, FixtureError, FixtureVault, SeedRecord, TestVault | Fixture vaults: seed a vault once, copy it for every test |
 | `src/golden_day/manifest.rs` | src | s | 1 enum · 3 const | FieldClass | The field manifest: how the normaliser treats every object key the golden-day trace holds (the receipt… |
-| `src/golden_day/mod.rs` | src | m | 2 struct · 8 fn · 7 const · 2 mod · 2 re-export | GoldenDayError, GoldenDayRun | The golden day: one scripted day on a fresh vault, and the normalised dump of what it leaves behind (Fable's… |
+| `src/golden_day/mod.rs` | src | m | 2 struct · 9 fn · 7 const · 2 mod · 2 re-export | GoldenDayError, GoldenDayRun | The golden day: one scripted day on a fresh vault, and the normalised dump of what it leaves behind (Fable's… |
 | `src/golden_day/normalise.rs` | src | m | 3 struct · 9 fn · 1 const | NormaliseError, Normaliser, UnknownKey | The trace normaliser: one walk over a raw trace that classifies every object key it meets by… |
 | `src/lib.rs` | src | s | 14 mod · 7 re-export | — | `oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09… |
 | `src/model/engine.rs` | src | m | 2 struct · 7 fn · 1 const | EngineVault, SeedReport | The engine side of the reference-model test: one real vault that takes each generated [`Step`] through the… |

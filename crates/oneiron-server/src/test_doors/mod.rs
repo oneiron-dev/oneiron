@@ -30,6 +30,8 @@ pub mod embedded_peer_path;
 pub mod embedding_line;
 pub mod fingerprint_keep_lens_callback;
 pub mod gpu_backend;
+pub mod hex_input_policy;
+pub mod hex_sign_digit;
 pub mod history_import;
 #[cfg(unix)]
 pub mod hosted_import;

@@ -386,7 +386,7 @@ fn correction_identity_choice() {
                 .expect("falls back");
         match fallback_step {
             Step::Finished(corrections) => {
-                assert_eq!(corrections[0].corrects, Some(expected_claim))
+                assert_eq!(corrections[0].corrects, Some(expected_claim));
             } // native: crates/oneiron/src/dreamer_consolidation/executor/decisions/identity_choice.rs:50 most probable; tie keeps last at :61; probability required at :55; no-probability still names at :30
             Step::Ask(_) => panic!("empty final is terminal"),
         }
@@ -474,9 +474,9 @@ fn mapping_and_layout() {
     let same_pack = resolution(same_input, None).expect("pack builds");
     let resolution_key = same_pack.questions[0].key.clone();
     let identity_key = same_pack.questions[1].key.clone();
-    let mut mapped_entry = choice_entry(identity_key.clone(), &claim_hex(1), Some(0.9));
+    let mut mapped_entry = choice_entry(identity_key, &claim_hex(1), Some(0.9));
     mapped_entry.question = claim_hex(2);
-    let resolution_entry = choice_entry(resolution_key.clone(), "merge", Some(0.9));
+    let resolution_entry = choice_entry(resolution_key, "merge", Some(0.9));
     let mapped_answered = answered_pack(&same_pack, vec![resolution_entry, mapped_entry]);
     let mapped_history = [mapped_answered];
     let mapped_step =

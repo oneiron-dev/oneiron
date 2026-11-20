@@ -43,10 +43,10 @@
 //! them (shipped default manifest, an in-memory keystore, this install's
 //! signing keys prepared, so the manifest is trusted and the gate enforced),
 //! every step through public doors. Each destination opens at least one
-//! wall-clock second after its source (sleep 1100 ms), and an annotation
-//! that must be newer than another is written at least 1100 ms after it, as
-//! in `whole_vault_restore_held_link_provenance.rs`. Run with `cargo test
-//! --locked -p oneiron --all-features --test
+//! wall-clock second after its source (sleep 1100 ms): the built-in pack
+//! seeds stamp the real wall second. An annotation that must be newer than
+//! another is learned at a later second given explicitly, with no wait. Run
+//! with `cargo test --locked -p oneiron --all-features --test
 //! whole_vault_restore_annotated_link_trusted_manifest`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -74,16 +74,11 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
-/// Waits until the wall-clock second has changed: any 1100 ms interval
-/// crosses a second boundary.
-fn next_second() {
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-}
-
 /// A fresh SEEDED destination whose engine-seed seconds differ from the
-/// source's.
+/// source's: any 1100 ms interval crosses a wall-clock second boundary.
 fn open_later_vault() -> (tempfile::TempDir, Vault) {
-    next_second();
+    // testkit-lint: allow(sleep) built-in pack seeds use real wall seconds
+    std::thread::sleep(std::time::Duration::from_millis(1100));
     open_vault()
 }
 
@@ -143,8 +138,8 @@ fn linked_source() -> Linked {
 }
 
 /// A provenance claim on the link through the public provenance door,
-/// learned at the vault's current second.
-fn annotate(linked: &Linked) -> EntityId {
+/// learned at `learned_at`.
+fn annotate(linked: &Linked, learned_at: u64) -> EntityId {
     let id = EntityId::now();
     linked
         .vault
@@ -153,7 +148,7 @@ fn annotate(linked: &Linked) -> EntityId {
             &EdgeRef::new(linked.source, EdgeKind::Mentions, linked.target),
             &EdgeProvenanceClaimBody::new(linked.source, 1.0, SupersessionStatus::Confirmed),
             EdgeActorClass::Human,
-            linked.vault.now_recorded_at(),
+            learned_at,
         )
         .expect("the provenance claim on the link lands");
     id
@@ -162,7 +157,7 @@ fn annotate(linked: &Linked) -> EntityId {
 /// The source's link with one live annotation, and its whole-vault archive.
 fn annotated_archive() -> (Linked, EntityId, Vec<u8>) {
     let linked = linked_source();
-    let annotation = annotate(&linked);
+    let annotation = annotate(&linked, linked.vault.now_recorded_at());
     assert_eq!(
         lifecycle(&linked.vault, &annotation),
         Some(ClaimLifecycleStatus::Active),
@@ -243,13 +238,14 @@ fn owner_restore_brings_an_annotated_link_back_with_its_provenance() {
 #[test]
 fn owner_restore_brings_a_superseded_and_a_retracted_annotation_back() {
     let linked = linked_source();
-    let first = annotate(&linked);
-    next_second();
-    let second = annotate(&linked);
-    next_second();
+    // Each step a second after the one before: the second annotation is
+    // strictly newer than the first, so it supersedes it.
+    let at = linked.vault.now_recorded_at();
+    let first = annotate(&linked, at);
+    let second = annotate(&linked, at + 1);
     linked
         .vault
-        .retract_edge_provenance(&second, linked.vault.now_recorded_at())
+        .retract_edge_provenance(&second, at + 2)
         .expect("the source retracts its second annotation");
     assert_eq!(
         lifecycle(&linked.vault, &first),
@@ -324,10 +320,12 @@ fn a_later_import_without_the_owner_keeps_a_restored_annotation_open() {
         Some(ClaimLifecycleStatus::Active),
         "precondition: the owner's restore brought the annotation back live"
     );
-    next_second();
+    // The source closes the annotation a second past its present, after
+    // the restore.
+    let close_at = linked.vault.now_recorded_at() + 1;
     linked
         .vault
-        .retract_edge_provenance(&annotation, linked.vault.now_recorded_at())
+        .retract_edge_provenance(&annotation, close_at)
         .expect("the source retracts the annotation");
     assert_eq!(
         lifecycle(&linked.vault, &annotation),

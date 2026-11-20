@@ -29,8 +29,6 @@ use crate::error::Error;
 use crate::memory::{DreamerParkedAttemptView, MemoryError, MemoryResult};
 
 #[doc(hidden)]
-use oneiron_verb_wire::dreamer_runner::owner_doors::hex32;
-#[doc(hidden)]
 pub use oneiron_verb_wire::dreamer_runner::owner_doors::{
     ConsolidationHomeCandidate, ConsolidationHomeNode, ConsolidationHomePickHead,
     ConsolidationHomePickReceipt, ConsolidationHomePickRequest, ConsolidationHomeView,
@@ -122,9 +120,10 @@ fn parse_node_id(text: &str) -> MemoryResult<u64> {
     text.parse().map_err(|_| refused())
 }
 
-/// A pick revision as the home doors show it: 64 hex digits.
+/// A pick revision as the home doors show it: 64 hex digits, either case.
 fn parse_revision(text: &str) -> MemoryResult<[u8; 32]> {
-    hex32(text).ok_or_else(|| MemoryError::bad_request("seen is a 64-hex home pick revision"))
+    oneiron_hex::decode_any_case(text)
+        .ok_or_else(|| MemoryError::bad_request("seen is a 64-hex home pick revision"))
 }
 
 fn home_candidate(candidate: DreamerHomeNodeCandidate) -> ConsolidationHomeCandidate {

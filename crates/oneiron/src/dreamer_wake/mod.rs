@@ -13,6 +13,7 @@ pub(crate) mod archive_restore;
 mod deadline;
 mod driver;
 pub(crate) mod follower;
+mod frame_outline;
 mod grain;
 mod legibility;
 mod night_step;
@@ -44,6 +45,7 @@ pub(crate) use self::driver::{
     check_host_wake_rewrite, executor_error_ends_pass, llm_waits_on_owner_act,
     refuses_attempt_input, waits_on_owner_act,
 };
+pub(crate) use self::frame_outline::build_boxed_future;
 pub use self::grain::*;
 pub use self::legibility::*;
 pub use self::night_step::NightStepRequestId;
