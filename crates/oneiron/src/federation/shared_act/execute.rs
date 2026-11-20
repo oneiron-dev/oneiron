@@ -140,6 +140,8 @@ impl Vault {
         let slips = slips.or(own_issuer.as_ref());
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
         let owners = self.act_executors_in_txn(&txn, &act, actor, now)?;
+        // Read before the move, which may end the executor's ownership.
+        let owner_authored = self.membership_owner_write_in_txn(&txn, executor);
         let receipt_id = self.store.clock.entity_id()?.to_hex();
         let request_id = self.store.clock.entity_id()?.to_hex();
         self.claim_completed_authority_act_in_txn(
@@ -384,7 +386,7 @@ impl Vault {
                             &mut txn,
                             act.vault_id,
                             &receipt_id,
-                            actor,
+                            (actor, owner_authored.as_ref()),
                             now,
                             UnsignedExecution {
                                 cause: execution_cause,

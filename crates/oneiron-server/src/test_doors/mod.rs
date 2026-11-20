@@ -52,6 +52,7 @@ pub mod mcp_run_claim_lane;
 pub mod mcp_surface;
 pub mod media_job_spend;
 pub mod memory_owner_commit;
+pub mod memory_timeline_projection;
 #[cfg(unix)]
 pub mod merge_queue_checker_pressure;
 pub mod model_licence;
@@ -72,6 +73,7 @@ pub mod replay_admission;
 pub mod residence;
 pub mod residence_connection;
 pub mod resident_pump;
+pub mod run_brief_people;
 pub mod run_self_brief_port;
 #[cfg(target_os = "linux")]
 pub mod sandbox_vendor;

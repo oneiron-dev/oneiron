@@ -31,7 +31,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/code_bench/manifest.rs` | src | m | 18 crate-vis | — | The CODE-BENCH task manifest (`fixtures/code_bench.tasks.v1.json`): three merged PRs of our repo, each with… |
 | `src/beam/code_bench/mcp_probe.rs` | src | s | 1 crate-vis | — | Probes each MCP server a run plan declares before any cell that needs it is ready |
 | `src/beam/code_bench/mod.rs` | src | s | 1 crate-vis | — | CODE-BENCH (ARCH-0042 #code-bench, owner intent 2026-10-21, cut by 90%): a small dogfood check of Oneiron… |
-| `src/beam/code_bench/pack.rs` | src | L | 5 crate-vis | — | `beam code-bench-pack <plan.json>`: materialize every ready cell for the run's driver, and list every cell… |
+| `src/beam/code_bench/pack.rs` | src | m | 5 crate-vis | — | `beam code-bench-pack <plan.json>`: materialize every ready cell for the run's driver, and list every cell… |
+| `src/beam/code_bench/pack/cell_files.rs` | src | s | 1 crate-vis | — | The files of one cell beside its world: the prompt, the MCP server config and the Claude Code settings |
+| `src/beam/code_bench/pack/git.rs` | src | s | 4 crate-vis | — | Git in a folder, reading no stdin |
+| `src/beam/code_bench/pack/world.rs` | src | s | 2 crate-vis | — | A cell's world: a fresh repository of the task's base, one commit, the sealed paths removed |
 | `src/beam/code_bench/profile.rs` | src | m | 24 crate-vis | — | Each CODE-BENCH arm is a fixed tool profile plus the pieces it needs |
 | `src/beam/code_bench/transcript.rs` | src | m | 2 crate-vis | — | Reads one writer's transcript in Claude Code's `--output-format stream-json`: one JSON object per line… |
 | `src/beam/community.rs` | src | m | 9 crate-vis | — | Community-beam run, timing loop, and aggregate gating |

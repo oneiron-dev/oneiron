@@ -647,9 +647,9 @@ pub enum RecordError {
     /// The authority fold needs history this vault does not hold (OF-469):
     /// no fold answers until an import closes it. `missing` ascends; on a
     /// vault that adopted a checkpoint image it may name covered rows, which
-    /// a late fork or an op the image cannot fold past needs. Fetching them
-    /// may name further ancestors: ask for the vault's history request again
-    /// after each import.
+    /// a late fork or an op the image cannot fold past needs, and `reason`
+    /// says which. Fetching them may name further ancestors: ask for the
+    /// vault's history request again after each import.
     #[error("authority history incomplete: {} rows required", missing.len())]
     AuthorityHistoryRequired {
         /// The authority vault (its genesis hash) the history belongs to.
@@ -658,6 +658,8 @@ pub enum RecordError {
         checkpoint: Option<[u8; 32]>,
         /// The authority entry hashes the fold needs, ascending.
         missing: Vec<[u8; 32]>,
+        /// Why it needs them; None only where a refusal names none.
+        reason: Option<crate::authority::AuthorityHistoryReason>,
     },
     /// The persisted authority clock floor is present and does not decode
     /// (FIX 10106): the vault no longer knows the least second it has

@@ -807,10 +807,16 @@ impl Vault {
             None => live_owners(&holders, None),
         };
         let id = self.store.clock.entity_id()?.to_hex();
+        let owner_authored = self.membership_owner_write_in_txn(&txn, actor);
         let (effect, unsigned) = apply(&mut txn, actor_id, now, &id)?;
         let record = match unsigned {
             Some(unsigned) => self.file_membership_execution_in_txn(
-                &mut txn, vault_id, &id, actor_id, now, unsigned,
+                &mut txn,
+                vault_id,
+                &id,
+                (actor_id, owner_authored.as_ref()),
+                now,
+                unsigned,
             )?,
             None => ChangeRecord::Unnamed,
         };

@@ -31,3 +31,7 @@ pub fn await_root_for_request(
         crate::authority::write_awaited_root_in_txn(&vault.store, wtxn, Some(root), Some(request))
     })
 }
+
+// The adopted-fold gate's covered-row check over replaced summaries (FIX
+// [ADOPTED-FOLD-GATE-SIGNER-COST]).
+pub use crate::authority::adopted_door::covered_rows_unfloored;

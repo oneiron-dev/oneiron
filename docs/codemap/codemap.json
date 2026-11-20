@@ -2371,7 +2371,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AgentInboxBoardSlice",
@@ -3988,17 +3988,17 @@
      "path": "src/authority/adopted_fold/covered_floors.rs",
      "purpose": "The covered rows a tail floors past an adopted image (FIX [SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY], Astra r4…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/authority/adopted_fold/mod.rs",
      "purpose": "The authority fold past an adopted checkpoint image (OF-469, slice C; identity.md, \"Resumable checkpoints…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -4012,13 +4012,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/authority/adopted_fold/settle.rs",
      "purpose": "The tail's seeded fold past an adopted image, settled and projected (OF-469, slice C): what the live fold…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 9
      }
     },
     {
@@ -4317,7 +4317,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AuthorityCheckpointV2"
@@ -4325,7 +4325,7 @@
      "path": "src/authority/checkpoint_image/mod.rs",
      "purpose": "The portable authority checkpoint v2 image (OF-469): the exact fold a vault builds of its covered history…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 16,
       "fn": 5,
       "re-export": 3,
       "struct": 1
@@ -5890,7 +5890,7 @@
       "crate-vis": 18,
       "enum": 1,
       "fn": 12,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 7
      }
     },
@@ -5901,7 +5901,21 @@
      "path": "src/authority/owner_key_enrollment_door/owner_authority_closure.rs",
      "purpose": "The owner authority a person's removal ends (row OWNER-REVOKE-BY-NAMED-ATTRIBUTION; ruled…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OwnerKeyBindingReceipt",
+      "PreparedOwnerKeyBinding"
+     ],
+     "path": "src/authority/owner_key_enrollment_door/owner_key_binding.rs",
+     "purpose": "An Owner's `human` binding to an owner device key of their own, signed by that key (lead ruling…",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -6221,7 +6235,7 @@
      "path": "src/authority/readonly_fold/adopted_door.rs",
      "purpose": "The adopted-fold door (FIX [ADOPTED-FOLD-GATE-TEST] and [SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY]): one…",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "struct": 2,
       "type": 1
      }
@@ -6357,7 +6371,7 @@
      "path": "src/authority/revoke_proof.rs",
      "purpose": "Log-derived, typed restrictive facts (actor and device revocations, slip withdrawals, a Grant's slip…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -6407,7 +6421,7 @@
      "path": "src/authority/rows_floor.rs",
      "purpose": "Sequence floors from the rows themselves (Engine RULING SEQ-FLOOR-SHAPE = A, 15 Nov 16:37; FIX…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -6653,7 +6667,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 42,
       "fn": 24,
       "re-export": 3
      }
@@ -6753,7 +6767,7 @@
      "path": "src/authority/stale_roster.rs",
      "purpose": "Clock-free expiry of approvals resting on a subsequently revoked roster",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -12273,11 +12287,21 @@
      "purpose": "BK-DEPOSITS PR 2: one deposit's payment, from checkout to settlement",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 3,
       "fn": 5,
       "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/lifecycle/deposit/held.rs",
+     "purpose": "What a booking's deposit still holds that its owner may give back…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -12398,9 +12422,26 @@
      "path": "src/booking/lifecycle/owner_card.rs",
      "purpose": "The owner's same-day booking card (ARCH-0062:155 \"every booking surfaces to the owner as an inbox card…",
      "surface": {
-      "const": 1,
-      "crate-vis": 2,
+      "const": 2,
+      "crate-vis": 4,
+      "re-export": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BookingDepositHeld",
+      "BookingDepositHeldReason",
+      "BookingOwnerCardDeposit"
+     ],
+     "path": "src/booking/lifecycle/owner_card/held_deposit.rs",
+     "purpose": "The owner's line for a booking's held deposit (BK-DEPOSIT-HOST-CANCEL-AFTER-START-OWNER-LINE, PR 2 of the…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "struct": 1
      }
     },
     {
@@ -13942,7 +13983,7 @@
      "path": "src/calendar/passport.rs",
      "purpose": "UID-first passport index and feed diff (CAL-02, ONE-1784)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 7
      }
@@ -17725,12 +17766,15 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "TimelineRecordProjection"
+     ],
      "path": "src/claim/scoped_read/graph_reads.rs",
      "purpose": "Receipted graph and timeline reads under the resolved actor floor",
      "surface": {
       "crate-vis": 4,
-      "fn": 4
+      "enum": 1,
+      "fn": 5
      }
     },
     {
@@ -17794,7 +17838,7 @@
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
       "crate-vis": 13,
-      "re-export": 18,
+      "re-export": 19,
       "struct": 1
      }
     },
@@ -17884,7 +17928,8 @@
      "path": "src/claim/scoped_read/person_about_lines.rs",
      "purpose": "The `about` lines the people roster shows a read (FIX-LIST GRANT-RECEIPT-OTHER-READ-LANES part 4)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -24857,7 +24902,7 @@
      "path": "src/connector_key/charter.rs",
      "purpose": "Connector charter compilation and stamped charter constraints",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1,
       "struct": 2
      }
@@ -26858,7 +26903,7 @@
      "purpose": "PEOPLE (owner ruling, ARCH-0067): one `pr` handle for every person, humans and agents alike",
      "surface": {
       "crate-vis": 6,
-      "fn": 18,
+      "fn": 19,
       "re-export": 2,
       "struct": 3
      }
@@ -32481,7 +32526,7 @@
      "path": "src/dreamer_consolidation/person_about/sources.rs",
      "purpose": "The `about` line a reader sees, with the CLAIM ids it stands on (FIX 3515)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -43460,7 +43505,7 @@
      "path": "src/federation/shared_act/membership/pending_execution.rs",
      "purpose": "A membership change no host issuer could sign (FIX 12335, Engine 13:13 call A)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -94773,7 +94818,7 @@
      "purpose": "The adopted-fold door (FIX [ADOPTED-FOLD-GATE-TEST] and [SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY]): one…",
      "surface": {
       "fn": 1,
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -96349,6 +96394,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/foldpast.rs",
+     "purpose": "Doors for `tests/foldpast_tail_scope.rs`: sign a host-root op as the next row without storing it (or one…",
+     "surface": {
+      "fn": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/free_time_cycle_writer.rs",
      "purpose": "A door to the free-time cycle writer (FABLE-6918-1): the writer of one due boundary alone, as…",
      "surface": {
@@ -97013,7 +97068,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 358,
+      "mod": 359,
       "re-export": 3
      }
     },
@@ -106953,6 +107008,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/adopted_fold_gate_signer_cost.rs",
+     "purpose": "FIX [ADOPTED-FOLD-GATE-SIGNER-COST] (Astra seq-floor round 2b F1; Engine RULING SEQ-FLOOR-GATE-COST = A)…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -107736,6 +107799,14 @@
      "notable": [],
      "path": "tests/authority_log_owner_reserve_import_mark.rs",
      "purpose": "Row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, part 2f2: the owner's own import of an export secret…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/authority_log_owner_reserve_membership_execution.rs",
+     "purpose": "Row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, part 2g: the vault owner's own membership change carries…",
      "surface": {}
     },
     {
@@ -110707,6 +110778,14 @@
      "surface": {}
     },
     {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/foldpast_tail_scope.rs",
+     "purpose": "A tail row folds past an adopted checkpoint image (FIX 11760)",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -113472,6 +113551,14 @@
      "notable": [],
      "path": "tests/owner_export_keeps_credentials.rs",
      "purpose": "Public-path pins for the Owner's whole-vault archive credential promises (ARCH-0038 #promise-cons-06, owner…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_key_binding.rs",
+     "purpose": "HOSTED-RELAY-OWNER-HUMAN-BIND-CEREMONY (lead ruling B, Sat 21 Nov 04:3x): an Owner of a hosted or relay…",
      "surface": {}
     },
     {
@@ -117609,7 +117696,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 326,
+     "files": 327,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -117651,7 +117738,7 @@
      "purpose": "—"
     },
     "booking": {
-     "files": 92,
+     "files": 94,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -119086,7 +119173,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 369,
+     "files": 370,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -119268,10 +119355,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 305,
+   "over_bar": 308,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8346,
-   "test_files": 2121
+   "source_files": 8350,
+   "test_files": 2125
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -121980,13 +122067,43 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/beam/code_bench/pack.rs",
      "purpose": "`beam code-bench-pack <plan.json>`: materialize every ready cell for the run's driver, and list every cell…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/code_bench/pack/cell_files.rs",
+     "purpose": "The files of one cell beside its world: the prompt, the MCP server config and the Claude Code settings",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/code_bench/pack/git.rs",
+     "purpose": "Git in a folder, reading no stdin",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/code_bench/pack/world.rs",
+     "purpose": "A cell's world: a fresh repository of the task's base, one commit, the sealed paths removed",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -123912,7 +124029,7 @@
    ],
    "modules": {
     "beam": {
-     "files": 51,
+     "files": 54,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -124031,9 +124148,9 @@
      "purpose": "`vector` subcommand — ARCH-0019 §perf vector benchmark harness (ONE-1120)"
     }
    },
-   "over_bar": 4,
+   "over_bar": 3,
    "purpose": "oneiron-bench — benchmark harness drivers",
-   "source_files": 193,
+   "source_files": 196,
    "test_files": 25
   },
   "oneiron-broker": {
@@ -127719,11 +127836,14 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "AuthorityHistoryReason"
+     ],
      "path": "src/authority.rs",
-     "purpose": "Authority-log hash vocabulary the write path shares",
+     "purpose": "Authority-log vocabulary the write path and the error share: the entry hash, and why a fold needs history",
      "surface": {
       "const": 1,
+      "enum": 1,
       "type": 1
      }
     },
@@ -128811,7 +128931,7 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Authority-log hash vocabulary the write path shares"
+     "purpose": "Authority-log vocabulary the write path and the error share: the entry hash, and why a fold needs history"
     },
     "claim": {
      "files": 4,
@@ -163950,7 +164070,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 76
+      "crate-vis": 77
      }
     },
     {
@@ -164571,6 +164691,16 @@
      "purpose": "`/v1/owner/outbox/diverged`: a vault VM's outbox carrier members as the owner sees them (FIX 11074, FIX 11242)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/owner_key_binding_routes.rs",
+     "purpose": "`/v1/owner/owner-signing-keys/bind`: the owner's device binds them, as `human`, to the owner key it…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -167491,17 +167621,12 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "Script",
-      "Scripted"
-     ],
+     "notable": [],
      "path": "src/commands/hook/continue_command.rs",
      "purpose": "`oneiron continue --cloud` (census L10-17): moves the Claude Code session working in this repo to the hosted…",
      "surface": {
       "crate-vis": 7,
-      "fn": 4,
-      "re-export": 1,
-      "struct": 2
+      "fn": 1
      }
     },
     {
@@ -167511,8 +167636,8 @@
      "path": "src/commands/hook/continue_command/hand_off.rs",
      "purpose": "The workspace half of `oneiron continue --cloud` (census L10-17): a hand-off commit of the working tree as…",
      "surface": {
-      "crate-vis": 6,
-      "fn": 1
+      "crate-vis": 7,
+      "fn": 2
      }
     },
     {
@@ -167533,6 +167658,21 @@
      "purpose": "The hooks' hand-over of a session's log to the selected hosted vault ([`hand_over_hosted`]): step 3 of…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Script",
+      "Scripted"
+     ],
+     "path": "src/commands/hook/continue_command/test_support.rs",
+     "purpose": "Seams for `tests/continue_command.rs`, reached through `crate::test_doors::continue_command`: the hand-off…",
+     "surface": {
+      "fn": 3,
+      "re-export": 1,
+      "struct": 2
      }
     },
     {
@@ -167559,10 +167699,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/commands/hook/hosted_continue_sign_in.rs",
+     "purpose": "The continue sign-in of an OAuth selection: the step-up `oneiron continue --cloud` runs on (lead rulings…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/commands/hook/hosted_selection.rs",
      "purpose": "The hosted vault this user's sign-in selected (H41, ARCH-0028 `#plugin-first-run` step 3), as `oneiron hook`…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -167572,7 +167722,7 @@
      "path": "src/commands/hook/hosted_sign_in.rs",
      "purpose": "`oneiron hosted login --origin <url>` with no credential: this user signs in to the hosted vault through the…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -178905,6 +179055,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/memory_timeline_projection.rs",
+     "purpose": "Door for `tests/timeline_shell_projection_recheck.rs` (FIX TIMELINE-SHELL-TWO-SNAPSHOT-CAP): the projection…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/merge_queue_checker_pressure.rs",
      "purpose": "Doors for `tests/merge_queue_checker_pressure.rs` ([GUEST-PIDS-PRESSURE-MERGE-QUEUE-CHECKER], FIX 8013…",
      "surface": {
@@ -178918,7 +179078,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 77
+      "mod": 79
      }
     },
     {
@@ -179095,6 +179255,16 @@
      "purpose": "Door for `tests/resident_pump_claim_latency.rs`: the agent run pump on a test's server, started as `serve`…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/run_brief_people.rs",
+     "purpose": "Door for `tests/run_brief_roster_off_device.rs`: the PEOPLE roster a pumped run's self brief reads, built as…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -181020,6 +181190,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/hosted_continue_sign_in.rs",
+     "purpose": "`oneiron continue --cloud` on an OAuth selection runs on a continue sign-in of its own (row…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -181880,6 +182058,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_key_binding_routes.rs",
+     "purpose": "HOSTED-RELAY-OWNER-HUMAN-BIND-CEREMONY (lead ruling B, Sat 21 Nov 04:3x): the owner of a managed host's…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -182133,6 +182319,14 @@
      "notable": [],
      "path": "tests/run_brief_prefix_recheck.rs",
      "purpose": "[BRIEF-PREFIX-STALE-PAST-REVOKE]: a pumped run's self brief goes again only while every row it shows stands…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_brief_roster_off_device.rs",
+     "purpose": "A pumped run's self brief is judged off-device, even for a run on this install",
      "surface": {}
     },
     {
@@ -182535,6 +182729,14 @@
      "notable": [],
      "path": "tests/t0i_token_revoke_log_on_stdout.rs",
      "purpose": "`oneiron token revoke` (and `oneiron revoke`) print their JSON answer on stdout, with the log lines on…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/timeline_shell_projection_recheck.rs",
+     "purpose": "[TIMELINE-SHELL-TWO-SNAPSHOT-CAP]: the core memory timeline route (`GET /v1/core/memory/{id}/timeline`)…",
      "surface": {}
     },
     {
@@ -183073,7 +183275,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 833,
+     "files": 834,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -183164,7 +183366,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 89,
+     "files": 91,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -183619,7 +183821,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 80,
+     "files": 82,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -183691,8 +183893,8 @@
    },
    "over_bar": 71,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2072,
-   "test_files": 537
+   "source_files": 2077,
+   "test_files": 541
   },
   "oneiron-setting-contract": {
    "files": [
