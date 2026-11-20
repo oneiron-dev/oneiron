@@ -2285,6 +2285,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/decision_read_think_start.rs` | test | s | — | — | L2-33 (FIX 22360; lead ruling THINK-START = C, 13 Nov 2026): a served host's ThinkThreshold row starts at… |
 | `tests/delete_authority_served_door.rs` | test | m | — | — | DEL-2 at the core HTTP delete (ARCH-0043, owner DEL-2 = A; Engine ruling 13 Nov 02:51 = A) |
 | `tests/device_burst_replay.rs` | test | s | — | — | L7-41: an own device's burst its home held lands by the home's own drain once the device's rate is back at… |
+| `tests/device_burst_residence_replay.rs` | test | s | — | — | Case 2 of BURST-REPLAY-ROUND2-TESTS (#9226 review round 2, P1 2): an own device's edit that a residence… |
 | `tests/device_burst_response.rs` | test | s | — | — | L7-41: an own device's write burst meets, at its home, the relative burst response a federated peer's does… |
 | `tests/device_home_dial_unreadable_enrolment.rs` | test | s | — | — | FIX-LIST [HOME-SELF-MARK-STALE-AS-DEVICE], case 2: a machine whose enrolment record is there but does not… |
 | `tests/device_sync_dial_gate_pinned_heads.rs` | test | m | — | — | Red/green test for #8722 review round 2, P1 2 (FIX [DOOR-HEADS-REVIEW2-P1-TESTS]): device sync's dial gate… |
@@ -2484,7 +2485,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/skill_merge_doors.rs` | test | m | — | — | A shared skill's merge through the served doors (FIX [SKILL-HUB-PROMOTION-VERBS], ND-001's merge half) |
 | `tests/skill_pack_load_doors.rs` | test | m | — | — | A run's own skill pack load through the served door (FIX [SKILL-HUB-PROMOTION-VERBS], ND-001's pack-load… |
 | `tests/substrate_read_attenuated_owner_slip.rs` | test | s | — | — | SUBSTRATE-READ-ATTENUATED-OWNER-CREDENTIAL-SERVER-TEST (FIX-LIST 23258): an owner slip attenuated to… |
-| `tests/support/device_burst_home.rs` | test | s | 15 crate-vis | — | The home and device of the L7-41 burst tests (`device_burst_response`, `device_burst_replay`): a home on a… |
+| `tests/support/device_burst_home.rs` | test | m | 18 crate-vis | — | The home and device of the L7-41 burst tests (`device_burst_response`, `device_burst_replay`): a home on a… |
 | `tests/support/engine_stack.rs` | test | s | 2 crate-vis | — | Runs a server test as the server's binary runs its app: on a multi-thread runtime whose threads have the… |
 | `tests/support/eval_authoring_fixture.rs` | test | m | 22 crate-vis | — | Shared fixture for the `vault.evals.authoring.execute` server tests: a rooted vault served over the real… |
 | `tests/support/fake_llm.rs` | test | m | 12 crate-vis | — | A scripted local model server speaking the OpenAI-compatible (`/v1/chat/completions`) and… |

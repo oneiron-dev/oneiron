@@ -6220,7 +6220,7 @@
      "path": "src/authority/retired_signers.rs",
      "purpose": "A handoff retires its predecessor for good (engine-crates-03)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -8448,7 +8448,7 @@
      "path": "src/batch/export/archive_retained_side_rows.rs",
      "purpose": "Retained side-table envelopes carry source table names, original key suffixes and value bytes, with identity…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "struct": 1
      }
     },
@@ -8578,6 +8578,16 @@
      "surface": {
       "crate-vis": 7,
       "fn": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/document_import/claim_pair_same_as.rs",
+     "purpose": "A restored `same_as` between two CLAIMs (fix list row WHOLE-VAULT-RESTORE-CLAIM-AND-NOTE-SAME-AS; Engine…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -9699,7 +9709,7 @@
      "path": "src/batch/secret_scan/mask/side_row.rs",
      "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -17466,7 +17476,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FrozenReadLane"
@@ -17474,9 +17484,30 @@
      "path": "src/claim/scoped_read/frozen.rs",
      "purpose": "OF-506 (FIX 1857): a read lane frozen when work is saved for later, and rebuilt each time that work reads",
      "surface": {
-      "crate-vis": 10,
-      "fn": 11,
+      "crate-vis": 8,
+      "fn": 8,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/frozen/freeze.rs",
+     "purpose": "[`FrozenReadLane::freeze`]: the saver's live lane, frozen when its work is saved for later (OF-506), and the…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/frozen/rebuild.rs",
+     "purpose": "[`FrozenReadLane::narrow_in_txn`] and its kin: each rebuild of a frozen lane, which narrows a live key and…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
      }
     },
     {
@@ -20211,7 +20242,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 74,
+      "crate-vis": 75,
       "mod": 8,
       "re-export": 39
      }
@@ -21127,7 +21158,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 45,
+      "crate-vis": 46,
       "re-export": 6
      }
     },
@@ -21158,7 +21189,7 @@
      "path": "src/code_run/storage/program_resume.rs",
      "purpose": "A turn program's resume checkpoint (DOOR-141 PR3b, FIX 4382): the compact head and keyed pages its pinned…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -31586,13 +31617,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/extracted_people.rs",
      "purpose": "Explicit PERSON outputs from the production extraction response",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -31603,6 +31634,16 @@
      "purpose": "The engine's person mint (FIX 7506, ARCH-0026 row 1): a reply declares a person it names as `new:P<n>`…",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/extracted_people/mint_door.rs",
+     "purpose": "The extraction's person mint for one declared person, for the integration door…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -31783,7 +31824,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 49,
+      "crate-vis": 50,
       "mod": 5,
       "re-export": 27
      }
@@ -94665,13 +94706,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/test_doors/erased_request_identity.rs",
      "purpose": "Door for `tests/erased_request_custody_identity.rs` (FIX ERASED-IDENTITY-ONE-STAND-IN): one code-run call…",
      "surface": {
-      "fn": 9
+      "fn": 16
      }
     },
     {
@@ -95826,7 +95867,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 333,
+      "mod": 334,
       "re-export": 2
      }
     },
@@ -95892,6 +95933,16 @@
      "purpose": "Doors for tests/msgpack_trailing_refusal.rs (PLAN-UC-08 PR 1)",
      "surface": {
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/native_person_mint.rs",
+     "purpose": "Door to the Dreamer's native person mint (FIX NATIVE-CLAIM-LANDS-ON-ARCHIVED-PERSON): the binding and the…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -98840,7 +98891,7 @@
      "path": "src/vault_cleanup/person_provenance.rs",
      "purpose": "Mint-time evidence for the extraction-only PERSON cleanup arm",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -107775,11 +107826,19 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/device_burst_admission.rs",
      "purpose": "L7-41: an own device's window update at its home gets the same relative burst response a federated peer's…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/device_burst_residence_admission.rs",
+     "purpose": "#9226 review round 2 and #9691 review round 1: an own device's update that a residence socket sent to a…",
      "surface": {}
     },
     {
@@ -108288,6 +108347,14 @@
      "notable": [],
      "path": "tests/feed_verbs.rs",
      "purpose": "The change feed verbs (untangle slice 6.8d) through the generated verb dispatch…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fenced_erase_stand_in_identity.rs",
+     "purpose": "FIX FENCE-ERASE-STAND-IN-DIGESTS-RAW-VALUE: an erase keeps each bridge request's stand-in identity (FIX…",
      "surface": {}
     },
     {
@@ -111034,6 +111101,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/native_re_mention_restores_archived_person.rs",
+     "purpose": "FIX [NATIVE-CLAIM-LANDS-ON-ARCHIVED-PERSON]: the Dreamer's extraction derives a person's id from the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/nightly_topic_groups.rs",
      "purpose": "Nightly extraction groups unbound TURNs by topic (census L2-04; ARCH-0026 Nightly: \"It groups the queued…",
      "surface": {}
@@ -112473,7 +112548,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/retired_key_evidence_own_vault.rs",
@@ -114683,6 +114758,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/whole_vault_restore_claim_pair_same_as.rs",
+     "purpose": "Fix list row WHOLE-VAULT-RESTORE-CLAIM-AND-NOTE-SAME-AS (Engine ANSWER CLAIM-NOTE-SAME-AS-RESTORE-PROOF = A…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -115009,7 +115092,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 207,
+     "files": 208,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -115135,7 +115218,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 156,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -115443,7 +115526,7 @@
      "purpose": "FIX 12569: each vault's own small draft model (I5-DRAFTER = A), retrained at night on the vault's own…"
     },
     "dreamer_consolidation": {
-     "files": 193,
+     "files": 194,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116472,7 +116555,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 342,
+     "files": 343,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116647,10 +116730,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 303,
+   "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8225,
-   "test_files": 1973
+   "source_files": 8230,
+   "test_files": 1977
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -177252,6 +177335,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/device_burst_residence_replay.rs",
+     "purpose": "Case 2 of BURST-REPLAY-ROUND2-TESTS (#9226 review round 2, P1 2): an own device's edit that a residence…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/device_burst_response.rs",
      "purpose": "L7-41: an own device's write burst meets, at its home, the relative burst response a federated peer's does…",
      "surface": {}
@@ -178849,13 +178940,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/support/device_burst_home.rs",
      "purpose": "The home and device of the L7-41 burst tests (`device_burst_response`, `device_burst_replay`): a home on a…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 18
      }
     },
     {
@@ -180090,7 +180181,7 @@
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2042,
-   "test_files": 505
+   "test_files": 506
   },
   "oneiron-setting-contract": {
    "files": [
