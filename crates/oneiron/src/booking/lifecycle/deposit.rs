@@ -45,9 +45,12 @@ use crate::booking::{BookingError, DepositTerms, EventTypeKey};
 use crate::side_table::{self, SideTable, VersionedNamed};
 use crate::{EntityId, Vault};
 
+mod held;
 mod refund;
 mod settle;
 
+pub(crate) use self::held::note_unattributed_cancel_in_txn;
+pub(super) use self::held::{HeldDeposit, HeldDepositKind, held_deposit_in_txn};
 pub(super) use self::refund::{
     cap_refund_on_visitor_reschedule_in_writer, refund_on_host_cancel_in_writer,
     refund_on_visitor_cancel_in_writer,
@@ -153,6 +156,14 @@ struct DepositRow {
     /// owed: once that refund settles, the balance is owed as well.
     #[serde(default)]
     balance_owed_after_refund: bool,
+    /// The staged SEQUENCE of the owner's cancelled calendar write whose
+    /// replay read a stored copy with no write marker as the owner's own
+    /// while this deposit was held (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C):
+    /// a host's cancel at that SEQUENCE would read the same, so the owner's
+    /// line names it as a cancel Oneiron cannot attribute. Unset on every
+    /// other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unattributed_cancel_sequence: Option<u32>,
     updated_at: u64,
 }
 
@@ -316,6 +327,7 @@ pub fn begin_deposit_checkout(
                 captured_minor: None,
                 refunded_minor: 0,
                 balance_owed_after_refund: false,
+                unattributed_cancel_sequence: None,
                 updated_at: now_utc,
             },
         };

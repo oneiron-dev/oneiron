@@ -91,7 +91,9 @@ pub struct InboxItemView {
     pub lens: Option<crate::lens::GeneratedLens>,
     /// The card a booking row carries, read as the booking stands now: the
     /// visitor, the event type, the slot, the page it came from, and the
-    /// owner's cancel and reschedule doors it offers (ARCH-0062:155).
+    /// owner's cancel and reschedule doors it offers (ARCH-0062:155); a
+    /// held-deposit row opens the same card, its deposit line with Return
+    /// deposit for a host selected at confirmation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub booking: Option<crate::booking::BookingOwnerCard>,
 }
@@ -229,8 +231,11 @@ impl Memory<'_> {
             self.actor(),
             &read,
         )?;
-        let booking =
-            crate::booking::lifecycle::booking_owner_card_of_item(self.vault(), &item.item_id)?;
+        let booking = crate::booking::lifecycle::booking_owner_card_of_item(
+            self.vault(),
+            &item.item_id,
+            self.actor(),
+        )?;
         self.record_inbox_read_state(&item, AgentInboxReadState::Open, None)?;
         let mut row = InboxLensRow::from(item);
         row.read_state = Some(AgentInboxReadState::Open);
