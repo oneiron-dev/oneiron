@@ -681,68 +681,60 @@ impl Vault {
     /// knows for each key it carries, and the row of each wake this vault
     /// retracted ([`mirror_turn_program_wake_answers`]). Housekeeping runs it
     /// on every pass, after it admits what is owed. A base window this vault
-    /// owes such a row that is not loaded is opened first, as a flush opens
-    /// one: its open writes the row from this vault's marks and decisions,
-    /// stores it and routes it (FIX
-    /// TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN). An entry is cleared
-    /// once its window holds the rows: this pass opened it, or mirrored into
-    /// it, whether or not the mirror had anything left to write. A window
-    /// that did not open keeps its entry for the next pass. Every other
-    /// window opened later writes its rows as it opens.
+    /// owes such a row is stored first, loaded or not
+    /// ([`Self::store_turn_program_wake_rows_owed`]). Every other window is
+    /// best effort: one opened later writes its rows as it opens.
     pub(crate) fn refresh_turn_program_wake_answers_in_live_windows(&self) {
-        let owed = self.open_windows_owed_turn_program_wake_rows();
-        let mut took = owed
-            .as_ref()
-            .map(|(_, opened)| opened.clone())
-            .unwrap_or_default();
+        self.store_turn_program_wake_rows_owed();
         for window in self.live_windows() {
             if window.key.world().is_some() {
                 continue;
             }
             match mirror_turn_program_wake_answers(self, &window.doc, &window.key) {
-                Ok(wrote) => {
-                    if wrote {
-                        window
-                            .doc
-                            .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-                    }
-                    took.push(window.key.clone());
+                Ok(true) => {
+                    window
+                        .doc
+                        .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
                 }
+                Ok(false) => {}
                 Err(error) => {
                     tracing::warn!(window = %window.key, error = %error, "turn program wake answers not mirrored");
                 }
             }
         }
-        if let Some((owed, _)) = owed
-            && let Err(error) = owed.clear(self, &took)
-        {
-            tracing::warn!(%error, "windows owed a turn program wake row not cleared; the next pass clears them");
-        }
     }
 
-    /// Opens each base window this vault owes a wake row that is not loaded
-    /// (`WindowManager::open_windows_owed_rows`). Answers the entries it
-    /// read and the windows it opened; `None` when no wake owes a window a
-    /// row, when the entries cannot be read, or while no window manager is
-    /// attached: the entries then wait for a later pass.
-    fn open_windows_owed_turn_program_wake_rows(
-        &self,
-    ) -> Option<(replica::RowsOwed, Vec<WindowKey>)> {
+    /// Stores the row each base window is owed (FIX
+    /// TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN): reads the entries,
+    /// then has the manager open each window they name that is not loaded,
+    /// write this vault's rows into it, persist it and mark it ready
+    /// (`WindowManager::store_windows_owed_rows`), then clears each entry it
+    /// read whose window that stored. An entry whose window was not stored
+    /// stays for the next pass, as every entry does when they cannot be read
+    /// or while no window manager is attached.
+    fn store_turn_program_wake_rows_owed(&self) {
         let owed = match replica::RowsOwed::read(self) {
-            Ok(owed) if owed.is_empty() => return None,
             Ok(owed) => owed,
             Err(error) => {
                 tracing::warn!(%error, "windows owed a turn program wake row not read");
-                return None;
+                return;
             }
         };
-        let manager = self
-            .live_window_manager
-            .lock()
-            .ok()
-            .and_then(|manager| manager.upgrade())?;
-        let opened = manager.open_windows_owed_rows(&owed.windows());
-        Some((owed, opened))
+        let manager = self.live_window_manager.lock().ok();
+        let Some(manager) = manager.and_then(|manager| manager.upgrade()) else {
+            return;
+        };
+        let stored = manager.store_windows_owed_rows(&owed.windows(), |window| {
+            if mirror_turn_program_wake_answers(self, &window.doc, &window.key)? {
+                window
+                    .doc
+                    .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+            }
+            Ok(())
+        });
+        if let Err(error) = owed.clear(self, &stored) {
+            tracing::warn!(%error, "windows owed a turn program wake row not cleared; the next pass clears them");
+        }
     }
 
     /// Mirrors TURN `turn`'s riding wakes into the live window that carries

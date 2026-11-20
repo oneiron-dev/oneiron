@@ -374,12 +374,13 @@ crate::side_table::side_tables! {
     /// FIX TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN: a wake whose latest row this machine
     /// owes the base window that carries it, which may not be loaded: that window's key. Written
     /// with a retraction and where the home answers one; the housekeeping pass opens the window
-    /// if it is not loaded and clears the entry once it is.
+    /// if it is not loaded, and clears the entry once the window is persisted with the row and
+    /// marked ready.
     /// Key: id16(actor) + id16(turn) + id16(registration).
     DREAMER_TURN_PROGRAM_WAKE_ROW_OWED: VaultMeta b"dreamer:turn_program:wake_row_owed:v1:"
         Named Engine
-        // Restore class: an entry only makes one pass open one window. The rows it stands for
-        // are written from the marks at every open of that window, with or without it.
+        // Restore class: an entry only makes one pass open and persist one window. The rows it
+        // stands for are written from the marks at every open of that window, with or without it.
         [restore: live] [family: structure] [tier: canonical];
     /// The Coach's code-fix work on one failure case and its local verdicts: the invented
     /// example's and the candidate fix's, kept after the export queue drains. Never real chat

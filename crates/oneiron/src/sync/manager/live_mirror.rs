@@ -439,43 +439,61 @@ impl WindowManager {
         }
     }
 
-    /// Opens each of `windows` that is not loaded, as a flush opens one
-    /// ([`Self::open_window_for_room_fact_flush`]): a cold open writes what
-    /// this vault owes the window, persists it and routes it, and the window
-    /// joins the flush-kept ones ([`Self::keep_flush_window`], which unloads
-    /// the least recently used beyond [`ROOM_FACT_FLUSH_WINDOWS_KEPT`], so a
-    /// window opened early in a long call may be unloaded again by its end).
-    /// Answers the windows this call opened; one that did not open is logged
-    /// and left out (FIX TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN).
-    pub(crate) fn open_windows_owed_rows(
+    /// Stores what this vault owes each of `windows`, loaded or not, and
+    /// answers the windows it stored (FIX
+    /// TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN). Housekeeping calls
+    /// it on every pass, so it first tries again each flush-kept window whose
+    /// unload was refused ([`Self::unload_flush_windows_beyond_kept`]), with
+    /// or without a window to store. A window that did not open, took no
+    /// write, did not persist or was not marked ready is logged and left
+    /// out: its caller asks again on a later pass.
+    pub(crate) fn store_windows_owed_rows(
         self: &Arc<Self>,
         windows: &[WindowKey],
+        write: impl Fn(&crate::sync::window::LoadedWindow) -> crate::Result<()>,
     ) -> Vec<WindowKey> {
-        let loaded = self.loaded_keys();
-        let mut opened = Vec::new();
+        self.unload_flush_windows_beyond_kept();
+        let mut stored = Vec::new();
         for key in windows {
-            if loaded.contains(key) {
-                continue;
-            }
-            match self.open_window_for_room_fact_flush(key) {
-                Ok((_, true)) => {
-                    self.keep_flush_window(key);
-                    opened.push(key.clone());
-                }
-                Ok((_, false)) => {}
+            match self.store_window_owed_rows(key, &write) {
+                Ok(()) => stored.push(key.clone()),
                 Err(error) => {
-                    tracing::warn!(window = %key, %error, "window owed a turn program wake row not opened");
+                    tracing::warn!(window = %key, %error, "window owed a turn program wake row not stored");
                 }
             }
         }
-        opened
+        stored
+    }
+
+    /// Opens window `key` if it is not loaded, as a flush opens one
+    /// ([`Self::open_window_for_room_fact_flush`]; a window this call opened
+    /// joins the flush-kept ones), has `write` write the owed rows into it,
+    /// persists its state whether or not `write` changed the doc, and marks
+    /// it ready for every live connection, as a policy wake does
+    /// (`wake_window`). `Ok` says the stored window holds what `write`
+    /// wrote and each connection, a later one too, asks its peer to exchange
+    /// it: an update Observer A did not persist, or that only a live channel
+    /// took before the process stopped, is not lost with it.
+    fn store_window_owed_rows(
+        self: &Arc<Self>,
+        key: &WindowKey,
+        write: &impl Fn(&crate::sync::window::LoadedWindow) -> crate::Result<()>,
+    ) -> crate::Result<()> {
+        let (window, opened) = self.open_window_for_room_fact_flush(key)?;
+        let stored = write(&window).and_then(|()| window.persist_state(&self.vault).map(drop));
+        drop(window);
+        if opened {
+            self.keep_flush_window(key);
+        }
+        stored?;
+        self.mark_window_ready(key).map(drop)
     }
 
     /// Keeps `key`, just opened for a flush, loaded: most recently used
     /// among [`ROOM_FACT_FLUSH_WINDOWS_KEPT`]; unloads the least recently
-    /// used beyond it.
+    /// used beyond it ([`Self::unload_flush_windows_beyond_kept`]).
     fn keep_flush_window(&self, key: &WindowKey) {
-        let evicted = {
+        {
             let mut kept = self
                 .live_mirror
                 .flush_kept
@@ -485,12 +503,39 @@ impl WindowManager {
                 kept.remove(pos);
             }
             kept.push_back(key.clone());
+        }
+        self.unload_flush_windows_beyond_kept();
+    }
+
+    /// Unloads the least recently used flush-kept windows beyond
+    /// [`ROOM_FACT_FLUSH_WINDOWS_KEPT`]. A window whose unload is refused (a
+    /// caller holds a handle) or fails stays loaded and goes back to the
+    /// least recently used end, so the next call tries it again: the next
+    /// flush that keeps a window, and each housekeeping pass
+    /// ([`Self::store_windows_owed_rows`]). Until then more than
+    /// [`ROOM_FACT_FLUSH_WINDOWS_KEPT`] may be loaded.
+    fn unload_flush_windows_beyond_kept(&self) {
+        let evicted = {
+            let mut kept = self
+                .live_mirror
+                .flush_kept
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             let over = kept.len().saturating_sub(ROOM_FACT_FLUSH_WINDOWS_KEPT);
             kept.drain(..over).collect::<Vec<_>>()
         };
-        for key in evicted {
+        // Newest first, so the ones put back keep their order at the front.
+        for key in evicted.into_iter().rev() {
             if let Err(error) = self.unload_window(&key) {
-                tracing::debug!(window = %key, %error, "window opened for a flush stays loaded");
+                tracing::debug!(window = %key, %error, "window opened for a flush stays loaded; its unload is tried again");
+                let mut kept = self
+                    .live_mirror
+                    .flush_kept
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                if !kept.contains(&key) {
+                    kept.push_front(key);
+                }
             }
         }
     }

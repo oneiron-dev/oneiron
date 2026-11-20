@@ -371,7 +371,7 @@ fn ran(run: &JobRun) -> Option<SweepOutcome> {
 /// admission, and the pass ends by writing the latest row this machine knows
 /// for each carried wake into its live windows (FIX
 /// TURNPROGRAM-LATE-WITHHOLD-DOUBLE-DECIDE); a window that is owed such a
-/// row and is not loaded is opened for it first (FIX
+/// row is first opened if it is not loaded, and stored with the row (FIX
 /// TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN). A failure is logged by
 /// the admission and waits for the next pass.
 #[cfg(feature = "sync")]

@@ -26,8 +26,9 @@
 //! A `Retracted` row, and the home's answer to one, is owed to the window
 //! that carried the wake, loaded or not: the machine notes the window with
 //! the retraction or the answer ([`owe_retraction_answer_in_txn`]), and its
-//! housekeeping pass loads a window that is not loaded, whose open writes
-//! the row (FIX TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN).
+//! housekeeping pass loads a window that is not loaded, writes the row,
+//! persists the window and marks it ready before it clears the note (FIX
+//! TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN).
 //!
 //! On one key the rows are ordered `Owed`, `Retracted`, `Released`,
 //! `Admitted`, and no machine writes a row over a later one. A window keeps
@@ -616,11 +617,6 @@ impl RowsOwed {
         Ok(Self(entries))
     }
 
-    /// Whether no wake owed a window a row.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
     /// The base windows the entries name, each once. An entry whose value is
     /// no window key names none.
     pub(crate) fn windows(&self) -> Vec<WindowKey> {
@@ -630,12 +626,13 @@ impl RowsOwed {
     }
 
     /// Clears, in one writer, each entry read here that names one of
-    /// `windows` and still names it: those windows hold this machine's rows
-    /// as of a moment after the entries were read. An entry noted again
-    /// since under the same window stands for the same row, which that
-    /// window holds too: the row a machine owes for a retraction (its own
-    /// `Retracted`, or its answer to one) does not change once it owes it.
-    /// An entry noted since under another window stays.
+    /// `windows` and still names it: those windows were persisted, and
+    /// marked ready, holding this machine's rows as of a moment after the
+    /// entries were read. An entry noted again since under the same window
+    /// stands for the same row, which that stored window holds too: the row
+    /// a machine owes for a retraction (its own `Retracted`, or its answer
+    /// to one) does not change once it owes it. An entry noted since under
+    /// another window stays.
     pub(crate) fn clear(&self, vault: &Vault, windows: &[WindowKey]) -> Result<()> {
         let taken: Vec<&(ActorWakeKey, String)> = self
             .0
