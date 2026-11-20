@@ -607,12 +607,16 @@ fn signs_for_the_owner(
                 .is_some_and(|device| device.revoked))
 }
 
-/// Whether the stored row `hash`, a request or a directive this install's
-/// pickup answers, is the owner's work at this door: a slip issuer signed or
+/// Whether the row `hash`, a request or a directive this install's pickup
+/// answers, is the owner's work at this door: a slip issuer signed or
 /// cosigned it, or an anchor this install takes as its own signed it, as
 /// [`signs_for_the_owner`] reads `fold`, or this install carries
-/// it ([`carries_own_will`]). A row no raw body of is stored, such as one an
-/// adopted checkpoint image covers, is not.
+/// it ([`carries_own_will`]). The row is the stored one, else, on a vault
+/// that adopted a checkpoint image, the body the image carries of that
+/// covered row, judged the same way: the pickup takes such a request or
+/// directive from the adopted fold, so its result is the owner's work when
+/// the owner signed what it answers (FIX [OWNER-RESERVE-ADOPTED-OWNER-WORK]).
+/// A row neither stored nor carried whole is not.
 fn asks_the_owners_work(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -621,8 +625,12 @@ fn asks_the_owners_work(
     arriving: &[(AuthorityEntryHash, &AuthorityLogEntry)],
     hash: &AuthorityEntryHash,
 ) -> crate::error::Result<bool> {
-    let Some(asked) = super::retired_signers::stored_authority_row(store, txn, hash)? else {
-        return Ok(false);
+    let asked = match super::retired_signers::stored_authority_row(store, txn, hash)? {
+        Some(asked) => asked,
+        None => match super::adopted_evidence::CarriedRows::default().get(store, txn, hash)? {
+            Some(asked) => asked,
+            None => return Ok(false),
+        },
     };
     if names_an_owner_key(structure, &asked)
         && fold.read(store, txn, arriving, |view| {
@@ -634,7 +642,7 @@ fn asks_the_owners_work(
     carries_own_will(store, txn, &asked)
 }
 
-/// Whether the stored request `request` this install's pickup answers is the
+/// Whether the request `request` this install's pickup answers is the
 /// owner's work at this door ([`asks_the_owners_work`], on this vault's
 /// snapshot fold). The key wraps and
 /// joins a pickup signs under this install's key land at the door as the
