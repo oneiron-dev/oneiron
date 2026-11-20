@@ -206,7 +206,12 @@ impl Vault {
 
     /// The names of `id` at the revision the code rung publishes
     /// ([`ReadMode::Indexed`]): none for a record that is gone, withdrawn or unreadable.
-    fn phonetic_names_in_txn(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Vec<String>> {
+    /// The entity linker's sound rung reads them too: its stored sound keys are theirs.
+    pub(crate) fn phonetic_names_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Vec<String>> {
         let Some(raw) = read_entity_revision_in_txn(self, txn, id, ReadMode::Indexed)? else {
             return Ok(Vec::new());
         };

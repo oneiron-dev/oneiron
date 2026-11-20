@@ -53,6 +53,7 @@ use super::tags::{
 };
 use super::vector;
 use crate::attempt_queue::AttemptQueue;
+use crate::batch::phonetic_codes::{every_part_sounds_like, linking_codes};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::federation::record_scope::{birth_facet, scope_for_blob};
@@ -60,8 +61,10 @@ use crate::federation::{ScopeAxis, ScopeId};
 use crate::memory::extraction::{
     ContextLink, EncoderInput, EncoderOutput, SpeakerLink, SpeakerTarget,
 };
+use crate::pipeline::RetrievalParams;
 use crate::ports::{
-    EdgeDirection, EdgeStoreRead, EntityStoreRead, RetrievalIndexRead, TombstoneStoreRead,
+    EdgeDirection, EdgeStoreRead, EntityStoreRead, RetrievalIndexRead, SoundMatchAdmission,
+    TombstoneStoreRead,
 };
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::Store;
@@ -759,16 +762,17 @@ impl<'v> Linker<'v> {
     /// The phonetic rung (ARCH-0024 signal 2), for a name the key misses:
     /// the canonical heads of the live or archived persons whose phonetic
     /// postings hold the name's whole romaji or kana code, or the Soundex
-    /// code of every one of its parts, each in a world the turn is in. A
-    /// name of one part, and a mention of any other kind, take none. No hit
-    /// is a sure link: two or more are the mention's candidates, and one
-    /// alone is a candidate the nightly re-check asks about beside the
-    /// mention's own provisional entity (OF-123).
+    /// code of every one of its parts, or whose stored sound keys the
+    /// sound match keeps ([`Self::sound_matches`]), each in a world the
+    /// turn is in. A name of one part, and a mention of any other kind,
+    /// take none. No hit is a sure link: two or more are the mention's
+    /// candidates, and one alone is a candidate the nightly re-check asks
+    /// about beside the mention's own provisional entity (OF-123).
     fn sounds_like(&self, txn: &heed::RoTxn<'_>, kind: u8, mention: &str) -> Result<Vec<EntityId>> {
         if kind != ENTITY_TYPE_PERSON {
             return Ok(Vec::new());
         }
-        let codes = crate::batch::phonetic_codes::linking_codes(mention);
+        let codes = linking_codes(mention);
         let store = &self.vault.store;
         let mut hits: BTreeSet<EntityId> = store
             .port_retrieval_phonetic_search(txn, &codes.whole)?
@@ -795,6 +799,7 @@ impl<'v> Linker<'v> {
             every_part = Some(held);
         }
         hits.extend(every_part.unwrap_or_default());
+        hits.extend(self.sound_matches(txn, kind, mention, &codes.sound)?);
         let mut found = BTreeSet::new();
         for hit in hits {
             for head in self.vault.resolve_entity_in_txn(txn, &hit)? {
@@ -804,6 +809,56 @@ impl<'v> Linker<'v> {
             }
         }
         Ok(found.into_iter().collect())
+    }
+
+    /// The rows whose stored sound keys are within the Normalized Phonetic
+    /// Distance cut of `mention`'s `sound` keys (CROSS-ARCH-0013
+    /// `#two-uses`: canonicalize at extraction), by the phonetic channel's
+    /// sound match with the shipped cut: a misheard name whose codes differ
+    /// from the person's still finds them. A row is admitted only when every
+    /// part of the mention sounds like a part of one of its names
+    /// ([`every_part_sounds_like`]), as the code rung asks every part's
+    /// Soundex code to match, and when it has a live or archived head of
+    /// `kind` in a world the turn is in. A row not admitted neither sets the
+    /// cut's nearest distance nor takes a place under its cap.
+    fn sound_matches(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: u8,
+        mention: &str,
+        sound: &[String],
+    ) -> Result<Vec<EntityId>> {
+        if sound.is_empty() {
+            return Ok(Vec::new());
+        }
+        let store = &self.vault.store;
+        let admission: &mut SoundMatchAdmission<'_> = &mut |id: &EntityId| {
+            let mut linkable = false;
+            for head in self.vault.resolve_entity_in_txn(txn, id)? {
+                if linkable_in_txn(store, txn, &head, kind)? && self.shares_world(txn, &head)? {
+                    linkable = true;
+                    break;
+                }
+            }
+            // The names are read last: each part's readings cost a G2P pass.
+            Ok(linkable
+                && self
+                    .vault
+                    .phonetic_names_in_txn(txn, id)?
+                    .iter()
+                    .any(|name| every_part_sounds_like(mention, name)))
+        };
+        Ok(store
+            .port_retrieval_phonetic_search_with_deadline(
+                txn,
+                sound,
+                &RetrievalParams::shipped(),
+                None,
+                Some(admission),
+            )?
+            .into_iter()
+            .map(|hit| hit.id)
+            .collect())
     }
 
     /// The role rung (ARCH-0024 signal 3) for the role `word`: the persons

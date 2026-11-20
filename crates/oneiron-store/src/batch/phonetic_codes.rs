@@ -25,10 +25,7 @@ use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 /// Han reads as Mandarin only, so a Japanese kanji name still needs its
 /// reading passed separately rather than guessed from the written name.
 pub fn generate_phonetic_codes(name: &str) -> Vec<String> {
-    let mut codes = BTreeSet::new();
-    for reading in phonetic_readings(name) {
-        codes.insert(format!("ipa:{}:{}", reading.lang, reading.ipa()));
-    }
+    let mut codes: BTreeSet<String> = sound_keys(name).into_iter().collect();
     match spelling(&normalize(name)) {
         Spelling::Kana { folded, romaji } => {
             codes.insert(format!("kana:{folded}"));
@@ -48,6 +45,58 @@ pub fn generate_phonetic_codes(name: &str) -> Vec<String> {
     codes.into_iter().collect()
 }
 
+/// The sound keys of a name, `ipa:<lang>:<ipa>`: one per reading of
+/// [`phonetic_readings`], each compared with stored sound keys by
+/// [`npd()`] rather than looked up as a posting (rung 1).
+pub fn sound_keys(name: &str) -> Vec<String> {
+    phonetic_readings(name)
+        .iter()
+        .map(|reading| format!("ipa:{}:{}", reading.lang, reading.ipa()))
+        .collect()
+}
+
+/// The Normalized Phonetic Distance within which one part of a name sounds
+/// like a part of another ([`every_part_sounds_like`]). It is tighter than
+/// the whole-name cut [`NPD_THRESHOLD`] because a part is short: "snow" is
+/// 0.167 from "smith" and "kristen" 0.149 from "christina", while a part
+/// misheard or spelled another way stays under 0.04 ("owan" 0.021 from
+/// "owen", "ewan" 0.036, "sadou" 0.008 from "satou", "katherine" 0 from
+/// "catherine").
+pub const PART_NPD_THRESHOLD: f32 = 0.1;
+
+/// Whether every part of `mention` sounds like a part of `name`: a reading
+/// of the part within [`PART_NPD_THRESHOLD`] of a reading of that part of
+/// `name`. A mention with no part sounds like nothing. Two names within the
+/// whole-name cut can share one part and differ in another ("Robert Jones"
+/// is 0.159 from "Robert Smith" taken whole, "Owen Snow" 0.083 from "Owen
+/// Smith"); the linker's code rung tells them apart by each part's Soundex
+/// code ([`LinkingCodes::every_part`]), and this is the same rule by sound.
+pub fn every_part_sounds_like(mention: &str, name: &str) -> bool {
+    let name = normalize(name);
+    let name_parts: Vec<Vec<Vec<Segment>>> = parts(&name).map(part_readings).collect();
+    let mention = normalize(mention);
+    let mut mention_parts = parts(&mention).peekable();
+    mention_parts.peek().is_some()
+        && mention_parts.all(|part| {
+            let readings = part_readings(part);
+            name_parts.iter().any(|other| {
+                readings.iter().any(|reading| {
+                    other
+                        .iter()
+                        .any(|held| npd(reading, held) <= PART_NPD_THRESHOLD)
+                })
+            })
+        })
+}
+
+/// The segments of each reading of one part of a name.
+fn part_readings(part: &str) -> Vec<Vec<Segment>> {
+    phonetic_readings(part)
+        .into_iter()
+        .map(|reading| reading.segments)
+        .collect()
+}
+
 /// The codes the entity linker matches a mention on (ARCH-0024 signal 2),
 /// all of them among the codes [`generate_phonetic_codes`] writes. A name of
 /// one part has none: one part alone, a first name, is too common to name
@@ -63,6 +112,13 @@ pub struct LinkingCodes {
     /// inside or before the last part ("owen snow" and "owen smith" are
     /// both O525).
     pub every_part: Vec<String>,
+    /// The sound keys of the name taken whole ([`sound_keys`]), for the
+    /// same names as `whole`: a person whose stored sound key is within the
+    /// Normalized Phonetic Distance cut, and one of whose names holds a part
+    /// that sounds like each part of this one ([`every_part_sounds_like`]),
+    /// sounds like it (CROSS-ARCH-0013 `#two-uses`, canonicalize at
+    /// extraction).
+    pub sound: Vec<String>,
 }
 
 /// The [`LinkingCodes`] of a name or a mention.
@@ -86,9 +142,15 @@ pub fn linking_codes(name: &str) -> LinkingCodes {
         }
         _ => {}
     }
+    let sound = if whole.is_empty() {
+        Vec::new()
+    } else {
+        sound_keys(name)
+    };
     LinkingCodes {
         whole: whole.into_iter().collect(),
         every_part: every_part.into_iter().collect(),
+        sound,
     }
 }
 
