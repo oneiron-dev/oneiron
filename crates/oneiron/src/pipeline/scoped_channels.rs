@@ -395,8 +395,11 @@ impl PipelineBuilder<'_> {
 
     /// The temporal channel's list for the call's scope, and the rows a
     /// clamped pack's unnarrowed list kept out of its cut because the
-    /// audience could not read them whatever their status, among the places
-    /// the cut would have given them without the clamp.
+    /// audience could not read them whatever their status, among its first
+    /// `limit` lane rows inside the window's bound, best first. That is the
+    /// place a call without the clamp gave them, as far as the window is
+    /// the same: hidden rows no longer stop its rounds, so it can grow
+    /// further. The count is the owner's; no audience-visible output reads it.
     pub(super) fn scoped_temporal_results(
         &self,
         rtxn: &RoTxn<'_>,

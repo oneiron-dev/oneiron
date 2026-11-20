@@ -567,10 +567,13 @@ impl PipelineBuilder<'_> {
             // Hidden rows that outrank a readable one would fill the window
             // and leave it only before the blend, cutting the readable row
             // out of the run (REVIEW-9980 round 1), so the clamp asks first.
-            // The read judges rows best first until its window is full (with
-            // a port walk pending, every posting in index order), so a hidden
-            // row among the first `limit` lane rows it judges held a place
-            // the window gave it before: the pack counts it as it did then.
+            // Read best first, a hidden row among the first `limit` lane rows
+            // it judges held a place the window gave it before, and the pack
+            // counts it as it did then. With a port walk pending the read
+            // judges every posting in index order, so there the owner-side
+            // count takes the first `limit` hidden lane rows it meets. Each
+            // judged row under a clamp is a deadline checkpoint, as at the
+            // scope's admission: a read past many hidden rows stops there.
             let mut clamp_metadata = EntityMetadataCache::default();
             let mut places = 0_usize;
             let mut category = |id: &EntityId| {
@@ -578,6 +581,11 @@ impl PipelineBuilder<'_> {
                     .admits(&self.read, rtxn, id)?
                 {
                     return Ok(false);
+                }
+                if let Some(deadline) = self.deadline
+                    && clamp.is_some()
+                {
+                    deadline.checkpoint()?;
                 }
                 let hidden = clamp_hides_row(&self.read, rtxn, id, clamp, &mut clamp_metadata)?;
                 if hidden && places < limit {
