@@ -618,6 +618,7 @@ pub(crate) fn scoped_session_text(
                 matches_scope: &mut admits,
                 private_note_ids: None,
                 recency: None,
+                hidden_row: None,
             },
         )
     };

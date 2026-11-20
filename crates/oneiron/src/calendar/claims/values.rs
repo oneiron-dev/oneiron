@@ -200,6 +200,20 @@ pub struct CalendarAttendeeValue {
     pub partstat: String,
 }
 
+/// The identity of a calendar address such as an attendee's `who`: a
+/// `mailto:` or `MAILTO:` prefix and ASCII case are vendor spelling, not
+/// identity, so two calendar systems that spell one person differently name
+/// one attendee. Invite hygiene matches a recipient by it, and the
+/// `calendar.attendee` conflict set `(event, who)` keys on it.
+pub(crate) fn attendee_address_identity(address: &str) -> String {
+    let trimmed = address.trim();
+    trimmed
+        .strip_prefix("mailto:")
+        .or_else(|| trimmed.strip_prefix("MAILTO:"))
+        .unwrap_or(trimmed)
+        .to_ascii_lowercase()
+}
+
 /// Confirmed/cancelled status of an EVENT.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CalendarStatus {

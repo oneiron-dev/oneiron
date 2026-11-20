@@ -38,9 +38,9 @@ mod storage;
 mod tap;
 
 pub use self::preset::{
-    CompanionConfirmationMode, CompanionPresetRow, FRIEND_HANGOUT_PRESET_ID,
-    HangoutProposalAssembly, ProposalCarrier, assemble_hangout_proposal_message,
-    friend_hangout_preset, load_companion_preset,
+    CompanionConfirmationMode, CompanionPresetRow, DEFAULT_PROPOSAL_MAX_CHOICES,
+    FRIEND_HANGOUT_PRESET_ID, HangoutProposalAssembly, ProposalCarrier,
+    assemble_hangout_proposal_message, friend_hangout_preset, load_companion_preset,
 };
 pub use self::proposal::{
     COMPANION_PROPOSAL_META_PREFIX, ChoiceId, CompanionProposal, CompanionProposalCreation,

@@ -14,6 +14,7 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::request_limits::page_limit_zero_as_one;
 use crate::side_table::{Named, SideCodec};
 
 pub use crate::memory::wake_observation::WAKE_OBSERVATION_PAGE_DEFAULT;
@@ -47,10 +48,12 @@ impl Vault {
         &self,
         request: &WakeObservationRequest,
     ) -> Result<Option<WakeObservation>> {
-        let limit = request
-            .limit
-            .unwrap_or(WAKE_OBSERVATION_PAGE_DEFAULT)
-            .clamp(1, WAKE_OBSERVATION_PAGE_MAX);
+        let limit = page_limit_zero_as_one(
+            request.limit,
+            WAKE_OBSERVATION_PAGE_DEFAULT,
+            WAKE_OBSERVATION_PAGE_MAX,
+        )
+        .rows;
         let observation = {
             let rtxn = self.store.env.read_txn()?;
             match request.selector {

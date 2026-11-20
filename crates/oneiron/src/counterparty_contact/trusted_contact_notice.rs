@@ -31,7 +31,7 @@ use crate::memory::Memory;
 use crate::outbound::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchRequest,
     OutboundDispatchResult, OutboundExecutionOutcome, OutboundExecutionRequest,
-    OutboundExecutionSink, OutboundIntent, OutboundIntentDraft,
+    OutboundExecutionSink, OutboundIntent, OutboundIntentDraft, kept_send_backoff_until,
 };
 use crate::receipt::{DispatchObservationKey, append_dispatch_observation_in_txn};
 use crate::side_table::{self, Named, SideTable};
@@ -533,9 +533,7 @@ impl Vault {
                             lease_owner,
                             attempt_count: attempt.attempt_count,
                             // FIX 11660: never before the edge its receipt names.
-                            backoff_until: now
-                                .saturating_add(60)
-                                .max(result.retry_at().unwrap_or(0)),
+                            backoff_until: kept_send_backoff_until(now, result.retry_at()),
                             last_error: Some("notice_not_dispatched".into()),
                             now,
                         },

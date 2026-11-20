@@ -18,7 +18,8 @@ mod reply;
 pub(crate) use reply::generate_reply;
 mod run_self;
 pub(crate) use run_self::{
-    BriefHostFacts, brief_pins_family, describe_self_for_run, run_brief_people, run_brief_state,
+    BriefHostFacts, brief_pins_family, describe_self_for_run, fallen_brief_rows,
+    run_brief_fallen_rows, run_brief_people, run_brief_state,
 };
 mod layout;
 mod mcp_self;
@@ -343,7 +344,19 @@ pub(crate) async fn context_board_hydrate(
     ),
     EnvelopedApiError,
 > {
-    let (served, response, _) = hydrate_inner(auth, State(server), payload, false).await?;
+    let (served, response, _) =
+        hydrate_inner(auth, State(Arc::clone(&server)), payload, false).await?;
+    // The delivered board's items go to this machine's home as prefetch seeds: its MEMORIES rows
+    // (pins included) first, then every other row it was derived from.
+    let memories = response
+        .memories
+        .iter()
+        .flat_map(|memories| &memories.rows)
+        .filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok());
+    crate::board_seed_report::report_delivered_board(
+        &server,
+        memories.chain(served.0.rows.iter().copied()),
+    );
     Ok((served, response))
 }
 
@@ -637,6 +650,7 @@ async fn hydrate_inner(
         &parts.sections,
         explicit_tasks_layout.as_ref().unwrap_or(&layout.layout),
         cap_tok,
+        oneiron::context_board::fold_attention_rows(&server.vault),
     );
     let layout_candidate = layout
         .candidate
@@ -1026,6 +1040,8 @@ pub(crate) async fn describe_self_for_auth(
             let agent = oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Agent);
             let host = BriefHostFacts {
                 run_ceiling: None,
+                // No pumped wake picked a read shape for a credential's call.
+                read_shape: None,
                 replay_run: None,
                 // A Core call arrives on no registered MCP connector.
                 credential_ceiling: auth.verified_slip().map(|proof| {
@@ -1130,6 +1146,7 @@ pub(crate) async fn chat_board(
         false,
         false,
         chat_layout_actor,
+        None,
     )
     .await
 }
@@ -1139,6 +1156,7 @@ pub(crate) async fn chat_board(
 /// turn's message, and `query` what that message read, which rides right
 /// after it. One hydration under one budget, as the one frame's.
 /// `chat_layout_actor` is as [`chat_board`]'s.
+/// `retrieval_turn` is as [`chat_turn_board_deferred`]'s.
 pub(crate) async fn chat_turn_board(
     server: &Arc<SyncServer>,
     auth: CoreAuth,
@@ -1146,6 +1164,7 @@ pub(crate) async fn chat_turn_board(
     reader: oneiron::EntityId,
     query: &str,
     chat_layout_actor: Option<oneiron::EntityId>,
+    retrieval_turn: Option<oneiron::store::RetrievalTurn>,
 ) -> Result<ChatBoard, axum::http::StatusCode> {
     read_chat_board(
         server,
@@ -1156,11 +1175,15 @@ pub(crate) async fn chat_turn_board(
         true,
         false,
         chat_layout_actor,
+        retrieval_turn,
     )
     .await
 }
 
-/// A live turn's split board, with its rider acknowledged only after answer admission.
+/// A live turn's split board, with its rider acknowledged only after answer
+/// admission. `retrieval_turn`, when the turn has one, names the TURN its
+/// recall serves on the retrieval run (the convention on
+/// [`oneiron::store::RetrievalTurn`]).
 pub(crate) async fn chat_turn_board_deferred(
     server: &Arc<SyncServer>,
     auth: CoreAuth,
@@ -1168,6 +1191,7 @@ pub(crate) async fn chat_turn_board_deferred(
     reader: oneiron::EntityId,
     query: &str,
     chat_layout_actor: Option<oneiron::EntityId>,
+    retrieval_turn: Option<oneiron::store::RetrievalTurn>,
 ) -> Result<ChatBoard, axum::http::StatusCode> {
     read_chat_board(
         server,
@@ -1178,6 +1202,7 @@ pub(crate) async fn chat_turn_board_deferred(
         true,
         true,
         chat_layout_actor,
+        retrieval_turn,
     )
     .await
 }
@@ -1191,6 +1216,7 @@ async fn read_chat_board(
     split: bool,
     defer_rider_ack: bool,
     chat_layout_actor: Option<oneiron::EntityId>,
+    retrieval_turn: Option<oneiron::store::RetrievalTurn>,
 ) -> Result<ChatBoard, axum::http::StatusCode> {
     let mut request: ContextBoardRequest = serde_json::from_value(serde_json::json!({
         "retrieval": {
@@ -1203,6 +1229,9 @@ async fn read_chat_board(
     .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
     request.chat_layout_actor = chat_layout_actor;
     request.chat_split = split;
+    if let Some(retrieval) = request.retrieval.as_mut() {
+        retrieval.retrieval_turn = retrieval_turn;
+    }
     let (served, Json(context), rider_ack) = hydrate_inner(
         auth,
         State(Arc::clone(server)),

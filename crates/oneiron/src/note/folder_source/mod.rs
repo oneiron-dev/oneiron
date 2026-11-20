@@ -122,6 +122,15 @@ impl FolderSource {
 #[doc(hidden)]
 pub use oneiron_records::note::folder_source::{FolderFileState, FolderSourceFile};
 
+/// Whether `text` is `file`'s text as the last rescan that took the file
+/// read it: the text of the revision the ledger names. A note the owner
+/// edited since, or one that keeps its text while the file's change waits
+/// as a proposal, holds other text.
+#[must_use]
+pub(crate) fn holds_file_text(file: &FolderSourceFile, text: &str) -> bool {
+    !file.file_hash.is_empty() && text_hash(text) == file.file_hash
+}
+
 /// One file the folder holds, as written.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FolderFile {

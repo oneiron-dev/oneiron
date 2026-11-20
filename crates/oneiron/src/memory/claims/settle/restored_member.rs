@@ -4,7 +4,8 @@
 //! reads it, with the owner's restore left out of its openers (D5), and
 //! settles with its own owner proof and its own Settlement receipt. A member
 //! the owner opened, or whose approval would supersede a live head, is left
-//! waiting; so is one the gate refuses or holds. The caller settles each
+//! waiting; so is one the gate refuses or holds, and one whose settlement
+//! would lift a restriction on a handle that acts as no person. The caller settles each
 //! member in its own savepoint and drops the savepoint of one left waiting.
 
 use super::*;
@@ -138,6 +139,19 @@ impl Memory<'_> {
                 Some(error.message),
             ));
         }
+        // The owner's proof answers for the owner, but a settlement by no
+        // person (his slip handed on to another key) never lifts a
+        // restriction: that member waits for his own answer (RULING
+        // HANDED-ON-SLIP-PERSON Q1 = A).
+        if !self.acts_as_own_person()
+            && reviewed.settle_lifts_restriction_in(self.vault, &*wtxn, &id, action)?
+        {
+            return Ok(waiting(
+                RestoreMemberWait::Refused,
+                None,
+                Some(restriction_close_needs_a_person(actor).message),
+            ));
+        }
         let owner_answer = owner.owner_answer_in_txn(self.vault, &*wtxn)?;
         let changes_others =
             settlement_may_change_other_claims(self.vault, &*wtxn, &id, &reviewed.body)?;
@@ -164,19 +178,24 @@ impl Memory<'_> {
             self.vault.owe_settled_claim_vads_in_txn(wtxn, &[id])?;
         }
         let (outcome, reason) = match action {
-            GateConsentBundleAction::Approve => ("approved", ClaimSettlementReason::OwnerApproved),
-            GateConsentBundleAction::Decline => ("rejected", ClaimSettlementReason::OwnerDeclined),
+            GateConsentBundleAction::Approve => (
+                GateReceiptOutcome::Approved,
+                ClaimSettlementReason::OwnerApproved,
+            ),
+            GateConsentBundleAction::Decline => (
+                GateReceiptOutcome::Rejected,
+                ClaimSettlementReason::OwnerDeclined,
+            ),
         };
-        let mut record = crate::memory::authorship::decision(
+        let mut receipt = crate::memory::authorship::decision(
             actor,
             CLAIM_SETTLEMENT_CONTENT_KIND,
             outcome,
             reason.as_str(),
             Some(id),
             reviewed.digest.to_vec(),
-            now,
         );
-        record.read_frontier_hash = reviewed.frontier;
+        receipt.basis = crate::store::PolicyBasis::frontier(reviewed.frontier);
         // FIX 7499, 7500: the member's read context, and the loop links of
         // the pending decision it answers.
         let pending = reviewed.pending.as_ref().and_then(|pending| {
@@ -186,7 +205,7 @@ impl Memory<'_> {
                 .ok()
                 .flatten()
         });
-        record.context = crate::store::GateDecisionContext {
+        receipt.context = crate::store::GateDecisionContext {
             read: crate::store::GateDecisionReadContext::claim(&id, &reviewed.body)
                 .map(|read| {
                     read.with_anchors(crate::conversation::gate_claim_anchors_in(
@@ -203,9 +222,7 @@ impl Memory<'_> {
                 .map(crate::store::GateDecisionContext::answering)
                 .unwrap_or_default()
         };
-        self.vault
-            .store
-            .append_gate_decision_in_txn(wtxn, &record)?;
+        let record = self.vault.store.record_gate_receipt_in_txn(wtxn, receipt)?;
         // The member's savepoint commits or the whole act fails, so the index
         // takes in what this savepoint wrote.
         if changes_others {

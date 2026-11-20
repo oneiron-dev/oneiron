@@ -1,9 +1,11 @@
 //! The settlement item (kind 3): an agent answers one open conflict its live
 //! `derive` grant reaches, through the conflict settlement's own door, with
 //! the guards a responder meets (a person alone closes user-stated truth;
-//! the owner's revert and review hold stand). The marker and every member
-//! are read under the actor's own read first: a conflict it does not read
-//! answers as a row that is no open conflict.
+//! the owner's revert and review hold stand, whichever actor asks). The
+//! marker and every member are read under the actor's own read first: a
+//! conflict it does not read answers as a row that is no open conflict. An
+//! imported Keep stages and lands its proposal pending approval, with the
+//! marker open (FIX 5754).
 
 use std::cell::Cell;
 
@@ -26,12 +28,9 @@ use crate::{EntityId, Vault};
 pub const SETTLE_REFUSED: &str = "gate.deny.derive.settle_refused";
 
 /// The refusal of a settlement the owner reverted, or whose review the owner
-/// holds.
+/// holds. The one hold an owner mints names the Dreamer, and it leaves the
+/// subject's conflicts to the owner whichever actor asks.
 pub const SETTLE_OWNER_HOLD: &str = "gate.deny.derive.settle_owner_hold";
-
-/// The refusal of a Keep that waits in its import's review instead of
-/// settling.
-pub const SETTLE_IMPORT_REVIEW: &str = "gate.pending.derive.settle_import_review";
 
 /// The reason a landed settlement's receipt names.
 const SETTLE_ALLOWED: &str = "gate.allow.derive.settle";
@@ -44,7 +43,8 @@ const SETTLE_SURFACE: &str = "vault.derive.settle";
 
 /// Stages `item`: the marker under the actor's own read, the derive verdict
 /// over it, its members under that read, the owner's revert and hold, then
-/// the settlement in a savepoint of `txn`.
+/// the settlement in a savepoint of `txn`. An imported Keep stages and
+/// lands its proposal pending approval, leaving the marker open (FIX 5754).
 ///
 /// # Errors
 ///
@@ -93,7 +93,7 @@ pub(super) fn stage_in_txn(
         return refuse(vault, txn, context, marker, &[SETTLE_REFUSED]);
     }
     if conflict.reverted
-        || crate::memory::conflict_review_held_in(vault, txn, actor, conflict.subject)?.is_some()
+        || crate::memory::dreamer_conflict_review_held_in(vault, txn, conflict.subject)?.is_some()
     {
         return refuse(vault, txn, context, marker, &[SETTLE_OWNER_HOLD]);
     }
@@ -154,9 +154,27 @@ pub(super) fn stage_in_txn(
                 receipt: Some(receipt),
             })
         }
-        Ok(SettlementApplied::ImportReviewPending(_)) => {
-            savepoint.abort();
-            refuse(vault, txn, context, marker, &[SETTLE_IMPORT_REVIEW])
+        Ok(SettlementApplied::ImportReviewPending(staged)) => {
+            let approval = vault
+                .get_claim_in_txn(&savepoint, &staged.staged)?
+                .ok_or(Error::InvalidClaimBody("the staged Keep is missing"))?
+                .approval;
+            savepoint.commit()?;
+            let receipt = allowance_receipt_in_txn(
+                vault,
+                txn,
+                context,
+                Some(marker),
+                &[SETTLE_ALLOWED.to_owned()],
+                &allowance,
+            )?;
+            // The proposal first: a revert retracts it without closing the
+            // marker or changing any member (FIX 5754).
+            Ok(ItemOutcome::Landed {
+                rows: vec![staged.staged, marker],
+                approval: Some(approval),
+                receipt: Some(receipt),
+            })
         }
         Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
             savepoint.abort();

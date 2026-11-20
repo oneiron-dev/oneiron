@@ -53,6 +53,7 @@ mod host;
 mod index;
 mod presentation;
 mod recheck;
+pub(crate) mod setting_keys;
 mod settle_undo;
 mod settlement;
 pub use admission::maintenance_reader;
@@ -104,19 +105,12 @@ pub const SOMEONE_NEW: &str = "someone_new";
 pub const IDENTITY_ANSWER_VERB: &str = "self.identity.answer";
 /// A candidate's option: this prefix, then its id.
 const IS_PREFIX: &str = "is:";
-/// Tag sets one nightly pass reads.
-const SCAN_TURNS: usize = 2_048;
-/// Open asks at once, besides those kept separate: a pace. Past this a pass
-/// stops at the turn that would open one, and the next pass starts there.
-const MAX_OPEN_ASKS: usize = 64;
 /// Candidates one Choice lists beside "someone new"; the rest ride in its
 /// state by id.
 const MAX_CANDIDATES: usize = 63;
 /// Context words one mention keeps.
 const MAX_TERMS: usize = 16;
 const MIN_TERM_CHARS: usize = 4;
-/// How long a failed decision waits before the host tries again.
-const RETRY_SECS: u64 = 3_600;
 /// The rationale on a someone-new answer's `assert_distinct` event.
 const SOMEONE_NEW_RATIONALE: &str = "identity ask: someone new";
 /// The context of the id an owner's answer binds its topology decision to
@@ -212,6 +206,68 @@ pub(crate) fn recheck_page_for_test(vault: &Vault, now: u64) -> Result<Vec<Ident
         .into_iter()
         .map(|(_, ask)| ask)
         .collect())
+}
+
+/// Settles every open ask whose mention is in `turn` as `chosen` at `now`,
+/// as the nightly pass settles one a saved hint picks (inferred, under the
+/// Dreamer's seal), with no Dreamer receipt: the test door's way to answer
+/// an ask (FIX LINKER-ROLE-PROVISIONAL-PER-SPEAKER). Returns how many it
+/// settled.
+#[cfg(oneiron_test_support)]
+pub(crate) fn settle_asks_of_turn_for_test(
+    vault: &Vault,
+    turn: &EntityId,
+    chosen: EntityId,
+    now: u64,
+) -> Result<usize> {
+    vault.with_write_txn(|txn| {
+        let open = ASKS.scan(&vault.store, txn)?;
+        let mut settled = 0;
+        for (key, ask) in open.iter().filter(|(_, ask)| ask.turn == *turn) {
+            settle_ask_in_txn(
+                vault,
+                txn,
+                key,
+                ask,
+                Answer::Is(chosen),
+                (ClaimSource::Inferred, &dreamer_seal()),
+                now,
+            )?;
+            settled += 1;
+        }
+        Ok(settled)
+    })
+}
+
+/// Settles every open ask whose mention is in `turn` as `chosen` at `now`,
+/// as the Dreamer settles one a saved hint or its decision picks: inferred,
+/// under the Dreamer's seal, with its receipt and the inverse the owner's
+/// revert reads (FIX 3327). Returns each settled ask's key.
+#[cfg(oneiron_test_support)]
+pub(crate) fn settle_asks_of_turn_as_dreamer_for_test(
+    vault: &Vault,
+    turn: &EntityId,
+    chosen: EntityId,
+    now: u64,
+) -> Result<Vec<[u8; 32]>> {
+    vault.with_write_txn(|txn| {
+        let open = ASKS.scan(&vault.store, txn)?;
+        let mut settled = Vec::new();
+        for (key, ask) in open.iter().filter(|(_, ask)| ask.turn == *turn) {
+            settle_undo::settle_in_txn(
+                vault,
+                txn,
+                ask,
+                Answer::Is(chosen),
+                (ClaimSource::Inferred, &dreamer_seal()),
+                now,
+            )?;
+            ASKS.delete(&vault.store, txn, key)?;
+            index::sync_ask_membership(&vault.store, txn, key, Some(ask), None)?;
+            settled.push(*key);
+        }
+        Ok(settled)
+    })
 }
 
 /// Stamps every open ask kept separate at `now`, as a nightly decision
@@ -533,9 +589,10 @@ impl Memory<'_> {
                 now,
             )?
             else {
-                // One entity answers only when the lane reads it.
+                // One entity answers only when the lane reads it, as it
+                // stands: nothing here restores an archived one.
                 if let [entity] = current.link.entities()
-                    && admission::candidate_in_txn(vault, &admit, txn, entity)?
+                    && admission::linked_in_txn(vault, &admit, txn, entity)?
                 {
                     return Ok(IdentityActNow::Settled {
                         entity: entity.to_hex(),

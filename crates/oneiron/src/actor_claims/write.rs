@@ -26,6 +26,7 @@ use super::evidence::{ActorClaimEvidence, ActorClaimLane};
 use super::invalid;
 use super::rows::{
     ACTOR_CLAIM_LINEAGE_KEY, ActorClaimRow, LAPSE_FAILURE_MODE, PREDICATE_ACTOR_SKILL_FIT,
+    actor_note_max_bytes_in_txn,
 };
 use super::validate::{actor_claim_lineage, native_actor_source, skill_fit_scope_skill};
 
@@ -153,7 +154,7 @@ pub(super) fn write_born_actor_claim_in_txn(
     }
     let predicate = row.predicate();
     let actor = row.actor();
-    let (value, pair_scope) = row.value_and_scope()?;
+    let (value, pair_scope) = row.value_and_scope(actor_note_max_bytes_in_txn(vault, wtxn)?)?;
     let at = evidence.at;
 
     // The SET key is the value; a pair-scoped key is the scope entry. Same

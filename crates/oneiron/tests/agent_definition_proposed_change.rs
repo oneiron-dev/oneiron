@@ -401,7 +401,7 @@ fn owner_approving_a_proposed_change_makes_it_the_stored_definitions_next_versio
     assert_answer_recorded(
         &fixture,
         text(&settled, "/receipt_ref"),
-        "allow",
+        "approved",
         "gate.allow.owner_agent_definition_change",
         &body,
         &[
@@ -477,7 +477,7 @@ fn owner_rejecting_a_proposed_change_leaves_the_stored_definition_as_it_was() {
     assert_answer_recorded(
         &fixture,
         text(&settled, "/receipt_ref"),
-        "deny",
+        "rejected",
         "gate.deny.owner_agent_definition_change",
         &body,
         &[

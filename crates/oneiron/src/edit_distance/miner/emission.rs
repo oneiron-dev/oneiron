@@ -3,7 +3,7 @@
 use rmpv::Value;
 
 use super::config::{
-    GATE_OUTCOME_REJECTED, MARK_KIND_PREFERENCE, MARK_KIND_SKILL_EDIT, MINED_EVIDENCE_RECEIPTS_KEY,
+    MARK_KIND_PREFERENCE, MARK_KIND_SKILL_EDIT, MINED_EVIDENCE_RECEIPTS_KEY,
     MINED_EVIDENCE_ROW_LABEL, MINER_CLUSTER_HASH_DOMAIN, MINER_EVIDENCE_RECORD_ID_DOMAIN,
     MINER_PREFERENCE_CONFIDENCE, MINT_MARK_ROW_LABEL, PREDICATE_PREFERENCE_PHRASING,
     PREFERENCE_VALUE_KEY_CLASS, PREFERENCE_VALUE_KEY_FROM, PREFERENCE_VALUE_KEY_RATIONALE,
@@ -17,15 +17,17 @@ use super::model::{
     StoredSkillEdit, SubstitutionClass, SubstitutionCluster,
 };
 use super::observed::observed_support_in_txn;
-use super::store::{SKILL_EDIT, decode_row, encode_row, mined_skill_edit_in_txn};
+use super::store::{SKILL_EDIT, encode_row, mined_skill_edit_in_txn};
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consolidation_evidence};
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
+use crate::edit_distance::stored_row::versioned_row_codec;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::side_table::{self, Raw, SideTable};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 
@@ -34,21 +36,7 @@ use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 pub(super) const MINT_MARK: SideTable<[u8; 32], StoredMintMark, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_MINER_MINT_MARK);
 
-impl RawValue for StoredMintMark {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_row(self, MINT_MARK_ROW_LABEL)?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let row: StoredMintMark = decode_row(bytes, MINT_MARK_ROW_LABEL)?;
-        if row.v != ROW_VERSION {
-            return Err(CodecError::Value(Error::CorruptedIndex(
-                MINT_MARK_ROW_LABEL,
-            )));
-        }
-        Ok(row)
-    }
-}
+versioned_row_codec!(StoredMintMark, MINT_MARK_ROW_LABEL, ROW_VERSION);
 
 // ---------------------------------------------------------------------------
 // The chooser
@@ -205,7 +193,23 @@ fn preference_is_stale(
         .store
         .gate_decisions_for_claim_in_txn(txn, claim_id.as_bytes())?
         .iter()
-        .filter(|decision| decision.outcome == GATE_OUTCOME_REJECTED)
+        .filter(|decision| match decision.gate_outcome() {
+            Some(GateReceiptOutcome::Rejected) => true,
+            Some(
+                GateReceiptOutcome::Allow
+                | GateReceiptOutcome::Pending
+                | GateReceiptOutcome::Deny
+                | GateReceiptOutcome::Approved
+                | GateReceiptOutcome::ApprovedAmended
+                | GateReceiptOutcome::LetGo
+                | GateReceiptOutcome::Superseded
+                | GateReceiptOutcome::Retracted
+                | GateReceiptOutcome::Invalidated
+                | GateReceiptOutcome::Revoked
+                | GateReceiptOutcome::Noted,
+            )
+            | None => false,
+        })
         .map(|decision| decision.created_at)
         .max();
     Ok(rejected_at.is_some_and(|at| now >= at.saturating_add(wait)))
@@ -320,8 +324,9 @@ pub(super) fn emit_preference_value(
                 &evidence_record,
             )
             .apply(wtxn)?;
-        // Observed only on ARCH-0003's bar, joined in this writer; below it
-        // the claim keeps its Generated stamp (FIX 3083).
+        // Observed only on the observed-preference bar (ARCH-0003's, or the
+        // owner's for a preference about the owner), joined in this writer;
+        // below it the claim keeps its Generated stamp (FIX 3083).
         let observed = crate::claim::is_observed_preference(Some(ClaimSource::Observed), predicate)
             && observed_support_in_txn(vault, wtxn, cluster)?;
         let source = if observed {

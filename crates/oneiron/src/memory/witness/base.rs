@@ -456,6 +456,15 @@ impl Memory<'_> {
                 plan.conversation_id,
             )?;
         }
+        // L7-05: a work-talk conversation admits its two bound writers only;
+        // a third writer is refused here. The binding needs no settle step:
+        // work-talk turns are ordinary company content.
+        let _work_talk = crate::workspace_roster::admit_work_talk_witness(
+            self.vault,
+            wtxn,
+            plan.conversation_id,
+            self.actor,
+        )?;
         Ok(BaseGuards::Clear {
             mint_conversation: current_conversation.is_none(),
             person_author,
@@ -498,7 +507,12 @@ impl Memory<'_> {
                 crate::source_audience::mark_birth_in_txn(self.vault, wtxn, birth, &id)?;
             }
         }
-        let mut batch = self.vault.batch_in();
+        // A TURN an import births is born under its stamp's facet, when it
+        // names one; the vault default otherwise.
+        let mut batch = self
+            .vault
+            .batch_in()
+            .mask(plan.imported.as_ref().and_then(|stamp| stamp.facet));
         if mint_conversation {
             batch = put_container(
                 batch,

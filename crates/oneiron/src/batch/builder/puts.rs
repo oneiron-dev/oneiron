@@ -200,6 +200,37 @@ impl BatchBuilder<'_> {
         )
     }
 
+    /// [`Self::put`] of a row that rewrites the stored row `id` and keeps the
+    /// source-audience stamp its stored bytes carry (fix list row 16256), as
+    /// a host's taint mark rewrites a mail attachment (census L6-32). The
+    /// early check lets the key through; the write transaction admits it
+    /// only when the stored row states the same stamp
+    /// ([`crate::source_audience::admit_obligation_in_txn`]), so this door
+    /// keeps a stamp and never births one. A body without the key, over a
+    /// row without one, is judged as through [`Self::put`]. Every other
+    /// public check runs as for [`Self::put`].
+    pub(crate) fn put_keeping_stored_stamp(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        if self.validation_error.is_none() {
+            self.commit_checks
+                .push(CommitCheck::PublicType(self.ops.len()));
+        }
+        self.put_through(
+            id,
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+            RawPutDoor::KeptStoredStamp,
+        )
+    }
+
     /// FIX 9034: [`Self::put`] of ASSET `id` holding `data`, the
     /// content of a carrier its writer already scanned whole and holds marked
     /// (a marked LFS object's chunk, `install_lfs_manifest_with_mark`): a

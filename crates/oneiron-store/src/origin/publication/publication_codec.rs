@@ -105,26 +105,12 @@ impl SideKey for CasIntentKey {
 }
 
 /// `origin:visible_ref:v1:` key shape: repo id, then a NUL-framed ref name.
+#[derive(SideKey)]
+#[side_key(sep = b'\0')]
 pub struct VisibleRefKey {
     pub repo_id: EntityId,
+    #[side_key(rest)]
     pub ref_name: String,
-}
-
-impl SideKey for VisibleRefKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        self.repo_id.encode_into(out);
-        out.push(0);
-        out.extend_from_slice(self.ref_name.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (repo_bytes, rest) = bytes.split_at_checked(ENTITY_ID_LEN)?;
-        let rest = rest.strip_prefix(&[0][..])?;
-        Some(Self {
-            repo_id: EntityId::decode_key(repo_bytes)?,
-            ref_name: String::from_utf8(rest.to_vec()).ok()?,
-        })
-    }
 }
 
 pub fn visible_ref_key(repo_id: &EntityId, ref_name: &GitRefName) -> VisibleRefKey {

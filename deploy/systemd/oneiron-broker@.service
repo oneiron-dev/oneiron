@@ -1,0 +1,48 @@
+[Unit]
+Description=Oneiron credential broker for the daemon of uid %i
+Documentation=https://github.com/oneiron-dev/oneiron
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# The broker runs as its own OS user (ARCH-0069 #broker-design, OSH-2) and
+# answers only the daemon whose uid is the instance name:
+#   systemctl enable --now oneiron-broker@$(id -u <daemon user>).service
+# The user and its group come from sysusers.d/oneiron-broker.conf. The
+# socket's directory is the fence: only the broker and its group may enter
+# it, so add the daemon's user to that group
+# (`usermod -aG oneiron-broker <daemon user>`), and name the socket and the
+# broker's uid (`id -u oneiron-broker`) in the daemon's [models.broker].
+Type=simple
+User=oneiron-broker
+Group=oneiron-broker
+# The broker reads no environment and takes no key on its command line. Its
+# binary ships with oneiron-server, which `cargo install` puts in the
+# installing user's ~/.cargo/bin; copy it where this user can run it:
+#   install -m 0755 ~/.cargo/bin/oneiron-broker /usr/local/bin/
+# Add --extra-roots <pem> for a provider behind a private CA.
+ExecStart=/usr/local/bin/oneiron-broker serve --socket /run/oneiron-broker/%i/broker.sock --client-uid %i
+RuntimeDirectory=oneiron-broker/%i
+RuntimeDirectoryMode=0750
+Restart=on-failure
+RestartSec=5s
+# Each call holds its key in memory: no core dump may hold it.
+LimitCORE=0
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectProc=invisible
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

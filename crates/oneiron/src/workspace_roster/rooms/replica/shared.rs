@@ -362,6 +362,13 @@ pub(super) fn fact_order(fact: &participation::Fact) -> (u64, Vec<u8>, Option<St
 /// speaker holds the turn's claim stands, and among those, or when none
 /// does, the earliest `(at, response)`. A response that loses keeps its
 /// TURN, which was spoken; it loses only the slot, and is logged.
+///
+/// `carried` also holds the claims of `parent` the window carries. An answer
+/// seals its claim (REVIEW-9956 round 2): a claim whose holder spoke one of
+/// the turn's responses stands over a takeover no answer followed, on every
+/// replica and in either order, so the claim and its answer stay one
+/// holder's. Of two answered claims the lower generation stands, then the
+/// lower `(at, receipt_ref)`.
 pub(crate) fn merge_replicated_responses_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -373,8 +380,19 @@ pub(crate) fn merge_replicated_responses_in_txn(
         .get_lenient(store, txn, &parent)?
         .map(|turn| turn.room_id);
     let mut candidates: Vec<(EntityId, Option<EntityId>, u64)> = Vec::new();
+    let mut claims = Vec::new();
     let mut refused = None;
     for row in carried {
+        if let RoomSideRow::Claim { claim } = row {
+            if claim.turn_id == parent.to_hex()
+                && parent_room
+                    .as_ref()
+                    .is_none_or(|held| *held == claim.room_id)
+            {
+                claims.push(claim);
+            }
+            continue;
+        }
         let RoomSideRow::Response {
             room,
             parent: answered,
@@ -419,6 +437,44 @@ pub(crate) fn merge_replicated_responses_in_txn(
             spoken.map_or(u64::MAX, |turn| turn.at),
         ));
     }
+    // REVIEW-9956 round 2: the answered claim stands. A speaker this vault
+    // erased answers as no one, so its claim seals nothing. Own review: nor
+    // does a receipt whose copy here names no one (FIX 4870: the erased form
+    // wins where copies meet), so the seal never writes a live copy back
+    // over the erased form.
+    let held_claim = CLAIMS.get_lenient(store, txn, &parent)?;
+    let copies: Vec<_> = claims.into_iter().chain(held_claim.as_ref()).collect();
+    let mut erased = Vec::new();
+    for copy in &copies {
+        let names_no_one = match named(&copy.actor) {
+            Some(actor) => vault.carrier_actor_erased_in_txn(txn, &actor)?,
+            None => true,
+        };
+        if names_no_one {
+            erased.push((copy.at, copy.receipt_ref.as_str()));
+        }
+    }
+    let sealed = copies
+        .iter()
+        .copied()
+        .filter(|claim| {
+            !erased.contains(&(claim.at, claim.receipt_ref.as_str()))
+                && named(&claim.actor).is_some_and(|holder| {
+                    candidates
+                        .iter()
+                        .any(|(_, speaker, _)| *speaker == Some(holder))
+                })
+        })
+        .min_by(|a, b| {
+            (a.generation, a.at, &a.receipt_ref).cmp(&(b.generation, b.at, &b.receipt_ref))
+        });
+    let resealed = match sealed {
+        Some(sealed) if held_claim.as_ref() != Some(sealed) => {
+            CLAIMS.put(store, txn, &parent, sealed)?;
+            true
+        }
+        _ => false,
+    };
     // FIX 4870: no one holds the claim of an actor this vault erased.
     let claimant = match CLAIMS
         .get_lenient(store, txn, &parent)?
@@ -435,7 +491,7 @@ pub(crate) fn merge_replicated_responses_in_txn(
     if held != Some(winner) {
         RESPONSE.put(store, txn, &parent, &winner)?;
     }
-    Ok(if candidates.len() > 1 {
+    Ok(if candidates.len() > 1 || resealed {
         SideMerge::Conflict
     } else if held == Some(winner) {
         SideMerge::Held

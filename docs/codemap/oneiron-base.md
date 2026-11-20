@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `examples/tokenizer_count.rs` | src | s | — | — | Bench-only micro-bench (never part of production paths): the public default O200k context-pack token counter… |
 | `src/analyzer.rs` | src | s | 1 re-export | — | Multilingual analyzer subsystem |
 | `src/calendar_body_screen.rs` | src | s | 3 struct · 1 enum · 1 trait · 2 fn · 2 const | CalendarAdmissionRequest, CalendarBodyScreener, CalendarInboundBody, CalendarScreenVerdict, Screened | Optional inbound-body screen for imported calendar content (CAL-09) |
-| `src/config.rs` | src | m | 4 struct · 2 enum · 7 fn · 5 const · 2 mod · 1 re-export | HostingPrivacyPosture, TextAnalyzerConfig, TextIndexOptions, VaultDataKeyCustody, VaultPrivacyConfig, VectorEvidenceFloors | Portable runtime configuration moved down from the engine crate |
+| `src/config.rs` | src | m | 4 struct · 2 enum · 6 fn · 5 const · 2 mod · 1 re-export | HostingPrivacyPosture, TextAnalyzerConfig, TextIndexOptions, VaultDataKeyCustody, VaultPrivacyConfig, VectorEvidenceFloors | Portable runtime configuration moved down from the engine crate |
 | `src/config/failure_signals.rs` | src | s | 1 struct · 1 enum · 3 fn | DeploymentTier, FailureSignalConfig | The owner's "Help improve Oneiron" switch (`export_opt_in`, with [`default_exports`] when he has not chosen)… |
 | `src/config/ppr_community.rs` | src | s | 1 struct · 1 enum · 1 fn · 5 const | CommunityError, PprCommunityConfig | Portable PPR community prior: the config closure moved down from the engine crate |
 | `src/distance.rs` | src | s | 1 re-export | — | Cosine distance kernels, defined in `oneiron-retrieval` |
@@ -27,8 +27,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/extraction_eval.rs` | src | s | 1 re-export | — | OF-360 extraction-quality evaluation |
 | `src/fusion.rs` | src | s | 1 re-export | — | Score fusion kernels, defined in `oneiron-retrieval` |
 | `src/host_descriptors.rs` | src | s | 1 struct · 3 fn · 1 re-export | DescriptorPolicy | The process's one descriptor floor (FIX 5978, FIX 5979, FIX 6299): the line every socket a serving host… |
-| `src/human_task_followup.rs` | src | s | 5 struct · 2 enum · 3 fn · 1 type · 10 const | HumanFollowupDispatch, HumanFollowupStage, HumanResponseSignal, HumanTaskError, HumanTaskFollowupRecord, HumanTaskWaitBinding, NativeHumanRoute | Human TASK follow-up shared types, stage machine and timing bounds |
-| `src/learning_estimate.rs` | src | m | 5 struct · 4 enum · 20 fn · 1 const | BetaView, Estimate, EstimateForm, EstimateLabels, EstimateValue, OwnTally, Prior, PriorOrigin +1 | The `estimate` value (ARCH-0003 #estimate): one measured answer, its own runs, the prior it started from and… |
+| `src/human_task_followup.rs` | src | s | 6 struct · 2 enum · 3 fn · 1 type · 11 const | FollowupTimings, HumanFollowupDispatch, HumanFollowupStage, HumanResponseSignal, HumanTaskError, HumanTaskFollowupRecord, HumanTaskWaitBinding, NativeHumanRoute | Human TASK follow-up shared types, stage machine and timing bounds |
+| `src/learning_estimate.rs` | src | m | 5 struct · 4 enum · 18 fn · 1 const | BetaView, Estimate, EstimateForm, EstimateLabels, EstimateValue, OwnTally, Prior, PriorOrigin +1 | The `estimate` value (ARCH-0003 #estimate): one measured answer, its own runs, the prior it started from and… |
 | `src/learning_ranking.rs` | src | s | 1 fn | — | The shared selector ranking (OF-184, OF-540; FIX 602): every arm's estimate mean plus its exploration bonus… |
 | `src/lib.rs` | src | s | 2 fn · 28 mod | — | The base layer of the oneiron engine: modules that name nothing above them |
 | `src/limits.rs` | src | s | 1 re-export | — | Traversal safety caps, defined in `oneiron-contracts` |
@@ -46,5 +46,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/step_cancellation.rs` | src | s | 1 struct · 6 fn · 1 const | StepCancellation | The cancellation of one code step (FIX 600): a flag its owner sets and its runtime reads, linked one way to… |
 | `src/tokenizer.rs` | src | s | 1 enum · 1 trait · 4 fn · 2 const | ContextPackTokenizer, PackTokenizer | — |
 | `src/unsubscribe_headers.rs` | src | s | 1 struct · 4 fn · 5 const | ListUnsubscribeTarget | Deterministic unsubscribe headers and their frozen outbound payload representation |
-| `src/work_line.rs` | src | L | 5 struct · 2 trait · 24 fn · 2 const | LineCrossing, LineObserver, LinePermit, LineShortage, TaskWorkTurn, WaitTimedOut, WorkLine | A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work… |
+| `src/work_line.rs` | src | m | 5 struct · 2 trait · 2 const | LineCrossing, LineObserver, LinePermit, LineShortage, TaskWorkTurn, WaitTimedOut, WorkLine | A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work… |
+| `src/work_line/admission.rs` | src | m | 24 fn | — | How work enters a line: making and setting a `WorkLine`, and each way a piece of work takes a permit at… |
+| `tests/base_register_names.rs` | test | s | — | — | The names of 3 name lists in `oneiron-base`, one line per row, generated from… |
 | `tests/request_limit_rules.rs` | test | s | — | — | The five page-limit rules (UC-13 PR 3): each at an absent ask, 0, 1, the default, the maximum and the… |

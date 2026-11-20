@@ -8,10 +8,11 @@ use rmpv::Value;
 
 use super::super::MAINTENANCE_QUEUE_KIND;
 use super::admission::{Admit, admitted_in_txn, dreamer_reader};
+use super::setting_keys::{MAX_OPEN_ASKS, SCAN_TURNS};
 use super::{
-    ASKS, Answer, CURSOR, IDENTITY_RECHECK_FACET, IdentityAsk, IdentityAskReason, MAX_OPEN_ASKS,
-    MAX_TERMS, MIN_TERM_CHARS, SCAN_TURNS, STOP_WORDS, ask_key, dreamer_seal,
-    entity_of_kind_in_txn, hinted_in_txn, index, settle_undo,
+    ASKS, Answer, CURSOR, IDENTITY_RECHECK_FACET, IdentityAsk, IdentityAskReason, MAX_TERMS,
+    MIN_TERM_CHARS, STOP_WORDS, ask_key, dreamer_seal, entity_of_kind_in_txn, hinted_in_txn, index,
+    settle_undo,
 };
 use crate::claim::ClaimSource;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore};
@@ -202,13 +203,15 @@ pub(super) fn ask_for_mention_in_txn(
 /// unless one is open for it or for its question. A kept-separate ask whose
 /// candidate set changed opens afresh, to be decided again; a new order of
 /// the same set leaves it kept. `false` when a
-/// mention would open an ask past [`MAX_OPEN_ASKS`]: the turn is not
-/// handled, and a later pass checks it again whole.
+/// mention would open an ask past `max_open_asks` (the owner's
+/// [`MAX_OPEN_ASKS`]): the turn is not handled, and a later pass checks it
+/// again whole.
 fn recheck_turn_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     (turn, admit): (&EntityId, Option<&Admit<'_, '_>>),
     open: &mut Vec<([u8; 32], IdentityAsk)>,
+    max_open_asks: usize,
     now: u64,
 ) -> Result<bool> {
     let Some(tags) = crate::tagging::readable_view_in_txn(&vault.store, txn, turn)? else {
@@ -286,7 +289,7 @@ fn recheck_turn_in_txn(
             .iter()
             .filter(|(_, held)| held.kept_separate_at.is_none())
             .count();
-        if waiting >= MAX_OPEN_ASKS {
+        if waiting >= max_open_asks {
             return Ok(false);
         }
         measure_ask(vault, &ask);
@@ -336,7 +339,9 @@ impl DreamerRunnerStore<'_> {
 /// by a hint or opens an ask. The cursor moves past the page, and starts
 /// over once a page comes back short. A turn that would open an ask past a
 /// full tray stops the page: the cursor stays at the last turn handled, so
-/// the next pass starts at the one that waited.
+/// the next pass starts at the one that waited. The page's size and the
+/// tray's are the owner's [`SCAN_TURNS`] and [`MAX_OPEN_ASKS`], read once
+/// in the pass's writer.
 pub(in crate::dreamer_runner::maintenance) fn run(
     vault: &Vault,
     _attempt: &DreamerAdmittedAttempt,
@@ -375,13 +380,27 @@ pub(super) fn run_page(vault: &Vault, now: u64) -> Result<()> {
                 None
             }
         };
+        // The owner's paces, read once in this writer: every change committed
+        // before the pass is one it reads.
+        let scan_turns = SCAN_TURNS.read_in_txn(vault, txn, &[], None)?.value.count();
+        let max_open_asks = MAX_OPEN_ASKS
+            .read_in_txn(vault, txn, &[], None)?
+            .value
+            .count();
         let after = CURSOR.get(&vault.store, txn, &())?;
         let (page, last) =
-            crate::tagging::readable_page_in_txn(&vault.store, txn, after.as_ref(), SCAN_TURNS)?;
+            crate::tagging::readable_page_in_txn(&vault.store, txn, after.as_ref(), scan_turns)?;
         let mut open = ASKS.scan(&vault.store, txn)?;
         let mut handled = None;
         for tags in &page {
-            if !recheck_turn_in_txn(vault, txn, (&tags.turn, admit.as_ref()), &mut open, now)? {
+            if !recheck_turn_in_txn(
+                vault,
+                txn,
+                (&tags.turn, admit.as_ref()),
+                &mut open,
+                max_open_asks,
+                now,
+            )? {
                 // The page reads after the cursor, so the next pass starts at
                 // the turn that waited; before the page's first turn the
                 // cursor stays where it was.
@@ -393,7 +412,7 @@ pub(super) fn run_page(vault: &Vault, now: u64) -> Result<()> {
             handled = Some(tags.turn);
         }
         match last {
-            Some(last) if page.len() == SCAN_TURNS => CURSOR.put(&vault.store, txn, &(), &last)?,
+            Some(last) if page.len() == scan_turns => CURSOR.put(&vault.store, txn, &(), &last)?,
             _ => {
                 CURSOR.delete(&vault.store, txn, &())?;
             }

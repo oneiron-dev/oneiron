@@ -64,7 +64,6 @@ const MONDAY: u64 = 1_772_409_600;
 const NOW: u64 = MONDAY + 8 * 3_600;
 
 const PAGE_SEED: u8 = 0x51;
-const HOST_SEED: u8 = 0x52;
 const BOOKER_SEED: u8 = 0x57;
 const BUSY_SEED: u8 = 0x61;
 const IDENTITY_SEED: u8 = 0x79;
@@ -126,14 +125,11 @@ impl Fixture {
             oneiron_keystore::MemoryKeystore::default(),
         ));
         let page = test_id(PAGE_SEED);
-        let host = test_id(HOST_SEED);
+        let host = vault.ensure_embedded_owner_actor().expect("host");
         let booker = test_id(BOOKER_SEED);
         vault
             .put_entity(&page, ENTITY_TYPE_ASSET, at(1), 1, b"booking page")
             .expect("put booking page");
-        vault
-            .put_entity(&host, ENTITY_TYPE_PERSON, at(1), 1, b"host")
-            .expect("put host");
         vault
             .put_entity(
                 &booker,
@@ -164,7 +160,7 @@ impl Fixture {
             encode_event_type_claim_value(&BookingEventTypeClaimValue {
                 schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
                 page_ref: page,
-                config: fixture_config(),
+                config: fixture_config(host),
             })
             .expect("encode the event type"),
             1.0,
@@ -390,14 +386,15 @@ impl SlotOracle for LifecycleSolver<'_> {
             Some(key) => VaultActiveHoldSource::excluding(self.vault, key),
             None => VaultActiveHoldSource::new(self.vault),
         };
-        let calendars = vec![(test_id(HOST_SEED), vec![CalendarSel { system: None }])];
+        let host = self.vault.ensure_embedded_owner_actor().expect("host");
+        let calendars = vec![(host, vec![CalendarSel { system: None }])];
         BookingSolver {
             vault: self.vault,
             page_ref: self.page,
             calendars_by_host: &calendars,
             holds: &holds,
             now_utc: NOW,
-            synthetic_config: Some(fixture_config()),
+            synthetic_config: Some(fixture_config(host)),
         }
         .solve(req)
     }
@@ -407,7 +404,7 @@ fn event_type() -> EventTypeKey {
     EventTypeKey("intro-call".to_owned())
 }
 
-fn fixture_config() -> EventTypeConfig {
+fn fixture_config(host: EntityId) -> EventTypeConfig {
     EventTypeConfig {
         key: event_type(),
         duration_min: DEFAULT_INTRO_DURATION_MIN,
@@ -418,9 +415,10 @@ fn fixture_config() -> EventTypeConfig {
         booking_window_secs: 7 * 24 * 3_600,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
-            host_ref: test_id(HOST_SEED),
+            host_ref: host,
             calendar_refs: vec![test_id(BUSY_SEED)],
             host_tz: "UTC".to_owned(),
             working_hours: vec![WeeklyWallWindow {
@@ -430,7 +428,9 @@ fn fixture_config() -> EventTypeConfig {
             }],
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 
@@ -446,6 +446,7 @@ fn book(fixture: &Fixture, session_key: SessionKey, slot: TimeRange) -> ConfirmR
                 constraint: None,
                 lease: HoldLeaseSpec::Ordinary,
                 idempotency_key: None,
+                cap_override: None,
             }),
             NOW,
         )
@@ -736,8 +737,8 @@ fn the_owners_upload_of_a_held_booking_move_says_it_was_held() {
 
     // The vault's owner uploads the host calendar's file with both events
     // moved. The upload door asks for this vault's owner, the embedded owner
-    // a self-hosted root binds; the fixture bound the host key to the page's
-    // host for the emergency, so it binds the owner back first.
+    // a self-hosted root binds. The page's host is that owner, so the bind
+    // below finds the binding the emergency left and changes nothing.
     let owner_id = fixture
         .vault
         .ensure_embedded_owner_actor()

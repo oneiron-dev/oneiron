@@ -13,6 +13,10 @@
 //!   install starts empty slots, as a new machine does.
 //! - Like the platform tier it needs a signed app with a keychain access group;
 //!   an unsigned build gets `Unavailable`.
+//! - The bytes the engine sealed under a device PIN rest under the same
+//!   `.enclave` service, as the platform tier keeps them (`sealed-bytes:<name>`,
+//!   [`SealedBytesStore`]). The engine sealed them; the enclave key did not,
+//!   and keeping one makes no enclave key.
 
 use std::sync::{Mutex, OnceLock};
 
@@ -40,14 +44,14 @@ use security_framework_sys::keychain_item::SecItemDelete;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::apple::{AppleKeychain, platform};
+use crate::apple_names::SELECTOR_ACCOUNT;
 use crate::{
     DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality, KeystoreSlot, Result,
+    SealedBytesStore,
 };
 
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 const SEAL: Algorithm = Algorithm::ECIESEncryptionCofactorVariableIVX963SHA256AESGCM;
-// Slot accounts always start with the vault and install hex ids, unlike this account.
-const SELECTOR_ACCOUNT: &str = "enclave-key-selector.v1";
 static KEY_SELECTION: Mutex<()> = Mutex::new(());
 
 #[cfg(target_os = "macos")]
@@ -319,6 +323,12 @@ impl DeviceKeystore for SecureEnclaveKeychain {
 
     fn assurance(&self) -> KeystoreAssurance {
         KeystoreAssurance::Hardware
+    }
+
+    /// The platform tier's items under this tier's own service: the engine
+    /// sealed these bytes, the enclave key did not.
+    fn sealed_bytes(&self) -> Option<&dyn SealedBytesStore> {
+        Some(&self.items)
     }
 }
 

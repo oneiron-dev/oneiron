@@ -8,8 +8,10 @@
 # so the Soniox ASR and Irodori/MOSS-local TTS wires are no longer in core's
 # voice cascade, and the server's speech rungs keep their sends but define no
 # vendor codec of their own (Cartesia, ElevenLabs, VoxCPM2 framing, Soniox
-# error codes). The `oneiron-image` organ is not a wire adapter and stays its
-# own crate.
+# error codes). `oneiron-llm`'s OpenAI-compatible media wire keeps its shared
+# seam and its embeddings only: its image and video calls are `oneiron-gen`'s
+# and its speech and transcription calls `oneiron-speech`'s. The
+# `oneiron-image` organ is not a wire adapter and stays its own crate.
 #
 # Fails CLOSED: a missing or unreadable manifest fails the check. Reads the
 # manifests and the directory tree only, so it needs no cargo and no network.
@@ -67,6 +69,7 @@ FOREIGN_PATHS = (
     ("crates/oneiron/src/voice_cascade/soniox.rs", "the Soniox ASR wire belongs to oneiron-speech"),
     ("crates/oneiron/src/voice_cascade/tts_spikes.rs", "the Irodori/MOSS-local TTS wire belongs to oneiron-speech"),
     ("crates/oneiron/src/voice_cascade/tts_spikes", "the Irodori/MOSS-local TTS wire belongs to oneiron-speech"),
+    ("crates/oneiron-llm/src/openai_compat/image.rs", "the OpenAI-compatible image wire belongs to oneiron-gen"),
 )
 for path, reason in FOREIGN_PATHS:
     if (root / path).exists():
@@ -79,8 +82,11 @@ HOST_CODEC_ITEMS = (
      ("fn build", "fn parse", "const PCM_RATE", "const CARTESIA_VERSION", "enum HostedWire",
       "struct VendorVoice", "fn url_safe", "fn joined_wav", "fn clip_part")),
     ("crates/oneiron-server/src/models/voxcpm2_speech.rs",
-     ("enum TranscriptPlacement", "struct Transcript", "fn render_header", "fn escaped_len",
-      "fn header_pieces", "fn split_to_fit", "fn joined_wav_header")),
+     ("fn voice_socket_url", "fn text_pieces", "fn start_frame", "fn started_matches",
+      "fn worker_error", "fn split_to_fit", "fn escaped_len", "fn joined_wav_header")),
+    ("crates/oneiron-server/src/models/voxcpm2_speech/socket.rs",
+     ("fn voice_socket_url", "fn text_pieces", "fn start_frame", "fn started_matches",
+      "fn worker_error", "fn split_to_fit", "fn escaped_len", "fn joined_wav_header")),
     ("crates/oneiron-server/src/models/soniox.rs",
      ("const RETRIABLE_ERROR_CODES", "const FINALIZE", "fn retriable_error")),
 )
@@ -95,6 +101,28 @@ for path, items in HOST_CODEC_ITEMS:
         pattern = rf"^\s*(?:pub(?:\([^)]*\))?\s+)?{kind}\s+{name}\b"
         if re.search(pattern, text, re.MULTILINE):
             refused.append(f"{path} defines `{item}`: the codec belongs to oneiron-speech")
+
+# The OpenAI-compatible media seam in oneiron-llm serves embeddings alone: an
+# image, video, speech or transcription call named there is another family's.
+FOREIGN_OPERATIONS = (
+    ("Image", "oneiron-gen"),
+    ("Video", "oneiron-gen"),
+    ("Speech", "oneiron-speech"),
+    ("Transcribe", "oneiron-speech"),
+)
+seam = root / "crates/oneiron-llm/src/openai_compat/media.rs"
+seam_files = [seam] + sorted((root / "crates/oneiron-llm/src/openai_compat/media").glob("**/*.rs"))
+if not seam.is_file():
+    refused.append("crates/oneiron-llm/src/openai_compat/media.rs is missing")
+for path in seam_files:
+    if not path.is_file():
+        continue
+    text = path.read_text(encoding="utf-8")
+    for operation, family in FOREIGN_OPERATIONS:
+        if re.search(rf"\bAiOperation::{operation}\b", text):
+            refused.append(
+                f"{path.relative_to(root)} names `AiOperation::{operation}`: that call belongs to {family}"
+            )
 
 # The image organ is a process boundary, not an adapter: it stays.
 organ = crates / "oneiron-image" / "Cargo.toml"

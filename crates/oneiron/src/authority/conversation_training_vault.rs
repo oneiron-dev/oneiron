@@ -169,6 +169,7 @@ pub(super) fn apply_conversation_training_vault(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let choice = VaultTrainingChoice {
         on: set.on,
@@ -179,6 +180,8 @@ pub(super) fn apply_conversation_training_vault(
         machine: set.machine,
         choice: Some(&choice),
         context: CONVERSATION_TRAINING_VAULT_REVISION_CONTEXT,
+        needs_proof_off_the_line,
+        persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
         state,
@@ -350,7 +353,12 @@ impl Vault {
         let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?
             .ok_or_else(|| authority_refused(NO_CARRIER))?;
         let public_key = key.verifying_key().to_bytes();
-        if !owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+        if !owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(authority_refused(NO_CARRIER));
         }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
@@ -372,7 +380,7 @@ impl Vault {
             current.0,
         );
         let now = self.instant_in_txn(txn)?.secs();
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &key,
             seq,
@@ -384,6 +392,7 @@ impl Vault {
                 allow_opt_out,
             }),
             now,
+            self.owner_proof_signer(&fold).as_ref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
@@ -392,6 +401,7 @@ impl Vault {
         };
         self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(txn)?;
+        after.refuse_waiting_choice(&entry_hash)?;
         if !after
             .conversation_training_vault
             .choices
@@ -402,6 +412,21 @@ impl Vault {
             return Err(authority_refused(NOT_COUNTED));
         }
         let view = self.setting_view_in_txn(txn, &after)?;
+        // In a shared vault the choice is an admin act: every live Owner,
+        // Admin and Deputy hears of it (UNBUILT06-SHAPE Q3 = A).
+        if let Some(creation) = self.shared_vault_creation_in_txn(txn)? {
+            let recorded = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            self.record_admin_act_in_txn(
+                txn,
+                creation.vault_id,
+                person,
+                crate::federation::SharedVaultChange::ConversationLearningChanged {
+                    on,
+                    allow_opt_out,
+                },
+                recorded,
+            )?;
+        }
         Ok((entry_hash, view, now))
     }
 

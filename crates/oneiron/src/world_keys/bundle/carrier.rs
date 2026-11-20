@@ -278,25 +278,29 @@ impl Vault {
     /// base section carries no pad row). Each row keeps the time it was first
     /// learned, so it rides the same month's window as on every other replica
     /// (FIX 3790). A world whose keys were destroyed here gets none. Returns
-    /// how many it stored.
+    /// how many it stored. In the caller's write transaction: a sealed
+    /// bundle's kit restore lands them in the one that judges the kit's R
+    /// last (REVIEW-9488 round 2 P1 2).
     #[cfg(feature = "sync")]
-    pub(crate) fn restore_key_pads(&self, pads: &OpenedKeyPads) -> Result<usize> {
-        self.with_write_txn(|txn| {
-            let fold = self.authority_view_readonly_in_txn(txn)?;
-            let mut stored = 0;
-            for (key, pad, learned_at) in &pads.entries {
-                if fold.world_key(key).is_none()
-                    || pad_row_in_txn(&self.store, txn, key)?.is_some()
-                    || world_keys_destroyed_in_txn(&self.store, txn, key.world)?
-                {
-                    continue;
-                }
-                let pad = WorldKeyPad::from_bytes(Zeroizing::new(**pad));
-                self.put_pad_in_txn(txn, key, &pad, *learned_at)?;
-                stored += 1;
+    pub(crate) fn restore_key_pads_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        pads: &OpenedKeyPads,
+    ) -> Result<usize> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let mut stored = 0;
+        for (key, pad, learned_at) in &pads.entries {
+            if fold.world_key(key).is_none()
+                || pad_row_in_txn(&self.store, txn, key)?.is_some()
+                || world_keys_destroyed_in_txn(&self.store, txn, key.world)?
+            {
+                continue;
             }
-            Ok(stored)
-        })
+            let pad = WorldKeyPad::from_bytes(Zeroizing::new(**pad));
+            self.put_pad_in_txn(txn, key, &pad, *learned_at)?;
+            stored += 1;
+        }
+        Ok(stored)
     }
 
     /// The sections of `opened` this machine may read now, opened. A key whose pad

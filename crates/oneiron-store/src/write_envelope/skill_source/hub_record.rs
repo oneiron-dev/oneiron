@@ -2,6 +2,7 @@
 //! Entry: `HubRef`.
 //! Defines its own items.
 
+use oneiron_contracts::register::Register;
 use rmpv::Value;
 
 use crate::write_envelope::skill_record::SkillContentHash;
@@ -34,8 +35,10 @@ pub const HUB_PIN_KEYS: [&str; 2] = ["type", "value"];
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "kebab-case")]
+#[register("skill.hub.kind")]
 pub enum SkillHubKind {
     Git,
     HttpIndex,
@@ -43,23 +46,8 @@ pub enum SkillHubKind {
 }
 
 impl SkillHubKind {
-    /// Pinned wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Git => "git",
-            Self::HttpIndex => "http-index",
-            Self::LocalDir => "local-dir",
-        }
-    }
-
     fn parse(value: &str) -> Option<Self> {
-        match value {
-            "git" => Some(Self::Git),
-            "http-index" => Some(Self::HttpIndex),
-            "local-dir" => Some(Self::LocalDir),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 
@@ -74,8 +62,10 @@ impl SkillHubKind {
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "lowercase")]
+#[register("skill.hub.trust.tier")]
 pub enum SkillHubTrustTier {
     Untrusted,
     Community,
@@ -83,23 +73,8 @@ pub enum SkillHubTrustTier {
 }
 
 impl SkillHubTrustTier {
-    /// Pinned wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Untrusted => "untrusted",
-            Self::Community => "community",
-            Self::Verified => "verified",
-        }
-    }
-
     fn parse(value: &str) -> Option<Self> {
-        match value {
-            "untrusted" => Some(Self::Untrusted),
-            "community" => Some(Self::Community),
-            "verified" => Some(Self::Verified),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 
@@ -114,8 +89,10 @@ impl SkillHubTrustTier {
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "kebab-case")]
+#[register("hub.sync.policy")]
 pub enum HubSyncPolicy {
     PinnedRef,
     PinnedCommit,
@@ -124,27 +101,10 @@ pub enum HubSyncPolicy {
 }
 
 impl HubSyncPolicy {
-    /// Pinned wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::PinnedRef => "pinned-ref",
-            Self::PinnedCommit => "pinned-commit",
-            Self::ContentHashFrozen => "content-hash-frozen",
-            Self::MirrorOfHub => "mirror-of-hub",
-        }
-    }
-
     /// Parses the pinned wire spelling.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "pinned-ref" => Some(Self::PinnedRef),
-            "pinned-commit" => Some(Self::PinnedCommit),
-            "content-hash-frozen" => Some(Self::ContentHashFrozen),
-            "mirror-of-hub" => Some(Self::MirrorOfHub),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 
     pub const fn allows_automatic_update(self) -> bool {

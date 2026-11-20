@@ -124,6 +124,7 @@ fn erase_edit_as(
                 receipt_id: None,
                 sweep_key: None,
                 turn_program_details: Vec::new(),
+                version_release: false,
             }
         };
         Ok(Some(ConfirmedEraseOutcome::Completed(outcome)))
@@ -307,6 +308,7 @@ impl Memory<'_> {
                     .receipt_id
                     .map(|receipt| format!("redaction:{}", receipt.to_hex())),
                 state: DeleteRequestState::Applied,
+                check_in: None,
             }),
             None => self.safe_delete_as_owner(owner, &record.to_hex(), reason),
         }

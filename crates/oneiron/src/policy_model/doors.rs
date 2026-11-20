@@ -12,6 +12,11 @@ use super::{PolicyClassifyRequest, PolicyClassifySubject, PolicyRowChange, Polic
 #[serde(deny_unknown_fields)]
 pub struct PolicyRowChangeRequest {
     pub change: PolicyRowChange,
+    /// The check-in an asker opened for this exact change, 32 hex: with it
+    /// the Owner applies the asker's approved ask on their own proof, and
+    /// the receipt names it (2k4; P25-SHAPE Q1 = A).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// No verdict, caller identity, policy document or attestation is accepted here.
@@ -50,12 +55,34 @@ impl PolicyOutboundRequest {
     }
 }
 
+/// `vault.policy.owner.row.change`: the Owner's change of one policy row,
+/// whose receipt records the Owner's check-in decision; with `check_in_ref`
+/// the Owner applies an asker's approved check-in for this change (2k4).
+///
+/// # Errors
+///
+/// A `check_in_ref` that is no 32-hex id; as
+/// [`Vault::change_policy_row_with_check_in`].
 pub fn change_owner_policy_row(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: PolicyRowChangeRequest,
 ) -> Result<PolicyRowReceipt> {
-    vault.change_policy_row(owner, input.change, crate::unix_seconds_now())
+    let check_in_ref = input
+        .check_in_ref
+        .as_deref()
+        .map(|hex| {
+            EntityId::from_hex(hex).map_err(|_| {
+                crate::Error::InvalidConfig("check_in_ref is not a check-in id".into())
+            })
+        })
+        .transpose()?;
+    vault.change_policy_row_with_check_in(
+        owner,
+        input.change,
+        check_in_ref,
+        crate::unix_seconds_now(),
+    )
 }
 
 /// Validate configured patterns with the classifier's own compiler.
@@ -86,6 +113,15 @@ pub struct HostedRelayDecision {
     pub outbound_halted: bool,
     pub system_notice: Option<String>,
     pub system_notices: Vec<crate::store::GateSystemNoticeRecord>,
+    /// The same send works from a self-hosted vault through its own
+    /// connector, which no hosted policy evaluates
+    /// (`RelayTrustDomain::LocalViaByoConnector`): true on every decision of
+    /// a hosted relay's own pass (DEC-0005 #will-sweep; RULING
+    /// L9-61-POLICY-SELFHOST = A).
+    pub works_self_hosted: bool,
+    /// What self-hosting changes, as the legal-hold notice's field of the
+    /// same name says it.
+    pub self_hosted_note: String,
 }
 
 /// Enforce the relay's own pass, including its fail-closed outage and notice.
@@ -200,6 +236,8 @@ pub async fn enforce_hosted_relay(
         outbound_halted: halted,
         system_notice: super::notice::default_system_notice(&system_notices),
         system_notices,
+        works_self_hosted: true,
+        self_hosted_note: super::notice::HOSTED_RELAY_SELF_HOSTED_NOTE.to_owned(),
     })
 }
 

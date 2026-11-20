@@ -2,11 +2,21 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::edge::EdgeKind;
+use oneiron_contracts::register::Register;
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("weave.section.kind")]
 pub enum WeaveSectionKind {
     Changes,
     Projects,
@@ -34,17 +44,6 @@ pub struct WeaveSectionSpec {
 
 impl WeaveSectionKind {
     pub fn policy_name(self) -> &'static str {
-        match self {
-            Self::Changes => "changes",
-            Self::Projects => "projects",
-            Self::OpenAsks => "open_asks",
-            Self::Links => "links",
-            Self::Conflicts => "conflicts",
-            Self::Exceptions => "exceptions",
-            Self::Admissions => "admissions",
-            Self::Budgets => "budgets",
-            Self::SieveScore => "sieve_score",
-            Self::Digest => "digest",
-        }
+        self.as_str()
     }
 }

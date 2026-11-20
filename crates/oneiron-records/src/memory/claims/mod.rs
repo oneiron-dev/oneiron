@@ -40,12 +40,18 @@ impl DeleteRequestState {
     }
 }
 
+/// The [`DeleteReceipt::reason`] of the owner's delete of a live artifact's lone `blob.version`
+/// claim, which runs as the release of the version it records: the claim goes with its version
+/// and its unheld bytes (ASTRA-R2-002).
+pub const DELETE_RECEIPT_VERSION_RELEASE: &str = "blob_version_release";
+
 /// Receipt for one safe delete.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteReceipt {
     /// Whether the entity existed before the delete.
     pub existed: bool,
-    /// The reason the delete was performed under.
+    /// The reason the delete was performed under, or [`DELETE_RECEIPT_VERSION_RELEASE`] when the
+    /// delete of a live artifact's lone version claim ran as that version's release.
     pub reason: String,
     /// Redaction audit receipt ref (`redaction:<hex>`); `None` for
     /// `user_delete`, which writes no receipt entity by design, and for a
@@ -53,6 +59,13 @@ pub struct DeleteReceipt {
     pub receipt_ref: Option<String>,
     /// Whether the local rail applied it or it waits (FIX 1465).
     pub state: DeleteRequestState,
+    /// The check-in decision `vault.delete` ran on (ROLES-CHECKIN 2k5;
+    /// P25-SHAPE Q1 = A): the Owner's own proof, or a person's judgment
+    /// under their membership role. None for an agent's delete under its
+    /// Grant, which PR 3's act gate judges, and for a delete another door
+    /// runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<oneiron_verb_wire::check_in::CheckInDecision>,
 }
 
 /// One pending gated write awaiting consent.

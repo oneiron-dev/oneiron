@@ -7,8 +7,8 @@
 use loro::LoroMap;
 use serde::{Deserialize, Serialize};
 
-use super::carrier_parts::{Parts, assembly_fits, join_parts, split_parts, write_parts};
-use super::loro_bytes::map_insert_bytes;
+use super::carrier_parts::{Parts, assembly_fits, join_parts_from, split_parts, write_parts};
+use super::loro_bytes::{map_get_bytes, map_insert_bytes};
 use super::room_parts::ROOM_FACT_MAX_ROW_BYTES;
 use crate::error::{Error, Result};
 use crate::workspace_roster::RoomSideRow;
@@ -83,12 +83,21 @@ impl OfferManifest {
         head.checked_add(self.text.len)?.checked_sub(placeholder)
     }
 
-    pub(crate) fn joined(mut self, map: &LoroMap) -> Option<Vec<u8>> {
+    pub(crate) fn joined(self, map: &LoroMap) -> Option<Vec<u8>> {
+        self.joined_from(|key| map_get_bytes(map, key))
+    }
+
+    /// [`Self::joined`] over parts read through `get` (captured history)
+    /// instead of a map.
+    pub(crate) fn joined_from<B: AsRef<[u8]>>(
+        mut self,
+        get: impl FnMut(&str) -> Option<B>,
+    ) -> Option<Vec<u8>> {
         let len = self.logical_len()?;
         if !assembly_fits(len) {
             return None;
         }
-        let bytes = join_parts(map, &self.text)?;
+        let bytes = join_parts_from(&self.text, get)?;
         let text: OfferText = serde_json::from_slice(&bytes).ok()?;
         if serde_json::to_vec(&text).ok()? != bytes {
             return None;

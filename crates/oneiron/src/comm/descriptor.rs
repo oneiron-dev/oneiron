@@ -35,6 +35,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR;
+use crate::serialize::msgpack_value_to_exact_json;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
@@ -46,7 +47,7 @@ pub use crate::store::claim_descriptors::ClaimWriteClass;
 pub use crate::store::claim_descriptors::EnforcementStamp;
 use crate::store::claim_descriptors::{
     DESCRIPTOR_PUT_OPERATION, compiled_descriptor, compiled_row, generic_class_seed, hash_hex,
-    invalid, json_value, value_meets_schema,
+    invalid, value_meets_schema,
 };
 
 /// Checks `body` against its class's descriptor where the descriptor
@@ -74,7 +75,7 @@ pub(crate) fn check_claim_against_descriptor_in_txn(
     if let (ClaimValidatorKind::Generic, Some(schema)) =
         (descriptor.validator_kind, &descriptor.schema)
     {
-        let value = json_value(&body.value)
+        let value = msgpack_value_to_exact_json(&body.value)
             .ok_or_else(|| invalid("the claim's value is not JSON for its class's schema"))?;
         if !value_meets_schema(&body.predicate, schema, &value)? {
             return Err(invalid(
@@ -103,7 +104,7 @@ pub(crate) fn check_claim_against_compiled_descriptor(
     if !seed.subject_kind.admits_without_store(&body.subject) {
         return Err(invalid("the claim's subject is not one its class admits"));
     }
-    let value = json_value(&body.value)
+    let value = msgpack_value_to_exact_json(&body.value)
         .ok_or_else(|| invalid("the claim's value is not JSON for its class's schema"))?;
     if !seed.admits_value(&value)? {
         return Err(invalid(
@@ -168,6 +169,54 @@ pub(crate) fn is_restrictive_comm_predicate(
     }
     Ok(claim_class_descriptor_in_txn(store, txn, predicate)?
         .is_some_and(|descriptor| descriptor.restrictive))
+}
+
+/// Every claim class the send gate consults (ARCH-0057 §3, the registry leg
+/// of the claims-read door), in predicate order: the compiled table's
+/// enforced rows, and every stored descriptor that is enforced here
+/// ([`ClaimClassDescriptor::enforced`]: an owner stamp over its semantics, or
+/// the build's own).
+///
+/// The compiled rows are the build's stamp for its own semantics, and the
+/// gate keeps its compiled policy: a synced or owner-revised row for one of
+/// them is read where the compiled row is not, but never removes the class
+/// from this set. A restriction only adds suppression. A stored row that does
+/// not decode, or that sits at another predicate's id, is skipped, as
+/// [`claim_class_descriptor_in_txn`] skips it.
+pub(crate) fn enforced_claim_classes_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<ClaimClassDescriptor>> {
+    let mut classes = std::collections::BTreeMap::new();
+    for row in claim_class_descriptors() {
+        if row.enforcement {
+            classes.insert(
+                row.predicate.to_owned(),
+                ClaimClassDescriptor::from_compiled(&row),
+            );
+        }
+    }
+    for entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, None)? {
+        let id = entry?;
+        let Some(raw) = store.port_entity_record(txn, &id)? else {
+            continue;
+        };
+        if raw.entity_type != ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
+            continue;
+        }
+        let Ok(descriptor) = decode_claim_class_descriptor(&raw.body) else {
+            continue;
+        };
+        if claim_class_descriptor_id(&descriptor.predicate).ok() != Some(id)
+            || !descriptor.enforced()
+        {
+            continue;
+        }
+        classes
+            .entry(descriptor.predicate.clone())
+            .or_insert(descriptor);
+    }
+    Ok(classes.into_values().collect())
 }
 
 /// Writes `descriptor` at `id` on the engine-owned setting, in the caller's

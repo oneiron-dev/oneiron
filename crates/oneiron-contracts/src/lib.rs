@@ -6,6 +6,7 @@ pub mod affect;
 pub mod authority;
 pub mod claim;
 pub mod code_run;
+pub mod cursor_text;
 pub mod edge;
 pub mod entity_id;
 pub mod error;
@@ -13,12 +14,15 @@ pub mod gate;
 pub mod host_descriptors;
 pub mod host_memory;
 pub mod identity_topology;
+pub mod lifecycle;
 pub mod limit_ask;
 pub mod limits;
 pub mod memory;
 pub mod msgpack;
 pub mod posterior;
 pub mod record_layout;
+pub mod recorded_seconds;
+pub mod register;
 pub mod registry;
 pub mod retrieval_quality;
 pub mod retrieval_telemetry;
@@ -34,6 +38,11 @@ pub mod write_envelope;
 /// purpose registry and the K door for digests that keep their stored bytes.
 pub use oneiron_fingerprint as fingerprint;
 
+// `#[derive(Register)]` writes `::oneiron_contracts::register::Register`; this makes that path
+// resolve inside this crate too.
+extern crate self as oneiron_contracts;
+
 // The same root aliases `oneiron` has, so moved code keeps its `crate::` paths.
 pub use crate::entity_id::EntityId;
 pub use crate::error::{Error, ErrorKind, Result};
+pub use crate::recorded_seconds::RecordedSeconds;

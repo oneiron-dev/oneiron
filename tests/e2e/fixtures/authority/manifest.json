@@ -25,17 +25,19 @@
       "path": "host-note.json",
       "source": {
         "uri": "independent-oracle:owner-e2e-authority-20261018",
-        "revision": "1"
+        "revision": "2"
       },
       "licence": "Apache-2.0",
-      "sha256": "6fde41465ba4030fe257b53a55777ad3eb9f21715b6a4fb074d3fe8efe3a2a44",
+      "sha256": "3d1ef2fcb14b891a900b44e909c2d6d8f0a21a001cc993f39bac08cca0de1d4d",
       "expectedFacts": {
         "namespace": [
           "authority",
           "handoff"
         ],
         "key": "harbour-note",
-        "value": "The harbour lantern is amber.",
+        "value": {
+          "text": "The harbour lantern is amber."
+        },
         "requestId": "e2e-authority-08-preserve-note"
       },
       "scenarios": [

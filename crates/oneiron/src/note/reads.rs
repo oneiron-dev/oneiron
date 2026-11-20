@@ -317,11 +317,30 @@ impl Memory<'_> {
         } else {
             None
         };
+        // A replica holds a NOTE's row before its authority sends the NOTE's
+        // head document; the sync registry asks for that document from an
+        // empty version (FIX [REPLICA-NOTE-READ-400-BEFORE-DOCUMENT]). Until
+        // it lands, this host holds no body to read: the read answers none,
+        // as for a row it does not hold, and takes no diary admission. A live
+        // read's point read already answers no row here (scoped_read
+        // versions); this covers a read of a retained revision, which is
+        // served as its stored row. Only an empty slot answers so; updates
+        // with no snapshot, and an erased NOTE, still refuse in the strict
+        // load below.
+        if !super::documents::head_document_held_in(at.store, txn, note)?
+            && !self
+                .vault()
+                .local_hard_delete_marker_exists_in_txn(txn, &note)?
+        {
+            return Ok((None, None));
+        }
         // An erased diary author is no agent, so no Grant covers the entry:
-        // it stays held, never admitted through a stand-in author.
+        // it stays held, never admitted through a stand-in author. So does an
+        // imported one until the owner's review of the restored agent names
+        // it the entry's author.
         if core.kind == NoteKind::Diary
             && let Some(diary) = &mut gate
-            && match core.author_ref.id() {
+            && match super::diary_author_in(at.store, txn, core.author_ref)? {
                 Some(author) => {
                     diary.admit(self.vault(), txn, author, note)? != DiaryEntryAdmission::Read
                 }

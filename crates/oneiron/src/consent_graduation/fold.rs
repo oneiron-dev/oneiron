@@ -7,8 +7,8 @@ use super::state::{
 };
 use super::storage::{
     RAMP_DEMOTION, RAMP_DEMOTION_ROW_LABEL, RAMP_FLOOR, RAMP_OUTCOME, RAMP_OUTCOME_ROW_LABEL,
-    RAMP_ROW_VERSION, RAMP_STATS, StoredDemotion, StoredRampOutcome, StreakFloor, stats_row,
-    stats_row_parts, stored_row_scope, validated_ramp_row,
+    RAMP_ROW_VERSION, RAMP_STATS, StoredDemotion, StoredRampOutcome, stats_row, stats_row_parts,
+    stored_row_scope, validated_ramp_row,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -53,7 +53,7 @@ pub(crate) fn ramp_floor_override_in_txn(
 ) -> Result<Option<u32>> {
     Ok(RAMP_FLOOR
         .get(store, txn, &scope.key())?
-        .map(|StreakFloor(floor)| floor))
+        .map(|row| row.floor))
 }
 
 /// The scope's live standing grant reference, when one is active.

@@ -1,23 +1,30 @@
-//! Counterparty hydration plus send-override and do-not-contact fold.
+//! Counterparty hydration: the send gate's ask of the claims-read door.
 
-use crate::counterparty_contact::{
-    CounterpartyContactStatus, CounterpartyFirstTouch, normalize_channel_class,
+use crate::claim::enforcement_read::{
+    SendTarget, enforcement_heads_for_send_in_txn, send_override_head_in_txn,
 };
+use crate::counterparty_contact::{CounterpartyFirstTouch, normalize_channel_class};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::gate::input::{ExternalEffectGateInput, ExternalEffectPolicyRisk};
 use crate::store::Store;
 use crate::write_envelope::communication::SendOverrideMatch;
 
-/// Receipt reason for a deny whose only restrictive source is a CA-01
-/// `comm.do_not_contact` head. Inside `store.rs`'s closed `counterparty_*`
-/// receipt-reason family.
-const COUNTERPARTY_OPT_OUT_DO_NOT_CONTACT_RECEIPT_REASON: &str =
-    "counterparty_opt_out_do_not_contact";
-
-/// Receipt reason for a hold whose restrictive source is an owner-revoked
-/// `COUNTERPARTY_CONTACT` row. Same closed `counterparty_*` family.
-const COUNTERPARTY_CONTACT_REVOKED_RECEIPT_REASON: &str = "counterparty_contact_revoked";
+/// What hydration answers: the input with the counterparty's contact and
+/// hold facts folded in, and beside it the gate-internal facts no caller may
+/// assert, which the single evaluating caller writes onto the gate context.
+pub(crate) struct CounterpartyHydration {
+    /// The hydrated input.
+    pub(crate) effect: ExternalEffectGateInput,
+    /// The owner's matching `comm.send_override`, read only for a held send.
+    pub(crate) send_override: Option<SendOverrideMatch>,
+    /// Whether a head no override lifts (an owner-revoked contact) holds the
+    /// send.
+    pub(crate) revoked: bool,
+    /// The registry ids of the overridable classes whose heads hold the send,
+    /// for the evaluator's per-class posture (ARCH-0057 §3.1).
+    pub(crate) hold_classes: Vec<EntityId>,
+}
 
 /// Hydrates the counterparty consent facts the external-effect door decides on.
 ///
@@ -27,23 +34,27 @@ const COUNTERPARTY_CONTACT_REVOKED_RECEIPT_REASON: &str = "counterparty_contact_
 /// because every shipping constructor leaves it `None` and the legal-class hard
 /// deny below it was therefore unreachable.
 ///
-/// Every restrictive source is OR-folded: COUNTERPARTY_CONTACT records AND CA-01's
-/// `comm.do_not_contact` heads. No leg may clear suppression another leg
-/// established.
+/// ARCH-0057 §3 cutover: the restrictive sources are the claims-read door's
+/// registry-selected enforcement heads ([`enforcement_heads_for_send_in_txn`]),
+/// OR-folded: no head may clear suppression another established, and a
+/// caller's own opt-out flag only adds. The contact family's own opt-out head
+/// is no longer one of them. The contacts the door rebuilt from their claims
+/// give the claim-backed `first_touch`.
 ///
-/// ONE-1752 adds ONE read and no new suppression source: once the fold has
-/// decided the counterparty is opted out, the owner's `comm.send_override`
-/// heads are read on THIS transaction and returned BESIDE the input.
-/// [`ExternalEffectGateInput`] stays byte-unchanged — an override is never
-/// something a caller may assert — so the match travels back as its own value
-/// and the single caller writes it onto the gate-internal context. Whether a
-/// matching contact is owner-revoked travels back the same way.
+/// ONE-1752 adds ONE read and no new suppression source: once the send is
+/// held, the owner's `comm.send_override` heads are read on THIS transaction
+/// and returned BESIDE the input. [`ExternalEffectGateInput`] stays
+/// byte-unchanged — an override is never something a caller may assert — so
+/// the match travels back as its own value and the single caller writes it
+/// onto the gate-internal context. Whether a head no override lifts (an
+/// owner-revoked contact) holds the send, and which classes hold it, travel
+/// back the same way.
 pub(crate) fn hydrate_external_effect_contact(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
     policy: &crate::gate::PolicyManifestResolution,
-) -> Result<(ExternalEffectGateInput, Option<SendOverrideMatch>, bool)> {
+) -> Result<CounterpartyHydration> {
     hydrate_external_effect_contact_at(store, txn, effect, policy, None)
 }
 
@@ -53,20 +64,28 @@ pub(crate) fn hydrate_external_effect_contact_at(
     effect: &ExternalEffectGateInput,
     policy: &crate::gate::PolicyManifestResolution,
     override_now: Option<u64>,
-) -> Result<(ExternalEffectGateInput, Option<SendOverrideMatch>, bool)> {
+) -> Result<CounterpartyHydration> {
     let mut hydrated = effect.clone();
     let Some(party_ref) = effect.counterparty.as_deref() else {
-        return Ok((hydrated, None, false));
+        return Ok(CounterpartyHydration {
+            effect: hydrated,
+            send_override: None,
+            revoked: false,
+            hold_classes: Vec::new(),
+        });
     };
 
     let channel_class = normalize_channel_class(&effect.channel);
-    let mut any_revoked = false;
-    for record in crate::counterparty_contact::counterparty_contacts_for_send_in_claims_in_txn(
+    let enforcement = enforcement_heads_for_send_in_txn(
         store,
         txn,
-        party_ref,
-        &channel_class,
-    )? {
+        &SendTarget {
+            party_ref,
+            channel_class: &channel_class,
+            verb: &effect.verb,
+        },
+    )?;
+    for record in &enforcement.contacts {
         hydrated.counterparty_first_touch = hydrated
             .counterparty_first_touch
             .or(Some(record.first_touch));
@@ -74,18 +93,6 @@ pub(crate) fn hydrate_external_effect_contact_at(
             && hydrated.policy_risk == ExternalEffectPolicyRisk::Normal
         {
             hydrated.policy_risk = ExternalEffectPolicyRisk::HoldToProposal;
-        }
-        // An owner-revoked contact is unreachable: it suppresses the send like
-        // an opt-out, under its own reason, and an active sibling row never
-        // clears it.
-        let revoked = record.status == CounterpartyContactStatus::Revoked;
-        any_revoked |= revoked;
-        hydrated.counterparty_opted_out |= record.is_opted_out() || revoked;
-        if hydrated.counterparty_opt_out_receipt_reason.is_none() {
-            hydrated.counterparty_opt_out_receipt_reason = record
-                .opt_out
-                .map(crate::counterparty_contact::CounterpartyOptOut::receipt_reason)
-                .or_else(|| revoked.then_some(COUNTERPARTY_CONTACT_REVOKED_RECEIPT_REASON));
         }
     }
 
@@ -120,25 +127,20 @@ pub(crate) fn hydrate_external_effect_contact_at(
         }
     }
 
-    // Every PERSON that carries the counterparty's key, read once for both
-    // comm legs: the node-local party shortcut would fail open.
-    let persons = store
-        .record_hooks
-        .do_not_contact_subjects_in_txn(store, txn, party_ref)?;
-    fold_matching_comm_do_not_contact_heads(store, txn, &persons, &channel_class, &mut hydrated)?;
-    fold_comm_stop(
-        store,
-        txn,
-        &persons,
-        party_ref,
-        &channel_class,
-        &mut hydrated,
-    )?;
+    let any_revoked = enforcement.revoked();
+    if let Some(head) = enforcement.heads.first() {
+        hydrated.counterparty_opted_out = true;
+        // A reason the caller already carries wins; otherwise the hold would
+        // reach the receipt with no reason at all.
+        if hydrated.counterparty_opt_out_receipt_reason.is_none() {
+            hydrated.counterparty_opt_out_receipt_reason = Some(head.receipt_reason);
+        }
+    }
     // A send override answers the counterparty's opt-out. The owner's own
     // revocation is not an opt-out, so no override lifts it (nor does the
     // opt-out posture; see the evaluator).
     let send_override = if hydrated.counterparty_opted_out && !any_revoked {
-        counterparty_send_override_at_in_txn(
+        send_override_head_in_txn(
             store,
             txn,
             party_ref,
@@ -151,17 +153,17 @@ pub(crate) fn hydrate_external_effect_contact_at(
         // opt-out fall-through, so an unsuppressed send must not carry one.
         None
     };
-    Ok((hydrated, send_override, any_revoked))
+    Ok(CounterpartyHydration {
+        effect: hydrated,
+        send_override,
+        revoked: any_revoked,
+        hold_classes: enforcement.hold_classes(),
+    })
 }
 
 /// The owner's `comm.send_override` head for this send, read on the caller's
-/// transaction.
-///
-/// Expiry is measured on the engine's trusted clock, never a caller timestamp:
-/// a one-shot override is expiry-bound at mint, and letting the requester
-/// supply "now" would hand them the lifetime too. A comm-side failure is
-/// propagated, never swallowed — an unreadable override head means the send
-/// holds, exactly like no override at all, and never becomes a silent allow.
+/// transaction through the claims-read door, on the store clock
+/// ([`send_override_head_in_txn`]).
 pub(crate) fn counterparty_send_override_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -169,119 +171,5 @@ pub(crate) fn counterparty_send_override_in_txn(
     channel_class: &str,
     send_ref: Option<&str>,
 ) -> Result<Option<SendOverrideMatch>> {
-    counterparty_send_override_at_in_txn(store, txn, party_ref, channel_class, send_ref, None)
-}
-
-/// The owner's `comm.send_override` head for this send, read on the caller's
-/// transaction.
-///
-/// Expiry is measured on the engine's trusted clock, never a caller timestamp:
-/// a one-shot override is expiry-bound at mint, and letting the requester
-/// supply "now" would hand them the lifetime too. A comm-side failure is
-/// propagated, never swallowed — an unreadable override head means the send
-/// holds, exactly like no override at all, and never becomes a silent allow.
-/// `now` is the caller's recording time; `None` samples the store clock here,
-/// as a writer's judgment does. A read-only preflight passes its own peeked
-/// time so that nothing moves the clock floor (FIX 22102).
-pub(crate) fn counterparty_send_override_at_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    party_ref: &str,
-    channel_class: &str,
-    send_ref: Option<&str>,
-    now: Option<u64>,
-) -> Result<Option<SendOverrideMatch>> {
-    let Some(party) = comm_result(
-        store
-            .record_hooks
-            .resolve_party_ref_from_store_in_txn(store, txn, party_ref),
-    )?
-    else {
-        return Ok(None);
-    };
-    comm_result(store.record_hooks.send_override_for_send_in_txn(
-        store,
-        txn,
-        &party,
-        channel_class,
-        send_ref,
-        now.unwrap_or_else(|| store.clock.now_recorded_at()),
-    ))
-}
-
-/// Lowers a comm-family read failure into the gate's error type. An engine
-/// error travels unchanged; a comm-shaped one (an undecodable head) becomes a
-/// corrupted-index refusal rather than an answer.
-fn comm_result<T>(result: crate::write_envelope::communication::CommResult<T>) -> Result<T> {
-    result.map_err(|error| match error {
-        crate::write_envelope::communication::CommError::Engine(error) => error,
-        _ => Error::CorruptedIndex("comm send override head"),
-    })
-}
-
-/// OR-folds CA-01's `comm.do_not_contact` heads into the hydrated effect.
-///
-/// The predicate, the value codec, and the restrictive-wins semantics
-/// (`Proposed` is effective; staleness never clears; only an authorized clear
-/// stamp removes a head) are CA-01's — imported, never redefined here. The fold
-/// is monotonic: it can only ADD suppression.
-fn fold_matching_comm_do_not_contact_heads(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    persons: &[EntityId],
-    channel_class: &str,
-    hydrated: &mut ExternalEffectGateInput,
-) -> Result<()> {
-    if !store.record_hooks.subjects_do_not_contact_in_txn(
-        store,
-        txn,
-        persons,
-        Some(channel_class),
-        &hydrated.verb,
-    )? {
-        return Ok(());
-    }
-    hydrated.counterparty_opted_out = true;
-    // A COUNTERPARTY_CONTACT reason already folded above wins; otherwise the deny would
-    // reach the receipt with no reason at all.
-    if hydrated.counterparty_opt_out_receipt_reason.is_none() {
-        hydrated.counterparty_opt_out_receipt_reason =
-            Some(COUNTERPARTY_OPT_OUT_DO_NOT_CONTACT_RECEIPT_REASON);
-    }
-    Ok(())
-}
-
-/// OR-folds the counterparty's standing comm opt-out (F06): a STOP's
-/// `comm.opt_out` head and a party-wide one, which the contact rows above only
-/// cache and a supported drop removes (R2-F5), and a STOP this replica has not
-/// projected yet. Each holds the send as the contact row it projects to does,
-/// so an owner override or posture answers it the same way. Monotonic, like
-/// every leg here.
-fn fold_comm_stop(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    persons: &[EntityId],
-    party_ref: &str,
-    channel_class: &str,
-    hydrated: &mut ExternalEffectGateInput,
-) -> Result<()> {
-    // A send already held, with its reason, gains nothing here.
-    if hydrated.counterparty_opted_out && hydrated.counterparty_opt_out_receipt_reason.is_some() {
-        return Ok(());
-    }
-    let Some(reason) = comm_result(store.record_hooks.send_stop_reason_in_txn(
-        store,
-        txn,
-        persons,
-        party_ref,
-        channel_class,
-    ))?
-    else {
-        return Ok(());
-    };
-    hydrated.counterparty_opted_out = true;
-    if hydrated.counterparty_opt_out_receipt_reason.is_none() {
-        hydrated.counterparty_opt_out_receipt_reason = Some(reason);
-    }
-    Ok(())
+    send_override_head_in_txn(store, txn, party_ref, channel_class, send_ref, None)
 }

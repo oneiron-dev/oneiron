@@ -1,0 +1,9 @@
+{"id": "latn-latn-irish-1", "entity": {"key": "siobhan", "kind": "person", "names": ["Siobhan"]}, "query": "Shivon", "script_pair": "Latn-Latn"}
+{"id": "latn-latn-irish-2", "entity": {"key": "siobhan", "kind": "person", "names": ["Siobhan"]}, "query": "Shavon", "script_pair": "Latn-Latn"}
+{"id": "latn-latn-nordic-1", "entity": {"key": "bjork", "kind": "person", "names": ["Björk"]}, "query": "Biork", "script_pair": "Latn-Latn"}
+{"id": "latn-latn-nordic-2", "entity": {"key": "bjork", "kind": "person", "names": ["Björk"]}, "query": "Byork", "script_pair": "Latn-Latn"}
+{"id": "latn-hani-1", "entity": {"key": "xiao-ming", "kind": "person", "names": ["小明"]}, "query": "Showming", "script_pair": "Latn-Hani"}
+{"id": "latn-kana-1", "entity": {"key": "mirai", "kind": "org", "names": ["株式会社未来"]}, "query": "Mirai KK", "script_pair": "Latn-Kana"}
+{"id": "hani-kana-1", "entity": {"key": "tanaka-taro", "kind": "person", "names": ["田中太郎"]}, "query": "たなかたろう", "script_pair": "Hani-Kana"}
+{"id": "cmn-yue-hard-negative-1", "entity": {"key": "zhang-wei-b", "kind": "person", "names": ["章玮"]}, "query": "章玮", "script_pair": "cmn-yue", "hard_negative_of": "zhang-wei-a"}
+{"id": "cmn-yue-hard-negative-2", "entity": {"key": "zhang-wei-a", "kind": "person", "names": ["张伟"]}, "query": "张伟", "script_pair": "cmn-yue", "hard_negative_of": "zhang-wei-b"}

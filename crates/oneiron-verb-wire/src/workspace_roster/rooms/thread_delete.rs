@@ -4,6 +4,8 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::check_in::CheckInDecision;
+
 /// `vault.rooms.thread_delete`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -23,4 +25,9 @@ pub struct PrivateThreadDeleteReceipt {
     /// The delete's receipt, 32-hex, when it wrote one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receipt_ref: Option<String>,
+    /// The check-in decision of a delete by vault standing: the Owner's
+    /// `own_proof`, an Admin's `never_ask`, a Deputy's `sure`. None for a
+    /// delete by a room role alone, and for an agent's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
