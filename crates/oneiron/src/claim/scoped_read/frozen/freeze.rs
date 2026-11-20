@@ -12,10 +12,11 @@ impl FrozenReadLane {
     /// `lane`, frozen. A lane under no narrowing freezes as the principal's
     /// own, except under a credential that keeps its Scope at top
     /// (`keeps_top_scope`), whose credential's id stays with a top read
-    /// Scope, under a key the access gate binds or whose actor is no live
-    /// owner, which keeps its grant basis and its key's own Scope, if any
-    /// (Sol F3 on #8061; F1/F2/F3 on #8065; FIX
-    /// SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS), or under another
+    /// Scope, under a key the access gate binds, that names no human class
+    /// or whose actor is no live owner, which keeps its grant basis and its
+    /// key's own Scope, if any (Sol F3 on #8061; F1/F2/F3 on #8065; FIX
+    /// SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS, FIX
+    /// OWNER-LANE-WITHOUT-CLASS-REBUILDS-AS-HUMAN), or under another
     /// credential that names a grant, whose id stays with no Scope
     /// ([`Self::reads_as_principal`]): each rebuild judges that grant (FIX
     /// OWN-DEVICE-GRANT-NOT-RECHECKED). Otherwise the
@@ -108,10 +109,14 @@ impl FrozenReadLane {
         // (Sol F3 on #8065). So does the key of every actor that is no live
         // owner: a lane with no basis rebuilds for such an asker under the
         // access gate, so the gate its key read under stands again only from
-        // its basis (FIX SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS).
+        // its basis (FIX SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS). So does
+        // a live owner's key that names no human class: every rebuild from
+        // the principal's row reads as a PERSON, human, so its class stands
+        // again only from its basis (FIX
+        // OWNER-LANE-WITHOUT-CLASS-REBUILDS-AS-HUMAN).
         let basis = key.native_read_basis();
         let keeps_basis = basis.closes_unscoped_rows()
-            || (!keeps_scope && !narrows && !actor_is_live_owner(lane)?);
+            || (!keeps_scope && !narrows && !human_key_of_live_owner(lane)?);
         // The lane stays bound to each credential a rebuilt key carries, and
         // to the proof's own unless the lane freezes as its principal's own
         // with no grant to judge. A credential that names a grant stands
@@ -224,13 +229,20 @@ fn keeps_top_scope(key: &ScopedReadActorKey, proof: &crate::authority::VerifiedS
             || !matches!(claims.actor_class.as_deref(), None | Some("human")))
 }
 
-/// Whether `lane`'s actor is a live owner of its vault, judged in a snapshot
-/// of its own (`ScopedReadActorKey::actor_is_live_owner_in`).
+/// Whether `lane`'s key names the human class and its actor is a live owner
+/// of its vault, judged in a snapshot of its own
+/// (`ScopedReadActorKey::actor_is_live_owner_in`): only such a lane freezes
+/// as its principal's own with no basis. A key that names no class, or
+/// another, is no such key, whatever the census says of its actor (FIX
+/// OWNER-LANE-WITHOUT-CLASS-REBUILDS-AS-HUMAN).
 ///
 /// # Errors
 /// A store failure opening the snapshot, reading the owner binding or the
 /// live-owner census.
-fn actor_is_live_owner(lane: &ScopedRead<'_>) -> Result<bool> {
+fn human_key_of_live_owner(lane: &ScopedRead<'_>) -> Result<bool> {
+    if lane.actor_key.actor_class() != Some("human") {
+        return Ok(false);
+    }
     let txn = lane.vault.store.env.read_txn()?;
     lane.actor_key.actor_is_live_owner_in(lane.vault, &txn)
 }
