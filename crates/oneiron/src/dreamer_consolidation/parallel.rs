@@ -164,8 +164,8 @@ impl ConsolidationExecutor<'_> {
             resources.known(),
         )?;
         let config = ctx.vault.consolidation_selection()?;
-        let (slices, serial_width) =
-            resources.extraction_slices(&turn_ids, config.extraction_turns_per_child)?;
+        let bound = self.extraction_bound(ctx.vault, &config)?;
+        let (slices, serial_width) = resources.extraction_slices(&turn_ids, bound)?;
         // The attempt's read set: every row its slices' calls read and
         // every row its branch pinned, which every later read of this branch
         // reads within (FIX 7019).

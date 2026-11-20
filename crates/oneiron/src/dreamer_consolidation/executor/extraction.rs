@@ -6,6 +6,7 @@ use super::*;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, CandidateRel};
 use crate::dreamer_consolidation::extracted_people::MintNamespace;
 use crate::dreamer_consolidation::provenance::KeptDecision;
+use crate::dreamer_consolidation::resources::SliceBound;
 
 pub(in crate::dreamer_consolidation) use super::decisions::identity_choice::identity_round_specs;
 pub(in crate::dreamer_consolidation) use super::decisions::{
@@ -50,6 +51,30 @@ impl ConsolidationExecutor<'_> {
         let mut request = Self::request_over(call, prompt, None, transcript.to_owned(), scope)?;
         labels.bind_request(&mut request, Some(&namespace.identity()));
         Ok(request)
+    }
+
+    /// How far one extraction call's input may run (FIX
+    /// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW): `config`'s TURNs per
+    /// child, and, when the host lends the extraction model's window, that
+    /// window less the prompt every call carries, by the recipe policy's
+    /// bytes-per-token estimate the follower also sizes by.
+    pub(in crate::dreamer_consolidation) fn extraction_bound(
+        &self,
+        vault: &crate::Vault,
+        config: &crate::dreamer_consolidation::selection::SelectionConfig,
+    ) -> Result<SliceBound> {
+        let room = match self.roles.follower_window_tokens() {
+            Some(window) => {
+                let bytes_per_token = vault.dreamer_recipe_policy()?.follower_sizing_token_bytes;
+                crate::dreamer_wake::follower::Sizing::new(Some(window), bytes_per_token)
+                    .room(self.decisions.extraction_prompt.frame_bytes())
+            }
+            None => None,
+        };
+        Ok(SliceBound {
+            turns: config.extraction_turns_per_child,
+            room,
+        })
     }
 
     /// The extraction request over `source` in `prompt`'s words, `source_rule`
@@ -574,6 +599,17 @@ struct WorkedExample {
 }
 
 impl ExtractionPrompt {
+    /// The bytes every extraction call carries beside its transcript: the
+    /// system text and both turns of each worked example (FIX
+    /// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW).
+    pub(in crate::dreamer_consolidation) fn frame_bytes(&self) -> usize {
+        self.examples
+            .iter()
+            .map(|example| example.user.len() + example.assistant.len())
+            .sum::<usize>()
+            + self.system.len()
+    }
+
     /// The shipped prompt (`extraction_prompt.json`), word for word what the
     /// engine asks with when the host words none.
     ///

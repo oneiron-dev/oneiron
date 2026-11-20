@@ -520,7 +520,10 @@ pub(crate) fn native_slice_transcripts_for_test(
         .map_err(MemoryError::from)?;
     let config = vault.consolidation_selection().map_err(MemoryError::from)?;
     let (slices, _) = resources
-        .extraction_slices(turns, config.extraction_turns_per_child)
+        .extraction_slices(
+            turns,
+            super::resources::SliceBound::by_count(config.extraction_turns_per_child),
+        )
         .map_err(MemoryError::from)?;
     Ok(slices
         .into_iter()

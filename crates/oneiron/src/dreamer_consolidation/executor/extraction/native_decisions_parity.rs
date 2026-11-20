@@ -8,7 +8,7 @@ use super::super::super::evidence::{EvidenceLocator, VerifiedCandidate};
 use super::super::super::extraction_pack::parse_reference;
 use super::super::super::judge_context::{bound_correction, fast_path};
 use super::super::super::provenance::{KeptDecision, PromotionCandidate};
-use super::super::super::resources::{BranchResources, ExtractionSlice};
+use super::super::super::resources::{BranchResources, ExtractionSlice, SliceBound};
 use super::super::super::support::invalid_consolidation;
 use super::super::super::wake_plan::{AttemptPreparation, PreparedWake};
 use super::super::super::{ConflictSet, PriorHead};
@@ -131,7 +131,10 @@ pub(crate) async fn native_extraction_decisions_for_test(
     let axes: BranchAxes = plan.branch().axes();
     let turn_ids = plan.branch().turn_ids();
     let config = vault.consolidation_selection()?;
-    let (slices, _) = resources.extraction_slices(&turn_ids, config.extraction_turns_per_child)?;
+    let (slices, _) = resources.extraction_slices(
+        &turn_ids,
+        SliceBound::by_count(config.extraction_turns_per_child),
+    )?;
     let parsed = parse_operands(&fixture.operands, &slices, &resources)?;
     let subject = match plan.branch().subject() {
         Some(subject) => subject,

@@ -24,6 +24,23 @@ pub(in crate::dreamer_consolidation) struct ExtractionSlice {
     pub(in crate::dreamer_consolidation) sources: Vec<EntityId>,
 }
 
+/// How far one extraction call's input may run (FIX
+/// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW): at most `turns` TURNs, and,
+/// when the host lends the extraction model's window, at most `room` bytes of
+/// transcript by the sizing estimate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::dreamer_consolidation) struct SliceBound {
+    pub(in crate::dreamer_consolidation) turns: usize,
+    pub(in crate::dreamer_consolidation) room: Option<usize>,
+}
+
+impl SliceBound {
+    /// At most `turns` TURNs a call, with no room: chunks by count alone.
+    pub(in crate::dreamer_consolidation) const fn by_count(turns: usize) -> Self {
+        Self { turns, room: None }
+    }
+}
+
 /// Maps each queued TURN to its part line, so native slices and the
 /// bound step group by the same line.
 ///
@@ -50,10 +67,17 @@ impl BranchResources<'_> {
     /// extracts at width one (ARCH-0026: an imported or otherwise low-trust
     /// member, by provenance: [`serial_width_prior`]); each slice also
     /// carries its own low trust for the clean-slice loan.
+    ///
+    /// A chunk holds at most `bound.turns` TURNs. With a room (FIX
+    /// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW) it also ends before the
+    /// turn that would pass it beside what each of its calls carries (the
+    /// host material and the group's widest page). A turn that passes it
+    /// alone is a chunk of its own, its words whole: labels and spans cite
+    /// them.
     pub(in crate::dreamer_consolidation) fn extraction_slices(
         &self,
         turns: &[EntityId],
-        turns_per_child: usize,
+        bound: SliceBound,
     ) -> Result<(Vec<ExtractionSlice>, bool)> {
         type Group = Vec<(EntityId, TurnBodyFacts)>;
         let mut groups = BTreeMap::<(u32, Vec<EntityId>), Group>::new();
@@ -90,6 +114,17 @@ impl BranchResources<'_> {
         for ((_, entities), group) in groups {
             let known = self.known.slice(&entities);
             let pages = known.pages(|id| self.priors.contains_key(id));
+            let turn_room = bound.room.map(|room| {
+                let widest = pages
+                    .iter()
+                    .map(|page| page.rendered_bytes())
+                    .max()
+                    .unwrap_or_default();
+                room.saturating_sub(material.len().saturating_add(widest))
+            });
+            let chunks = room_chunks(&group, bound.turns, turn_room, |(_, facts)| {
+                turn_line_bytes(facts)
+            });
             // What paging costs, measured where it happens (FIX 10354): each
             // chunk of the group makes one call per page. Sharing one
             // extraction across a listing's pages waits on these numbers.
@@ -98,12 +133,24 @@ impl BranchResources<'_> {
                     target: "oneiron::dreamer",
                     code = "listing_paged",
                     pages = pages.len(),
-                    chunks = group.chunks(turns_per_child).len(),
+                    chunks = chunks.len(),
                     entities = entities.len(),
                     "a child's listing pages into more than one extraction call"
                 );
             }
-            for chunk in group.chunks(turns_per_child) {
+            for chunk in chunks {
+                if let (Some(turn_room), [(_, facts)]) = (turn_room, chunk) {
+                    let bytes = turn_line_bytes(facts);
+                    if bytes > turn_room {
+                        tracing::warn!(
+                            target: "oneiron::dreamer",
+                            code = "extraction_turn_past_room",
+                            bytes,
+                            room = turn_room,
+                            "a turn alone passes its extraction call's room; it is read whole"
+                        );
+                    }
+                }
                 let ids: BTreeSet<_> = chunk.iter().map(|(id, _)| *id).collect();
                 let parents: BTreeSet<EntityId> = ids
                     .iter()
@@ -222,6 +269,51 @@ impl BranchResources<'_> {
         let txn = vault.store.env.read_txn()?;
         super::extraction_scope::word_bound_in_txn(vault, &txn, &self.texts, turns)
     }
+}
+
+/// What a turn's line adds to a call's transcript beside its words and its
+/// speaker, at most: its label and brackets, the label of the person an
+/// imported turn names, and the header of a conversation it opens.
+const TURN_LINE_FRAME_BYTES: usize = 48;
+
+/// The bytes a turn's line may add to a call's transcript.
+fn turn_line_bytes(facts: &TurnBodyFacts) -> usize {
+    facts.text.as_deref().map_or(0, str::len)
+        + facts.speaker.as_deref().unwrap_or("unknown").len()
+        + TURN_LINE_FRAME_BYTES
+}
+
+/// `group` cut in order into chunks of at most `turns_per_child` items whose
+/// `line_bytes` fit `room` together (FIX
+/// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW). An item that passes the
+/// room alone is a chunk of its own, never cut. With no room, chunks are by
+/// count alone, as `chunks` cuts them.
+fn room_chunks<T>(
+    group: &[T],
+    turns_per_child: usize,
+    room: Option<usize>,
+    line_bytes: impl Fn(&T) -> usize,
+) -> Vec<&[T]> {
+    let most = turns_per_child.max(1);
+    let Some(room) = room else {
+        return group.chunks(most).collect();
+    };
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut used = 0_usize;
+    for (at, item) in group.iter().enumerate() {
+        let bytes = line_bytes(item);
+        if at > start && (at - start == most || used.saturating_add(bytes) > room) {
+            chunks.push(&group[start..at]);
+            start = at;
+            used = 0;
+        }
+        used = used.saturating_add(bytes);
+    }
+    if start < group.len() {
+        chunks.push(&group[start..]);
+    }
+    chunks
 }
 
 /// Whether a prior head is not the user's own words, by its source or its
