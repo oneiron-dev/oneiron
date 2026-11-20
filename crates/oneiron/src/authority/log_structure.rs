@@ -8,6 +8,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::*;
 use crate::store::Store;
 
+mod belief;
+
+pub(super) use belief::{fold_belief_structure_in_txn, stage_batch_for_belief};
+
 /// The key an admission names: an enrollment, a rotation, a re-root, or the
 /// owner's enrollment of a device's own owner signing key (FIX 4920), which
 /// its primary signer, an owner root, vouches for.

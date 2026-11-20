@@ -1,14 +1,19 @@
 //! Delta side-ledger writes, receipt attachment, and the identity-topology projection pass.
 
 use crate::Vault;
+use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
+use crate::ports::EntityStoreRead;
 use crate::receipt::{
     FIELD_AMENDMENT_DELTA, FIELD_AMENDMENT_DELTA_UNCAPTURED, MAX_RECEIPT_QUERY_SCAN, ReceiptKind,
     ReceiptQuery, ReceiptRecord, ReceiptScanPosition, proposal_outcome_amended_body,
 };
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::store::{GateDecisionId, Store};
+use crate::vault::RevisionRef;
+use crate::write_envelope::claim_body::{ClaimBody, decode_claim_body, encode_claim_body};
 
 use super::endpoint::{EndpointRef, MeasuredEnd, live_revision_in_txn};
 use super::lanes::{DeltaCaptureContext, capture_delta_best};
@@ -61,8 +66,8 @@ const AMENDMENT_UNCAPTURED_COUNT: SideTable<String, u64, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_AMENDMENT_UNCAPTURED_COUNT);
 
 /// Door key for uncaptured side-ledger rows: the identity-topology projection
-/// pass and the settlement door both write the row through
-/// [`put_amendment_uncaptured_in_txn`], so both count here.
+/// pass, the settlement door and the claim door's owner revision write the
+/// row through [`put_amendment_measurement_in_txn`], so all three count here.
 pub(crate) const AMENDMENT_UNCAPTURED_STORE: &str = "store";
 
 /// Door key for inbox amendments the door could not measure: the inbox writes
@@ -89,25 +94,41 @@ pub(crate) fn put_amendment_delta_in_txn(
     receipt_id: &str,
     delta: &AmendmentDelta,
 ) -> Result<bool> {
-    put_amendment_row_in_txn(vault, wtxn, receipt_id, &DeltaRow::Captured(delta.clone()))
+    put_amendment_measurement_in_txn(&vault.store, wtxn, receipt_id, Some(delta))
 }
 
 /// Records that capture was attempted for `receipt_id` and measured nothing,
-/// returning whether a row was written.
-///
-/// A written row also bumps the store door's uncaptured counter (FIX 11542):
-/// first-writer-wins on the row is what keeps the counter exact, since a
-/// retry finds the row and writes nothing.
+/// returning whether a row was written, as
+/// [`put_amendment_measurement_in_txn`] records it.
 pub(crate) fn put_amendment_uncaptured_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     receipt_id: &str,
 ) -> Result<bool> {
-    let wrote = put_amendment_row_in_txn(vault, wtxn, receipt_id, &DeltaRow::Uncaptured)?;
-    if wrote {
-        bump_amendment_uncaptured_in_txn(vault, wtxn, AMENDMENT_UNCAPTURED_STORE)?;
-    }
-    Ok(wrote)
+    put_amendment_measurement_in_txn(&vault.store, wtxn, receipt_id, None)
+}
+
+/// Records what capture measured for `receipt_id`: the Δ, or the
+/// [`DeltaRow::Uncaptured`] marker when `measured` is `None`. Returns whether
+/// a row was written.
+///
+/// A written marker also bumps the store door's uncaptured counter (FIX
+/// 11542): first-writer-wins on the row is what keeps the counter exact,
+/// since a retry finds the row and writes nothing.
+pub(crate) fn put_amendment_measurement_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    receipt_id: &str,
+    measured: Option<&AmendmentDelta>,
+) -> Result<bool> {
+    let Some(delta) = measured else {
+        let wrote = put_amendment_row_in_txn(store, wtxn, receipt_id, &DeltaRow::Uncaptured)?;
+        if wrote {
+            bump_amendment_uncaptured_in_txn(store, wtxn, AMENDMENT_UNCAPTURED_STORE)?;
+        }
+        return Ok(wrote);
+    };
+    put_amendment_row_in_txn(store, wtxn, receipt_id, &DeltaRow::Captured(delta.clone()))
 }
 
 /// Bumps `door`'s uncaptured counter, returning the new count.
@@ -116,20 +137,20 @@ pub(crate) fn put_amendment_uncaptured_in_txn(
 ///
 /// Storage errors, and overflow past `u64::MAX`.
 pub(crate) fn bump_amendment_uncaptured_in_txn(
-    vault: &Vault,
+    store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     door: &str,
 ) -> Result<u64> {
     let key = door.to_owned();
     let current = AMENDMENT_UNCAPTURED_COUNT
-        .get(&vault.store, &*wtxn, &key)?
+        .get(store, &*wtxn, &key)?
         .unwrap_or(0);
     let next = current
         .checked_add(1)
         .ok_or(crate::error::Error::ArithmeticOverflow(
             "amendment uncaptured counter",
         ))?;
-    AMENDMENT_UNCAPTURED_COUNT.put(&vault.store, wtxn, &key, &next)?;
+    AMENDMENT_UNCAPTURED_COUNT.put(store, wtxn, &key, &next)?;
     Ok(next)
 }
 
@@ -149,17 +170,87 @@ pub(crate) fn amendment_uncaptured_count(vault: &Vault, door: &str) -> Result<u6
 /// [`DeltaRow::Uncaptured`]. Both outcomes are measurements of the same
 /// closed window, so both take the same first-writer-wins law.
 pub(super) fn put_amendment_row_in_txn(
-    vault: &Vault,
+    store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     receipt_id: &str,
     row: &DeltaRow,
 ) -> Result<bool> {
     let key = receipt_id.to_owned();
-    if AMENDMENT_DELTA.contains(&vault.store, &*wtxn, &key)? {
+    if AMENDMENT_DELTA.contains(store, &*wtxn, &key)? {
         return Ok(false);
     }
-    AMENDMENT_DELTA.put(&vault.store, wtxn, &key, row)?;
+    AMENDMENT_DELTA.put(store, wtxn, &key, row)?;
     Ok(true)
+}
+
+/// Drops the row recorded for the Gate decision `decision`'s receipt, if
+/// there is one. The ledger calls it wherever the decision's content goes: its
+/// retention skeleton (an erase, a delete, a discard, a restore's rerun), a
+/// restore's drop of a row an erase retired, and the row's removal. A
+/// skeleton keeps the receipt's id and its `approved_amended` outcome, so a
+/// row left behind would still be attached to the redacted receipt, with the
+/// revisions of the bodies it measured. The uncaptured counter keeps its
+/// count: it counts measurements that failed, not rows.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn forget_gate_amendment_delta_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    decision: GateDecisionId,
+) -> Result<()> {
+    AMENDMENT_DELTA.delete(store, wtxn, &format!("gate:{}", decision.to_hex()))?;
+    Ok(())
+}
+
+/// The Δ of a claim amendment: from `reviewed`, the claim body a decider
+/// reviewed at the revision `reviewed_at`, to the claim's live revision as
+/// the amendment landed it, read back on `txn`. Both ends are normalized to
+/// Approved ([`approved_claim_body_bytes`]), so the Δ reports the decider's
+/// edit and not the approval flip. `None` when the landed end has no
+/// revision or no row, or no lane measures.
+///
+/// # Errors
+///
+/// Storage errors, and a landed body that does not decode.
+pub(crate) fn measured_claim_amendment_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    claim: &EntityId,
+    reviewed_at: RevisionRef,
+    reviewed: &[u8],
+) -> Result<Option<AmendmentDelta>> {
+    let Some(landed_at) = live_revision_in_txn(store, txn, *claim)? else {
+        return Ok(None);
+    };
+    let Some(raw) = store.port_entity_record(txn, claim)? else {
+        return Ok(None);
+    };
+    let landed = approved_claim_body_bytes(&decode_claim_body(&raw.body, true)?)?;
+    let context = DeltaCaptureContext::from_bodies(
+        MeasuredEnd {
+            at: EndpointRef::approved_claim(*claim, reviewed_at),
+            content: reviewed,
+        },
+        MeasuredEnd {
+            at: EndpointRef::approved_claim(*claim, landed_at),
+            content: &landed,
+        },
+    );
+    Ok(capture_delta_best(context).ok())
+}
+
+/// The claim body as an approval persists it. Approval is the ENGINE's to
+/// set: a submitted body asserting its own approval decides nothing.
+///
+/// # Errors
+///
+/// A body that does not encode.
+pub(crate) fn approved_claim_body_bytes(body: &ClaimBody) -> Result<Vec<u8>> {
+    let mut approved = body.clone();
+    approved.approval = ClaimApprovalStatus::Approved;
+    encode_claim_body(&approved)
 }
 
 /// The Δ recorded for `receipt_id`, if one was captured.
@@ -209,7 +300,8 @@ fn amendment_delta_in_txn(
 /// [`FIELD_AMENDMENT_DELTA_UNCAPTURED`] marker differ on whether the
 /// measurement succeeded, not on whether the amendment happened. Every writer
 /// of either row is gated on an `approved_amended` outcome
-/// ([`project_identity_amendment_deltas`], `inbox`'s amend-accept), so the
+/// ([`project_identity_amendment_deltas`], `inbox`'s amend-accept, the claim
+/// door's owner revision), so the
 /// presence of a row is the engine's own record that the outcome was
 /// adjudicated — which is why [`record_amendment_evidence`] refuses a receipt
 /// without one, and why a projection over amendments can gate on it rather

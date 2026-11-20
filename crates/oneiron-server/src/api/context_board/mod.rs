@@ -18,7 +18,8 @@ mod reply;
 pub(crate) use reply::generate_reply;
 mod run_self;
 pub(crate) use run_self::{
-    BriefHostFacts, brief_pins_family, describe_self_for_run, run_brief_people, run_brief_state,
+    BriefHostFacts, brief_pins_family, describe_self_for_run, fallen_brief_rows,
+    run_brief_fallen_rows, run_brief_people, run_brief_state,
 };
 mod layout;
 mod mcp_self;
@@ -343,7 +344,19 @@ pub(crate) async fn context_board_hydrate(
     ),
     EnvelopedApiError,
 > {
-    let (served, response, _) = hydrate_inner(auth, State(server), payload, false).await?;
+    let (served, response, _) =
+        hydrate_inner(auth, State(Arc::clone(&server)), payload, false).await?;
+    // The delivered board's items go to this machine's home as prefetch seeds: its MEMORIES rows
+    // (pins included) first, then every other row it was derived from.
+    let memories = response
+        .memories
+        .iter()
+        .flat_map(|memories| &memories.rows)
+        .filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok());
+    crate::board_seed_report::report_delivered_board(
+        &server,
+        memories.chain(served.0.rows.iter().copied()),
+    );
     Ok((served, response))
 }
 

@@ -995,11 +995,12 @@ impl ScopedReadActorKey {
         self
     }
 
-    /// This key held to `scope`, a saved lane's frozen read Scope (OF-506),
+    /// This key held to `scope`, a saved lane's frozen read Scope (OF-506)
+    /// or a verified account key's ([`crate::Vault::account_key_read_key`]),
     /// as every read door holds a credential's. It only narrows: it meets
     /// any Scope the key already holds.
     #[must_use]
-    pub(super) fn within_authority(mut self, scope: Scope) -> Self {
+    pub(crate) fn within_authority(mut self, scope: Scope) -> Self {
         self.authority = Some(match self.authority.take() {
             Some(held) => held.meet(&scope),
             None => scope,

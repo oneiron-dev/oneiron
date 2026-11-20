@@ -178,6 +178,33 @@ impl SyncConnection {
         )
     }
 
+    /// Reports the items one board showed on this machine to its home, at most
+    /// [`crate::sync::residence::BOARD_SEEDS_MAX`] of them, whoever ran the board (lead ruling
+    /// PREDICTED-BOARD-SEED-SIGNAL = A, 21 Nov): the home records each one this machine may hold
+    /// as a seed of its next prediction, and the answer is how many it recorded. A machine the
+    /// owner did not set to the predicted level reports nothing (0), and so does a federation
+    /// lane. Nothing is kept for a home that is down: a prediction freezes while it is.
+    ///
+    /// # Errors
+    ///
+    /// As [`crate::sync::SyncClient`]'s residence calls: a refusal for more items than that, for
+    /// a mode other than opened or a missing residence selector; the home's outage; storage.
+    pub async fn report_board_seeds(
+        &self,
+        items: &[crate::EntityId],
+    ) -> Result<u64, TransportError> {
+        if items.is_empty() || self.config.client_config.federation_peer.is_some() {
+            return Ok(0);
+        }
+        let predicted = crate::sync::residence::load_device_sync_preference(self.manager.vault())
+            .map_err(storage)?
+            .is_some_and(|preference| preference.predicted);
+        if !predicted {
+            return Ok(0);
+        }
+        self.client()?.report_board_seeds(items).await
+    }
+
     /// Asks the home for a prediction when one is due, and takes a pushed one through the
     /// authority catch-up, waking the directives that apply it.
     async fn maybe_ask_prediction(&self) -> Result<(), TransportError> {

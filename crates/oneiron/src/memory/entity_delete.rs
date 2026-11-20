@@ -7,8 +7,8 @@ use super::support::{
     verify_own_person_deletion_authority_in_txn,
 };
 use super::{
-    DeleteReceipt, DeleteRequestState, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED,
-    Memory, MemoryError, MemoryResult, SafeDeleteReason,
+    DELETE_RECEIPT_VERSION_RELEASE, DeleteReceipt, DeleteRequestState, MEMORY_CODE_FORBIDDEN,
+    MEMORY_CODE_OWNER_BINDING_REQUIRED, Memory, MemoryError, MemoryResult, SafeDeleteReason,
 };
 use crate::check_in::{
     ActClass, CheckInDecision, CheckInMode, CheckInScope, DoorAct, DoorCheckIn, RolePreset,
@@ -245,11 +245,18 @@ impl Memory<'_> {
                 ArchiveDeleteRole::Agent => None,
                 ArchiveDeleteRole::Admin
                 | ArchiveDeleteRole::Steward
-                | ArchiveDeleteRole::Member => {
+                | ArchiveDeleteRole::Member
+                | ArchiveDeleteRole::Delegate => {
+                    // A person's Delegate grant is judged on its own row of
+                    // the act table, the grant the judge found.
+                    let delegate = (judged.role() == ArchiveDeleteRole::Delegate)
+                        .then(|| judged.grant())
+                        .flatten();
                     match person_delete_check_in_in_txn(
                         self.vault,
                         txn,
                         self.actor,
+                        delegate,
                         target,
                         reason,
                         verb,
@@ -498,7 +505,13 @@ impl Memory<'_> {
             outcome.map_err(|err| refusal.take().unwrap_or_else(|| MemoryError::from(err)))?;
         Ok(DeleteReceipt {
             existed: outcome.existed,
-            reason: reason.as_str().to_owned(),
+            // A live artifact's lone version claim went as its version's release (ASTRA-R2-002).
+            reason: if outcome.version_release {
+                DELETE_RECEIPT_VERSION_RELEASE
+            } else {
+                reason.as_str()
+            }
+            .to_owned(),
             receipt_ref: outcome
                 .receipt_id
                 .map(|receipt| format!("redaction:{}", receipt.to_hex())),
@@ -636,6 +649,9 @@ pub(super) fn spends_no_check_in() -> MemoryError {
 /// pending check-in climbs from, and `check_in_ref` when they name an
 /// approved one. A Steward's delete of its own NOTE or TASK goes at once as
 /// `own_item`, as a Member's does (Engine ruling STEWARD-DELETE-WAIT = B).
+/// A person the judge admitted under their Delegate grant `delegate` is
+/// judged as a Delegate on that grant instead (the act table's "if named:
+/// go"; DELEGATE-PERSON-DELETE).
 ///
 /// # Errors
 ///
@@ -646,6 +662,7 @@ fn person_delete_check_in_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     person: EntityId,
+    delegate: Option<EntityId>,
     target: &DeleteTarget,
     reason: DeleteReason,
     verb: &str,
@@ -653,13 +670,18 @@ fn person_delete_check_in_in_txn(
 ) -> crate::Result<DoorCheckIn> {
     let not_member =
         || Error::InvalidConfig("a delete by role needs the person's membership grant".into());
-    let creation = vault
-        .shared_vault_creation_in_txn(txn)?
-        .ok_or_else(not_member)?;
-    let (grant, role) = vault
-        .member_grant_in_txn(txn, creation.vault_id, person)?
-        .ok_or_else(not_member)?;
-    let role = RolePreset::of_grant_role(role);
+    let (grant, role) = match delegate {
+        Some(grant) => (grant, RolePreset::Delegate),
+        None => {
+            let creation = vault
+                .shared_vault_creation_in_txn(txn)?
+                .ok_or_else(not_member)?;
+            let (grant, role) = vault
+                .member_grant_in_txn(txn, creation.vault_id, person)?
+                .ok_or_else(not_member)?;
+            (grant, RolePreset::of_grant_role(role))
+        }
+    };
     if role == RolePreset::Steward && target.owned_by_in(vault, txn, person)? {
         // Its own item goes at once and spends no check-in, so one the call
         // names is refused, as the judge refuses it for every act that goes

@@ -465,6 +465,77 @@ pub fn admit_device_residence_update(
     admit_device_update(vault, peer, key, update, carried, Some(admission))
 }
 
+/// The address of the batch `peer`'s window `update` to `key` is held as at
+/// its home ([`DeviceBurstWork::batch_ref`]), read before the update is
+/// admitted: `promoted` for one a residence socket sent to a window it
+/// promoted ([`admit_device_residence_update`]). The home claims the batch's
+/// landing by it before it admits the update, so its drain and a socket
+/// never land one batch at once (FIX DEVICE-BURST-ALLOW-DRAIN-OVERLAP).
+///
+/// # Errors
+/// A device whose lane does not encode.
+pub fn device_update_batch_ref(
+    peer: &DevicePeer,
+    key: &WindowKey,
+    update: &[u8],
+    promoted: bool,
+) -> Result<String> {
+    let id = device_update_batch_id(peer, key, update, promoted)?;
+    Ok(blake3::Hash::from(id).to_hex().to_string())
+}
+
+/// How `peer`'s window `update` to `key` is answered while another landing
+/// holds its batch (the home's drain, or another socket of the device): by
+/// the batch's durable record at its home, never by the claim alone (#9954
+/// review round 1). A batch retained `Pending` answers `Defer`: the landing
+/// that holds it, or the drain after it, lands it unless the retained copy
+/// expires first, so a caller answers it as held only to a sender that keeps
+/// its queued copy on a held answer (#9954 review round 2). A settled batch
+/// answers `Settled` with its receipt's state. `None` when nothing of the
+/// batch is retained or settled here (the holder's admission has not
+/// committed, or failed, or the batch ended unsettled): the device must send
+/// it again. `promoted` as [`device_update_batch_ref`] reads it.
+///
+/// # Errors
+/// A device whose lane does not encode; a store error, or a receipt that
+/// does not decode.
+pub fn contended_device_update(
+    vault: &Vault,
+    peer: &DevicePeer,
+    key: &WindowKey,
+    update: &[u8],
+    promoted: bool,
+) -> Result<Option<DeviceBurstAdmission>> {
+    let id = device_update_batch_id(peer, key, update, promoted)?;
+    let txn = vault.store.env.read_txn()?;
+    let Some(receipt) = super::ledger::load(vault, &txn, BurstPeer::Device(peer), &id)? else {
+        return Ok(None);
+    };
+    let batch_ref = blake3::Hash::from(id).to_hex().to_string();
+    Ok(match receipt.state {
+        FederationBurstWorkState::Pending => Some(DeviceBurstAdmission::Defer { batch_ref }),
+        state if state.is_settled() => Some(DeviceBurstAdmission::Settled { batch_ref, state }),
+        _ => None,
+    })
+}
+
+/// The id of the batch `peer`'s window `update` to `key` is held as at its
+/// home, `promoted` as [`device_update_batch_ref`] reads it.
+fn device_update_batch_id(
+    peer: &DevicePeer,
+    key: &WindowKey,
+    update: &[u8],
+    promoted: bool,
+) -> Result<[u8; 32]> {
+    let kind = if promoted {
+        WorkKind::DeviceResidenceUpdate
+    } else {
+        WorkKind::DeviceUpdate
+    };
+    let (id, _) = DeferredWork::identity(BurstPeer::Device(peer), key, kind, update)?;
+    Ok(id)
+}
+
 fn admit_device_update(
     vault: &Vault,
     peer: &DevicePeer,
@@ -495,8 +566,7 @@ fn admit_device_update(
         ),
     )?;
     let Some(work) = work else {
-        let (id, _) = DeferredWork::identity(BurstPeer::Device(peer), key, kind, update)?;
-        let batch_ref = blake3::Hash::from(id).to_hex().to_string();
+        let batch_ref = device_update_batch_ref(peer, key, update, admission.is_some())?;
         let state = vault
             .federation_burst_disposition(BurstPeer::Device(peer), &batch_ref)?
             .state;
