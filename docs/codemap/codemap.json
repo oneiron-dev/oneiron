@@ -162667,7 +162667,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/asset_forms.rs",
-     "purpose": "OF-329's hydrate doors: a text-only agent that hydrates a generated image, on `/v1` core hydrate and on…",
+     "purpose": "OF-329's hydrate doors: a text-only agent that hydrates a generated image is served the image's ASSET_TEXT…",
      "surface": {}
     },
     {
