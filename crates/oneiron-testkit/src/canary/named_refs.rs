@@ -250,4 +250,45 @@ mod tests {
         named_refs(&json!({"by_entity": {"title": "x"}}), None, &mut found);
         assert!(found.is_empty(), "{found:?}");
     }
+
+    #[test]
+    fn an_upper_case_entity_id_is_a_named_ref_in_lower_case() {
+        let upper = ENTITY.to_ascii_uppercase();
+        let mut by_entity = Map::new();
+        by_entity.insert(upper.clone(), Value::Bool(true));
+        let mut found = Vec::new();
+        named_refs(
+            &json!({"by_entity": by_entity, "entity": upper}),
+            None,
+            &mut found,
+        );
+        assert_eq!(found, vec![NamedRef::Entity(ENTITY.to_owned()); 2]);
+    }
+
+    /// A report issue id a stored map names under `issue_ref`.
+    const ISSUE: &str = "fedcba9876543210fedcba9876543210";
+
+    #[test]
+    fn a_messagepack_body_in_its_archive_nodes_names_its_refs_under_their_map_keys() {
+        let reference: Vec<u8> = (0_u8..16).map(|byte| byte * 17).collect();
+        let body = json!({"codec": "message_pack", "value": [
+            {"type": "string", "value": "issue_ref"},
+            {"type": "string", "value": ISSUE},
+            {"type": "string", "value": "scopeProjectId"},
+            {"type": "entity_reference", "value": reference},
+            {"type": "map", "value": 2},
+        ]});
+        let mut found = Vec::new();
+        named_refs(&json!({"body": body}), None, &mut found);
+        assert!(
+            found.contains(&NamedRef::ReportIssue(ISSUE.to_owned())),
+            "{found:?}"
+        );
+        assert!(
+            found.contains(&NamedRef::Entity(
+                "00112233445566778899aabbccddeeff".to_owned()
+            )),
+            "{found:?}"
+        );
+    }
 }

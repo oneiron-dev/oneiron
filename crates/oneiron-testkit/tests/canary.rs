@@ -439,6 +439,124 @@ fn the_owners_decoded_export_reads_each_custody_record_less_its_value() {
     assert!(scan.incomplete.is_empty(), "{:?}", scan.incomplete);
 }
 
+/// The custody records the raw `vault.export` answer in `scan` carries, as
+/// the archive's custody member writes them.
+fn raw_export_custody_records(scan: &CanaryScan) -> Vec<Value> {
+    use std::io::Read as _;
+
+    use oneiron::memory::ExportAnswer;
+
+    let mut records = Vec::new();
+    for read in scan
+        .seen
+        .iter()
+        .filter(|read| read.surface == "vault.export")
+    {
+        let Ok(ExportAnswer::Inline(export)) = serde_json::from_str::<ExportAnswer>(&read.text)
+        else {
+            panic!("the raw vault.export surface holds no inline export");
+        };
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(export.archive))
+            .expect("the raw export is a ZIP");
+        let mut text = String::new();
+        archive
+            .by_name("records/secret_custody.jsonl")
+            .expect("the raw export has a custody member")
+            .read_to_string(&mut text)
+            .expect("the custody member reads");
+        records.extend(
+            text.lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| serde_json::from_str::<Value>(line).expect("a custody line is JSON")),
+        );
+    }
+    records
+}
+
+#[test]
+fn the_raw_export_the_owners_scan_keeps_carries_no_custody_value() {
+    let (test_vault, canaries) = seeded();
+    let vault = test_vault.open_owned().expect("open the seeded vault");
+    register_custody_record(&vault);
+    let scan = canaries.scan(&vault, CanaryActor::Owner);
+    let records = raw_export_custody_records(&scan);
+    let named = |record: &&Value| record.get("name").and_then(Value::as_str) == Some(CUSTODY_NAME);
+    assert_eq!(
+        records.iter().filter(named).count(),
+        1,
+        "the raw export the owner's scan kept names no custody record {CUSTODY_NAME}; incomplete: {:?}",
+        scan.incomplete
+    );
+    let valued: Vec<&str> = records
+        .iter()
+        .filter(|record| record.get("body").is_some_and(|body| !body.is_null()))
+        .map(|record| record.get("name").and_then(Value::as_str).unwrap_or("?"))
+        .collect();
+    assert!(
+        valued.is_empty(),
+        "the raw export the owner's scan kept carries the values of these custody records: {valued:?}"
+    );
+}
+
+/// The 32 hex of each entity reference node in `value`: a decoded export
+/// writes a MessagePack body as its nodes, an id slot as
+/// `{"type": "entity_reference", "value": [<16 bytes>]}`.
+fn entity_reference_nodes(value: &Value, out: &mut BTreeSet<String>) {
+    match value {
+        Value::Object(fields) => {
+            if fields.get("type").and_then(Value::as_str) == Some("entity_reference")
+                && let Some(bytes) = fields.get("value").and_then(Value::as_array)
+            {
+                out.insert(
+                    bytes
+                        .iter()
+                        .filter_map(Value::as_u64)
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect(),
+                );
+            }
+            for item in fields.values() {
+                entity_reference_nodes(item, out);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                entity_reference_nodes(item, out);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+#[test]
+fn every_entity_reference_in_the_owners_decoded_export_is_followed_through_get_and_resolve() {
+    let (test_vault, canaries) = seeded();
+    let vault = test_vault.open_owned().expect("open the seeded vault");
+    let scan = canaries.scan(&vault, CanaryActor::Owner);
+    let mut ids = BTreeSet::new();
+    for document in answers_on(&scan, EXPORT_DECODED) {
+        entity_reference_nodes(&document, &mut ids);
+    }
+    assert!(
+        !ids.is_empty(),
+        "the owner's decoded export holds no entity reference node (each claim's worldId is one); incomplete: {:?}",
+        scan.incomplete
+    );
+    let read = surfaces(&scan);
+    let missed: Vec<String> = ids
+        .iter()
+        .flat_map(|id| ["vault.get", "vault.refs.resolve"].map(|door| format!("{door} {id}")))
+        .filter(|surface| !read.contains(surface.as_str()))
+        .collect();
+    assert!(
+        missed.is_empty(),
+        "the owner's scan never read these entity references its decoded export holds ({} of {} ids): {missed:#?}",
+        missed.len(),
+        ids.len()
+    );
+    assert!(scan.incomplete.is_empty(), "{:?}", scan.incomplete);
+}
+
 /// The turn wake's model calls over the canary vault, as `(prompt digest,
 /// reply)` (see tests/dreamer.rs for how a table is filled). The turn wake
 /// reads the newest owner turn, the relationship message, with the owner's
