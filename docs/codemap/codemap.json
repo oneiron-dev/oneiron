@@ -8822,7 +8822,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/export_egress.rs",
@@ -24582,7 +24582,7 @@
      "purpose": "PERSON identity baselines and deterministic replay of recorded changes",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 6,
       "re-export": 1,
       "struct": 3
@@ -98564,7 +98564,7 @@
      "path": "src/vault/entity_revision/mod.rs",
      "purpose": "Per-entity Loro history, exact reads, and idle-only index publication",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "re-export": 2
      }
     },
@@ -98625,7 +98625,7 @@
      "path": "src/vault/entity_revision/storage.rs",
      "purpose": "Transactional revision ledger",
      "surface": {
-      "crate-vis": 43,
+      "crate-vis": 44,
       "fn": 2,
       "re-export": 1
      }
@@ -99212,7 +99212,7 @@
      "path": "src/vault_cleanup/person_provenance.rs",
      "purpose": "Mint-time evidence for the extraction-only PERSON cleanup arm",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -106151,6 +106151,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/archive_export_withholds_content_about_a_withheld_person.rs",
+     "purpose": "The whole-vault export keeps out the rows whose content is about a PERSON it keeps out (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/archive_export_withholds_retained_rows_of_withheld_records.rs",
      "purpose": "The whole-vault export withholds a retained side row about a record it keeps out (FIX…",
      "surface": {}
@@ -108414,7 +108422,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/entity_linker_cascade.rs",
@@ -111206,7 +111214,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/live_run_claim_put.rs",
@@ -114242,7 +114250,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/step_claim_audience.rs",
@@ -114639,6 +114647,14 @@
      "notable": [],
      "path": "tests/tombstone_publish_policy_prune.rs",
      "purpose": "FIX 17211: a tombstone publication prunes, in its own commit, the policy revisions no binding reaches any…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/tournament_winner_restores_archived_person.rs",
+     "purpose": "ARCH-0073 §6, \"a re-mention restores the archived record\" (FIX…",
      "surface": {}
     },
     {
@@ -117184,7 +117200,7 @@
    "over_bar": 301,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8255,
-   "test_files": 1997
+   "test_files": 1999
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -162038,13 +162054,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/machine_routes.rs",
      "purpose": "`/v1/owner/machines`: the owner's answer for each of his linked machines (mesh PR1b)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/machine_routes/held.rs",
+     "purpose": "`/machines/held` is the owner's list of the carried answers that wait for his confirm (row…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -180110,7 +180136,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 829,
+     "files": 830,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -180719,9 +180745,9 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 70,
+   "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2044,
+   "source_files": 2045,
    "test_files": 510
   },
   "oneiron-setting-contract": {
@@ -181791,8 +181817,8 @@
      "path": "src/batch/phonetic_codes.rs",
      "purpose": "Deterministic name codes for the phonetic rungs (OF-101; CROSS-ARCH-0013 `#ladder`)",
      "surface": {
-      "const": 1,
-      "fn": 4,
+      "const": 2,
+      "fn": 6,
       "re-export": 3,
       "struct": 1
      }
@@ -189382,7 +189408,7 @@
      "path": "src/write_envelope/claim_body/mod.rs",
      "purpose": "The stored CLAIM body, its MessagePack codec, scope stamps and citations",
      "surface": {
-      "const": 10,
+      "const": 11,
       "crate-vis": 1,
       "enum": 1,
       "fn": 5,

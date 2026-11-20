@@ -811,7 +811,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/intent_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/intents`: the owner states an intent in his own words (FIX 8949) |
 | `src/api/owner_routes/learning_setting_routes.rs` | src | s | 4 crate-vis | — | `/v1/owner/settings/learning`: the owner reads the learned-setting catalog and its own rows, and lays or… |
 | `src/api/owner_routes/legal_hold_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/legal-holds`: the owner's legal holds (OF-470), behind the same owner door as every other owner… |
-| `src/api/owner_routes/machine_routes.rs` | src | L | 10 crate-vis | — | `/v1/owner/machines`: the owner's answer for each of his linked machines (mesh PR1b) |
+| `src/api/owner_routes/machine_routes.rs` | src | m | 8 crate-vis | — | `/v1/owner/machines`: the owner's answer for each of his linked machines (mesh PR1b) |
+| `src/api/owner_routes/machine_routes/held.rs` | src | s | 9 crate-vis | — | `/machines/held` is the owner's list of the carried answers that wait for his confirm (row… |
 | `src/api/owner_routes/meeting_transcript_routes.rs` | src | s | 1 crate-vis | — | Owner-selected storage, speaker labels and exact reads of meeting artifacts |
 | `src/api/owner_routes/meeting_transcript_routes/import.rs` | src | s | 1 crate-vis | — | An explicit owner POST approves the complete binding returned by read |
 | `src/api/owner_routes/model_setting_routes.rs` | src | s | 4 crate-vis | — | `/v1/owner/settings/models`: the owner's model settings and first-run setup |
