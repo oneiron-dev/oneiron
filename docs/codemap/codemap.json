@@ -4602,7 +4602,7 @@
      "path": "src/authority/entry_transition_predicates.rs",
      "purpose": "The per-entry consent and retired-op predicates; `entry_transition` re-exports them",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -6536,7 +6536,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "fn": 22,
       "re-export": 3
      }
@@ -9286,7 +9286,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "Secret detection and custody filtering at batch and release boundaries",
      "surface": {
-      "crate-vis": 58,
+      "crate-vis": 59,
       "re-export": 2
      }
     },
@@ -9519,7 +9519,7 @@
      "path": "src/batch/secret_scan/mask.rs",
      "purpose": "Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -9586,6 +9586,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/secret_scan/mask/custody_form.rs",
+     "purpose": "A value read for the custody records it names (FIX ERASED-IDENTITY-ONE-STAND-IN, Engine ANSWER 19 Nov 02:54…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/secret_scan/mask/file_plane.rs",
      "purpose": "Body files with keys in them (FIX 5507)",
      "surface": {
@@ -9599,7 +9609,7 @@
      "path": "src/batch/secret_scan/mask/held_template.rs",
      "purpose": "A live held row read against a raw offer once custody knows a value (FIX RECEIPT-RECORDS-CALL-HELD-INPUT…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -9669,7 +9679,7 @@
      "path": "src/batch/secret_scan/mask/side_row.rs",
      "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 20
      }
     },
     {
@@ -12047,7 +12057,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BookingDepositStatus",
@@ -12062,11 +12072,21 @@
      "purpose": "BK-DEPOSITS PR 2: one deposit's payment, from checkout to settlement",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 5,
       "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/lifecycle/deposit/refund.rs",
+     "purpose": "A deposit's refund rules, each in the booking writer's commit: a visitor's cancel or reschedule refunds by…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -13262,7 +13282,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/calendar/ingest/admission.rs",
@@ -13293,6 +13313,16 @@
       "crate-vis": 5,
       "fn": 1,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/ingest/admission/host_cancel.rs",
+     "purpose": "A poll's host cancellations: an explicit cancel in the feed, or an event gone from it, writes…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -21339,13 +21369,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/storage/replay_bodies.rs",
      "purpose": "A code run's replay outcomes under body custody (KS-2B1, FIX 5683 part B1)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 9
      }
     },
     {
@@ -36106,6 +36136,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/program/carried_row_placement.rs",
+     "purpose": "Where a carried turn-program row goes in a checkpoint (KS7-3a): moved whole out of `replica`, which says…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/program/erase.rs",
      "purpose": "The erase of a turn program's waking actor takes the signed instrument a slip's turn sealed out of every…",
      "surface": {
@@ -36171,6 +36211,7 @@
      "path": "src/dreamer_runner/program/read.rs",
      "purpose": "A turn program's reads (DOOR-141 PR3a, FIX 4382): what admitting a landed turn's wakes decided and the wakes…",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "re-export": 2
      }
@@ -36216,7 +36257,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/program/rebind.rs",
@@ -36245,7 +36286,7 @@
      "path": "src/dreamer_runner/program/replica.rs",
      "purpose": "A vault's turn programs across its linked machines (FIX 5266; ruled by the Engine 10-20: replicate the…",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 33
      }
     },
     {
@@ -36257,6 +36298,16 @@
      "surface": {
       "crate-vis": 9,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/retraction.rs",
+     "purpose": "The acknowledged retraction of a carried wake (FIX TURNPROGRAM-LATE-WITHHOLD-DOUBLE-DECIDE)",
+     "surface": {
+      "crate-vis": 14
      }
     },
     {
@@ -36303,11 +36354,14 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ImportedWakeImage"
+     ],
      "path": "src/dreamer_runner/program/test_hooks.rs",
      "purpose": "Hooks for the integration tests, compiled only under `--cfg oneiron_test_support` and reached through…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 24,
+      "struct": 1
      }
     },
     {
@@ -59121,11 +59175,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/merge_queue/driver_resolution.rs",
-     "purpose": "Reconciliation links follow accepted conflict-path coverage, not TASK completion",
+     "purpose": "Reconciliation links follow accepted conflict-path coverage and the green carry-over of a handed-off batch's…",
      "surface": {
       "crate-vis": 1
      }
@@ -83326,7 +83380,7 @@
      "path": "src/store/known_value_index/entries.rs",
      "purpose": "The shared value-print matcher builder",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -86214,7 +86268,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/federated.rs",
@@ -87336,6 +87390,23 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DeviceBurstAdmission",
+      "DeviceBurstWork",
+      "DevicePeer"
+     ],
+     "path": "src/sync/federation_burst/device.rs",
+     "purpose": "One of this vault's own devices as a burst peer (L7-41)",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 2,
+      "fn": 11,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -87372,7 +87443,7 @@
      "path": "src/sync/federation_burst/ledger.rs",
      "purpose": "Payload-free batch receipts, kept after durable work completes",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 2
      }
     },
@@ -87380,16 +87451,17 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "BurstPeer",
       "FederationBurstDecision",
       "FederationPeer"
      ],
      "path": "src/sync/federation_burst/mod.rs",
      "purpose": "Peer-relative federation admission with durable, automatically replayable work",
      "surface": {
-      "crate-vis": 18,
-      "enum": 1,
+      "crate-vis": 22,
+      "enum": 2,
       "fn": 1,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 1
      }
     },
@@ -87445,7 +87517,7 @@
      "path": "src/sync/federation_burst/queue.rs",
      "purpose": "Actual deferred payloads and their identity-bound, idempotent completion",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -90086,7 +90158,7 @@
      "path": "src/sync/turn_programs.rs",
      "purpose": "FIX 5266: a vault's turn programs on the window plane (the Engine's 10-20 ruling: replicate the arming as a…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -93704,6 +93776,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/burst_receipt_stored_shape.rs",
+     "purpose": "Door to the burst ledger's read of one stored receipt row (L7-41, the lead's M-1 STORED-CHANGE-RULE): a test…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/call_receipt_damage.rs",
      "purpose": "Plants an undecodable CALL_RECEIPT row for `tests/agent_health_calls_drops_unread.rs`: the row sits past the…",
      "surface": {
@@ -94503,6 +94585,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/erased_request_identity.rs",
+     "purpose": "Door for `tests/erased_request_custody_identity.rs` (FIX ERASED-IDENTITY-ONE-STAND-IN): one code-run call…",
+     "surface": {
+      "fn": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "BurnedPage"
      ],
@@ -95139,7 +95231,7 @@
      "path": "src/test_doors/held_program.rs",
      "purpose": "A held turn-program attempt for release tests: plant a Diverged hold as the admission and the program…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -95652,7 +95744,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 328,
+      "mod": 330,
       "re-export": 2
      }
     },
@@ -96882,7 +96974,8 @@
      "path": "src/test_doors/turn_programs.rs",
      "purpose": "Turn programs between a vault's machines (FIX 5266, untangle 6.9a): plant an arming and the wake a landed…",
      "surface": {
-      "fn": 21
+      "fn": 23,
+      "re-export": 1
      }
     },
     {
@@ -107083,6 +107176,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/conflict_supersede_unshared_files.rs",
+     "purpose": "[CONFLICT-SUPERSEDE-DROPS-UNSHARED-FILES]: a handed-off batch ends Superseded as a whole, so a resolution…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -107563,6 +107664,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/device_burst_admission.rs",
+     "purpose": "L7-41: an own device's window update at its home gets the same relative burst response a federated peer's…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -107784,6 +107893,14 @@
      "notable": [],
      "path": "tests/erase_world_backup_notice.rs",
      "purpose": "The owner's erase of a world says, in plain words, what its old backups keep (ARCH-0038…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/erased_request_custody_identity.rs",
+     "purpose": "FIX ERASED-IDENTITY-ONE-STAND-IN (Engine ANSWER 19 Nov 02:54 = B): an erase of a run's replies keeps each…",
      "surface": {}
     },
     {
@@ -108955,6 +109072,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/hosted_reroot_fold_rule.rs",
+     "purpose": "FIX [HOSTED-REROOT-FOLD-RULE] option A (Engine RULING HOSTED-REROOT-ADMISSION-DOORS = C, 15 Nov 23:31: \"C…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -110053,7 +110178,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it_project_conversion.rs",
@@ -113903,6 +114028,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/turn_program_recorder_retraction.rs",
+     "purpose": "A riding turn-program wake whose recording machine can no longer carry it (FIX…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -114685,7 +114818,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 204,
+     "files": 205,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114713,7 +114846,7 @@
      "purpose": "—"
     },
     "booking": {
-     "files": 91,
+     "files": 92,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -114741,7 +114874,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 96,
+     "files": 97,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -115147,7 +115280,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 243,
+     "files": 245,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116092,7 +116225,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 433,
+     "files": 434,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116148,7 +116281,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 337,
+     "files": 339,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116323,10 +116456,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 306,
+   "over_bar": 305,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8207,
-   "test_files": 1957
+   "source_files": 8215,
+   "test_files": 1962
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129179,6 +129312,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/contract.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -129408,7 +129549,7 @@
    "over_bar": 1,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
    "source_files": 196,
-   "test_files": 18
+   "test_files": 19
   },
   "oneiron-dreamer": {
    "files": [
@@ -164168,7 +164309,7 @@
      "path": "src/commands/init/config_assembly.rs",
      "purpose": "The config file init writes: its tables from init's answers, merged over the file already there, and staged…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -165132,7 +165273,7 @@
      "path": "src/config/merge/file_admission.rs",
      "purpose": "A config file's text, read once the file is admitted by who else can reach it (FIX CONFIG-VALIDATION-PORT)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -167377,6 +167518,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/handler/device_burst_replay.rs",
+     "purpose": "An own device's retained burst, landed by its home (L7-41)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/handler/document_copy.rs",
      "purpose": "A marked source's edit notice, delivered to the sockets that hold its document by its copy id (FIX 10730…",
      "surface": {
@@ -167556,7 +167707,7 @@
      "path": "src/handler/mod.rs",
      "purpose": "WebSocket upgrade handler and connection lifecycle",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -167710,7 +167861,7 @@
      "path": "src/handler/window_sync.rs",
      "purpose": "WindowSync sub-tag dispatcher with selector and VV paths",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 9
      }
     },
     {
@@ -173928,6 +174079,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/device_burst_drain.rs",
+     "purpose": "The home's drain of its own devices' retained bursts (L7-41)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -174948,6 +175109,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/device_burst_drain.rs",
+     "purpose": "Door for `tests/device_burst_replay.rs`: one pass of the home's drain of its own devices' retained bursts…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/device_home_dial.rs",
      "purpose": "Whether a served host is a device of another home (`crate::device_sync::dials_home`), as plain serve and a…",
      "surface": {
@@ -175239,7 +175410,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 68
+      "mod": 69
      }
     },
     {
@@ -176848,6 +177019,22 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/device_burst_replay.rs",
+     "purpose": "L7-41: an own device's burst its home held lands by the home's own drain once the device's rate is back at…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/device_burst_response.rs",
+     "purpose": "L7-41: an own device's write burst meets, at its home, the relative burst response a federated peer's does…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/device_home_dial_unreadable_enrolment.rs",
      "purpose": "FIX-LIST [HOME-SELF-MARK-STALE-AS-DEVICE], case 2: a machine whose enrolment record is there but does not…",
      "surface": {}
@@ -178440,6 +178627,16 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/support/device_burst_home.rs",
+     "purpose": "The home and device of the L7-41 burst tests (`device_burst_response`, `device_burst_replay`): a home on a…",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/support/engine_stack.rs",
      "purpose": "Runs a server test as the server's binary runs its app: on a multi-thread runtime whose threads have the…",
      "surface": {
@@ -179301,7 +179498,7 @@
      "purpose": "The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31)"
     },
     "handler": {
-     "files": 46,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -179560,7 +179757,7 @@
      "purpose": "A selector answer leaves a socket only while what it was made under still stands (SELECTOR-RELEASE-POINT =…"
     },
     "server": {
-     "files": 100,
+     "files": 101,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -179595,7 +179792,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 70,
+     "files": 71,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -179667,8 +179864,8 @@
    },
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2038,
-   "test_files": 501
+   "source_files": 2041,
+   "test_files": 504
   },
   "oneiron-setting-contract": {
    "files": [
@@ -204600,8 +204797,10 @@
      "notable": [
       "FederationBurstBaseline",
       "FederationBurstBaselineState",
+      "FederationBurstDeviceRef",
       "FederationBurstDisposition",
       "FederationBurstOutcome",
+      "FederationBurstPeerRef",
       "FederationBurstPolicy",
       "FederationBurstReceipt",
       "FederationBurstReviewReceipt",
@@ -204612,8 +204811,8 @@
      "path": "src/sync/federation_burst/types.rs",
      "purpose": "Moved from `crates/oneiron/src/sync/federation_burst/types.rs` (lib split W1: wire types below the lib)",
      "surface": {
-      "enum": 4,
-      "fn": 2,
+      "enum": 6,
+      "fn": 6,
       "struct": 6
      }
     },
