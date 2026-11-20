@@ -552,3 +552,35 @@ fn covers(peer: &VersionVector, floor: &VersionVector) -> bool {
 fn denied() -> Error {
     Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied)
 }
+
+#[cfg(test)]
+mod text_diff_budget_tests {
+    use super::merged;
+    use std::time::{Duration, Instant};
+
+    /// Before the diff budget this ran for many minutes.
+    #[test]
+    fn an_unrelated_merge_of_a_large_copy_ends_within_the_budget() {
+        let base = format!("{} tail \u{2713}", "x".repeat(1 << 20));
+        let ours = "\u{e9}dited tail \u{2713}";
+        let started = Instant::now();
+        let result = merged(&base, ours, &base);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(60),
+            "the copy merge took {elapsed:?}"
+        );
+        assert_eq!(result.unwrap(), ours);
+    }
+
+    #[test]
+    fn edits_at_opposite_ends_of_a_copy_both_survive_the_merge() {
+        let result = merged(
+            "the first draft of a turn",
+            "the second draft of a turn",
+            "the first draft of a story",
+        )
+        .unwrap();
+        assert_eq!(result, "the second draft of a story");
+    }
+}

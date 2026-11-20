@@ -656,3 +656,90 @@ fn bounded(text: &str) -> Result<()> {
 fn loro(_: loro::LoroError) -> crate::error::Error {
     invalid("office body document operation")
 }
+
+#[cfg(test)]
+mod text_diff_budget_tests {
+    use super::*;
+    use loro::LoroDoc;
+    use oneiron_docedit::docx_body::{DocxBlock, DocxBlockKind, DocxCell};
+    use std::time::{Duration, Instant};
+
+    /// Before the diff budget this ran for many minutes.
+    #[test]
+    fn an_unrelated_set_text_of_a_large_paragraph_ends_within_the_budget() {
+        let old = format!("{} tail \u{2713}", "x".repeat((1 << 20) - 16));
+        let new = "\u{e9}dited tail \u{2713}";
+        let doc = LoroDoc::new();
+        import(
+            &doc,
+            &[DocxBlock {
+                id: "p1".to_string(),
+                kind: DocxBlockKind::Paragraph,
+                role: None,
+                text: old,
+                runs: Vec::new(),
+                cells: Vec::new(),
+                locked: None,
+            }],
+            &[],
+        )
+        .unwrap();
+        let op = DocxBodyOp::SetText {
+            block: "p1".to_string(),
+            text: new.to_string(),
+        };
+        let mut minted: Vec<String> = Vec::new();
+        let started = Instant::now();
+        let result = apply(&doc, &op, &mut minted);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(60),
+            "the replacement took {elapsed:?}"
+        );
+        result.unwrap();
+        assert_eq!(read(&doc).unwrap().blocks[0].text, new);
+    }
+
+    /// Before the diff budget this ran for many minutes.
+    #[test]
+    fn an_unrelated_set_cell_of_a_large_table_cell_ends_within_the_budget() {
+        let old = format!("{} tail \u{2713}", "x".repeat((1 << 20) - 16));
+        let new = "\u{e9}dited tail \u{2713}";
+        let doc = LoroDoc::new();
+        import(
+            &doc,
+            &[DocxBlock {
+                id: "t1".to_string(),
+                kind: DocxBlockKind::Table,
+                role: None,
+                text: String::new(),
+                runs: Vec::new(),
+                cells: vec![DocxCell {
+                    row: 0,
+                    col: 0,
+                    text: old,
+                    paragraphs: Vec::new(),
+                }],
+                locked: None,
+            }],
+            &[],
+        )
+        .unwrap();
+        let op = DocxBodyOp::SetCell {
+            block: "t1".to_string(),
+            row: 0,
+            col: 0,
+            text: new.to_string(),
+        };
+        let mut minted: Vec<String> = Vec::new();
+        let started = Instant::now();
+        let result = apply(&doc, &op, &mut minted);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(60),
+            "the replacement took {elapsed:?}"
+        );
+        result.unwrap();
+        assert_eq!(read(&doc).unwrap().blocks[0].cells[&(0, 0)], new);
+    }
+}
