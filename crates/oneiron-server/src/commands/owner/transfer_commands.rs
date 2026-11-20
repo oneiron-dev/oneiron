@@ -145,6 +145,12 @@ struct ImportedArchive {
     unrestored_identity_topology_shells: usize,
     /// The owner's line for those rows, when there are any.
     identity_topology_status: Option<String>,
+    /// Merges and splits the owner's restore into a fresh vault decided
+    /// again here (RESTORE-KEEPS-MERGES-AND-SPLITS), by kind.
+    restored_merges: usize,
+    restored_splits: usize,
+    /// The owner's line for them, when there are any.
+    restored_identity_topology_status: Option<String>,
     /// Archived `same_as` links that stayed out.
     unrestored_same_as_links: usize,
     /// The owner's line for those links, when there are any.
@@ -195,6 +201,17 @@ fn identity_topology_status(rows: usize) -> Option<String> {
         format!(
             "{rows} merged or split rows came back as separate rows: their merges and splits \
              were not restored"
+        )
+    })
+}
+
+/// The owner's line for the merges and splits the owner's restore decided
+/// again here (RESTORE-KEEPS-MERGES-AND-SPLITS), when there are any.
+fn restored_identity_topology_status(merges: usize, splits: usize) -> Option<String> {
+    (merges + splits > 0).then(|| {
+        format!(
+            "{merges} merges and {splits} splits came back, each decided again here as part \
+             of your restore; undo any of them as you would one made here"
         )
     })
 }
@@ -253,6 +270,12 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
                 }
             })?,
     };
+    let restored_merges = receipt
+        .restored_identity_topology
+        .iter()
+        .filter(|event| event.kind == oneiron::batch::export::IdentityTopologyRestoreKind::Merge)
+        .count();
+    let restored_splits = receipt.restored_identity_topology.len() - restored_merges;
     let setup = receipt.embedding_setup;
     let status = setup
         .vectors_pending_recompute()
@@ -276,6 +299,12 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
         unrestored_identity_topology_shells: receipt.unrestored_identity_topology_shells,
         identity_topology_status: identity_topology_status(
             receipt.unrestored_identity_topology_shells,
+        ),
+        restored_merges,
+        restored_splits,
+        restored_identity_topology_status: restored_identity_topology_status(
+            restored_merges,
+            restored_splits,
         ),
         unrestored_same_as_links: receipt.unrestored_same_as_links,
         same_as_status: same_as_status(receipt.unrestored_same_as_links),

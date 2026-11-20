@@ -13,11 +13,15 @@
 //!   restores none (as today).
 //! * `actor_import_keeps_merges_and_splits_in_the_archive`: the actor door
 //!   restores none (as today).
+//! * `owner_restore_without_signing_keys_keeps_them_separate`: a
+//!   destination that cannot load signing keys restores none, and its
+//!   receipt names each as `SigningUnavailable`.
 //!
-//! Red on main d4c26c681b6: the first test fails at its first lifecycle
-//! check (the merged PERSON is back Active); the other two pass and guard
-//! the doors this row does not change. The receipt fields and the undo of a
-//! restored merge are new, so their assertions come with the fix commit.
+//! Red on main d4c26c681b6 (the tests-only commit): the first test fails at
+//! its first lifecycle check (the merged PERSON is back Active); the other
+//! two pass and guard the doors this row does not change. The receipt
+//! fields, the undo of a restored merge and the no-keys test are new, so
+//! they come with the fix commit.
 //!
 //! Vaults in tempdirs, every step through public doors. Source and
 //! destination each sign with their own in-memory install keystore. Each
@@ -30,11 +34,14 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
+use oneiron::batch::export::{
+    IdentityTopologyNotRestored, IdentityTopologyRestoreKind, WholeVaultImportReceipt,
+};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeKind;
 use oneiron::identity_topology::{
-    EntityLifecycleState, IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite,
-    IdentityTopologyOp, MergeOp, ReassignmentMap, SplitOp, SurvivorshipPlan,
+    EngineCause, EntityLifecycleState, IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite,
+    IdentityTopologyOp, MergeOp, ReassignmentMap, SplitOp, SurvivorshipPlan, TopologySeal,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
@@ -46,21 +53,33 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
-/// A vault that signs with its own in-memory install keystore.
-fn open_signing_vault() -> (tempfile::TempDir, Vault) {
-    let (dir, vault) = open_vault();
+/// Loads `vault`'s signing keys from its own in-memory install keystore.
+fn load_signing_keys(vault: &Vault) {
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     vault
         .prepare_install_signing()
         .expect("load this install's signing keys");
+}
+
+/// A vault that signs with its own in-memory install keystore.
+fn open_signing_vault() -> (tempfile::TempDir, Vault) {
+    let (dir, vault) = open_vault();
+    load_signing_keys(&vault);
     (dir, vault)
 }
 
-/// A fresh SEEDED signing destination whose engine-seed seconds differ from
-/// the source's: any 1100 ms interval crosses a second boundary.
-fn open_later_signing_vault() -> (tempfile::TempDir, Vault) {
+/// A fresh SEEDED destination whose engine-seed seconds differ from the
+/// source's: any 1100 ms interval crosses a second boundary.
+fn open_later_vault() -> (tempfile::TempDir, Vault) {
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    open_signing_vault()
+    open_vault()
+}
+
+/// [`open_later_vault`], signing as [`open_signing_vault`] does.
+fn open_later_signing_vault() -> (tempfile::TempDir, Vault) {
+    let (dir, vault) = open_later_vault();
+    load_signing_keys(&vault);
+    (dir, vault)
 }
 
 fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
@@ -137,6 +156,9 @@ struct Topology {
     /// Merged into `kept` and the merge undone.
     unmerged: EntityId,
     kept: EntityId,
+    /// The source's current decisions, as archived: the merge, the split
+    /// and the zero-head split.
+    current: [(EntityId, IdentityTopologyRestoreKind); 3],
 }
 
 impl Topology {
@@ -167,9 +189,20 @@ fn topology_archive() -> Topology {
     let gone = put_person(&source);
     let unmerged = put_person(&source);
     let kept = put_person(&source);
-    apply(&source, merge(merged, survivor), 200);
-    apply(&source, split(split_row, heads.to_vec()), 210);
-    apply(&source, split(gone, Vec::new()), 220);
+    let current = [
+        (
+            apply(&source, merge(merged, survivor), 200),
+            IdentityTopologyRestoreKind::Merge,
+        ),
+        (
+            apply(&source, split(split_row, heads.to_vec()), 210),
+            IdentityTopologyRestoreKind::Split,
+        ),
+        (
+            apply(&source, split(gone, Vec::new()), 220),
+            IdentityTopologyRestoreKind::Split,
+        ),
+    ];
     let undone = apply(&source, merge(unmerged, kept), 230);
     let outcome = source
         .undo_identity_topology_event(
@@ -210,7 +243,45 @@ fn topology_archive() -> Topology {
         gone,
         unmerged,
         kept,
+        current,
     }
+}
+
+/// The receipt restores each of the source's current decisions, and only
+/// those, as its own kind; the restored merge's new event.
+fn assert_restored(receipt: &WholeVaultImportReceipt, restored: &Topology) -> EntityId {
+    assert!(
+        receipt.unrestored_identity_topology_events.is_empty(),
+        "every current decision is restored: {:?}",
+        receipt.unrestored_identity_topology_events
+    );
+    assert_eq!(
+        receipt.unrestored_identity_topology_shells, 0,
+        "no merged or split row is back separate"
+    );
+    let mut archived: Vec<(String, IdentityTopologyRestoreKind)> = receipt
+        .restored_identity_topology
+        .iter()
+        .map(|event| (event.archived.clone(), event.kind))
+        .collect();
+    archived.sort();
+    let mut expected: Vec<(String, IdentityTopologyRestoreKind)> = restored
+        .current
+        .iter()
+        .map(|(event, kind)| (event.to_hex(), *kind))
+        .collect();
+    expected.sort();
+    assert_eq!(archived, expected, "the receipt maps each current decision");
+    let merge = receipt
+        .restored_identity_topology
+        .iter()
+        .find(|event| event.archived == restored.current[0].0.to_hex())
+        .expect("the restored merge");
+    assert_ne!(
+        merge.restored, merge.archived,
+        "the restored merge is a new event of this vault"
+    );
+    EntityId::from_hex(&merge.restored).expect("the restored merge's id")
 }
 
 /// `dest` holds every source PERSON, each in `state_of`'s state.
@@ -257,7 +328,8 @@ fn owner_restore_into_a_fresh_vault_brings_merges_and_splits_back() {
     let restored = topology_archive();
     let (_dir, dest) = open_later_signing_vault();
     let owner = owner_proof(&dest);
-    dest.import_whole_vault_archive_from_as_owner(Cursor::new(&restored.archive), &owner)
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&restored.archive), &owner)
         .expect("the owner's restore completes");
     assert_states(&dest, &restored, |row| {
         if *row == restored.merged {
@@ -300,6 +372,37 @@ fn owner_restore_into_a_fresh_vault_brings_merges_and_splits_back() {
             .expect("read the undone merge's link"),
         "the merge the source undid stays undone"
     );
+    // The restored merge is this vault's own: sealed here, and its undo door
+    // reverts it with one counter-event.
+    let merge = assert_restored(&receipt, &restored);
+    let revision = dest
+        .identity_topology_seal_revision(&merge)
+        .expect("read the restored merge's seal revision");
+    assert_ne!(revision, [0; 32], "the restored merge is sealed here");
+    let undo = dest
+        .undo_identity_topology_event_as(
+            &merge,
+            &IdentityOpWrite::auto(ClaimSource::UserStated),
+            &TopologySeal::engine(EngineCause::Unattributed).with_seen(Some(revision)),
+            300,
+        )
+        .expect("undo the restored merge");
+    assert!(
+        matches!(undo, IdentityOpOutcome::Applied { .. }),
+        "the restored merge undoes: {undo:?}"
+    );
+    assert_eq!(
+        dest.entity_lifecycle_state(&restored.merged)
+            .expect("lifecycle after the undo"),
+        EntityLifecycleState::Active,
+        "the undone merge's source is Active again"
+    );
+    assert!(
+        !dest
+            .edge_exists(&restored.merged, EdgeKind::MergedInto, &restored.survivor)
+            .expect("read the merged_into link after the undo"),
+        "the undo removes the restored shell link"
+    );
 }
 
 #[test]
@@ -324,4 +427,46 @@ fn actor_import_keeps_merges_and_splits_in_the_archive() {
     )
     .expect("the actor import completes");
     assert_back_separate(&dest, &restored);
+}
+
+#[test]
+fn owner_restore_without_signing_keys_keeps_them_separate() {
+    let restored = topology_archive();
+    let (_dir, dest) = open_later_vault();
+    let owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&restored.archive), &owner)
+        .expect("the owner's restore completes");
+    assert_back_separate(&dest, &restored);
+    assert!(
+        receipt.restored_identity_topology.is_empty(),
+        "nothing is sealed without keys"
+    );
+    let mut unrestored: Vec<String> = receipt
+        .unrestored_identity_topology_events
+        .iter()
+        .map(|event| {
+            assert_eq!(
+                event.reason,
+                IdentityTopologyNotRestored::SigningUnavailable,
+                "each current decision stays archive data for want of keys"
+            );
+            event.archived.clone()
+        })
+        .collect();
+    unrestored.sort();
+    let mut expected: Vec<String> = restored
+        .current
+        .iter()
+        .map(|(event, _)| event.to_hex())
+        .collect();
+    expected.sort();
+    assert_eq!(
+        unrestored, expected,
+        "the receipt names each current decision"
+    );
+    assert_eq!(
+        receipt.unrestored_identity_topology_shells, 2,
+        "the merged and the split rows are counted back separate"
+    );
 }
