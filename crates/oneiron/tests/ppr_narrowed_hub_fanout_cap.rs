@@ -219,8 +219,9 @@ fn the_owner_cap_decides_which_group_is_a_hub() {
 
 #[test]
 fn a_hidden_leaf_never_counts_toward_the_cap() {
-    let fixture = Fixture::new(3, 2);
-    fixture.set_cap(3);
+    // 3 visible leaves and 1,025 the type filter hides: the hub's About group holds 1,028 edges,
+    // above the default cap, but only 3 the reader sees.
+    let fixture = Fixture::new(3, ABOVE_DEFAULT_LEAVES);
     let narrowed = fixture.walk(true);
     assert!(
         narrowed.iter().all(|row| !fixture.hidden.contains(&row.id)),
@@ -229,7 +230,7 @@ fn a_hidden_leaf_never_counts_toward_the_cap() {
     assert_eq!(
         fixture.other_leaves_in(&narrowed),
         2,
-        "the hub's group holds 5 About edges but only 3 the reader sees: at cap 3 it still \
-         spreads to both other visible leaves"
+        "only the 3 About edges the reader sees count toward the cap: the group still spreads to \
+         both other visible leaves"
     );
 }

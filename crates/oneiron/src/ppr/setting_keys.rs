@@ -39,7 +39,8 @@ const fn narrowed_hub_fanout_cap_default() -> HubFanoutCap {
 
 crate::setting::setting_keys! {
     /// The most edges one group of a narrowed PPR walk may hold and still spread mass (default
-    /// 256). A narrowed walk is the compute-only walk of a reader-scoped read: a scoped recall,
+    /// 256). A narrowed walk is the compute-only walk of a read scoped to a reader or narrowed
+    /// by a filter: a scoped recall, a filtered search (a type, time, project or world filter),
     /// a code-memory pull, the home's residence prediction. A group is one node's edges of one
     /// kind in one direction, counting only edges that pass the walk's gates and that the
     /// reader can see; a group above the cap (an author's byline over every message they wrote,

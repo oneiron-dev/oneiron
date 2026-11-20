@@ -97,7 +97,13 @@ fn parse_args(args: &[String]) -> Result<Settings, WalkShareError> {
             "--cases" => settings.cases = positive(text, flag)?,
             "--repetitions" => settings.repetitions = positive(text, flag)?,
             "--seed" => settings.seed = unsigned(text, flag)?,
-            "--hub-cap" if text == "default" && settings.hub_caps.is_empty() => {
+            "--hub-cap" if text == "default" => {
+                if !settings.hub_caps.is_empty() {
+                    return Err(WalkShareError::Argument(
+                        "--hub-cap default must come first: an arm cannot clear a cap set before it"
+                            .into(),
+                    ));
+                }
                 settings.hub_caps.push(None);
             }
             "--hub-cap" => settings.hub_caps.push(Some(positive_u32(text, flag)?)),

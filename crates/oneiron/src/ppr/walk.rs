@@ -92,8 +92,11 @@ pub(super) struct PprCacheState {
 /// the owner's `retrieval.ppr.narrowed_hub_fanout_cap` Setting. An edge the
 /// reader cannot see never counts toward K, so a hidden row cannot change
 /// what a reader's walk reaches. Once a group passes K, the walk gates none
-/// of that kind's remaining rows at that node. The unscoped walk takes no
-/// cap, so its cached ranking is unchanged.
+/// of that kind's remaining rows at that node: each row is still read and
+/// decoded (a corrupt edge row still fails the walk), but a neighbour check
+/// that would have failed on such a row no longer runs, since no mass
+/// reaches it. The unscoped walk takes no cap, so its cached ranking is
+/// unchanged.
 ///
 /// Seed mass follows the [`SeedWeighting`] mode: UNIFORM `1/n` for
 /// `expand_ppr` (and the pre-Layer-2 behavior), or ARCH-0039 Layer-2
