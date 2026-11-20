@@ -42,6 +42,8 @@
 //! The same pass renews this machine's own lease on each run with a try
 //! pending in its queue (`own_agent_run_lease_renewal`): a parked or queued
 //! try, or a step that runs past half a hold, commits nothing that renews it.
+//! A queued try the claim refuses, an orphaned child, runs nowhere here: the
+//! pass neither renews a lease for it nor keeps it at a take (REVIEW-9863).
 //!
 //! The old executor needs nothing from here: slice 5's fence stands it down
 //! at its next step commit or effect, and its settlement ends its local try
@@ -63,7 +65,7 @@ use std::collections::BTreeMap;
 use super::run_task::{
     AgentRunExecutorLease, AgentRunTaskBody, agent_run_lease_held_until, agent_run_lease_renewal,
     agent_run_task_body_in, agent_run_task_ref_in, attempt_id_from_hex, closing,
-    open_agent_runs_in, update_agent_run_task_body_in_txn,
+    open_agent_runs_in, queued_orphaned_child_in, update_agent_run_task_body_in_txn,
 };
 use super::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatcher, decode_agent_dispatch_input,
@@ -258,9 +260,11 @@ impl Vault {
             for (task_ref, body) in runs {
                 let lease = body.executor;
                 let pending = local.get(&task_ref).copied();
+                // REVIEW-9863: a queued try the claim refuses holds no lease.
+                let orphaned = queued_orphaned_child_in(self, &rtxn, pending.map(|(id, _)| id))?;
                 if lease.node_id == node_id {
                     if let Some(held_until) =
-                        own_agent_run_lease_renewal(lease, pending.is_some(), now)
+                        own_agent_run_lease_renewal(lease, pending.is_some() && !orphaned, now)
                     {
                         renew.push((task_ref, lease, held_until));
                     }
@@ -284,6 +288,7 @@ impl Vault {
                 };
                 let local_try = match reason {
                     Some(reason) => LocalTry::Wait(reason),
+                    None if orphaned => LocalTry::Wait(NOT_THE_AGENT_PUMPS),
                     None => match attempt_id_from_hex(&body.live_attempt_ref) {
                         Some(live) => {
                             handover_local_try(pending, newest_local_try_in(self, &rtxn, live)?)
@@ -646,6 +651,10 @@ fn take_expired_agent_run_in_txn(
             });
             if !queued {
                 return Ok(AgentRunTake::Waits(LOCAL_TRY_CHANGED));
+            }
+            // REVIEW-9863: a kept try must be one the claim takes.
+            if queued_orphaned_child_in(vault, &*wtxn, Some(id))? {
+                return Ok(AgentRunTake::Waits(NOT_THE_AGENT_PUMPS));
             }
             // The queued try spends under the scope its dispatch or an
             // earlier take kept for it here. The take judges that scope as

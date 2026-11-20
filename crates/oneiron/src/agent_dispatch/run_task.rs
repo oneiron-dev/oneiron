@@ -1280,6 +1280,38 @@ pub(super) fn attempt_outlived_root_task_in(
     }
 }
 
+/// Whether the try `attempt`, one of a run pending in this queue, waits for
+/// a claim the agent pump refuses, read in `txn`: queued or scheduled, and
+/// an orphaned child, a spawned child whose parent this queue holds no row
+/// of and no outlived root here ([`outlived_root_in`]; an unproven
+/// outlived-root TASK counts as none), which `agent_run::agent_run_row`
+/// refuses. Such a try runs nowhere here, so it holds its run no lease: the
+/// lease reaper neither renews this machine's lease for it nor keeps it at a
+/// take (REVIEW-9863). `false` for `None`, a try this queue does not hold or
+/// holds in another state, a root, and a payload that does not read.
+pub(super) fn queued_orphaned_child_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: Option<AttemptId>,
+) -> Result<bool> {
+    let queue = AttemptQueue::new(vault);
+    let Some(row) = attempt
+        .map(|attempt| queue.get_in_txn(txn, attempt))
+        .transpose()?
+        .flatten()
+        .filter(|row| matches!(row.state, AttemptState::Queued | AttemptState::Scheduled))
+    else {
+        return Ok(false);
+    };
+    let Some(parent) = spawning_parent(&row.payload) else {
+        return Ok(false);
+    };
+    if queue.get_in_txn(txn, parent)?.is_some() {
+        return Ok(false);
+    }
+    Ok(!outlived_root_in(vault, txn, &row)?)
+}
+
 /// The run TASK id `attempt` names, read in `txn`, with whether a hard erase
 /// took it, when a run TASK stands there or a hard erase took one.
 fn agent_run_task_slot_at_in(
