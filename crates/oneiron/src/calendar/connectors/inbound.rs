@@ -250,8 +250,9 @@ fn apply_remote_change(
                 return Ok(());
             }
             // A cancelled version of a member a write of this UID still in
-            // flight writes cancelled may be that write coming back before
-            // its settlement marks the member's passport, and would read as a
+            // flight (or refused with its stored copy's proof owed) writes
+            // cancelled may be that write coming back before its settlement
+            // or proof marks the member's passport, and would read as a
             // host cancel that refunds the deposit. The resource stays owed
             // and unread, as an omission a write in flight holds back does,
             // and each cancelled member's passport keeps this first sighting,

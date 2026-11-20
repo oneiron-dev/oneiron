@@ -211,7 +211,9 @@ pub(crate) fn omission_observed(
 }
 
 /// The members an upsert of `uid` under `system` still in flight on any seat
-/// of the vault (prepared or remotely applied, not yet settled) writes
+/// of the vault (prepared or remotely applied, not yet settled, or refused
+/// with its stored copy's proof owed:
+/// [`super::CalendarWriteOutboxRow::stored_copy_unproven`]) writes
 /// cancelled, each with the RECURRENCE-ID its staged VEVENT carries under
 /// `uid` ([`super::staged_recurrence_id`]); empty when none is in flight. A
 /// pulled cancelled version of such a member may be that write coming back
@@ -222,10 +224,12 @@ pub(crate) fn omission_observed(
 /// share its system and its passports but not their outboxes
 /// ([`UnsettledWrites`]), so another seat's pull of the version reads the
 /// writing seat's row too
-/// (CAL-SECOND-SEAT-CANCELLED-VERSION-MISSES-OTHER-SEAT-WRITE). The pull
-/// matches its VEVENTs to them by that identity, whatever exception claims a
-/// member holds now; a first write's copy is held back before, whole
-/// ([`first_write_unsettled`]).
+/// (CAL-SECOND-SEAT-CANCELLED-VERSION-MISSES-OTHER-SEAT-WRITE). Only the
+/// writing seat's pull proves a refused replay's copy (`unproven_replay`
+/// reads that seat's own row), so until it does, the row holds the members
+/// as one in flight does. The pull matches its VEVENTs to them by that
+/// identity, whatever exception claims a member holds now; a first write's
+/// copy is held back before, whole ([`first_write_unsettled`]).
 ///
 /// The read scans every seat's outbox rows, so the pull asks it only for a
 /// copy that carries a cancelled VEVENT. It opens no row's sealed values.
@@ -250,10 +254,11 @@ pub(crate) fn cancelled_members_in_flight(
     };
     let mut members = Vec::new();
     for (_, stored) in rows {
-        let in_flight = matches!(
-            stored.state,
-            CalendarWriteOutboxState::Prepared | CalendarWriteOutboxState::RemoteApplied
-        );
+        let in_flight = match stored.state {
+            CalendarWriteOutboxState::Prepared | CalendarWriteOutboxState::RemoteApplied => true,
+            CalendarWriteOutboxState::ReconcileRequired => stored.stored_copy_unproven,
+            CalendarWriteOutboxState::Committed => false,
+        };
         if !in_flight
             || stored.action != CalendarWriteAction::Upsert
             || stored.system != system
