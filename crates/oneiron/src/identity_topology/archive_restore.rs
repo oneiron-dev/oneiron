@@ -20,12 +20,15 @@ use crate::error::{Error, Result, SyncError};
 use crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT;
 use crate::vault::Vault;
 
-use super::event_body_codec::decode_identity_topology_event_body;
+use super::event_body_codec::{
+    decode_identity_topology_event_body, decode_identity_topology_operation_payload,
+};
 use super::ledger_fold::{IdentityTopologyAction, fold_identity_topology_log};
 use super::op_apply::IdentityOpWrite;
 use super::op_vocabulary::IdentityTopologyOp;
 use super::operation_parts::logical_identity_topology_event_with;
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
+use super::wire_keys::{EVENT_KIND_MERGE, EVENT_KIND_SPLIT};
 
 /// The merge and split decisions this vault's effective ledger holds
 /// current, sorted: each names a row still in its Merged or Split shell.
@@ -124,6 +127,52 @@ pub(crate) fn is_inline_merge_or_split_body(body: &[u8]) -> bool {
             StoredIdentityOpAction::Merge { .. } | StoredIdentityOpAction::Split { .. }
         )
     })
+}
+
+/// Whether `body` is the manifest of a merge or split recorded in one part
+/// (NO-SECRETS-ARCHIVE-MULTIPART-TOPOLOGY-DECISION): its only byte slot is
+/// the digest of that part's payload.
+#[must_use]
+pub(crate) fn is_one_part_merge_or_split_manifest(body: &[u8]) -> bool {
+    decode_identity_topology_event_body(body).is_ok_and(|event| {
+        matches!(
+            event.action,
+            StoredIdentityOpAction::OperationManifest { kind, parts: 1, .. }
+                if kind == EVENT_KIND_MERGE || kind == EVENT_KIND_SPLIT
+        )
+    })
+}
+
+/// The payload of `body` when it is the one part of a merge or split: part 0
+/// whose payload the codec decodes alone as the whole decision. A part of a
+/// decision recorded over two or more parts holds a slice no decode reads
+/// whole, so no credential scan reads its text whole either: `None`.
+#[must_use]
+pub(crate) fn one_part_merge_or_split_payload(body: &[u8]) -> Option<Vec<u8>> {
+    let event = decode_identity_topology_event_body(body).ok()?;
+    let StoredIdentityOpAction::OperationPart {
+        index: 0, payload, ..
+    } = event.action
+    else {
+        return None;
+    };
+    let decision = decode_identity_topology_operation_payload(&payload).ok()?;
+    matches!(
+        decision.action,
+        StoredIdentityOpAction::Merge { .. } | StoredIdentityOpAction::Split { .. }
+    )
+    .then_some(payload)
+}
+
+/// The decision `body` is a part of, when it is an operation part: the part
+/// carries that decision's record, so an export carries it only where it
+/// carries the decision.
+#[must_use]
+pub(crate) fn operation_part_root(body: &[u8]) -> Option<EntityId> {
+    match decode_identity_topology_event_body(body).ok()?.action {
+        StoredIdentityOpAction::OperationPart { root, .. } => Some(root),
+        _ => None,
+    }
 }
 
 /// Whether `error` is the topology door refusing a decision here (a

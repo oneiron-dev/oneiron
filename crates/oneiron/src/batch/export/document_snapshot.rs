@@ -450,6 +450,29 @@ impl Vault {
             }) {
                 continue;
             }
+            // NO-SECRETS-ARCHIVE-MULTIPART-TOPOLOGY-DECISION: an operation
+            // part carries its decision's record, so it goes out only where
+            // the decision's own row goes, and tainted when that row is.
+            let part_root = if header.entity_type
+                == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+            {
+                crate::identity_topology::operation_part_root(&raw[ENTITY_METADATA_HEADER_LEN..])
+            } else {
+                None
+            };
+            if let Some(root) = &part_root
+                && !operation_root_carried(
+                    &self.store,
+                    &rtxn,
+                    only,
+                    scope == ExportScope::WholeVault,
+                    &device_only,
+                    root,
+                    owner_export,
+                )?
+            {
+                continue;
+            }
             // FIX 1496 S5: an epoch summary stays home when any transitive
             // source is excluded (use-limited or off-record), same as the
             // JSON bundle door. Non-epoch rows answer None and pass through.
@@ -536,9 +559,12 @@ impl Vault {
             {
                 agent_fork_hashes.insert(id, hash.to_hex());
             }
-            let tainted =
-                !crate::secret_rotation::exhaust_taint_refs_in_txn(&self.store, &rtxn, &id)?
-                    .is_empty();
+            let mut tainted = false;
+            for row in std::iter::once(&id).chain(&part_root) {
+                tainted = tainted
+                    || !crate::secret_rotation::exhaust_taint_refs_in_txn(&self.store, &rtxn, row)?
+                        .is_empty();
+            }
             let mut task_receipts = BTreeMap::new();
             let mut archived_receipts = None;
             if !tainted
@@ -937,6 +963,39 @@ fn archive_custody_secret(
         },
         need,
     )))
+}
+
+/// Whether this export carries the row of `root`, the decision an operation
+/// part belongs to, judged as the entity loop judges each row it reads: the
+/// export's selection, the egress door, the world filter and the row's own
+/// deletion state (`whole_vault`: the whole-vault archive's). A decision this
+/// vault holds no row of is withheld by none of those, so its part is judged
+/// on its own row alone.
+fn operation_root_carried(
+    store: &crate::store::Store,
+    rtxn: &heed::RoTxn<'_>,
+    only: Option<&BTreeSet<EntityId>>,
+    whole_vault: bool,
+    device_only: &BTreeSet<EntityId>,
+    root: &EntityId,
+    owner_export: bool,
+) -> Result<bool> {
+    if only.is_some_and(|only| !only.contains(root))
+        || whole_vault_export_excludes_entity_in_txn(store, rtxn, root)?
+    {
+        return Ok(false);
+    }
+    if crate::ports::EntityStoreRead::port_entity_record(store, rtxn, root)?.is_none() {
+        return Ok(true);
+    }
+    if barred_worlds_carried(store, rtxn, device_only, root, None, owner_export)?.is_none() {
+        return Ok(false);
+    }
+    if whole_vault {
+        row_exported_in_txn(store, rtxn, root)
+    } else {
+        row_live_in_txn(store, rtxn, root)
+    }
 }
 
 /// Whether the export's filter admits `carrier`, a row another row's section
