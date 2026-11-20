@@ -40,10 +40,9 @@ mod workspace_facet;
 mod tests;
 
 pub use hook_transcript::{
-    HOOK_TRANSCRIPT_MAX_BYTES, HOOK_TRANSCRIPT_MAX_SUBAGENTS, HOOK_TRANSCRIPT_STAGED_MAX_BYTES,
-    HistoryImportCaller, HookSubagentTranscript, HookTranscriptConversation,
-    HookTranscriptImportRequest, HookTranscriptImportView, HookTranscriptPartRequest,
-    HookTranscriptPartView, HookTranscriptSource,
+    HOOK_TRANSCRIPT_MAX_BYTES, HOOK_TRANSCRIPT_MAX_SUBAGENTS, HistoryImportCaller,
+    HookSubagentTranscript, HookTranscriptConversation, HookTranscriptImportRequest,
+    HookTranscriptImportView, HookTranscriptSource,
 };
 pub use hosted::{
     HOSTED_IMPORT_SKIPS_LISTED, HostedImportCanceller, HostedImportEmbeddings, HostedImportId,

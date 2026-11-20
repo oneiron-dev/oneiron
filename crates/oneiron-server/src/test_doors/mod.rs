@@ -33,7 +33,6 @@ pub mod gpu_backend;
 pub mod hex_input_policy;
 pub mod hex_sign_digit;
 pub mod history_import;
-pub mod hook_transcript_uploads;
 #[cfg(unix)]
 pub mod hosted_import;
 pub mod lens_frames;
