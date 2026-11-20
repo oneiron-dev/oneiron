@@ -20,6 +20,7 @@ use crate::http_listener::ConnectionLimits;
 mod machine_floors;
 mod override_keys;
 
+pub(crate) use machine_floors::REQUEST_BODY_FLOOR_MIN_BYTES;
 use machine_floors::{memory_floor, request_body_floor};
 pub(super) use override_keys::LimitsConfigOverride;
 

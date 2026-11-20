@@ -232,7 +232,7 @@ pub(crate) use context_board::{action_board, freeze_chat_context, record_action_
 mod reactive;
 mod report;
 // ABC transport rows T1, T3, T4: the API's request floor.
-mod request_floor;
+pub(crate) mod request_floor;
 mod routes;
 mod run_tree;
 mod saved_query;

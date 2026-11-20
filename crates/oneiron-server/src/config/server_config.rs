@@ -27,12 +27,12 @@ use crate::runtime::RuntimeConfig;
 /// the sync protocol's frame floor as base64 carries it, plus a window pad
 /// envelope's header allowance and a window frame's lead (tag, key length,
 /// key, sub-tag), so no frame the protocol sends within its floor is refused
-/// at the socket.
-const DEFAULT_MAX_FRAME_SIZE: usize =
-    oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES.div_ceil(3) * 4
-        + oneiron::sync::transport::WINDOW_PAD_HEADER_BYTES
-        + 3
-        + oneiron::sync::transport::MAX_WINDOW_KEY_LEN;
+/// at the socket. `oneiron mcp` sends no longer request on its socket.
+pub(crate) const DEFAULT_MAX_FRAME_SIZE: usize = oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES
+    .div_ceil(3) * 4
+    + oneiron::sync::transport::WINDOW_PAD_HEADER_BYTES
+    + 3
+    + oneiron::sync::transport::MAX_WINDOW_KEY_LEN;
 
 /// The `*.localhost` host a local vault answers on.
 mod artifact_localhost;
