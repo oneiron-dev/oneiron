@@ -57,6 +57,7 @@
 //!   while holding the materializer lock.
 
 mod document_api;
+mod follow_refusals;
 mod live_mirror;
 mod pending_mirror;
 mod promotion;
@@ -125,6 +126,10 @@ pub struct WindowManager {
     /// Window promotion notices for the one live sync socket. Markers remain
     /// durable when there is no receiver; reconnect replays them from rp:w:.
     promotions: tokio::sync::broadcast::Sender<WindowKey>,
+    /// The followed windows the home refused on the one live sync socket
+    /// (FOLLOWED-TOMBSTONE-HELD-WINDOW-REFUSED-LIVE): the residence upkeep
+    /// asks for their tombstone id sets again, held here or not.
+    follows_refused: Mutex<std::collections::HashSet<WindowKey>>,
     /// Rows local commits wrote, on their way into the loaded windows.
     live_mirror: Arc<live_mirror::LiveMirror>,
     /// Test-only handle-issue pause slot (ONE-1608), owned by THIS manager.
@@ -173,6 +178,7 @@ impl WindowManager {
             transition: super::sweep_fence::SweepFence::default(),
             outbound: Arc::new(OutboundSink::new()),
             promotions: tokio::sync::broadcast::channel(64).0,
+            follows_refused: Mutex::default(),
             live_mirror: Arc::default(),
             #[cfg(test)]
             handle_issue_pause: Mutex::new(None),
