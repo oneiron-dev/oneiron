@@ -171,6 +171,25 @@ fn profile_sources(body: &[u8]) -> Vec<EntityId> {
     sources
 }
 
+impl Vault {
+    /// What the words of the row `id` (bytes `bytes`) came from, as this
+    /// walk reads them ([`word_sources`]): the rows each of which must read,
+    /// then a CLAIM's supports. The row's floor reads the same rows
+    /// (`floor::row_sources_in`).
+    ///
+    /// # Errors
+    ///
+    /// Storage failures, and bytes with no readable header.
+    pub(crate) fn lineage_word_sources_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        bytes: &[u8],
+    ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
+        word_sources(self, &self.store.read(), txn, id, bytes)
+    }
+}
+
 /// The lane a row would leave this vault on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReplicationScope {
@@ -913,15 +932,22 @@ impl Judge<'_, '_, '_> {
             return Ok(Opened::Decided(false));
         }
         // The policies a full-window carrier brought for a derived row (fix
-        // list row 17207): every one of them reads, whatever the row's own
-        // lineage here says, before anything else; an unknown one reads to
-        // no one. A replication walk ships such a row only with its carried
-        // policies, as its own sets them (`travel_closure_in`).
+        // list row 17207), and the floor its own write raised (READ-LINEAGE
+        // L1): every policy on it reads, whatever the row's own lineage here
+        // says, before anything else; an id that names no source reads to no
+        // one. A replication walk ships such a row only with
+        // its carried policies, as its own sets them (`travel_closure_in`).
         if let Some(policies) = super::derived_policies_in(self.vault, self.txn, &id)? {
             match self.ask {
                 Ask::Read(viewers) => {
                     for policy in policies {
-                        if !self.policy_readable(policy, viewers)? {
+                        // A policy's own people (`SourceReaders`).
+                        let admitted = match super::SOURCE_READERS {
+                            super::SourceReaders::OwnSourceReaders => {
+                                self.policy_readable(policy, viewers)?
+                            }
+                        };
+                        if !admitted {
                             return Ok(Opened::Decided(false));
                         }
                     }

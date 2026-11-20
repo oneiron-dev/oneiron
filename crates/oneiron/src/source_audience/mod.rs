@@ -38,6 +38,7 @@
 pub(crate) mod binding_door;
 pub(crate) mod carried;
 pub(crate) mod checkpoint;
+pub(crate) mod floor;
 mod obligation;
 mod replica;
 pub(crate) mod tables;
@@ -53,6 +54,10 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::source_audience_obligation::SourceAudienceObligation;
 use crate::{EntityId, Vault};
 
+pub(crate) use floor::{
+    SOURCE_READERS, SourceReaders, facts_hidden_source_unknown_in, raise_floors_in_txn,
+    seal_births_from_erased_inputs_in_txn,
+};
 pub(crate) use obligation::{
     SourceAudienceBirth, admit_obligation_in_txn, admit_session_obligation_in_txn,
     binding_stands_on, body_names_obligation, keeps_row_obligation, mark_birth_in_txn,
@@ -240,13 +245,13 @@ pub(crate) fn derived_policies_in(
     DERIVED.get(&vault.store, txn, row)
 }
 
-/// Adds `policies` to those the derived row `row` reads under, in `txn`.
-/// Whether the set grew.
+/// Adds `policies` to those the derived row `row` reads under, in `txn`: a
+/// full-window carrier's, or the floor its own write raised
+/// ([`raise_floors_in_txn`]). Whether the set grew.
 ///
 /// # Errors
 ///
 /// Storage failures.
-#[cfg(feature = "sync")]
 pub(crate) fn add_derived_policies_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
