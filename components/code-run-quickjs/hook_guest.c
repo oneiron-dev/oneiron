@@ -293,7 +293,7 @@ bool exports_hook_run_hook(hook_string_t *source, hook_string_t *input_json, hoo
     frozen_now_ms = 0;
     JSRuntime *runtime = JS_NewRuntime2(&allocator, NULL);
     if (!runtime) {
-        hook_string_dup(error, "runtime allocation failed");
+        hook_string_dup(error, INPUT_NOT_TAKEN);
         hook_string_free(source); hook_string_free(input_json);
         return false;
     }
@@ -304,7 +304,7 @@ bool exports_hook_run_hook(hook_string_t *source, hook_string_t *input_json, hoo
     JSContext *ctx = JS_NewContext(runtime);
     if (!ctx) {
         JS_FreeRuntime(runtime);
-        hook_string_dup(error, "context allocation failed");
+        hook_string_dup(error, INPUT_NOT_TAKEN);
         hook_string_free(source); hook_string_free(input_json);
         return false;
     }
