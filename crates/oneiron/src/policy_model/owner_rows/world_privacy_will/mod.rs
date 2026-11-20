@@ -263,7 +263,8 @@ impl Vault {
                     return Ok(WorldPrivacyOutcome::Asked(request));
                 }
             }
-            let author = WorldEditAuthor::holder(actor, surface);
+            let owner_authored = owner.owner_answer_in_txn(self, txn)?;
+            let author = WorldEditAuthor::holder(actor, surface, owner_authored.as_ref());
             let receipt =
                 self.write_world_privacy_in_txn(txn, author, world, settings, Some(current), None)?;
             let key_owner = key_owner_in_txn(self, txn, actor)?;
