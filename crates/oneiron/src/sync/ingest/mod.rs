@@ -33,7 +33,7 @@ pub(in crate::sync) use self::entity::{
 };
 pub(in crate::sync) use self::message_writer::{
     MESSAGE_WRITER_MAP, admit_writer_proof_carrier, admit_writer_proof_map, copy_writer_proofs,
-    forget_written_rows, publish_writer_proof,
+    forget_written_rows, forget_written_rows_in_txn, publish_writer_proof,
 };
 pub(crate) use self::message_writer::{forget_message_writer_in_txn, note_message_put_in_txn};
 pub(in crate::sync) use self::order::{authority_parent_order, is_authority_row};
@@ -44,7 +44,7 @@ pub(crate) use self::peer_import::forget_stale_peer_origins;
 pub(in crate::sync) use self::peer_import::{
     PEER_ORIGIN_MAP, admit_peer_origin_carrier, admit_peer_origin_map, admitted_peer_rows,
     carried_origin_in_txn, carry_peer_rows, copy_peer_origins, forget_peer_origin,
-    forget_peer_rows, peer_row_in_txn, record_peer_rows,
+    forget_peer_rows, forget_peer_rows_in_txn, peer_row_in_txn, record_peer_rows,
 };
 pub(in crate::sync) use self::placement::{AdmittedPlacements, with_placements};
 pub(in crate::sync) use self::promotion::{

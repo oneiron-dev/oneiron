@@ -257,30 +257,37 @@ pub(in crate::sync) fn forget_peer_rows(
     if !carriers.iter().any(|(_, carrier)| judged(carrier)) {
         return Ok(());
     }
-    vault.with_write_txn_grouped(|wtxn| {
-        for (id, carrier) in carriers.iter().filter(|(_, carrier)| judged(carrier)) {
-            let removed = digest(carrier);
-            let prefix = format!("{}:", id.to_hex());
-            for (key, held) in PEER_ORIGIN.scan_from(&vault.store, wtxn, prefix.as_bytes())? {
-                let retained = (held.len() > 64).then(|| &held[..64]);
-                let mut kept = Vec::new();
-                for entry in retained
-                    .into_iter()
-                    .chain(std::iter::once(latest_origin(&held)))
-                {
-                    if entry.get(..32) != Some(removed.as_slice()) {
-                        kept.extend_from_slice(entry);
-                    }
-                }
-                if kept.is_empty() {
-                    PEER_ORIGIN.delete(&vault.store, wtxn, &key)?;
-                } else if kept != held {
-                    PEER_ORIGIN.put(&vault.store, wtxn, &key, &kept)?;
+    vault.with_write_txn_grouped(|wtxn| forget_peer_rows_in_txn(vault, wtxn, carriers))
+}
+
+/// [`forget_peer_rows`] in `wtxn`, the transaction that removes the carriers.
+pub(in crate::sync) fn forget_peer_rows_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    carriers: &[(EntityId, Vec<u8>)],
+) -> Result<()> {
+    for (id, carrier) in carriers.iter().filter(|(_, carrier)| judged(carrier)) {
+        let removed = digest(carrier);
+        let prefix = format!("{}:", id.to_hex());
+        for (key, held) in PEER_ORIGIN.scan_from(&vault.store, wtxn, prefix.as_bytes())? {
+            let retained = (held.len() > 64).then(|| &held[..64]);
+            let mut kept = Vec::new();
+            for entry in retained
+                .into_iter()
+                .chain(std::iter::once(latest_origin(&held)))
+            {
+                if entry.get(..32) != Some(removed.as_slice()) {
+                    kept.extend_from_slice(entry);
                 }
             }
+            if kept.is_empty() {
+                PEER_ORIGIN.delete(&vault.store, wtxn, &key)?;
+            } else if kept != held {
+                PEER_ORIGIN.put(&vault.store, wtxn, &key, &kept)?;
+            }
         }
-        Ok(())
-    })
+    }
+    Ok(())
 }
 
 /// Whether `doc` holds a peer origin map. Looking a root up by name creates
