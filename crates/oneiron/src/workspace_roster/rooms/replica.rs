@@ -648,10 +648,8 @@ pub(crate) fn merge_replicated_side_row_in_txn(
                     CLAIMS.put(store, txn, &turn, &merged)?;
                     return Ok(SideMerge::Written);
                 }
-                // REVIEW-9956 round 2, own review: that rule alone settles
-                // one receipt's copies, so neither the seal nor the
-                // generation below writes a live copy back over the erased
-                // form.
+                // REVIEW-9956 own review: one receipt's copies settle by that
+                // rule alone, so no live copy returns over the erased form.
                 if (held.at, &held.receipt_ref) == (claim.at, &claim.receipt_ref) {
                     return Ok(SideMerge::Conflict);
                 }
