@@ -6,7 +6,7 @@ pub(crate) use invalidation::PprCacheInvalidator;
 mod policy;
 pub(crate) mod project_weight;
 mod query;
-mod setting_keys;
+pub(crate) mod setting_keys;
 mod walk;
 
 pub(crate) use self::cache_evict::evict_ppr_cache_page;
