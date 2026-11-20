@@ -317,8 +317,8 @@ impl ScopedRead<'_> {
     /// The `ChildOf` tree under `root` from ONE snapshot under one receipt:
     /// the root at depth zero, then breadth-first each child whose exact
     /// relation and both endpoints are admitted, down to `max_depth`. `node`
-    /// decodes each admitted live row; a row it declines is not in the tree
-    /// and is not descended. The value is `None` when the root is withheld,
+    /// decodes each admitted live row in the tree's snapshot; a row it
+    /// declines is not in the tree and is not descended. The value is `None` when the root is withheld,
     /// missing or declined. `project` labels the nodes in the same snapshot.
     /// A withheld root or child counts once in the receipt and its subtree is
     /// not read; an opaque or declined row, or one below `max_depth`, never
@@ -330,7 +330,7 @@ impl ScopedRead<'_> {
         root: &EntityId,
         max_depth: u32,
         node_type: Option<u8>,
-        node: impl Fn(&[u8]) -> std::result::Result<Option<N>, E>,
+        node: impl Fn(&heed::RoTxn<'_>, &[u8]) -> std::result::Result<Option<N>, E>,
         project: impl FnOnce(
             &heed::RoTxn<'_>,
             Option<Vec<ChildOfTreeNode<N>>>,
@@ -362,7 +362,7 @@ impl ScopedRead<'_> {
         let mut suppressed = root_row.suppression();
         let mut tree = None;
         if let Some(row) = root_row.into_option()
-            && let Some(value) = node(&row.raw)?
+            && let Some(value) = node(&txn, &row.raw)?
         {
             let mut nodes = vec![ChildOfTreeNode {
                 id: *root,
@@ -412,7 +412,7 @@ impl ScopedRead<'_> {
                     let Some(row) = child_row.into_option() else {
                         continue;
                     };
-                    if let Some(value) = node(&row.raw)? {
+                    if let Some(value) = node(&txn, &row.raw)? {
                         nodes.push(ChildOfTreeNode {
                             id: child,
                             parent: Some(parent),
