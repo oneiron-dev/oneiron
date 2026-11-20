@@ -17,10 +17,12 @@ use super::super::super::protocol_close::internal_fault_close;
 use super::super::super::socket_stop::StoppingTransport;
 use super::super::super::transport::GuardedTransport;
 use super::super::super::window_pads::{Released, send_released, send_released_outcome};
-use super::super::super::window_ready::{send_ready_window_requests, window_update_verdict};
+use super::super::super::window_ready::{
+    send_ready_window_requests, window_update_verdict, withheld_change_notice,
+};
 use super::super::{
-    ConnEvent, MAX_VERB_CALLS_IN_FLIGHT, privileged_sync_message, session_credential_revoked,
-    session_gone, should_forward_broadcast, window_delivery,
+    ConnEvent, MAX_VERB_CALLS_IN_FLIGHT, WindowDelivery, privileged_sync_message,
+    session_credential_revoked, session_gone, should_forward_broadcast, window_delivery,
 };
 
 use crate::auth::{CoreAuth, RevokedTokenJtis};
@@ -415,7 +417,21 @@ pub(super) async fn handle_connection(
                         // v6 peers cannot decode world-month keys, so they keep
                         // base-month broadcasts but never receive world frames.
                         let frame = if data.first() == Some(&protocol::TAG_WINDOW_SYNC) {
-                            window_delivery(&server, protocol_version, &conn_state, data)
+                            match window_delivery(&server, protocol_version, &conn_state, data) {
+                                WindowDelivery::Send(frame) => Some(frame),
+                                // The withheld change's other writes reach the
+                                // peer through a fresh exchange, asked through
+                                // the direct queue's doors (REVIEW-9846 round 2).
+                                WindowDelivery::Withheld(key) => {
+                                    if let Some(notice) =
+                                        withheld_change_notice(&server, &conn_state, &key)
+                                    {
+                                        let _ = direct_tx.send(notice);
+                                    }
+                                    None
+                                }
+                                WindowDelivery::Nothing => None,
+                            }
                         } else {
                             should_forward_broadcast(protocol_version, &data).then_some(data)
                         };

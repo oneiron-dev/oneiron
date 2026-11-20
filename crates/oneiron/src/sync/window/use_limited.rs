@@ -6,13 +6,13 @@
 //! SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B, 20 Nov 21:19; LEGAL-HOLD-USE = B).
 //!
 //! Packing skips it (`egress::window_packing_excludes_entity_with`). A window
-//! that already carries it, or an edge naming it, loses them before any side
-//! row of it is scrubbed ([`withhold_use_limited_carriers`]), so its message
-//! document, quote pins, office proposals, typed body receipts and repo
-//! manifest leave with it. A raw send queued before the limit took effect is
+//! that already carries it, an edge naming it, or a NOTE workflow row of it
+//! loses them before any side row of it is scrubbed
+//! ([`withhold_use_limited_carriers`]), so its message document, quote pins,
+//! office proposals, typed body receipts and repo manifest leave with it. A raw send queued before the limit took effect is
 //! read again at release ([`use_limit_update_verdict`]).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
 use loro::json::{JsonOpContent, JsonSchema, MapOp};
@@ -24,63 +24,87 @@ use super::super::manager::WindowManager;
 use super::super::types::WindowKey;
 use super::UpdateVerdict;
 use super::egress::require_history_free_window;
-use super::reverse::remove_entity_crdt_carriers;
+use super::reverse::{delete_edges_touching_entities, remove_entity_crdt_carriers};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::source_audience::carried::{CarrierKey, parse_key};
 
 /// Takes out of `doc` each row a use limit keeps for storage only on this
-/// vault that `doc` carries or names in an edge. An edge rides in its
-/// target's window when its two rows live in different windows (a base
-/// row's edge to a world row, `types::edge_belongs_to_window`), so a limited
-/// endpoint can be named here with its carrier elsewhere. Its carrier (under
-/// any spelling of its id), edges, birth and binding go, and a withholding
-/// marker naming this machine takes their place, so the owner's devices hold
-/// the row back and read it to no one, as they would had the erase run; this
-/// vault keeps its stored copy for the hold. The marker lifts, and the row
-/// rides again, once the limit goes inert and the row packs
-/// (`source_audiences::refresh_and_scrub`). Each scrub sequence (export,
-/// persist, sweep) runs this before its side-row scrubs, which drop the side
-/// rows of a row the window no longer carries. `pin` names the window pinned
-/// history-free before anything goes, so its history never ships the row's
-/// bytes; the sweep passes `None`. A vault with no use limit carries no such
-/// row. Whether anything went, committed.
+/// vault that `doc` carries, names in an edge, or holds a NOTE workflow row
+/// of. A row `doc` carries loses its carrier (under any spelling of its id),
+/// edges, birth and binding, and a withholding marker naming this machine
+/// takes their place, so the owner's devices hold the row back and read it
+/// to no one, as they would had the erase run; this vault keeps its stored
+/// copy for the hold. The marker lifts, and the row rides again, once the
+/// limit goes inert and the row packs (`source_audiences::refresh_and_scrub`).
+/// An edge rides in its target's window when its two rows live in different
+/// windows (a base row's edge to a world row, `types::edge_belongs_to_window`),
+/// so a limited endpoint can be named here with its carrier elsewhere: that
+/// edge goes with no marker, since a marker in a window that never carries
+/// the row would never lift and would hold the row back again after the
+/// limit goes (REVIEW-9846 round 2). A limited NOTE's workflow rows go too,
+/// whichever pass packed them (`note::drop_workflows`), so no fork text rides
+/// without its NOTE when the limit took effect after the window's NOTE
+/// refresh read it. Each scrub sequence (export, persist, sweep) runs this
+/// before its side-row scrubs, which drop the side rows of a row the window
+/// no longer carries. `pin` names the window pinned history-free before
+/// anything goes, so its history never ships the row's bytes; the sweep
+/// passes `None`. A vault with no use limit carries no such row. Whether
+/// anything went, committed.
 ///
 /// # Errors
 ///
-/// Storage failures.
+/// Storage failures, and codec failures of the window's NOTE maps.
 pub(crate) fn withhold_use_limited_carriers(
     vault: &Vault,
     doc: &LoroDoc,
     pin: Option<&WindowKey>,
 ) -> Result<bool> {
-    let (withheld, by) = {
+    let (carried, named, notes, by) = {
         let rtxn = vault.store.env.read_txn()?;
         if !crate::store::legal_hold::any_record_use_limit_in_txn(&vault.store, &rtxn)? {
             return Ok(false);
         }
-        let mut named = BTreeSet::new();
+        let limited = |id: &EntityId| -> Result<bool> {
+            Ok(crate::store::legal_hold::use_limit_in_txn(&vault.store, &rtxn, id)?.is_some())
+        };
+        let mut in_entities = BTreeSet::new();
         map_for_each_value_bytes(&doc.get_map("entities"), |key, _| {
-            named.extend(EntityId::from_hex(key).ok());
+            in_entities.extend(EntityId::from_hex(key).ok());
         });
+        let mut in_edges = BTreeSet::new();
         map_for_each_value_bytes(&doc.get_map("edges"), |key, _| {
             if let Some((source, _, target)) = parse_edge_key(key) {
-                named.extend([source, target]);
+                in_edges.extend([source, target]);
             }
         });
-        let mut withheld = Vec::new();
-        for id in named {
-            if crate::store::legal_hold::use_limit_in_txn(&vault.store, &rtxn, &id)?.is_some() {
-                withheld.push(id);
+        let mut carried = Vec::new();
+        for id in &in_entities {
+            if limited(id)? {
+                carried.push(*id);
+            }
+        }
+        let mut named = HashSet::new();
+        for id in in_edges.difference(&in_entities) {
+            if limited(id)? {
+                named.insert(*id);
+            }
+        }
+        let mut notes = BTreeSet::new();
+        for id in crate::sync::note::workflow_notes(doc)? {
+            if limited(&id)? {
+                notes.insert(id);
             }
         }
         (
-            withheld,
+            carried,
+            named,
+            notes,
             crate::identity::read_machine_id_in_txn(vault, &rtxn)?,
         )
     };
-    if withheld.is_empty() {
+    if carried.is_empty() && named.is_empty() && notes.is_empty() {
         return Ok(false);
     }
     if let Some(key) = pin {
@@ -88,12 +112,15 @@ pub(crate) fn withhold_use_limited_carriers(
     }
     let entities = doc.get_map("entities");
     let edges = doc.get_map("edges");
-    for id in &withheld {
-        remove_entity_crdt_carriers(&entities, &edges, id)?;
+    let mut changed = false;
+    for id in &carried {
+        changed |= remove_entity_crdt_carriers(&entities, &edges, id)?;
     }
-    crate::sync::source_audiences::mark_withheld(doc, &withheld, by.as_ref())?;
+    changed |= delete_edges_touching_entities(&edges, &named)?;
+    changed |= crate::sync::note::drop_workflows(doc, &notes)?;
+    crate::sync::source_audiences::mark_withheld(doc, &carried, by.as_ref())?;
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-    Ok(true)
+    Ok(changed)
 }
 
 /// The verdict a record use limit gives raw `update` bytes of window
