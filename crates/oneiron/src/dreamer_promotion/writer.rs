@@ -634,13 +634,10 @@ pub(super) fn promote_one_answering(
     verify_landed(vault, &candidate.claim_id, &probe_body.predicate, source)
 }
 
-/// What a promoted claim's birth batch indexes under `val`: its value as the
-/// embedder projects a claim (embed.rs `claim_text`), then `queries`.
+/// What a promoted claim's birth batch indexes under `val`: its index text,
+/// the one the embedder projects (`claim::claim_index_text`), then `queries`.
 fn birth_lexical_text(body: &crate::claim::ClaimBody, queries: &[String]) -> String {
-    let mut text = body
-        .value
-        .as_str()
-        .map_or_else(|| body.value.to_string(), str::to_owned);
+    let mut text = crate::claim::claim_index_text(&body.predicate, &body.value);
     for query in queries {
         text.push(' ');
         text.push_str(query);

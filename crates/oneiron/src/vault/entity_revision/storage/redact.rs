@@ -433,7 +433,7 @@ pub(crate) fn redact_claim_value_fields_in_txn(
         .ok_or(Error::EntityNotFound)?;
     let body_bytes = &live[ENTITY_METADATA_HEADER_LEN..];
     let body = decode_claim_body(body_bytes, false)?;
-    let text = crate::store::claim_lineage::claim_value_index_text(&body.value);
+    let text = crate::claim::claim_index_text(&body.predicate, &body.value);
     let fields = if crate::claim::claim_surfaceable(&body) && !text.is_empty() {
         vec![("val".to_owned(), text)]
     } else {

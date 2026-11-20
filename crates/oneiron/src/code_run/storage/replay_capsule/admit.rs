@@ -490,7 +490,10 @@ fn admit_start_in_txn(
 /// prefix (FIX 4198). The body goes through the wall too, and the prefix it
 /// carries must come back as it went in. FIX 18924: a prefix that records a
 /// fold answer whose words are withdrawn keeps no start, and the start
-/// names the folds whose words its prefix records.
+/// names the folds whose words its prefix records. FIX
+/// ERASED-FORM-UNFENCED-REPLAY-PUTS: the wall reads the row, and the prefix
+/// in the body, as a fenced put has it read a row: without the erase's
+/// fixed words in each part held in its erased form.
 fn admitted_start(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
@@ -506,7 +509,7 @@ fn admitted_start(
         return Ok(None);
     }
     let mut source = stored.clone();
-    replay_rows::admit(vault, wtxn, &capture.run, &mut source)?;
+    replay_rows::admit_fenced(vault, wtxn, &mut source)?;
     // A spawn whose target an erase took keeps no ask in the row or in the
     // prefix taken from it (FIX 9180).
     let source = fence_spawn_targets_in_txn(&vault.store, wtxn, Cow::Owned(source))?.into_owned();
@@ -514,7 +517,7 @@ fn admitted_start(
         if source.generation()? != generation {
             return Ok(None);
         }
-        replay_rows::put(vault, wtxn, &capture.run, &source)?;
+        replay_rows::put_fenced(vault, wtxn, &source)?;
     }
     let mut prefix = source;
     prefix.live_run = None;
@@ -523,8 +526,11 @@ fn admitted_start(
         return Ok(None);
     }
     let record = encode_code_run_replay_record(&prefix)?;
+    let erased = replay_rows::ErasedFormProjection::of(&prefix)?;
     let body = StepStartBody {
-        record: record.clone(),
+        record: erased
+            .as_ref()
+            .map_or_else(|| record.clone(), |erased| erased.bytes().to_vec()),
         task: capture.task.to_owned(),
         model: start.model.clone(),
         model_locality: start.model_locality,
@@ -537,18 +543,25 @@ fn admitted_start(
         compaction: StartCompaction::captured_in_txn(&vault.store, wtxn, &prefix)?,
     };
     let mut parts = [SidePart::Body(encode_start(&body)?)];
-    admit_side_parts(vault, wtxn, (START_PLACE, key), &mut parts, reads_start)?;
+    admit_side_parts(vault, wtxn, (START_PLACE, key), &mut parts, |parts| {
+        reads_start(parts, erased.as_ref())
+    })?;
     let [SidePart::Body(admitted)] = parts else {
         return Err(Error::InvariantViolation(
             "an admitted step start is no longer a body",
         ));
     };
-    let body = decode_start(&admitted)?;
-    if body.record != record {
+    let mut body = decode_start(&admitted)?;
+    let kept = match &erased {
+        Some(erased) => encode_code_run_replay_record(&erased.put_back(&body.record)?)?,
+        None => std::mem::take(&mut body.record),
+    };
+    if kept != record {
         return Err(Error::InvariantViolation(
             "the wall changed a step start's admitted prefix",
         ));
     }
+    body.record = record;
     let bytes = encode_start(&body)?;
     Ok(Some(AdmittedStart {
         pieces: StartPieces::of(&bytes)?,
@@ -568,13 +581,16 @@ fn decode_start(bytes: &[u8]) -> Result<StepStartBody> {
         .map_err(|error| Error::InvalidConfig(format!("capsule start: {error}")))
 }
 
-/// Whether an admitted copy still reads as a start, its prefix row too.
-fn reads_start(parts: &[SidePart]) -> bool {
+/// Whether an admitted copy still reads as a start, its prefix row too:
+/// with `erased`, the row's projection the wall read in its place.
+fn reads_start(parts: &[SidePart], erased: Option<&replay_rows::ErasedFormProjection>) -> bool {
     let [SidePart::Body(body)] = parts else {
         return false;
     };
-    rmp_serde::from_slice::<StepStartBody>(body)
-        .is_ok_and(|start| decode_code_run_replay_record(&start.record).is_ok())
+    rmp_serde::from_slice::<StepStartBody>(body).is_ok_and(|start| match erased {
+        Some(erased) => erased.put_back(&start.record).is_ok(),
+        None => decode_code_run_replay_record(&start.record).is_ok(),
+    })
 }
 
 /// `slots`, located in `sent`, moved to where they sit in the request as

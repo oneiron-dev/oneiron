@@ -373,6 +373,14 @@ impl LoadedWindow {
     /// the flag reads STALE (`[0]`) and the fast-reconnect reader full-opens
     /// the doc rather than shipping an `sv:w:` VV that omits the survivor's
     /// ops. It is never assumed fresh just because a snapshot was persisted.
+    ///
+    /// Erased inserts (L6-05-SNAPSHOT-PERSIST-ERASED-INSERTS): an update a
+    /// bulk import or a residence landing imported into the doc becomes
+    /// durable here, with no update row whose append owes for it. So the
+    /// history this snapshot stores past the window's last stored one
+    /// ([`UpdateInserts::past_stored`]) owes the erasure sweep a compaction of
+    /// the window in the storing transaction when an insert names a row
+    /// hard-deleted here, as an appended update's does.
     pub fn persist_state(&self, vault: &Vault) -> Result<Vec<u8>> {
         let subsumed_update_keys = merge_persisted_state_into_doc(vault, &self.doc, &self.key)?;
 
@@ -382,10 +390,12 @@ impl LoadedWindow {
         // history a pinned export dropped (census L6-05).
         let state = export_scrubbed_window_state(vault, &self.key, &self.doc)?;
         let vv = doc_version_vector(&self.doc);
+        let inserts = UpdateInserts::past_stored(vault, &self.key, &self.doc)?;
 
         vault.with_write_txn_grouped(|wtxn| {
             let (stored, history_free) = state.stored_in_txn(vault, wtxn)?;
             persist_window_doc_in_txn(vault, wtxn, &self.key, stored, &vv, history_free)?;
+            inserts.owe_in_txn(vault, wtxn, &self.key)?;
             if state.history_free {
                 HISTORY_FREE_WINDOW.put(
                     &vault.store,

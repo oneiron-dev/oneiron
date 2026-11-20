@@ -40,6 +40,7 @@ use crate::llm::decision::{DecisionBandPolicy, DecisionLadder, TypedDecision};
 use crate::llm::{HostInferenceBinding, HostInferenceContext};
 use crate::memory::MemoryResult;
 use crate::model_step_error::DurableStepError;
+use crate::settings::ReadDestination;
 use crate::vault::Vault;
 use crate::verbs::{AiVerdict, ExtractionPack};
 use crate::write_envelope::WriteActor;
@@ -69,6 +70,9 @@ pub struct ExtractionVerdictFixture {
     now_ms: u64,
     /// Records both legs' spend in the attempt's shared native tally.
     charges: Mutex<StepChargeTally>,
+    /// Holds the destination bound of the pass these resources stand for; none until a test
+    /// states one.
+    destination_bound: Mutex<Option<ReadDestination>>,
 }
 
 /// Shares the parity fixture's prepared pass resources with a host-lender integration test.
@@ -126,6 +130,26 @@ impl ExtractionVerdictFixture {
         &self.charges
     }
 
+    /// States `bound` as the destination bound of the pass these resources stand for.
+    ///
+    /// Every lender built on this fixture answers it from then on, as a host's lender answers
+    /// the bound its pass stated. `None`, the start, states no bound.
+    pub fn set_destination_bound(&self, bound: Option<ReadDestination>) {
+        *self
+            .destination_bound
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = bound;
+    }
+
+    /// Returns the destination bound a test stated, for a lender built on this fixture to answer.
+    #[must_use]
+    pub fn destination_bound(&self) -> Option<ReadDestination> {
+        self.destination_bound
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     /// Builds the fixture around `reasoner` and shares it for the lender to own: a
     /// current-thread runtime, the pass guard, the shipped decisions, the fixture model
     /// with its advertised binding, the frozen pass clock and an empty shared tally.
@@ -169,6 +193,7 @@ impl ExtractionVerdictFixture {
             deadline,
             now_ms: 1_000_000,
             charges: Mutex::new(StepChargeTally::new()),
+            destination_bound: Mutex::new(None),
         }))
     }
 }
@@ -285,6 +310,11 @@ impl DreamerDecisionLender for FixtureExtractionLender {
             runtime: fixture.runtime.handle(),
         })
         .map(Some)
+    }
+
+    /// Answers the destination bound the test stated on the fixture.
+    fn destination_bound(&self) -> Option<ReadDestination> {
+        self.fixture.destination_bound()
     }
 }
 

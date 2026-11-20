@@ -14,7 +14,7 @@
 //! counts, phases, receipt numbers and reasons; never a cookie's or a stored
 //! item's value.
 
-use crate::{BrowserEngine, EffectReceipt, ObservationPage};
+use crate::{BrowserEngine, EffectReceipt, ObservationPage, SessionGuestPressure};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -87,6 +87,13 @@ pub struct EngineSwitchRecord {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub not_carried: Vec<SwitchNotCarried>,
     pub outcome: SwitchOutcome,
+    /// The pressure the source guest showed before a switch dropped it (FIX
+    /// 8013), read once more as the switch commits: that guest's manifest
+    /// goes with it, so no later answer names it. Absent where the source
+    /// showed none, and on an unchanged or failed switch, whose source stays
+    /// and keeps its own manifest. Evidence only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_guest_pressure: Option<SessionGuestPressure>,
 }
 
 /// How a switch ended.

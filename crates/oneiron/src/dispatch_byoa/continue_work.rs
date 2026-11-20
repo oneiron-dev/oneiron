@@ -290,6 +290,22 @@ fn caller_owner(vault: &Vault, caller: &RunnerContinueCaller<'_>) -> MemoryResul
 }
 
 impl Vault {
+    /// The doors' admission of `caller` to `vault.runners.continue` and
+    /// `vault.runners.continue.check`, before any verb hook sees the call:
+    /// the owner's proof revalidated, or the agent's live Grant naming the
+    /// act, in a read snapshot of its own. [`Self::continue_outside_work`]
+    /// and [`Self::continue_outside_work_check`] judge the caller again.
+    ///
+    /// # Errors
+    ///
+    /// A caller the doors refuse.
+    pub fn admit_runner_continue_caller(
+        &self,
+        caller: RunnerContinueCaller<'_>,
+    ) -> MemoryResult<()> {
+        caller_owner(self, &caller).map(drop)
+    }
+
     /// Starts the outside session the local CLI pushed as `input.commit` on
     /// `input.git_ref` of the custody repo `input.repo`: the same request
     /// twice binds the same work and answers it again, with no second write.

@@ -203,9 +203,9 @@ pub use oneiron_model::llm::{
     LlmCallMetadata, LlmCapability, LlmCatalogCost, LlmCatalogEntry, LlmEndpointFlavor, LlmError,
     LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest,
     LlmResponse, LlmResult, LlmRole, LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec,
-    LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, OwnedDispatchRelease,
-    PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort,
-    ReasoningPartKind, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
+    LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, OWN_SERVER_ONLY_PARAM,
+    OwnedDispatchRelease, PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM,
+    ReasoningEffort, ReasoningPartKind, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
     SafeguardModelBindingError, ServedCacheHorizon, SingleRouteBackend, SingleSend, SpentKind,
     TierPrecedence, TransportFault, TransportFaultKind, UnsupportedCapability,
 };

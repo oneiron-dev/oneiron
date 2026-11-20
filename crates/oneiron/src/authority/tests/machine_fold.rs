@@ -94,111 +94,128 @@ fn a_cloud_root_never_vouches_for_a_machine() {
 /// A self-hosted root is the owner's own process, and a peer reading that
 /// vault's log keeps its answer and everything after it. Custody is read from
 /// the log's cloud stamp alone (Engine ANSWER
-/// HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A, d3d2a2eacda).
+/// HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A, d3d2a2eacda), so each half folds
+/// its own vault's rows: a self-hosted root's under the self-host posture, a
+/// stamped hosted root's under the hosted one.
 #[test]
 fn a_hosted_host_root_never_vouches_for_a_machine() {
-    let host = hosted_host();
-    let node = request_for(host.vault_id, EntityId::now(), &ed_key(86));
-    let yours = request_for(host.vault_id, EntityId::now(), &ed_key(87));
-    let later = request_for(host.vault_id, EntityId::now(), &ed_key(88));
-    for (request, role) in [
-        (&node, MachineRole::HostedNode),
-        (&yours, MachineRole::Owned(MachineOwnership::Yours)),
-        (&later, MachineRole::ExecutionNode),
-    ] {
-        host.vault
-            .enroll_machine(&host.owner, ActSurface::ThisInstall, request, role, None)
-            .unwrap();
-    }
-    let entries: Vec<_> = {
-        let txn = host.vault.store.env.read_txn().unwrap();
-        authority_log_rows_in_txn(&host.vault.store, &txn)
-            .unwrap()
-            .into_iter()
-            .map(|(_, body)| decode_authority_log_entry_body(&body).unwrap())
-            .collect()
+    let enrolled = |host: Host| {
+        let node = request_for(host.vault_id, EntityId::now(), &ed_key(86));
+        let yours = request_for(host.vault_id, EntityId::now(), &ed_key(87));
+        let later = request_for(host.vault_id, EntityId::now(), &ed_key(88));
+        for (request, role) in [
+            (&node, MachineRole::HostedNode),
+            (&yours, MachineRole::Owned(MachineOwnership::Yours)),
+            (&later, MachineRole::ExecutionNode),
+        ] {
+            host.vault
+                .enroll_machine(&host.owner, ActSurface::ThisInstall, request, role, None)
+                .unwrap();
+        }
+        let entries: Vec<AuthorityLogEntry> = {
+            let txn = host.vault.store.env.read_txn().unwrap();
+            authority_log_rows_in_txn(&host.vault.store, &txn)
+                .unwrap()
+                .into_iter()
+                .map(|(_, body)| decode_authority_log_entry_body(&body).unwrap())
+                .collect()
+        };
+        (entries, node.machine, yours.machine, later.machine)
     };
-    let fold = |posture| {
-        fold_authority_log_for_posture(&entries, &BTreeMap::new(), 10, &BTreeMap::new(), posture)
+    let fold = |entries: &[AuthorityLogEntry], posture: crate::HostingPrivacyPosture| {
+        fold_authority_log_for_posture(entries, &BTreeMap::new(), 10, &BTreeMap::new(), posture)
     };
+    let (entries, _, yours, later) = enrolled(host());
     for own in [
-        fold(crate::HostingPrivacyPosture::SelfHostLocal),
+        fold(&entries, crate::HostingPrivacyPosture::SelfHostLocal),
         fold_peer_authority_log(&entries),
     ] {
         assert!(
-            own.machine(yours.machine)
+            own.machine(yours)
                 .is_some_and(|folded| folded.is_mine(None))
         );
         assert!(
-            own.machine(later.machine)
+            own.machine(later)
                 .is_some_and(|folded| folded.roster_chain().is_live())
         );
     }
-    let hosted = fold(crate::HostingPrivacyPosture::Hosted);
+    let (entries, node, yours, _) = enrolled(hosted_host());
+    let hosted = fold(&entries, crate::HostingPrivacyPosture::Hosted);
     assert!(
         hosted
-            .machine(node.machine)
+            .machine(node)
             .is_some_and(|folded| folded.roster_chain().is_live() && !folded.is_mine(None))
     );
-    assert!(hosted.machine(yours.machine).is_none());
+    assert!(hosted.machine(yours).is_none());
 }
 
 /// A key the host's root re-roots to stays in the host's custody whatever
 /// labels it carries: a provider never launders its root into an owner-held
 /// key that answers "yours" (Engine ANSWER
-/// HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A, d3d2a2eacda).
+/// HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A, d3d2a2eacda). A self-hosted
+/// root's successor does answer "yours"; and a hosted vault's rows read under
+/// the self-host posture admit neither the move nor the machine, so the
+/// posture alone never admits a hosted root.
 #[test]
 fn a_hosted_roots_successor_never_vouches_for_a_machine() {
-    let host = hosted_host();
-    let successor = ed_key(89);
-    let fold = host.vault.authority_fold().unwrap();
-    let re_root = host_entry(
-        &host,
-        fold.append_sequences[&host.issuer.public_key()] + 1,
-        &fold.append_heads,
-        AuthorityOp::ReRoot {
-            new_device: device(
+    let rows = |host: Host| {
+        let successor = ed_key(89);
+        let fold = host.vault.authority_fold().unwrap();
+        let re_root = host_entry(
+            &host,
+            fold.append_sequences[&host.issuer.public_key()] + 1,
+            &fold.append_heads,
+            AuthorityOp::ReRoot {
+                new_device: device(
+                    authority_key_from_ed(&successor),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            None,
+        );
+        let re_root_hash = authority_entry_hash(&re_root).unwrap();
+        let machine = EntityId::now();
+        let yours = sign_ed(
+            unsigned_entry(
+                Some(host.vault_id),
+                1,
+                vec![re_root_hash],
+                profile_op(&host, machine, &ed_key(90)),
                 authority_key_from_ed(&successor),
-                ROLE_OWNER | ROLE_ADMIN,
-                AuthorityTier::Software,
+                3,
             ),
-        },
-        None,
-    );
-    let re_root_hash = authority_entry_hash(&re_root).unwrap();
-    let machine = EntityId::now();
-    let yours = sign_ed(
-        unsigned_entry(
-            Some(host.vault_id),
-            1,
-            vec![re_root_hash],
-            profile_op(&host, machine, &ed_key(90)),
-            authority_key_from_ed(&successor),
-            3,
-        ),
-        &successor,
-    );
-    let mut entries: Vec<_> = {
-        let txn = host.vault.store.env.read_txn().unwrap();
-        authority_log_rows_in_txn(&host.vault.store, &txn)
-            .unwrap()
-            .into_iter()
-            .map(|(_, body)| decode_authority_log_entry_body(&body).unwrap())
-            .collect()
+            &successor,
+        );
+        let mut entries: Vec<AuthorityLogEntry> = {
+            let txn = host.vault.store.env.read_txn().unwrap();
+            authority_log_rows_in_txn(&host.vault.store, &txn)
+                .unwrap()
+                .into_iter()
+                .map(|(_, body)| decode_authority_log_entry_body(&body).unwrap())
+                .collect()
+        };
+        entries.extend([re_root, yours]);
+        (entries, re_root_hash, machine)
     };
-    entries.extend([re_root, yours]);
-    let fold = |posture| {
-        fold_authority_log_for_posture(&entries, &BTreeMap::new(), 10, &BTreeMap::new(), posture)
+    let fold = |entries: &[AuthorityLogEntry], posture: crate::HostingPrivacyPosture| {
+        fold_authority_log_for_posture(entries, &BTreeMap::new(), 10, &BTreeMap::new(), posture)
     };
-    let self_hosted = fold(crate::HostingPrivacyPosture::SelfHostLocal);
-    assert!(self_hosted.valid_entries.contains(&re_root_hash));
+    let (entries, re_root, machine) = rows(host());
+    let self_hosted = fold(&entries, crate::HostingPrivacyPosture::SelfHostLocal);
+    assert!(self_hosted.valid_entries.contains(&re_root));
     assert!(
         self_hosted
             .machine(machine)
             .is_some_and(|folded| folded.is_mine(None))
     );
-    let hosted = fold(crate::HostingPrivacyPosture::Hosted);
-    assert!(hosted.valid_entries.contains(&re_root_hash));
+
+    let (entries, re_root, machine) = rows(hosted_host());
+    let wrong_posture = fold(&entries, crate::HostingPrivacyPosture::SelfHostLocal);
+    assert!(!wrong_posture.valid_entries.contains(&re_root));
+    assert!(wrong_posture.machine(machine).is_none());
+    let hosted = fold(&entries, crate::HostingPrivacyPosture::Hosted);
+    assert!(hosted.valid_entries.contains(&re_root));
     assert!(hosted.machine(machine).is_none());
 }
 

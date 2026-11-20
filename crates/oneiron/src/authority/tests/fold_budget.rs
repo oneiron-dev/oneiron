@@ -395,10 +395,11 @@ fn a_signer_past_its_bound_lands_with_a_check_but_an_unvouched_removal_waits() {
             1,
         )
         .unwrap();
-    // The admin's removal copies the head's carried answer (carrier + act) but
-    // is signed by the admin key, which the carrier arm never vouches for
-    // (mesh PR1b, log_structure.rs:610-612): it waits with SignerPending, for
-    // its lack of a vouch, not for the bound.
+    // The admin's removal keeps the head's carrier and carries the owner's
+    // removal act (a Removed role takes only that kind), but it is signed by
+    // the admin key, not by the named carrier's install key, which alone the
+    // carrier arm vouches for (mesh PR1b, log_structure.rs:607-612): it waits
+    // with SignerPending, for its lack of a vouch, not for the bound.
     let current = fold()
         .machine(request.machine)
         .unwrap()
@@ -413,6 +414,13 @@ fn a_signer_past_its_bound_lands_with_a_check_but_an_unvouched_removal_waits() {
                 AuthorityOp::MachineProfile(MachineProfile {
                     role: MachineRole::Removed,
                     revision: current.revision + 1,
+                    act: Some(OwnerAct::by_owner(
+                        host.owner.actor(),
+                        OwnerActKind::MachineRemoval,
+                        current.machine,
+                        ActSurface::ThisInstall,
+                        [0; 32],
+                    )),
                     ..current
                 }),
                 false,

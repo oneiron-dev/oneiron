@@ -953,7 +953,8 @@ pub struct RetrievalMeta {
     pub partial: bool,
     /// Time phrases read from the query and what recall did with each.
     pub temporal_hints: Vec<TemporalHint>,
-    /// The request's `limit` was past the ceiling and was served at it.
+    /// Whether this door lowered the requested result count; recall serves
+    /// the whole limit, so this is always false.
     pub limit_clamped: bool,
 }
 

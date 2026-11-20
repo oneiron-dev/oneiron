@@ -7,7 +7,6 @@ use super::CoreHydrateDeletionMetadata;
 use super::DagWriteError;
 use super::core_engine_error;
 use super::core_entity_timestamps;
-use super::core_hydrate_deletion_metadata;
 use super::facade;
 use super::hex_bytes;
 use super::json_payload;
@@ -20,8 +19,6 @@ use crate::auth::CoreScope;
 use crate::error::ApiError;
 use crate::error::ApiErrorDetails;
 use crate::error::ApiErrorEnvelope;
-use crate::projection;
-use crate::projection::View;
 use crate::server::SyncServer;
 use axum::extract::Path;
 use axum::extract::State;
@@ -146,6 +143,14 @@ pub(crate) struct CoreMemoryVerbRequest {
     /// Delete reason override for delete verbs.
     #[serde(default)]
     reason: Option<CoreMemoryVerbDeleteReason>,
+    /// For `delete` and `hard_delete` judged by role: the check-in an
+    /// earlier call's `CHECK_IN_PENDING` named, 32 hex. Once the Owner
+    /// approves it, the same delete naming it runs and spends it
+    /// (ROLES-CHECKIN 2k5). The owner's delete, a delete that goes at once
+    /// and every other verb refuse it.
+    #[serde(default)]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    check_in_ref: Option<String>,
 }
 
 /// Named delete reason accepted by the memory verb route.
@@ -240,6 +245,13 @@ pub(crate) struct CoreMemoryVerbDeleteOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(example = "applied")]
     state: Option<String>,
+    /// The check-in decision a delete judged by role ran on: the role it
+    /// was judged under and why it went, and the check-in it spent when an
+    /// approved one let it go. Absent on the owner's path and when post
+    /// hooks redact it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    check_in: Option<Value>,
 }
 
 /// Typed operation family selected by a named memory verb.
@@ -269,7 +281,9 @@ mod timeline;
 mod watch;
 pub(crate) use self::receipts::core_memory_delete_reason;
 use self::receipts::{core_memory_delete_by_role, core_memory_retract_by_facade};
-pub(crate) use self::timeline::{__path_core_memory_timeline, core_memory_timeline};
+pub(crate) use self::timeline::{
+    __path_core_memory_timeline, core_memory_timeline, core_memory_timeline_response,
+};
 // A timeline read that an ask stopped runs again through its route (FIX 1435).
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub(crate) use self::timeline::core_memory_timeline_hooked;
@@ -296,7 +310,8 @@ pub(super) use self::watch::{
     request_body(content = CoreMemoryVerbRequest, content_type = "application/json"),
     responses(
         (status = 200, description = "Named verb resolved and executed as a typed operation.", body = CoreMemoryVerbResponse, content_type = "application/json"),
-        (status = 400, description = "Malformed verb request, or a retract by a caller that is not the vault owner naming `at`.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 202, description = "delete or hard_delete by a person whose role makes it wait (a Steward's delete of another's item in scope): CHECK_IN_PENDING with a typed `pending` block naming the check-in, in the facade's MemoryError body; nothing is deleted. Once the Owner approves it, the same call naming it as `check_in_ref` deletes and spends it.", body = super::facade::MemoryErrorEnvelopeSchema, content_type = "application/json"),
+        (status = 400, description = "Malformed verb request, a retract by a caller that is not the vault owner naming `at`, or a `check_in_ref` on a verb other than delete and hard_delete, on the owner's delete, or on a person's delete that goes at once (their own item, or an Admin's or a Deputy's in scope), which spends none.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:write, or the verb names the owner's erase. delete and hard_delete by a token that is not owner-grade answer the engine's delete authority (DEL-2) in the facade's MemoryError body: FORBIDDEN naming not_owner_of_item, out_of_admin_scope, no_delete_grant, credential_bounds, unresolved_actor, or account_key_unbound (an account key that does not name the owner, on a rooted vault). remember's guarded batch door refusing the writer answers the engine's FORBIDDEN in the facade's MemoryError body, as `/v1/core/batch` does. supersede by a caller that is not the vault owner is refused. retract by a caller that is not the vault owner answers `vault.claims.retract`'s refusal in the facade's MemoryError body: FORBIDDEN for a claim it did not write, for a token that names no actor (unresolved_actor), or for an account key on a rooted vault retracting a claim its person did not write (account_key_unbound); OWNER_BINDING_REQUIRED for a person the authority log does not bind.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Referenced entity was not found. A retract by a caller that is not the vault owner answers the claim door's NOT_FOUND in the facade's MemoryError body.", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -318,6 +333,20 @@ pub(crate) async fn core_memory_verb(
     let verb = oneiron::NamedMemoryVerb::parse(&verb_name).map_err(memory_verb_refusal)?;
     let req = json_payload(payload)?;
     let operation = core_memory_operation_kind(verb.operation_kind());
+    // A check-in names a person's waiting delete; no other verb spends one,
+    // so the field is refused, never dropped.
+    if req.check_in_ref.is_some()
+        && !matches!(
+            verb,
+            oneiron::NamedMemoryVerb::Delete | oneiron::NamedMemoryVerb::HardDelete
+        )
+    {
+        return Err(ApiError::bad_request(
+            "check_in_ref is only for delete and hard_delete",
+            Some("check_in_ref"),
+        )
+        .into());
+    }
 
     match verb {
         oneiron::NamedMemoryVerb::Remember => {
@@ -494,6 +523,15 @@ pub(crate) async fn core_memory_verb(
             // the owner's proof in each writer before it publishes or tears
             // (FIX MEMORY-DELETE-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
             let owner = memory_owner_proof(&server, &auth, host_action.is_some())?;
+            // The owner's delete goes on their own proof and waits on no
+            // check-in, as the engine's `vault.delete` refuses one there.
+            if owner.is_some() && req.check_in_ref.is_some() {
+                return Err(ApiError::bad_request(
+                    "check_in_ref names a person's waiting delete; the owner's delete waits on none",
+                    Some("check_in_ref"),
+                )
+                .into());
+            }
             let (id, delete) = if let Some(owner) = owner {
                 let failed = |error: oneiron::Error| {
                     tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");
@@ -521,10 +559,17 @@ pub(crate) async fn core_memory_verb(
                             .as_str()
                             .to_owned()
                     ),
+                    check_in: None,
                 });
                 (Some(id.to_hex()), delete)
             } else {
-                core_memory_delete_by_role(&server, &auth, &id, response_reason)?
+                core_memory_delete_by_role(
+                    &server,
+                    &auth,
+                    &id,
+                    response_reason,
+                    req.check_in_ref.as_deref(),
+                )?
             };
 
             Ok(Json(CoreMemoryVerbResponse {
@@ -539,179 +584,6 @@ pub(crate) async fn core_memory_verb(
                 retract: None,
             }))
         }
-    }
-}
-
-/// Projects one timeline, its bodies, pinned changes included, decoded under
-/// one budget of `body_bytes` (`[limits].projection_body_bytes`).
-pub(crate) fn core_memory_timeline_response(
-    read: &oneiron::claim::ScopedRead<'_>,
-    result: oneiron::claim::ScopedReadResult<oneiron::MemoryTimeline>,
-    view: View,
-    body_bytes: usize,
-) -> Result<CoreMemoryTimelineResponse, ApiError> {
-    let mut bodies = projection::BodyBudget::new(read.vault(), body_bytes);
-    let timeline = result.value;
-    let mut narrowing = result.receipt;
-    let projected = read
-        .memory_timeline_parts_with_receipt(&timeline.records, Some(&narrowing.applied.as_filter()))
-        .map_err(|error| core_engine_error("core memory timeline projection failed", error))?;
-    narrowing.restrict_with(&projected.receipt);
-    let mut parts: std::collections::BTreeMap<_, _> = timeline
-        .records
-        .iter()
-        .map(|record| record.id)
-        .zip(projected.value)
-        .filter_map(|(id, body)| body.map(|body| (id, body)))
-        .collect();
-    let mut records = Vec::with_capacity(timeline.records.len());
-    let deleted_anchor_visible = timeline.records.iter().any(|record| {
-        record.id == timeline.anchor
-            && record.state == oneiron::MemoryTimelineRecordState::Deleted
-            && !narrowing.applied.deny_all
-            && record.entity_type.is_some_and(|kind| {
-                narrowing
-                    .applied
-                    .entity_types
-                    .as_ref()
-                    .is_none_or(|types| types.contains(&kind))
-            })
-    });
-    if !parts.contains_key(&timeline.anchor) && !deleted_anchor_visible {
-        narrowing.add_suppressed(parts.len());
-        return Ok(CoreMemoryTimelineResponse {
-            narrowing,
-            anchor_id: timeline.anchor.to_hex(),
-            records,
-        });
-    }
-    for record in timeline.records {
-        let item = if record.state == oneiron::MemoryTimelineRecordState::Deleted {
-            if narrowing.applied.deny_all
-                || record.entity_type.is_none_or(|kind| {
-                    narrowing
-                        .applied
-                        .entity_types
-                        .as_ref()
-                        .is_some_and(|types| !types.contains(&kind))
-                })
-            {
-                narrowing.add_suppressed(1);
-                continue;
-            }
-            None
-        } else {
-            let Some((kind, learned_at, body)) = parts.remove(&record.id) else {
-                continue;
-            };
-            if record.entity_type != Some(kind)
-                || record.learned_at != Some(learned_at)
-                || record.body_bytes != Some(body.len())
-            {
-                narrowing.add_suppressed(1);
-                continue;
-            }
-            Some(bodies.project(&record.id, kind, learned_at, &body, view))
-        };
-        records.push(CoreMemoryTimelineRecord {
-            id: record.id.to_hex(),
-            state: core_memory_timeline_state(record.state),
-            entity_type: record.entity_type,
-            occurred_start: record.occurred_start,
-            occurred_end: record.occurred_end,
-            learned_at: record.learned_at,
-            body_bytes: record.body_bytes,
-            deletion: record.deletion.map(core_hydrate_deletion_metadata),
-            supersedes: record
-                .supersedes
-                .into_iter()
-                .map(|id| id.to_hex())
-                .collect(),
-            superseded_by: record
-                .superseded_by
-                .into_iter()
-                .map(|id| id.to_hex())
-                .collect(),
-            item,
-            changes: Vec::new(),
-        });
-    }
-    let content_visible: std::collections::BTreeSet<_> = records
-        .iter()
-        .filter(|record| record.item.is_some())
-        .map(|record| record.id.clone())
-        .collect();
-    for record in &mut records {
-        if !content_visible.contains(&record.id) {
-            continue;
-        }
-        let after_id = oneiron::EntityId::from_hex(&record.id)
-            .map_err(|_| ApiError::internal_server_error("timeline successor id"))?;
-        for before_id in &record.supersedes {
-            if !content_visible.contains(before_id) {
-                continue;
-            }
-            let old_id = oneiron::EntityId::from_hex(before_id)
-                .map_err(|_| ApiError::internal_server_error("timeline predecessor id"))?;
-            let pinned = read
-                .memory_supersession_parts_with_receipt(
-                    &old_id,
-                    &after_id,
-                    Some(&narrowing.applied.as_filter()),
-                )
-                .map_err(|error| core_engine_error("core memory pinned change failed", error))?;
-            narrowing.restrict_with(&pinned.receipt);
-            let Some((
-                (before_kind, before_at, before_body, before_revision),
-                (after_kind, after_at, after_body, after_revision),
-            )) = pinned.value
-            else {
-                continue;
-            };
-            record.changes.push(CoreMemoryChange {
-                before_id: before_id.clone(),
-                after_id: record.id.clone(),
-                before: bodies.project_at(
-                    &old_id,
-                    before_kind,
-                    before_at,
-                    &before_body,
-                    view,
-                    oneiron::memory::ReadMode::Pinned(before_revision),
-                ),
-                after: bodies.project_at(
-                    &after_id,
-                    after_kind,
-                    after_at,
-                    &after_body,
-                    view,
-                    oneiron::memory::ReadMode::Pinned(after_revision),
-                ),
-            });
-        }
-    }
-    let visible: std::collections::BTreeSet<_> =
-        records.iter().map(|record| record.id.clone()).collect();
-    for record in &mut records {
-        record.supersedes.retain(|id| visible.contains(id));
-        record.superseded_by.retain(|id| visible.contains(id));
-    }
-    Ok(CoreMemoryTimelineResponse {
-        narrowing,
-        anchor_id: timeline.anchor.to_hex(),
-        records,
-    })
-}
-
-pub(crate) fn core_memory_timeline_state(
-    state: oneiron::MemoryTimelineRecordState,
-) -> CoreMemoryTimelineRecordState {
-    match state {
-        oneiron::MemoryTimelineRecordState::Live => CoreMemoryTimelineRecordState::Live,
-        oneiron::MemoryTimelineRecordState::Superseded => CoreMemoryTimelineRecordState::Superseded,
-        oneiron::MemoryTimelineRecordState::Retracted => CoreMemoryTimelineRecordState::Retracted,
-        oneiron::MemoryTimelineRecordState::Deleted => CoreMemoryTimelineRecordState::Deleted,
-        oneiron::MemoryTimelineRecordState::Missing => CoreMemoryTimelineRecordState::Missing,
     }
 }
 

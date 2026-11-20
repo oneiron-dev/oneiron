@@ -24,6 +24,10 @@
 //! 404 (no route), so all four fail on an assertion; with this PR all pass.
 //! Case 5 (blind review F1): before the engine judged the caller first, the
 //! agent with no Grant got a not-found for a repo this node does not serve.
+//! Case 6 (FIX CONTINUE-ADMISSION-SKIPS-LIVE-GRANT): before the admission
+//! judged the agent's live Grant, the owner's pre hook that skips the rows
+//! answered the agent with no Grant (409, the hook's skip) before any door
+//! refused it.
 //!
 //! Deterministic: in-process vault and router, one seat, no provider calls.
 //!
@@ -38,6 +42,8 @@
 
 #[path = "support/engine_stack.rs"]
 mod engine_stack;
+#[path = "support/owner_skip_hook.rs"]
+mod owner_skip_hook;
 
 use axum::{
     Router,
@@ -64,6 +70,7 @@ use oneiron_server::ai_host::AiHost;
 use oneiron_server::build_app;
 use oneiron_server::config::{SyncServerConfig, models::ModelsConfig};
 use oneiron_server::server::SyncServer;
+use owner_skip_hook::put_owner_skip_hook;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -784,4 +791,54 @@ fn an_agent_without_the_grant_learns_nothing_of_the_repo() {
             );
         }
     });
+}
+
+/// Case 6: the agent's live Grant is judged at the admission, before any
+/// verb hook runs. Under the owner's pre hook that skips both rows, the
+/// paired agent with no Grant gets the Grant refusal on each row and the
+/// hook never answers it; once its Grant is minted, the agent passes the
+/// admission and meets the hook's skip.
+#[test]
+fn an_agent_without_the_grant_is_refused_before_any_verb_hook() {
+    run_on_engine_stack("continue-refused-before-hooks", || async {
+        let (fixture, agent) = setup(true).await;
+        put_owner_skip_hook(
+            &fixture.vault,
+            &[GRANT_VERB, "vault.runners.continue.check"],
+        );
+        let binding = || agent_binding(&fixture, &agent);
+
+        let (status, body) = check_as(&fixture, &agent.token, binding(), check_body()).await;
+        assert_refused_before_any_hook("check", status, &body);
+        let (status, body) =
+            continue_as(&fixture, &agent.token, binding(), continue_body(&fixture)).await;
+        assert_refused_before_any_hook("continue", status, &body);
+
+        let _grant = mint_continue_grant(&fixture, &agent.principal.to_hex()).await;
+        let (status, body) =
+            continue_as(&fixture, &agent.token, binding(), continue_body(&fixture)).await;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "the granted agent passes the admission and meets the owner's hook: {body}"
+        );
+        assert_eq!(body["error"]["hook"]["status"], "skipped", "{body}");
+    });
+}
+
+/// The answer to the agent with no Grant on `row` is the Grant refusal, and
+/// no hook answered it.
+fn assert_refused_before_any_hook(row: &str, status: StatusCode, body: &Value) {
+    assert!(
+        body["error"]["hook"].is_null(),
+        "ungranted {row}: no hook answers a caller the admission refuses: {status} {body}"
+    );
+    assert!(
+        status.is_client_error() && status != StatusCode::CONFLICT,
+        "ungranted {row} is refused 4xx, not the hook's 409: {status} {body}"
+    );
+    assert!(
+        body.to_string().contains(AUTHORITY_REFUSAL_MESSAGE),
+        "ungranted {row} names the missing Grant: {body}"
+    );
 }
