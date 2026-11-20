@@ -79,7 +79,8 @@ use oneiron::authority::{
     CapabilitySlip, HostSlipIssuer, PairingPrincipal, pairing_binding_transcript,
 };
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::inbox::{NotificationKind, decode_notification_body};
+use oneiron::registry::{ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON};
 use oneiron::voice_identity::{
     VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState, VoiceEmbeddingFamily,
     VoiceEmbeddingSpaceV1, VoiceEnrollmentLegalContext, VoiceEnrollmentOrigin,
@@ -1738,23 +1739,58 @@ fn an_agent_with_the_consent_log_grant_logs_a_counterpartys_consent_and_tells_th
 }
 
 impl Served {
-    /// `person`'s own inbox notices that an agent logged their spoken
+    /// The member's own inbox rows of an agent-logged withdrawal of their
+    /// voice, read as the member reads them: `self.inbox.list` on their own
+    /// credential and holder proof.
+    async fn member_withdrawal_rows(&self) -> Vec<Value> {
+        let page = self
+            .ok(Caller::Person, "self.inbox.list", json!({"limit": 100}))
+            .await;
+        page["rows"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the member's inbox page: {page}"))
+            .iter()
+            .filter(|row| row["kind"] == "voice_recognition_withdrawal_logged_for_subject")
+            .cloned()
+            .collect()
+    }
+
+    /// The member's own inbox notices that an agent logged their spoken
     /// recognition withdrawal, as (result, detail).
-    fn subject_withdrawal_notices(
-        &self,
-        person: EntityId,
-    ) -> Vec<(Option<String>, Option<String>)> {
-        self.vault
-            .memory(person, EdgeActorClass::Human)
-            .inbox_list(None, 100)
-            .expect("the person's inbox")
-            .rows
-            .into_iter()
-            .filter(|row| {
-                serde_json::to_value(row.kind).ok()
-                    == Some(json!("voice_recognition_withdrawal_logged_for_subject"))
+    async fn member_withdrawal_notices(&self) -> Vec<(Option<String>, Option<String>)> {
+        let text = |value: &Value| value.as_str().map(str::to_owned);
+        self.member_withdrawal_rows()
+            .await
+            .iter()
+            .map(|row| {
+                (
+                    text(&row["source"]["result"]),
+                    text(&row["source"]["detail"]),
+                )
             })
-            .map(|row| (row.source.result, row.source.detail))
+            .collect()
+    }
+
+    /// Every stored notice of an agent-logged withdrawal addressed to
+    /// `recipient`, as (result, detail), read from the raw rows: an inbox
+    /// lists only its caller's own rows, and a person who holds no credential
+    /// here has no inbox door to read.
+    fn stored_subject_withdrawal_notices(
+        &self,
+        recipient: EntityId,
+    ) -> Vec<(Option<String>, Option<String>)> {
+        let recipient = recipient.to_hex();
+        self.vault
+            .entities_by_type(ENTITY_TYPE_NOTIFICATION)
+            .expect("the notification rows")
+            .into_iter()
+            .filter_map(|id| self.vault.get(&id).expect("a notification row"))
+            .map(|body| decode_notification_body(&body).expect("a notification body"))
+            .filter(|body| {
+                body.kind == NotificationKind::VoiceRecognitionWithdrawalLoggedForSubject
+                    && body.recipient.as_deref() == Some(recipient.as_str())
+            })
+            .map(|body| (body.source.result, body.source.detail))
             .collect()
     }
 }
@@ -1832,7 +1868,7 @@ fn an_agent_logs_a_live_members_withdrawal_and_tells_the_member() {
             "recognition of the member stops in the same write"
         );
 
-        let told = served.subject_withdrawal_notices(member);
+        let told = served.member_withdrawal_notices().await;
         assert_eq!(told.len(), 1, "one notice for the member: {told:?}");
         let (result, detail) = &told[0];
         assert_eq!(result.as_deref(), Some("member-spoken-withdrawal"));
@@ -1851,7 +1887,7 @@ fn an_agent_logs_a_live_members_withdrawal_and_tells_the_member() {
             "the owner is told as before"
         );
         assert!(
-            served.subject_withdrawal_notices(owner).is_empty(),
+            served.stored_subject_withdrawal_notices(owner).is_empty(),
             "the owner's notice is the owner's kind"
         );
 
@@ -1861,7 +1897,9 @@ fn an_agent_logs_a_live_members_withdrawal_and_tells_the_member() {
             .ok(Caller::Agent, RECOGNITION_WITHDRAW, counterparty_withdrawal)
             .await;
         assert!(
-            served.subject_withdrawal_notices(counterparty).is_empty(),
+            served
+                .stored_subject_withdrawal_notices(counterparty)
+                .is_empty(),
             "a counterparty who holds no credential here is not told"
         );
 
@@ -1870,7 +1908,7 @@ fn an_agent_logs_a_live_members_withdrawal_and_tells_the_member() {
             .await;
         assert_eq!(replay["replayed"], true, "{replay}");
         assert_eq!(
-            served.subject_withdrawal_notices(member).len(),
+            served.member_withdrawal_notices().await.len(),
             1,
             "a replay tells no one again"
         );
@@ -1878,21 +1916,13 @@ fn an_agent_logs_a_live_members_withdrawal_and_tells_the_member() {
 }
 
 impl Served {
-    /// The taps `person`'s own notices of an agent-logged withdrawal offer,
-    /// as their wire form.
-    fn subject_withdrawal_taps(&self, person: EntityId) -> Vec<Value> {
-        self.vault
-            .memory(person, EdgeActorClass::Human)
-            .inbox_list(None, 100)
-            .expect("the person's inbox")
-            .rows
-            .into_iter()
-            .filter(|row| {
-                serde_json::to_value(row.kind).ok()
-                    == Some(json!("voice_recognition_withdrawal_logged_for_subject"))
-            })
-            .flat_map(|row| row.actions)
-            .map(|action| serde_json::to_value(action).expect("the tap's wire form"))
+    /// The taps the member's own notices of an agent-logged withdrawal offer
+    /// them, as their inbox door answers them.
+    async fn member_withdrawal_taps(&self) -> Vec<Value> {
+        self.member_withdrawal_rows()
+            .await
+            .iter()
+            .flat_map(|row| row["actions"].as_array().cloned().unwrap_or_default())
             .collect()
     }
 }
@@ -1922,7 +1952,7 @@ fn a_member_disowns_an_agent_logged_withdrawal_and_restores_consent_only() {
             )
             .await;
 
-        let taps = served.subject_withdrawal_taps(member);
+        let taps = served.member_withdrawal_taps().await;
         assert_eq!(taps.len(), 1, "one tap on the member's notice: {taps:?}");
         let tap = &taps[0];
         assert_eq!(tap["verb"], RECOGNITION_CONSENT, "{tap}");
@@ -1930,7 +1960,7 @@ fn a_member_disowns_an_agent_logged_withdrawal_and_restores_consent_only() {
             tap["args"].get("subject").is_none(),
             "the tap is of the member's own voice: {tap}"
         );
-        let notices = served.subject_withdrawal_notices(member);
+        let notices = served.member_withdrawal_notices().await;
         let detail = notices[0].1.as_deref().expect("the notice's detail");
         assert!(detail.contains("fresh enrolment"), "{detail}");
 
@@ -1965,7 +1995,7 @@ fn a_member_disowns_an_agent_logged_withdrawal_and_restores_consent_only() {
             "the print stays deleted"
         );
         assert!(
-            served.subject_withdrawal_taps(member).is_empty(),
+            served.member_withdrawal_taps().await.is_empty(),
             "a tapped notice offers it no more"
         );
 
@@ -2017,7 +2047,7 @@ fn a_withdrawal_dated_past_the_vault_clock_is_refused() {
             "a refused withdrawal deletes nothing"
         );
         assert!(
-            served.subject_withdrawal_notices(member).is_empty()
+            served.stored_subject_withdrawal_notices(member).is_empty()
                 && served.withdrawal_notices().is_empty(),
             "a refusal tells no one"
         );
@@ -2050,7 +2080,7 @@ fn a_withdrawal_in_its_grants_second_still_offers_the_members_tap() {
             "the withdrawal beats the grant of its own second"
         );
 
-        let taps = served.subject_withdrawal_taps(member);
+        let taps = served.member_withdrawal_taps().await;
         assert_eq!(
             taps.len(),
             1,
@@ -2066,7 +2096,7 @@ fn a_withdrawal_in_its_grants_second_still_offers_the_members_tap() {
             .await;
         assert_eq!(restored["replayed"], false, "{restored}");
         assert!(
-            served.subject_withdrawal_taps(member).is_empty(),
+            served.member_withdrawal_taps().await.is_empty(),
             "a tapped notice offers it no more"
         );
         let event_id = tap["args"]["event_id"]
@@ -2105,6 +2135,12 @@ impl Served {
         claims.binding_key = key.verifying_key().to_bytes();
         claims.actor_class = Some("human".to_owned());
         claims.single_use = single_use;
+        if single_use {
+            // A one-shot slip lives at most five minutes (the one-shot door's
+            // ceiling); the host root's ten years would fail validation.
+            claims.expires_at = claims.issued_at + 300;
+            claims.ttl_secs = 300;
+        }
         claims.scope = Scope::top();
         claims.scope.verbs = ScopeAxis::Some(BTreeSet::from([
             "core:read".to_owned(),
@@ -2143,12 +2179,14 @@ fn a_single_use_slip_holder_gets_no_member_withdrawal_notice() {
                 .await;
         }
         assert_eq!(
-            served.subject_withdrawal_notices(ordinary).len(),
+            served.stored_subject_withdrawal_notices(ordinary).len(),
             1,
             "an ordinary human slip's holder is a member and is told"
         );
         assert!(
-            served.subject_withdrawal_notices(single_use).is_empty(),
+            served
+                .stored_subject_withdrawal_notices(single_use)
+                .is_empty(),
             "a single-use slip's holder is not"
         );
         assert_eq!(
