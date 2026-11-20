@@ -532,6 +532,15 @@ impl PollAdmission<'_> {
     /// ([`crate::claim::claim_surfaceable`]), so it does not block the
     /// omission, and the omission is admitted beside it without superseding
     /// it, so the owner's answer to it stays owed (review round 2 of #9677).
+    /// The other way round, a status whose body the screen flagged waits on
+    /// the owner too (the standing consent holds it), so it supersedes no
+    /// admitted status: that one stays live beside it until the owner's
+    /// approval closes it, as its review's conflict head or in the feed
+    /// review's approval (`consent::close_admitted_status_beside_in_txn`), and
+    /// a decline leaves it standing
+    /// (CAL-HELD-STATUS-SUPERSEDES-ADMITTED-STATUS). The writer that closes
+    /// the prior decides, so an owner's answer that lands while the new
+    /// status is screened counts ([`super::consent::status_supersedes`]).
     /// Returns the new claim's id, or `None` when nothing was written.
     fn admit_status_if_changed(
         &mut self,
@@ -575,7 +584,9 @@ impl PollAdmission<'_> {
             value,
         )?;
         if let Some(old_id) = prior_live {
-            self.vault.supersede_claim(&new_id, &old_id, self.now)?;
+            let closes = super::consent::status_supersedes;
+            self.vault
+                .supersede_claim_when(&new_id, &old_id, self.now, closes)?;
         }
         Ok(Some(new_id))
     }
