@@ -32,6 +32,17 @@
 //! PR's head 2dfe011cd05 with these tests and their door: the moved part's
 //! piece summaries ride the entry, and the floor budget reads
 //! `turn_past_input_room`. The standing-part guard holds on both.
+//!
+//! #10050 review, round 2. The rows the piece summaries were read from are
+//! the entry request's sources before it is sent, so the send's freshness
+//! guard reads them and every entry try's filed step derives from them; a
+//! moved part's row never joins them. And each piece is sized on the
+//! writer's room beside its own summary's ceiling, the entry on the room
+//! beside the turn's reply: a writer whose replies share its context holds
+//! a piece it could not hold beside the entry's reply. Red at 1075e10c273
+//! with these tests alone: the entry names neither row among its sources,
+//! and the shared-context writer's turn reads `turn_past_input_room`. The
+//! moved-part guard holds on both.
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron --all-features --test compaction_turn_past_input_room`.
 
@@ -72,6 +83,13 @@ const SUMMARY_WORDS: &str =
     "The person listed the shed beds by number and the day of the week each one needs water";
 /// How a piece's marker line ends.
 const PIECE_MARKER_END: &str = "; summarise only these bytes]";
+/// A writer whose replies share its context: its input room beside a reply
+/// of `b` tokens is this less `b`.
+const SHARED_CONTEXT: u64 = 2_200;
+/// A profile window whose summary budget, a quarter of it, leaves that
+/// writer 200 tokens of input beside the turn's own reply: no piece of the
+/// long turn fits beside it, and two fit beside a piece summary's ceiling.
+const WIDE_WINDOW_TOKENS: u64 = 8_000;
 
 /// A turn of a few thousand tokens that ends with [`PIN`].
 fn long_turn() -> String {
@@ -86,13 +104,14 @@ fn window_text(words: &str) -> String {
     format!("user: {words}")
 }
 
-/// A network-free writer with a set input room: it answers each request
-/// with a one-line summary naming its call and every pin of the request,
-/// refuses the call numbered `refuse_call`, and records every request. It
-/// answers each piece call with `piece_receipt` as its record, when set,
-/// and every other call with none.
+/// A network-free writer with a set input room, or with `context` its
+/// replies share: it answers each request with a one-line summary naming its
+/// call and every pin of the request, refuses the call numbered
+/// `refuse_call`, and records every request. It answers each piece call with
+/// `piece_receipt` as its record, when set, and every other call with none.
 struct ScriptedWriter {
     room: Option<u64>,
+    context: Option<u64>,
     refuse_call: Option<usize>,
     piece_receipt: Option<CompactionExecution>,
     requests: Mutex<Vec<CompactionRequest>>,
@@ -107,8 +126,10 @@ impl CompactionBackend for ScriptedWriter {
         CompactionTierClass::Cheap
     }
 
-    fn input_token_limit(&self, _summary_token_budget: u64) -> Option<u64> {
-        self.room
+    fn input_token_limit(&self, summary_token_budget: u64) -> Option<u64> {
+        self.context
+            .map(|context| context.saturating_sub(summary_token_budget))
+            .or(self.room)
     }
 
     fn compact_as_writer(
@@ -178,20 +199,41 @@ fn fixture_with_receipt(
     refuse_call: Option<usize>,
     piece_receipt: Option<CompactionExecution>,
 ) -> Fixture {
-    let dir = tempfile::tempdir().expect("FIXTURE: a temporary vault directory");
-    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("FIXTURE: a fresh vault");
-    let writer = Arc::new(ScriptedWriter {
+    let writer = ScriptedWriter {
         room,
+        context: None,
         refuse_call,
         piece_receipt,
         requests: Mutex::new(Vec::new()),
-    });
+    };
+    fixture_of(writer, WINDOW_TOKENS)
+}
+
+/// A fixture whose writer's replies share `context`, under a profile
+/// window of `window_tokens`.
+fn fixture_on_context(context: u64, window_tokens: u64) -> Fixture {
+    let writer = ScriptedWriter {
+        room: None,
+        context: Some(context),
+        refuse_call: None,
+        piece_receipt: None,
+        requests: Mutex::new(Vec::new()),
+    };
+    fixture_of(writer, window_tokens)
+}
+
+/// A fresh vault, `writer` registered, and a profile of `window_tokens` on
+/// it that pins [`PIN`].
+fn fixture_of(writer: ScriptedWriter, window_tokens: u64) -> Fixture {
+    let dir = tempfile::tempdir().expect("FIXTURE: a temporary vault directory");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("FIXTURE: a fresh vault");
+    let writer = Arc::new(writer);
     let mut registry = CompactionBackendRegistry::new();
     registry
         .register(writer.clone())
         .expect("FIXTURE: the writer registers");
     let profile = MemoryProfile::new(
-        WINDOW_TOKENS,
+        window_tokens,
         ModelTierRef(WRITER_KEY.into()),
         CompactionOwnership::Engine,
     )
@@ -573,5 +615,111 @@ fn a_piece_budget_equal_to_the_gate_floor_is_still_read_in_pieces() {
     assert_eq!(
         first.summary_token_budget, budget,
         "each piece summary is held to the floor"
+    );
+}
+
+#[test]
+fn the_entry_request_names_every_row_its_piece_summaries_were_read_from() {
+    // #10050 review, round 2: the rows ride the request the writer is sent,
+    // so its freshness guard reads them before the send and every entry
+    // try's filed step derives from them.
+    let worn = EntityId::now();
+    let prefix = EntityId::now();
+    let mut receipt = writer_receipt_wearing(worn, None);
+    receipt.prefix_sources.push(prefix);
+    let fixture = fixture_with_receipt(Some(INPUT_ROOM), None, Some(receipt));
+    let long = long_turn();
+    let (outcome, requests) = breakpoint(&fixture, &[&long, SHORT_TURN]);
+    assert_eq!(outcome, accepted(), "the over-room turn compacts");
+    let (entry, pieces) = requests
+        .split_last()
+        .expect("the writer was sent the turn's pieces and its entry");
+    assert!(
+        entry.window[0]
+            .content
+            .contains(&format!("{SUMMARY_WORDS}, call 0.")),
+        "the piece summaries ride the entry: {}",
+        entry.window[0].content
+    );
+    for row in [worn, prefix] {
+        assert!(
+            entry.sources.contains(&row),
+            "the entry, as the writer is sent it, names {row:?} among its sources: {:?}",
+            entry.sources
+        );
+        assert!(
+            pieces.iter().all(|piece| !piece.sources.contains(&row)),
+            "no piece request names {row:?}: each piece was read from the turn alone"
+        );
+    }
+}
+
+#[test]
+fn a_moved_parts_row_never_joins_the_entrys_sources() {
+    // A row the vault never stored reads at no revision: the head is sent,
+    // and nothing the pieces read rides it.
+    let worn = EntityId::now();
+    let fixture = fixture_with_receipt(
+        Some(INPUT_ROOM),
+        None,
+        Some(writer_receipt_wearing(worn, Some([7; 16]))),
+    );
+    let long = long_turn();
+    let (_, requests) = breakpoint(&fixture, &[&long, SHORT_TURN]);
+    let entry = requests
+        .last()
+        .expect("the writer was sent the turn's pieces and its entry");
+    assert!(
+        !entry.sources.contains(&worn),
+        "the head names no row a piece wore: {:?}",
+        entry.sources
+    );
+}
+
+#[test]
+fn a_piece_is_sized_on_the_writers_room_beside_its_own_summary() {
+    // #10050 review, round 2: a writer whose replies share its context holds
+    // more input beside a piece summary's ceiling than beside the entry's.
+    let fixture = fixture_on_context(SHARED_CONTEXT, WIDE_WINDOW_TOKENS);
+    let long = long_turn();
+    let (outcome, requests) = breakpoint(&fixture, &[&long, SHORT_TURN]);
+    assert_eq!(
+        outcome,
+        accepted(),
+        "the turn is read in pieces the writer's room beside their own ceiling holds"
+    );
+    let (entry, pieces) = requests
+        .split_last()
+        .expect("the writer was sent the turn's pieces and its entry");
+    assert!(
+        pieces
+            .first()
+            .is_some_and(|piece| piece.window[0].content.starts_with("[bytes 0..")),
+        "the first request is the turn's first piece"
+    );
+    let entry_room = SHARED_CONTEXT - entry.summary_token_budget;
+    for (call, piece) in pieces.iter().enumerate() {
+        let tokens = input_tokens(piece);
+        assert!(
+            tokens <= SHARED_CONTEXT - piece.summary_token_budget,
+            "piece {call}, {tokens} tokens, fits the room beside its own {}-token reply",
+            piece.summary_token_budget
+        );
+        assert!(
+            tokens > entry_room,
+            "piece {call}, {tokens} tokens, would not fit the {entry_room}-token room beside the \
+             entry's reply"
+        );
+        assert!(
+            entry.window[0]
+                .content
+                .contains(&format!("{SUMMARY_WORDS}, call {call}.")),
+            "piece {call}'s summary rides the entry: {}",
+            entry.window[0].content
+        );
+    }
+    assert!(
+        input_tokens(entry) <= entry_room,
+        "the entry fits the room beside its own reply"
     );
 }
