@@ -70,7 +70,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-speech](codemap/oneiron-speech.md) | Speech wire adapters for Oneiron's voice cascade seams, one module per wire protocol (ARCH-0036 `#adapters`… | 13 | 3 | 1 |
 | [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 653 | 29 | 1 |
-| [oneiron-testkit](codemap/oneiron-testkit.md) | `oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09… | 28 | 12 | 3 |
+| [oneiron-testkit](codemap/oneiron-testkit.md) | `oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09… | 31 | 12 | 3 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 40 | 1 | 2 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 63 | 6 | 1 |
 | [oneiron-verb-wire](codemap/oneiron-verb-wire.md) | The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response… | 978 | 6 | 0 |
@@ -1425,7 +1425,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `canary` | file | 1 | L | The canary leak detector, step 1 (Fable's review of verdict 52, 2026-11-10, section 4 idea 1) |
+| `canary` | file+dir | 4 | L | The canary leak detector, step 1 (Fable's review of verdict 52, 2026-11-10, section 4 idea 1) |
 | `clock` | file | 1 | s | The fake clock: time that moves only when the test moves it |
 | `door` | file | 1 | s | The in-process verb door: a public verb, by name, with JSON in and JSON out, through… |
 | `dreamer` | file | 1 | L | One in-process Dreamer wake pass on the kit's fake clock, its model calls answered by a [`ScriptedBackend`]… |

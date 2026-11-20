@@ -178710,7 +178710,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/restriction_wave11_cap_note.rs",
@@ -191753,6 +191753,36 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/canary/export_archive.rs",
+     "purpose": "The whole-vault export as a scan surface ([CANARY-SCAN-COVERAGE] step 4)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/canary/named_refs.rs",
+     "purpose": "The refs a scan's answers name, and the reads that follow them ([CANARY-SCAN-COVERAGE] step 2): a list…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/canary/point_doors.rs",
+     "purpose": "The scan's point and ledger doors ([CANARY-SCAN-COVERAGE] step 1 and 3): the keyed value at the canary…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "FakeClock"
      ],
@@ -192124,7 +192154,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/canary.rs",
@@ -192214,10 +192244,10 @@
    ],
    "modules": {
     "canary": {
-     "files": 1,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "L",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The canary leak detector, step 1 (Fable's review of verdict 52, 2026-11-10, section 4 idea 1)"
     },
     "clock": {
@@ -192321,7 +192351,7 @@
    },
    "over_bar": 3,
    "purpose": "`oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09…",
-   "source_files": 28,
+   "source_files": 31,
    "test_files": 12
   },
   "oneiron-uniffi": {

@@ -2438,7 +2438,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/residence_media_vectors_server_test.rs` | test | s | — | — | RESIDENCE-MEDIA-VECTORS-SERVER-TEST: `residence.media_vectors` serves a proven own machine the text replica… |
 | `tests/resident_pump_claim_latency.rs` | test | s | — | — | FIX AGENT-RUN-START-LATENCY-4S, fix 1: the agent run pump claims a run dispatched to it while idle on that… |
 | `tests/restriction_wave11_ai_gates.rs` | test | L | — | — | Restriction wave 11, PR 1: the owner's Setting keys that let an agent plan waves (`ai.waves.agent_may_plan`)… |
-| `tests/restriction_wave11_cap_note.rs` | test | s | — | — | Restriction wave 11, PR 1: the confirm sheet's line for letting an agent pay (RESTRICTION-WAVE-11-CAP-NOTE… |
+| `tests/restriction_wave11_cap_note.rs` | test | m | — | — | Restriction wave 11, PR 1: the confirm sheet's line for letting an agent pay (RESTRICTION-WAVE-11-CAP-NOTE… |
 | `tests/restriction_wave11_owner_delegates.rs` | test | XL | — | — | Restriction wave 11 owner delegates: an agent the owner lets through an owner Setting key takes the owner… |
 | `tests/restriction_wave11_repo_registrant.rs` | test | m | — | — | WAVE11-REPO-REGISTRANT-UNRECORDED (restriction wave 11 C55): a local repository registration an agent makes… |
 | `tests/restriction_wave7_served.rs` | test | L | — | — | Restriction wave 7 over the real facade routes (C24, C28, C41): an agent whose own live owner grant names… |
