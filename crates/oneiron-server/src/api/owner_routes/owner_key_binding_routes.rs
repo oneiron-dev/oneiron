@@ -139,7 +139,7 @@ fn parse_entry(value: &str) -> OwnerResult<Vec<u8>> {
 /// lower-case hex.
 fn parse_signature(value: &str) -> OwnerResult<Vec<u8>> {
     oneiron_hex::decode::<64>(value)
-        .map(|signature| signature.to_vec())
+        .map(Vec::from)
         .ok_or_else(|| {
             OwnerError::Invalid(
                 "signature must be 128 lower-case hex: the key's signature over the binding's \
