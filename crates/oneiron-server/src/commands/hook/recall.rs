@@ -208,6 +208,24 @@ pub(super) fn admits(
     answered
 }
 
+/// A JSON-RPC error answer to one bridge request: the server's refusal, or
+/// the bridge's own when the request got no MCP answer from the server.
+#[derive(Debug)]
+pub(super) struct RpcRefusal {
+    method: String,
+    /// The error's `data.kind`, when it names one.
+    pub(super) kind: Option<String>,
+    said: String,
+}
+
+impl std::fmt::Display for RpcRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} failed: {}", self.method, self.said)
+    }
+}
+
+impl std::error::Error for RpcRefusal {}
+
 /// One `oneiron mcp` process in a process group of its own, so giving up
 /// also ends the `curl` it started. `oneiron continue --cloud` calls its
 /// verbs through one too.
@@ -310,7 +328,9 @@ impl Bridge {
     }
 
     /// The answer to one request; a JSON-RPC error names the server's
-    /// reason, which never quotes a credential.
+    /// reason, which never quotes a credential, as an [`RpcRefusal`]. No
+    /// answer before the deadline, or a bridge that ended first, is the
+    /// channel's [`mpsc::RecvTimeoutError`].
     pub(super) fn call(&mut self, id: u64, method: &str, params: Value) -> anyhow::Result<Value> {
         self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))?;
         loop {
@@ -326,7 +346,15 @@ impl Bridge {
                         .or_else(|| error.get("message"))
                         .and_then(Value::as_str)
                         .unwrap_or("no reason given");
-                    anyhow::bail!("{method} failed: {said}");
+                    return Err(RpcRefusal {
+                        method: method.to_owned(),
+                        kind: error
+                            .pointer("/data/kind")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        said: said.to_owned(),
+                    }
+                    .into());
                 }
                 return Ok(answer
                     .get("result")

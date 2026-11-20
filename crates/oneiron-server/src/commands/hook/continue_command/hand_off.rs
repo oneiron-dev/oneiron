@@ -4,9 +4,11 @@
 
 use std::ffi::{OsStr, OsString};
 use std::io::{IsTerminal as _, Read as _, Write as _};
+use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::mpsc::{self, Receiver};
+use std::time::{Duration, Instant};
 
 use oneiron_vault_contract::BINDING_HEADER;
 
@@ -34,11 +36,21 @@ pub(crate) struct HandOff {
 /// L10-17-FILES = A), with HEAD as the parent. Ignored files stay on the
 /// machine. It is built in a copy of the repo's index, so the user's HEAD,
 /// index and files stay as they were; only git's object store gains the
-/// commit's objects, which the push sends.
-pub(crate) fn hand_off_commit(dir: &Path, message: &str) -> anyhow::Result<HandOff> {
-    let top = repo_top(dir)?;
+/// commit's objects, which the push sends. Every git it runs ends by
+/// `deadline` ([`git`]).
+pub(crate) fn hand_off_commit(
+    dir: &Path,
+    message: &str,
+    deadline: Instant,
+) -> anyhow::Result<HandOff> {
+    let top = repo_top(dir, deadline)?;
     // The repo's own index, wherever a worktree keeps it; relative to `top`.
-    let index = top.join(git(&top, ["rev-parse", "--git-path", "index"], &[])?);
+    let index = top.join(git(
+        &top,
+        ["rev-parse", "--git-path", "index"],
+        &[],
+        deadline,
+    )?);
     let scratch = tempfile::Builder::new()
         .prefix("oneiron-continue-")
         .tempdir()?;
@@ -47,9 +59,9 @@ pub(crate) fn hand_off_commit(dir: &Path, message: &str) -> anyhow::Result<HandO
         std::fs::copy(&index, &own_index)?;
     }
     let in_own_index = [(OsString::from("GIT_INDEX_FILE"), own_index.into_os_string())];
-    git(&top, ["add", "-A"], &in_own_index)?;
-    let tree = git(&top, ["write-tree"], &in_own_index)?;
-    let parent = head(&top)?;
+    git(&top, ["add", "-A"], &in_own_index, deadline)?;
+    let tree = git(&top, ["write-tree"], &in_own_index, deadline)?;
+    let parent = head(&top, deadline)?;
     let mut args = vec![
         OsString::from("commit-tree"),
         tree.into(),
@@ -59,7 +71,7 @@ pub(crate) fn hand_off_commit(dir: &Path, message: &str) -> anyhow::Result<HandO
     if let Some(parent) = &parent {
         args.extend(["-p".into(), parent.into()]);
     }
-    let commit = git(&top, args, &identity(&top))?;
+    let commit = git(&top, args, &identity(&top, deadline), deadline)?;
     Ok(HandOff {
         top,
         commit,
@@ -68,11 +80,12 @@ pub(crate) fn hand_off_commit(dir: &Path, message: &str) -> anyhow::Result<HandO
 }
 
 /// The top directory of the repo that holds `dir`, as git names it.
-pub(super) fn repo_top(dir: &Path) -> anyhow::Result<PathBuf> {
+pub(super) fn repo_top(dir: &Path, deadline: Instant) -> anyhow::Result<PathBuf> {
     Ok(PathBuf::from(git(
         dir,
         ["rev-parse", "--show-toplevel"],
         &[],
+        deadline,
     )?))
 }
 
@@ -99,12 +112,13 @@ pub(crate) struct CustodyRepo<'a> {
 /// repo's pre-push hook does not run: it guards pushes to the user's own
 /// remotes, and a hand-off ref is none of them. The requests go straight to
 /// the vault, never through a proxy the environment names: they carry the
-/// slip, a fresh proof and the workspace.
+/// slip, a fresh proof and the workspace. Each request ends by `deadline`.
 pub(crate) fn push(
     top: &Path,
     custody: &CustodyRepo<'_>,
     commit: &str,
     git_ref: &str,
+    deadline: Instant,
 ) -> anyhow::Result<()> {
     let base = format!(
         "{}/git/{}.git",
@@ -115,7 +129,7 @@ pub(crate) fn push(
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(30))
-        .timeout(PUSH_TIMEOUT)
+        .timeout(deadline.saturating_duration_since(Instant::now()))
         .build()?;
     let proven = |request: reqwest::blocking::RequestBuilder| -> anyhow::Result<_> {
         Ok(request
@@ -197,8 +211,6 @@ const AGENT: &str = "oneiron-continue/1";
 const FLUSH: &[u8] = b"0000";
 /// The most of an advertisement or a report read.
 const MAX_ANSWER_BYTES: u64 = 8 << 20;
-/// How long one request of the push may take, the pack's upload included.
-const PUSH_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 /// The refs a receive-pack advertisement names, `(oid, name)`.
 struct Advertisement {
@@ -341,25 +353,25 @@ fn held<'a>(top: &Path, oids: impl Iterator<Item = &'a str>) -> anyhow::Result<V
 }
 
 /// HEAD's commit, `None` on a branch with no commit yet.
-fn head(top: &Path) -> anyhow::Result<Option<String>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(top)
-        .args(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])
-        .stdin(Stdio::null())
-        .output()?;
-    Ok(output
+fn head(top: &Path, deadline: Instant) -> anyhow::Result<Option<String>> {
+    let ran = run_git(
+        top,
+        ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+        &[],
+        deadline,
+    )?;
+    Ok(ran
         .status
         .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned()))
+        .then(|| String::from_utf8_lossy(&ran.stdout).trim().to_owned()))
 }
 
 /// The author and committer git would write, or [`FALLBACK_NAME`] for both
 /// when the repo's config and environment name none.
-fn identity(top: &Path) -> Vec<(OsString, OsString)> {
+fn identity(top: &Path, deadline: Instant) -> Vec<(OsString, OsString)> {
     let named = ["GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"]
         .into_iter()
-        .all(|ident| git(top, ["var", ident], &[]).is_ok());
+        .all(|ident| git(top, ["var", ident], &[], deadline).is_ok());
     if named {
         return Vec::new();
     }
@@ -375,23 +387,112 @@ fn identity(top: &Path) -> Vec<(OsString, OsString)> {
 }
 
 /// `git -C dir <args>` with `env` added, its trimmed stdout; a failure
-/// names git's own words.
-fn git<I, S>(dir: &Path, args: I, env: &[(OsString, OsString)]) -> anyhow::Result<String>
+/// names git's own words. It ends by `deadline` ([`run_git`]).
+fn git<I, S>(
+    dir: &Path,
+    args: I,
+    env: &[(OsString, OsString)],
+    deadline: Instant,
+) -> anyhow::Result<String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let output = Command::new("git")
+    let ran = run_git(dir, args, env, deadline)?;
+    anyhow::ensure!(
+        ran.status.success(),
+        "git: {}",
+        String::from_utf8_lossy(&ran.stderr).trim()
+    );
+    Ok(String::from_utf8_lossy(&ran.stdout).trim().to_owned())
+}
+
+/// How one git run ended, with what it wrote.
+struct GitRun {
+    status: ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+/// `git -C dir <args>` with `env` added, in a process group of its own, run
+/// until `deadline`. A filter or hook git starts can wait forever (a clean
+/// filter reading a FIFO no one writes, say), so a git still running then,
+/// or a process it started that still holds its output, is killed with its
+/// whole group, and the error names the git step.
+fn run_git<I, S>(
+    dir: &Path,
+    args: I,
+    env: &[(OsString, OsString)],
+    deadline: Instant,
+) -> anyhow::Result<GitRun>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let args: Vec<OsString> = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_owned())
+        .collect();
+    let mut child = Command::new("git")
         .arg("-C")
         .arg(dir)
-        .args(args)
+        .args(&args)
         .envs(env.iter().map(|(name, value)| (name, value)))
         .stdin(Stdio::null())
-        .output()?;
-    anyhow::ensure!(
-        output.status.success(),
-        "git: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()?;
+    let stdout = drained(child.stdout.take());
+    let stderr = drained(child.stderr.take());
+    let left = || deadline.saturating_duration_since(Instant::now());
+    let ran = super::super::wait_until(&mut child, deadline).and_then(|status| {
+        Some(GitRun {
+            status,
+            stdout: stdout.recv_timeout(left()).ok()?,
+            stderr: stderr.recv_timeout(left()).ok()?,
+        })
+    });
+    if let Some(ran) = ran {
+        return Ok(ran);
+    }
+    stop_group(&mut child);
+    let step = args
+        .first()
+        .map(|step| step.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    anyhow::bail!(
+        "git {step} did not finish before the hand-off's deadline, so it was stopped: a filter \
+         or hook it runs may be waiting on something that never comes"
+    )
+}
+
+/// What `pipe` writes until it closes, read on a thread of its own so that
+/// neither of git's pipes can fill and stall it.
+fn drained(pipe: Option<impl std::io::Read + Send + 'static>) -> Receiver<Vec<u8>> {
+    let (send, read) = mpsc::channel();
+    match pipe {
+        Some(mut pipe) => {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                let _ = pipe.read_to_end(&mut bytes);
+                let _ = send.send(bytes);
+            });
+        }
+        None => {
+            let _ = send.send(Vec::new());
+        }
+    }
+    read
+}
+
+/// Kills `child`'s process group, which it leads, and reaps it.
+fn stop_group(child: &mut Child) {
+    if let Some(group) = i32::try_from(child.id())
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    {
+        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+    }
+    let _ = child.wait();
 }

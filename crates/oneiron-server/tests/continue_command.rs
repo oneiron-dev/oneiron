@@ -9,6 +9,16 @@
 //! - A selection that is not a paired slip stops after the check and names
 //!   what is missing.
 //!
+//! Review round 2 of #9771:
+//! - A log whose last record was cut mid-write stops before the import.
+//! - A start whose answer never came back says UNCONFIRMED, never "did NOT
+//!   move" or "safe to close", and names the hand-off and the call.
+//! - A git clean filter that never ends is stopped at the deadline, naming
+//!   the git step.
+//! - Discovery skips a newer log of a repo nested in this one whose path
+//!   folds to the same project folder name.
+//! - A FIFO named as the log is refused at once.
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --test continue_command`.
 
@@ -16,10 +26,24 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, Instant, SystemTime};
 
-use oneiron_server::test_doors::continue_command::{hand_off_commit, run_scripted};
+use oneiron_server::test_doors::continue_command::{
+    Script, discovered_session, hand_off_commit, run_scripted,
+};
 
 const SESSION: &str = "0b5e2c1d-7a44-4c39-9f0e-5d2a6b8c9e10";
+/// Another session's id.
+const OTHER_SESSION: &str = "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b";
+/// The deadline every hand-off commit but the stalled one gets.
+const WITHIN: Duration = Duration::from_secs(600);
+
+/// A paired-slip selection whose push and start go through.
+const SLIP: Script = Script {
+    can_push: true,
+    push_fails: false,
+    start_unanswered: false,
+};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -88,7 +112,7 @@ fn the_hand_off_commit_carries_the_working_tree_and_leaves_it_untouched() {
     let status = git(dir, &["status", "--porcelain=v2"]);
     let index = std::fs::read(dir.join(".git").join("index")).expect("read index");
 
-    let (commit, parent) = hand_off_commit(dir).expect("the hand-off commit");
+    let (commit, parent) = hand_off_commit(dir, WITHIN).expect("the hand-off commit");
     // Read before any later git command, which may refresh the index itself.
     let index_after = std::fs::read(dir.join(".git").join("index")).expect("read index");
 
@@ -121,7 +145,14 @@ fn the_hand_off_commit_carries_the_working_tree_and_leaves_it_untouched() {
 fn a_failed_push_never_says_safe_to_close() {
     let repo = repo_with_work();
     let logs = tempfile::tempdir().expect("temp logs");
-    let ran = run_scripted(repo.path(), &session_log(logs.path()), true, true);
+    let ran = run_scripted(
+        repo.path(),
+        &session_log(logs.path()),
+        Script {
+            push_fails: true,
+            ..SLIP
+        },
+    );
 
     assert!(ran.error.is_some(), "the command fails: {}", ran.output);
     assert!(
@@ -149,7 +180,7 @@ fn a_failed_push_never_says_safe_to_close() {
 fn a_bound_start_says_safe_to_close() {
     let repo = repo_with_work();
     let logs = tempfile::tempdir().expect("temp logs");
-    let ran = run_scripted(repo.path(), &session_log(logs.path()), true, false);
+    let ran = run_scripted(repo.path(), &session_log(logs.path()), SLIP);
 
     assert_eq!(ran.error, None, "the command succeeds: {}", ran.output);
     assert!(
@@ -177,7 +208,14 @@ fn a_bound_start_says_safe_to_close() {
 fn a_selection_without_a_slip_stops_after_the_check() {
     let repo = repo_with_work();
     let logs = tempfile::tempdir().expect("temp logs");
-    let ran = run_scripted(repo.path(), &session_log(logs.path()), false, false);
+    let ran = run_scripted(
+        repo.path(),
+        &session_log(logs.path()),
+        Script {
+            can_push: false,
+            ..SLIP
+        },
+    );
 
     let error = ran.error.expect("the command stops");
     assert!(
@@ -190,4 +228,198 @@ fn a_selection_without_a_slip_stops_after_the_check() {
         "nothing is imported or pushed"
     );
     assert!(!ran.output.to_lowercase().contains("safe to close"));
+}
+
+#[test]
+fn a_torn_last_record_stops_before_the_import() {
+    let repo = repo_with_work();
+    let logs = tempfile::tempdir().expect("temp logs");
+    let log = session_log(logs.path());
+    let mut text = std::fs::read_to_string(&log).expect("read session log");
+    // A second record, cut mid-write.
+    text.push_str(&format!(
+        "{{\"type\":\"user\",\"sessionId\":\"{SESSION}\",\"mess"
+    ));
+    std::fs::write(&log, text).expect("write torn session log");
+
+    let ran = run_scripted(repo.path(), &log, SLIP);
+
+    let error = ran.error.expect("the command stops");
+    assert!(
+        error.contains("line 2 of") && error.contains("not a whole JSON record"),
+        "it names the torn line: {error}"
+    );
+    assert_eq!(
+        ran.calls,
+        ["vault.runners.continue.check"],
+        "nothing is imported, pushed or started"
+    );
+    assert!(
+        ran.output.contains("The work did NOT move"),
+        "it says the work did not move: {}",
+        ran.output
+    );
+    assert!(!ran.output.to_lowercase().contains("safe to close"));
+}
+
+#[test]
+fn a_lost_start_answer_says_unconfirmed() {
+    let repo = repo_with_work();
+    let logs = tempfile::tempdir().expect("temp logs");
+    let ran = run_scripted(
+        repo.path(),
+        &session_log(logs.path()),
+        Script {
+            start_unanswered: true,
+            ..SLIP
+        },
+    );
+
+    assert!(ran.error.is_some(), "the command fails: {}", ran.output);
+    assert!(
+        ran.output.contains("The start is UNCONFIRMED"),
+        "it says the start is unconfirmed: {}",
+        ran.output
+    );
+    assert!(
+        !ran.output.contains("The work did NOT move"),
+        "it never says the work did not move: {}",
+        ran.output
+    );
+    assert!(
+        !ran.output.to_lowercase().contains("safe to close"),
+        "it never says safe to close: {}",
+        ran.output
+    );
+    for named in [
+        "1".repeat(32),
+        "refs/heads/oneiron/continue/".to_owned(),
+        "https://vault.example".to_owned(),
+    ] {
+        assert!(
+            ran.output.contains(&named),
+            "it names {named} for the status check: {}",
+            ran.output
+        );
+    }
+    assert_eq!(
+        ran.calls,
+        [
+            "vault.runners.continue.check",
+            "vault.imports.hook_transcript",
+            "git-receive-pack",
+            "vault.runners.continue"
+        ]
+    );
+}
+
+#[test]
+fn a_stalled_clean_filter_is_stopped_at_the_deadline() {
+    let repo = repo_with_work();
+    let dir = repo.path();
+    // The changed tracked.txt goes through a clean filter that never answers
+    // in time.
+    std::fs::write(dir.join(".gitattributes"), "tracked.txt filter=stall\n")
+        .expect("write .gitattributes");
+    git(dir, &["config", "filter.stall.clean", "sleep 120"]);
+
+    let started = Instant::now();
+    let error =
+        hand_off_commit(dir, Duration::from_secs(3)).expect_err("the hand-off commit stops");
+
+    assert!(
+        started.elapsed() < Duration::from_secs(60),
+        "it stops at the deadline, not when the filter ends: {:?}",
+        started.elapsed()
+    );
+    assert!(
+        error.contains("git add did not finish before the hand-off's deadline"),
+        "it names the git step: {error}"
+    );
+}
+
+/// `dir` as Claude Code names its project folder: each character that is not
+/// an ASCII letter or digit as `-`.
+fn project_folder(dir: &Path) -> String {
+    dir.to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
+/// A session log named `session` in `folder` whose records say it ran in
+/// `cwd`, last written at `modified`.
+fn log_in(folder: &Path, session: &str, cwd: &Path, modified: SystemTime) -> PathBuf {
+    let log = folder.join(format!("{session}.jsonl"));
+    let record = serde_json::json!({
+        "type": "user",
+        "sessionId": session,
+        "cwd": cwd,
+        "message": {"role": "user", "content": "go on"},
+    });
+    std::fs::write(&log, format!("{record}\n")).expect("write session log");
+    std::fs::File::options()
+        .write(true)
+        .open(&log)
+        .and_then(|file| file.set_modified(modified))
+        .expect("set the log's time");
+    log
+}
+
+#[test]
+fn discovery_skips_a_nested_repos_log_that_folds_alike() {
+    let root = tempfile::tempdir().expect("temp root");
+    let main = root.path().join("main");
+    std::fs::create_dir_all(main.join("a-b").join("c")).expect("make a-b/c");
+    git(&main, &["init", "--initial-branch=main"]);
+    let nested = main.join("a").join("b-c");
+    std::fs::create_dir_all(&nested).expect("make a/b-c");
+    git(&nested, &["init", "--initial-branch=main"]);
+    let here = std::fs::canonicalize(main.join("a-b").join("c")).expect("resolve a-b/c");
+    let nested = std::fs::canonicalize(&nested).expect("resolve a/b-c");
+    assert_eq!(
+        project_folder(&here),
+        project_folder(&nested),
+        "both paths fold to one project folder name"
+    );
+
+    let projects = tempfile::tempdir().expect("temp projects");
+    let folder = projects.path().join(project_folder(&here));
+    std::fs::create_dir_all(&folder).expect("make project folder");
+    let now = SystemTime::now();
+    let ours = log_in(&folder, SESSION, &here, now - Duration::from_secs(60));
+    log_in(&folder, OTHER_SESSION, &nested, now);
+
+    assert_eq!(
+        discovered_session(projects.path(), &here),
+        Ok(ours),
+        "the newer log of the nested repo is not this repo's"
+    );
+}
+
+#[test]
+fn a_fifo_named_as_the_log_is_refused_at_once() {
+    let repo = repo_with_work();
+    let logs = tempfile::tempdir().expect("temp logs");
+    let fifo = logs.path().join(format!("{SESSION}.jsonl"));
+    let made = Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("run mkfifo");
+    assert!(made.success(), "mkfifo: {made}");
+
+    let started = Instant::now();
+    let ran = run_scripted(repo.path(), &fifo, SLIP);
+
+    assert!(
+        started.elapsed() < Duration::from_secs(30),
+        "it never waits on the FIFO: {:?}",
+        started.elapsed()
+    );
+    let error = ran.error.expect("the command stops");
+    assert!(
+        error.contains("is not a regular file"),
+        "it names the FIFO: {error}"
+    );
+    assert_eq!(ran.calls, ["vault.runners.continue.check"]);
 }

@@ -20,7 +20,13 @@
 //!    goes to `refs/heads/oneiron/continue/<conversation>` of the custody
 //!    repo.
 //! 5. **Start.** `vault.runners.continue`. "Safe to close this machine" is
-//!    printed only when it answers bound.
+//!    printed only when it answers bound. A start whose answer never came
+//!    back (the bridge read none in time, or none it could read) may have
+//!    bound the work, so it ends neither way: the command says the start is
+//!    UNCONFIRMED and names the hand-off and the call, so a later start of
+//!    the same hand-off answers where it stands ([`StartUnconfirmed`]).
+//!
+//! Every git the command runs, and the push, ends by the command's deadline.
 //!
 //! Each verb is one MCP tool call through `oneiron mcp`, as the hooks'
 //! recall makes it, so the bridge alone reads the credential the selection
@@ -48,10 +54,10 @@ use serde_json::{Map, Value, json};
 
 use self::hand_off::{CustodyRepo, HandOff};
 use super::hosted_selection::{self, HostedAuthMode, HostedDiscovery, HostedVault};
-use super::recall::Bridge;
+use super::recall::{Bridge, RpcRefusal};
 use crate::cli::ContinueArgs;
 use crate::commands::credential_file::PairedCredentialFile;
-use crate::commands::mcp_bridge::{INVOCATION_META, mint_invocation};
+use crate::commands::mcp_bridge::{INVOCATION_META, UNANSWERED_ERROR_KINDS, mint_invocation};
 
 /// How long the whole hand-off may take, the import of a long session and
 /// the push of a large tree included.
@@ -83,16 +89,18 @@ pub fn continue_work(args: ContinueArgs) -> anyhow::Result<()> {
             anyhow::bail!("the hosted vault selection cannot be read: {why}")
         }
     };
+    let deadline = Instant::now() + DEADLINE;
     let plan = Plan {
         dir: std::env::current_dir()?,
         repo: args.repo,
         runner: args.runner,
         note: args.note,
         transcript: args.transcript,
+        deadline,
     };
     let oneiron = super::oneiron(None);
     let mut out = std::io::stdout().lock();
-    let mut remote = match Hosted::open(&oneiron, &vault, Instant::now() + DEADLINE) {
+    let mut remote = match Hosted::open(&oneiron, &vault, deadline) {
         Ok(remote) => remote,
         Err(error) => {
             writeln!(out, "{NOT_MOVED}")?;
@@ -116,6 +124,8 @@ pub(crate) struct Plan {
     pub(crate) note: Option<String>,
     /// The session log to send; `None` finds the newest of this repo's.
     pub(crate) transcript: Option<PathBuf>,
+    /// When the hand-off must have ended: every git it runs is stopped then.
+    pub(crate) deadline: Instant,
 }
 
 /// The steps that leave this process: the hosted vault's three verbs and
@@ -140,15 +150,19 @@ pub(crate) trait ContinueRemote {
 }
 
 /// Runs the steps of `plan` against `remote`, saying each on `out`; on any
-/// failure the last line is [`NOT_MOVED`].
+/// failure the last line is [`NOT_MOVED`], save a start whose answer never
+/// came back, which ends with what [`StartUnconfirmed`] says.
 pub(crate) fn run(
     remote: &mut dyn ContinueRemote,
     plan: &Plan,
     out: &mut dyn Write,
 ) -> anyhow::Result<()> {
     let ran = steps(remote, plan, out);
-    if ran.is_err() {
-        writeln!(out, "{NOT_MOVED}")?;
+    if let Err(error) = &ran {
+        match error.downcast_ref::<StartUnconfirmed>() {
+            Some(start) => writeln!(out, "{}", start.next_steps())?,
+            None => writeln!(out, "{NOT_MOVED}")?,
+        }
     }
     ran
 }
@@ -175,7 +189,7 @@ fn steps(remote: &mut dyn ContinueRemote, plan: &Plan, out: &mut dyn Write) -> a
     }
     anyhow::ensure!(remote.can_push(), "{PUSH_NEEDS_SLIP}");
 
-    let session = transcript::read(plan.transcript.as_deref(), &plan.dir)?;
+    let session = transcript::read(plan.transcript.as_deref(), &plan.dir, plan.deadline)?;
     writeln!(
         out,
         "Sending session {} ({} subagent logs) from {}.",
@@ -206,7 +220,7 @@ fn steps(remote: &mut dyn ContinueRemote, plan: &Plan, out: &mut dyn Write) -> a
         "oneiron continue: hand-off of Claude Code session {}\n\nConversation {}.",
         session.request.session, imported.conversation
     );
-    let hand_off = hand_off::hand_off_commit(&plan.dir, &message)?;
+    let hand_off = hand_off::hand_off_commit(&plan.dir, &message, plan.deadline)?;
     writeln!(
         out,
         "Hand-off commit {} (parent {}); pushing it to {git_ref} of {}.",
@@ -217,14 +231,22 @@ fn steps(remote: &mut dyn ContinueRemote, plan: &Plan, out: &mut dyn Write) -> a
     remote.push(&hand_off, &plan.repo, &git_ref)?;
     writeln!(out, "Pushed.")?;
 
-    let started = remote.start(&ContinueOutsideWorkRequest {
+    let request = ContinueOutsideWorkRequest {
         repo: plan.repo.clone(),
         git_ref,
         commit: hand_off.commit.clone(),
         conversation: imported.conversation,
         runner: plan.runner.clone(),
         note: plan.note.clone(),
-    })?;
+    };
+    let answered = remote.start(&request);
+    let started = match answered {
+        Ok(started) => started,
+        Err(error) => match error.downcast::<CallUnconfirmed>() {
+            Ok(call) => return Err(StartUnconfirmed { call, request }.into()),
+            Err(error) => return Err(error),
+        },
+    };
     match started {
         ContinueOutsideWorkView::Bound {
             seat,
@@ -249,6 +271,95 @@ fn steps(remote: &mut dyn ContinueRemote, plan: &Plan, out: &mut dyn Write) -> a
             anyhow::bail!("{}", exhausted(back_at, &skipped))
         }
     }
+}
+
+/// A call the vault may have acted on whose answer this command never read:
+/// none came before the deadline, the bridge said it got none it could read
+/// ([`UNANSWERED_ERROR_KINDS`]), or the one that came holds no output this
+/// command reads.
+#[derive(Debug)]
+pub(crate) struct CallUnconfirmed {
+    /// The verb called.
+    pub(crate) verb: String,
+    /// The vault's origin, where the call went.
+    pub(crate) origin: String,
+    /// The call's invocation id ([`INVOCATION_META`]).
+    pub(crate) invocation: String,
+    /// What the bridge said.
+    pub(crate) why: String,
+}
+
+impl std::fmt::Display for CallUnconfirmed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} at {} (invocation {}) got no answer this command could read: {}",
+            self.verb, self.origin, self.invocation, self.why
+        )
+    }
+}
+
+impl std::error::Error for CallUnconfirmed {}
+
+/// The start of a pushed hand-off whose answer never came back: the vault
+/// may have bound the work, or not. The same start again binds nothing new
+/// and answers where the work stands (`continue_outside_work`: the same
+/// request twice binds the same work), so its coordinates are kept for that
+/// check. Running the whole command again would build a new hand-off commit,
+/// and so a second run of the session if this one is bound.
+#[derive(Debug)]
+pub(crate) struct StartUnconfirmed {
+    call: CallUnconfirmed,
+    request: ContinueOutsideWorkRequest,
+}
+
+impl StartUnconfirmed {
+    /// The lines the command ends with in place of [`NOT_MOVED`].
+    fn next_steps(&self) -> String {
+        let request = &self.request;
+        format!(
+            "The start is UNCONFIRMED: the vault may have bound the work, or not, and this \
+             machine cannot tell which. Do not close it, and do not run `oneiron continue \
+             --cloud` again yet: a new hand-off commit would start a second run if this one is \
+             bound.\n\
+             The hand-off: commit {} on {} of the custody repo {} at {}, conversation {}, runner \
+             {}; the start's invocation {}.\n\
+             To learn where it stands, call vault.runners.continue again with that repo, git_ref, \
+             commit, conversation and runner: a bound start answers its binding again, with no \
+             second write, and any other answer means it did not start.",
+            request.commit,
+            request.git_ref,
+            request.repo,
+            self.call.origin,
+            request.conversation,
+            request.runner,
+            self.call.invocation,
+        )
+    }
+}
+
+impl std::fmt::Display for StartUnconfirmed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the start is unconfirmed: {}", self.call)
+    }
+}
+
+impl std::error::Error for StartUnconfirmed {}
+
+/// Whether a bridge call's failure leaves the request's fate unknown: no
+/// answer came before the deadline or the bridge ended first, or the bridge
+/// said it got no answer it could read. A request the bridge never took
+/// (its stdin closed) and every refusal the vault answers are known.
+fn unanswered(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<std::sync::mpsc::RecvTimeoutError>()
+        .is_some()
+        || error.downcast_ref::<RpcRefusal>().is_some_and(|refusal| {
+            refusal
+                .kind
+                .as_deref()
+                .is_some_and(|kind| UNANSWERED_ERROR_KINDS.contains(&kind))
+        })
 }
 
 /// Why the session's log did not land whole: each conversation with a turn
@@ -311,6 +422,8 @@ struct Hosted<'a> {
     vault: &'a HostedVault,
     bridge: Bridge,
     calls: u64,
+    /// When the push must have ended, as the bridge's calls must.
+    deadline: Instant,
 }
 
 impl<'a> Hosted<'a> {
@@ -335,11 +448,13 @@ impl<'a> Hosted<'a> {
             vault,
             bridge,
             calls: 1,
+            deadline,
         })
     }
 
     /// One tool call of `verb` with `spec`, its output. A refusal names the
-    /// verb and the vault's reason.
+    /// verb and the vault's reason; a call whose answer never came back, or
+    /// came back unreadable, is a [`CallUnconfirmed`].
     fn call<O: DeserializeOwned>(
         &mut self,
         verb: &str,
@@ -349,24 +464,39 @@ impl<'a> Hosted<'a> {
         self.calls += 1;
         // One logical call under one invocation id (ARCH-0080 §3): made once,
         // never retried.
+        let invocation = mint_invocation();
         let mut meta = Map::new();
-        meta.insert(INVOCATION_META.to_owned(), Value::String(mint_invocation()));
-        let result = self
-            .bridge
-            .call(
-                self.calls,
-                "tools/call",
-                json!({
-                    "name": verb,
-                    "arguments": {
-                        "schema_version": TOOL_ARGS_VERSION,
-                        "consent": {"policy_ref": POLICY_REF, "purpose": purpose},
-                        "arguments": {"spec": spec},
-                    },
-                    "_meta": meta,
-                }),
-            )
-            .map_err(|error| error.context(verb.to_owned()))?;
+        meta.insert(
+            INVOCATION_META.to_owned(),
+            Value::String(invocation.clone()),
+        );
+        let vault = self.vault;
+        let unconfirmed = |why: String| CallUnconfirmed {
+            verb: verb.to_owned(),
+            origin: vault.origin.clone(),
+            invocation: invocation.clone(),
+            why,
+        };
+        let answered = self.bridge.call(
+            self.calls,
+            "tools/call",
+            json!({
+                "name": verb,
+                "arguments": {
+                    "schema_version": TOOL_ARGS_VERSION,
+                    "consent": {"policy_ref": POLICY_REF, "purpose": purpose},
+                    "arguments": {"spec": spec},
+                },
+                "_meta": meta,
+            }),
+        );
+        let result = match answered {
+            Ok(result) => result,
+            Err(error) if unanswered(&error) => {
+                return Err(unconfirmed(format!("{error:#}")).into());
+            }
+            Err(error) => return Err(error.context(verb.to_owned())),
+        };
         if result.get("isError") == Some(&Value::Bool(true)) {
             let said = result
                 .pointer("/content/0/text")
@@ -374,12 +504,14 @@ impl<'a> Hosted<'a> {
                 .unwrap_or("no reason given");
             anyhow::bail!("{verb} stopped: {said}");
         }
-        let output = result
-            .pointer("/structuredContent/output")
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("{verb} answered no output"))?;
+        let Some(output) = result.pointer("/structuredContent/output").cloned() else {
+            return Err(unconfirmed("it answered no output".to_owned()).into());
+        };
         serde_json::from_value(output).map_err(|error| {
-            anyhow::anyhow!("{verb} answered an output this command cannot read: {error}")
+            unconfirmed(format!(
+                "it answered an output this command cannot read: {error}"
+            ))
+            .into()
         })
     }
 }
@@ -423,6 +555,7 @@ impl ContinueRemote for Hosted<'_> {
             },
             &hand_off.commit,
             git_ref,
+            self.deadline,
         )
     }
 
@@ -439,12 +572,24 @@ impl ContinueRemote for Hosted<'_> {
 }
 
 /// Seams for `tests/continue_command.rs`, reached through
-/// `crate::test_doors::continue_command`: the hand-off commit, and the
-/// command's steps against a scripted vault, since its own vault is a hosted
-/// one reached through `oneiron mcp`.
+/// `crate::test_doors::continue_command`: the hand-off commit, the session
+/// log discovery, and the command's steps against a scripted vault, since
+/// its own vault is a hosted one reached through `oneiron mcp`.
 #[cfg(oneiron_test_support)]
 pub(crate) mod test_support {
     use super::*;
+
+    /// How the scripted vault and the push answer.
+    #[derive(Debug, Clone, Copy, Default)]
+    pub struct Script {
+        /// The selection is a paired slip.
+        pub can_push: bool,
+        /// The push fails.
+        pub push_fails: bool,
+        /// The start's answer never comes back, as when the connection is
+        /// lost after the vault bound the work.
+        pub start_unanswered: bool,
+    }
 
     /// What one scripted run of the command did.
     pub struct Scripted {
@@ -459,26 +604,30 @@ pub(crate) mod test_support {
         pub sent: Option<(String, Vec<String>)>,
     }
 
-    /// The hand-off commit of the repo that holds `dir`, and its parent.
-    pub fn hand_off_commit(dir: &Path) -> Result<(String, Option<String>), String> {
-        hand_off::hand_off_commit(dir, "a test hand-off")
+    /// The hand-off commit of the repo that holds `dir`, and its parent,
+    /// built with `within` left before the deadline.
+    pub fn hand_off_commit(
+        dir: &Path,
+        within: Duration,
+    ) -> Result<(String, Option<String>), String> {
+        hand_off::hand_off_commit(dir, "a test hand-off", Instant::now() + within)
             .map(|hand_off| (hand_off.commit, hand_off.parent))
+            .map_err(|error| format!("{error:#}"))
+    }
+
+    /// The session log the command finds for `dir` with no `--transcript`,
+    /// when Claude Code's project folders are under `projects`.
+    pub fn discovered_session(projects: &Path, dir: &Path) -> Result<PathBuf, String> {
+        transcript::newest_session(projects, dir, Instant::now() + DEADLINE)
             .map_err(|error| format!("{error:#}"))
     }
 
     /// Runs the command in `dir`, sending the session log `transcript`,
     /// against a vault whose check answers ready, whose import lands it, and
-    /// whose start binds it. The selection is a paired slip when `can_push`;
-    /// the push fails when `push_fails`.
-    pub fn run_scripted(
-        dir: &Path,
-        transcript: &Path,
-        can_push: bool,
-        push_fails: bool,
-    ) -> Scripted {
+    /// whose start binds it, save where `script` says otherwise.
+    pub fn run_scripted(dir: &Path, transcript: &Path, script: Script) -> Scripted {
         let mut remote = ScriptedRemote {
-            can_push,
-            push_fails,
+            script,
             calls: Vec::new(),
             sent: None,
         };
@@ -488,6 +637,7 @@ pub(crate) mod test_support {
             runner: "claude-code".to_owned(),
             note: None,
             transcript: Some(transcript.to_path_buf()),
+            deadline: Instant::now() + DEADLINE,
         };
         let mut out = Vec::new();
         let ran = run(&mut remote, &plan, &mut out);
@@ -500,8 +650,7 @@ pub(crate) mod test_support {
     }
 
     struct ScriptedRemote {
-        can_push: bool,
-        push_fails: bool,
+        script: Script,
         calls: Vec<&'static str>,
         sent: Option<(String, Vec<String>)>,
     }
@@ -519,7 +668,7 @@ pub(crate) mod test_support {
         }
 
         fn can_push(&self) -> bool {
-            self.can_push
+            self.script.can_push
         }
 
         fn import(
@@ -545,7 +694,7 @@ pub(crate) mod test_support {
         fn push(&mut self, _: &HandOff, _: &str, _: &str) -> anyhow::Result<()> {
             self.calls.push("git-receive-pack");
             anyhow::ensure!(
-                !self.push_fails,
+                !self.script.push_fails,
                 "the custody repo refused the push (503 Service Unavailable): down"
             );
             Ok(())
@@ -556,6 +705,15 @@ pub(crate) mod test_support {
             _: &ContinueOutsideWorkRequest,
         ) -> anyhow::Result<ContinueOutsideWorkView> {
             self.calls.push("vault.runners.continue");
+            if self.script.start_unanswered {
+                return Err(CallUnconfirmed {
+                    verb: "vault.runners.continue".to_owned(),
+                    origin: "https://vault.example".to_owned(),
+                    invocation: "1".repeat(32),
+                    why: "tools/call failed: the connection closed before an answer".to_owned(),
+                }
+                .into());
+            }
             Ok(ContinueOutsideWorkView::Bound {
                 binding: "binding".to_owned(),
                 seat: 0,

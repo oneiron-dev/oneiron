@@ -5,17 +5,24 @@
 //! The log is the one `--transcript` names, as the hook's `transcript_path`
 //! does, or else the newest session log of the project folder Claude Code
 //! keeps for the working directory (or the nearest parent inside the repo
-//! that has one) whose recorded working directory is inside the repo:
+//! that has one) whose recorded working directory git places in this repo:
 //! `<config>/projects/<path with each character that is not an ASCII letter
 //! or digit as '-'>/<session id>.jsonl`, where `<config>` is
-//! `$CLAUDE_CONFIG_DIR` or `~/.claude`. A log of a folder above the repo, or
-//! of another repo whose path folds to the same name, is never sent. Its
-//! subagents' logs are `<session id>/subagents/agent-*.jsonl` beside it.
-//! Only regular files are read, so a named FIFO or device never blocks the
-//! command.
+//! `$CLAUDE_CONFIG_DIR` or `~/.claude`. A log of a folder above the repo, of
+//! a repo nested in it, or of another repo whose path folds to the same
+//! name, is never sent. Its subagents' logs are
+//! `<session id>/subagents/agent-*.jsonl` beside it.
+//!
+//! Each log is read through one descriptor, opened without blocking and
+//! checked to be a regular file, so a FIFO or device at the path, even one
+//! put there after it was listed, never blocks the command. A log with a
+//! line that is not a whole JSON record (the last one cut mid-write, say) is
+//! not sent: the importer would land the rest without it.
 
-use std::io::{BufRead as _, Write as _};
+use std::io::{BufRead as _, Read as _, Write as _};
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use base64::Engine as _;
 use oneiron::ingest::history::{
@@ -30,11 +37,15 @@ pub(super) struct SessionLogs {
 }
 
 /// The session log `named`, else the newest of `dir`'s project folder, and
-/// its subagents' logs.
-pub(super) fn read(named: Option<&Path>, dir: &Path) -> anyhow::Result<SessionLogs> {
+/// its subagents' logs. The git that finds the repo ends by `deadline`.
+pub(super) fn read(
+    named: Option<&Path>,
+    dir: &Path,
+    deadline: Instant,
+) -> anyhow::Result<SessionLogs> {
     let path = match named {
         Some(path) => path.to_path_buf(),
-        None => newest_session(dir)?,
+        None => newest_session(&claude_config_dir()?.join("projects"), dir, deadline)?,
     };
     let session = path
         .file_name()
@@ -71,13 +82,17 @@ pub(super) fn read(named: Option<&Path>, dir: &Path) -> anyhow::Result<SessionLo
     })
 }
 
-/// The newest session log of the project folder Claude Code keeps for `dir`
-/// or its nearest parent inside the repo that has one, among the logs whose
-/// recorded working directory is inside the repo.
-fn newest_session(dir: &Path) -> anyhow::Result<PathBuf> {
-    let projects = claude_config_dir()?.join("projects");
+/// The newest session log under `projects` of the project folder Claude
+/// Code keeps for `dir` or its nearest parent inside the repo that has one,
+/// among the logs whose recorded working directory git places in this repo
+/// ([`in_repo`]).
+pub(super) fn newest_session(
+    projects: &Path,
+    dir: &Path,
+    deadline: Instant,
+) -> anyhow::Result<PathBuf> {
     let dir = std::fs::canonicalize(dir)?;
-    let top = std::fs::canonicalize(super::hand_off::repo_top(&dir)?)?;
+    let top = std::fs::canonicalize(super::hand_off::repo_top(&dir, deadline)?)?;
     for folder in dir
         .ancestors()
         .take_while(|path| path.starts_with(&top))
@@ -105,10 +120,9 @@ fn newest_session(dir: &Path) -> anyhow::Result<PathBuf> {
             })
             .collect();
         logs.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
-        if let Some((_, path)) = logs
-            .into_iter()
-            .find(|(_, path)| recorded_dir(path).is_some_and(|recorded| recorded.starts_with(&top)))
-        {
+        if let Some((_, path)) = logs.into_iter().find(|(_, path)| {
+            recorded_dir(path).is_some_and(|recorded| in_repo(&recorded, &top, deadline))
+        }) {
             return Ok(path);
         }
     }
@@ -120,11 +134,21 @@ fn newest_session(dir: &Path) -> anyhow::Result<PathBuf> {
     )
 }
 
+/// Whether git's top directory for `dir` is `top` itself: `dir` is in this
+/// repo, not in a repo nested inside it or beside it. A directory that no
+/// longer exists, or that is in no repo, is not.
+fn in_repo(dir: &Path, top: &Path, deadline: Instant) -> bool {
+    super::hand_off::repo_top(dir, deadline)
+        .ok()
+        .and_then(|found| std::fs::canonicalize(found).ok())
+        .is_some_and(|found| found == top)
+}
+
 /// The working directory a session log records, from its first entry that
-/// names one (`cwd`), resolved as the file system resolves it when it still
-/// exists; `None` when no entry names one or the log cannot be read.
+/// names one (`cwd`); `None` when no entry names one or the log cannot be
+/// read.
 fn recorded_dir(log: &Path) -> Option<PathBuf> {
-    let lines = std::io::BufReader::new(std::fs::File::open(log).ok()?).lines();
+    let lines = std::io::BufReader::new(open_log(log).ok()?).lines();
     for line in lines {
         let line = line.ok()?;
         if !line.contains("\"cwd\"") {
@@ -134,8 +158,7 @@ fn recorded_dir(log: &Path) -> Option<PathBuf> {
             continue;
         };
         if let Some(cwd) = entry.get("cwd").and_then(serde_json::Value::as_str) {
-            let cwd = PathBuf::from(cwd);
-            return Some(std::fs::canonicalize(&cwd).unwrap_or(cwd));
+            return Some(PathBuf::from(cwd));
         }
     }
     None
@@ -197,19 +220,60 @@ fn session_id(stem: &str) -> bool {
     stem.len() == 36 && stem.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 
-/// `path`'s bytes, gzip-compressed, in standard base64. Only a regular file
-/// is read: opening a FIFO with no writer would block the command.
+/// `path`'s bytes, gzip-compressed, in standard base64, once every record
+/// of them is whole ([`whole_records`]).
 fn encoded(path: &Path) -> anyhow::Result<String> {
-    let kind = std::fs::metadata(path)
+    let mut bytes = Vec::new();
+    open_log(path)?
+        .read_to_end(&mut bytes)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+    whole_records(path, &bytes)?;
+    let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gzip.write_all(&bytes)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(gzip.finish()?))
+}
+
+/// `path` opened for reading without blocking, once the open descriptor is
+/// a regular file. Opening a FIFO with no writer would otherwise block, and
+/// a check of the path before the open could see another file than the one
+/// opened. A regular file reads the same either way.
+fn open_log(path: &Path) -> anyhow::Result<std::fs::File> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+    let kind = file
+        .metadata()
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
     anyhow::ensure!(
         kind.is_file(),
         "{} is not a regular file, so it is not a Claude Code session log",
         path.display()
     );
-    let bytes =
-        std::fs::read(path).map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
-    let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-    gzip.write_all(&bytes)?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(gzip.finish()?))
+    Ok(file)
+}
+
+/// Refuses a log with a line that is not a whole JSON record as the
+/// importer reads one: a JSON object on each line that is not blank, in the
+/// text the importer decodes (invalid UTF-8 replaced). The last record of a
+/// log being written can be cut mid-write, and the importer would count it
+/// unreadable and land the rest, so the session would go on without it.
+fn whole_records(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let text = String::from_utf8_lossy(bytes);
+    for (index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let whole =
+            serde_json::from_str::<serde_json::Value>(line).is_ok_and(|record| record.is_object());
+        anyhow::ensure!(
+            whole,
+            "line {} of {} is not a whole JSON record (one cut mid-write, say), so the session \
+             cannot go on whole elsewhere; let its turn end, then run the command again",
+            index + 1,
+            path.display()
+        );
+    }
+    Ok(())
 }
