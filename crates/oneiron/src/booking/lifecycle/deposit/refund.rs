@@ -6,7 +6,9 @@
 use super::super::claim::read_booking_facts_to_cancel;
 use super::super::storage::{booking_writer, engine_failure, read_txn};
 use super::super::types::BookingStatus;
-use super::{DEPOSIT, DEPOSIT_BOOKING, DepositState, booking_key, enqueue_settle, put_deposit};
+use super::{
+    DEPOSIT, DEPOSIT_BOOKING, DepositRow, DepositState, booking_key, enqueue_settle, put_deposit,
+};
 use crate::booking::BookingError;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, MemoryError};
@@ -49,6 +51,7 @@ pub(in crate::booking::lifecycle) fn refund_on_visitor_cancel_in_writer(
             }
         }
         DepositState::Captured { amount_minor } if refund.min(amount_minor) > 0 => {
+            row.captured_minor = Some(amount_minor);
             DepositState::RefundDue {
                 amount_minor: refund.min(amount_minor),
             }
@@ -187,6 +190,58 @@ fn whole_return(state: DepositState) -> Option<DepositState> {
     }
 }
 
+/// What the owner's return changed on a deposit row.
+enum OwnerReturn {
+    /// Nothing: the deposit owes or has made its whole return already.
+    Nothing,
+    /// A move is owed now; its settle row is to be queued.
+    Queued,
+    /// The refund owed now settles first, and its record owes the balance
+    /// (its settle row is queued already).
+    AfterOwedRefund,
+}
+
+/// The owner's return of `row`'s deposit, whole: a capture still due is
+/// released and a captured amount owed back, as a host cancel does. A
+/// refund for less than the capture (a visitor's late cancel, or the excess
+/// of a capture a cancel overtook) gains the balance (review round 2 of
+/// #9977): owed at once after that refund settled, or once it settles while
+/// it is owed, so the provider refunds the earlier part once. A row
+/// refunded before its capture was recorded gains nothing.
+fn owner_return(row: &mut DepositRow) -> OwnerReturn {
+    match row.state {
+        DepositState::CaptureDue { .. } => {
+            row.state = DepositState::VoidDue;
+            OwnerReturn::Queued
+        }
+        DepositState::Captured { amount_minor } => {
+            row.captured_minor = Some(amount_minor);
+            row.state = DepositState::RefundDue { amount_minor };
+            OwnerReturn::Queued
+        }
+        DepositState::RefundDue { amount_minor }
+            if !row.balance_owed_after_refund
+                && row.captured_minor.is_some_and(|captured| {
+                    captured > row.refunded_minor.saturating_add(amount_minor)
+                }) =>
+        {
+            row.balance_owed_after_refund = true;
+            OwnerReturn::AfterOwedRefund
+        }
+        DepositState::Refunded { amount_minor } => match row.captured_minor {
+            Some(captured) if captured > amount_minor => {
+                row.refunded_minor = amount_minor;
+                row.state = DepositState::RefundDue {
+                    amount_minor: captured - amount_minor,
+                };
+                OwnerReturn::Queued
+            }
+            _ => OwnerReturn::Nothing,
+        },
+        _ => OwnerReturn::Nothing,
+    }
+}
+
 /// `vault.booking.deposit.refund` (BK-DEPOSIT-OWNER-RETURN-ACT = A and
 /// BK-DEPOSIT-OWNER-RETURN-SCOPE = A, Engine 21 Nov 02:56): the owner gives a
 /// booking's held deposit back whole, in one booking writer. The proof is
@@ -198,9 +253,12 @@ fn whole_return(state: DepositState) -> Option<DepositState> {
 /// MACRO home move (a move carries no deposit row). A
 /// capture still due is released and a captured deposit owed back whole, as
 /// a host cancel does, with its settle row queued "owner-refund"; the
-/// booking's status and revision stay as they are. A deposit that already
-/// owes or has settled its return is left as it stands, so a retry queues
-/// nothing.
+/// booking's status and revision stay as they are. After a refund of part of
+/// the capture (a visitor's late cancel) the balance is owed: at once when
+/// that refund has settled, and once it settles while it is owed. A deposit
+/// that already owes or has settled its whole return is left as it stands,
+/// so a retry queues nothing. The receipt's amount is the whole return:
+/// what was refunded before and what is owed now.
 ///
 /// # Errors
 ///
@@ -254,19 +312,23 @@ pub(crate) fn refund_booking_deposit_as_owner(
                 "this node holds no deposit for the booking".to_owned(),
             ));
         };
-        let queued = match whole_return(row.state) {
-            Some(next) => {
-                row.state = next;
-                row.updated_at = now_utc;
-                put_deposit(vault, wtxn, &link.deposit_key, &row)?;
-                enqueue_settle(vault, wtxn, &link.deposit_key, "owner-refund", now_utc)?;
-                true
-            }
-            None => false,
-        };
+        let returned = owner_return(&mut row);
+        if !matches!(returned, OwnerReturn::Nothing) {
+            row.updated_at = now_utc;
+            put_deposit(vault, wtxn, &link.deposit_key, &row)?;
+        }
+        if matches!(returned, OwnerReturn::Queued) {
+            enqueue_settle(vault, wtxn, &link.deposit_key, "owner-refund", now_utc)?;
+        }
+        let queued = !matches!(returned, OwnerReturn::Nothing);
         let (state, amount_minor) = match row.state {
             DepositState::RefundDue { amount_minor } => {
-                (BookingDepositRefundState::RefundDue, amount_minor)
+                let refunded_after = row.refunded_minor.saturating_add(amount_minor);
+                let whole = match row.captured_minor {
+                    Some(captured) if row.balance_owed_after_refund => captured.max(refunded_after),
+                    _ => refunded_after,
+                };
+                (BookingDepositRefundState::RefundDue, whole)
             }
             DepositState::VoidDue => (BookingDepositRefundState::VoidDue, 0),
             DepositState::Refunded { amount_minor } => {

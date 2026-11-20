@@ -95,9 +95,10 @@ pub enum DepositState {
     VoidDue,
     /// The payment is cancelled; nothing was captured.
     Voided,
-    /// A visitor's cancel owes this refund.
+    /// This refund is owed: a cancel's, a capture's excess, or a return's
+    /// (all of it, or the balance after an earlier refund).
     RefundDue { amount_minor: u64 },
-    /// The provider refunded this amount.
+    /// The provider refunded this amount in all.
     Refunded { amount_minor: u64 },
 }
 
@@ -137,6 +138,21 @@ struct DepositRow {
     /// left. Unset until a visitor reschedule.
     #[serde(default)]
     refund_cap_minor: Option<u64>,
+    /// What the provider captured: recorded when a capture, or a void that
+    /// found one, answers, and when a cancel owes part of a capture back.
+    /// Unset on a row refunded before it was recorded; the owner's return
+    /// then owes no balance.
+    #[serde(default)]
+    captured_minor: Option<u64>,
+    /// What the provider refunded before the refund owed now: 0 for a first
+    /// refund. A later refund names it in its idempotency key, so a balance
+    /// equal to the earlier refund is a new request, not its replay.
+    #[serde(default)]
+    refunded_minor: u64,
+    /// The owner asked the whole capture back while a smaller refund was
+    /// owed: once that refund settles, the balance is owed as well.
+    #[serde(default)]
+    balance_owed_after_refund: bool,
     updated_at: u64,
 }
 
@@ -297,6 +313,9 @@ pub fn begin_deposit_checkout(
                 event_ref: None,
                 failure: None,
                 refund_cap_minor: None,
+                captured_minor: None,
+                refunded_minor: 0,
+                balance_owed_after_refund: false,
                 updated_at: now_utc,
             },
         };
