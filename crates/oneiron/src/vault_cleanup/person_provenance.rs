@@ -134,17 +134,18 @@ impl Vault {
         Ok(true)
     }
 
-    /// Restores the PERSON `id` for the Dreamer's new mention of it, when it
-    /// bears a cleanup-archive marker: the same record through the cleanup's
-    /// restore door ([`Self::restore_archived_in_txn`]), never a second one
+    /// Restores the PERSON `id` for a new mention of it, when it bears a
+    /// cleanup-archive marker: the same record through the cleanup's restore
+    /// door ([`Self::restore_archived_in_txn`]), never a second one
     /// (ARCH-0073 §6, ARCH-0055 §10; FIX
-    /// NATIVE-CLAIM-LANDS-ON-ARCHIVED-PERSON). Its callers are all the
-    /// Dreamer's: its person mint, when
-    /// [`Self::put_attempt_minted_person_in_txn`] wrote nothing for the id a
-    /// declaration derives, and each of its claim writers, for the entity
-    /// subject of a claim it writes, through
-    /// [`Self::restore_mentioned_subject_in_txn`]. A derivation's person item
-    /// never calls it: that item stays refused for an archived id.
+    /// NATIVE-CLAIM-LANDS-ON-ARCHIVED-PERSON). Its callers: the Dreamer's
+    /// person mint, when [`Self::put_attempt_minted_person_in_txn`] wrote
+    /// nothing for the id a declaration derives; each of the Dreamer's claim
+    /// writers, for the entity subject of a claim it writes, through
+    /// [`Self::restore_mentioned_subject_in_txn`]; and every other claim write
+    /// door, through [`Self::restore_subjects_of_landed_claims_in_txn`]. A
+    /// derivation's person item never calls it: that item stays refused for
+    /// an archived id.
     ///
     /// Returns `false` without writing when `id` bears no marker with the
     /// cleanup-archive reason, when no row is stored for it, when the stored
@@ -214,6 +215,56 @@ impl Vault {
             ClaimSubject::Edge { .. } => Ok(false),
         }
     }
+
+    /// Restores the PERSON each of `claims` (a claim id and its subject) is
+    /// about, as [`Self::restore_mentioned_subject_in_txn`] does, for each
+    /// claim whose row stands live in `wtxn` once its write door applied it.
+    /// The cleanup archives only a PERSON no live claim is about, so a claim
+    /// the owner, an agent or an import lands about her makes her no husk:
+    /// every claim write door calls this in the claim's own transaction
+    /// (ARCH-0073 §6; FIX PUT-CLAIM-LANDS-ON-ARCHIVED-PERSON, Engine ANSWER
+    /// PUT-CLAIM-ARCHIVED-PERSON-RESTORE = A). A candidate the gate refused
+    /// or parked with no row restores nothing, and an owner's archive, a
+    /// delete or an erase is never lifted.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors and [`Self::restore_mentioned_person_in_txn`]'s.
+    pub(crate) fn restore_subjects_of_landed_claims_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        claims: &[(EntityId, ClaimSubject)],
+    ) -> Result<()> {
+        for (claim, subject) in claims {
+            let landed = crate::vault::live_entity_row_in_txn(&self.store, wtxn, claim)?
+                .live_type()
+                == Some(crate::registry::ENTITY_TYPE_CLAIM);
+            if landed {
+                self.restore_mentioned_subject_in_txn(wtxn, *subject)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The id and subject of each claim candidate in `ops`, the internal lexical
+/// query hints aside: what
+/// [`Vault::restore_subjects_of_landed_claims_in_txn`] reads once the ops
+/// have applied.
+pub(crate) fn candidate_claim_subjects(
+    ops: &[crate::batch::BatchOp],
+) -> Vec<(EntityId, ClaimSubject)> {
+    ops.iter()
+        .filter_map(|op| match op {
+            crate::batch::BatchOp::ClaimCandidate {
+                id,
+                candidate,
+                internal_lexical_query_hint: false,
+                ..
+            } => Some((*id, candidate.subject())),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Drops what the mint recorded for `id`: its evidence, and the lineage of
