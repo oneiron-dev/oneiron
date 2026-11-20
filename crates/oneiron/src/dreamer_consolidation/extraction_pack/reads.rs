@@ -31,8 +31,9 @@ use super::super::routing::judge_queue;
 use super::super::settle::decision_pages::{json_len, split_pages};
 use super::super::support::invalid_consolidation;
 use super::super::value_projection::rmpv_to_json;
+use super::correction_listing::{CorrectionListed, cited_claims, correction_sets};
 use super::observed_beside::route_observed_priors;
-use super::step_records::{OperandBound, takes_head_relationship};
+use super::step_records::OperandBound;
 use super::{
     BoundBranchRead, ExtractionRebuildContext, extraction_layout_refusal, select_conflict,
 };
@@ -59,19 +60,6 @@ pub(crate) struct CheckedCandidate {
     pub(super) project: EntityId,
     /// The assembled proposal with its native id, as nomination routes it.
     pub(crate) proposal: PromotionCandidate,
-}
-
-/// One listed claim as the rebuild holds it: its id and subject with its
-/// predicate and value as the listing writes them.
-pub(super) struct CorrectionListed {
-    /// The listed claim id.
-    pub(super) claim: EntityId,
-    /// The subject the listing shows it about.
-    pub(super) subject: EntityId,
-    /// The predicate as the listing writes it.
-    pub(super) predicate: String,
-    /// The value as JSON text, as the listing writes it.
-    pub(super) value_text: String,
 }
 
 /// The pack candidates checked with their eligible pairs and listing: every
@@ -155,98 +143,6 @@ pub(in crate::dreamer_consolidation) fn parse_reference(reference: &str) -> Resu
         ));
     }
     Ok(id)
-}
-
-/// The eligible (candidate position, listed index) pairs over `operands` with
-/// the listing in native first-seen order: every claim the bound listing
-/// shows about each subject that its read may correct, except a claim the
-/// candidate restates and a claim whose relationship set the candidate may
-/// not take. Native never asks about a restated claim (FIX 8295), and a
-/// claim left in no pair is not listed. `cited` holds each operand's
-/// admitted claim evidence and `bounds` what the shared operand check fixed
-/// for each operand, both by position. An operand that names recorded
-/// candidates is paired only with a head one of them may be asked about.
-///
-/// A correcting candidate takes the relationship set of the head it
-/// corrects, and assembly refuses a set outside the candidate's own
-/// (S63E-RULED: a claim never holds wider than its words' label). A native
-/// candidate that the model binds to such a head is not written. Here that
-/// head is left in no pair, so no read asks about it and no request names it
-/// in `corrects`: the candidate stands on its own proposal, inside its own
-/// set.
-pub(super) fn correction_sets(
-    operands: &[CandidateOperand],
-    subjects: &[EntityId],
-    cited: &[Vec<EntityId>],
-    (bound, bounds): (&BoundBranchRead, &[OperandBound]),
-) -> Result<(Vec<(usize, usize)>, Vec<CorrectionListed>)> {
-    let mut entries: Vec<(usize, usize)> = Vec::new();
-    let mut listed: Vec<CorrectionListed> = Vec::new();
-    let rows = operands.iter().zip(subjects).zip(cited);
-    for (position, ((operand, subject), cited)) in rows.enumerate() {
-        let fixed = bounds.get(position);
-        let within = fixed.and_then(|fixed| fixed.relationship.as_ref());
-        let askable = fixed.and_then(|fixed| fixed.askable.as_ref());
-        for (claim, predicate, value) in bound.correctable(*subject, bound.scope()) {
-            if cited.contains(&claim) && restates(operand, bound, claim) {
-                continue;
-            }
-            if askable.is_some_and(|heads| !heads.contains(&claim)) {
-                continue;
-            }
-            if !takes_head_relationship(bound, claim, within) {
-                continue;
-            }
-            let at = match listed.iter().position(|row| row.claim == claim) {
-                Some(at) => at,
-                None => {
-                    listed.push(CorrectionListed {
-                        claim,
-                        subject: *subject,
-                        predicate,
-                        value_text: value,
-                    });
-                    listed.len() - 1
-                }
-            };
-            entries.push((position, at));
-        }
-    }
-    Ok((entries, listed))
-}
-
-/// Whether `operand`, which cites listed `claim`, restates it unchanged: it
-/// carries the head's own predicate and its value as JSON. The subject is the
-/// head's, since the listing shows the head about that subject. This mirrors
-/// the native correction read's restatement rule over the bound prior heads.
-pub(super) fn restates(
-    operand: &CandidateOperand,
-    bound: &BoundBranchRead,
-    claim: EntityId,
-) -> bool {
-    bound.prior(claim).is_some_and(|prior| {
-        operand.predicate == prior.body.predicate
-            && rmpv_to_json(&prior.body.value) == operand.value
-    })
-}
-
-/// The listed heads `operand` cites as evidence, sorted and deduped: each
-/// reference parsed canonically and each head admitted by the bound read's
-/// cited-head rule, so a candidate never rests on a claim outside the
-/// branch's listing or one that may not corroborate. Which call showed the
-/// head is not checked: `BoundBranchRead::cited_head` says why.
-fn cited_claims(operand: &CandidateOperand, bound: &BoundBranchRead) -> Result<Vec<EntityId>> {
-    let mut cited = operand
-        .claim_evidence
-        .iter()
-        .map(|pin| parse_reference(&pin.claim))
-        .collect::<Result<Vec<_>>>()?;
-    cited.sort_unstable();
-    cited.dedup();
-    for claim in &cited {
-        bound.cited_head(*claim)?;
-    }
-    Ok(cited)
 }
 
 /// The native correction evidence over `checked`: every rebuilt listed claim

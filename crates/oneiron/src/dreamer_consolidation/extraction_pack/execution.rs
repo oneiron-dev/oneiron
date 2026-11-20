@@ -32,9 +32,10 @@ use super::super::executor::{
     label_questions_with,
 };
 use super::super::support::invalid_consolidation;
+use super::correction_listing::CorrectionListed;
 use super::reads::{
-    BuiltConflict, CheckedCandidate, CheckedPack, CorrectionListed, correction_evidence,
-    correction_page_entries, correction_project,
+    BuiltConflict, CheckedCandidate, CheckedPack, correction_evidence, correction_page_entries,
+    correction_project,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
