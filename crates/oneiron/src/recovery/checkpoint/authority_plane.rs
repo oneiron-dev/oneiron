@@ -566,12 +566,12 @@ fn current_rows(
 }
 
 /// Whether a live projection is authority the live vault holds. A task fact
-/// is only when the live fold counts it: this install's door wrote it with
-/// that body, or its carrier's signature proves it, and the fold admits it
-/// (`task_authority::FactCountRule::counts`). A row that proves nothing, such
-/// as another install's unsigned or forged replica, changes no task, so a
-/// restore that drops it rolls nothing back (FIX
-/// TASK-FACT-RESTORE-BELIEVES-ROWS); nor does a proved fact the fold skips,
+/// is only when the live fold counts it: its row links to its task, this
+/// install's door wrote it with that body or its carrier's signature proves
+/// it, and the fold admits it (`task_authority::FactCountRule::counts`). A
+/// row that proves nothing, such as another install's unsigned or forged
+/// replica, changes no task, so a restore that drops it rolls nothing back
+/// (FIX TASK-FACT-RESTORE-BELIEVES-ROWS); nor does a proved fact the fold skips,
 /// such as an Owner fact whose maker derives another task, or an assignment
 /// by an actor who does not own the task (FIX
 /// TASK-FACT-RESTORE-COUNT-SKIPS-ADMISSION). Every other projection is.
@@ -696,9 +696,23 @@ fn authority_moved(
             None => {}
         }
     }
+    // A live-only fact row moves nothing while a row the image holds states the same fact
+    // and the live fold counts that row: adoption's twin of a fact this install wrote
+    // unsigned (`Vault::adopt_unsigned_task_facts`), which the fold absorbs as a set
+    // duplicate. The restore drops the twin and keeps the counted row, whose written-here
+    // mark it carries from the live vault, and the next adoption pass twins the fact again
+    // (blind review round 1 P1, REVIEW-10064).
+    let kept_facts: Vec<&TaskAuthorityFact> = held
+        .iter()
+        .filter_map(|key| match live.get(*key) {
+            Some((_, _, Compared::TaskFact(fact))) => Some(&**fact),
+            _ => None,
+        })
+        .collect();
     for (key, (what, projection, current)) in live {
         if !held.contains(key.as_slice())
             && presence_is_authority(*projection, current, image_entities, true)
+            && !matches!(current, Compared::TaskFact(fact) if kept_facts.contains(&&**fact))
         {
             moved.insert(current.family().unwrap_or(*what));
         }
@@ -863,7 +877,8 @@ fn scan_postures(
 /// public (which holds a send for the owner), whose absence would let a send
 /// through; and an owner, cancellation or human assignment
 /// fact added since the image to a task the image holds, which the live fold
-/// counts (`current_rows` keeps no other: `counted_in_live_fold`). An acknowledgement
+/// counts (`current_rows` keeps no other: `counted_in_live_fold`) and which is
+/// no twin of a counted fact the image holds (`authority_moved`). An acknowledgement
 /// only takes a failed task off the board.
 fn presence_is_authority(
     projection: Projection,

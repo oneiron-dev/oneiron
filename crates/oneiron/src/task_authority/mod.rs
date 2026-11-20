@@ -1452,11 +1452,14 @@ impl FactCountRule {
     }
 
     /// Whether the fact row `fact_ref` with `body`, about `task_ref`, counts in `vault`'s
-    /// fold: the row counts (this install's door wrote exactly `body`, or its carrier's
-    /// signature proves it), and the fold admits its fact, judged against `task_ref`'s other
-    /// counted facts as [`TaskAuthorityFacts::fold`] judges a fact of its pass. So an Owner
-    /// fact whose maker derives another task, or a fact by an actor its kind does not admit,
-    /// does not count (FIX TASK-FACT-RESTORE-COUNT-SKIPS-ADMISSION).
+    /// fold: the row links to `task_ref`, the row counts (this install's door wrote exactly
+    /// `body`, or its carrier's signature proves it), and the fold admits its fact, judged
+    /// against `task_ref`'s other counted facts as [`TaskAuthorityFacts::fold`] judges a fact
+    /// of its pass. So an Owner fact whose maker derives another task, or a fact by an actor
+    /// its kind does not admit, does not count (FIX TASK-FACT-RESTORE-COUNT-SKIPS-ADMISSION).
+    /// Nor does a row whose `ScopedTo` link to its task has not arrived: sync can commit a
+    /// fact's row before its link, in separate writes, and the fold reads a task's facts
+    /// through those links (blind review round 1 P1, REVIEW-10064).
     ///
     /// A task the live fold refuses (a forked owner or assignment, or an own row that fails
     /// its strict read) reads on no device, so each of its counted rows still counts here:
@@ -1469,6 +1472,9 @@ impl FactCountRule {
         body: &[u8],
         task_ref: EntityId,
     ) -> Result<bool> {
+        if !vault.edge_exists_in_txn(rtxn, fact_ref, EdgeKind::ScopedTo, &task_ref)? {
+            return Ok(false);
+        }
         let Some(fact) = self.counted(vault, rtxn, fact_ref, body, task_ref)? else {
             return Ok(false);
         };
