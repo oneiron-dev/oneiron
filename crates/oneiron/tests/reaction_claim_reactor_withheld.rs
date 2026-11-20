@@ -10,6 +10,11 @@
 //! grant over the room. The Memory view tests stamp a birth naming Mirela on her
 //! claim, which `Vault::react` does not.
 //!
+//! A reaction's lexical document is its glyph alone, so no reader, not even one who
+//! reads the reactor, finds the reaction by the reactor's name; a search of the glyph
+//! still finds it (FIX REACTION-TEXT-NAMES-REACTOR; Engine ANSWER
+//! REACTION-TEXT-REACTOR-NAME-INDEX = A, 20 Nov 17:12).
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test reaction_claim_reactor_withheld`.
 #![cfg(oneiron_test_support)]
@@ -24,6 +29,7 @@ use oneiron::conversation::{ConversationBody, ConversationKind, HistoryChoice};
 use oneiron::embed::EmbedderLocality;
 use oneiron::memory::extraction::{EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder};
 use oneiron::memory::extraction::{ExtractionWork, NerSpan};
+use oneiron::memory::{Effort, RecallScope};
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::reaction::ReactionInput;
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
@@ -515,8 +521,7 @@ fn the_reaction_still_counts_for_a_reader_who_may_not_read_the_reactor() {
 /// The pack's scoped filter holds each hydrated claim against the row the lane serves now,
 /// so the served claim must still match the fields hydration projected, where `by` and
 /// the writer stamp already read as null. The search reaches the claim through its
-/// indexed text, the glyph and the reactor's stored name (`reaction/write.rs`
-/// `indexed_text`).
+/// indexed text, the glyph (`reaction/write.rs`, `write_reaction_in_txn`).
 #[test]
 fn the_outsiders_context_pack_keeps_the_reaction_claim() {
     let fixture = fixture();
@@ -524,7 +529,7 @@ fn the_outsiders_context_pack_keeps_the_reaction_claim() {
     let plan = read.context_pack_plan().expect("the outsider’s pack plan");
     let mut pack = plan
         .admit(fixture.vault.context_pack())
-        .search_text("Mirela", 10)
+        .search_text("👍", 10)
         .filter_types(&[ENTITY_TYPE_CLAIM])
         .run()
         .expect("the outsider’s pack");
@@ -610,4 +615,90 @@ fn a_relationship_member_reads_the_reaction_claims_birth_whole() {
         Some(fixture.reactor),
         "the member of R reads the birth naming the reactor as its writer"
     );
+}
+
+impl Fixture {
+    /// Whether `reader`'s filtered context pack for the text `query` holds the reaction
+    /// claim.
+    fn pack_finds_reaction(&self, reader: EntityId, query: &str) -> bool {
+        let read = self.vault.scoped_read(key(reader));
+        let plan = read.context_pack_plan().expect("a member’s pack plan");
+        let mut pack = plan
+            .admit(self.vault.context_pack())
+            .search_text(query, 10)
+            .filter_types(&[ENTITY_TYPE_CLAIM])
+            .run()
+            .expect("a member’s pack");
+        read.filter_context_pack(&mut pack)
+            .expect("a member’s pack filter");
+        pack.results.iter().any(|entity| entity.id == self.reaction)
+    }
+
+    /// Whether `reader`'s Medium recall of `query` returns a reaction claim.
+    fn recall_finds_reaction(&self, reader: EntityId, query: &str) -> bool {
+        self.vault
+            .memory(reader, EdgeActorClass::Human)
+            .recall(
+                query,
+                Effort::Medium,
+                &RecallScope::default(),
+                20,
+                None,
+                None,
+            )
+            .expect("a member’s recall")
+            .items
+            .iter()
+            .any(|item| item.predicate.as_deref() == Some("conversation.reaction"))
+    }
+}
+
+/// The outsider, who may not read Mirela's PERSON row, searches her name and finds no
+/// reaction: the name is in no reaction's lexical document. The glyph still finds it.
+#[test]
+fn a_search_of_the_reactors_name_finds_no_reaction_for_a_reader_who_may_not_read_them() {
+    let fixture = fixture();
+    assert!(
+        fixture.pack_finds_reaction(fixture.outsider, "👍"),
+        "FIXTURE: the outsider’s search of the glyph finds the reaction claim"
+    );
+    assert!(
+        !fixture.pack_finds_reaction(fixture.outsider, "Mirela"),
+        "the outsider’s search of the reactor’s name finds no reaction"
+    );
+}
+
+/// The member of R reads Mirela's PERSON row, and still finds no reaction by her name:
+/// no reader searches reactions by reactor name.
+#[test]
+fn a_search_of_the_reactors_name_finds_no_reaction_for_a_reader_who_may_read_them() {
+    let fixture = fixture();
+    assert!(
+        fixture.pack_finds_reaction(fixture.insider, "👍"),
+        "FIXTURE: the member of R’s search of the glyph finds the reaction claim"
+    );
+    assert!(
+        !fixture.pack_finds_reaction(fixture.insider, "Mirela"),
+        "the member of R’s search of the reactor’s name finds no reaction"
+    );
+}
+
+/// A Memory recall of the reactor's name returns no reaction to either member; a recall
+/// of the glyph returns it to both.
+#[test]
+fn a_recall_of_the_reactors_name_returns_no_reaction() {
+    let fixture = fixture();
+    for (reader, who) in [
+        (fixture.outsider, "the outsider"),
+        (fixture.insider, "the member of R"),
+    ] {
+        assert!(
+            fixture.recall_finds_reaction(reader, "👍"),
+            "FIXTURE: {who}’s recall of the glyph returns the reaction claim"
+        );
+        assert!(
+            !fixture.recall_finds_reaction(reader, "Mirela"),
+            "{who}’s recall of the reactor’s name returns no reaction"
+        );
+    }
 }
