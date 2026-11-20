@@ -10,6 +10,9 @@
 //!
 //! * `the_setting_door_refuses_a_reserved_scope_id`: `Vault::set_setting`
 //!   by the owner, a pin of `test.owner_number` over a project.
+//! * `the_setting_door_still_clears_at_a_reserved_scope_id`: a clear (no
+//!   value) there still runs and stores nothing, so it can remove such a row
+//!   a caller stored before (REVIEW-9764 round 1 P1).
 //! * `the_owner_learning_setting_door_refuses_a_reserved_scope_id`:
 //!   `put_scoped_setting_row`, the owner's pin of `health.review`.
 //! * `the_holder_learning_setting_door_refuses_a_reserved_scope_id`:
@@ -19,7 +22,8 @@
 //!
 //! Red on main dfb702d62d79 (the tests-only commit): each reserved write
 //! returns `Ok`. Green on the fix: each is refused and the readable write
-//! next to it still lands.
+//! next to it still lands. The clear test passes on main and fails at
+//! 5cee524bec6, the first fix, which refused a clear too.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_key_reserved_scope_id_refused`.
 
 use oneiron::edge::EdgeActorClass;
@@ -115,6 +119,31 @@ fn the_setting_door_refuses_a_reserved_scope_id() {
         assert!(
             matches!(outcome, Err(Error::InvalidConfig(_))),
             "a pin over the reserved id {} stores a row no reader decodes: {outcome:?}",
+            reserved.to_hex()
+        );
+    }
+}
+
+#[test]
+fn the_setting_door_still_clears_at_a_reserved_scope_id() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (vault, _, _) = owner_and_coach(dir.path());
+    let owner_id = vault.ensure_embedded_owner_actor().expect("owner");
+    let owner = vault
+        .authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())
+        .expect("owner proof");
+
+    for reserved in reserved_ids() {
+        let clear = vault.set_setting(
+            SettingCaller::Owner(&owner),
+            SetSetting {
+                value: None,
+                ..owner_number_pin(reserved, 0)
+            },
+        );
+        assert!(
+            matches!(clear, Ok(SetSettingOutcome::Applied { sequence: None, .. })),
+            "a clear over the reserved id {} runs and stores nothing: {clear:?}",
             reserved.to_hex()
         );
     }
