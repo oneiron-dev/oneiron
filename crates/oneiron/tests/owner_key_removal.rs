@@ -2664,3 +2664,177 @@ fn a_removal_a_sibling_handoff_fenced_is_not_in_the_changes_list() {
         "a removal fenced by a sibling handoff lists neither Removed nor RemovedByEndedKey: {changes:?}"
     );
 }
+
+/// A removal whose signer another crossing ended yielded to that crossing and
+/// ended nothing (REVIEW-9584 round 2 P1 1). From one past, A and C remove
+/// each other, B and D remove each other, and A, on top of its removal of C,
+/// also removes B. Both crossings close and end all four keys; A's removal of
+/// B yields to C's removal of A, so D's removal of B is what ended B, and the
+/// changes list names that one alone for B.
+#[test]
+fn a_removal_whose_signer_another_crossing_ended_is_not_in_the_changes_list() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let install = removal_vault.install();
+    let [a, b, c, d] = [91, 92, 93, 94].map(signing);
+    let [a_key, b_key, c_key, d_key] = [&a, &b, &c, &d].map(|signing_key| {
+        removal_vault
+            .enrol_owner_key_on_machine(install, signing_key)
+            .0
+    });
+    let parents = removal_vault.authority_heads();
+    assert!(
+        !parents.is_empty(),
+        "the five removals have their common past"
+    );
+    let sequence = |signing_key: &SigningKey| {
+        removal_vault.next_sequence_for(&AuthorityKey::Ed25519(
+            signing_key.verifying_key().to_bytes(),
+        ))
+    };
+    let now = now_seconds();
+    let (a_removes_c, a_removes_c_hash) =
+        removal_vault.sibling_revoke_row(parents.clone(), sequence(&a), &a, c_key, now);
+    let (c_removes_a, c_removes_a_hash) =
+        removal_vault.sibling_revoke_row(parents.clone(), sequence(&c), &c, a_key, now);
+    let (b_removes_d, b_removes_d_hash) =
+        removal_vault.sibling_revoke_row(parents.clone(), sequence(&b), &b, d_key, now);
+    let (d_removes_b, d_removes_b_hash) =
+        removal_vault.sibling_revoke_row(parents, sequence(&d), &d, b_key, now);
+    let (a_removes_b, a_removes_b_hash) =
+        removal_vault.sibling_revoke_row(vec![a_removes_c_hash], sequence(&a) + 1, &a, b_key, now);
+    let batch: Vec<(AuthorityLogEntry, TimeRange, u64)> = [
+        a_removes_c,
+        c_removes_a,
+        b_removes_d,
+        d_removes_b,
+        a_removes_b,
+    ]
+    .into_iter()
+    .map(|entry| {
+        (
+            entry,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+    })
+    .collect();
+    removal_vault
+        .vault
+        .put_authority_log_entries(&batch)
+        .expect("the five removals land in one batch");
+    let fold = removal_vault
+        .vault
+        .authority_fold()
+        .expect("authority fold");
+    for (removal, row) in [
+        (a_removes_c_hash, "A's removal of C"),
+        (c_removes_a_hash, "C's removal of A"),
+        (b_removes_d_hash, "B's removal of D"),
+        (d_removes_b_hash, "D's removal of B"),
+        (a_removes_b_hash, "A's removal of B"),
+    ] {
+        assert!(
+            !fold.valid_entries.contains(&removal),
+            "guard: the fold counts none of the five removals: {row}"
+        );
+        assert!(
+            fold.issues
+                .contains(&AuthorityFoldIssue::RetiredSigner(removal)),
+            "guard: the fold refused {row} for its signer alone: {:?}",
+            fold.issues
+        );
+    }
+    let enrolled_keys = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys");
+    for (key, name) in [(a_key, "A"), (b_key, "B"), (c_key, "C"), (d_key, "D")] {
+        assert!(
+            !enrolled_keys
+                .iter()
+                .find(|enrolled| enrolled.public_key == key)
+                .expect("the key is enrolled")
+                .live,
+            "guard: the two crossings end key {name}"
+        );
+    }
+    let changes = removal_vault
+        .vault
+        .owner_key_changes(&removal_vault.owner)
+        .expect("the owner reads the key changes");
+    assert!(
+        changes
+            .iter()
+            .all(|change| change.entry != a_removes_b_hash),
+        "a removal whose signer another crossing ended lists neither Removed nor \
+         RemovedByEndedKey: A's removal of B yielded to C's removal of A: {changes:?}"
+    );
+    for (removal, key, row) in [
+        (d_removes_b_hash, b_key, "D's removal of B"),
+        (b_removes_d_hash, d_key, "B's removal of D"),
+        (a_removes_c_hash, c_key, "A's removal of C"),
+        (c_removes_a_hash, a_key, "C's removal of A"),
+    ] {
+        assert!(
+            changes.iter().any(|change| change.entry == removal
+                && change.public_key == key
+                && change.change == OwnerKeyChangeKind::RemovedByEndedKey),
+            "each removal of a crossing that ended its key shows as RemovedByEndedKey: {row}: \
+             {changes:?}"
+        );
+    }
+}
+
+/// The key door refuses a key that one enrolment names as a device's key
+/// and another marks as the recovery root's: it is the root's authority key,
+/// which the root's door changes, so the door writes nothing and the key and
+/// its kit stay (REVIEW-9584 round 2 P1 2).
+#[test]
+fn the_key_door_refuses_a_key_enrolled_as_a_devices_and_as_the_recovery_roots() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let machine_b = removal_vault.enrol_machine_with([0x76; 16], JOINING_SEED);
+    let shared_key = removal_vault.enrol_key_both_ways(
+        machine_b,
+        machine_b,
+        &signing(JOINING_SEED),
+        &SigningKey::from_bytes(&[77; 32]),
+    );
+    let shared = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys")
+        .into_iter()
+        .find(|enrolled| enrolled.public_key == shared_key)
+        .expect("the shared key is enrolled");
+    assert!(
+        shared.live && shared.recovery_authority && shared.device_machines.contains(&machine_b),
+        "guard: the shared key is live, a device's key and the recovery root's: {shared:?}"
+    );
+    let rows = removal_vault.stored_rows();
+    let answer = removal_vault.vault.remove_owner_key(
+        &removal_vault.owner,
+        shared_key,
+        LastDeviceKeyConfirmation::Given,
+    );
+    assert!(
+        matches!(answer, Err(Error::Record(RecordError::AuthorityRefused(_)))),
+        "the key door refuses a key enrolled both ways, as it refuses the root's key: {answer:?}"
+    );
+    removal_vault.assert_nothing_stored_since(rows);
+    assert!(
+        removal_vault
+            .vault
+            .enrolled_owner_keys()
+            .expect("enrolled owner keys")
+            .iter()
+            .find(|enrolled| enrolled.public_key == shared_key)
+            .expect("the shared key is enrolled")
+            .live,
+        "a key enrolled both ways stays live after the key door refuses it"
+    );
+}
