@@ -267,13 +267,22 @@ pub(crate) fn home_here_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<O
 /// another machine is the elected home, is the home's to admit. So is a wake
 /// this machine carried as owed, whether or not it still rides, until the
 /// home releases it (`retraction`); a released wake is admitted here whatever
-/// rides.
+/// rides. A copy this machine took from a window as the home is passed by
+/// on every machine that is not the home, riding or not, also while no home
+/// is elected: only the home admits a copy.
 pub(super) fn wake_is_the_homes_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     wake: &TurnProgramWake,
 ) -> Result<bool> {
-    if home_here_in_txn(vault, txn)? != Some(false) {
+    let home_here = home_here_in_txn(vault, txn)?;
+    if home_here == Some(true) {
+        return Ok(false);
+    }
+    if super::retraction::imported_in_txn(vault, txn, wake)? {
+        return Ok(true);
+    }
+    if home_here.is_none() {
         return Ok(false);
     }
     match super::retraction::carried_state_in_txn(vault, txn, wake)? {

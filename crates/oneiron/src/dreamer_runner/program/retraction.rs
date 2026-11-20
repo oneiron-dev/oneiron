@@ -28,8 +28,16 @@
 //! one writer's row when two write at once, so each machine writes the latest
 //! row it knows again on every pass ([`outranking_wake_row_in_txn`]).
 //!
-//! A wake recorded while this machine's own view names it the home, or names
-//! no home, is admitted where it was recorded, mark or no mark, as before.
+//! While this machine's own view names it the home, or names no home, a wake
+//! it recorded is admitted here, mark or no mark, as before.
+//!
+//! A copy the home took from a window is the home's alone to admit (FIX
+//! TURNPROGRAM-HOME-CHANGE-CARRIED-COPY-DOUBLE-DECIDE). A machine that is the
+//! home no more keeps the copy and admits it by no door, with another home
+//! elected or none ([`imported_in_txn`]): the wake's recording machine, or
+//! the home the election names now, decides the wake, and that decision's
+//! `Admitted` row or a `Released` row clears the copy. A machine elected the
+//! home again admits the copy it kept.
 
 use serde::{Deserialize, Serialize};
 
@@ -138,6 +146,20 @@ pub(super) fn mark_imported_in_txn(
     key: (EntityId, EntityId),
 ) -> Result<()> {
     IMPORTED.put(vault, txn, &actor_wake_key(actor, key), &())
+}
+
+/// Whether `wake` is a copy this machine took from a window as the home,
+/// not a wake it recorded.
+pub(super) fn imported_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    wake: &TurnProgramWake,
+) -> Result<bool> {
+    IMPORTED.contains(
+        vault,
+        txn,
+        &actor_wake_key(wake.authority.actor(), wake.key()),
+    )
 }
 
 /// Whether this machine, as the home, released the wake keyed `key` under
