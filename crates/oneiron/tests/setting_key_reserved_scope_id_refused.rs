@@ -72,6 +72,7 @@ fn owner_number_pin(project: EntityId, value: u64) -> SetSetting {
         why: None,
         check_in_ref: None,
         weight_runs: None,
+        surface: None,
     }
 }
 
