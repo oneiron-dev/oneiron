@@ -145,7 +145,14 @@ impl ScopedRead<'_> {
         let admitted =
             |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
                 Ok(plan_admits(store, txn, id)?
-                    && self.session_scope_admits_in(txn, &policy, &filter, id, session_scope)?)
+                    && self.session_scope_admits_in(
+                        txn,
+                        &policy,
+                        &filter,
+                        id,
+                        session_scope,
+                        requested,
+                    )?)
             };
         let pipeline = self
             .vault
@@ -246,7 +253,14 @@ impl ScopedRead<'_> {
         let admitted =
             |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
                 Ok(plan_admits(store, txn, id)?
-                    && self.session_scope_admits_in(txn, &policy, &filter, id, session_scope)?)
+                    && self.session_scope_admits_in(
+                        txn,
+                        &policy,
+                        &filter,
+                        id,
+                        session_scope,
+                        requested,
+                    )?)
             };
         let mut pipeline = self
             .vault
@@ -287,6 +301,10 @@ impl ScopedRead<'_> {
 
     /// Session hints narrow each channel in its ranking snapshot. The final
     /// result still rechecks current authority and its exact pinned revision.
+    /// The row and its facet edge take the row gate under what the search
+    /// asked (`requested`), as its final recheck does, so a row the reader's
+    /// own live Grant admits keeps its hint and none reads wider than asked
+    /// (FIX-LIST SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS).
     fn session_scope_admits_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -294,10 +312,14 @@ impl ScopedRead<'_> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
         scope: Option<&SessionScope>,
+        requested: Option<&RetrievalFilter>,
     ) -> Result<bool> {
         let Some(scope) = scope.filter(|scope| !scope.is_empty()) else {
             return Ok(true);
         };
+        // One held authority for this row's checks in `txn`: the search
+        // calls this from its own snapshots.
+        let held = self.held_for(requested);
         if let Some(world) = scope.world_ref {
             let revision =
                 match self
@@ -308,7 +330,6 @@ impl ScopedRead<'_> {
                     Ok(None) | Err(Error::EntityNotFound) => return Ok(false),
                     Err(error) => return Err(error),
                 };
-            let held = self.held_for(None);
             let Some(row) = self.entity_raw_with_mode_held_in(
                 txn,
                 policy,
@@ -331,7 +352,7 @@ impl ScopedRead<'_> {
             }
         }
         if let Some(facet) = scope.facet_ref {
-            let admitted = self.admitted_edges_in(
+            let admitted = self.admitted_edges_held_in(
                 txn,
                 policy,
                 filter,
@@ -341,6 +362,7 @@ impl ScopedRead<'_> {
                 usize::MAX,
                 usize::MAX,
                 false,
+                &held,
             )?;
             if !admitted.source.visible()
                 || !admitted
