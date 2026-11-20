@@ -460,7 +460,14 @@ impl ScopedRead<'_> {
             suppressed += withheld;
             value.push(row.filter(&keep));
         }
-        let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
+        let receipt = self.receipt_in(
+            txn,
+            requested,
+            &policy,
+            &filter,
+            suppressed,
+            Some(&authority),
+        );
         self.charge_served(value.iter().flatten().map(|row| row.id));
         Ok(ScopedReadResult {
             value: project(txn, value)?,

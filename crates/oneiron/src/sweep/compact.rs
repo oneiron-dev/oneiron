@@ -201,6 +201,9 @@ pub(super) fn compact_all_windows(
                 continue;
             }
             match vault.compact_document_for_sweep(id, erase) {
+                // A resident document is compacted under its writer lock and
+                // waits only while that writer is busy, or while the vault's
+                // attached manager is gone (HELD-ENTITY-DOCUMENT-DEFERRED).
                 Ok(false) => {
                     run.windows_deferred_live += 1;
                     if matches!(state, WindowSweepState::AllCompacted) {

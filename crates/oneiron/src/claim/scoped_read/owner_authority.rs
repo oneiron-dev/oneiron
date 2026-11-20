@@ -181,6 +181,7 @@ impl<'v> ScopedRead<'v> {
             records_cover: self.records_cover.clone(),
             judged_at: self.judged_at,
             read_filter: self.read_filter.clone(),
+            receipts_include_live_grants: self.receipts_include_live_grants,
         })
     }
 }

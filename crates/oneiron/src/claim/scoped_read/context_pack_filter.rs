@@ -209,7 +209,7 @@ impl ScopedRead<'_> {
             // The pack's receipt reports the candidates its search ranked,
             // the key's own rows and its own live Grants' (FIX 7528).
             let candidates = self.candidate_filter_in(&rtxn, &policy, &filter, None);
-            Ok(self.receipt_for(None, &policy, &candidates, suppressed))
+            Ok(self.receipt_in(&rtxn, None, &policy, &candidates, suppressed, Some(&held)))
         })();
         self.end_recall_plan()?;
         result

@@ -556,7 +556,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/snapshot_lifecycle.rs` | src | s | 2 struct · 1 trait · 2 fn · 1 type · 4 re-export | Gate, SnapshotAdmission, SnapshotRuntime | A vault's inference snapshot lifecycle (DESIGN-V2 §7 "On vault lock", V2-R3): the admission generation and… |
 | `src/snapshot_lock_result.rs` | src | s | 3 struct · 1 const | SnapshotLockReceipt, SnapshotRelease, SnapshotWorkerAbort | Results of releasing inference snapshot state before a vault lock |
 | `src/source_audience_obligation.rs` | src | s | 1 enum · 3 fn · 1 const | SourceAudienceObligation | The source-audience obligation (fix list row 16256): one engine-owned key in a bound row's own MessagePack… |
-| `src/store_clock.rs` | src | m | 2 struct · 2 trait · 20 fn · 1 const · 1 mod | Clock, IdGen, LeaseRenewal, StoreClock | Per-store clock and id source |
+| `src/store_clock.rs` | src | m | 2 struct · 2 trait · 21 fn · 1 const · 1 mod | Clock, IdGen, LeaseRenewal, StoreClock | Per-store clock and id source |
 | `src/store_clock/lease_journal.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | LeaseJournal | The authorization clock's lease journal (FIX 12023 W0, review #4484 P1-B; L02 11-04 13:53 = A) |
 | `src/store_clock/tests.rs` | test | s | — | — | The store clock's reads, observed through what a caller gets back |
 | `src/structural_kind_registry.rs` | src | s | 1 mod | — | Store-layer modules of core `store::structural_kind_registry`; core re-exports each one at its old path |
@@ -691,5 +691,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/side_key_hex_case.rs` | test | s | — | — | UC-06 PR 0a (HEX-CASE-POLICY = A, Engine RULING 14:31 Sun 15 Nov: "Stored and wire forms stay… |
 | `tests/side_key_pins.rs` | test | m | — | — | UC-06 PR 1 K-proof: the ten `oneiron-store` side-table keys that PR 1 derives spell the same bytes and read… |
 | `tests/source_ranking_tie_order.rs` | test | s | — | — | RERANK-GROUP-ORDER = A, at a weakest reranked score of zero (review round 2 of #8383): the rerank ladder… |
+| `tests/store_clock_monotonic_domain.rs` | test | s | — | — | A store clock reads elapsed time in one clock domain for its whole life (review round 1 of #9778, FIX-LIST… |
 | `tests/store_envelope_register_names.rs` | test | s | — | — | The names of 6 name lists in `oneiron-store`, one line per row, generated from… |
 | `tests/store_records_register_names.rs` | test | m | — | — | The names of 11 name lists in `oneiron-store`, one line per row, generated from… |

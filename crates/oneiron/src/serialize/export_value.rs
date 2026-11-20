@@ -639,6 +639,13 @@ pub(crate) fn typed_rule_keeps_text(text: &str) -> bool {
     safe_text(text, 0)
 }
 
+/// The tree an export without secrets makes of `value`, a whole body of
+/// `entity_type`, before any codec puts its typed slots back: the tree
+/// [`ExportBody::from_bytes_with`] starts from.
+pub(super) fn nulled_value_tree(value: &Mp, entity_type: u8) -> ExportValue {
+    tree::export_value_tree_with(value, entity_type, 0, ExportSecrets::Nulled)
+}
+
 /// Whether a door that ships `text` beside a row, where no typed rule reads
 /// it, may ship it as it is: the raw release check reads no credential in it,
 /// nor in it read as a body, each text inside decoded again

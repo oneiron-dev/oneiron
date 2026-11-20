@@ -16,6 +16,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use oneiron_testkit::clock::FAKE_EPOCH;
 use oneiron_testkit::dreamer::{PassStack, print_seen, scripted_backend};
 use oneiron_testkit::golden_day::{self, GOLDEN_FILE, GoldenDayRun, MEASURED, Normaliser, render};
 use serde_json::{Value, json};
@@ -133,6 +134,59 @@ fn two_fresh_golden_days_leave_the_same_normalised_trace() {
     );
 }
 
+/// The authority log's times follow the fake clock: the seed's rows read the
+/// time the seed ran at, and the revoke stands as far past the mint as the
+/// day's clock moved between the two steps. Measured on the host's monotonic
+/// clock, the authority clock added the real seconds since its first read, so
+/// the two rows stood 0 or 1 s apart and the seed's read 0 or 1 s past it.
+#[test]
+fn the_authority_logs_times_follow_the_fake_clock() {
+    let backend = golden_day::backend();
+    let run = golden_day::run(&backend).unwrap_or_else(|error| panic!("{error}"));
+    backend.finish();
+    let at = |step: &str| {
+        run.raw()["steps"]
+            .as_array()
+            .and_then(|steps| steps.iter().find(|row| row["step"] == step))
+            .and_then(|row| row["at"].as_u64())
+            .unwrap_or_else(|| panic!("the day ran no step {step}"))
+    };
+    let rows = run.stream_rows("authority_audit");
+    let act = |kind: &str| {
+        rows.iter()
+            .find(|row| row["source_op"] == "agent_grant_act" && row["event_kind"] == kind)
+            .unwrap_or_else(|| panic!("no agent_grant_act {kind} row in {rows:?}"))
+    };
+    let ts = |row: &Value| {
+        row["advisory_ts"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("an authority row without its time: {row}"))
+    };
+    let (mint, revoke) = (act("grant"), act("revoke"));
+
+    assert_eq!(
+        ts(revoke).saturating_sub(ts(mint)),
+        at("grant-revoke") - at("grant-mint"),
+        "the revoke's authority time stands as far past the mint's as the day's clock moved: \
+         mint {mint}, revoke {revoke}"
+    );
+    let seeded: Vec<&Value> = rows
+        .iter()
+        .filter(|row| row["source_op"] != "agent_grant_act")
+        .collect();
+    assert!(!seeded.is_empty(), "the seed left no authority rows");
+    for row in seeded {
+        for key in [
+            "advisory_ts",
+            "learned_at",
+            "occurred_start",
+            "occurred_end",
+        ] {
+            assert_eq!(row[key], FAKE_EPOCH, "{key} of a row the seed wrote: {row}");
+        }
+    }
+}
+
 #[test]
 fn the_golden_day_lands_its_claims_ends_the_agents_reads_at_the_revoke_and_matches_its_golden_file()
 {
@@ -220,6 +274,63 @@ fn the_golden_day_lands_its_claims_ends_the_agents_reads_at_the_revoke_and_match
     );
 }
 
+/// Whether the receipt list `list` names `entry`.
+fn lists(list: &Value, entry: &str) -> bool {
+    list.as_array()
+        .is_some_and(|entries| entries.iter().any(|named| named == entry))
+}
+
+/// A read the agent's live Grant admitted reports that Grant's reach in its
+/// receipt, not the agent key's own floor, which reads nothing: the Grant is
+/// every world, facet, band, audience and sensitivity, so each scope is the
+/// full floor and nothing is denied. After the revoke the key's own floor is
+/// all the agent reads under, and the receipt says so (FIX-LIST
+/// GRANT-READ-NARROWING-SAYS-DENY-ALL).
+#[test]
+fn the_granted_agents_read_receipts_report_its_grant_and_deny_all_after_the_revoke() {
+    let (run, _) = run_day("receipts");
+    for door in ["recall", "search", "claims", "get"] {
+        let live = format!("agent-{door}");
+        let answer = run
+            .answer(&live)
+            .unwrap_or_else(|| panic!("{live}: {:?}", run.refusal(&live)));
+        let narrowing = &answer["narrowing"];
+        for scope in ["requested", "actor_ceiling", "applied"] {
+            assert_eq!(
+                narrowing[scope]["deny_all"], false,
+                "{live}: the {scope} scope denies all under the live Grant: {narrowing:#}"
+            );
+            assert_eq!(
+                narrowing[scope]["max_sensitivity_band"], 3,
+                "{live}: the {scope} scope is not the Grant's band: {narrowing:#}"
+            );
+        }
+        for list in ["narrowed_axes", "replan_hint"] {
+            for entry in ["deny_all", "grant_scope"] {
+                assert!(
+                    !lists(&narrowing[list], entry),
+                    "{live}: {list} names {entry} under the live Grant: {narrowing:#}"
+                );
+            }
+        }
+        let after = format!("agent-after-revoke-{door}");
+        let answer = run
+            .answer(&after)
+            .unwrap_or_else(|| panic!("{after}: {:?}", run.refusal(&after)));
+        let narrowing = &answer["narrowing"];
+        for scope in ["actor_ceiling", "applied"] {
+            assert_eq!(
+                narrowing[scope]["deny_all"], true,
+                "{after}: the {scope} scope reads after the revoke: {narrowing:#}"
+            );
+        }
+        assert!(
+            lists(&narrowing["replan_hint"], "grant_scope"),
+            "{after}: the revoked read names no grant boundary: {narrowing:#}"
+        );
+    }
+}
+
 #[test]
 fn a_trace_key_the_manifest_does_not_classify_fails_the_normalisation_with_its_path() {
     let trace = json!({"steps": [{"step": "witness", "golden_day_unclassified": 1}]});
@@ -265,30 +376,4 @@ fn run_minted_refs_are_named_in_first_seen_order_bound_refs_by_name_and_real_tim
     // short run-minted one is named only where the manifest classifies it.
     assert_eq!(steps[0]["refused"], "the owner owner refused claim c-1");
     assert_eq!(steps[1]["wall_ms"], MEASURED);
-}
-
-#[test]
-fn the_authority_clock_keys_of_a_row_are_masked_and_its_other_keys_kept() {
-    let mut rows = vec![
-        json!({"seq": 0, "source_op": "genesis", "advisory_ts": 1_800_000_001_u64,
-               "learned_at": 1_800_000_001_u64, "occurred_start": 1_800_000_001_u64,
-               "occurred_end": 1_800_000_001_u64, "expires_at": 2_115_360_001_u64}),
-        json!({"seq": 1, "source_op": "agent_grant_act", "advisory_ts": 1_800_000_003_u64,
-               "expires_at": null}),
-    ];
-
-    golden_day::mask_measured(&mut rows, golden_day::AUTHORITY_CLOCK_KEYS);
-
-    for key in golden_day::AUTHORITY_CLOCK_KEYS {
-        assert_eq!(rows[0][*key], MEASURED, "{key}");
-    }
-    assert_eq!(rows[0]["seq"], 0);
-    assert_eq!(rows[0]["source_op"], "genesis");
-    assert_eq!(rows[1]["advisory_ts"], MEASURED);
-    assert_eq!(rows[1]["expires_at"], Value::Null, "a null stays null");
-    assert!(
-        rows[1].get("learned_at").is_none(),
-        "a key the row lacks stays absent: {}",
-        rows[1]
-    );
 }

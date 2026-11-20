@@ -180,6 +180,12 @@ pub struct ScopedRead<'a> {
     /// resolution, own-Grant and owner alternative, candidate envelope and
     /// receipt of this read meets it with the request its door names.
     read_filter: Option<RetrievalFilter>,
+    /// Set only on a verb answer's lane that reports its live Grants
+    /// (`ScopedRead::with_live_grant_receipts`): each receipt it builds in a
+    /// serving snapshot states the key's own floor and its live Grants', the
+    /// reach that admitted its rows. Off elsewhere, so a consumer that caps
+    /// unjudged content by a receipt's applied band keeps the key's own.
+    receipts_include_live_grants: bool,
 }
 
 mod owned;

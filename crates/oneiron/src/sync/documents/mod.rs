@@ -406,16 +406,35 @@ impl DocumentRegistry {
         self.line.waiting()
     }
 
-    pub(crate) fn compact_closed(&self, id: EntityId, erased: bool) -> Result<bool> {
+    /// Compacts `id`'s document for the erasure sweep; `false` when it waits
+    /// for the next pass. The registry stays locked throughout, so no opener
+    /// makes the document resident meanwhile. A resident document is
+    /// compacted too, under its writer lock (HELD-ENTITY-DOCUMENT-DEFERRED,
+    /// ARCH-0038 #housekeeping-sla-open): it holds no Loro copy, and each of
+    /// its writers reads the durable text inside its own transaction, so the
+    /// compaction leaves nothing stale for a writer to persist over. A
+    /// compaction that keeps the document keeps its whole history, text and
+    /// version vector, so its editor and its peers see no change; one that
+    /// erases it takes a row hard-deleted here, which no reader or writer of
+    /// the document admits, or a withdrawn generation. Only a resident
+    /// document whose writer is busy waits: the next pass compacts it.
+    pub(crate) fn compact_for_sweep(&self, id: EntityId, erased: bool) -> Result<bool> {
         let residents = self
             .residents
             .lock()
             .map_err(|_| Error::InvariantViolation("document registry poisoned"))?;
-        if residents.get(&id).is_some_and(|v| v.strong_count() > 0) {
-            return Ok(false);
-        }
+        let resident = residents.get(&id).and_then(Weak::upgrade);
+        let _writer = match &resident {
+            Some(document) => match document.writer.try_lock() {
+                Ok(writer) => Some(writer),
+                Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err(Error::InvariantViolation("entity document poisoned"));
+                }
+            },
+            None => None,
+        };
         storage::compact(&self.vault, id, erased)?;
-        drop(residents);
         Ok(true)
     }
 }
