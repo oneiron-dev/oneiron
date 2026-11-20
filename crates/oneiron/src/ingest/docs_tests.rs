@@ -1210,6 +1210,12 @@ fn docs_deep_transport_reimport_preserves_claims_and_receipt() -> Result<()> {
     let ner = Ner(AtomicUsize::new(0));
     let original =
         vault.deep_ingest_docs_asset(&owner, asset, DocsDeepTrigger::Explicit, &ner, 3)?;
+    // FIX 9884: deriving permits no approval; approve the exact batch first.
+    let reviewed = vault
+        .docs_deep_review_effect(&owner, asset)?
+        .digest()
+        .to_hex();
+    vault.approve_docs_deep_claims(&owner, asset, &reviewed)?;
     let calls = ner.0.load(Ordering::Relaxed);
     doc.pages[0].text = format!("\u{feff}{}", doc.pages[0].text);
     assert_eq!(
