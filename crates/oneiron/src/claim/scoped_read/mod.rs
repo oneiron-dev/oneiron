@@ -187,10 +187,10 @@ pub struct ScopedRead<'a> {
     /// unjudged content by a receipt's applied band keeps the key's own.
     receipts_include_live_grants: bool,
     /// The rule this read applies to a claim whose cited claim the owner
-    /// retracted ([`crate::claim::CitedSupport`]): `History` only on the
+    /// retracted ([`crate::claim::evidence_support::CitedSupport`]): `History` only on the
     /// claim history door's lane (`ScopedRead::for_claim_history`), which
     /// keeps such a claim in the record; `Served` on every other lane.
-    cited_support: crate::claim::CitedSupport,
+    cited_support: crate::claim::evidence_support::CitedSupport,
 }
 
 mod owned;

@@ -111,10 +111,10 @@ impl ScopedRead<'_> {
 
     /// The same lane reading claim history: a claim whose cited claim the
     /// owner retracted stays in the record
-    /// ([`crate::claim::CitedSupport::History`]); every other check applies.
+    /// ([`crate::claim::evidence_support::CitedSupport::History`]); every other check applies.
     #[must_use]
     pub(crate) fn for_claim_history(mut self) -> Self {
-        self.cited_support = crate::claim::CitedSupport::History;
+        self.cited_support = crate::claim::evidence_support::CitedSupport::History;
         self
     }
 
@@ -196,7 +196,7 @@ impl ScopedRead<'_> {
         if crate::claim::history_store::machine_history_kind(&body.predicate).is_some() {
             return Ok(false);
         }
-        if !crate::claim::has_live_support_under_in_txn(
+        if !crate::claim::evidence_support::has_live_support_under_in_txn(
             &self.store_read(),
             rtxn,
             body,

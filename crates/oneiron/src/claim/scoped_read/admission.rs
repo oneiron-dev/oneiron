@@ -25,7 +25,7 @@ impl crate::vault::Vault {
             judged_at: None,
             read_filter: None,
             receipts_include_live_grants: false,
-            cited_support: crate::claim::CitedSupport::Served,
+            cited_support: crate::claim::evidence_support::CitedSupport::Served,
         }
     }
 
@@ -60,7 +60,7 @@ impl crate::vault::Vault {
             judged_at: None,
             read_filter: None,
             receipts_include_live_grants: false,
-            cited_support: crate::claim::CitedSupport::Served,
+            cited_support: crate::claim::evidence_support::CitedSupport::Served,
         }
     }
 

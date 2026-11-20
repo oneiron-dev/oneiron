@@ -42,21 +42,8 @@ pub(crate) enum CitedSupport {
     History,
 }
 
-/// A derived claim with typed TURN citations is readable while at least one
-/// cited turn remains live. On a serving read a cited CLAIM the owner
-/// retracted is not live (`retracted_claim`); a superseded one is, and the
-/// claim history door keeps the retracted one ([`CitedSupport::History`],
-/// [`has_live_support_under_in_txn`]). This is a read-time test: sync
-/// can deliver a claim after the deletion that erased its source, or before
-/// the retraction of the claim it cites. Ordinary claims have no such
-/// evidence obligation, and claim history remains available through get_claim.
-/// A stamped successor of a raw claim keeps that claim's obligation: the
-/// evidence it carries is read as the raw claim's own. A stamped claim's
-/// writer evidence (`candidate_evidence`, where the Dreamer's promotion and a
-/// derive item put their consolidation envelope) cites as a raw claim's own
-/// envelope does. Every citing slot asks together: one live cited row among
-/// them supports the claim, and one malformed slot fails it. `store` is the
-/// content read: a room's view finds a turn the room holds.
+/// A derived claim's live support on every serving read:
+/// [`has_live_support_under_in_txn`] under [`CitedSupport::Served`].
 pub(crate) fn has_live_support_in_txn(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -65,8 +52,21 @@ pub(crate) fn has_live_support_in_txn(
     has_live_support_under_in_txn(store, txn, body, CitedSupport::Served)
 }
 
-/// [`has_live_support_in_txn`] under `rule`: [`CitedSupport::History`] counts
-/// a retracted cited claim as live, as it did before the serving rule.
+/// A derived claim with typed TURN citations is readable while at least one
+/// cited turn remains live. Under [`CitedSupport::Served`] a cited CLAIM the
+/// owner retracted is not live (`retracted_claim`); a superseded one is.
+/// Under [`CitedSupport::History`] a retracted one counts. This is a
+/// read-time test: sync can deliver a claim after the deletion that erased
+/// its source, or before the retraction of the claim it cites. Ordinary
+/// claims have no such evidence obligation, and claim history remains
+/// available through get_claim.
+/// A stamped successor of a raw claim keeps that claim's obligation: the
+/// evidence it carries is read as the raw claim's own. A stamped claim's
+/// writer evidence (`candidate_evidence`, where the Dreamer's promotion and a
+/// derive item put their consolidation envelope) cites as a raw claim's own
+/// envelope does. Every citing slot asks together: one live cited row among
+/// them supports the claim, and one malformed slot fails it. `store` is the
+/// content read: a room's view finds a turn the room holds.
 pub(crate) fn has_live_support_under_in_txn(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,

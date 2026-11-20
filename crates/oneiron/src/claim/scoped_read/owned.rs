@@ -18,7 +18,7 @@ pub struct OwnedScopedRead {
     judged_at: Option<u64>,
     read_filter: Option<RetrievalFilter>,
     receipts_include_live_grants: bool,
-    cited_support: crate::claim::CitedSupport,
+    cited_support: crate::claim::evidence_support::CitedSupport,
     vault: Arc<crate::Vault>,
 }
 
