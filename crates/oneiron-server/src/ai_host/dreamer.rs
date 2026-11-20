@@ -57,7 +57,9 @@ mod urgent_digest;
 mod window_tests;
 use super::skill_author::CoachSkillAuthor;
 use super::status::{IdleReason, StatusCell, UnservedNote, UnservedReason, WorkState, WorkStatus};
-use crate::config::models::{DreamerSettings, DreamerWording, ModelsConfig, role_key};
+use crate::config::models::{
+    DreamerSettings, DreamerWording, ModelsConfig, ProviderConfig, role_key,
+};
 use crate::decision_host::DecisionHost;
 use crate::models::{ModelRuntime, OfferLadder, RoleRefusal, RoleRoute, Seat};
 use crate::runtime::wall_clock_ms as now_ms;
@@ -199,6 +201,31 @@ pub(super) struct DreamerStart {
 /// window again). A context no larger than [`EXTRACTION_MAX_TOKENS`] with no
 /// ceiling, or no larger than its ceiling, reserves nothing.
 pub(super) fn dream_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
+    rung_windows(models, |provider| match provider.max_output_tokens {
+        Some(ceiling) => ceiling,
+        None if provider.context_tokens > EXTRACTION_MAX_TOKENS => {
+            EXTRACTION_MAX_TOKENS.min(provider.context_tokens / 2)
+        }
+        None => 0,
+    })
+}
+
+/// The input code mode's reader child may fill on each model a role's rungs
+/// name: its provider's context less only the output ceiling it names. A
+/// summary's budget already halves this window, so a provider naming no
+/// ceiling reserves nothing here; the Dreamer's extraction reserve stays in
+/// [`dream_windows`].
+pub(super) fn reader_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
+    rung_windows(models, |provider| provider.max_output_tokens.unwrap_or(0))
+}
+
+/// Each rung model's provider context less the output `reserve` names for
+/// it, the smallest where several rungs name the model. A reserve that
+/// leaves no room keeps the whole context.
+fn rung_windows(
+    models: &ModelsConfig,
+    reserve: impl Fn(&ProviderConfig) -> u64,
+) -> BTreeMap<ModelId, u64> {
     let mut windows = BTreeMap::new();
     for rungs in models.roles.values() {
         for rung in rungs {
@@ -208,13 +235,7 @@ pub(super) fn dream_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
             let Ok(model) = rung.model.engine_id(&provider.revision) else {
                 continue;
             };
-            let output = match provider.max_output_tokens {
-                Some(ceiling) => ceiling,
-                None if provider.context_tokens > EXTRACTION_MAX_TOKENS => {
-                    EXTRACTION_MAX_TOKENS.min(provider.context_tokens / 2)
-                }
-                None => 0,
-            };
+            let output = reserve(provider);
             let room = provider
                 .context_tokens
                 .checked_sub(output)

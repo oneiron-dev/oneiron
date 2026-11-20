@@ -1,9 +1,9 @@
-//! The input windows the Dreamer lends its models (FIX
-//! DREAMER-WINDOW-RESERVES-NO-OUTPUT-WITHOUT-PROVIDER-CAP).
+//! The input windows the Dreamer and code mode's reader child lend their
+//! models (FIX DREAMER-WINDOW-RESERVES-NO-OUTPUT-WITHOUT-PROVIDER-CAP).
 use oneiron::ModelId;
 use oneiron::dreamer_consolidation::EXTRACTION_MAX_TOKENS;
 
-use super::dream_windows;
+use super::{dream_windows, reader_windows};
 use crate::ai_host::test_support::models_toml;
 
 /// The house layout (deploy/house-model/models.toml): a 32,768-token server
@@ -41,10 +41,19 @@ rungs = [
 ]
 "#;
 
+/// The engine id of `provider`'s model.
+fn model(provider: &str) -> ModelId {
+    ModelId::new(format!("{provider}/qwen@live")).unwrap()
+}
+
 /// The window the Dreamer lends `provider`'s model.
 fn window(provider: &str) -> u64 {
-    let model = ModelId::new(format!("{provider}/qwen@live")).unwrap();
-    dream_windows(&models_toml(MODELS))[&model]
+    dream_windows(&models_toml(MODELS))[&model(provider)]
+}
+
+/// The window code mode lends its reader child on `provider`'s model.
+fn reader_window(provider: &str) -> u64 {
+    reader_windows(&models_toml(MODELS))[&model(provider)]
 }
 
 #[test]
@@ -66,4 +75,15 @@ fn an_uncapped_context_just_past_the_ask_keeps_half_its_window() {
 #[test]
 fn an_uncapped_context_below_the_ask_keeps_its_whole_window() {
     assert_eq!(window("small"), 8_192);
+}
+
+#[test]
+fn the_code_mode_reader_keeps_an_uncapped_context_whole() {
+    assert_eq!(reader_window("house"), 32_768);
+    assert_eq!(reader_window("tight"), 12_289);
+}
+
+#[test]
+fn the_code_mode_reader_reserves_a_provider_output_ceiling() {
+    assert_eq!(reader_window("capped"), 32_768 - 2_048);
 }
