@@ -1239,6 +1239,63 @@ fn a_message_within_the_request_floor_reaches_the_server_on_either_carrier() {
     );
 }
 
+/// A tool call as long as the least request floor, naming no invocation,
+/// reaches its tool on a vault set to that floor: the invocation the bridge
+/// would add to its `_meta` takes the body past the floor, so the bridge
+/// sends the call as the client wrote it. Review round 2 of #9786.
+#[test]
+fn a_call_as_long_as_the_request_floor_goes_as_the_client_wrote_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = init_vault(dir.path());
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&config)
+        .unwrap();
+    writeln!(file, "\n[limits]\nrequest_body_bytes = {FRAME_LIMIT}").unwrap();
+    drop(file);
+    let credential_file = dir.path().join("claude-code.cred");
+    stdout(oneiron(
+        &[
+            "token",
+            "agent",
+            "--name",
+            "claude-code",
+            "--tier",
+            "full-access",
+            "--out",
+            credential_file.to_str().unwrap(),
+        ],
+        &config,
+    ));
+    let port = free_port();
+    let origin = format!("http://127.0.0.1:{port}");
+    let _server = serve(&config, port, &dir.path().join("serve.log"));
+    let curl_dir = argv_recording_curl(dir.path(), &dir.path().join("curl-argv.log"));
+    let stderr = dir.path().join("mcp.stderr");
+    let mut bridge = Bridge::spawn(&origin, &credential_file, &curl_dir, &stderr);
+    let version = schema_version(&mut bridge);
+    let query = json!({ "spec": { "query": "Vellichor ferry pier nine", "limit": 10 } });
+    let (id, mut params) = tool_call(2, "vault.recall", &version, query);
+    params["_meta"] = json!({ "pad": "" });
+    let line = |params: &Value| {
+        json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params })
+            .to_string()
+            .len()
+    };
+    let unpadded = line(&params);
+    params["_meta"]["pad"] = Value::String("x".repeat(FRAME_LIMIT - unpadded));
+    assert_eq!(line(&params), FRAME_LIMIT);
+    let recalled = bridge.call(id, "tools/call", params);
+    assert!(recalled.get("error").is_none(), "{}", head(&recalled));
+    assert_ne!(
+        recalled["result"]["isError"],
+        json!(true),
+        "{}",
+        head(&recalled)
+    );
+    bridge.close();
+}
+
 /// On the stopped vault: a task of `writer`'s whose realization failed, and a
 /// project room of the owner's with the agents on its roster, where the
 /// owner has opened a turn that names no one. Returns the task, the room and
