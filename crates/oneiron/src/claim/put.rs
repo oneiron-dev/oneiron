@@ -10,7 +10,7 @@ use crate::batch::{
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
-use crate::ports::EntityStoreRead;
+use crate::ports::{ClaimReadStatus, EntityStoreRead};
 use crate::provenance::validate_actor_class;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
@@ -88,6 +88,32 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        self.put_claim_reading_edge_subject_in_txn(
+            wtxn,
+            id,
+            body,
+            occurred,
+            learned_at,
+            ClaimReadStatus::Surfaceable,
+        )
+    }
+
+    /// [`Vault::put_claim_in_txn`] whose EdgeRef subject the live Owners
+    /// read at `edge_subject_status`. The owner's whole-vault restore of a
+    /// proven CLAIM-pair link reads the subject of each claim about it at
+    /// [`ClaimReadStatus::Recorded`]: the link's two restored CLAIMs come
+    /// back proposed, as every imported claim does
+    /// (`batch::export::document_import::claim_pair_same_as`). Every other
+    /// check is the same.
+    pub(crate) fn put_claim_reading_edge_subject_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+        occurred: TimeRange,
+        learned_at: u64,
+        edge_subject_status: ClaimReadStatus,
+    ) -> Result<()> {
         // The raw door writes a body and nothing else — no supersession at
         // all. For `companion.expression.*` that is not "less"; it is a SECOND
         // live head beside the one the typed door is tracking, with the chain
@@ -109,7 +135,11 @@ impl Vault {
         // through the live Owners' keys. The reserved door keeps its own
         // allowance: provenance lands an edge and its claim in one txn.
         if let ClaimSubject::Edge { .. } = body.subject
-            && !self.owner_reads_edge_subject_in(wtxn, &body.subject)?
+            && !self.owner_reads_edge_subject_at_status_in(
+                wtxn,
+                &body.subject,
+                edge_subject_status,
+            )?
         {
             return Err(Error::EntityNotFound);
         }
@@ -190,10 +220,22 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         subject: &ClaimSubject,
     ) -> Result<bool> {
+        self.owner_reads_edge_subject_at_status_in(txn, subject, ClaimReadStatus::Surfaceable)
+    }
+
+    /// [`Vault::owner_reads_edge_subject_in`] with each Owner's lane
+    /// admitting the endpoint claims `status` admits.
+    fn owner_reads_edge_subject_at_status_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        subject: &ClaimSubject,
+        status: ClaimReadStatus,
+    ) -> Result<bool> {
         let mut failed = None;
         for owner in crate::policy_model::owners_in_txn(self, txn)? {
             match self
                 .scoped_read(ScopedReadActorKey::vault_owner(owner))
+                .with_claim_status(status)
                 .claim_edge_subject_admitted_in_txn(txn, subject)
             {
                 Ok(true) => return Ok(true),

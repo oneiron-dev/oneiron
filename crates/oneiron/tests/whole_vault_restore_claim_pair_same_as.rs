@@ -29,6 +29,23 @@
 //! link. The other three pass there and on the fix: they pin the doors and
 //! cases the ruling keeps out.
 //!
+//! FIX OWNER-RESTORE-OF-GRANTED-CLAIM-PAIR-LINK-ABORTS (after-merge proof of
+//! the fix above, 20 Nov): on the merged head the owner's restore in
+//! `owner_restore_brings_a_granted_claim_pair_link_back` aborted whole with
+//! `EntityNotFound`: the link's status claim was put with its link read in
+//! the Surfaceable mode, which admits no proposed claim, and both restored
+//! CLAIMs come back proposed. It runs red at the tests-only commit on main
+//! and green at the fix, which reads that link in the Recorded mode on the
+//! owner's restore of a proven CLAIM pair. The diary test's source is now a
+//! rooted vault whose owner holds the root owner binding `grant_diary_read`
+//! asks for; on a plain device vault it failed in its fixture at every head.
+//! `owner_restore_brings_a_claim_about_a_granted_claim_pair_link_back`
+//! (REVIEW-9744 P1): the source's owner also puts an ordinary claim about
+//! the link; the owner's restore completes and brings the link and that
+//! claim back. It runs red at 7674fd3a789, which reads only the status
+//! claim's link in the Recorded mode, so the restore aborts at the other
+//! claim, and green at the fix.
+//!
 //! Vaults in tempdirs. The CLAIM-pair source opens through
 //! `test_doors::consolidation::open_dreamer_vault` and lands the link through
 //! the Dreamer's derive door, as `derive_links.rs` does; every other step
@@ -47,6 +64,7 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
+use oneiron::authority::MachineRole;
 use oneiron::batch::export::WholeVaultImportReceipt;
 use oneiron::claim::{COREFERENCE_STATUS_PROPOSED, PREDICATE_COREFERENCE_STATUS};
 use oneiron::consent::AuthenticatedOwner;
@@ -60,8 +78,8 @@ use oneiron::test_doors::derive::{
 };
 use oneiron::test_doors::steward::dreamer;
 use oneiron::{
-    ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig,
-    WriteActor,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EntityId,
+    TimeRange, Vault, VaultConfig, WriteActor,
 };
 use serde_json::json;
 
@@ -304,6 +322,60 @@ fn owner_restore_brings_a_granted_claim_pair_link_back() {
 }
 
 #[test]
+fn owner_restore_brings_a_claim_about_a_granted_claim_pair_link_back() {
+    let source = claim_pair_source();
+    let annotation = EntityId::now();
+    let at = source.vault.now_recorded_at();
+    source
+        .vault
+        .put_claim(
+            &annotation,
+            &ClaimBody::new(
+                "relationship.context",
+                ClaimSubject::Edge {
+                    source: source.first,
+                    kind: EdgeKind::SameAs,
+                    target: source.second,
+                },
+                rmpv::Value::from("both name one coffee order"),
+                0.9,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            )
+            .expect("a claim body about the link"),
+            TimeRange { start: at, end: at },
+            at,
+        )
+        .expect("FIXTURE: the source's owner puts a claim about the claim-pair link");
+    let archive = claim_pair_archive(&source);
+    let (_dir, dest) = open_destination();
+    let owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner)
+        .expect("the owner's restore completes");
+    assert!(
+        dest.edge_exists(&source.first, EdgeKind::SameAs, &source.second)
+            .expect("read the restored link"),
+        "the claim-pair link comes back: unrestored {:?}, omissions {:?}",
+        unrestored_same_as_links(&receipt),
+        receipt.destination_omissions
+    );
+    let restored = dest
+        .get_claim(&annotation)
+        .expect("read the restored claim about the link")
+        .expect("the claim about the link comes back");
+    assert_eq!(
+        restored.subject,
+        ClaimSubject::Edge {
+            source: source.first,
+            kind: EdgeKind::SameAs,
+            target: source.second,
+        },
+        "the restored claim is about the restored link"
+    );
+}
+
+#[test]
 fn owner_restore_keeps_a_claim_pair_link_out_once_its_grant_is_revoked() {
     let source = claim_pair_source();
     let proof = owner_proof(&source.vault);
@@ -379,7 +451,26 @@ fn put_diary(vault: &Vault, author: EntityId, markdown: &str) -> EntityId {
 #[test]
 fn the_owners_restore_keeps_a_diary_pair_link_out() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let source = Vault::open(dir.path(), VaultConfig::device()).expect("open the source");
+    // A rooted source whose embedded owner holds the active root owner
+    // binding `grant_diary_read` asks for, as `context_board_rows_shown.rs`
+    // roots its vault.
+    let source = Vault::open_owned(dir.path(), VaultConfig::device()).expect("open the source");
+    source.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    source
+        .prepare_install_signing()
+        .expect("load the source's signing keys");
+    let issuer = source
+        .bootstrap_host_slip_issuer()
+        .expect("the source's host issuer");
+    source
+        .ensure_host_root_slip(&issuer)
+        .expect("root the source under its host");
+    source
+        .provision_engine_machine_identities(&issuer)
+        .expect("the source's engine machine identities");
+    source
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("the source's serving install profile");
     let proof = owner_proof(&source);
     let owner = source
         .ensure_embedded_owner_actor()
