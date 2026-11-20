@@ -30,5 +30,10 @@ toml = "0.9"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[dev-dependencies]
+# Encodes a custody record through the custody codec's key map
+# (tests/canary.rs).
+rmpv = { workspace = true }
+
 [lints]
 workspace = true

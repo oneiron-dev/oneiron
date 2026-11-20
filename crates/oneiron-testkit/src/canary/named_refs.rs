@@ -223,3 +223,28 @@ fn is_entity_hex(text: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Map, Value, json};
+
+    use super::{NamedRef, named_refs};
+
+    const ENTITY: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn an_entity_id_used_as_an_object_key_is_a_named_ref() {
+        let mut by_entity = Map::new();
+        by_entity.insert(ENTITY.to_owned(), Value::Bool(true));
+        let mut found = Vec::new();
+        named_refs(&json!({"by_entity": by_entity}), None, &mut found);
+        assert_eq!(found, vec![NamedRef::Entity(ENTITY.to_owned())]);
+    }
+
+    #[test]
+    fn a_key_that_is_no_ref_names_none() {
+        let mut found = Vec::new();
+        named_refs(&json!({"by_entity": {"title": "x"}}), None, &mut found);
+        assert!(found.is_empty(), "{found:?}");
+    }
+}

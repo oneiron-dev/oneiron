@@ -2,6 +2,8 @@
 //! public verbs reaches the readers in its audience, and no reader outside
 //! it finds its word on any surface it reaches.
 
+use std::collections::BTreeSet;
+
 use oneiron_testkit::TestVault;
 use oneiron_testkit::canary::{
     CanaryActor, CanaryClass, CanaryScan, CanaryVault, ClaimBand, NEUTRAL_PHRASE, PENDING,
@@ -11,7 +13,7 @@ use oneiron_testkit::dreamer::{
     read_everything_scope, scripted_backend,
 };
 use oneiron_testkit::provider::SeenCall;
-use serde_json::json;
+use serde_json::{Value, json};
 
 fn seeded() -> (TestVault, CanaryVault) {
     CanaryVault::seeded("canary-audiences").expect("the canary fixture seeds through public doors")
@@ -256,6 +258,185 @@ fn the_owners_export_is_scanned_as_its_decoded_archive() {
         "the inside agent's vault.export was not refused; refused: {:#?}",
         inside.refused
     );
+}
+
+/// The surface the owner's export is read as, decoded.
+const EXPORT_DECODED: &str = "vault.export (archive decoded)";
+/// The surface the export's custody records are read as.
+const EXPORT_CUSTODY: &str = "vault.export (custody records decoded)";
+
+/// Every surface `scan` read, answered or refused.
+fn surfaces(scan: &CanaryScan) -> BTreeSet<&str> {
+    scan.seen
+        .iter()
+        .chain(&scan.refused)
+        .map(|read| read.surface.as_str())
+        .collect()
+}
+
+/// The JSON of each answer `scan` read on `surface`.
+fn answers_on(scan: &CanaryScan, surface: &str) -> Vec<Value> {
+    scan.seen
+        .iter()
+        .filter(|read| read.surface == surface)
+        .map(|read| serde_json::from_str(&read.text).expect("a decoded surface reads as JSON"))
+        .collect()
+}
+
+#[test]
+fn every_entity_the_owners_export_names_is_followed_through_get_and_resolve() {
+    let (test_vault, canaries) = seeded();
+    let vault = test_vault.open_owned().expect("open the seeded vault");
+    let scan = canaries.scan(&vault, CanaryActor::Owner);
+    let ids: Vec<String> = answers_on(&scan, EXPORT_DECODED)
+        .iter()
+        .filter_map(|document| document.pointer("/evidence_ledger/entities"))
+        .filter_map(Value::as_array)
+        .flatten()
+        .filter_map(|entity| entity.get("id").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        !ids.is_empty(),
+        "the owner's decoded export names no ledger entity; incomplete: {:?}",
+        scan.incomplete
+    );
+    let read = surfaces(&scan);
+    let missed: Vec<String> = ids
+        .iter()
+        .flat_map(|id| ["vault.get", "vault.refs.resolve"].map(|door| format!("{door} {id}")))
+        .filter(|surface| !read.contains(surface.as_str()))
+        .collect();
+    assert!(
+        missed.is_empty(),
+        "the owner's scan never read these entities its export names ({} of {} ids): {missed:#?}",
+        missed.len(),
+        ids.len()
+    );
+    assert!(scan.incomplete.is_empty(), "{:?}", scan.incomplete);
+}
+
+#[test]
+fn every_entity_a_scan_gets_by_id_it_also_resolves_whatever_the_get_answered() {
+    let (test_vault, canaries) = seeded();
+    let vault = test_vault.open_owned().expect("open the seeded vault");
+    for actor in CanaryActor::ALL {
+        let scan = canaries.scan(&vault, actor);
+        let read = surfaces(&scan);
+        let unresolved: Vec<&str> = read
+            .iter()
+            .filter_map(|surface| surface.strip_prefix("vault.get "))
+            .filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .filter(|id| !read.contains(format!("vault.refs.resolve {id}").as_str()))
+            .collect();
+        assert!(
+            unresolved.is_empty(),
+            "{actor}'s scan read these ids through vault.get and never through vault.refs.resolve: {unresolved:#?}"
+        );
+    }
+}
+
+/// A custody record's name: the owner's decoded export reads it.
+const CUSTODY_NAME: &str = "canary-custody-record-name";
+/// Its value: no surface may hold it.
+const CUSTODY_VALUE: &str = "canary-custody-record-value";
+/// The effector its one binding names.
+const CUSTODY_EFFECTOR: &str = "canary:custody-scan";
+/// Its registration instant, unix seconds.
+const CUSTODY_REGISTERED_AT: u64 = 1_767_225_600;
+
+/// Registers an active portable custody record named [`CUSTODY_NAME`]. Its
+/// value field is crate-private, so the record is built as
+/// tests/it/snapshot_custody_binding.rs builds one: the custody codec's
+/// key map, encoded and decoded.
+fn register_custody_record(vault: &oneiron::Vault) {
+    use oneiron::secret_custody::{
+        CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
+        SecretCustodyStatus, decode_secret_custody_body,
+    };
+    use rmpv::Value as Pack;
+
+    let band = |min: u64, max: u64| {
+        Pack::Map(vec![
+            (Pack::from("min"), Pack::from(min)),
+            (Pack::from("max"), Pack::from(max)),
+        ])
+    };
+    let floor = Pack::Map(vec![
+        (Pack::from("portable"), band(0, 2)),
+        (Pack::from("device_bound"), band(0, 2)),
+        (Pack::from("cross_vault"), band(0, 0)),
+        (Pack::from("rotation_max_age_secs"), Pack::Nil),
+        (Pack::from("env_bindings"), Pack::Map(vec![])),
+    ]);
+    let binding = Pack::Map(vec![
+        (Pack::from("effector"), Pack::from(CUSTODY_EFFECTOR)),
+        (
+            Pack::from("tier_ceiling"),
+            Pack::from(u64::from(CustodyTier::T1Leased.as_u8())),
+        ),
+        (Pack::from("scopes"), Pack::Array(vec![Pack::from("get")])),
+    ]);
+    let key = |index: usize| Pack::from(SECRET_CUSTODY_BODY_KEYS[index]);
+    let body = Pack::Map(vec![
+        (key(0), Pack::from(u64::from(SECRET_CUSTODY_SCHEMA_VERSION))),
+        (key(1), Pack::from(CUSTODY_NAME)),
+        (key(2), Pack::from(CustodyClass::CustodyPortable.as_str())),
+        (key(3), Pack::from(false)),
+        (key(4), Pack::Binary(CUSTODY_VALUE.as_bytes().to_vec())),
+        (key(5), Pack::from(SecretCustodyStatus::Active.as_str())),
+        (key(6), Pack::from(CUSTODY_REGISTERED_AT)),
+        (key(7), Pack::Nil),
+        (key(8), Pack::from(0_u64)),
+        (key(9), Pack::Array(vec![binding])),
+        (key(10), Pack::from("")),
+        (key(11), Pack::Array(vec![])),
+        (key(12), floor),
+        (key(13), Pack::from(true)),
+    ]);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &body).expect("encode the custody body");
+    let record = decode_secret_custody_body(&bytes).expect("decode the custody body");
+    vault
+        .register_secret(record)
+        .expect("register the custody record");
+}
+
+#[test]
+fn the_owners_decoded_export_reads_each_custody_record_less_its_value() {
+    let (test_vault, canaries) = seeded();
+    let vault = test_vault.open_owned().expect("open the seeded vault");
+    register_custody_record(&vault);
+    let scan = canaries.scan(&vault, CanaryActor::Owner);
+    let custody = answers_on(&scan, EXPORT_CUSTODY);
+    let named: Vec<&Value> = custody
+        .iter()
+        .filter_map(Value::as_array)
+        .flatten()
+        .filter(|record| record.get("name").and_then(Value::as_str) == Some(CUSTODY_NAME))
+        .collect();
+    assert_eq!(
+        named.len(),
+        1,
+        "the owner's scan read the custody record named {CUSTODY_NAME} on no `{EXPORT_CUSTODY}` surface: {custody:?}; incomplete: {:?}",
+        scan.incomplete
+    );
+    assert!(
+        named.iter().all(|record| record.get("body").is_none()),
+        "the custody surface keeps the record's value field: {named:?}"
+    );
+    let holding: Vec<&str> = scan
+        .seen
+        .iter()
+        .chain(&scan.refused)
+        .filter(|read| read.text.contains(CUSTODY_VALUE))
+        .map(|read| read.surface.as_str())
+        .collect();
+    assert!(
+        holding.is_empty(),
+        "these surfaces hold the custody value: {holding:?}"
+    );
+    assert!(scan.incomplete.is_empty(), "{:?}", scan.incomplete);
 }
 
 /// The turn wake's model calls over the canary vault, as `(prompt digest,

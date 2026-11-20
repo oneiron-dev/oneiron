@@ -9162,6 +9162,7 @@ dependencies = [
  "oneiron-contracts",
  "oneiron-keystore",
  "oneiron-spawn",
+ "rmpv",
  "serde_json",
  "stacker",
  "tempfile",
