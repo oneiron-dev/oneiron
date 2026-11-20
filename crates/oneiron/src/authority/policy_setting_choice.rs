@@ -338,7 +338,9 @@ fn birth_names_source_heads(state: &FoldState, row: &SettingCopyRow) -> Result<b
 
 /// The `SettingPackHead` transition (stage 7c-3a): the head lands on its pack's target as an
 /// engine statement ([`choice_landing`] with no owner), its choice the entry's own hash, its
-/// `seen` judged against the target's live revision.
+/// `seen` judged against the target's live revision. `needs_proof_off_the_line` is the owner
+/// key's line's mark on the entry ([`super::owner_key_line`]), which marks no pack head yet, as
+/// no setting copy (FIX SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
 pub(super) fn apply_setting_pack_head(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -346,6 +348,7 @@ pub(super) fn apply_setting_pack_head(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let target = head
         .target()
@@ -357,6 +360,7 @@ pub(super) fn apply_setting_pack_head(
         machine: head.machine,
         choice: Some(&hash),
         context: POLICY_SETTING_REVISION_CONTEXT,
+        needs_proof_off_the_line,
         persons_own_narrowing: false,
     };
     let landing = choice_landing(
