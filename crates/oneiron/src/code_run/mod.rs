@@ -418,4 +418,4 @@ pub use self::dispatcher::workflow_operations;
 // Door seams for `test_doors::parked_hook_custody`, apart from the block
 // above, so no other re-export edit meets this one.
 #[cfg(oneiron_test_support)]
-pub(crate) use self::dispatcher::{hook_parked_outcome_for_test, parked_note_meets_for_test};
+pub(crate) use self::dispatcher::{hook_parked_outcome_for_test, parked_note_resumed_for_test};
