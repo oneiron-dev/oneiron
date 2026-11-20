@@ -247,10 +247,13 @@ impl Vault {
     }
 }
 
-/// The id and subject of each claim candidate in `ops`, the internal lexical
-/// query hints aside: what
-/// [`Vault::restore_subjects_of_landed_claims_in_txn`] reads once the ops
-/// have applied.
+/// The id and subject of each claim `ops` may land: each claim candidate, the
+/// internal lexical query hints aside, and each raw CLAIM row a public put
+/// writes (every admit flag closed, so no replicated, maintenance or
+/// reserved-door put; FIX BATCH-RAW-CLAIM-PUT-SKIPS-ARCHIVED-PERSON-RESTORE).
+/// What [`Vault::restore_subjects_of_landed_claims_in_txn`] reads once the
+/// ops have applied. A raw body that does not decode names no subject: its
+/// apply refuses it.
 pub(crate) fn candidate_claim_subjects(
     ops: &[crate::batch::BatchOp],
 ) -> Vec<(EntityId, ClaimSubject)> {
@@ -262,6 +265,17 @@ pub(crate) fn candidate_claim_subjects(
                 internal_lexical_query_hint: false,
                 ..
             } => Some((*id, candidate.subject())),
+            crate::batch::BatchOp::Put {
+                id,
+                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                data,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+                ..
+            } => crate::claim::decode_claim_body(data, false)
+                .ok()
+                .map(|body| (*id, body.subject)),
             _ => None,
         })
         .collect()
