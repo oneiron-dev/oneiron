@@ -43,7 +43,7 @@ mod refusal_origin;
 mod sections;
 mod validation;
 
-pub(crate) use self::file_admission::{read_config_file, read_referenced_file};
+pub(crate) use self::file_admission::{FileRefused, read_config_file, read_referenced_file};
 use self::layers::{merge_layers, read_layers};
 pub use self::sections::default_config_path;
 pub(crate) use self::validation::settings_schema_keys;

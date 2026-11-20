@@ -729,6 +729,9 @@ impl Vault {
         crate::federation::backfill_agent_grant_member_index(&vault, false)?;
         // The PERSON party-key index, for a vault older than it (L6-22).
         crate::store::person_party_keys::backfill_person_party_key_index(&vault, false)?;
+        // The voice speakers' entries by container, for a vault older than
+        // their index (PLAN-RUN-RESULT-GUARD-SPEAKER-ENTRIES).
+        crate::task_verb::speaker_entry_index::backfill_speaker_entry_index(&vault, false)?;
         vault.backfill_widen_contact_verdict_index(false)?;
         vault.backfill_standing_outbound_grant_index(false)?;
         crate::counterparty_contact::backfill_counterparty_identity_index(&vault, false)?;
@@ -909,6 +912,28 @@ impl Vault {
             std::sync::Arc::clone(manager.materializer()),
             manager,
         ))
+    }
+
+    /// [`Self::live_window`] for a tombstone publication to `key`. With no
+    /// live window, `key` stays held closed until the returned hold drops:
+    /// no open or replacement of it reads the persisted state the publication
+    /// rewrites and then puts back the state from before it
+    /// ([`crate::sync::WindowManager::publication_window`]). Lookup only, as
+    /// [`Self::live_window`] is.
+    #[cfg(feature = "sync")]
+    pub(crate) fn publication_window(
+        &self,
+        key: &crate::window_key::WindowKey,
+    ) -> crate::sync::manager::PublicationWindow {
+        let manager = self
+            .live_window_manager
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .upgrade();
+        match manager {
+            Some(manager) => manager.publication_window(key),
+            None => crate::sync::manager::PublicationWindow::Closed { _hold: None },
+        }
     }
 
     /// Returns every registry-owned live window without faulting any closed

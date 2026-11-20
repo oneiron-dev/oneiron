@@ -8,7 +8,7 @@
       "streamed": false
     },
     {
-      "digest": "78d9143fe540c8d87f9f1c3807d66bd8622baf605aaa7e445e123a51655ea334",
+      "digest": "fd552e2249e1dc35060cbe0e05fb6a177cc1603fe5cf9d108e5b310003db8796",
       "model": "oneiron-testkit/scripted@1",
       "route": "generate oneiron-testkit/scripted@1",
       "step": "golden-day-1-1",
@@ -317,7 +317,7 @@
             "confidence": 1.0,
             "facet": null,
             "hedge_bucket": "confident",
-            "kind": "MACHINE",
+            "kind": "NOTIFICATION",
             "predicate": null,
             "project_ref": null,
             "provenance": {
@@ -329,13 +329,39 @@
             },
             "record": {
               "id": "record#2",
-              "kind": "MACHINE",
+              "kind": "NOTIFICATION",
               "label": "label#6",
               "short_id": "short#5"
             },
             "salience": null,
             "short_id": "short#5",
             "source_revision_ref": "revision#3",
+            "value_text": "{\"kind\":\"finding\",\"source\":{\"producer\":\"dreamer.finding\",\"event\":\"claim#1\"},\"subject_refs\":[\"claim#1\",\"owner\"],\"created_at\":1800000060}",
+            "world": null
+          },
+          {
+            "confidence": 1.0,
+            "facet": null,
+            "hedge_bucket": "confident",
+            "kind": "MACHINE",
+            "predicate": null,
+            "project_ref": null,
+            "provenance": {
+              "evidence_turn_ids": [],
+              "source": "record",
+              "source_revision_ids": [
+                "record#3"
+              ]
+            },
+            "record": {
+              "id": "record#3",
+              "kind": "MACHINE",
+              "label": "label#7",
+              "short_id": "short#6"
+            },
+            "salience": null,
+            "short_id": "short#6",
+            "source_revision_ref": "revision#4",
             "value_text": "{}",
             "world": null
           },
@@ -375,34 +401,8 @@
             },
             "salience": null,
             "short_id": "short#1",
-            "source_revision_ref": "revision#4",
-            "value_text": "I moved to Lisbon last March, and my sister Ana lives two streets away.",
-            "world": null
-          },
-          {
-            "confidence": 1.0,
-            "facet": null,
-            "hedge_bucket": "confident",
-            "kind": "NOTIFICATION",
-            "predicate": null,
-            "project_ref": null,
-            "provenance": {
-              "evidence_turn_ids": [],
-              "source": "record",
-              "source_revision_ids": [
-                "record#3"
-              ]
-            },
-            "record": {
-              "id": "record#3",
-              "kind": "NOTIFICATION",
-              "label": "label#7",
-              "short_id": "short#6"
-            },
-            "salience": null,
-            "short_id": "short#6",
             "source_revision_ref": "revision#5",
-            "value_text": "{\"kind\":\"finding\",\"source\":{\"producer\":\"dreamer.finding\",\"event\":\"claim#1\"},\"subject_refs\":[\"claim#1\",\"owner\"],\"created_at\":1800000060000}",
+            "value_text": "I moved to Lisbon last March, and my sister Ana lives two streets away.",
             "world": null
           }
         ],
@@ -710,7 +710,7 @@
             "record": {
               "id": "claim#1",
               "kind": "CLAIM",
-              "label": "label#5",
+              "label": "label#8",
               "short_id": "short#4"
             },
             "salience": null,
@@ -723,7 +723,7 @@
             "confidence": 1.0,
             "facet": null,
             "hedge_bucket": "confident",
-            "kind": "MACHINE",
+            "kind": "NOTIFICATION",
             "predicate": null,
             "project_ref": null,
             "provenance": {
@@ -735,13 +735,39 @@
             },
             "record": {
               "id": "record#2",
-              "kind": "MACHINE",
+              "kind": "NOTIFICATION",
               "label": "label#6",
               "short_id": "short#5"
             },
             "salience": null,
             "short_id": "short#5",
             "source_revision_ref": "revision#3",
+            "value_text": "{\"kind\":\"finding\",\"source\":{\"producer\":\"dreamer.finding\",\"event\":\"claim#1\"},\"subject_refs\":[\"claim#1\",\"owner\"],\"created_at\":1800000060}",
+            "world": null
+          },
+          {
+            "confidence": 1.0,
+            "facet": null,
+            "hedge_bucket": "confident",
+            "kind": "MACHINE",
+            "predicate": null,
+            "project_ref": null,
+            "provenance": {
+              "evidence_turn_ids": [],
+              "source": "record",
+              "source_revision_ids": [
+                "record#3"
+              ]
+            },
+            "record": {
+              "id": "record#3",
+              "kind": "MACHINE",
+              "label": "label#7",
+              "short_id": "short#6"
+            },
+            "salience": null,
+            "short_id": "short#6",
+            "source_revision_ref": "revision#4",
             "value_text": "{}",
             "world": null
           },
@@ -780,34 +806,8 @@
             },
             "salience": null,
             "short_id": "short#1",
-            "source_revision_ref": "revision#4",
-            "value_text": "I moved to Lisbon last March, and my sister Ana lives two streets away.",
-            "world": null
-          },
-          {
-            "confidence": 1.0,
-            "facet": null,
-            "hedge_bucket": "confident",
-            "kind": "NOTIFICATION",
-            "predicate": null,
-            "project_ref": null,
-            "provenance": {
-              "evidence_turn_ids": [],
-              "source": "record",
-              "source_revision_ids": [
-                "record#3"
-              ]
-            },
-            "record": {
-              "id": "record#3",
-              "kind": "NOTIFICATION",
-              "label": "label#7",
-              "short_id": "short#6"
-            },
-            "salience": null,
-            "short_id": "short#6",
             "source_revision_ref": "revision#5",
-            "value_text": "{\"kind\":\"finding\",\"source\":{\"producer\":\"dreamer.finding\",\"event\":\"claim#1\"},\"subject_refs\":[\"claim#1\",\"owner\"],\"created_at\":1800000060000}",
+            "value_text": "I moved to Lisbon last March, and my sister Ana lives two streets away.",
             "world": null
           }
         ],
@@ -833,7 +833,8 @@
             "max_sensitivity_band",
             "min_confidence",
             "min_salience",
-            "deny_all"
+            "deny_all",
+            "row_authority"
           ],
           "replan_hint": [
             "entity_types",
@@ -841,6 +842,7 @@
             "min_confidence",
             "min_salience",
             "deny_all",
+            "row_authority",
             "grant_scope"
           ],
           "requested": {
@@ -851,7 +853,7 @@
             "min_confidence": 1.0,
             "min_salience": 1.0
           },
-          "suppressed_count": 0
+          "suppressed_count": 6
         },
         "pack_version": 1,
         "rendered": null,
@@ -1341,7 +1343,7 @@
       "pages": [
         {
           "order": "entry_ref_ascending",
-          "scanned": 26
+          "scanned": 30
         }
       ],
       "rows": [
@@ -1476,7 +1478,7 @@
           "learned_at": "<measured>",
           "occurred_end": "<measured>",
           "occurred_start": "<measured>",
-          "seq": 5,
+          "seq": 25,
           "signer_key": "key#1",
           "source_op": "bind_actor",
           "vault_ref": "vault#1"
@@ -1493,7 +1495,7 @@
           "learned_at": "<measured>",
           "occurred_end": "<measured>",
           "occurred_start": "<measured>",
-          "seq": 7,
+          "seq": 27,
           "signer_key": "key#1",
           "source_op": "bind_actor",
           "vault_ref": "vault#1"
@@ -1510,6 +1512,40 @@
           "learned_at": "<measured>",
           "occurred_end": "<measured>",
           "occurred_start": "<measured>",
+          "seq": 5,
+          "signer_key": "key#1",
+          "source_op": "bind_actor",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "cosigner_keys": [
+            "key#12"
+          ],
+          "entry_hash": "entry_hash#11",
+          "entry_ref": "entry#11",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 7,
+          "signer_key": "key#1",
+          "source_op": "bind_actor",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "cosigner_keys": [
+            "key#13"
+          ],
+          "entry_hash": "entry_hash#12",
+          "entry_ref": "entry#12",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
           "seq": 9,
           "signer_key": "key#1",
           "source_op": "bind_actor",
@@ -1519,7 +1555,7 @@
           "advisory_ts": "<measured>",
           "detail": "mint; withdrawn",
           "entry_hash": "act#1",
-          "entry_ref": "entry#11",
+          "entry_ref": "entry#13",
           "event_kind": "grant",
           "fold_valid": true,
           "grant_ref": "grant",
@@ -1528,7 +1564,7 @@
           "occurred_end": "<measured>",
           "occurred_start": "<measured>",
           "seq": 1,
-          "signer_key": "key#12",
+          "signer_key": "key#14",
           "source_op": "agent_grant_act",
           "subject_ref": "owner",
           "vault_ref": "vault#1"
@@ -1537,7 +1573,7 @@
           "advisory_ts": "<measured>",
           "detail": "revoke",
           "entry_hash": "act#2",
-          "entry_ref": "entry#12",
+          "entry_ref": "entry#14",
           "event_kind": "revoke",
           "fold_valid": true,
           "grant_ref": "grant",
@@ -1545,15 +1581,15 @@
           "occurred_end": "<measured>",
           "occurred_start": "<measured>",
           "seq": 2,
-          "signer_key": "key#12",
+          "signer_key": "key#14",
           "source_op": "agent_grant_act",
           "subject_ref": "owner",
           "vault_ref": "vault#1"
         },
         {
           "advisory_ts": "<measured>",
-          "entry_hash": "entry_hash#11",
-          "entry_ref": "entry#13",
+          "entry_hash": "entry_hash#13",
+          "entry_ref": "entry#15",
           "event_kind": "grant",
           "expires_at": "<measured>",
           "fold_valid": true,
@@ -1570,7 +1606,7 @@
         {
           "advisory_ts": "<measured>",
           "entry_hash": "vault#1",
-          "entry_ref": "entry#14",
+          "entry_ref": "entry#16",
           "event_kind": "other",
           "fold_valid": true,
           "learned_at": "<measured>",
@@ -1582,34 +1618,6 @@
         },
         {
           "advisory_ts": "<measured>",
-          "entry_hash": "entry_hash#12",
-          "entry_ref": "entry#15",
-          "event_kind": "other",
-          "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
-          "seq": 10,
-          "signer_key": "key#1",
-          "source_op": "enroll_device",
-          "vault_ref": "vault#1"
-        },
-        {
-          "advisory_ts": "<measured>",
-          "entry_hash": "entry_hash#13",
-          "entry_ref": "entry#16",
-          "event_kind": "other",
-          "fold_valid": true,
-          "learned_at": "<measured>",
-          "occurred_end": "<measured>",
-          "occurred_start": "<measured>",
-          "seq": 12,
-          "signer_key": "key#1",
-          "source_op": "enroll_device",
-          "vault_ref": "vault#1"
-        },
-        {
-          "advisory_ts": "<measured>",
           "entry_hash": "entry_hash#14",
           "entry_ref": "entry#17",
           "event_kind": "other",
@@ -1617,7 +1625,7 @@
           "learned_at": "<measured>",
           "occurred_end": "<measured>",
           "occurred_start": "<measured>",
-          "seq": 14,
+          "seq": 10,
           "signer_key": "key#1",
           "source_op": "enroll_device",
           "vault_ref": "vault#1"
@@ -1631,7 +1639,7 @@
           "learned_at": "<measured>",
           "occurred_end": "<measured>",
           "occurred_start": "<measured>",
-          "seq": 16,
+          "seq": 12,
           "signer_key": "key#1",
           "source_op": "enroll_device",
           "vault_ref": "vault#1"
@@ -1645,7 +1653,7 @@
           "learned_at": "<measured>",
           "occurred_end": "<measured>",
           "occurred_start": "<measured>",
-          "seq": 18,
+          "seq": 14,
           "signer_key": "key#1",
           "source_op": "enroll_device",
           "vault_ref": "vault#1"
@@ -1659,9 +1667,9 @@
           "learned_at": "<measured>",
           "occurred_end": "<measured>",
           "occurred_start": "<measured>",
-          "seq": 2,
+          "seq": 16,
           "signer_key": "key#1",
-          "source_op": "bind_actor",
+          "source_op": "enroll_device",
           "vault_ref": "vault#1"
         },
         {
@@ -1673,7 +1681,7 @@
           "learned_at": "<measured>",
           "occurred_end": "<measured>",
           "occurred_start": "<measured>",
-          "seq": 20,
+          "seq": 18,
           "signer_key": "key#1",
           "source_op": "enroll_device",
           "vault_ref": "vault#1"
@@ -1687,9 +1695,9 @@
           "learned_at": "<measured>",
           "occurred_end": "<measured>",
           "occurred_start": "<measured>",
-          "seq": 22,
+          "seq": 2,
           "signer_key": "key#1",
-          "source_op": "enroll_device",
+          "source_op": "bind_actor",
           "vault_ref": "vault#1"
         },
         {
@@ -1701,9 +1709,9 @@
           "learned_at": "<measured>",
           "occurred_end": "<measured>",
           "occurred_start": "<measured>",
-          "seq": 3,
+          "seq": 20,
           "signer_key": "key#1",
-          "source_op": "machine_profile",
+          "source_op": "enroll_device",
           "vault_ref": "vault#1"
         },
         {
@@ -1715,7 +1723,7 @@
           "learned_at": "<measured>",
           "occurred_end": "<measured>",
           "occurred_start": "<measured>",
-          "seq": 4,
+          "seq": 22,
           "signer_key": "key#1",
           "source_op": "enroll_device",
           "vault_ref": "vault#1"
@@ -1729,7 +1737,7 @@
           "learned_at": "<measured>",
           "occurred_end": "<measured>",
           "occurred_start": "<measured>",
-          "seq": 6,
+          "seq": 24,
           "signer_key": "key#1",
           "source_op": "enroll_device",
           "vault_ref": "vault#1"
@@ -1738,6 +1746,62 @@
           "advisory_ts": "<measured>",
           "entry_hash": "entry_hash#23",
           "entry_ref": "entry#26",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 26,
+          "signer_key": "key#1",
+          "source_op": "enroll_device",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#24",
+          "entry_ref": "entry#27",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 3,
+          "signer_key": "key#1",
+          "source_op": "machine_profile",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#25",
+          "entry_ref": "entry#28",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 4,
+          "signer_key": "key#1",
+          "source_op": "enroll_device",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#26",
+          "entry_ref": "entry#29",
+          "event_kind": "other",
+          "fold_valid": true,
+          "learned_at": "<measured>",
+          "occurred_end": "<measured>",
+          "occurred_start": "<measured>",
+          "seq": 6,
+          "signer_key": "key#1",
+          "source_op": "enroll_device",
+          "vault_ref": "vault#1"
+        },
+        {
+          "advisory_ts": "<measured>",
+          "entry_hash": "entry_hash#27",
+          "entry_ref": "entry#30",
           "event_kind": "other",
           "fold_valid": true,
           "learned_at": "<measured>",
@@ -1801,7 +1865,7 @@
           "claim": {
             "id": "claim#1",
             "kind": "CLAIM",
-            "label": "label#9",
+            "label": "label#10",
             "short_id": null
           },
           "claim_ref": "claim#1",
@@ -1831,7 +1895,7 @@
           "claim": {
             "id": "claim#2",
             "kind": "CLAIM",
-            "label": "label#8",
+            "label": "label#9",
             "short_id": null
           },
           "claim_ref": "claim#2",
@@ -1858,7 +1922,7 @@
           "claim": {
             "id": "claim#3",
             "kind": "CLAIM",
-            "label": "label#8",
+            "label": "label#9",
             "short_id": null
           },
           "claim_ref": "claim#3",
@@ -1885,7 +1949,7 @@
           "claim": {
             "id": "claim:remembered",
             "kind": "CLAIM",
-            "label": "label#8",
+            "label": "label#9",
             "short_id": null
           },
           "claim_ref": "claim:remembered",
@@ -1950,7 +2014,7 @@
           "claim": {
             "id": "claim#2",
             "kind": "CLAIM",
-            "label": "label#8",
+            "label": "label#9",
             "short_id": null
           },
           "claim_ref": "claim#2",
@@ -1969,7 +2033,7 @@
           "claim": {
             "id": "claim#3",
             "kind": "CLAIM",
-            "label": "label#8",
+            "label": "label#9",
             "short_id": null
           },
           "claim_ref": "claim#3",
@@ -1988,7 +2052,7 @@
           "claim": {
             "id": "claim#1",
             "kind": "CLAIM",
-            "label": "label#9",
+            "label": "label#10",
             "short_id": null
           },
           "claim_ref": "claim#1",
@@ -2007,7 +2071,7 @@
           "claim": {
             "id": "claim:remembered",
             "kind": "CLAIM",
-            "label": "label#8",
+            "label": "label#9",
             "short_id": null
           },
           "claim_ref": "claim:remembered",

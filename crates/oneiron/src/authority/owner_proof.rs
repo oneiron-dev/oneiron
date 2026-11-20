@@ -357,10 +357,11 @@ impl AuthorityFold {
             && !self.passkey_limited_keys.contains(key)
     }
 
-    /// Whether an install may offer `signer`, a root signer it holds, as the
-    /// owner's proof: this fold trusts its key as the owner's
-    /// ([`Self::proves_owner_acts`]), and under the Hosted posture it is no
-    /// host root ([`CheckpointRootSigner::is_host_root`]). The fold keeps
+    /// Whether an install may offer a root signer it holds, of key `root`,
+    /// as the owner's proof: this fold trusts `root` as the owner's
+    /// ([`Self::proves_owner_acts`]), and under the Hosted posture the
+    /// signer is no host root (`host_root`,
+    /// [`CheckpointRootSigner::is_host_root`]). The fold keeps
     /// what a self-host root proved when its log is folded as hosted; a
     /// hosted install that holds that root, as after a move of the vault
     /// onto a managed host, never acts for the owner with it (Engine ANSWER
@@ -370,10 +371,11 @@ impl AuthorityFold {
     #[must_use]
     pub(crate) fn offers_owner_proof(
         &self,
-        signer: &dyn CheckpointRootSigner,
+        root: &AuthorityKey,
+        host_root: bool,
         hosted: bool,
     ) -> bool {
-        !(hosted && signer.is_host_root()) && self.proves_owner_acts(&signer.root(), hosted)
+        !(hosted && host_root) && self.proves_owner_acts(root, hosted)
     }
 
     /// Whether the passkey limits hold `key` on this fold, read on the
@@ -439,13 +441,14 @@ impl AuthorityFold {
 /// ([`CheckpointRootSigner::sign_owner_proof`]).
 pub(crate) struct OwnerProofSigner<'vault> {
     vault: &'vault crate::Vault,
-    signer: std::sync::Arc<dyn CheckpointRootSigner>,
+    held: HeldRootSigner,
 }
 
 impl OwnerProofSigner<'_> {
-    /// The key the proof is made with: the cosign's key.
+    /// The key the proof is made with: the cosign's key, the root the
+    /// signer named when it was held.
     pub(crate) fn key(&self) -> AuthorityKey {
-        self.signer.root()
+        self.held.root.clone()
     }
 
     /// The key's signature over `transcript`, the transcript of an entry on
@@ -461,7 +464,9 @@ impl OwnerProofSigner<'_> {
         fold: &AuthorityFold,
         transcript: &[u8],
     ) -> crate::error::Result<Vec<u8>> {
-        self.signer.sign_owner_proof(self.vault, fold, transcript)
+        self.held
+            .signer
+            .sign_owner_proof(self.vault, fold, transcript)
     }
 
     /// The key's signature over `transcript`, the owner's proof that he
@@ -476,7 +481,8 @@ impl OwnerProofSigner<'_> {
         fold: &AuthorityFold,
         transcript: &[u8],
     ) -> crate::error::Result<Vec<u8>> {
-        self.signer
+        self.held
+            .signer
             .sign_ask_word_proof(self.vault, fold, transcript)
     }
 }
@@ -504,17 +510,17 @@ impl crate::Vault {
     /// it needs the proof, it waits or is held until the owner proves it.
     ///
     /// A door calls this inside its own transaction, so nothing here opens
-    /// one: each signer reads the roster from `fold`.
+    /// one: each signer reads the roster from `fold`. No signer is asked its
+    /// root or kind here: the pick reads what each named when it was held
+    /// ([`HeldRootSigner`]).
     pub(crate) fn owner_proof_signer(&self, fold: &AuthorityFold) -> Option<OwnerProofSigner<'_>> {
         let hosted = self.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
         self.held_checkpoint_root_signers()
             .into_iter()
-            .find(|signer| {
-                fold.offers_owner_proof(signer.as_ref(), hosted) && signer.proves_now(self, fold)
+            .find(|held| {
+                fold.offers_owner_proof(&held.root, held.host_root, hosted)
+                    && held.signer.proves_now(self, fold)
             })
-            .map(|signer| OwnerProofSigner {
-                vault: self,
-                signer,
-            })
+            .map(|held| OwnerProofSigner { vault: self, held })
     }
 }

@@ -291,7 +291,7 @@ impl<'h> Template<'h> {
 
 /// Each record a handle in `value` names, by its bare handle, into
 /// `records`: in each text, map key and member included.
-fn named_records(value: &Value, records: &mut BTreeSet<String>) {
+pub(super) fn named_records(value: &Value, records: &mut BTreeSet<String>) {
     match value {
         Value::String(text) => {
             if let Some(text) = text.as_str() {

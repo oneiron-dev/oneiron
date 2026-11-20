@@ -80,11 +80,14 @@
 //!
 //! The wake driver takes no async runtime (it yields by waking itself), and a
 //! durable step's retry delay wakes its waker from a timer thread, so the
-//! pass runs on the calling thread under a waker that unparks it.
+//! pass runs on the calling thread under a waker that unparks it. It is
+//! polled on a stack segment as large as the stack the server gives an engine
+//! thread (32 MiB), not on the calling thread's own stack: a dev-build turn
+//! wake overran a libtest thread's default 2 MiB inside its micro
+//! consolidation.
 
 use std::fmt;
 use std::future::Future;
-use std::pin::pin;
 use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread::{self, Thread};
@@ -155,6 +158,13 @@ const HOST_ISSUER_DOMAIN: &[u8] = b"oneiron-testkit/host-issuer/v1\0";
 /// itself once at each attempt boundary, so a pass over a small vault takes
 /// tens.
 const MAX_POLLS: usize = 100_000;
+
+/// The native stack a pass is polled on: the stack the server gives each
+/// engine thread (`oneiron_server::ENGINE_THREAD_STACK_BYTES`; this crate
+/// does not depend on the server). On a libtest thread's default 2 MiB a
+/// dev-build turn wake overflowed inside its micro consolidation (golden day,
+/// 20 Nov) and completed on a 1 GiB stack.
+const ENGINE_THREAD_STACK_BYTES: usize = 32 * 1024 * 1024;
 
 /// Which wake a pass runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -963,17 +973,21 @@ impl Wake for ThreadWaker {
 
 /// Polls `future` on this thread until it is ready, parking between polls
 /// until its waker unparks the thread; `None` after [`MAX_POLLS`] polls.
+/// Every poll runs on a stack segment of [`ENGINE_THREAD_STACK_BYTES`]; the
+/// future is boxed first, so only a pointer to it crosses onto the segment.
 fn block_on<F: Future>(future: F) -> Option<F::Output> {
-    let waker = Waker::from(Arc::new(ThreadWaker(thread::current())));
-    let mut context = Context::from_waker(&waker);
-    let mut future = pin!(future);
-    for _ in 0..MAX_POLLS {
-        if let Poll::Ready(output) = future.as_mut().poll(&mut context) {
-            return Some(output);
+    let mut future = Box::pin(future);
+    stacker::grow(ENGINE_THREAD_STACK_BYTES, move || {
+        let waker = Waker::from(Arc::new(ThreadWaker(thread::current())));
+        let mut context = Context::from_waker(&waker);
+        for _ in 0..MAX_POLLS {
+            if let Poll::Ready(output) = future.as_mut().poll(&mut context) {
+                return Some(output);
+            }
+            thread::park();
         }
-        thread::park();
-    }
-    None
+        None
+    })
 }
 
 fn refused(what: &str, error: &dyn fmt::Display) -> DreamerPassError {

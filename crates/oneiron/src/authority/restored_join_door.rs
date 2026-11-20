@@ -123,7 +123,8 @@ impl Vault {
     /// held enrolment that is not this install's ask, or a join the fold
     /// does not count; an owner refusal when the proof is no longer the
     /// vault's live owner; storage faults. Nothing is written on any error
-    /// but the install's own identity, minted once the reads above pass.
+    /// but the install's own identity, minted once the reads above pass: not
+    /// the authority clock's reading either, which commits with the join.
     pub fn join_restored_install(
         &self,
         issuer: &HostSlipIssuer,
@@ -134,12 +135,14 @@ impl Vault {
             return Err(authority_refused(BOUND_PROOF));
         }
         self.restored_join_preflight(Some(issuer))?;
-        // The clock rows and backfills `authority_fold` commits, as every
-        // door's first read does, only once nothing above refuses.
-        let vault_id = self
-            .authority_fold()?
-            .vault_id
-            .ok_or_else(|| authority_refused(NOT_ROOTED))?;
+        // Read-only up to the writer: a refusal there commits nothing, not
+        // even the clock reading `authority_fold` would store (REVIEW-9524
+        // P1). The writer takes the reading, so it commits only with the join.
+        let vault_id = {
+            let txn = self.store.env.read_txn()?;
+            self.authority_view_readonly_in_txn(&txn)?.vault_id
+        }
+        .ok_or_else(|| authority_refused(NOT_ROOTED))?;
         // The install's identity, minted and signed outside the writer.
         let encryption_key = self.machine_encryption_key(vault_id)?;
         let request = self.machine_enrolment_request(vault_id, encryption_key)?;
@@ -147,6 +150,7 @@ impl Vault {
             return Err(authority_refused(NOT_RESTORED));
         }
         let mut txn = self.store.env.write_txn()?;
+        self.instant_in_write_txn(&mut txn)?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         if let Some(folded) = fold.machine(request.machine) {
@@ -162,19 +166,25 @@ impl Vault {
         // Only holds under a scope this install counts, the roster's and its
         // pinned anchor's: an unpinned anchor's mark refuses nothing here
         // (REVIEW-9509 round 2 P1).
-        let mut held = fold.counted_waiting_enrolments(request.machine).peekable();
-        let enrolment = if held.peek().is_some() {
-            let mut held: Vec<_> = held.collect();
-            if !held
-                .iter()
-                .all(|(_, held)| held_is_this_ask(&held.profile, &request, actor, role))
-            {
-                return Err(authority_refused(HELD_DIFFERS));
-            }
-            held.sort_by_key(|(hash, _)| **hash);
-            *held[0].0
-        } else {
-            self.file_restored_enrolment_in_txn(&mut txn, issuer, actor, &request, role)?
+        let held: Vec<_> = fold.counted_waiting_enrolments(request.machine).collect();
+        if !held
+            .iter()
+            .all(|(_, held)| held_is_this_ask(&held.profile, &request, actor, role))
+        {
+            return Err(authority_refused(HELD_DIFFERS));
+        }
+        // The join names a roster enrolment: a pinned anchor's mark joins
+        // under its anchor and heads no roster chain, which the join must
+        // (REVIEW-9539 round 2 P1). With none held, the root files one, and
+        // the join names that exact entry.
+        let roster_enrolment = held
+            .iter()
+            .filter(|(_, held)| held.admitter == MachineAdmitter::Roster)
+            .map(|(hash, _)| **hash)
+            .min();
+        let enrolment = match roster_enrolment {
+            Some(enrolment) => enrolment,
+            None => self.file_restored_enrolment_in_txn(&mut txn, issuer, actor, &request, role)?,
         };
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let target = request.machine;

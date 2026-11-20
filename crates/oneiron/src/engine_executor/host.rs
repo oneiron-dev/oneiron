@@ -146,6 +146,25 @@ pub(super) struct RecordingJsHost<'a, 's> {
     callable_depth: u32,
     /// The host projection already ran this outer call's verb hooks.
     admitted_skill_seq: Option<u64>,
+    /// Whether that outer call's verb hooks are live: its pre chain found
+    /// hooks on it, so its post chain may still run on the admitted
+    /// call's answer. The admitted entry (`skill_call`) carries it from
+    /// that pre chain; this host never re-reads the bindings for it, so
+    /// a binding toggled while the skill runs cannot split the outer
+    /// chain from this call.
+    admitted_outer_hooks_live: bool,
+    /// The whole answer of the admitted skill call above, when the outer
+    /// caller's post chain may still run on it: its bridge row spills the
+    /// real answer record-only and binds no name to it, and the admitted
+    /// entry (`skill_call`) returns this answer to that caller instead of
+    /// the recorded card. Taken by that entry after its one dispatch.
+    pub(super) admitted_skill_answer: Option<serde_json::Value>,
+    /// Whether the admitted call's answer was withheld where its bridge row
+    /// stores it: the side-row wall could not place a secret it holds, so
+    /// the row keeps the typed unavailable content and nothing of the
+    /// answer. The admitted entry then returns that content, never the
+    /// answer whole nor a hook's view of it.
+    pub(super) admitted_skill_withheld: bool,
     /// Each stored skill this host's callable calls read and loaded, and the
     /// rows of every result a read took from another run (`None` once one
     /// kept no set): what a callable's answer stands on, counted in
@@ -243,6 +262,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             summary_prompt_package: None,
             callable_depth: 0,
             admitted_skill_seq: None,
+            admitted_outer_hooks_live: false,
+            admitted_skill_answer: None,
+            admitted_skill_withheld: false,
             callable_rows: (Vec::new(), Some(Vec::new())),
             injection: None,
             program_callables: Vec::new(),
@@ -289,9 +311,12 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     }
 
     /// Only the credential-bound host projection sets this; nested calls
-    /// still enter their own verb hooks.
-    pub(super) fn with_admitted_skill_call(mut self, seq: u64) -> Self {
+    /// still enter their own verb hooks. `outer_hooks_live` is that
+    /// projection's own pre chain's state, carried by the entry that ran
+    /// it (see `admitted_outer_hooks_live`).
+    pub(super) fn with_admitted_skill_call(mut self, seq: u64, outer_hooks_live: bool) -> Self {
         self.admitted_skill_seq = Some(seq);
+        self.admitted_outer_hooks_live = outer_hooks_live;
         self
     }
 

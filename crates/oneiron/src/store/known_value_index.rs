@@ -395,16 +395,20 @@ impl KnownValues {
         data: &[u8],
         keep: impl Fn(&[u8]) -> bool,
     ) -> Vec<MatchedSpan<'_>> {
-        self.matched_spans_by(data, keep, &|_| true)
+        self.matched_spans_by(data, keep, &|_| true, self.reach())
     }
 
     /// [`Self::matched_spans_except`] over the values `admits` takes alone:
-    /// every other value is out before the longest at a place is chosen.
+    /// every other value is out before the longest at a place is chosen. A
+    /// base64 run longer than `reach` reads as none: the reach of the values
+    /// `admits` takes, so a value it leaves out never changes what is read
+    /// (blind review round 2 of #9528).
     fn matched_spans_by(
         &self,
         data: &[u8],
         keep: impl Fn(&[u8]) -> bool,
         admits: &dyn Fn(&Known) -> bool,
+        reach: usize,
     ) -> Vec<MatchedSpan<'_>> {
         let mut spans: Vec<_> = self
             .raw_spans(data, admits)
@@ -440,7 +444,7 @@ impl KnownValues {
         let fits = |len: usize| self.lengths.binary_search(&len).is_ok();
         // One decode: base64_runs is base64_views + fits filter, so reuse
         // the same views for the whole-run and in-run passes (identical output).
-        let b64_views = forms::base64_views(data, self.reach());
+        let b64_views = forms::base64_views(data, reach);
         for (run, view) in &b64_views {
             if fits(view.bytes.len()) && !keep(&view.bytes) {
                 if let Some(known) = self.whole(&view.bytes, admits) {

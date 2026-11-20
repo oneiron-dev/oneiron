@@ -1,12 +1,14 @@
 //! World privacy orphan re-pick: a world whose read names no machine still
-//! the owner's is re-picked from another of the owner's machines, and never
-//! while a machine it names is still the owner's.
+//! the owner's is re-picked from another of the owner's machines. Standing
+//! still reports whether a world is orphaned; the door itself re-picks any
+//! world from any live machine (mesh PR1a: the door needs no holder).
 use super::machine_identity::{host, own_encryption_key, request_for};
 use super::support::RosterHead;
 use super::support::ed_key;
 use super::world_floor::assert_no_vouch_widens;
 use super::world_privacy::{
-    edit_by, enrol_here, land, other_machine, read_of, set, settings, stored_entries, world_row,
+    answer_by, edit_by, enrol_here, land, next_seq, other_machine, read_of, settings,
+    stored_entries, world_row,
 };
 use super::*;
 
@@ -33,16 +35,17 @@ fn a_stolen_machines_world_is_re_picked_from_another_of_the_owners_machines() {
         );
         if seen {
             land(&host, std::slice::from_ref(&theft));
-            // While the stolen machine is still the owner's, nobody else
-            // re-picks its world.
-            assert!(
-                set(
-                    &host,
-                    EditOrigin::ThisMachine,
-                    world,
-                    ReadLocation::OneMachine(here)
-                )
-                .is_err()
+            // While the stolen machine is still the owner's the world is not
+            // orphaned: standing says so, though the door would re-pick it
+            // anyway (mesh PR1a, FIX-LIST 10-19 02:16: any live carrier
+            // counts at full strength; the door needs no holder,
+            // world_privacy_door.rs:1-11).
+            assert_eq!(
+                host.vault
+                    .authority_fold()
+                    .unwrap()
+                    .world_edit_standing(here, world),
+                None
             );
         }
         host.vault
@@ -124,20 +127,23 @@ fn a_conflict_with_one_live_contender_is_not_orphaned() {
     };
     assert_eq!(read_of(&host, world), conflicted);
 
-    // One contender is still the owner's: it re-picks, nobody else does.
-    assert!(
-        set(
-            &host,
-            EditOrigin::ThisMachine,
-            world,
-            ReadLocation::OneMachine(here)
-        )
-        .is_err()
+    // One contender is still the owner's: the world is not orphaned, though
+    // the door would re-pick it anyway (mesh PR1a, FIX-LIST 10-19 02:16: any
+    // live carrier counts; the door needs no holder).
+    assert_eq!(
+        host.vault
+            .authority_fold()
+            .unwrap()
+            .world_edit_standing(here, world),
+        None
     );
+    // A live bystander's edit would count at full strength now (owner_act.rs
+    // :27-47), so the refused edit below comes from the removed contender: it
+    // is judged where it was made.
     let early = edit_by(
         &host,
-        d,
-        &d_key,
+        c,
+        &c_key,
         world,
         settings(ReadLocation::OneMachine(d)),
     );
@@ -174,8 +180,9 @@ fn a_conflict_with_one_live_contender_is_not_orphaned() {
 }
 
 /// A world one machine kept to itself, when a handoff from elsewhere never
-/// marked that machine again: the handoff hangs off the main log alone and
-/// keeps the world's restriction (Sol P2 round 2, F3). Once the old machine
+/// marked that machine again: the handoff covers every main-log head, the
+/// kept edit among them (FIX 11993 R1), and keeps the world's restriction
+/// (Sol P2 round 2, F3). Once the old machine
 /// goes stale here it no longer reads the world, but it is still the owner's
 /// by the roster, so the world is not orphaned on any install until the
 /// owner removes it; then a machine the new root marked re-picks the world
@@ -204,7 +211,7 @@ fn a_stale_holders_world_is_re_picked_after_a_handoff() {
         )
         .unwrap();
     assert!(
-        !handoff
+        handoff
             .parent_hashes
             .contains(&authority_entry_hash(&kept).unwrap())
     );
@@ -229,10 +236,10 @@ fn a_stale_holders_world_is_re_picked_after_a_handoff() {
         )
         .unwrap();
     host.vault
-        .enroll_machine(
+        .set_machine_role(
             &owner,
             ActSurface::ThisInstall,
-            &request,
+            request.machine,
             MachineRole::Owned(MachineOwnership::Yours),
             None,
         )
@@ -247,8 +254,16 @@ fn a_stale_holders_world_is_re_picked_after_a_handoff() {
             None,
         )
     };
-    // Inside the window the old machine still stands, and keeps its world.
-    assert!(repick().is_err());
+    // Inside the window the old machine still stands: the world is not
+    // orphaned, though the door would re-pick it anyway (mesh PR1a: the door
+    // needs no holder).
+    assert_eq!(
+        host.vault
+            .authority_fold()
+            .unwrap()
+            .world_edit_standing(here, world),
+        None
+    );
 
     super::observation_safety::advance_observation_floor(
         &host.vault,
@@ -259,7 +274,15 @@ fn a_stale_holders_world_is_re_picked_after_a_handoff() {
     assert!(fold.machine(here).is_some_and(RosterHead::mine));
     assert!(!fold.world_readable_on(world, Destination::Machine(old)));
     assert_eq!(fold.world_edit_standing(here, world), None);
-    assert!(repick().is_err());
+    // Stale here but still the owner's by the roster, so still not orphaned;
+    // the door would re-pick anyway (mesh PR1a).
+    assert_eq!(
+        host.vault
+            .authority_fold()
+            .unwrap()
+            .world_edit_standing(here, world),
+        None
+    );
 
     host.vault
         .set_machine_role(
@@ -306,46 +329,49 @@ fn a_world_orphaned_by_a_removal_that_arrived_late_is_re_picked() {
         )],
     );
     let before = host.vault.authority_fold().unwrap();
-    let seq = before.append_sequences[&host.issuer.public_key()];
-    let root_entry = |seq, op| {
-        host.issuer
-            .sign_entry(
-                Some(host.vault_id),
-                seq,
-                before.append_heads.iter().copied().collect(),
-                op,
-                2,
-            )
-            .unwrap()
-    };
-    let removal = root_entry(
-        seq + 1,
-        AuthorityOp::MachineProfile(MachineProfile {
-            role: MachineRole::Removed,
-            revision: 2,
-            ..before.machine(holder).unwrap().head().profile.clone()
-        }),
+    let parents: Vec<_> = before.append_heads.iter().copied().collect();
+    let holder_profile = before.machine(holder).unwrap().head().profile.clone();
+    let base_seq = next_seq(&host, &holder_key);
+    let removal = answer_by(
+        &host,
+        holder,
+        &holder_key,
+        &holder_profile,
+        MachineRole::Removed,
+        2,
+        BTreeSet::new(),
+        parents.clone(),
+        base_seq,
     );
     let node = EntityId::now();
     let request = request_for(host.vault_id, node, &ed_key(80));
-    let sibling = root_entry(
-        seq + 2,
-        AuthorityOp::MachineProfile(MachineProfile {
-            machine: node,
-            owner: host.owner.actor(),
-            machine_key: request.machine_key,
-            device_class: request.device_class,
-            encryption_key: request.encryption_key,
-            role: MachineRole::HostedNode,
-            revision: 1,
-            machine_proof: request.machine_proof,
-            seen_world_edits: BTreeSet::new(),
-            carrier: None,
-            act: None,
-            restored_from: None,
-        }),
+    let node_base = MachineProfile {
+        machine: node,
+        owner: host.owner.actor(),
+        machine_key: request.machine_key,
+        device_class: request.device_class,
+        encryption_key: request.encryption_key,
+        role: MachineRole::HostedNode,
+        revision: 1,
+        machine_proof: request.machine_proof,
+        seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
+        restored_from: None,
+    };
+    let sibling = answer_by(
+        &host,
+        holder,
+        &holder_key,
+        &node_base,
+        MachineRole::HostedNode,
+        1,
+        BTreeSet::new(),
+        parents,
+        base_seq + 1,
     );
-    // The higher row first, in a write of its own.
+    // The higher row of the same signer first, in a write of its own (mesh
+    // PR1b: both answers are signed by the holder's install key).
     land(&host, &[sibling]);
     land(&host, std::slice::from_ref(&removal));
 

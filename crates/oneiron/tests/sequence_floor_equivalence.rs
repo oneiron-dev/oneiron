@@ -72,6 +72,11 @@ fn rooted() -> Rooted {
         .expect("this install's live machine profile");
     let owner = vault.ensure_embedded_owner_actor().expect("the owner");
     oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
+    // The handle holds the host's root as a serving host does, so the owner
+    // answers this install carries (this install marked yours, the two
+    // admissions, the removal) are proven (row CARRIER-OWNER-PROOF) and
+    // stand instead of being held for an owner device.
+    vault.hold_checkpoint_root_signer(Arc::new(issuer));
     let proof = vault
         .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
         .expect("an owner proof");

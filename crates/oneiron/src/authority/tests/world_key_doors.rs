@@ -11,6 +11,7 @@ use oneiron_keystore::MemoryKeystore;
 use super::machine_identity::{Host, host, own_encryption_key};
 use super::support::{authority_key_from_ed, ed_key, sign_ed, unsigned_entry};
 use super::world_privacy::{edit_by, land, settings, stored_entries, world_row};
+use super::world_reissue::with_predecessor;
 use super::*;
 use crate::recovery::checkpoint::RestoreReason;
 use crate::recovery::{
@@ -354,6 +355,7 @@ fn a_world_key_opens_only_where_its_world_reads_and_for_the_kit() {
     let key = host.vault.world_key(world).unwrap();
     let id = *key.id();
 
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let root = prepared.seed().public(&host.vault_id).unwrap();
     let kit = prepared.seed().recovery_secret().unwrap();
@@ -441,6 +443,7 @@ fn a_record_naming_another_key_or_suite_is_refused_before_any_write() {
     let with = |key: WorldKeyId, bytes: Vec<u8>| WorldKeyWrapsRecord {
         key,
         wraps: vec![(to_b, bytes)],
+        permitted: vec![to_b],
         ..genuine.clone()
     };
     let blank = |suite, kem| {
@@ -525,6 +528,7 @@ fn a_second_key_under_one_id_conflicts_and_the_next_door_mints_afresh() {
             )
             .unwrap(),
         )],
+        permitted: vec![to_b],
         ..genuine
     };
     host.vault
@@ -554,6 +558,7 @@ fn a_second_key_under_one_id_conflicts_and_the_next_door_mints_afresh() {
         broken[last] ^= flip;
         let record = WorldKeyWrapsRecord {
             wraps: vec![(to_a, broken)],
+            permitted: vec![to_a],
             ..latest.clone()
         };
         host.vault
@@ -666,6 +671,7 @@ fn a_kit_restore_honours_erasure_and_one_machine_and_reports_every_key() {
     let host = host();
     let a = enrol_own(&host);
     let c = keyed_machine(&host, 45);
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let seed = kit_seed(host.vault_id, prepared.seed());
     host.vault

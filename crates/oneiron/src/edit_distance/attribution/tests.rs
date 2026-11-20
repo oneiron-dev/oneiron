@@ -689,12 +689,23 @@ fn terminal_attempt(
     assert_eq!(leased.id, row.id);
     queue.set_executor_model(row.id, "host", leased.attempt_count, MODEL)?;
     if failed {
-        queue.fail(FailAttempt {
-            id: row.id,
-            lease_owner: "host".to_owned(),
-            attempt_count: leased.attempt_count,
-            reason: "failed check".to_owned(),
-            now: vault.now_recorded_at(),
+        // The public fail door refuses an agent-dispatch row (only the typed
+        // failure ladder fails one); the fixture takes the queue transition
+        // the ladder's terminal write makes, with its terminal pack receipt.
+        let now = vault.now_recorded_at();
+        vault.with_write_txn(|wtxn| {
+            queue
+                .fail_in_txn(
+                    wtxn,
+                    FailAttempt {
+                        id: row.id,
+                        lease_owner: "host".to_owned(),
+                        attempt_count: leased.attempt_count,
+                        reason: "failed check".to_owned(),
+                        now,
+                    },
+                )
+                .map(|_| ())
         })?;
     } else {
         queue.complete(CompleteAttempt {

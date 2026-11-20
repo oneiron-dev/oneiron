@@ -319,7 +319,8 @@ fn delete_then_restore_defaults_mints_candidate_with_pinned_hash() -> Result<()>
     vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     assert!(vault.get_skill_record(&old)?.is_none());
     let owner = restore_owner(&vault)?;
-    let restored = vault.restore_default_skills(&owner, TimeRange { start: 2, end: 2 }, 2)?;
+    // Bootstrap-only: restore_default_skills also restores the pinned hub library (default_hub.rs:290).
+    let restored = vault.restore_bootstrap_skills(&owner, TimeRange { start: 2, end: 2 }, 2)?;
     assert_eq!(restored.len(), 1);
     let id = restored[0];
     assert_ne!(id, old);
@@ -334,8 +335,9 @@ fn delete_then_restore_defaults_mints_candidate_with_pinned_hash() -> Result<()>
             .content_hash,
         hash.to_hex()
     );
+    // Bootstrap-only: restore_default_skills also restores the pinned hub library (default_hub.rs:290).
     assert_eq!(
-        vault.restore_default_skills(&owner, TimeRange { start: 3, end: 3 }, 3)?,
+        vault.restore_bootstrap_skills(&owner, TimeRange { start: 3, end: 3 }, 3)?,
         Vec::<EntityId>::new()
     );
     Ok(())

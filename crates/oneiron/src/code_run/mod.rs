@@ -187,6 +187,8 @@ pub(crate) use self::result_read::{
 pub(crate) use self::result_read::{unmarked_secret, unplaced_answer};
 pub use self::run_verb_call::run_verb_call;
 pub use self::storage::ReadWorldUnknown;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::storage::put_record_with_resume_listing_its_calls;
 pub(crate) use self::storage::session_model_heal_count;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
@@ -414,3 +416,8 @@ pub(crate) use self::dispatcher::{
 };
 
 pub use self::dispatcher::workflow_operations;
+
+// Door seams for `test_doors::parked_hook_custody`, apart from the block
+// above, so no other re-export edit meets this one.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dispatcher::{hook_parked_outcome_for_test, parked_note_resumed_for_test};

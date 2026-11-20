@@ -17,6 +17,7 @@ pub mod approval_target_round_trip;
 pub mod archive_import;
 pub mod archive_producers;
 pub mod archive_provenance;
+pub mod archive_room_ledger;
 pub mod archive_side_binary_credential;
 pub mod archive_side_catalogue;
 #[cfg(feature = "sync")]
@@ -38,6 +39,7 @@ pub mod booking_anti_abuse_manifest;
 pub mod booking_side_table_rows;
 pub mod bootstrap_skills;
 pub mod builtin_pack_seed;
+pub mod burst_receipt_stored_shape;
 pub mod call_receipt_damage;
 pub mod callable_skill;
 pub mod campaign_member_index;
@@ -97,6 +99,7 @@ pub mod derivation_position;
 pub mod derive;
 pub mod derive_person;
 pub mod derive_verbs;
+pub mod device_burst_work_stands;
 pub mod device_pin;
 pub mod device_succession_fold;
 pub mod disclosure_word_sources;
@@ -105,10 +108,12 @@ pub mod dreamer_attempt_binding;
 pub mod dreamer_exclusion_forgets;
 pub mod dreamer_partition_window;
 pub mod dreamer_promotion_seconds;
+pub mod dreamer_signed_claim_recall;
 pub mod dreamer_stage_line;
 pub mod enum_name_rows;
 pub mod epoch_lineage_pointer;
 pub mod erase_preview_rows;
+pub mod erased_request_identity;
 pub mod esign_commitments;
 pub mod esign_send_binding;
 pub mod eval_authoring_execution_fault;
@@ -124,6 +129,7 @@ pub mod extraction_verdict;
 pub mod fanout_admission;
 pub mod feed_prune;
 pub mod feeds;
+pub mod fenced_erase_form;
 pub mod file_custody_marks;
 pub mod fingerprint_keep_booking_dreamer_digests;
 pub mod fingerprint_keep_code_run_digests;
@@ -227,6 +233,7 @@ pub mod model_step_submission_codec;
 pub mod msgpack_bridge;
 pub mod msgpack_duplicate_key;
 pub mod msgpack_trailing;
+pub mod native_person_mint;
 pub mod nightly;
 pub mod note_bm25f_repair;
 #[cfg(feature = "sync")]
@@ -249,6 +256,7 @@ pub mod pack_encode_work;
 pub mod pad_offer_invalidation;
 pub mod pairing_pending_rows;
 pub mod park_typed_wait;
+pub mod parked_hook_custody;
 pub mod parked_own_retract;
 pub mod passkey_vouch_limits;
 pub mod payment_credential;
@@ -280,6 +288,7 @@ pub mod room_facet_limit;
 pub mod room_facet_set;
 #[cfg(feature = "sync")]
 pub mod room_fact_marks;
+pub mod room_speaker_entries;
 pub mod room_turn_backfill;
 pub mod root_appointment;
 pub mod root_recovery;
@@ -312,6 +321,7 @@ pub mod skill_package;
 pub mod skill_read_hold;
 pub mod slack_install_rows;
 pub mod slate_scope_signals;
+pub mod slip_store_fault;
 pub mod snapshot_page_accounting;
 pub mod sound_match_birth;
 pub mod source_audience;
@@ -357,6 +367,8 @@ pub mod world_follow;
 pub mod world_key_record_signature;
 #[cfg(feature = "sync")]
 pub use crate::sync::connection::sync_outbox;
+#[cfg(feature = "sync")]
+pub use crate::sync::queue::sync_queue_rows;
 
 /// Runs the identity-topology reconcile that a replica's sync ingest runs,
 /// over this vault's own ledger: shell edges, redirects and split assignment

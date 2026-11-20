@@ -1699,6 +1699,7 @@ fn a_capture_without_sync_carries_the_refusal_of_a_deleted_fact_never_admitted()
         assigned_ref: None,
         actor_generation: None,
         assigned_generation: None,
+        answered_heads: None,
         occurred_at: LEARNED_AT,
     };
     let window = LoroDoc::new();
@@ -1737,6 +1738,7 @@ fn a_capture_without_sync_carries_the_refusal_of_a_deleted_fact_never_admitted()
     for stamp in [at.start, at.end, LEARNED_AT] {
         blob.extend_from_slice(&stamp.to_be_bytes());
     }
+    blob.extend_from_slice(&0u64.to_be_bytes());
     blob.extend_from_slice(&body);
     entities
         .insert(&fact.to_hex(), &blob[..])

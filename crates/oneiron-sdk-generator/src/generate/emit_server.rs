@@ -734,6 +734,13 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
     } else {
         ""
     };
+    // Only the admitted skill call's entry needs this call's own pre chain
+    // state: its post chain here may still run on the skill's answer.
+    let skill_hooks_arg = if name_value.is_str("self.skills.call") {
+        ", !hooks.passed_through()"
+    } else {
+        ""
+    };
     let paced_arg = if flag(row, "host_door_paced") {
         "Some(super::FacadePacedCall::of(call)?), "
     } else {
@@ -745,7 +752,7 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
         ""
     };
     let door = format!(
-        "super::host_doors::{method}(server, auth, {session_arg}{caller}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}facade_door_input(&mut hooks)?{fold_hooks_arg}).await"
+        "super::host_doors::{method}(server, auth, {session_arg}{caller}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}facade_door_input(&mut hooks)?{fold_hooks_arg}{skill_hooks_arg}).await"
     );
     // A door that fails after the pre chain ran keeps a session-only call's pre hook records and runs no post chain
     // (FIX 5527).
@@ -773,15 +780,32 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
         "output?"
     };
     let answer = if flag(row, "host_door_lists") {
-        format!(
-            "let ran = async {{
+        // The admitted skill call's post-hook view spills to its run past
+        // the inline size, bound as a readable result; a small view answers
+        // inline, as every other row's does.
+        if name_value.is_str("self.skills.call") {
+            format!(
+                "let ran = async {{
+                    let (output, listed) = {door};
+                    Ok::<_, FacadeApiError>((facade_output({door_output})?, listed))
+                }}.await;
+                let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+                let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
+                let spill_run = super::host_doors::skill_call_spill_run(&hooks);
+                let spill_rows = listed.clone();
+                Ok(FacadeCallOutput {{ value: super::host_doors::spill_admitted_skill_view(server, spill_run, {post_hooks}.await.map_err(|error| error.with_hook_notice(hook_notice))?, spill_rows).await, rows: super::host_doors::support::ListedRows::rows(listed), hook_notice }})"
+            )
+        } else {
+            format!(
+                "let ran = async {{
                     let (output, listed) = {door};
                     Ok::<_, FacadeApiError>((facade_output({door_output})?, listed))
                 }}.await;
                 let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
                 let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
                 Ok(FacadeCallOutput {{ value: {post_hooks}.await.map_err(|error| error.with_hook_notice(hook_notice))?, rows: super::host_doors::support::ListedRows::rows(listed), hook_notice }})"
-        )
+            )
+        }
     } else {
         format!(
             "let ran = async {{ Ok::<_, FacadeApiError>(facade_output({door}?)?) }}.await;

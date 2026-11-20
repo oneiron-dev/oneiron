@@ -102,7 +102,7 @@ pub use self::feed_move::{
     BOOKING_REVISION_INVITE_ATTEMPT_KIND, BookingRevisionInviteDrain, BookingRevisionInvitePayload,
     run_booking_revision_invites,
 };
-pub(crate) use self::feed_move::{FeedMoveOutcome, move_booking_by_feed};
+pub(crate) use self::feed_move::{FeedMoveOutcome, is_booking_event, move_booking_by_feed};
 pub use self::hold_source::VaultActiveHoldSource;
 pub use self::owner_card::{
     BOOKING_OWNER_CARD_ITEM_PREFIX, BookingOwnerCard, BookingOwnerCardOffer,
@@ -363,11 +363,30 @@ struct BookingFacts {
     /// only: a cancel reads it, so a cancel still lands on a booking whose
     /// calendar was cancelled.
     status: BookingStatus,
-    /// Whether a `calendar.status` head on the EVENT says cancelled: the
-    /// booking's own cancel, or a calendar provider's that need not change
+    /// What the `calendar.status` heads on the EVENT say: the booking's own
+    /// cancel, or a calendar provider's that need not change
     /// `booking.status` (FIX 22385).
-    calendar_cancelled: bool,
+    calendar_cancellation: CalendarCancellation,
     context: Option<BookingConfirmationContext>,
+}
+
+/// Whether a booking's `calendar.status` heads say cancelled, and whether a
+/// live VEVENT of a feed ends that cancellation. Ordered, so the strongest
+/// head of an EVENT decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CalendarCancellation {
+    /// No head says cancelled.
+    None,
+    /// Only a feed's omission says cancelled (basis `imported_absence`). The
+    /// next live VEVENT of any source ends it: calendar ingest retracts every
+    /// omission's status of an EVENT a feed reports live, and a booking's
+    /// feed move retracts it in the move's own transaction.
+    Omission,
+    /// A head with any other basis says cancelled: the booking's own cancel,
+    /// an owner's ruling, a provider's cancellation or tombstone. No later
+    /// VEVENT ends it, since ingest never writes `confirmed` back and an
+    /// omission never replaces it.
+    Standing,
 }
 
 impl BookingFacts {
@@ -376,10 +395,10 @@ impl BookingFacts {
     /// cancellation says so. The cap reads the same two heads
     /// (`claim::is_confirmed_booking_in`).
     fn effective_status(&self) -> BookingStatus {
-        if self.calendar_cancelled {
-            BookingStatus::Cancelled
-        } else {
+        if self.calendar_cancellation == CalendarCancellation::None {
             self.status
+        } else {
+            BookingStatus::Cancelled
         }
     }
 }

@@ -17,6 +17,8 @@ pub mod coach_wake;
 pub mod compaction_pass;
 pub mod connector_issuer_watch;
 pub mod connector_sends;
+pub mod device_burst_drain;
+pub mod device_home_dial;
 #[cfg(feature = "mesh")]
 pub mod device_sync_dial_gate;
 #[cfg(feature = "mesh")]
@@ -73,6 +75,7 @@ pub mod siwc_seat;
 pub mod solved_runs;
 pub mod system_one_leg;
 pub mod system_one_rung;
+mod vault_acts;
 pub mod voice_call;
 pub mod web_search_count;
 pub mod wire_health_sweep;

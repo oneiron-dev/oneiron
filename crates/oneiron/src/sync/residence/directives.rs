@@ -263,6 +263,22 @@ pub(crate) fn pending_residence_directives(vault: &Vault) -> Result<Vec<Residenc
     Ok(states)
 }
 
+/// Whether `pending`'s directive still counts in the fold: one the fold took
+/// out after the run read it as pending (a forked directive whose signer or
+/// a cosigner was revoked since, row SEQ-FLOOR-S-WITHHELD-COSIGN) is pending
+/// no longer, and its act committed nothing
+/// ([`finish_residence_directive_in_txn`] refuses its result).
+pub(crate) fn residence_directive_counts(
+    vault: &Vault,
+    pending: &ResidenceDirectiveState,
+) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .authority_view_readonly_in_txn(&txn)?
+        .valid_entries
+        .contains(&pending.entry))
+}
+
 /// A refusal's reason as a result carries it: one line, at most
 /// [`RESIDENCE_REASON_MAX`] bytes.
 pub(crate) fn residence_refusal_reason(text: &str) -> String {
@@ -299,6 +315,13 @@ pub(crate) fn finish_residence_directive_in_txn(
     let key = crate::identity::read_machine_signing_key_in_txn(vault, txn)?
         .ok_or_else(|| refused("this install has no machine key"))?;
     let fold = vault.authority_view_readonly_in_txn(txn)?;
+    // The directive must still count in this transaction's fold. The fold
+    // takes a forked directive out once a key it rests on is revoked (row
+    // SEQ-FLOOR-S-WITHHELD-COSIGN), which may land after the run read it as
+    // pending: then neither its result nor the act beside it commits.
+    if !fold.valid_entries.contains(&pending.entry) {
+        return Err(refused("the residence directive no longer counts"));
+    }
     let now = vault.instant_in_txn(txn)?.secs();
     let result = ResidenceResult {
         directive: pending.directive.id,

@@ -45,7 +45,7 @@ use super::super::{
 };
 use super::admit::Lifted;
 use super::held_template::{MapOrder, held_row_meets};
-pub(crate) use super::text::TextReplacements;
+pub(crate) use super::text::{TextReplacements, tracked_replacements};
 use super::wipe::{PlanParts, PlanTree, replace_wiped, wipe_value};
 use super::{HANDLE_OPEN, Masker, STAND_IN, credential_member};
 use crate::Vault;
@@ -144,7 +144,7 @@ fn mask_body(masker: &mut Masker, bytes: &[u8], refs: &[RefPath]) -> Result<Opti
 
 /// The bodies `tree`'s byte members carry, then the door's rules over the
 /// whole tree; whether anything was placed.
-fn mask_tree(masker: &mut Masker, tree: &mut Value) -> Result<bool> {
+pub(super) fn mask_tree(masker: &mut Masker, tree: &mut Value) -> Result<bool> {
     let nested = mask_nested(masker, tree)?;
     Ok(masker.mask_value(tree)? | nested)
 }
@@ -282,7 +282,7 @@ fn mask_nested(masker: &mut Masker, value: &mut Value) -> Result<bool> {
 
 /// An array's items as bytes, when there are some and every one is a byte
 /// value.
-fn byte_values(items: &[Value]) -> Option<Vec<u8>> {
+pub(super) fn byte_values(items: &[Value]) -> Option<Vec<u8>> {
     if items.is_empty() {
         return None;
     }
@@ -293,7 +293,7 @@ fn byte_values(items: &[Value]) -> Option<Vec<u8>> {
 }
 
 /// `bytes` as one whole MessagePack value.
-fn whole_messagepack(bytes: &[u8]) -> Option<Value> {
+pub(super) fn whole_messagepack(bytes: &[u8]) -> Option<Value> {
     let mut cursor = std::io::Cursor::new(bytes);
     rmpv::decode::read_value(&mut cursor)
         .ok()
@@ -462,6 +462,25 @@ pub(crate) fn admit_seeded_parts(
     };
     let scope = Scope::of(dbs, wtxn)?;
     Ok(admitted(scope, wtxn, origins, parts, seed, |_| true, pass)?.is_some())
+}
+
+/// [`admit_seeded_parts`], tracked (FIX 6144): the same pass, which also
+/// keeps where each handle went in each text it masked, for a writer that
+/// puts the handles into its own copy of those texts at their spans (a
+/// NOTE's live body). `None` when the parts are written as given.
+pub(crate) fn admit_tracked_seeded_parts(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    origins: &[(EntityId, &str)],
+    parts: &mut [SidePart],
+    seed: &mut Lifted,
+) -> Result<Option<TextReplacements>> {
+    let pass = Pass {
+        tracked: true,
+        ..Pass::default()
+    };
+    let scope = Scope::of(dbs, wtxn)?;
+    admitted(scope, wtxn, origins, parts, seed, |_| true, pass)
 }
 
 /// [`admit_seeded_parts`] as its plan alone (FIX 21363), for a replay that
@@ -785,6 +804,29 @@ fn masked_plan(value: &Value, known: Option<Arc<KnownValues>>) -> Result<PlanTre
 pub(crate) fn admission_form(value: &Value, known: Option<Arc<KnownValues>>) -> Result<Value> {
     let mut planned = planned_form(value, known)?;
     Ok(std::mem::replace(&mut planned.0, Value::Nil))
+}
+
+/// `value` with each value `known` holds inside a member that carries a
+/// body of its own ([`mask_nested`]) as its record's handle, as the wall
+/// places it there at a write. Nothing is minted and nothing else changes
+/// (blind review round 1 of #9692). [`admission_form`] reads members by the
+/// field rule alone, so a body that is no text, such as a MessagePack map,
+/// it reads as written: an erase that reads custody reads a request a put
+/// fence erased before the wall in this form first, as a scrub reads the
+/// stored row whose body holds the handle.
+///
+/// # Errors
+///
+/// A body the wall cannot read.
+pub(crate) fn known_nested_form(value: &Value, known: Arc<KnownValues>) -> Result<Value> {
+    let mut form = PlanTree(value.clone());
+    let mut masker = Masker {
+        known: Some(known),
+        known_only: true,
+        ..Masker::default()
+    };
+    mask_nested(&mut masker, &mut form.0)?;
+    Ok(std::mem::replace(&mut form.0, Value::Nil))
 }
 
 /// `value` as a MessagePack tree that keeps its field names, as a named row

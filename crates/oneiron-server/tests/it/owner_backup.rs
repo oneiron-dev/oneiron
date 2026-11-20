@@ -310,3 +310,61 @@ fn restore_join_makes_a_restored_self_host_install_a_machine_of_the_vault() {
     assert_eq!(again["machine"], joined["machine"], "{again}");
     assert_eq!(again["restored_from"], joined["restored_from"], "{again}");
 }
+
+/// REVIEW-9511 round 2 (row RESTORED-COPIES-R2-TESTS): `restore --join` on
+/// a vault no restore made refuses before it provisions this install, so
+/// the refusal mints no machine identity. Before, the command installed the
+/// keystore, which wrote the machine id, and only then refused.
+///
+/// `init` runs without the auth secret: with it, init loads the host root
+/// issuer, which installs the keystore and so mints the machine id before
+/// `--join` runs (row RESTORE-JOIN-REFUSAL-PROOF-FIXTURE). Rooting the vault
+/// through the binary mints it the same way, so the vault here has no root,
+/// and `--join` refuses for that. A handle with no keys loaded reads a
+/// minted id as `KeystoreUnavailable`, so any answer but `Ok(None)` is a
+/// minted identity.
+#[test]
+fn restore_join_refusal_mints_no_machine_identity() {
+    let dir = oneiron::test_support::restore_tempdir();
+    let vault_path = dir.path().join("vault");
+    let config = dir.path().join("oneiron.toml");
+    let keys = dir.path().join("keys");
+    let vault_arg = vault_path.to_str().unwrap();
+    let init = Command::new(env!("CARGO_BIN_EXE_oneiron"))
+        .args(["init", vault_arg, "--embedder", "none"])
+        .arg("--config")
+        .arg(&config)
+        .env("TMPDIR", dir.path())
+        .env("ONEIRON_KEYSTORE_DIR", &keys)
+        .env_remove("ONEIRON_AUTH_SECRET")
+        .env_remove("ONEIRON_VAULT_PATH")
+        .env_remove("ONEIRON_BACKUP_DIR")
+        .output()
+        .expect("run oneiron");
+    assert!(
+        init.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let before = open(&vault_path).local_machine();
+    assert!(
+        matches!(before, Ok(None)),
+        "FIXTURE: init without the auth secret mints no machine identity: {before:?}"
+    );
+
+    let refused = self_host(&config, &keys, &["restore", "--join"]);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        !refused.status.success(),
+        "a vault no restore made is refused"
+    );
+    let after = open(&vault_path).local_machine();
+    assert!(
+        matches!(after, Ok(None)),
+        "a refused --join mints no machine identity: {after:?}; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("no root roots this vault yet"),
+        "refused by the join's own preflight: {stderr}"
+    );
+}

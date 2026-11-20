@@ -409,29 +409,35 @@ fn suppression_counts(body: &Value) -> Vec<u64> {
         .collect()
 }
 
-/// Sol R1 F3: retrieval counts a claim its status gate holds back before any
-/// scoped read sees the row. A caller off this device gets no such count for
-/// a device-local claim; a caller on it still does.
+/// A caller off this device neither reads nor counts a device-local claim;
+/// a caller on it still does both. Surfaceable claims reach the text index,
+/// and discovery counts stored rows independently of ranked retrieval.
 #[tokio::test]
 async fn a_caller_off_this_device_counts_no_device_local_claim() {
     let (_dir, server, caller, grower) = serve();
+    let claim_count = |body: &Value| {
+        body["counts"][oneiron::registry::ENTITY_TYPE_CLAIM.to_string()]
+            .as_u64()
+            .unwrap_or(0)
+    };
+    let baseline_here = claim_count(&caller.discover(HERE).await);
+    let baseline_away = claim_count(&caller.discover(AWAY).await);
     let kept_world = put_world(&server.vault);
-    // Proposed claims: the status gate holds each one back.
-    for (predicate, world, text) in [
-        ("test.orchid_kept", Some(kept_world), "orchid ledger kept"),
-        ("test.orchid_open", None, "orchid ledger open"),
-    ] {
-        put_claim_as(
-            &server,
-            grower,
-            predicate,
-            world,
-            text,
-            ClaimApprovalStatus::Proposed,
-            101,
-        );
-    }
-    put_orchid_claim(
+    let kept = put_orchid_claim(
+        &server,
+        grower,
+        "test.orchid_kept",
+        Some(kept_world),
+        "orchid ledger kept",
+    );
+    let open = put_orchid_claim(
+        &server,
+        grower,
+        "test.orchid_open",
+        None,
+        "orchid ledger open",
+    );
+    let shown = put_orchid_claim(
         &server,
         grower,
         "test.orchid_shown",
@@ -451,16 +457,20 @@ async fn a_caller_off_this_device_counts_no_device_local_claim() {
     for uri in ["/v1/core/query", "/v1/core/context-pack"] {
         let here: Value = serde_json::from_str(&caller.answer(HERE, uri).await).unwrap();
         let away: Value = serde_json::from_str(&caller.answer(AWAY, uri).await).unwrap();
-        let (here, away) = (suppression_counts(&here), suppression_counts(&away));
-        assert!(!away.is_empty(), "{uri}: no count");
-        // The portable proposal still counts off this device.
-        assert!(away.iter().all(|count| *count >= 1), "{uri}: {away:?}");
-        assert_eq!(
-            here.iter().map(|count| count - 1).collect::<Vec<_>>(),
-            away,
-            "{uri}: here {here:?}"
-        );
+        for (body, on_device) in [(&here, true), (&away, false)] {
+            let answer = body.to_string();
+            assert!(answer.contains(&open.to_hex()), "{uri}: {body}");
+            assert!(answer.contains(&shown.to_hex()), "{uri}: {body}");
+            assert_eq!(answer.contains(&kept.to_hex()), on_device, "{uri}: {body}");
+            assert_eq!(suppression_counts(body), vec![0], "{uri}: {body}");
+        }
     }
+    // Device-local rows are removed before retrieval can count suppression.
+    // Discovery still counts the rows each destination may read.
+    let here = caller.discover(HERE).await;
+    let away = caller.discover(AWAY).await;
+    assert_eq!(claim_count(&here), baseline_here + 3, "{here}");
+    assert_eq!(claim_count(&away), baseline_away + 2, "{away}");
 }
 
 /// Sol R1 F4 and R2 F4: discovery and a board's session prefix count the

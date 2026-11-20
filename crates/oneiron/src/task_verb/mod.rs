@@ -101,6 +101,10 @@ mod project_ask;
 mod project_tradeoff;
 mod proposal_create;
 mod query_facade;
+#[cfg(test)]
+pub(crate) use query_facade::set_before_ack_writer_hook;
+#[cfg(test)]
+pub(crate) use query_facade::set_between_ack_reads_hook;
 mod rate_limit;
 mod reconciliation;
 pub(crate) use reconciliation::REPO_RECONCILIATION_TASK_HELD;
@@ -122,6 +126,7 @@ mod runner_done;
 mod scheduling;
 pub(crate) mod setting_keys;
 pub(crate) mod settlement_anchor;
+pub(crate) mod speaker_entry_index;
 mod subproject;
 mod symbol_lease;
 mod task_actor;
@@ -240,7 +245,7 @@ pub(crate) use create_validation::{
 pub(crate) use rate_limit::task_create_owner;
 pub(crate) use task_continuation::{
     FailedTaskContinuation, TaskContinuationOutcome, continue_failed_task_in_txn,
-    task_settled_at_in,
+    task_settlement_in,
 };
 
 /// The objectives a run realizing `task` confesses against (OF-544): its

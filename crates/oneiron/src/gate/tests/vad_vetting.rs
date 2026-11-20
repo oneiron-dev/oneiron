@@ -16,13 +16,39 @@ mod vad_vetting_tests {
         dominance: 0.25,
     };
 
-    fn pending_member(vault: &crate::Vault, predicate: &str) -> Result<EntityId> {
-        pending_member_with_turn(vault, predicate).map(|(claim, _)| claim)
+    /// The disclosure band a fixture claim is stamped at. A claim's VAD mean
+    /// reads only the evidence turns no more private than the claim (FIX
+    /// 11251, `affect::consolidation::reappraisal`), and the evidence TURN is
+    /// born at the default Sensitive band. A Public claim therefore reads no
+    /// evidence and its approval derives no VAD state; a claim whose approval
+    /// must derive one stands at Sensitive, with its turn.
+    #[derive(Clone, Copy)]
+    enum ClaimBand {
+        Public,
+        Sensitive,
+    }
+
+    fn stamped_at(mut body: ClaimBody, band: ClaimBand) -> ClaimBody {
+        match band {
+            ClaimBand::Public => public_stamped(body),
+            ClaimBand::Sensitive => {
+                body.scope = Some(Value::Map(vec![(
+                    Value::from("sensitivity"),
+                    Value::from("sensitive"),
+                )]));
+                body
+            }
+        }
+    }
+
+    fn pending_member(vault: &crate::Vault, predicate: &str, band: ClaimBand) -> Result<EntityId> {
+        pending_member_with_turn(vault, predicate, band).map(|(claim, _)| claim)
     }
 
     fn pending_member_with_turn(
         vault: &crate::Vault,
         predicate: &str,
+        band: ClaimBand,
     ) -> Result<(EntityId, EntityId)> {
         let turn = EntityId::now();
         let claim = EntityId::now();
@@ -33,7 +59,7 @@ mod vad_vetting_tests {
             &turn,
             VadAnnotation::new(FULL_VAD, VadAnnotationSource::ModelInference, 3)?,
         )?;
-        let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+        let mut body = stamped_at(source_trust_claim(ClaimSource::Generated), band);
         body.predicate = predicate.to_owned();
         body.approval = ClaimApprovalStatus::Proposed;
         body.evidence = Some(precommit_evidence(vec![turn]));
@@ -155,7 +181,8 @@ mod vad_vetting_tests {
                     test_id(0x70),
                     &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Inferred, 3)]),
                 )?;
-                let claim = pending_member(&vault, CLAIM_VAD_REAPPRAISAL_PREDICATE)?;
+                let claim =
+                    pending_member(&vault, CLAIM_VAD_REAPPRAISAL_PREDICATE, ClaimBand::Public)?;
                 let result = generic_approve(&vault, claim, door, stale_binding);
                 if stale_binding {
                     assert!(matches!(
@@ -202,7 +229,8 @@ mod vad_vetting_tests {
                 test_id(0x70),
                 &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Inferred, 3)]),
             )?;
-            let (claim, turn) = pending_member_with_turn(&vault, "profile.name")?;
+            let (claim, turn) =
+                pending_member_with_turn(&vault, "profile.name", ClaimBand::Sensitive)?;
             let annotation = crate::affect::vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
             let original = {
                 let txn = vault.store.env.read_txn()?;
@@ -264,7 +292,7 @@ mod vad_vetting_tests {
             test_id(0x70),
             &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Inferred, 3)]),
         )?;
-        let claim = pending_member(&vault, "profile.name")?;
+        let claim = pending_member(&vault, "profile.name", ClaimBand::Sensitive)?;
         let mut body = vault.get_claim(&claim)?.expect("pending member");
         body.approval = ClaimApprovalStatus::Approved;
         let (candidate, envelope) = approval_candidate_parts(&vault, body)?;
@@ -313,7 +341,7 @@ mod vad_vetting_tests {
         )?;
         let mut approvals = Vec::new();
         for _ in 0..2 {
-            let claim = pending_member(&vault, "profile.name")?;
+            let claim = pending_member(&vault, "profile.name", ClaimBand::Sensitive)?;
             let mut body = vault.get_claim(&claim)?.expect("pending member");
             body.approval = ClaimApprovalStatus::Approved;
             let (candidate, envelope) = approval_candidate_parts(&vault, body)?;
@@ -354,7 +382,7 @@ mod vad_vetting_tests {
             test_id(0x70),
             &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Inferred, 3)]),
         )?;
-        let claim = pending_member(&vault, "profile.name")?;
+        let claim = pending_member(&vault, "profile.name", ClaimBand::Sensitive)?;
         let mut body = vault.get_claim(&claim)?.expect("pending member");
         body.approval = ClaimApprovalStatus::Approved;
         let (candidate, envelope) = approval_candidate_parts(&vault, body.clone())?;
@@ -401,7 +429,7 @@ mod vad_vetting_tests {
                 test_id(0x70),
                 &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Inferred, 3)]),
             )?;
-            let claim = pending_member(&vault, CLAIM_VAD_REAPPRAISAL_PREDICATE)?;
+            let claim = pending_member(&vault, CLAIM_VAD_REAPPRAISAL_PREDICATE, ClaimBand::Public)?;
             let reviewer = WriteActor::new(test_id(0x40), EdgeActorClass::Agent);
             let bundle = vault.review_gate_consent_bundle(&reviewer, RUN)?;
             let owner = consent_bundle_owner(&vault)?;

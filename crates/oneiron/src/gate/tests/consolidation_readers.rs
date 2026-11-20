@@ -14,6 +14,28 @@ fn reader_body() -> ClaimBody {
     public_stamped(source_trust_claim(ClaimSource::UserStated))
 }
 
+/// Stamps the birth position of raw row `id`, as the batch write door's
+/// `stamp_put` does for a row born through it.
+fn stamp_birth_position(vault: &Vault, id: EntityId) -> Result<()> {
+    use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+    use crate::ports::EntityStoreRead;
+    vault.with_write_txn(|wtxn| {
+        let raw = vault
+            .store
+            .port_entity_raw(wtxn, &id)?
+            .expect("raw fixture row");
+        let header = EntityMetadataHeader::parse(&raw).expect("fixture row header");
+        crate::federation::record_scope::stamp_put(
+            &vault.store,
+            wtxn,
+            id,
+            header.entity_type,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            crate::federation::record_scope::RowPut::Birth,
+        )
+    })
+}
+
 fn check_transition(
     vault: &Vault,
     id: EntityId,
@@ -239,7 +261,7 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
         let control = test_id(0x41);
         let head = test_id(0x48);
         let principal = test_id(0x43);
-        put_raw_entity_row(&vault, &subject, ENTITY_TYPE_PERSON, b"subject")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, test_time(1), 1, b"subject")?;
         put_raw_entity_row(&vault, &principal, ENTITY_TYPE_PERSON, b"reader")?;
         for id in [claim, control, head] {
             put_claim_body(&vault, &id, &reader_body())?;
@@ -263,9 +285,19 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                         freshness: None,
                     },
                 )?;
+                // A claim's VAD mean reads only the evidence turns no more
+                // private than the claim (FIX 11251): the claim stands at its
+                // turn's default Sensitive band, and both raw rows take the
+                // birth position the write door would have stamped.
                 let mut body = reader_body();
+                body.scope = Some(Value::Map(vec![(
+                    Value::from("sensitivity"),
+                    Value::from("sensitive"),
+                )]));
                 body.evidence = Some(Value::Array(vec![Value::Binary(turn.as_bytes().to_vec())]));
                 put_claim_body(&vault, &claim, &body)?;
+                stamp_birth_position(&vault, turn)?;
+                stamp_birth_position(&vault, claim)?;
                 check_transition(&vault, claim, reader, |v, id| {
                     match v.consolidate_claim_vad_now(id, 10) {
                         Ok(result) => {

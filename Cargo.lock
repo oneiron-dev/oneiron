@@ -9159,11 +9159,15 @@ dependencies = [
  "futures-core",
  "libc",
  "oneiron",
+ "oneiron-contracts",
  "oneiron-keystore",
  "oneiron-spawn",
+ "rmpv",
  "serde_json",
+ "stacker",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
+ "zip 0.6.6",
 ]
 
 [[package]]
