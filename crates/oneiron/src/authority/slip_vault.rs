@@ -893,12 +893,10 @@ impl Vault {
         // path. The rows named beside the heads join with them, so no count
         // of expired rows takes the act past MAX_PARENTS (REVIEW-9609 round 2).
         let joiner = FrontierSigner::Host(issuer);
-        let frontier = fold.append_heads.union(&beside).copied().collect();
-        let (fold, beside) =
-            match self.join_authority_heads_in_txn(txn, &fold, &frontier, joiner, MAX_PARENTS)? {
-                Some(joined) => (joined, std::collections::BTreeSet::new()),
-                None => (fold, beside),
-            };
+        let room = MAX_PARENTS.saturating_sub(beside.len());
+        let fold = self
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, room)?
+            .unwrap_or(fold);
         let entry = next_entry_naming(issuer, &fold, &beside, op, now)?;
         let entry = match proof {
             Some(proof) => with_owner_proof(issuer, &fold, entry, proof)?,
