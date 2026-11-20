@@ -345,6 +345,20 @@ impl Confined {
     /// What the start isolated the organ with, once the child has exec'd,
     /// the cell it is fenced in, if it joined one, and its scratch dir, if
     /// it has one: the process holds both until it is reaped.
+    /// DIAGNOSTIC ONLY (branch opus-unbuilt3-b/handshake-cut-diag): the
+    /// status pipe's descriptor numbers.
+    pub(crate) fn diag_fds(&self) -> String {
+        #[cfg(target_os = "linux")]
+        if let Some((reader, writer)) = &self.status {
+            return format!(
+                "status_r={} status_w={}",
+                std::os::fd::AsRawFd::as_raw_fd(reader),
+                std::os::fd::AsRawFd::as_raw_fd(writer)
+            );
+        }
+        "status=none".to_owned()
+    }
+
     pub(crate) fn started(self) -> (OrganIsolation, Option<Cell>, Option<Scratch>) {
         #[cfg(target_os = "linux")]
         let (namespaces, joined) = match self.status {
@@ -367,7 +381,15 @@ impl Confined {
                         };
                         (namespaces, Some(at(4)))
                     }
-                    Err(_) => (NamespaceFact::Unobserved, None),
+                    Err(err) => {
+                        // DIAGNOSTIC ONLY (branch opus-unbuilt3-b/handshake-cut-diag).
+                        eprintln!(
+                            "ORGAN-DIAG status-unobserved thread={:?} reader={} err={err}",
+                            std::thread::current().id(),
+                            std::os::fd::AsRawFd::as_raw_fd(&reader),
+                        );
+                        (NamespaceFact::Unobserved, None)
+                    }
                 }
             }
             None => (NamespaceFact::Unobserved, None),

@@ -375,6 +375,18 @@ impl OrganProcess {
         let shutdown = ours.try_clone()?;
         let (mut command, confined) = sandbox::command(spec, theirs.as_raw_fd())?;
         let child = command.spawn()?;
+        // DIAGNOSTIC ONLY (branch opus-unbuilt3-b/handshake-cut-diag).
+        eprintln!(
+            "ORGAN-DIAG spawn organ={} child={} thread={:?} ours={} theirs={} reader={} shutdown={} {}",
+            spec.name,
+            child.id(),
+            std::thread::current().id(),
+            ours.as_raw_fd(),
+            theirs.as_raw_fd(),
+            reader.as_raw_fd(),
+            shutdown.as_raw_fd(),
+            confined.diag_fds(),
+        );
         drop(theirs);
         let (isolation, cell, scratch) = confined.started();
         // A first-party organ's soft limits follow what its own buffers are

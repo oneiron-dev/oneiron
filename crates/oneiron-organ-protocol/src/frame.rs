@@ -554,6 +554,7 @@ fn recv_frame_with<T: DeserializeOwned, B: FrameBooking>(
     let mut held = booking.body(0)?;
     let mut fds = Vec::new();
     let (len, mut more) = recv_header(stream, wait, &mut fds, &mut booking, &mut held)?;
+    let mut diag_frames = vec![(len, more)];
     bound.check(len, 0)?;
     // The room first, then the bytes: nothing is allocated for a frame its
     // receiver has not made room for.
@@ -562,6 +563,7 @@ fn recv_frame_with<T: DeserializeOwned, B: FrameBooking>(
     recv_body(stream, wait, &mut body, len)?;
     while more {
         let (len, next) = recv_header(stream, wait, &mut fds, &mut booking, &mut held)?;
+        diag_frames.push((len, next));
         bound.check(len, body.len() as u64)?;
         // Scratch is a temporary full lease covering the old buffer
         // outliving its realloc, on floor and budget, released by drop;
@@ -583,14 +585,43 @@ fn recv_frame_with<T: DeserializeOwned, B: FrameBooking>(
         more = next;
     }
     let total = body.len() as u64;
-    let shape = codec::shape(&body).map_err(FrameError::Decode)?;
+    let shape = codec::shape(&body).map_err(|err| {
+        diag_decode("shape", &err, &diag_frames, &body, stream);
+        FrameError::Decode(err)
+    })?;
     // Room for the value before it is built, while the bytes still live;
     // theirs goes back once only the value is left.
     booking.value(&mut held, shape.decoded())?;
-    let message = codec::from_slice(&body).map_err(FrameError::Decode)?;
+    let message = codec::from_slice(&body).map_err(|err| {
+        diag_decode("from_slice", &err, &diag_frames, &body, stream);
+        FrameError::Decode(err)
+    })?;
     drop(body);
     booking.body_gone(&mut held, total);
     Ok((message, fds, total, held))
+}
+
+/// DIAGNOSTIC ONLY (branch opus-unbuilt3-b/handshake-cut-diag, never merged):
+/// prints a failed decode's frames, its body's first and last bytes, and up
+/// to 256 bytes still queued on the socket (MSG_PEEK, not consumed).
+fn diag_decode(stage: &str, err: &CodecError, frames: &[(u32, bool)], body: &[u8], stream: &UnixStream) {
+    use std::os::fd::AsRawFd as _;
+    let head = &body[..body.len().min(48)];
+    let tail = &body[body.len().saturating_sub(16)..];
+    let mut queued = [0u8; 256];
+    let peeked = match recv(stream, &mut queued[..], RecvFlags::PEEK | RecvFlags::DONTWAIT) {
+        Ok((n, _)) => format!("{:02x?}", &queued[..n.min(256)]),
+        Err(errno) => format!("errno {errno}"),
+    };
+    let fd = stream.as_raw_fd();
+    let link = std::fs::read_link(format!("/proc/self/fd/{fd}"))
+        .map_or_else(|e| e.to_string(), |p| p.display().to_string());
+    eprintln!(
+        "ORGAN-DIAG decode-failed pid={} thread={:?} stage={stage} err={err} fd={fd} link={link} frames={frames:?} total={} head={head:02x?} tail={tail:02x?} queued={peeked}",
+        std::process::id(),
+        std::thread::current().id(),
+        body.len(),
+    );
 }
 
 /// One frame's header, and the descriptors that rode on its first byte.
