@@ -5,6 +5,9 @@
 //! its shutdown instead. A 401 and any other failed upgrade still redial with
 //! backoff, as before, and so does a 403 to an upgrade that carried no
 //! credential: it refuses nothing the device holds (Astra review of #8018).
+//! A 403 that names its reason in `oneiron-upgrade-refusal` is told with it
+//! (MEMBER-SYNC-WORLD-PACT = C): a member lane under a world-bounded pact is
+//! refused as `WorldBoundedPact`, so the member sees why its lane never runs.
 //! While it waits, a local commit goes to the durable queue, never to a
 //! channel nobody reads; and a peer session's probe of the home that gets the
 //! 403 ends that session, so the probe never redials on it either (round-1
@@ -57,8 +60,14 @@ struct Upgrades {
 
 /// A fake home on a loopback port that answers every request with `status`
 /// (an HTTP status line's code and reason) and counts the WebSocket upgrade
-/// requests among them. Returns its sync URL and the counts.
-fn refusing_home(status: &'static str) -> (String, Arc<Upgrades>) {
+/// requests among them. When `extra_header` is `Some`, the answer carries one
+/// extra header line `name: value` (wire strings, not engine constants).
+/// Returns its sync URL and the counts (MEMBER-SYNC-WORLD-PACT = C: the typed
+/// 403 names its reason in `oneiron-upgrade-refusal`).
+fn refusing_home(
+    status: &'static str,
+    extra_header: Option<(&'static str, &'static str)>,
+) -> (String, Arc<Upgrades>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind the fake home");
     let url = format!(
         "ws://{}/ws",
@@ -87,8 +96,15 @@ fn refusing_home(status: &'static str) -> (String, Arc<Upgrades>) {
                     counted.credentialed.fetch_add(1, Ordering::SeqCst);
                 }
             }
-            let answer =
-                format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            let answer = match extra_header {
+                Some((name, value)) => format!(
+                    "HTTP/1.1 {status}\r\n{name}: {value}\r\nContent-Length: 0\r\nConnection: \
+                     close\r\n\r\n"
+                ),
+                None => {
+                    format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                }
+            };
             let _ = stream.write_all(answer.as_bytes());
             let _ = stream.flush();
         }
@@ -142,9 +158,15 @@ fn reconnecting_connection(
 
 /// Runs a reconnecting connection against a home answering `status` for
 /// [`RUN_WINDOW`], then shuts it down; the run must end on that shutdown.
-/// Its upgrades carry [`DEVICE_TOKEN`] when `credentialed`, else none.
-async fn run_against(status: &'static str, credentialed: bool) -> Run {
-    let (url, upgrades) = refusing_home(status);
+/// Its upgrades carry [`DEVICE_TOKEN`] when `credentialed`, else none. When
+/// `extra_header` is `Some`, the home's answer carries that header line
+/// (MEMBER-SYNC-WORLD-PACT = C: the typed 403 names its reason).
+async fn run_against(
+    status: &'static str,
+    credentialed: bool,
+    extra_header: Option<(&'static str, &'static str)>,
+) -> Run {
+    let (url, upgrades) = refusing_home(status, extra_header);
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("vault"));
     let manager = Arc::new(WindowManager::new(
@@ -225,7 +247,7 @@ where
 #[test]
 fn a_forbidden_upgrade_is_told_once_and_never_redialed() {
     on_sync_runtime("forbidden_upgrade", || async {
-        let run = run_against("403 Forbidden", true).await;
+        let run = run_against("403 Forbidden", true, None).await;
         assert_eq!(
             run.credentialed, run.upgrades,
             "the device's upgrades carry its credential"
@@ -237,7 +259,7 @@ fn a_forbidden_upgrade_is_told_once_and_never_redialed() {
             run.events
         );
         assert_eq!(
-            run.told("UpgradeForbidden"),
+            run.told("UpgradeForbidden { reason: None }"),
             1,
             "the host is told the 403 once, as its own event (events: {:?})",
             run.events
@@ -253,7 +275,7 @@ fn a_forbidden_upgrade_is_told_once_and_never_redialed() {
 #[test]
 fn an_unauthorized_upgrade_still_redials() {
     on_sync_runtime("unauthorized_upgrade", || async {
-        let run = run_against("401 Unauthorized", true).await;
+        let run = run_against("401 Unauthorized", true, None).await;
         assert!(
             run.upgrades >= 3,
             "a 401 redials with backoff as before: {} upgrades",
@@ -267,7 +289,7 @@ fn an_unauthorized_upgrade_still_redials() {
             run.events
         );
         assert_eq!(
-            run.told("UpgradeForbidden"),
+            run.told("UpgradeForbidden { reason: None }"),
             0,
             "a 401 is not told as a 403"
         );
@@ -277,13 +299,13 @@ fn an_unauthorized_upgrade_still_redials() {
 #[test]
 fn a_failing_home_still_redials() {
     on_sync_runtime("failing_home", || async {
-        let run = run_against("503 Service Unavailable", true).await;
+        let run = run_against("503 Service Unavailable", true, None).await;
         assert!(
             run.upgrades >= 3,
             "any other failed upgrade redials with backoff as before: {} upgrades",
             run.upgrades
         );
-        assert_eq!(run.told("UpgradeForbidden"), 0);
+        assert_eq!(run.told("UpgradeForbidden { reason: None }"), 0);
         assert_eq!(run.told("UpgradeUnauthorized"), 0);
     });
 }
@@ -291,7 +313,7 @@ fn a_failing_home_still_redials() {
 #[test]
 fn a_forbidden_upgrade_without_a_credential_still_redials() {
     on_sync_runtime("forbidden_uncredentialed_upgrade", || async {
-        let run = run_against("403 Forbidden", false).await;
+        let run = run_against("403 Forbidden", false, None).await;
         assert_eq!(run.credentialed, 0, "the device holds no credential");
         assert!(
             run.upgrades >= 3,
@@ -301,9 +323,48 @@ fn a_forbidden_upgrade_without_a_credential_still_redials() {
             run.events
         );
         assert_eq!(
-            run.told("UpgradeForbidden"),
+            run.told("UpgradeForbidden { reason: None }"),
             0,
             "no credential was refused, so none is told"
+        );
+    });
+}
+
+#[test]
+fn a_world_bounded_pact_refusal_is_told_with_its_reason() {
+    on_sync_runtime("world_bounded_pact_refusal", || async {
+        let run = run_against(
+            "403 Forbidden",
+            true,
+            Some(("oneiron-upgrade-refusal", "world-bounded-pact")),
+        )
+        .await;
+        assert_eq!(
+            run.credentialed, run.upgrades,
+            "the device's upgrades carry its credential"
+        );
+        assert_eq!(
+            run.upgrades, 1,
+            "a typed 403 refuses the credential the socket: the connection never redials on it \
+             (events: {:?})",
+            run.events
+        );
+        assert_eq!(
+            run.told("UpgradeForbidden { reason: Some(WorldBoundedPact) }"),
+            1,
+            "the host is told the typed 403 once, with its reason (MEMBER-SYNC-WORLD-PACT = C) \
+             (events: {:?})",
+            run.events
+        );
+        assert_eq!(
+            run.told("UpgradeForbidden { reason: None }"),
+            0,
+            "the typed refusal is not told as an untyped one"
+        );
+        assert_eq!(
+            run.told("UpgradeUnauthorized"),
+            0,
+            "a 403 is not told as a 401"
         );
     });
 }
@@ -328,7 +389,7 @@ fn a_commit_made_while_a_served_hosts_run_waits_on_a_403_is_queued_at_once() {
 /// once. With `host_relay`, a relay channel stands beside the run on the
 /// manager's outbound sink for the whole run, as a served host's does.
 async fn commit_while_parked(host_relay: bool) {
-    let (url, upgrades) = refusing_home("403 Forbidden");
+    let (url, upgrades) = refusing_home("403 Forbidden", None);
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("vault"));
     let manager = Arc::new(WindowManager::new(
@@ -356,7 +417,7 @@ async fn commit_while_parked(host_relay: bool) {
                 .lock()
                 .expect("event sink")
                 .iter()
-                .any(|told| told == "UpgradeForbidden")
+                .any(|told| told == "UpgradeForbidden { reason: None }")
         })
         .await;
         let before = queued_in(&queue, PARKED_WINDOW);
@@ -405,7 +466,7 @@ async fn commit_while_parked(host_relay: bool) {
 fn a_peer_sessions_home_probe_ends_on_a_403() {
     use oneiron::sync::peer_route::HOME_PROBE_SECS;
     on_sync_runtime("forbidden_home_probe", || async {
-        let (url, upgrades) = refusing_home("403 Forbidden");
+        let (url, upgrades) = refusing_home("403 Forbidden", None);
         let dir = tempfile::tempdir().expect("tempdir");
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("vault"));
         let config = SyncClientConfig {
@@ -433,7 +494,7 @@ fn a_peer_sessions_home_probe_ends_on_a_403() {
         assert_eq!(
             events
                 .iter()
-                .filter(|told| *told == "UpgradeForbidden")
+                .filter(|told| *told == "UpgradeForbidden { reason: None }")
                 .count(),
             1,
             "the host is told the 403 once (events: {events:?})"
