@@ -7,7 +7,8 @@
   "uniffi": {
     "args": {
       "entity_ref": "String",
-      "reason": "SafeDeleteReason"
+      "reason": "SafeDeleteReason",
+      "check_in_ref": "Option<String>"
     },
     "output": "DeleteReceipt"
   },

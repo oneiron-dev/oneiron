@@ -397,6 +397,27 @@ pub enum DeleteRequestState {
     CompletionPending,
 }
 
+/// The check-in decision an act ran on (ROLES-CHECKIN; P24-SHAPE Q9 = A):
+/// the act class, the role it was judged under, the mode and why it went.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct CheckInDecision {
+    /// The act class's token.
+    pub act_class: String,
+    /// The role's token.
+    pub role: String,
+    /// The mode's wire token; none when the role acts on its own proof.
+    pub mode: Option<String>,
+    /// Why the act went: `never_ask`, `sure`, `own_proof`, `own_item`, or
+    /// the basis the spent check-in gave (`approved`, `proceed_with_undo`
+    /// or `window_passed`).
+    pub basis: String,
+    /// The check-in the act spent, 32 hex.
+    pub check_in: Option<String>,
+    /// Who asked for the act, when an Owner applied another asker's
+    /// approved check-in; none for an act its own actor asked.
+    pub requester: Option<String>,
+}
+
 /// Receipt for one named deletion.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct DeleteReceipt {
@@ -408,6 +429,11 @@ pub struct DeleteReceipt {
     pub receipt_ref: Option<String>,
     /// Whether it was applied or waits.
     pub state: DeleteRequestState,
+    /// The check-in decision the delete ran on: the Owner's own proof, or
+    /// a person's judgment under their membership role, naming the
+    /// check-in its call spent. None for an agent's delete under its
+    /// Grant.
+    pub check_in: Option<CheckInDecision>,
 }
 
 /// One gated write parked for consent.
