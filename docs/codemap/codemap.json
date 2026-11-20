@@ -58229,6 +58229,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/tests/soft_delete_marker_replay.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -58244,6 +58252,14 @@
      "notable": [],
      "path": "src/memory/tests/takes_notes.rs",
      "purpose": "Note takes on claims, author binding, and stale upsert/retract conflicts",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/tests/unrooted_owner_deleting_itself.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -88155,7 +88171,7 @@
      "path": "src/sync/manager.rs",
      "purpose": "Production window manager: ARCH-0023b startup orchestration + registry",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 12,
       "re-export": 1,
       "struct": 1
@@ -88200,6 +88216,16 @@
      "purpose": "Opened-window promotion notices on the manager-owned connection lane",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/manager/publication_window.rs",
+     "purpose": "The window a tombstone publication commits to: the registered window, or a closed window's persisted state…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -90054,9 +90080,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/sweep_fence.rs",
-     "purpose": "Windows a sweep holds closed while it rewrites their persisted state",
+     "purpose": "Windows held closed while their persisted state is rewritten: by a sweep that compacts them, or by a…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -90612,6 +90638,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/sync/window/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/window/tests/publish_refusal_keeps_carrier_records.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -98532,7 +98566,7 @@
      "path": "src/vault/open/mod.rs",
      "purpose": "Vault open and bootstrap: open doors, privacy posture and live-window attachment",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 15
      }
     },
@@ -115967,7 +116001,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 416,
+     "files": 418,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116499,7 +116533,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 434,
+     "files": 436,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116732,8 +116766,8 @@
    },
    "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8230,
-   "test_files": 1977
+   "source_files": 8231,
+   "test_files": 1980
   },
   "oneiron-agent-runtime": {
    "files": [
