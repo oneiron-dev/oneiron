@@ -536,7 +536,9 @@ impl PollAdmission<'_> {
     /// the owner too (the standing consent holds it), so it supersedes no
     /// admitted status: that one stays live beside it until the owner's
     /// approval closes it as the review's conflict head, and a decline leaves
-    /// it standing (CAL-HELD-STATUS-SUPERSEDES-ADMITTED-STATUS).
+    /// it standing (CAL-HELD-STATUS-SUPERSEDES-ADMITTED-STATUS). The writer
+    /// that closes the prior decides, so an owner's answer that lands while
+    /// the new status is screened counts ([`super::consent::status_supersedes`]).
     /// Returns the new claim's id, or `None` when nothing was written.
     fn admit_status_if_changed(
         &mut self,
@@ -546,7 +548,7 @@ impl PollAdmission<'_> {
         status: CalendarStatus,
         basis: CalendarStatusBasis,
     ) -> Result<Option<EntityId>, CalendarError> {
-        let mut prior_live: Option<(EntityId, bool)> = None;
+        let mut prior_live: Option<EntityId> = None;
         for claim_id in self.vault.claims_for_subject(&event_ref)? {
             let Some(claim) = self.vault.get_claim(&claim_id)? else {
                 continue;
@@ -569,7 +571,7 @@ impl PollAdmission<'_> {
                     return Ok(None);
                 }
             }
-            prior_live = Some((claim_id, crate::claim::claim_surfaceable(&claim)));
+            prior_live = Some(claim_id);
         }
         let value = preflight::status_value(status, basis, self.now);
         let new_id = self.admit_screened(
@@ -579,14 +581,10 @@ impl PollAdmission<'_> {
             PREDICATE_CALENDAR_STATUS,
             value,
         )?;
-        if let Some((old_id, admitted)) = prior_live
-            && !(admitted
-                && self
-                    .vault
-                    .get_claim(&new_id)?
-                    .is_some_and(|body| super::consent::screen_flagged(&body)))
-        {
-            self.vault.supersede_claim(&new_id, &old_id, self.now)?;
+        if let Some(old_id) = prior_live {
+            let closes = super::consent::status_supersedes;
+            self.vault
+                .supersede_claim_when(&new_id, &old_id, self.now, closes)?;
         }
         Ok(Some(new_id))
     }

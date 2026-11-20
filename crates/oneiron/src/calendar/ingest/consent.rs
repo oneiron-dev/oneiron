@@ -538,11 +538,21 @@ fn waiting_in_txn(
     }))
 }
 
+/// Whether a `calendar.status` admitted as `new` closes the prior live status
+/// `old`, as the writer that closes it reads both (`admission.rs`,
+/// `admit_status_if_changed`). A closed claim closes nothing and is closed by
+/// nothing. A status whose body the screen flagged waits on the owner, so it
+/// closes no admitted (Approved/Auto) status, an owner's approval of `old`
+/// that landed while `new` was screened among them.
+pub(super) fn status_supersedes(new: &ClaimBody, old: &ClaimBody) -> bool {
+    new.lifecycle == ClaimLifecycleStatus::Active
+        && old.lifecycle == ClaimLifecycleStatus::Active
+        && !(crate::claim::claim_surfaceable(old) && screen_flagged(new))
+}
+
 /// Whether the inbound screen flagged the body this claim was admitted on, by
-/// the verdict its admission keeps on the claim's evidence (CAL-09). Such a
-/// claim waits on the owner, so its status admission supersedes no admitted
-/// status (`admission.rs`, `admit_status_if_changed`).
-pub(super) fn screen_flagged(body: &ClaimBody) -> bool {
+/// the verdict its admission keeps on the claim's evidence (CAL-09).
+fn screen_flagged(body: &ClaimBody) -> bool {
     body.evidence
         .as_ref()
         .and_then(crate::ingest::imported_screen_verdict)
