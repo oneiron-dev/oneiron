@@ -136,8 +136,9 @@ fn changes_allowed(
 
 /// Whether `caller` may make the member changes `body` makes to `held`:
 /// each added member as one who answers the room's admission (a host, or
-/// its nearest project leader), each removed one as its own leave or the
-/// vault owner's removal, as the room leave door allows.
+/// its nearest project leader), each removed one as the room leave door
+/// allows: the member's own leave, filed by them or their principal, or the
+/// vault owner's removal.
 fn members_allowed(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -154,10 +155,15 @@ fn members_allowed(
     {
         return Ok(false);
     }
-    Ok(held_members
-        .difference(&members)
-        .all(|removed| *removed == caller.entity_ref())
-        || crate::workspace_roster::room_leave::owner_removes_in_txn(vault, txn, caller))
+    let now = vault.now_recorded_at();
+    for removed in held_members.difference(&members) {
+        if !crate::workspace_roster::room_leave::removes_member_in_txn(
+            vault, txn, caller, *removed, now,
+        )? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Whether `body` changes `held`'s pins or the unpin records beside them.
