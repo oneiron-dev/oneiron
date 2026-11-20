@@ -178,12 +178,11 @@ async fn run_against(status: &'static str, credentialed: bool) -> Run {
     }
 }
 
-/// Polls `done` every 20 ms for up to 10 s; whether it held by then. Only for
-/// a state with no change signal to wait on: the durable queue.
+/// Polls `done` every 20 ms for up to 10 s; whether it held by then.
 async fn wait_until(mut done: impl FnMut() -> bool) -> bool {
     let polled = tokio::time::timeout(Duration::from_secs(10), async {
         while !done() {
-            // testkit-lint: allow(sleep) the durable queue has no change signal to wait on
+            // testkit-lint: allow(sleep) a bounded poll of state that has no change signal
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
@@ -349,26 +348,18 @@ async fn commit_while_parked(host_relay: bool) {
     let (stop, shutdown) = tokio::sync::oneshot::channel();
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&events);
-    // Each event the host is told wakes the wait for the 403 below.
-    let told = Arc::new(tokio::sync::Notify::new());
-    let tell = Arc::clone(&told);
     let run = connection.run_observed(shutdown, move |event: SyncEvent| {
         sink.lock().expect("event sink").push(format!("{event:?}"));
-        tell.notify_one();
     });
     let waiting = async {
-        let refused = tokio::time::timeout(Duration::from_secs(10), async {
-            while !events
+        let refused = wait_until(|| {
+            events
                 .lock()
                 .expect("event sink")
                 .iter()
-                .any(|event| event == "UpgradeForbidden")
-            {
-                told.notified().await;
-            }
+                .any(|told| told == "UpgradeForbidden")
         })
-        .await
-        .is_ok();
+        .await;
         let before = queued_in(&queue, PARKED_WINDOW);
         window
             .doc
