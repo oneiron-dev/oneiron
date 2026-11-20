@@ -111,7 +111,8 @@ impl ExtractionAttemptLender {
             deadline: context.deadline.clone(),
             now_ms: context.now_ms,
             material: context.hook_material().to_vec(),
-            destination_bound: context.destination_bound().cloned(),
+            // RED (scratch, never merged): the lender copies no bound again.
+            destination_bound: None,
             charges: Mutex::new(StepChargeTally::new()),
         }
     }

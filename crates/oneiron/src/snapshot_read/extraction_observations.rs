@@ -113,7 +113,8 @@ fn bound_extraction_observations_page(
             reader_scope.as_ref(),
             (
                 attempt_id,
-                binding.and_then(DreamerAttemptBinding::destination_bound),
+                // RED (scratch, never merged): the page states no bound again.
+                binding.and(None),
             ),
             &input.candidates,
             None,

@@ -44,7 +44,8 @@ impl DreamerAttemptBinding {
                 &read,
                 txn,
                 reader_scope.as_ref(),
-                (self.lease.attempt(), self.destination_bound()),
+                // RED (scratch, never merged): the pack check states no bound again.
+                (self.lease.attempt(), None),
                 &pack.candidates,
                 Some((&pack.listed, &pack.priors)),
             )?;
