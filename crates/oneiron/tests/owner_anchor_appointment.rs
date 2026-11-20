@@ -223,7 +223,7 @@ fn restored(vault_id: [u8; 32], seed: &RecoveryRootSeed) -> RecoveryRootSeed {
 struct Owned {
     _dir: tempfile::TempDir,
     vault: Vault,
-    _issuer: HostSlipIssuer,
+    issuer: HostSlipIssuer,
     person: EntityId,
     vault_id: [u8; 32],
     owner_key: SigningKey,
@@ -284,7 +284,7 @@ fn owned_on(keystore: Arc<dyn DeviceKeystore>) -> Owned {
     Owned {
         _dir: dir,
         vault,
-        _issuer: issuer,
+        issuer,
         person,
         vault_id,
         owner_key,
@@ -1346,6 +1346,14 @@ impl Owned {
         let request = vault
             .machine_enrolment_request(self.vault_id, key)
             .expect("the second install's enrolment request");
+        // A carried answer that makes a machine his needs the proof of an
+        // owner key this install holds (row CARRIER-OWNER-PROOF); with none
+        // it is held and the second install is never linked.
+        let authority =
+            ActAuthority::Owner(proof(&self.vault, self.person), ActSurface::ThisInstall);
+        self.vault
+            .enrol_device_owner_signing_key(&authority, &self.issuer)
+            .expect("this install holds an owner key, so its carried answer proves");
         self.vault
             .enroll_machine(
                 &proof(&self.vault, self.person),
