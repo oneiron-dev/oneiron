@@ -589,6 +589,7 @@ pub(crate) use log_budget::{
 pub(crate) use log_structure::carried_rows_never_applied_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use owner_key_line::tail_reaches_old_parents_past_rows_for_test;
+pub(crate) use owner_proof::OwnerProofSigner;
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 #[cfg(oneiron_test_support)]

@@ -20,8 +20,8 @@ use super::frontier::{ChainHead, Parents, WrapPlanInput};
 use super::{FrontierWide, RootRecipient, provenance};
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, AuthorityLogEntry, AuthorityOp, AuthorityView,
-    FrontierJoinScope, FrontierSigner, KeyFrontier, MAX_PARENTS, WideFrontier, invalid_authority,
-    next_sequence, scope_head, sign_side_entry, standing_rows,
+    FrontierJoinScope, FrontierSigner, KeyFrontier, MAX_PARENTS, OwnerProofSigner, WideFrontier,
+    invalid_authority, next_sequence, scope_head, sign_side_entry_with_owner_proof, standing_rows,
 };
 use crate::error::Result;
 use crate::{EntityId, TimeRange, Vault};
@@ -109,10 +109,15 @@ impl Vault {
     /// refold. On the frontier a record's width is the parents it names
     /// alone (FIX 5680): a world whose rows outgrow one record raises its
     /// OF-520 question and writes nothing ([`FrontierWide`]) only when its
-    /// records stay on those rows.
+    /// records stay on those rows. `proof` is the owner key's proof of the
+    /// owner's own act the records do (the owner's settings edit, its
+    /// re-assertion or an ensure the owner asked for in person,
+    /// [`Vault::owner_act_proof_signer`]): each record, and each join it
+    /// leads to, carries it where the merge takes it at that row's own
+    /// parents, so it lands past another install's owner reserve.
     #[expect(
         clippy::too_many_arguments,
-        reason = "one append: the snapshot, the signer, the key, its recipients and its request"
+        reason = "one append: the snapshot, the signer, the key, its recipients, its request and its proof"
     )]
     pub(crate) fn append_world_key_wraps_in_txn(
         &self,
@@ -125,6 +130,7 @@ impl Vault {
         recipients: &[(WrapRecipient, HybridPublicKey)],
         seq: &mut SequenceCounter,
         request: Option<AuthorityEntryHash>,
+        proof: Option<&OwnerProofSigner<'_>>,
     ) -> Result<std::result::Result<Vec<AuthorityEntryHash>, FrontierWide>> {
         self.append_wraps_in_txn(
             txn,
@@ -133,7 +139,7 @@ impl Vault {
             (machine, key, owner),
             recipients,
             seq,
-            request,
+            (request, proof),
             Parents::Frontier,
         )
     }
@@ -141,7 +147,8 @@ impl Vault {
     /// [`Self::append_world_key_wraps_in_txn`] on the rows the records'
     /// evidence rests on alone, never the frontier: for `fold`, a view the
     /// store has moved past since (repin's pre-wrap on the old pin's rows,
-    /// after the new marks and pin are stored).
+    /// after the new marks and pin are stored). Its records carry no owner
+    /// proof.
     #[expect(
         clippy::too_many_arguments,
         reason = "one append: the snapshot, the signer, the key, its recipients and its request"
@@ -165,12 +172,13 @@ impl Vault {
             (machine, key, owner),
             recipients,
             seq,
-            request,
+            (request, None),
             Parents::Explicit,
         )
     }
 
-    /// One append of `key`'s wraps, its records' parents as `mode` allows.
+    /// One append of `key`'s wraps, its records' parents as `mode` allows,
+    /// for `request` with `proof` (`append_world_key_wraps_in_txn`).
     #[expect(
         clippy::too_many_arguments,
         reason = "one append: the snapshot, the signer, the key, its recipients and its parents"
@@ -183,7 +191,7 @@ impl Vault {
         (machine, key, owner): (EntityId, &WorldKey, EntityId),
         recipients: &[(WrapRecipient, HybridPublicKey)],
         seq: &mut SequenceCounter,
-        request: Option<AuthorityEntryHash>,
+        (request, proof): (Option<AuthorityEntryHash>, Option<&OwnerProofSigner<'_>>),
         mode: Parents,
     ) -> Result<std::result::Result<Vec<AuthorityEntryHash>, FrontierWide>> {
         if recipients.is_empty() {
@@ -193,9 +201,13 @@ impl Vault {
         // is joined first, and the records plan, chain and count on the
         // fold read back; the planners are unchanged.
         let joined = match mode {
-            Parents::Frontier => {
-                self.join_wrap_frontier_in_txn(txn, fold, signing, (machine, key.id().world), seq)?
-            }
+            Parents::Frontier => self.join_wrap_frontier_in_txn(
+                txn,
+                fold,
+                (signing, proof),
+                (machine, key.id().world),
+                seq,
+            )?,
             Parents::Explicit => None,
         };
         let fold = joined.as_deref().unwrap_or(fold);
@@ -259,7 +271,7 @@ impl Vault {
             &binding,
             chunks,
             seq,
-            request,
+            (request, proof),
             plan.on_frontier,
         )
         .map(Ok)
@@ -274,12 +286,14 @@ impl Vault {
     /// The frontier is read again in `txn`, which an earlier append of this
     /// door may have joined already. The fold read back, or `txn`'s when it
     /// needs no join; `None` when `fold`'s frontier fits or no row admits
-    /// the key: today's path, nothing written.
+    /// the key: today's path, nothing written. A join carries `proof`, the
+    /// owner key's proof its records carry, where its heads' merge takes it
+    /// ([`FrontierSigner::install`]).
     fn join_wrap_frontier_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
-        signing: &SigningKey,
+        (signing, proof): (&SigningKey, Option<&OwnerProofSigner<'_>>),
         (machine, world): (EntityId, EntityId),
         seq: &mut SequenceCounter,
     ) -> Result<Option<AuthorityView>> {
@@ -289,7 +303,7 @@ impl Vault {
         }
         let current = self.authority_view_readonly_in_txn(txn)?;
         let chain = seq.chain(&current, signing, world);
-        let joiner = FrontierSigner::Install(machine, signing);
+        let joiner = FrontierSigner::install(machine, signing, proof);
         let (current, wide, sided) =
             match KeyFrontier::wide_in_txn(&self.store, txn, &current, world, chain)? {
                 Some(WideFrontier::Leaves(leaves)) => {
@@ -326,10 +340,11 @@ impl Vault {
     /// later door here opens the key from it whether or not it counts, so a
     /// merge and a re-run reach the same key (Engine, 2026-10-15, on Sol
     /// S2-R2 S2-F3 and Astra A2-F2). It names `request` as the other
-    /// records do, before the live edits fill the room left.
+    /// records do, before the live edits fill the room left, and carries
+    /// `proof` as they do.
     #[expect(
         clippy::too_many_arguments,
-        reason = "one append: the snapshot, the signer, the key, its two recipients and its request"
+        reason = "one append: the snapshot, the signer, the key, its two recipients, its request and its proof"
     )]
     pub(crate) fn append_bridge_wrap_in_txn(
         &self,
@@ -343,6 +358,7 @@ impl Vault {
         own: &HybridPublicKey,
         seq: &mut SequenceCounter,
         request: Option<AuthorityEntryHash>,
+        proof: Option<&OwnerProofSigner<'_>>,
     ) -> Result<AuthorityEntryHash> {
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let mut parents = standing_rows(fold, machine);
@@ -383,7 +399,7 @@ impl Vault {
             &binding,
             vec![(parents, wraps)],
             seq,
-            request,
+            (request, proof),
             false,
         )?
         .pop()
@@ -395,10 +411,11 @@ impl Vault {
     /// `request` when the records do an owner work request, or hold it
     /// beneath them (`frontier`: the first chunk's parents hold its signer's
     /// previous row of the world beneath them, and each later chunk names the
-    /// record before it alone).
+    /// record before it alone). Each record carries `proof` where the merge
+    /// takes it at the record's own parents ([`Self::proofs_at_records_in_txn`]).
     #[expect(
         clippy::too_many_arguments,
-        reason = "one append: the snapshot, the signer, the key, its records and their request"
+        reason = "one append: the snapshot, the signer, the key, its records and their request and proof"
     )]
     fn put_wrap_records_in_txn(
         &self,
@@ -410,7 +427,7 @@ impl Vault {
         binding: &WorldKeyBinding,
         chunks: Vec<WrapChunk<'_>>,
         seq: &mut SequenceCounter,
-        request: Option<AuthorityEntryHash>,
+        (request, proof): (Option<AuthorityEntryHash>, Option<&OwnerProofSigner<'_>>),
         frontier: bool,
     ) -> Result<Vec<AuthorityEntryHash>> {
         let now = self.instant_in_txn(txn)?.secs();
@@ -418,7 +435,13 @@ impl Vault {
         let mut rows: Vec<(AuthorityLogEntry, TimeRange, u64)> = Vec::new();
         let mut hashes = Vec::new();
         let world = key.id().world;
-        for (index, (mut parents, wraps)) in chunks.into_iter().enumerate() {
+        let first_chain = if frontier {
+            None
+        } else {
+            seq.chain(fold, signing, world)
+        };
+        let proofs = self.proofs_at_records_in_txn(txn, &chunks, first_chain, proof)?;
+        for ((index, (mut parents, wraps)), proof) in chunks.into_iter().enumerate().zip(proofs) {
             if !frontier || index > 0 {
                 parents.extend(seq.chain(fold, signing, world));
             }
@@ -430,13 +453,14 @@ impl Vault {
                 })
                 .collect::<Result<Vec<_>>>()?;
             let record = provenance::wraps_record(binding, machine, wraps, request);
-            let entry = sign_side_entry(
+            let entry = sign_side_entry_with_owner_proof(
                 fold,
                 signing,
                 seq.next(fold, signing)?,
                 parents,
                 AuthorityOp::WorldKeyWraps(record),
                 now,
+                proof,
             )?;
             let hash = crate::authority::authority_entry_hash(&entry)?;
             seq.chained.insert(world, hash);
@@ -452,5 +476,39 @@ impl Vault {
         }
         self.put_authority_log_entries_in_txn(txn, &rows)?;
         Ok(hashes)
+    }
+
+    /// `proof` for each of `chunks`' records where the merge takes it at the
+    /// record's own parents ([`Vault::owner_proof_taken_at_in_txn`]), else
+    /// `None` (row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS): a record
+    /// names its world's rows, not the main frontier `proof` was picked on,
+    /// and the merge judges a cosign its parents do not take as forged. The
+    /// first record names `first_chain` beside its own parents when it has
+    /// one; each later record names the one before it, stored only with the
+    /// call's last, so the rows that one stands on stand in for it: a key
+    /// record moves no roster.
+    fn proofs_at_records_in_txn<'p>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        chunks: &[WrapChunk<'_>],
+        first_chain: Option<AuthorityEntryHash>,
+        proof: Option<&'p OwnerProofSigner<'p>>,
+    ) -> Result<Vec<Option<&'p OwnerProofSigner<'p>>>> {
+        let Some(proof) = proof else {
+            return Ok(vec![None; chunks.len()]);
+        };
+        let mut below: BTreeSet<AuthorityEntryHash> = first_chain.into_iter().collect();
+        let parent_sets: Vec<BTreeSet<AuthorityEntryHash>> = chunks
+            .iter()
+            .map(|(parents, _)| {
+                below.extend(parents.iter().copied());
+                below.clone()
+            })
+            .collect();
+        let taken = self.owner_proof_taken_at_in_txn(txn, &proof.key(), &parent_sets)?;
+        Ok(taken
+            .into_iter()
+            .map(|taken| taken.then_some(proof))
+            .collect())
     }
 }

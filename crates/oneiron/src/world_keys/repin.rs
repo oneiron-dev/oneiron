@@ -418,6 +418,7 @@ impl Vault {
                         &my_public,
                         &mut seq,
                         None,
+                        None,
                     )?]
                 }
             };
@@ -471,6 +472,7 @@ impl Vault {
                 &missing,
                 &mut seq,
                 None,
+                None,
             )? {
                 Ok(records) => appended.extend(records),
                 // The root's and this machine's wraps go in a bridge record,
@@ -489,6 +491,7 @@ impl Vault {
                             Some(&root),
                             &my_public,
                             &mut seq,
+                            None,
                             None,
                         )?;
                     }

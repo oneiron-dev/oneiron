@@ -388,6 +388,42 @@ pub(super) fn head_states_in_txn(
     Ok(capture_in_txn(store, txn, heads, pin.as_ref())?.map(|(image, _)| image.per_parent))
 }
 
+impl crate::Vault {
+    /// Whether the merge takes `key`'s owner proof on a row naming each of
+    /// `parent_sets`, rows a door signs off the main frontier the key was
+    /// picked on (a world's key records on their own rows): the merge of
+    /// each set's states ([`parent_state`]), from one capture as the causal
+    /// points read it, judged as the merge judges a carried act's one cosign
+    /// ([`super::owner_proof::owner_proof_key`]). `false` for a set whose
+    /// state is not held here, and for every set when the capture is
+    /// unavailable ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]): its row is
+    /// then carried unproven, as before.
+    pub(crate) fn owner_proof_taken_at_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        key: &AuthorityKey,
+        parent_sets: &[BTreeSet<AuthorityEntryHash>],
+    ) -> Result<Vec<bool>> {
+        let heads: BTreeSet<AuthorityEntryHash> = parent_sets.iter().flatten().copied().collect();
+        let pin = super::pinned_root::read_pinned_root_in_txn(&self.store, txn)?;
+        let captured = match capture_in_txn(&self.store, txn, &heads, pin.as_ref()) {
+            Ok(captured) => captured,
+            Err(_) if AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT => None,
+            Err(error) => return Err(error),
+        };
+        let Some((ImageFold { per_parent, .. }, parents)) = captured else {
+            return Ok(vec![false; parent_sets.len()]);
+        };
+        Ok(parent_sets
+            .iter()
+            .map(|set| {
+                parent_state(&per_parent, &parents, set)
+                    .is_some_and(|state| super::owner_proof::gives_owner_proof(&state, key))
+            })
+            .collect())
+    }
+}
+
 /// The stored log's fold keeping the state at each of `heads`, with no clock,
 /// and each row's parents: past the adopted image where this vault does not
 /// hold its covered history, else the held log whole. `None` where history

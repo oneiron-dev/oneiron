@@ -325,7 +325,7 @@ impl Vault {
         }
         if mode == WorldKeyMode::Reassert
             && !self
-                .reassert_held_world_keys_in_txn(txn, world, secret, Some(hash))?
+                .reassert_held_world_keys_in_txn(txn, world, secret, Some(hash), None)?
                 .ensures()
         {
             return Ok(match WORLD_KEY_REASSERT_INCOMPLETE {
@@ -338,6 +338,7 @@ impl Vault {
             world,
             secret,
             Some(hash),
+            None,
         ) {
             Ok(Ok(_)) => {}
             // A frontier too wide for one record waits for a merge.
