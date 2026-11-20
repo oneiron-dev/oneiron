@@ -794,7 +794,7 @@ impl KeptTurn {
         let mut voice = serde_json::Map::new();
         voice.insert("call".to_owned(), json!(call.call_ref));
         if let Some(speaker) = self.speaker.as_deref() {
-            voice.insert("speaker".to_owned(), json!(speaker));
+            voice.insert("speaker_key".to_owned(), json!(speaker));
         }
         voice.insert("speaker_label".to_owned(), json!(label));
         let mut person = witness_turn(
