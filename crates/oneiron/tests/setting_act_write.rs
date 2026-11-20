@@ -11,7 +11,10 @@
 //! - an act whose value this build cannot decode reads the key's strictest value, quarantined;
 //! - a machine that cannot carry the act is refused, and nothing is written;
 //! - an equal value over the engine's row writes, and the row becomes the owner's;
-//! - a key that does not travel keeps stage 7a-1's acts: digest only, and only with a surface.
+//! - free text never goes on the log: its act keeps only the digest, the value beside it (stage
+//!   7c-1, `setting_beside`);
+//! - a key that stays on its install keeps stage 7a-1's acts: digest only, and only with a
+//!   surface.
 //!
 //! Without an authority root, the owner's change writes the row alone.
 //!
@@ -381,7 +384,7 @@ fn an_equal_value_over_the_engines_row_writes_and_the_row_becomes_the_owners() {
 }
 
 #[test]
-fn a_key_that_does_not_travel_keeps_the_digest_only_act() {
+fn free_text_keeps_only_its_digest_and_an_install_key_keeps_the_digest_only_act() {
     let fx = Fixture::rooted();
     let text = fx.change_of(&fx.owner_sets(SetSetting {
         surface: Some(ActSurface::ThisInstall),
@@ -389,12 +392,11 @@ fn a_key_that_does_not_travel_keeps_the_digest_only_act() {
     }));
     let act = fx.act(text.signed);
     assert_eq!(act.inline, None, "free text never goes on the log");
+    assert!(act.value.is_some(), "the act keeps the value's digest");
     assert_eq!(act.slot, None);
 
     let acts = fx.setting_act_count();
-    for (key, value) in [(BANNER, json!("again")), (INSTALL_MODE, json!(3))] {
-        let change = fx.change_of(&fx.owner_sets(SetSetting::vault_value(key, value)));
-        assert_eq!(change.signed, None, "{key}: no surface, no act");
-    }
+    let change = fx.change_of(&fx.owner_sets(SetSetting::vault_value(INSTALL_MODE, json!(3))));
+    assert_eq!(change.signed, None, "{INSTALL_MODE}: no surface, no act");
     assert_eq!(fx.setting_act_count(), acts);
 }

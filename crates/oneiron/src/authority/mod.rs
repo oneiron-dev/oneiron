@@ -570,7 +570,7 @@ pub(crate) use pinned_root::{
 pub(crate) use policy_setting_choice::SettingFrontier;
 pub(crate) use policy_setting_choice::{
     ChoiceCount, ChoiceCounts, PolicySettingAct, SettingSlotAct, SettingSlotFold, SettingSlotHead,
-    SettingSlotRow,
+    SettingSlotRow, SlotValue,
 };
 pub(crate) use principal_standing::{
     GIT_PUSH_PACT_STANDING_LAPSED, git_push_pact_standing_lapsed_in_txn,

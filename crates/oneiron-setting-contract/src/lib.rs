@@ -101,9 +101,10 @@ pub enum Restore {
     Content,
 }
 
-/// Where a key's value holds. From stage 7a-2 an owner's change of a `Vault` key whose value is
-/// closed ([`SettingValue::CLOSED`]) travels as its signed act to every machine of a rooted
-/// vault; an `Install` key's never leaves its install.
+/// Where a key's value holds. From stage 7a-2 an owner's change of a `Vault` key travels as its
+/// signed act to every machine of a rooted vault, its value inside the act where the value type
+/// is closed ([`SettingValue::CLOSED`]) and beside it otherwise (stage 7c-1); an `Install` key's
+/// never leaves its install.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SettingSync {

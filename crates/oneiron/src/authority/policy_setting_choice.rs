@@ -340,7 +340,7 @@ impl Vault {
                     let seen = view
                         .policy_settings
                         .revision(setting_slot_target(&row.slot)?);
-                    slot_row(row.slot, seen, row.prior, row.inline)
+                    slot_row(row.slot, seen, row.prior, row.value)
                 })
                 .collect::<Result<Vec<_>>>()?
         };
@@ -606,26 +606,50 @@ pub(crate) struct SettingSlotRow {
     pub(crate) slot: RowKey,
     /// BLAKE3 over the value the act replaced, as JSON.
     pub(crate) prior: [u8; 32],
-    /// The value it left, as its JSON bytes; `None` for a clear.
-    pub(crate) inline: Option<Vec<u8>>,
+    /// The value it left.
+    pub(crate) value: SlotValue,
+}
+
+/// The value one row of a setting act leaves (stage 7a-2; beside its act stage 7c-1).
+pub(crate) enum SlotValue {
+    /// A clear: no row.
+    Clear,
+    /// A value the act carries, as its JSON bytes.
+    Inline(Vec<u8>),
+    /// A value beside the act: the act keeps only BLAKE3 over its JSON bytes, and the door
+    /// writes those bytes beside it in the same write (`crate::setting::beside`).
+    Beside([u8; 32]),
+}
+
+impl SlotValue {
+    /// A test's row value: its JSON bytes inline, or a clear.
+    #[cfg(all(oneiron_test_support, feature = "test-support"))]
+    fn inline_or_clear(json: Option<Vec<u8>>) -> Self {
+        json.map_or(Self::Clear, Self::Inline)
+    }
 }
 
 /// The row `slot` of an act, on `seen`: no slot for the key's vault value row
-/// (the target every act on it has named since stage 7a-1), and the value's
-/// digest from its inline bytes.
+/// (the target every act on it has named since stage 7a-1), the value's
+/// digest, and its bytes when the act carries them.
 fn slot_row(
     slot: RowKey,
     seen: [u8; 32],
     prior: [u8; 32],
-    inline: Option<Vec<u8>>,
+    value: SlotValue,
 ) -> Result<PolicySettingRow> {
     let vault_row = setting_slot_target(&slot)? == policy_setting_target(&slot.name)?;
+    let (value, inline) = match value {
+        SlotValue::Clear => (None, None),
+        SlotValue::Inline(json) => (Some(setting_value_digest(&json)), Some(json)),
+        SlotValue::Beside(digest) => (Some(digest), None),
+    };
     Ok(PolicySettingRow {
         setting: slot.name.clone(),
         slot: (!vault_row).then_some(slot),
         seen,
         prior,
-        value: inline.as_deref().map(setting_value_digest),
+        value,
         inline,
     })
 }
@@ -752,23 +776,24 @@ impl Vault {
         Ok(SettingFrontier { parents, seen })
     }
 
-    /// The owner `owner`'s change of each row of `rows` to its JSON bytes (`None` clears), as
-    /// the machine `machine`'s own door signs it with its install key `key`, on `frontier`, at
-    /// `ts`: one act that names its rows and carries their values (a batch for more than one
-    /// row, stage 7a-3). A row `frontier` did not read names `seen` zero.
+    /// The owner `owner`'s change of each row of `rows` to its value, as the machine
+    /// `machine`'s own door signs it with its install key `key`, on `frontier`, at `ts`: one act
+    /// that names its rows and carries their values, or keeps the digest of a value beside it
+    /// (a batch for more than one row, stage 7a-3; beside stage 7c-1). A row `frontier` did not
+    /// read names `seen` zero.
     pub(crate) fn sign_setting_act_as(
         &self,
         (machine, key): (EntityId, &ed25519_dalek::SigningKey),
         owner: EntityId,
         frontier: &SettingFrontier,
-        rows: Vec<(RowKey, Option<Vec<u8>>)>,
+        rows: Vec<(RowKey, SlotValue)>,
         ts: u64,
     ) -> Result<AuthorityLogEntry> {
         let rows = rows
             .into_iter()
-            .map(|(slot, inline)| {
+            .map(|(slot, value)| {
                 let seen = frontier.seen_of(&slot)?;
-                slot_row(slot, seen, setting_value_digest(b"null"), inline)
+                slot_row(slot, seen, setting_value_digest(b"null"), value)
             })
             .collect::<Result<Vec<_>>>()?;
         let op = AuthorityOp::PolicySettingSet(setting_act_of(
@@ -792,7 +817,12 @@ impl Vault {
             .into_iter()
             .map(|(slot, inline)| {
                 let seen = frontier.seen_of(&slot)?;
-                slot_row(slot, seen, setting_value_digest(b"null"), inline)
+                slot_row(
+                    slot,
+                    seen,
+                    setting_value_digest(b"null"),
+                    SlotValue::inline_or_clear(inline),
+                )
             })
             .collect::<Result<Vec<_>>>()?;
         let op = AuthorityOp::PolicySettingSet(setting_act_of(

@@ -561,11 +561,11 @@ fn set_in_txn(
         on_change(vault, txn, &recorded)?;
     }
     // The act of a row that travels is mandatory: it fails the change when this install cannot
-    // append it. A value too long to carry inline keeps the best-effort digest act until values
-    // travel beside their acts (stage 7c).
+    // append it. Its value rides inside it or beside it (stage 7c-1).
     let appended = match (travelling, by, surface) {
         (true, Some(owner), Some(surface)) => {
-            append_act_in_txn(vault, txn, change.spec, (owner, surface), &recorded)?
+            append_act_in_txn(vault, txn, change.spec, (owner, surface), &recorded)?;
+            true
         }
         _ => false,
     };

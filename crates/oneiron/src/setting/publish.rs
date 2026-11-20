@@ -9,10 +9,14 @@
 //! that the owner set, on a slot no act names yet. Each row's change row then names the act, as
 //! the door's own do, and a machine that takes the log writes the rows from it.
 //!
+//! A value the act cannot carry inside it (a key whose value type is not closed, or JSON longer
+//! than an act carries) travels beside it, written in the same write (stage 7c-1,
+//! [`super::beside`]).
+//!
 //! The pass leaves every other row on this install: a person's, an agent's or the engine's change
 //! (RULING SETTING-7A-2-DECIDERS = A), a pack's default, a key that stays on its install, a
-//! learned key, a carried row, a value longer than an act carries, a value this build cannot
-//! decode, and a slot an act already names, whose acts decide it. Each row names `seen` zero (no
+//! learned key, a carried row, a value this build cannot decode, and a slot an act already names,
+//! whose acts decide it. Each row names `seen` zero (no
 //! act names its slot) and the prior value `null`, as the door does for a slot with no row.
 //!
 //! It runs once per vault. It records that it ran ([`super::tables::SETTING_PUBLISHED`]) in the
@@ -24,11 +28,10 @@
 
 use std::collections::BTreeMap;
 
-use oneiron_authority::authority::{
-    ActSurface, POLICY_SETTING_INLINE_MAX, setting_slot_target, setting_value_digest,
-};
+use oneiron_authority::authority::{ActSurface, setting_slot_target, setting_value_digest};
 use oneiron_setting_contract::{RowKey, ScopeKind, SettingMode};
 
+use super::beside::slot_value_in_txn;
 use super::change::{change_in_txn, record_signed_entry_in_txn};
 use super::project::{json_bytes, rooted_in_txn, travels};
 use super::read::{StoredRow, table_of};
@@ -53,7 +56,10 @@ pub struct SettingsPublished {
 
 /// One row the pass publishes.
 struct Unbacked {
-    row: SettingSlotRow,
+    spec: &'static SettingSpec,
+    slot: RowKey,
+    /// The row's value as its JSON bytes.
+    json: Vec<u8>,
     /// The change that wrote the row, while it stands: it then names the act.
     change: Option<SettingChange>,
 }
@@ -146,21 +152,17 @@ fn unbacked_rows_in_txn(
         if !spec.kind.decodes(&stored.value) {
             continue;
         }
-        let inline = json_bytes(spec, &stored.value)?;
-        if inline.len() > POLICY_SETTING_INLINE_MAX
-            || vault.policy_setting_revision_in_txn(txn, setting_slot_target(&slot)?)? != [0; 32]
-        {
+        if vault.policy_setting_revision_in_txn(txn, setting_slot_target(&slot)?)? != [0; 32] {
             continue;
         }
+        let json = json_bytes(spec, &stored.value)?;
         let change = change_in_txn(&vault.store, txn, stored.change)?;
         rows.push((
             owner,
             Unbacked {
-                row: SettingSlotRow {
-                    slot,
-                    prior: setting_value_digest(b"null"),
-                    inline: Some(inline),
-                },
+                spec,
+                slot,
+                json,
                 change,
             },
         ));
@@ -168,21 +170,35 @@ fn unbacked_rows_in_txn(
     Ok(rows)
 }
 
-/// Signs `rows`, the owner `owner`'s, as one act in a savepoint of `txn`, and names it on each
-/// row's change. Whether it published: a typed refusal of the append, an act the fold holds
-/// without effect (an owner the log no longer holds live), or one that waits for an owner key's
-/// proof, leaves the rows on this install, and is logged.
+/// Signs `unbacked`, the owner `owner`'s rows, as one act in a savepoint of `txn`, with each value
+/// inside the act or beside it, and names it on each row's change. Whether it published: a typed
+/// refusal of the append, an act the fold holds without effect (an owner the log no longer holds
+/// live), or one that waits for an owner key's proof, leaves the rows on this install, and is
+/// logged; the savepoint, the values beside the act included, is then rolled back.
 fn publish_owner_rows_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     owner: EntityId,
-    rows: Vec<Unbacked>,
+    unbacked: Vec<Unbacked>,
 ) -> Result<bool> {
-    let (rows, changes): (Vec<SettingSlotRow>, Vec<Option<SettingChange>>) = rows
-        .into_iter()
-        .map(|unbacked| (unbacked.row, unbacked.change))
-        .unzip();
     let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+    let mut rows = Vec::with_capacity(unbacked.len());
+    let mut changes = Vec::with_capacity(unbacked.len());
+    for Unbacked {
+        spec,
+        slot,
+        json,
+        change,
+    } in unbacked
+    {
+        let value = slot_value_in_txn(vault, &mut savepoint, spec, &slot, Some(json))?;
+        rows.push(SettingSlotRow {
+            slot,
+            prior: setting_value_digest(b"null"),
+            value,
+        });
+        changes.push(change);
+    }
     let act = SettingSlotAct {
         owner,
         surface: ActSurface::ThisInstall,

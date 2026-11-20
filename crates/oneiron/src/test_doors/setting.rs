@@ -484,14 +484,29 @@ pub fn land_setting_batch_from(
     let rows = rows
         .iter()
         .map(|((key, item, mode, scope), value)| {
-            let inline = value
-                .as_ref()
-                .map(serde_json::to_vec)
-                .transpose()
-                .map_err(|_| Error::InvariantViolation("a setting value's JSON"))?;
-            Ok((row_key(key, *item, *mode, scope.clone()), inline))
+            let value = match value {
+                Some(value) => crate::authority::SlotValue::Inline(json_bytes(value)?),
+                None => crate::authority::SlotValue::Clear,
+            };
+            Ok((row_key(key, *item, *mode, scope.clone()), value))
         })
         .collect::<Result<Vec<_>>>()?;
+    land_slot_values_from(vault, (signer, owner), frontier, rows, ts)
+}
+
+/// `rows`, as `signer`'s own door signs them for the owner `owner` on `frontier` at `ts`, landed
+/// here as a peer's entry lands. Whether the fold here counts the entry.
+#[cfg(feature = "test-support")]
+fn land_slot_values_from(
+    vault: &Vault,
+    (signer, owner): (&EnrolledMachine, EntityId),
+    frontier: &SettingFrontier,
+    rows: Vec<(
+        oneiron_setting_contract::RowKey,
+        crate::authority::SlotValue,
+    )>,
+    ts: u64,
+) -> Result<bool> {
     let entry =
         vault.sign_setting_act_as((signer.machine, &signer.key), owner, &frontier.0, rows, ts)?;
     let hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
@@ -499,6 +514,108 @@ pub fn land_setting_batch_from(
     vault.put_authority_log_entries(&[(entry, at, ts)])?;
     let fold = vault.authority_fold()?;
     Ok(fold.valid_entries.contains(&hash) && !fold.held_back_entries().contains(&hash))
+}
+
+/// A setting value's JSON bytes, as a door writes them.
+#[cfg(feature = "test-support")]
+fn json_bytes(value: &serde_json::Value) -> Result<Vec<u8>> {
+    serde_json::to_vec(value).map_err(|_| Error::InvariantViolation("a setting value's JSON"))
+}
+
+/// The owner `owner`'s change of the row `slot` to `value` with its value beside the act (stage
+/// 7c-1): the act keeps only BLAKE3 over the value's JSON bytes, as `signer`'s own door signs it
+/// on `frontier` at `ts`, landed here as a peer's entry lands, without the row that holds the
+/// value ([`land_setting_beside_value`] lands that). Whether the fold here counts the entry.
+///
+/// # Errors
+///
+/// The log's refusal of the entry; storage errors.
+#[cfg(feature = "test-support")]
+pub fn land_setting_beside_act_from(
+    vault: &Vault,
+    (signer, owner): (&EnrolledMachine, EntityId),
+    frontier: &SettingFrontier,
+    (key, item, mode, scope): SlotName<'_>,
+    value: &serde_json::Value,
+    ts: u64,
+) -> Result<bool> {
+    let digest = oneiron_authority::authority::setting_value_digest(&json_bytes(value)?);
+    let rows = vec![(
+        row_key(key, item, mode, scope),
+        crate::authority::SlotValue::Beside(digest),
+    )];
+    land_slot_values_from(vault, (signer, owner), frontier, rows, ts)
+}
+
+/// The ASSET row that holds `value` beside an act on the row `slot` (stage 7c-1).
+///
+/// # Errors
+///
+/// A key name of another shape.
+#[cfg(feature = "test-support")]
+pub fn setting_beside_row(
+    (key, item, mode, scope): SlotName<'_>,
+    value: &serde_json::Value,
+) -> Result<EntityId> {
+    crate::setting::beside_row_of(&row_key(key, item, mode, scope), &json_bytes(value)?)
+}
+
+/// Lands the row that holds `value` beside an act on the row `slot`, in a write of its own, as a
+/// peer's row lands: through the batch door, whose commit runs the setting projection (stage
+/// 7c-1).
+///
+/// # Errors
+///
+/// The put's refusal; storage errors.
+#[cfg(feature = "test-support")]
+pub fn land_setting_beside_value(
+    vault: &Vault,
+    (key, item, mode, scope): SlotName<'_>,
+    value: &serde_json::Value,
+) -> Result<()> {
+    let json = json_bytes(value)?;
+    crate::setting::land_beside_row(vault, &row_key(key, item, mode, scope), &json, &json)
+}
+
+/// Lands at the row for `value` beside an act on the row `slot` a row that holds `held`'s JSON
+/// bytes instead: a row that does not match its digest (stage 7c-1).
+///
+/// # Errors
+///
+/// The put's refusal; storage errors.
+#[cfg(feature = "test-support")]
+pub fn land_setting_beside_value_holding(
+    vault: &Vault,
+    (key, item, mode, scope): SlotName<'_>,
+    value: &serde_json::Value,
+    held: &serde_json::Value,
+) -> Result<()> {
+    crate::setting::land_beside_row(
+        vault,
+        &row_key(key, item, mode, scope),
+        &json_bytes(value)?,
+        &json_bytes(held)?,
+    )
+}
+
+/// The JSON the row for `value` beside an act on the row `slot` holds here; `None` when no such
+/// row is readable here (stage 7c-1).
+///
+/// # Errors
+///
+/// A row whose bytes are not JSON; storage errors.
+#[cfg(feature = "test-support")]
+pub fn setting_beside_value_here(
+    vault: &Vault,
+    (key, item, mode, scope): SlotName<'_>,
+    value: &serde_json::Value,
+) -> Result<Option<serde_json::Value>> {
+    crate::setting::beside_row_json(vault, &row_key(key, item, mode, scope), &json_bytes(value)?)?
+        .map(|json| {
+            serde_json::from_slice(&json)
+                .map_err(|_| Error::InvariantViolation("a beside row's JSON"))
+        })
+        .transpose()
 }
 
 /// The live acts on `key`'s row (`item`, `mode`, `scope`), a move's copy among them (stage
@@ -605,6 +722,30 @@ pub fn forget_projected_setting_rows(vault: &Vault) -> Result<usize> {
 pub fn ordered_cap_read(vault: &Vault, known: &[SettingScope]) -> Result<Resolved<u64>> {
     let txn = vault.store.env.read_txn()?;
     super::setting_keys::TEST_ORDERED_CAP.read_in_txn(vault, &txn, known, None)
+}
+
+/// `test.permit_list` at the vault, read through its typed handle (stage 7c-1: a list that
+/// travels beside its act).
+///
+/// # Errors
+///
+/// As `Setting::read_in_txn`.
+#[cfg(feature = "test-support")]
+pub fn permit_list_read(vault: &Vault) -> Result<Resolved<Vec<String>>> {
+    let txn = vault.store.env.read_txn()?;
+    super::setting_keys::TEST_PERMIT_LIST.read_in_txn(vault, &txn, &[], None)
+}
+
+/// `test.member_banner` at the vault, read through its typed handle (stage 7c-1: free text that
+/// travels beside its act).
+///
+/// # Errors
+///
+/// As `Setting::read_in_txn`.
+#[cfg(feature = "test-support")]
+pub fn member_banner_read(vault: &Vault) -> Result<Resolved<String>> {
+    let txn = vault.store.env.read_txn()?;
+    super::setting_keys::TEST_MEMBER_BANNER.read_in_txn(vault, &txn, &[], None)
 }
 
 /// One setting act a peer signed that this install has not landed yet (stage 7b-3 tests).

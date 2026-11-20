@@ -781,6 +781,9 @@ pub struct SettingCatalogueEntry {
     pub read_by: ReadBy,
     pub restore: super::Restore,
     pub sync: super::SettingSync,
+    /// How the owner's change of it reaches the vault's other machines: inside its act, beside
+    /// it, or not at all (DESIGN 1.6, "What travels"; stage 7c-1).
+    pub travel: super::SettingTravel,
     /// The kinds of scope its rows may sit at.
     pub scopes: Vec<ScopeKind>,
     /// For a family key, what its items name.
@@ -914,6 +917,7 @@ impl Vault {
                 read_by: spec.read_by,
                 restore: spec.restore,
                 sync: spec.sync,
+                travel: super::SettingTravel::of(spec),
                 scopes: ScopeKind::NARROWEST_FIRST
                     .into_iter()
                     .filter(|kind| spec.admits_scope(*kind))

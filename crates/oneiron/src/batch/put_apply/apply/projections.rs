@@ -94,6 +94,14 @@ pub(super) fn stage_put_projections(
         }
         crate::authority::advance_authority_cache_generation(store, wtxn)?;
     }
+    // A setting value beside its signed act is part of that act (stage 7c-1): its row, local or a
+    // peer's, notes the pass an authority row notes, so the transaction's owner projects the
+    // setting rows once it commits, and an act that waited for this value is read again.
+    if fixed.entity_type == crate::registry::ENTITY_TYPE_ASSET
+        && crate::setting::is_beside_value_body(data)
+    {
+        store.record_hooks.note_authority_row();
+    }
 
     let touched_projects = crate::workspace_roster::projects_touched_by_put(
         store,
