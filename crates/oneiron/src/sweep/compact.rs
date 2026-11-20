@@ -79,7 +79,7 @@ const PENDING_EDIT_CARRIERS: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_QD_E);
 
 /// Distinct window labels currently carrying persisted CRDT state —
-/// `d:w:{key}` snapshots and `u:w:{key}:{seq:08x}` update rows.
+/// `d:w:{key}` snapshots and `u:w:{key}:{seq:016x}` update rows.
 fn persisted_window_labels(vault: &Vault) -> Result<(BTreeSet<String>, bool)> {
     let mut labels = BTreeSet::new();
     let mut malformed = false;
