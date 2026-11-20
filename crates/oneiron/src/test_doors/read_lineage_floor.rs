@@ -37,3 +37,30 @@ pub fn walked_policies_of(
     let dbs = vault.store.read();
     crate::source_audience::read_audience_in(vault, &dbs, &txn, &[row], viewers)
 }
+
+/// Whether the floor of `row` is not known whole here (#9289 review 2
+/// P1-1, P1-2): it waits on a row or binding that has not landed, or the
+/// floor backfill has not raised it yet while it names a birth input or a
+/// dependency source.
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn floor_waits(vault: &Vault, row: EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    crate::source_audience::floor_waits_in(vault, &txn, &row)
+}
+
+/// Forgets every floor's state and the floor backfill's, so the vault reads
+/// as one whose rows were written before floors were (#9289 review 2 P1-2).
+/// The floors already raised stay.
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn forget_floor_state(vault: &Vault) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::source_audience::forget_floor_state_in_txn(vault, &mut txn)?;
+    txn.commit()?;
+    Ok(())
+}
