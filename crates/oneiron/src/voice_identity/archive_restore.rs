@@ -6,6 +6,7 @@
 //! subject or kind. A withdrawn row installs as a row: the landing never mirrors a
 //! withdrawal's deletes, rebuilds no render history, and evicts no targets.
 
+use super::consent_void::{CONSENT_VOID, consent_void_digest};
 use super::math_keys::digest16;
 use super::ref_bank::{
     VoiceRefSubjectKind, VoiceRenderConsent, banked_identity_admits_decision_in,
@@ -34,7 +35,8 @@ const RENDER_CONSENT: SideTable<String, VoiceRenderConsent, Named> =
 const OWNER_INDEX: SideTable<(EntityId, Vec<u8>), Vec<u8>, Raw> =
     SideTable::new(&side_table::VOICE_OWNER_REF_OWNER_INDEX);
 
-/// Lands archived voice consent and render consent rows in input order, one outcome per row.
+/// Lands archived voice consent, consent void and render consent rows in input order, one
+/// outcome per row.
 pub(crate) fn land_archived_voice_rows_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -46,6 +48,9 @@ pub(crate) fn land_archived_voice_rows_in_txn(
         let outcome = match row.source_table.as_str() {
             name if name == side_table::VOICE_IDENTITY_CONSENT.name => {
                 land_archived_voice_consent_row_in_txn(vault, txn, permit, row)?
+            }
+            name if name == side_table::VOICE_IDENTITY_CONSENT_VOID.name => {
+                land_archived_voice_consent_void_row_in_txn(vault, txn, permit, row)?
             }
             name if name == side_table::VOICE_REF_RENDER_CONSENT.name => {
                 land_archived_voice_render_row_in_txn(vault, txn, permit, row)?
@@ -81,20 +86,50 @@ fn land_archived_voice_consent_row_in_txn(
             RetainedSideHeldBackReason::InvalidValue,
         ));
     }
-    match live_entity_row_in_txn(&vault.store, txn, &event.subject_ref)? {
-        LiveEntityRow::Live { entity_type, .. } if entity_type == ENTITY_TYPE_PERSON => {}
-        LiveEntityRow::Live { .. } => {
-            return Ok(ArchivedSideRowOutcome::HeldBack(
-                RetainedSideHeldBackReason::WrongEntityKind,
-            ));
-        }
-        LiveEntityRow::Absent | LiveEntityRow::DeletedShell => {
-            return Ok(ArchivedSideRowOutcome::HeldBack(
-                RetainedSideHeldBackReason::MissingLiveEntity,
-            ));
-        }
+    if let Some(reason) = live_person_held_back(vault, txn, &event.subject_ref)? {
+        return Ok(ArchivedSideRowOutcome::HeldBack(reason));
     }
     install_archived_row(&CONSENT, vault, txn, permit, &key, row)
+}
+
+/// Lands one archived void of a grant (FIX [VOICE-WITHDRAWAL-BACKDATED-LEAVES-GRANT]) for a live
+/// person subject. The key must be the subject and the digest of the (grant, withdrawal) pair it
+/// holds. It lands as written: a void acts only through its withdrawal's row, which the read
+/// takes from the consent log, so a void whose withdrawal stays out voids nothing.
+fn land_archived_voice_consent_void_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, void) = match decode_archived_row(&CONSENT_VOID, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if key.1 != consent_void_digest(&void) {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    if let Some(reason) = live_person_held_back(vault, txn, &key.0)? {
+        return Ok(ArchivedSideRowOutcome::HeldBack(reason));
+    }
+    install_archived_row(&CONSENT_VOID, vault, txn, permit, &key, row)
+}
+
+/// Why a voice consent row of `subject` stays back: the subject is no live person here.
+fn live_person_held_back(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+) -> Result<Option<RetainedSideHeldBackReason>> {
+    Ok(match live_entity_row_in_txn(&vault.store, txn, subject)? {
+        LiveEntityRow::Live { entity_type, .. } if entity_type == ENTITY_TYPE_PERSON => None,
+        LiveEntityRow::Live { .. } => Some(RetainedSideHeldBackReason::WrongEntityKind),
+        LiveEntityRow::Absent | LiveEntityRow::DeletedShell => {
+            Some(RetainedSideHeldBackReason::MissingLiveEntity)
+        }
+    })
 }
 
 /// Lands one archived render decision for its own voice id.
