@@ -261,6 +261,23 @@ fn predict(fixture: &Fixture) -> PredictedResidenceAnswer {
     .expect("the home's prediction")
 }
 
+/// The home's spacing between two predictions it pushes one machine under one parent, in seconds
+/// (`PREDICT_PUSH_MIN_SECS` in `sync/residence/predict.rs`, crate-private).
+const PUSH_SPACING_SECS: u64 = 30 * 60;
+
+/// Moves the home's authority clock to the push spacing past the machine's latest prediction.
+fn advance_past_push_spacing(fixture: &Fixture) {
+    let latest = predictions_of(fixture)
+        .iter()
+        .map(|state| state.directive.issued_at)
+        .max()
+        .expect("a prediction to space from");
+    fixture
+        .vault
+        .advance_authority_clock_for_test(latest + PUSH_SPACING_SECS)
+        .expect("the authority clock advances");
+}
+
 /// The predictions naming the fixture's machine.
 fn predictions_of(fixture: &Fixture) -> Vec<ResidenceDirectiveState> {
     fixture
@@ -465,12 +482,91 @@ fn an_unchanged_prediction_pushes_no_directive() {
         predict(&fixture),
         PredictedResidenceAnswer::Pushed(_)
     ));
+    // Past the push spacing, so only the unchanged set holds the next ask back.
+    advance_past_push_spacing(&fixture);
     assert_eq!(
         predict(&fixture),
         PredictedResidenceAnswer::Unchanged,
         "no new touch pushes nothing"
     );
     assert_eq!(predictions_of(&fixture).len(), 1, "one Predicted directive");
+}
+
+/// FIX PREDICTED-DIRECTIVES-GROW-AUTHORITY-LOG: a machine that asks again at once, with a touch
+/// that changes its set, appends no second signed entry to the owner's authority log until the
+/// home's push spacing has passed; then the changed set pushes.
+#[test]
+fn a_second_ask_inside_the_push_spacing_appends_nothing() {
+    let fixture = Fixture::open();
+    let subject = person_in(&fixture.vault, LEARNED_AT_A);
+    let a = EntityId::now();
+    claim_in(
+        &fixture.vault,
+        &a,
+        subject,
+        Some(fixture.world),
+        LEARNED_AT_A,
+    );
+    // C speaks of another person a month later, linked to nothing A reaches.
+    let other = person_in(&fixture.vault, LEARNED_AT_B);
+    let c = EntityId::now();
+    claim_in(&fixture.vault, &c, other, Some(fixture.world), LEARNED_AT_B);
+    predict_level(&fixture, 32, 128);
+    fixture
+        .vault
+        .record_machine_touch(fixture.machine, a)
+        .expect("the touch lands");
+    assert!(
+        matches!(predict(&fixture), PredictedResidenceAnswer::Pushed(_)),
+        "a first prediction pushes"
+    );
+    let window_c = window_of(LEARNED_AT_B, fixture.world);
+    let (_, first_digest, _, _) = predicted_act(&predictions_of(&fixture)[0]);
+    assert!(
+        !predicted_set_of(&fixture, &first_digest)
+            .windows
+            .contains(window_c.as_str()),
+        "FIXTURE: C's window is not in the first prediction"
+    );
+
+    // The machine touches C and asks again at once: its set would now name C's window.
+    fixture
+        .vault
+        .record_machine_touch(fixture.machine, c)
+        .expect("the second touch lands");
+    assert_eq!(
+        predict(&fixture),
+        PredictedResidenceAnswer::Unchanged,
+        "an ask inside the push spacing appends nothing"
+    );
+    assert_eq!(
+        predictions_of(&fixture).len(),
+        1,
+        "one Predicted directive inside the push spacing"
+    );
+
+    advance_past_push_spacing(&fixture);
+    assert!(
+        matches!(predict(&fixture), PredictedResidenceAnswer::Pushed(_)),
+        "an ask after the push spacing pushes the changed set"
+    );
+    let predictions = predictions_of(&fixture);
+    assert_eq!(
+        predictions.len(),
+        2,
+        "a second Predicted directive after the push spacing"
+    );
+    let (_, second_digest, _, _) = predictions
+        .iter()
+        .map(predicted_act)
+        .find(|(_, digest, _, _)| *digest != first_digest)
+        .expect("a prediction with the changed set");
+    assert!(
+        predicted_set_of(&fixture, &second_digest)
+            .windows
+            .contains(window_c.as_str()),
+        "C's window predicts after the push spacing"
+    );
 }
 
 #[test]

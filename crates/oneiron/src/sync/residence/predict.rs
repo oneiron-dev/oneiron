@@ -48,13 +48,21 @@ pub(crate) const PREDICT_DEPTH: u32 = 2;
 /// The walk's restart probability: the standard expansion's 0.15, as `retrieval_depth` runs it
 /// (that module keeps its own `STANDARD_PPR_ALPHA` private).
 const PREDICT_PPR_ALPHA: f32 = 0.15;
+/// The shortest spacing between two predictions the home pushes one machine under one parent, in
+/// authority-clock seconds: half the machine's shortest ask spacing (an hour after a reconnect,
+/// `sync::connection::predicted`), so an honest machine's ask is never held back, while a machine
+/// that asks more often appends at most one signed entry per spacing to the owner's authority log
+/// (FIX PREDICTED-DIRECTIVES-GROW-AUTHORITY-LOG). Signed entries are never compacted away: canon
+/// keeps authority history and offloads it (dec-0005, tiered authority history, 2026-09-26).
+const PREDICT_PUSH_MIN_SECS: u64 = 30 * 60;
 
 /// What the home did with one machine's ask.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PredictedResidenceAnswer {
     /// A new prediction, appended and signed by this host.
     Pushed(ResidenceDirectiveState),
-    /// The kept set equals the machine's last prediction: nothing appended.
+    /// Nothing appended: the kept set equals the machine's last prediction, or that prediction
+    /// is younger than the home's push spacing and still stands.
     Unchanged,
 }
 
@@ -224,6 +232,29 @@ fn keep_ranked_documents(
     hysteresis_keep(&ranked, previous, budget)
 }
 
+/// Whether the home's last prediction for `machine` under `parent` is younger than
+/// [`PREDICT_PUSH_MIN_SECS`] at `now`. `states` run in log order, oldest first. A prediction
+/// dated after `now` (another home's clock) holds nothing back.
+fn last_prediction_is_recent(
+    states: &[ResidenceDirectiveState],
+    machine: EntityId,
+    parent: EntityId,
+    now: u64,
+) -> bool {
+    states
+        .iter()
+        .rev()
+        .find(|state| {
+            state.directive.machine == machine
+                && matches!(
+                    &state.directive.act,
+                    ResidenceAct::Predicted { parent: named, .. } if *named == parent
+                )
+        })
+        .and_then(|state| now.checked_sub(state.directive.issued_at))
+        .is_some_and(|age| age < PREDICT_PUSH_MIN_SECS)
+}
+
 impl Vault {
     /// Records that this home served `entity` to the proved `machine` on a residence touch: one
     /// seed of that machine's next prediction. A promotion records nothing, so the machine's own
@@ -299,6 +330,10 @@ impl Vault {
         let states = directive_states_in_txn(self, &txn)?;
         let parent = live_predicted_parent(&states, machine)?;
         let now = self.instant_in_txn(&txn)?.secs();
+        if last_prediction_is_recent(&states, machine, parent.id, now) {
+            txn.abort();
+            return Ok(PredictedResidenceAnswer::Unchanged);
+        }
         let seeds = self.fresh_machine_seeds(&mut txn, machine, now, visibility)?;
         if seeds.is_empty() {
             txn.commit()?;
