@@ -303,6 +303,8 @@ fn set_reach_as_owner(
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
+            surface: None,
         },
     )?;
     assert!(

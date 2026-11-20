@@ -292,6 +292,7 @@ fn set_reach_as_owner(fixture: &Fixture, reach: PhoneReach) {
                 why: None,
                 check_in_ref: None,
                 weight_runs: None,
+                surface: None,
             },
         )
         .expect("owner sets the line's reach");
@@ -1044,6 +1045,7 @@ fn the_line_agents_narrowing_lands_at_the_next_read() {
                 why: None,
                 check_in_ref: None,
                 weight_runs: None,
+                surface: None,
             },
         )
         .expect("the line agent's narrowing sets");
@@ -1126,6 +1128,7 @@ fn narrowing_the_picked_documents_changes_a_calls_consent_not_its_scope() {
                 why: None,
                 check_in_ref: None,
                 weight_runs: None,
+                surface: None,
             },
         )
         .expect("the line agent's narrowing sets");
@@ -1177,6 +1180,7 @@ fn an_agents_widening_of_a_lines_reach_waits_for_the_owner() {
                 why: None,
                 check_in_ref: None,
                 weight_runs: None,
+                surface: None,
             },
         )
         .expect("the line agent's widening asks");
@@ -2972,6 +2976,7 @@ fn set_reach_as_agent(fixture: &Fixture, reach: Option<&PhoneReach>) -> SetSetti
                 why: None,
                 check_in_ref: None,
                 weight_runs: None,
+                surface: None,
             },
         )
         .expect("the line agent's reach change is taken")
