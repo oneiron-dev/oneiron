@@ -235,7 +235,7 @@ fn a_salience_boost_alone_records_no_confidence_component() -> TestResult {
         assert_eq!(
             signal_rank(components, RetrievalSignal::Confidence),
             None,
-            "claim {index} carries no confidence component without the confidence boost: {components:?}"
+            "claim {index} has no confidence component without its boost: {components:?}"
         );
     }
     Ok(())

@@ -162,6 +162,9 @@ fn msgpack_map(entries: Vec<(Value, Value)>) -> Vec<u8> {
     body
 }
 
+/// A named body, and the salience and confidence main's lone reader reads from it.
+type BodyCase = (&'static str, Vec<u8>, [Option<f32>; 2]);
+
 /// One parse reads salience and confidence by the rule each lone read keeps:
 /// the first entry of a field counts, a key that is no string ends the search
 /// of each field not yet read, and an empty, truncated or non-map body reads
@@ -181,7 +184,7 @@ fn one_parse_reads_each_field_by_the_lone_read_rule() {
     let invalid_key = vec![
         0x82, 0xA2, 0xFF, 0xFE, 0x00, 0xA3, b's', b'a', b'l', 0xCA, 0x3F, 0x00, 0x00, 0x00,
     ];
-    let cases: Vec<(&str, Vec<u8>, [Option<f32>; 2])> = vec![
+    let cases: Vec<BodyCase> = vec![
         (
             "both fields",
             msgpack_map(vec![(sal(), Value::F32(0.25)), (conf(), Value::F64(0.75))]),
