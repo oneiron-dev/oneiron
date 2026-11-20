@@ -293,7 +293,13 @@ impl Vault {
             closed_learned_at,
             closed_data,
         )?;
-        crate::batch::apply_owner_bound_claim_puts(self, wtxn, vec![op], vec![binding], true)?;
+        crate::batch::apply_provenance_claim_puts(
+            self,
+            wtxn,
+            vec![op],
+            vec![binding],
+            restore_permit,
+        )?;
         // The close changes the live head, so the subject edge must carry
         // the surviving cohort's flags, not the inserted prior's. Mirror
         // the retract path; a no-op when the edge is gone or already
@@ -461,7 +467,13 @@ impl Vault {
             learned_at,
             data,
         )?;
-        crate::batch::apply_owner_bound_claim_puts(self, wtxn, vec![op], vec![binding], true)?;
+        crate::batch::apply_provenance_claim_puts(
+            self,
+            wtxn,
+            vec![op],
+            vec![binding],
+            restore_permit,
+        )?;
         // Blind-review P1: a structural subject keeps its 12-byte value — no
         // hot flags to restamp — so only the claim's own lifecycle change
         // lands; the edge bytes, PPR and graph version stay put.
@@ -1070,7 +1082,7 @@ impl Vault {
             ops.push(op);
             bindings.push(binding);
         }
-        crate::batch::apply_owner_bound_claim_puts(self, wtxn, ops, bindings, true)?;
+        crate::batch::apply_provenance_claim_puts(self, wtxn, ops, bindings, restore_permit)?;
         if let Some(actor) = born_from {
             let evidence = self
                 .store

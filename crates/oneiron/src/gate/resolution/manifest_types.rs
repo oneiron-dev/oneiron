@@ -421,7 +421,9 @@ impl PolicyManifestResolution {
     /// PROVENANCE-RESTORE-UNDER-TRUSTED-MANIFEST = A, 20 Nov 09:26). The gate
     /// judges an edge provenance claim as its annotator's, so the restore's
     /// Imported Auto row binds `annotator`, the archived row's own, for the
-    /// write of that row only. Only the in-memory copy changes.
+    /// write of that row only: the writer's own check and the claim check of
+    /// its batch (`batch::apply_provenance_claim_puts`) bind it alike. Only
+    /// the in-memory copy changes.
     pub(crate) fn with_owner_archive_restore_permit_for_annotator(
         mut self,
         _permit: &OwnerArchiveRestorePermit,
