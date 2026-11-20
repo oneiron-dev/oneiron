@@ -30,11 +30,14 @@ use std::time::Duration;
 
 use ed25519_dalek::SigningKey;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole};
+use oneiron::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use oneiron::federation::{
-    FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
-    SharedVaultPreset,
+    FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope, ScopeAxis,
+    ScopeId, SharedVaultPreset,
 };
-use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON};
+use oneiron::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD,
+};
 use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::client::NoteSyncSession;
@@ -42,11 +45,13 @@ use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::server_state::persist_window_snapshot;
 use oneiron::sync::window::reverse_rematerialize;
 use oneiron::sync::{
-    ConnectionConfig, SyncClient, SyncClientConfig, SyncConnection, SyncEvent, SyncResidenceMode,
-    SyncSelector, SyncSelectorWorld, SyncTransportCredential, WindowKey, WindowManager,
-    put_selector_test_federation_grant,
+    ConnectionConfig, OpenedItem, SyncClient, SyncClientConfig, SyncConnection, SyncEvent,
+    SyncResidenceMode, SyncSelector, SyncSelectorWorld, SyncTransportCredential, WindowKey,
+    WindowManager, put_selector_test_federation_grant,
 };
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::write_envelope::claim_body::{decode_claim_body, encode_claim_body};
+use oneiron::{DeleteReason, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{
     ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
@@ -152,113 +157,12 @@ impl Drop for Fixture {
 }
 
 /// Builds the HOME: shared vault 42, member `yuki`, whole-grant human slip,
-/// the granted window at the wall-clock current month (the months the member
-/// catalogue asks are current plus previous, so the granted rows are asked
-/// for) and a far window at `2020-01` the catalogue never names.
+/// the granted window at the current month of the vault's recorded clock
+/// (the months the member catalogue asks are current plus previous, so the
+/// granted rows are asked for) and a far window at `2020-01` the catalogue
+/// never names.
 async fn fixture() -> Fixture {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
-    vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
-    vault.prepare_install_signing().unwrap();
-    let issuer = vault.bootstrap_host_slip_issuer().unwrap();
-    let root = vault.ensure_host_root_slip(&issuer).unwrap();
-    vault.provision_engine_machine_identities(&issuer).unwrap();
-    vault
-        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
-        .unwrap();
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
-    let proof = vault
-        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
-        .unwrap();
-    vault
-        .initialize_shared_vault(
-            &proof,
-            42,
-            Some(SharedVaultPreset::Team),
-            &[],
-            vault.now_recorded_at(),
-        )
-        .unwrap();
-    let member = person(&vault, "yuki");
-    let grant_id = EntityId::now();
-    let grant = FederationGrant::new(
-        FederationGrantScope::vault(42),
-        member,
-        FederationGrantRole::Member,
-        FederationGrantPreset::Member,
-    );
-    put_selector_test_federation_grant(&vault, &grant_id, &grant, vault.now_recorded_at()).unwrap();
-    let caller = mint(
-        &vault,
-        &issuer,
-        &root,
-        member,
-        Some((grant_id, &grant)),
-        "human",
-    );
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
-    let window = WindowKey::from_timestamp(now_secs);
-    let other_window = WindowKey::try_new("2020-01").unwrap();
-    let at = window.start_timestamp().unwrap() + 86_400;
-    let other_at = other_window.start_timestamp().unwrap() + 86_400;
-    let item = EntityId::now();
-    let other_item = EntityId::now();
-    vault
-        .put_entity(
-            &item,
-            ENTITY_TYPE_FACET,
-            TimeRange { start: at, end: at },
-            at,
-            &rmp_serde::to_vec_named(&json!({"title": "Granted facet"})).unwrap(),
-        )
-        .unwrap();
-    vault
-        .put_entity(
-            &other_item,
-            ENTITY_TYPE_FACET,
-            TimeRange {
-                start: other_at,
-                end: other_at,
-            },
-            other_at,
-            &rmp_serde::to_vec_named(&json!({"title": "Far facet"})).unwrap(),
-        )
-        .unwrap();
-    for key in [&window, &other_window] {
-        let doc = create_window_doc("home", key);
-        reverse_rematerialize(&vault, &doc, key).unwrap();
-        persist_window_snapshot(&vault, key, &doc).unwrap();
-    }
-    let server = Arc::new(
-        SyncServer::new(
-            Arc::clone(&vault),
-            SyncServerConfig {
-                auth_secret: Some("member-sync-lane".into()),
-                ..Default::default()
-            },
-        )
-        .unwrap(),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("ws://{}/ws", listener.local_addr().unwrap());
-    let app = build_app(server);
-    let task = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    Fixture {
-        task,
-        url,
-        vault,
-        grant_id,
-        caller,
-        window,
-        other_window,
-        item,
-        other_item,
-        _dir: dir,
-    }
+    world_fixture(0).await.fx
 }
 
 /// The member lane's client configuration, built exactly as `open_lane` builds
@@ -464,6 +368,532 @@ fn a_member_lane_syncs_its_granted_window_and_stays_up() {
         assert!(
             fx.vault.get_raw(&fx.item).unwrap().is_some(),
             "HOME keeps the granted row"
+        );
+    });
+}
+
+/// A world window's public claim over `subject`, reading `value` (as the
+/// socket fixture's).
+fn public_world_claim(subject: EntityId, world: EntityId, value: &str) -> ClaimBody {
+    let mut claim = ClaimBody::new(
+        "member_sync.fixture",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from(value),
+        0.8,
+        // A residence index reads only surfaceable claims (Auto or Approved).
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    claim.world = Some(world);
+    claim.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("sensitivity"),
+        rmpv::Value::from("public"),
+    )]));
+    claim
+}
+
+/// One world window of a world HOME: the world, its current-month window and
+/// the claim the window holds.
+struct WorldData {
+    world: EntityId,
+    window: WindowKey,
+    item: EntityId,
+}
+
+/// A [`Fixture`] HOME plus world windows in its current month, each holding
+/// one public claim, before the server starts (the server lists only windows
+/// its root names, so worlds must exist before it boots).
+struct WorldFixture {
+    fx: Fixture,
+    member: EntityId,
+    worlds: Vec<WorldData>,
+}
+
+/// [`fixture`] with `world_count` world windows in its current month, each
+/// holding one public claim reading `"before"`, under a whole member grant.
+async fn world_fixture(world_count: usize) -> WorldFixture {
+    world_fixture_under(
+        world_count,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    )
+    .await
+}
+
+/// [`world_fixture`] under a member grant of `role` and `preset` (a
+/// read-only member is a `Viewer` under `ReadOnly`).
+async fn world_fixture_under(
+    world_count: usize,
+    role: FederationGrantRole,
+    preset: FederationGrantPreset,
+) -> WorldFixture {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
+    vault.prepare_install_signing().unwrap();
+    let issuer = vault.bootstrap_host_slip_issuer().unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    vault.provision_engine_machine_identities(&issuer).unwrap();
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .unwrap();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let proof = vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .unwrap();
+    vault
+        .initialize_shared_vault(
+            &proof,
+            42,
+            Some(SharedVaultPreset::Team),
+            &[],
+            vault.now_recorded_at(),
+        )
+        .unwrap();
+    let member = person(&vault, "yuki");
+    let grant_id = EntityId::now();
+    let grant = FederationGrant::new(FederationGrantScope::vault(42), member, role, preset);
+    put_selector_test_federation_grant(&vault, &grant_id, &grant, vault.now_recorded_at()).unwrap();
+    let caller = mint(
+        &vault,
+        &issuer,
+        &root,
+        member,
+        Some((grant_id, &grant)),
+        "human",
+    );
+    // The vault's recorded clock, not a wall read: the current month, as the
+    // member catalogue asks it.
+    let now_secs = vault.now_recorded_at();
+    let window = WindowKey::from_timestamp(now_secs);
+    let other_window = WindowKey::try_new("2020-01").unwrap();
+    let at = window.start_timestamp().unwrap() + 86_400;
+    let other_at = other_window.start_timestamp().unwrap() + 86_400;
+    let item = EntityId::now();
+    let other_item = EntityId::now();
+    vault
+        .put_entity(
+            &item,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: at, end: at },
+            at,
+            &rmp_serde::to_vec_named(&json!({"title": "Granted facet"})).unwrap(),
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &other_item,
+            ENTITY_TYPE_FACET,
+            TimeRange {
+                start: other_at,
+                end: other_at,
+            },
+            other_at,
+            &rmp_serde::to_vec_named(&json!({"title": "Far facet"})).unwrap(),
+        )
+        .unwrap();
+    let mut worlds = Vec::new();
+    for nth in 0..world_count {
+        let world = EntityId::now();
+        vault
+            .put_entity(
+                &world,
+                ENTITY_TYPE_WORLD,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &rmp_serde::to_vec_named(&json!({"title": format!("World {nth}")})).unwrap(),
+            )
+            .unwrap();
+        let world_item = EntityId::now();
+        let claim = public_world_claim(member, world, "before");
+        vault
+            .put_entity(
+                &world_item,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: at, end: at },
+                at,
+                &encode_claim_body(&claim).unwrap(),
+            )
+            .unwrap();
+        // The public helper uses this vault's actual keystore issuer, not the test default.
+        vault
+            .keep_world_on_this_machine_under_for_test(&issuer, world, false)
+            .unwrap();
+        let world_window = WindowKey::for_world(at, world);
+        worlds.push(WorldData {
+            world,
+            window: world_window,
+            item: world_item,
+        });
+    }
+    for key in [&window, &other_window]
+        .into_iter()
+        .chain(worlds.iter().map(|data| &data.window))
+    {
+        let doc = create_window_doc("home", key);
+        reverse_rematerialize(&vault, &doc, key).unwrap();
+        persist_window_snapshot(&vault, key, &doc).unwrap();
+    }
+    let server = Arc::new(
+        SyncServer::new(
+            Arc::clone(&vault),
+            SyncServerConfig {
+                auth_secret: Some("member-sync-lane".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("ws://{}/ws", listener.local_addr().unwrap());
+    let app = build_app(server);
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    WorldFixture {
+        fx: Fixture {
+            task,
+            url,
+            vault,
+            grant_id,
+            caller,
+            window,
+            other_window,
+            item,
+            other_item,
+            _dir: dir,
+        },
+        member,
+        worlds,
+    }
+}
+
+/// A fresh member env: its vault, window manager and lane config, as the
+/// existing test builds them.
+struct MemberClient {
+    vault: Arc<Vault>,
+    manager: Arc<WindowManager>,
+    config: SyncClientConfig,
+    _dir: tempfile::TempDir,
+}
+
+fn member_client(url: String, caller: &Caller) -> MemberClient {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::with_lease_vault_id(42)),
+        "yuki",
+    ));
+    manager.attach_to_vault();
+    let config = member_lane_client_config(url, caller);
+    MemberClient {
+        vault,
+        manager,
+        config,
+        _dir: dir,
+    }
+}
+
+/// One lane session over `manager`: runs until `Synced`, or up to 30 s, then
+/// shuts the run down cleanly and reports whether it synced. A second call
+/// reconnects over the same vault state (markers, thin rows, index).
+async fn run_lane(manager: &Arc<WindowManager>, config: &SyncClientConfig) -> bool {
+    let connection = Arc::new(
+        SyncConnection::new(
+            Arc::clone(manager),
+            ConnectionConfig {
+                client_config: config.clone(),
+                auto_reconnect: true,
+            },
+        )
+        .unwrap(),
+    );
+    let synced = Arc::new(tokio::sync::Notify::new());
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let run_handle = tokio::spawn({
+        let connection = Arc::clone(&connection);
+        let synced = Arc::clone(&synced);
+        async move {
+            connection
+                .run_observed(shutdown_rx, move |event: SyncEvent| {
+                    if format!("{event:?}") == "StatusChanged(Synced)" {
+                        synced.notify_one();
+                    }
+                })
+                .await
+        }
+    });
+    let reached = tokio::time::timeout(Duration::from_secs(30), synced.notified())
+        .await
+        .is_ok();
+    let _ = shutdown_tx.send(());
+    tokio::time::timeout(Duration::from_secs(20), run_handle)
+        .await
+        .expect("the run ends on its shutdown")
+        .expect("the run task ends")
+        .expect("the run ends cleanly");
+    reached
+}
+
+/// The lane's doors (touch, promote, open, index) over `manager` without a
+/// running session: each call dials its own RPC.
+fn lane_connection(manager: &Arc<WindowManager>, config: &SyncClientConfig) -> SyncConnection {
+    SyncConnection::new(
+        Arc::clone(manager),
+        ConnectionConfig {
+            client_config: config.clone(),
+            auto_reconnect: false,
+        },
+    )
+    .unwrap()
+}
+
+/// Waits until HOME's live mirror threads a local commit into `window`'s
+/// doc: the mirror runs off the writer, so `u:w:` rows past `before` prove
+/// the window holds the edit before the member reconnects. Bounded; the
+/// yield paces the poll without a sleep.
+async fn wait_home_window_update(vault: &Vault, window: &WindowKey, before: usize) {
+    let prefix = format!("u:w:{window}:");
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if vault.sync_state_keys_with_prefix(&prefix).unwrap().len() > before {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("HOME's edit reaches its window before the member reconnects");
+}
+
+/// The member's read of `item`'s claim value through its open door, when the
+/// open lands on the resident row.
+async fn member_claim_value(
+    connection: &SyncConnection,
+    window: &WindowKey,
+    item: EntityId,
+) -> Option<String> {
+    match connection.open_item(window, item).await {
+        Ok(OpenedItem::Resident { raw, .. }) => {
+            decode_claim_body(raw.get(ENTITY_METADATA_HEADER_LEN..)?, false)
+                .ok()?
+                .value
+                .as_str()
+                .map(str::to_owned)
+        }
+        _ => None,
+    }
+}
+
+/// Review round 1 of #8364 (P1-1): a promoted world window catches up on
+/// reconnect. The member promotes it, syncs, disconnects; HOME edits its
+/// claim; the member reconnects and reads the new value after `Synced`.
+/// red at 40cf5d7d8818: the reconnect's promotion is granted but no VV is
+/// ever asked (a world window's VV waits for a root the lane never gets), so
+/// the member still reads the old value after `Synced`.
+#[test]
+fn a_promoted_world_window_catches_up_on_reconnect() {
+    run_on_engine_stack(|| async {
+        let home = world_fixture(1).await;
+        let data = &home.worlds[0];
+        let member = member_client(home.fx.url.clone(), &home.fx.caller);
+        let doors = lane_connection(&member.manager, &member.config);
+        doors.fetch_item(&data.window, data.item).await.unwrap();
+        doors.promote_window(&data.window, data.item).await.unwrap();
+        assert!(
+            member
+                .vault
+                .sync_state_get(&format!("rp:w:{}", data.window))
+                .unwrap()
+                .is_some(),
+            "the world window is promoted before the first sync"
+        );
+        assert!(
+            run_lane(&member.manager, &member.config).await,
+            "the lane first reaches Synced"
+        );
+        assert_eq!(
+            member_claim_value(&doors, &data.window, data.item)
+                .await
+                .as_deref(),
+            Some("before"),
+            "the member reads the promoted claim before HOME's edit"
+        );
+        // HOME edits the claim while the member is offline; the reconnect
+        // starts only once the edit is in HOME's window, so no steady-state
+        // invalidation can heal the member mid-session instead of the
+        // reconnect's own vector exchange.
+        let at = data.window.start_timestamp().unwrap() + 86_400;
+        let updates = format!("u:w:{}:", data.window);
+        let before = home
+            .fx
+            .vault
+            .sync_state_keys_with_prefix(&updates)
+            .unwrap()
+            .len();
+        let edited = public_world_claim(home.member, data.world, "after");
+        home.fx
+            .vault
+            .put_entity(
+                &data.item,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: at, end: at },
+                at,
+                &encode_claim_body(&edited).unwrap(),
+            )
+            .unwrap();
+        wait_home_window_update(&home.fx.vault, &data.window, before).await;
+        assert!(
+            run_lane(&member.manager, &member.config).await,
+            "the lane reconnects to Synced"
+        );
+        // The catch-up delta lands in the reconnect's own exchange, before
+        // `Synced`; the bounded poll absorbs only a slow import.
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if member_claim_value(&doors, &data.window, data.item)
+                    .await
+                    .as_deref()
+                    == Some("after")
+                {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the member reads the edited claim after reconnect");
+        assert_eq!(
+            member_claim_value(&doors, &data.window, data.item)
+                .await
+                .as_deref(),
+            Some("after"),
+            "the member reads the edited claim after reconnect"
+        );
+    });
+}
+
+/// Review round 1 of #8364 (P1-2, lane): a promotion the grant no longer
+/// covers leaves the lane syncing. Window A is promoted, then HOME narrows
+/// the grant to window B's world while the member is offline; the reconnect
+/// answers A's promotion refused with the socket kept, reaches `Synced`, and
+/// B is indexed.
+/// red at 40cf5d7d8818: the refused promotion closes the socket with
+/// DECODE_ERROR before the catalogue runs, so the lane never reaches
+/// `Synced` and B is never indexed.
+#[test]
+fn a_promotion_the_grant_no_longer_covers_leaves_the_lane_syncing() {
+    run_on_engine_stack(|| async {
+        let home = world_fixture(2).await;
+        let a = &home.worlds[0];
+        let b = &home.worlds[1];
+        let member = member_client(home.fx.url.clone(), &home.fx.caller);
+        let doors = lane_connection(&member.manager, &member.config);
+        doors.fetch_item(&a.window, a.item).await.unwrap();
+        doors.promote_window(&a.window, a.item).await.unwrap();
+        assert!(
+            member
+                .vault
+                .sync_state_get(&format!("rp:w:{}", a.window))
+                .unwrap()
+                .is_some(),
+            "window A is promoted before the grant narrows"
+        );
+        // HOME narrows the member's grant to B's world while the member is
+        // offline; the slip minted under the whole grant still opens the lane.
+        let mut narrowed = FederationGrant::new(
+            FederationGrantScope::vault(42),
+            home.member,
+            FederationGrantRole::Member,
+            FederationGrantPreset::Member,
+        );
+        narrowed.authority_scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(b.world)]));
+        put_selector_test_federation_grant(
+            &home.fx.vault,
+            &home.fx.grant_id,
+            &narrowed,
+            home.fx.vault.now_recorded_at(),
+        )
+        .unwrap();
+        assert!(
+            run_lane(&member.manager, &member.config).await,
+            "the lane reaches Synced past the refused promotion"
+        );
+        let index = doors.residence_index().unwrap();
+        let b_window = index
+            .iter()
+            .find(|window| window.window == b.window)
+            .expect("window B is indexed");
+        assert!(
+            b_window
+                .items
+                .iter()
+                .any(|entry| entry.entity_id == b.item.to_hex()),
+            "B's item is indexed (index: {index:?})"
+        );
+        assert!(
+            !index.iter().any(|window| window.window == a.window),
+            "window A stays unindexed (index: {index:?})"
+        );
+    });
+}
+
+/// Review round 1 of #8364 (P1-3, lane): a thin copy HOME hard-deleted is
+/// purged on reconnect. The member opens an item without promoting it, so a
+/// thin copy is cached, and disconnects; HOME hard-deletes it; the member
+/// reconnects and opening the item no longer serves the old body.
+/// red at 40cf5d7d8818: the reconnect takes no tombstone id set (its windows
+/// come from a root the lane never holds, and the RPC is barred), so the
+/// thin cache still serves the old body.
+#[test]
+fn a_thin_copy_home_hard_deleted_is_purged_on_reconnect() {
+    run_on_engine_stack(|| async {
+        let fx = fixture().await;
+        let member = member_client(fx.url.clone(), &fx.caller);
+        assert!(
+            run_lane(&member.manager, &member.config).await,
+            "the lane first reaches Synced"
+        );
+        let doors = lane_connection(&member.manager, &member.config);
+        let opened = doors.open_item(&fx.window, fx.item).await.unwrap();
+        assert!(
+            matches!(opened, OpenedItem::Thin(_)),
+            "the first open caches a thin copy"
+        );
+        let thin_key = format!("ro:e:{}", fx.item.to_hex());
+        assert!(
+            member.vault.sync_state_get(&thin_key).unwrap().is_some(),
+            "the thin copy is cached"
+        );
+        // HOME hard-deletes the item while the member is offline.
+        assert!(
+            fx.vault
+                .delete_entity_with_reason(&fx.item, DeleteReason::UserHardDelete)
+                .unwrap()
+                .existed,
+            "HOME hard-deletes the touched item"
+        );
+        assert!(
+            run_lane(&member.manager, &member.config).await,
+            "the lane reconnects to Synced"
+        );
+        assert!(
+            doors.open_item(&fx.window, fx.item).await.is_err(),
+            "the purged open is refused"
+        );
+        assert!(
+            member.vault.sync_state_get(&thin_key).unwrap().is_none(),
+            "the thin row is gone"
+        );
+        assert!(
+            member
+                .vault
+                .sync_state_get(&format!("ri:b:{}", fx.item.to_hex()))
+                .unwrap()
+                .is_none(),
+            "the thin body is gone"
         );
     });
 }
