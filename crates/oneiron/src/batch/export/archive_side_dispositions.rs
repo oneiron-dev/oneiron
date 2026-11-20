@@ -262,6 +262,12 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         "SYNC_RESIDENCE_BUNDLE_COMMIT_RECEIPT",
         ArchiveSideDisposition::Omitted(ImportOmissionReason::LocalProjectionNotRestored),
     ),
+    // PREDICTED-BOARD-SEED-SIGNAL: the home's touch log, a board's reports among it, travels as
+    // any vault row does; an import keeps it inert, so no prediction seeds from it there.
+    (
+        "SYNC_RESIDENCE_MACHINE_TOUCH",
+        ArchiveSideDisposition::Retained,
+    ),
     (
         "SYNC_SHARED_LEAVE_RECEIPT",
         ArchiveSideDisposition::Retained,
