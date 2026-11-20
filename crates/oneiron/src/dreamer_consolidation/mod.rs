@@ -106,6 +106,8 @@ pub(crate) use attempt_reads::{declare_attempt_reads, record_attempt_reads};
 pub use branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
 pub use conflict::*;
 pub(crate) use conflict::{candidate_probe_body, topic_key_canonical_bytes};
+#[cfg(oneiron_test_support)]
+pub(crate) use executor::extraction::entity_id_from_hex;
 pub use executor::*;
 #[cfg(oneiron_test_support)]
 pub(crate) use extracted_people::mint_named_person_for_test;

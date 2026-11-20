@@ -60,6 +60,8 @@ mod restore;
 mod scratch;
 pub(crate) mod write_budget;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::custody::unhex;
 pub(crate) use self::custody::{
     CustodyAnchorCredentials, custody_from_home, custody_recovery, custody_status, take_publishing,
 };
