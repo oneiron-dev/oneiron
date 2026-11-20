@@ -303,6 +303,19 @@ impl ScopedRead<'_> {
                     )?)
                 .then_some(()))
             })?;
+            if record.id == *anchor && !admitted.visible() {
+                // An anchor this per-record gate refuses ends the read as
+                // the anchor gate does: only the anchor counts, so the
+                // receipt cannot tell whether a linked record survived
+                // (review round 2 of #10031).
+                return Ok(ScopedReadResult {
+                    value: MemoryTimeline {
+                        anchor: *anchor,
+                        records: Vec::new(),
+                    },
+                    receipt: receipt(admitted.suppression()),
+                });
+            }
             suppressed += admitted.suppression();
             if admitted.visible() {
                 kept.push(record);
@@ -322,14 +335,15 @@ impl ScopedRead<'_> {
     }
 
     /// The bodies of already-authorized timeline rows,
-    /// [`Self::memory_timeline_projection_with_receipt`] with a deleted
-    /// record's shell and a withheld row both as `None`.
+    /// [`Self::memory_timeline_projection_with_receipt`] with a withheld row
+    /// as `None`. A deleted record is `None` before any check, so it adds
+    /// no count and no axis to the receipt (review round 2 of #10031).
     pub fn memory_timeline_parts_with_receipt(
         &self,
         records: &[MemoryTimelineRecord],
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<Option<TimelineEntityParts>>>> {
-        let projected = self.memory_timeline_projection_with_receipt(records, requested)?;
+        let projected = self.timeline_projection_in(records, requested, false)?;
         Ok(ScopedReadResult {
             value: projected
                 .value
@@ -366,6 +380,18 @@ impl ScopedRead<'_> {
         records: &[MemoryTimelineRecord],
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<TimelineRecordProjection>>> {
+        self.timeline_projection_in(records, requested, true)
+    }
+
+    /// [`Self::memory_timeline_projection_with_receipt`]; a deleted record
+    /// takes its shell gate only where `judge_shells`, and is otherwise
+    /// withheld uncounted before any check.
+    fn timeline_projection_in(
+        &self,
+        records: &[MemoryTimelineRecord],
+        requested: Option<&RetrievalFilter>,
+        judge_shells: bool,
+    ) -> Result<ScopedReadResult<Vec<TimelineRecordProjection>>> {
         let txn = self.vault.store.env.read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         let held = self.held_for(requested);
@@ -373,6 +399,10 @@ impl ScopedRead<'_> {
         let mut suppressed = 0;
         let mut value = Vec::with_capacity(records.len());
         for record in records {
+            if !judge_shells && record.state == MemoryTimelineRecordState::Deleted {
+                value.push(TimelineRecordProjection::Withheld { counted: false });
+                continue;
+            }
             let admitted = self.admit_held_in(&txn, &record.id, &held, || {
                 self.timeline_record_allowed_in(&txn, &policy, &filter, record, &held)
                     .map(|visible| visible.then_some(()))
