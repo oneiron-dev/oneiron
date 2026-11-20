@@ -4,7 +4,11 @@
 //! pushes nothing, a machine off the predicted level is refused, a prediction keeps to the
 //! owner's budget, and a key the machine no longer stands on gets neither a prediction nor a set
 //! body (REVIEW-7955). An entity document a touch reaches predicts beside the windows, and the
-//! owner's document budget binds it (PREDICTED-DOC-BRANCH-NO-FIXTURE).
+//! owner's document budget binds it (PREDICTED-DOC-BRANCH-NO-FIXTURE). A second ask inside the
+//! home's push spacing appends nothing, a push leaves the home's memory once the spacing has
+//! passed, and a later prediction the home holds no body for leaves its own last set the base of
+//! the hysteresis (PREDICTED-DIRECTIVES-GROW-AUTHORITY-LOG, REVIEW-9762). A foreign prediction
+//! that follows the home's push in the signed log unseats its set whatever its date (REVIEW-9781).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -15,8 +19,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{
-    ActSurface, HostSlipIssuer, MachineOwnership, MachineRole, PeerMachine, PredictedResidenceSet,
-    ReadLocation, ResidenceAct, WorldPrivacy,
+    ActAuthority, ActSurface, HostSlipIssuer, MachineOwnership, MachineRole, PeerMachine,
+    PredictedResidenceSet, ReadLocation, ResidenceAct, WorldPrivacy,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::entity_doc::{DocAuthorization, TextField};
@@ -24,7 +28,10 @@ use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::sync::WindowKey;
 use oneiron::sync::residence::{PredictedResidenceAnswer, ResidenceDirectiveState};
-use oneiron::test_doors::predicted_residence::predict_residence_withholding;
+use oneiron::test_doors::predicted_residence::{
+    age_predicted_pushes, append_prediction_dated, noted_predicted_pushes,
+    predict_residence_withholding,
+};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
@@ -76,6 +83,12 @@ impl Fixture {
             .expect("a minted machine")
             .id;
         vault
+            .enrol_device_owner_signing_key(
+                &ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall),
+                &issuer,
+            )
+            .expect("the owner enrols this install's owner signing key");
+        let landing = vault
             .set_machine_role(
                 &owner,
                 ActSurface::ThisInstall,
@@ -84,6 +97,10 @@ impl Fixture {
                 None,
             )
             .expect("the owner answers the device's machine");
+        assert!(
+            landing.held().is_none(),
+            "FIXTURE: the owner key this install holds proves the work-or-school answer"
+        );
         let world = vault
             .create_world(&owner, "World", vault.now_recorded_at())
             .expect("world");
@@ -249,6 +266,15 @@ fn predict(fixture: &Fixture) -> PredictedResidenceAnswer {
         standing_key(fixture),
     )
     .expect("the home's prediction")
+}
+
+/// The home's spacing between two predictions it pushes one machine under one parent, in seconds
+/// (`PREDICT_PUSH_MIN_SPACING` in `sync/residence/predict.rs`, crate-private).
+const PUSH_SPACING_SECS: u64 = 30 * 60;
+
+/// Lets the push spacing pass since the home's last push, as time passing does.
+fn advance_past_push_spacing(fixture: &Fixture) {
+    age_predicted_pushes(&fixture.vault, PUSH_SPACING_SECS);
 }
 
 /// The predictions naming the fixture's machine.
@@ -455,12 +481,255 @@ fn an_unchanged_prediction_pushes_no_directive() {
         predict(&fixture),
         PredictedResidenceAnswer::Pushed(_)
     ));
+    // Past the push spacing, so only the unchanged set holds the next ask back.
+    advance_past_push_spacing(&fixture);
     assert_eq!(
         predict(&fixture),
         PredictedResidenceAnswer::Unchanged,
         "no new touch pushes nothing"
     );
     assert_eq!(predictions_of(&fixture).len(), 1, "one Predicted directive");
+}
+
+/// FIX PREDICTED-DIRECTIVES-GROW-AUTHORITY-LOG: a machine that asks again at once, with a touch
+/// that changes its set, appends no second signed entry to the owner's authority log until the
+/// home's push spacing has passed; then the changed set pushes.
+#[test]
+fn a_second_ask_inside_the_push_spacing_appends_nothing() {
+    let fixture = Fixture::open();
+    let subject = person_in(&fixture.vault, LEARNED_AT_A);
+    let a = EntityId::now();
+    claim_in(
+        &fixture.vault,
+        &a,
+        subject,
+        Some(fixture.world),
+        LEARNED_AT_A,
+    );
+    // C speaks of another person a month later, linked to nothing A reaches.
+    let other = person_in(&fixture.vault, LEARNED_AT_B);
+    let c = EntityId::now();
+    claim_in(&fixture.vault, &c, other, Some(fixture.world), LEARNED_AT_B);
+    predict_level(&fixture, 32, 128);
+    fixture
+        .vault
+        .record_machine_touch(fixture.machine, a)
+        .expect("the touch lands");
+    assert!(
+        matches!(predict(&fixture), PredictedResidenceAnswer::Pushed(_)),
+        "a first prediction pushes"
+    );
+    let window_c = window_of(LEARNED_AT_B, fixture.world);
+    let (_, first_digest, _, _) = predicted_act(&predictions_of(&fixture)[0]);
+    assert!(
+        !predicted_set_of(&fixture, &first_digest)
+            .windows
+            .contains(window_c.as_str()),
+        "FIXTURE: C's window is not in the first prediction"
+    );
+
+    // The machine touches C and asks again at once: its set would now name C's window.
+    fixture
+        .vault
+        .record_machine_touch(fixture.machine, c)
+        .expect("the second touch lands");
+    assert_eq!(
+        predict(&fixture),
+        PredictedResidenceAnswer::Unchanged,
+        "an ask inside the push spacing appends nothing"
+    );
+    assert_eq!(
+        predictions_of(&fixture).len(),
+        1,
+        "one Predicted directive inside the push spacing"
+    );
+
+    advance_past_push_spacing(&fixture);
+    assert!(
+        matches!(predict(&fixture), PredictedResidenceAnswer::Pushed(_)),
+        "an ask after the push spacing pushes the changed set"
+    );
+    let predictions = predictions_of(&fixture);
+    assert_eq!(
+        predictions.len(),
+        2,
+        "a second Predicted directive after the push spacing"
+    );
+    let (_, second_digest, _, _) = predictions
+        .iter()
+        .map(predicted_act)
+        .find(|(_, digest, _, _)| *digest != first_digest)
+        .expect("a prediction with the changed set");
+    assert!(
+        predicted_set_of(&fixture, &second_digest)
+            .windows
+            .contains(window_c.as_str()),
+        "C's window predicts after the push spacing"
+    );
+}
+
+/// REVIEW-9762 round 2: the home forgets a push once the spacing has passed, so pushes under
+/// predicted-level approvals the owner has since replaced do not pile up while the vault is open.
+#[test]
+fn a_push_leaves_the_home_memory_once_the_spacing_has_passed() {
+    let fixture = Fixture::open();
+    let subject = person_in(&fixture.vault, LEARNED_AT_A);
+    let a = EntityId::now();
+    claim_in(
+        &fixture.vault,
+        &a,
+        subject,
+        Some(fixture.world),
+        LEARNED_AT_A,
+    );
+    predict_level(&fixture, 32, 128);
+    fixture
+        .vault
+        .record_machine_touch(fixture.machine, a)
+        .expect("the touch lands");
+    assert!(
+        matches!(predict(&fixture), PredictedResidenceAnswer::Pushed(_)),
+        "a first prediction pushes"
+    );
+    assert_eq!(
+        noted_predicted_pushes(&fixture.vault),
+        1,
+        "FIXTURE: the home notes its push"
+    );
+
+    // The owner approves the predicted level again: the next prediction names the new approval.
+    let replaced = predict_level(&fixture, 32, 128);
+    advance_past_push_spacing(&fixture);
+    assert!(
+        matches!(predict(&fixture), PredictedResidenceAnswer::Pushed(_)),
+        "a first prediction under the new approval pushes"
+    );
+    let (named, _, _, _) =
+        predicted_act(predictions_of(&fixture).last().expect("the new prediction"));
+    assert_eq!(
+        named, replaced,
+        "FIXTURE: the new prediction names the new approval"
+    );
+    assert_eq!(
+        noted_predicted_pushes(&fixture.vault),
+        1,
+        "the push under the replaced approval left once the spacing had passed"
+    );
+}
+
+/// REVIEW-9762 round 2: a later prediction this home holds no body for (another home's, dated by
+/// this home's clock) never stands in for this home's own last set. The hysteresis keeps toward
+/// the set the home pushed, and the home pushes it again, so the machine applies it last.
+#[test]
+fn a_later_foreign_prediction_leaves_the_home_its_own_set() {
+    let fixture = Fixture::open();
+    // Two lone entity documents that score alike: `early` takes the lower id, so it ranks first.
+    let early = document_holder(&fixture, LEARNED_AT_B);
+    let late = document_holder(&fixture, LEARNED_AT_B);
+    let parent = predict_level(&fixture, 32, 1);
+    fixture
+        .vault
+        .record_machine_touch(fixture.machine, late)
+        .expect("the touch lands");
+    assert!(
+        matches!(predict(&fixture), PredictedResidenceAnswer::Pushed(_)),
+        "a first prediction pushes"
+    );
+    let own = predictions_of(&fixture)
+        .pop()
+        .expect("the home's prediction");
+    let (_, own_digest, _, _) = predicted_act(&own);
+    assert_eq!(
+        predicted_set_of(&fixture, &own_digest).documents,
+        BTreeSet::from([late]),
+        "FIXTURE: the home's first set names the touched document"
+    );
+
+    // Another home's prediction at the same date, with a later id: it sorts after the home's own.
+    let foreign = PredictedResidenceSet {
+        windows: BTreeSet::new(),
+        documents: BTreeSet::from([EntityId::now()]),
+    };
+    append_prediction_dated(
+        &fixture.vault,
+        &fixture.issuer,
+        fixture.machine,
+        parent,
+        &foreign,
+        own.directive.issued_at,
+    )
+    .expect("the foreign prediction appends");
+    // The machine touches `early` too: from no previous set, `early` alone would fill the budget.
+    fixture
+        .vault
+        .record_machine_touch(fixture.machine, early)
+        .expect("the second touch lands");
+    advance_past_push_spacing(&fixture);
+
+    let PredictedResidenceAnswer::Pushed(pushed) = predict(&fixture) else {
+        panic!("the home pushes again over a later prediction it holds no body for");
+    };
+    let (_, digest, _, _) = predicted_act(&pushed);
+    assert_eq!(
+        predicted_set_of(&fixture, &digest).documents,
+        BTreeSet::from([late]),
+        "the hysteresis keeps the home's own last document, ranked second"
+    );
+}
+
+/// REVIEW-9781 round 1: another home that took this home's push in signs a prediction that
+/// follows it, dated an hour before it by that home's clock. The machine applies the one that
+/// follows, and this home holds no body for it, so its own set no longer stands there: asked again
+/// with nothing changed, the home pushes its set again rather than answering unchanged.
+#[test]
+fn a_foreign_prediction_that_follows_the_push_unseats_it_whatever_its_date() {
+    let fixture = Fixture::open();
+    let subject = person_in(&fixture.vault, LEARNED_AT_A);
+    let a = EntityId::now();
+    claim_in(
+        &fixture.vault,
+        &a,
+        subject,
+        Some(fixture.world),
+        LEARNED_AT_A,
+    );
+    let parent = predict_level(&fixture, 32, 128);
+    fixture
+        .vault
+        .record_machine_touch(fixture.machine, a)
+        .expect("the touch lands");
+    assert!(
+        matches!(predict(&fixture), PredictedResidenceAnswer::Pushed(_)),
+        "a first prediction pushes"
+    );
+    let own = predictions_of(&fixture)
+        .pop()
+        .expect("the home's prediction");
+    let (_, own_digest, _, _) = predicted_act(&own);
+
+    let foreign = PredictedResidenceSet {
+        windows: BTreeSet::new(),
+        documents: BTreeSet::from([EntityId::now()]),
+    };
+    append_prediction_dated(
+        &fixture.vault,
+        &fixture.issuer,
+        fixture.machine,
+        parent,
+        &foreign,
+        own.directive.issued_at - 3_600,
+    )
+    .expect("the foreign prediction that follows the push, dated an hour before it");
+    advance_past_push_spacing(&fixture);
+
+    let PredictedResidenceAnswer::Pushed(pushed) = predict(&fixture) else {
+        panic!("the home pushes again over a prediction that follows its own, dated before it");
+    };
+    let (_, digest, _, _) = predicted_act(&pushed);
+    assert_eq!(
+        digest, own_digest,
+        "the home pushes its unchanged set again"
+    );
 }
 
 #[test]

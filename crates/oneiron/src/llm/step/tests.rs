@@ -3394,6 +3394,7 @@ fn option_link_void_wakes_a_parked_code_mode_peer_wait_without_settling_ask()
     let owner = vault.ensure_embedded_owner_actor()?;
     let friend = EntityId::now();
     vault.put_entity(&friend, ENTITY_TYPE_PERSON, occurred(1), 1, b"friend")?;
+    crate::task_verb::tests::support::grant_ask_read(&vault, &[friend])?;
     let question = EntityId::now();
     let question_body =
         rmp_serde::to_vec_named(&std::collections::BTreeMap::from([("role", "question")]))?;

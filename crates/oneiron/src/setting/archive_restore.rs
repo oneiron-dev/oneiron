@@ -13,20 +13,23 @@
 //! seat ref that is never installed twice, a route the manifest in force admits, a feed's poll
 //! chain). An absent row of such a key installs through the hook, as a change with no prior,
 //! inside a savepoint: a refusal rolls the row back and its envelope stays retained. The effect
-//! starts from now and catches nothing up (ARCHIVE-RESTORE-LIVE = B).
+//! starts from now and catches nothing up (ARCHIVE-RESTORE-LIVE = B). Before its writer opens,
+//! the restore takes the write turn of each key the archive holds a source-live row of
+//! ([`take_write_turns`]), so no hooked row lands inside another holder's run, as no set of that
+//! key does.
 //!
 //! The change history installs at absent sequences, and the counter never goes back: it ends at
 //! the highest of the live counter, the archived counter, every landed change's sequence and
 //! every landed row's revision, so a row's revision still only grows and no sequence is handed
 //! out twice.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron_setting_contract::RowKey;
 
 use super::change::{CHANGE_NEXT, CHANGES, SettingChange};
 use super::read::{CONTENT_ROWS, ROWS, StoredRow, table_of};
-use super::{OnChange, OnCommitted, SettingMode, SettingSpec, spec_named};
+use super::{OnChange, OnCommitted, SettingMode, SettingSpec, WriteTurn, spec_named};
 use crate::Vault;
 use crate::batch::export::archive_side_install::{
     ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
@@ -176,6 +179,46 @@ pub(crate) fn land_archived_setting_rows_in_txn(
             ))
         })
         .collect()
+}
+
+/// The write turn of the key an archived envelope holds a row of, when the owner's restore may
+/// land that row: a source-live value or pin row of a key that names a turn. Read before the
+/// restore's writer opens, so it checks only what can name the key; a row that names a key but
+/// fails a later check takes a turn it never needed, never the other way round.
+pub(crate) fn write_turn_of_archived_row(row: &ArchiveRetainedSideRow) -> Option<WriteTurn> {
+    if !row.source_live {
+        return None;
+    }
+    let key_bytes = match row.source_table.as_str() {
+        name if name == side_table::SETTING.name => decode_archived_row(&ROWS, row).ok()?.0,
+        name if name == side_table::SETTING_CONTENT.name => {
+            decode_archived_row(&CONTENT_ROWS, row).ok()?.0
+        }
+        _ => return None,
+    };
+    spec_named(&RowKey::decode(&key_bytes)?.name)
+        .ok()?
+        .write_turn
+}
+
+/// Takes `turns`, each once and in name order, for the owner's restore to hold from before its
+/// writer opens until the wakes after its commit are done, as [`Vault::set_setting`] holds one
+/// key's. The caller names the turns of the keys its archive holds rows of
+/// ([`write_turn_of_archived_row`]): the restore can install an absent row of such a key through
+/// its hook, and which rows land is known only inside its writer. A restore whose archive holds no
+/// row of a key with a turn takes none, so it waits on no admission and is refused by none
+/// (REVIEW-9493 round 2).
+///
+/// # Errors
+///
+/// A turn's refusal: the calendar admission turn refuses a thread that already holds it.
+pub(crate) fn take_write_turns(
+    vault: &Vault,
+    turns: impl IntoIterator<Item = WriteTurn>,
+) -> Result<Vec<Box<dyn std::any::Any>>> {
+    let turns: BTreeMap<&str, WriteTurn> =
+        turns.into_iter().map(|turn| (turn.name, turn)).collect();
+    turns.values().map(|turn| (turn.take)(vault)).collect()
 }
 
 /// Lands the absent rows of keys with a change hook, in key order, and tries the refused ones

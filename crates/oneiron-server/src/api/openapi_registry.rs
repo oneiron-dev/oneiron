@@ -2,6 +2,7 @@
 
 use super::__path_core_reject_widen;
 use super::__path_restore_quarantined_booking;
+use super::ContextBoardMemoriesCut;
 use super::run_tree::{CoreAttemptPlacement, CoreRunTreeDeletion};
 use super::{
     __path_annotate_turn_vad, __path_append_core_record, __path_booking_agent_instructions,
@@ -371,6 +372,7 @@ use utoipa::OpenApi;
         ContextBoardCompanionAssembly,
         ContextBoardMemories,
         ContextBoardMemoriesBudget,
+        ContextBoardMemoriesCut,
         ContextBoardMemoryRow,
         ContextBoardRoomPin,
         ContextBoardMemorySlot,

@@ -678,3 +678,21 @@ impl Reader<'_> {
         RETRY.put(&vault.store, txn, &(), &retry)
     }
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::audit_windows::draw_rank_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::chunks::{ChunkRef as ChunkRefForTest, reading_digest_for_test};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::policy::policy_digest_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::read::{envelope_digest_for_test, span_id_for_test};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::recipes::{
+    audit_sample_rank_for_test, rung_dedupe_key_for_test, typing_member_key_for_test,
+};
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn chunk_digest_for_test(text: &str) -> [u8; 32] {
+    chunks::chunk_digest(text)
+}

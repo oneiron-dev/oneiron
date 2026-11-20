@@ -1,8 +1,8 @@
 //! The root appointment door's writer half (row OWNER-ANCHOR-ROOT-RECOVERY,
 //! PLAN v3 section 7; Engine RULINGs 14 Nov 21:01, 21:47 and 22:32).
 //!
-//! [`Vault::appoint_owner_root`] checks the owner, the kit and the pin, and
-//! makes the successor key; this half runs in its writer transaction. It
+//! [`Vault::appoint_owner_root`] checks the owner, the kit and the pin; this
+//! half runs in its writer transaction and makes the successor key. It
 //! names the appointment's parents from the recovery evidence: the rows of a
 //! closed conflict (the witnesses, which the append frontier never holds),
 //! this install's heads, and the root's own record. It judges each candidate
@@ -11,7 +11,11 @@
 //! row: a void row burns the anchor. Then the successor binds the owner as
 //! `human`, and the fold runs again. The transaction commits only when the
 //! fold counts the appointment, the successor is a live root key, the
-//! owner's binding is active, and the roster holds a root key again.
+//! owner's binding is active, and the roster holds a root key again. The
+//! successor key is made in memory, and this install's owner signing slot
+//! takes its seed only once all of that holds, as the writer's last step: a
+//! refused appointment leaves the slot's seed as it was (FIX
+//! APPOINTMENT-DROPS-SLOT-SEED-BEFORE-ITS-VERDICT).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -19,7 +23,7 @@ use ed25519_dalek::{Signer, SigningKey};
 
 use crate::error::Result;
 use crate::key_material::refused;
-use crate::world_keys::OwnerRootSigner;
+use crate::world_keys::{OwnerRootSigner, OwnerSigningSlot, SlotRenewal};
 use crate::{EntityId, TimeRange, Vault};
 
 use super::root_appointment_judge::{proof_fold, verdict_of_candidate};
@@ -303,26 +307,31 @@ fn valid_appointment(
 impl Vault {
     /// [`Vault::appoint_owner_root`]'s writer half, in its transaction, for
     /// `owner`, a vault owner the caller revalidated in it: `anchor` (the
-    /// anchor of `pin`, this install's pin) appoints the key `successor`
-    /// makes on the recovery evidence, and the successor binds `owner` as
-    /// `human` at its own floor, one past any binding its key has had (a
-    /// fresh key has none). The caller commits.
+    /// anchor of `pin`, this install's pin) appoints a new key of `slot`,
+    /// this install's owner signing slot, on the recovery evidence, and the
+    /// successor binds `owner` as `human` at its own floor, one past any
+    /// binding its key has had (a fresh key has none). The caller holds the
+    /// vault's `owner_signing_slot_lock` and commits.
     ///
-    /// `successor` runs only once the roster reads rootless in this
+    /// The key is made only once the roster reads rootless in this
     /// transaction: a run checked before another run's appointment committed
-    /// is refused here, before it makes a key in place of that run's
-    /// successor.
+    /// is refused here. It is made in memory, and `slot` takes its seed as
+    /// the last step, once the fold counts the appointment and the binding;
+    /// a refusal before that leaves the slot's seed as it was. The answer
+    /// carries what the slot held, which the caller puts back when its
+    /// commit fails ([`OwnerSigningSlot::put_back`]).
     pub(crate) fn appoint_successor_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: EntityId,
         pin: &PinnedRoot,
         anchor: &SigningKey,
-        successor: impl FnOnce() -> Result<OwnerRootSigner>,
-    ) -> Result<RootAppointmentReceipt> {
+        slot: &OwnerSigningSlot,
+    ) -> Result<(RootAppointmentReceipt, SlotRenewal)> {
         let before = self.authority_view_readonly_in_txn(txn)?;
         refuse_unneeded_appointment(&before, pin.anchor_key)?;
-        let successor = successor()?;
+        let fresh = slot.fresh_key()?;
+        let successor = fresh.signer();
         let rows: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> =
             super::history_transfer::history_in_txn(self, txn)?
                 .into_iter()
@@ -333,7 +342,7 @@ impl Vault {
             start: now,
             end: now,
         };
-        let appointment = valid_appointment(&before, &rows, pin, anchor, &successor, now)?;
+        let appointment = valid_appointment(&before, &rows, pin, anchor, successor, now)?;
         let entry = authority_entry_hash(&appointment)?;
         self.put_authority_log_entries_in_txn(txn, &[(appointment, at, now)])?;
         let key = AuthorityKey::Ed25519(successor.public_key());
@@ -385,13 +394,15 @@ impl Vault {
             .filter(|hash| !after.valid_entries.contains(hash))
             .copied()
             .collect();
-        Ok(RootAppointmentReceipt {
+        let (_, renewal) = slot.renew(&fresh)?;
+        let receipt = RootAppointmentReceipt {
             entry,
             root: pin.id,
             successor: successor.public_key(),
             binding,
             epoch,
             sealed,
-        })
+        };
+        Ok((receipt, renewal))
     }
 }

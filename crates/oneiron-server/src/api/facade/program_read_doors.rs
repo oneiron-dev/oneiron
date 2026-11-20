@@ -99,6 +99,7 @@ pub(crate) async fn vault_runs_program_hold_release(
     auth: &CoreAuth,
     input: ReleaseTurnProgramHoldRequest,
 ) -> Listed<ProgramHoldReleaseView> {
+    let credential = auth.verified_slip().cloned();
     as_owner_or_delegate_naming(
         server,
         auth,
@@ -109,7 +110,12 @@ pub(crate) async fn vault_runs_program_hold_release(
                     .map_err(MemoryError::from)
             }
             OwnerOrDelegate::Delegate(agent) => {
-                dreamer_runner::release_turn_program_hold_as_delegate(server.vault(), agent, &input)
+                dreamer_runner::release_turn_program_hold_as_delegate(
+                    server.vault(),
+                    agent,
+                    credential.as_ref(),
+                    &input,
+                )
             }
         },
         |_| Vec::new(),

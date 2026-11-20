@@ -208,7 +208,9 @@ impl<'a> Reader<'a> {
     /// (`ScopedReadActorKey::admits_owner_alternative`): its live-owner
     /// reader reads under that floor held to the key's bounds, as the lane's
     /// owner alternative does, never under the owner's own ungated key
-    /// (blind review round 2 on #8065).
+    /// (blind review round 2 on #8065). So does the reader of a key homed in
+    /// no conversation of this vault: the home binds the owner's floor too
+    /// (round 2 review P1 of #9590).
     fn own_in(&self, txn: &heed::RoTxn<'_>) -> Result<&OwnAuthority> {
         if let Some(own) = self.own.get() {
             return Ok(own);
@@ -220,7 +222,9 @@ impl<'a> Reader<'a> {
                 OwnAuthority::Owner(_) if !self.key.admits_owner_alternative() => {
                     OwnAuthority::Absent
                 }
-                OwnAuthority::Owner(_) if self.key.owner_authority_withheld() => {
+                OwnAuthority::Owner(_)
+                    if self.key.owner_authority_withheld() || self.key.is_homed_unnamed() =>
+                {
                     OwnAuthority::Owner(Box::new(self.key.bounded_owner_key(self.actor)))
                 }
                 own => own,

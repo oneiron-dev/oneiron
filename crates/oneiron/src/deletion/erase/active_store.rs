@@ -108,9 +108,7 @@ impl Vault {
                 // entries' retirement staged; another record's stays (KS-3).
                 self.store.stage_known_history_erase_in_txn(wtxn, id)?;
                 crate::store::secret_handle_labels::erase_secret_handle_label_in_txn(
-                    &self.store,
-                    wtxn,
-                    id,
+                    self, wtxn, id,
                 )?;
                 crate::store::secret_payment_marks::erase_secret_payment_mark_in_txn(
                     &self.store,
@@ -242,6 +240,10 @@ impl Vault {
             // A MACHINE claim's signed history controls go with it.
             let (existed, had_vector, had_graph_mutation, neighbors) =
                 crate::batch::deindex_entity_with_machine_history(&write, wtxn, id)?;
+            // A project's unbound home room leaves no standing answer wider
+            // than its rows; no batch runs before the purge's caller commits
+            // (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS).
+            self.mark_answers_in_narrowed_rooms_in_txn(wtxn)?;
             crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
             crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
             let note_removed = crate::note::erase::purge(self, wtxn, id)?;
@@ -400,6 +402,9 @@ impl Vault {
             .deindex_project_room(&self.store, wtxn, id, &|txn, id| {
                 crate::batch::deindex_entity(&write, txn, id)
             })?;
+        // A project's unbound home room leaves no standing answer wider than
+        // its rows (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS).
+        self.mark_answers_in_narrowed_rooms_in_txn(wtxn)?;
         if room_had_graph {
             ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &room_neighbors)?;
             crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
@@ -538,6 +543,7 @@ impl Vault {
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
         // The scrub below truncates a PERSON body in place: its party keys go first.
         crate::store::person_party_keys::reindex_person_party_keys(&self.store, wtxn, id, None)?;
+        crate::task_verb::speaker_entry_index::reindex_speaker_entry(&self.store, wtxn, id, None)?;
         // An epoch summary keeps its keyframe, so the next mint numbers above it.
         let scrubbed = crate::compaction::erased_form(&entity_record);
         self.store

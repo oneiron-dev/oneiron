@@ -579,6 +579,7 @@ fn request_admits(fold: &AuthorityFold, transition: &CustodyTransition) -> bool 
                     fold.machine(request.executor),
                     &fold.roster,
                     &transition.signer,
+                    fold.pinned_root.as_ref(),
                 )
         }
     }

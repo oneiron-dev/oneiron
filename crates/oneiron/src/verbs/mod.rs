@@ -39,6 +39,7 @@ mod describe;
 mod diary;
 mod diary_pinned;
 mod disclosure;
+mod display_edits;
 mod embedding_space;
 mod engine_controls;
 mod eval_cohort;
@@ -65,11 +66,13 @@ pub(crate) mod host;
 mod hub;
 mod identity_topology;
 mod inquiry;
+mod leave;
 mod legal_hold;
 // The build-time closure of the verb table over linked `self.*` operations.
 mod linked_self_surface;
 mod live_run;
 mod live_voice;
+mod machine_names;
 mod mesh;
 mod model_manifest;
 mod model_pack;
@@ -172,10 +175,11 @@ pub struct TaskAnswerRequest {
 pub use oneiron_verb_wire::verbs::{
     BoardFrameReply, BoardRefreshRequest, BoardSubscriptionReply, BoardSubscriptionRequest,
     BoardWakeReply, BoardWakeRequest, CompanionSharingRequest, EmptyRequest, InboxListRequest,
-    InboxMarkRequest, ProjectCardRequest, ProjectConversationRequest, ProjectGoalDismissRequest,
-    ProjectGoalDismissTarget, ProjectRefRequest, ProjectTradeoffRouteRequest, ReceiptsRequest,
-    RoomClaimRequest, RoomHostRequest, RoomRefRequest, RoomRequest, RoomTurnRequest, TaskRequest,
-    TaskWaveReceipt, TaskWaveRequest, WorkspaceRefRequest,
+    InboxMarkRequest, OneVaultAcknowledgeRequest, ProjectCardRequest, ProjectConversationRequest,
+    ProjectGoalDismissRequest, ProjectGoalDismissTarget, ProjectRefRequest,
+    ProjectTradeoffRouteRequest, ReceiptsRequest, RoomClaimRequest, RoomHostRequest,
+    RoomRefRequest, RoomRequest, RoomTurnRequest, TaskRequest, TaskWaveReceipt, TaskWaveRequest,
+    WorkTalkOpenRequest, WorkspaceRefRequest,
 };
 
 /// `vault.projects.goal.dismiss`'s result: `false` when an identical retry
@@ -398,6 +402,7 @@ pub use self::describe::*;
 pub use self::diary::*;
 pub use self::diary_pinned::*;
 pub use self::disclosure::*;
+pub use self::display_edits::*;
 pub use self::embedding_space::*;
 pub use self::engine_controls::*;
 pub use self::eval_cohort::*;
@@ -424,9 +429,11 @@ pub use self::host::*;
 pub use self::hub::*;
 pub use self::identity_topology::*;
 pub use self::inquiry::*;
+pub use self::leave::*;
 pub use self::legal_hold::*;
 pub use self::live_run::*;
 pub use self::live_voice::*;
+pub use self::machine_names::*;
 pub use self::mesh::*;
 pub use self::model_manifest::*;
 pub use self::model_pack::*;

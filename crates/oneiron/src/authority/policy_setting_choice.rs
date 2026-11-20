@@ -83,8 +83,10 @@ pub(super) type PolicySettingChoiceState = OwnerChoiceState<[u8; 32]>;
 /// copy's entry, then by the target of each of its rows, the target and hash of each act that row
 /// names. The fold counts each named act on its own row ([`NameCounts`]); the copy's frontier
 /// choice is its entry's own hash, which says nothing of what it names.
-pub(super) type SettingCopyNames =
-    BTreeMap<AuthorityEntryHash, BTreeMap<EntityId, BTreeSet<(EntityId, AuthorityEntryHash)>>>;
+pub(super) type SettingCopyNames = oneiron_persistent_collections::PersistentMap<
+    AuthorityEntryHash,
+    BTreeMap<EntityId, BTreeSet<(EntityId, AuthorityEntryHash)>>,
+>;
 
 /// Every setting's folded acts.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -157,6 +159,7 @@ pub(super) fn apply_policy_setting(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let acts = set
         .row_acts()
@@ -168,6 +171,7 @@ pub(super) fn apply_policy_setting(
             machine: set.machine,
             choice: value.as_ref(),
             context: POLICY_SETTING_REVISION_CONTEXT,
+            needs_proof_off_the_line,
             persons_own_narrowing: false,
         };
         landings.push(owner_choice_landing(
@@ -200,7 +204,9 @@ pub(super) fn apply_policy_setting(
 /// ([`choice_landing`] with no owner), its choice the entry's own hash. A row
 /// that leaves out a live act of its target, which it would replace, makes
 /// the entry invalid. Every row is judged against the state before the
-/// entry, and only then do they all land.
+/// entry, and only then do they all land. `needs_proof_off_the_line` is the
+/// owner key's line's mark on the entry ([`super::owner_key_line`]), which
+/// marks no setting copy yet (FIX SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
 pub(super) fn apply_setting_copy(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -208,6 +214,7 @@ pub(super) fn apply_setting_copy(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let mut landings = Vec::with_capacity(copy.rows.len());
     let mut names = BTreeMap::new();
@@ -245,6 +252,7 @@ pub(super) fn apply_setting_copy(
             machine: copy.machine,
             choice: Some(&hash),
             context: POLICY_SETTING_REVISION_CONTEXT,
+            needs_proof_off_the_line,
             persons_own_narrowing: false,
         };
         landings.push(choice_landing(
@@ -282,7 +290,7 @@ pub(super) fn folded_policy_settings(
         ),
         counts,
         targets: folded_owner_choices(state, &state.policy_settings, pin, counted),
-        refused: refused_owner_choices(&state.policy_settings).clone(),
+        refused: refused_owner_choices(&state.policy_settings).to_btree_set(),
         asking: state.policy_settings.asking_by_target(),
     }
 }

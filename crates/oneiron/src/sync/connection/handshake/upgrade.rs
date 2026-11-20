@@ -5,8 +5,8 @@
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::handshake::client::Request;
-use tokio_tungstenite::tungstenite::http::HeaderMap;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
+use tokio_tungstenite::tungstenite::http::{HeaderMap, HeaderValue};
 
 use crate::sync::carrier::SyncSocket;
 use crate::sync::client::{SyncClient, SyncClientConfig, SyncEvent};
@@ -30,6 +30,10 @@ use super::super::session::SessionFault;
 /// FIX 11111: no credential rides a clear `ws` upgrade that is neither
 /// loopback nor mesh; the socket opens as one with no credential. A peer
 /// session rides the paired mesh to its peer.
+///
+/// MEMBER-SYNC D1: a member lane's upgrade carries one request header, a
+/// restriction request that is never authority; without it the upgrade takes
+/// the path it took before.
 pub(in crate::sync::connection) fn upgrade_request(
     vault: &crate::Vault,
     config: &SyncClientConfig,
@@ -69,7 +73,22 @@ pub(in crate::sync::connection) fn upgrade_request(
             .map_err(|_| "Auth token is not a valid header value".to_string())?;
         request.headers_mut().insert(AUTHORIZATION, header_value);
     }
+    if config.member_lane {
+        request.headers_mut().insert(
+            crate::sync::carrier::MEMBER_LANE_HEADER,
+            HeaderValue::from_static(crate::sync::carrier::MEMBER_LANE_HEADER_VALUE),
+        );
+    }
     Ok((request, binding, withheld))
+}
+
+/// Whether `request` carries a credential: the slip its `binding` proves, or
+/// a bearer token.
+pub(in crate::sync::connection) fn upgrade_carries_credential(
+    request: &Request,
+    binding: Option<&UpgradeBinding>,
+) -> bool {
+    binding.is_some() || request.headers().contains_key(AUTHORIZATION)
 }
 
 impl SyncConnection {
@@ -87,6 +106,7 @@ impl SyncConnection {
         let (request, binding, withheld) =
             upgrade_request(self.manager.vault(), config, client.peer_session.is_some())
                 .map_err(SessionFault::Local)?;
+        let carried = upgrade_carries_credential(&request, binding.as_ref());
         if withheld && !client.cleartext_withhold_logged {
             client.cleartext_withhold_logged = true;
             tracing::warn!("sync server is clear ws off loopback and mesh: no credential sent");
@@ -102,15 +122,24 @@ impl SyncConnection {
         let (ws_stream, response) = crate::sync::carrier::connect_sync_socket(request, dialer)
             .await
             .map_err(|e| {
+                let message = format!("WS connect failed: {e}");
                 // A home's refused credential may mean a removed membership:
                 // the host asks the home, and this socket decides nothing
                 // (FIX 12442). A peer's refusal is not the home's.
-                if client.peer_session.is_none() && crate::sync::carrier::upgrade_unauthorized(&e) {
-                    let _ = event_tx.send(SyncEvent::UpgradeUnauthorized);
+                if client.peer_session.is_none()
+                    && let Some(refusal) = crate::sync::carrier::upgrade_refusal(&e, carried)
+                {
+                    let _ = event_tx.send(refusal.event());
+                    // A 403 refuses this credential the socket: no redial on
+                    // it opens one (MEMBER-SELECTOR-SOCKET). The refusal
+                    // carries the typed reason when the home named one
+                    // (MEMBER-SYNC-WORLD-PACT = C).
+                    if matches!(refusal, crate::sync::carrier::UpgradeRefusal::Forbidden(_)) {
+                        return SessionFault::Forbidden(message);
+                    }
                 }
                 // A carrier this machine cannot set up for its URL is its
                 // own fault; any other failure is the far end's (FIX 22217).
-                let message = format!("WS connect failed: {e}");
                 if crate::sync::carrier::own_setup_fault(&e) {
                     SessionFault::Local(message)
                 } else {

@@ -19,6 +19,7 @@ fn two_friends_get_distinct_generic_links_and_void_is_final() -> TestResult {
     for friend in friends {
         super::super::tests::support::put_person(&vault, friend);
     }
+    super::super::tests::support::grant_ask_read(&vault, &friends)?;
     let mut question =
         TaskAskQuestion::new(super::super::tests::support::consult_turn(&vault, 0x45));
     question.options = [
@@ -126,6 +127,7 @@ fn reissued_link_revokes_previous_token_without_affecting_other_friend() -> Test
     let owner = vault.ensure_embedded_owner_actor()?;
     let friend = EntityId::from_bytes([0x52; 16])?;
     super::super::tests::support::put_person(&vault, friend);
+    super::super::tests::support::grant_ask_read(&vault, &[friend])?;
     let mut question =
         TaskAskQuestion::new(super::super::tests::support::consult_turn(&vault, 0x53));
     question
@@ -181,6 +183,7 @@ fn unused_friend_link_lands_late_word_without_changing_first_answer() -> TestRes
     for friend in friends {
         super::super::tests::support::put_person(&vault, friend);
     }
+    super::super::tests::support::grant_ask_read(&vault, &friends)?;
     let mut question =
         TaskAskQuestion::new(super::super::tests::support::consult_turn(&vault, 0x63));
     question.options = [
@@ -236,6 +239,7 @@ fn governed_link_requires_explicit_disclosed_source_before_consuming_token() -> 
     let owner = vault.ensure_embedded_owner_actor()?;
     let friend = EntityId::from_bytes([0x71; 16])?;
     super::super::tests::support::put_person(&vault, friend);
+    super::super::tests::support::grant_ask_read(&vault, &[friend])?;
     let reference = super::super::tests::support::consult_turn(&vault, 0x72);
     let mut question = TaskAskQuestion::new(reference);
     let yes = TaskAskOptionId::new("yes")?;
@@ -307,6 +311,7 @@ fn settlement_replay_without_issuer_proof_is_refused_for_unissued_and_voided_lin
     for friend in friends {
         super::super::tests::support::put_person(&vault, friend);
     }
+    super::super::tests::support::grant_ask_read(&vault, &friends)?;
     let mut question =
         TaskAskQuestion::new(super::super::tests::support::consult_turn(&vault, 0x64));
     question.options = [(TaskAskOptionId::new("yes")?, TaskAskOption::new("Yes"))].into();
@@ -442,6 +447,7 @@ fn a_bearer_word_on_an_ask_past_the_link_bound_is_refused_unread() -> TestResult
     let owner = vault.ensure_embedded_owner_actor()?;
     let friend = EntityId::from_bytes([0x46; 16])?;
     super::super::tests::support::put_person(&vault, friend);
+    super::super::tests::support::grant_ask_read(&vault, &[friend])?;
     let mut question =
         TaskAskQuestion::new(super::super::tests::support::consult_turn(&vault, 0x47));
     question.options = [(TaskAskOptionId::new("a")?, TaskAskOption::new("Yes"))].into();

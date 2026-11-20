@@ -301,6 +301,10 @@ fn semantic_cooldown_survives_reopen() -> std::result::Result<(), Box<dyn std::e
     let mut reopen_config = VaultConfig::device();
     reopen_config.store_clock = clock.bundle();
     let reopened = Vault::open(tmp.path(), reopen_config)?;
+    // This reopen restores the seed marker; the built-in pack gate is not under test.
+    reopened
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     let mut second_sink = RecordingExecutor::default();
     let result = reopened.dispatch_outbound_intent(request("second"), &mut second_sink)?;
     assert_eq!(result.outcome, OutboundDispatchOutcome::Suppressed);
@@ -314,6 +318,10 @@ fn semantic_cooldown_survives_reopen() -> std::result::Result<(), Box<dyn std::e
     let mut reopen_config = VaultConfig::device();
     reopen_config.store_clock = crate::ports::ManualClock::new(1_002).bundle();
     let reopened = Vault::open(tmp.path(), reopen_config)?;
+    // This reopen restores the seed marker; the built-in pack gate is not under test.
+    reopened
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     let queried = reopened.receipts(
         crate::receipt::ReceiptQuery::new(10).with_kind(crate::receipt::ReceiptKind::Outbound),
     )?;

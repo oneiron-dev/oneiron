@@ -136,6 +136,10 @@ mod brief;
 mod decisions;
 mod dials;
 mod eval_set;
+#[cfg(oneiron_test_support)]
+pub(crate) use eval_set::{
+    eval_measurement_remeasure_digest_for_test, eval_measurement_request_digest_for_test,
+};
 pub(crate) mod exploration_trial;
 mod gate;
 mod goal_axes;

@@ -28,6 +28,7 @@ use crate::llm::call_as_step_checked;
 use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::DurableStepError;
 use crate::scope_summary::{ComposedSummary, ScopeSummaryPlan, SummaryLineSpan};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use oneiron_model::llm::LlmResponse;
 use std::collections::BTreeMap;
 
@@ -70,7 +71,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     window,
                 ))
                 .map_err(|_| invalid_consolidation("summary policy did not encode"))?;
-                let params_hash = *blake3::hash(&params).as_bytes();
+                let params_hash = session_pages_params_hash(&params);
                 let memo = plan.composition_memo(evidence, &params_hash)?;
                 // The same paged composition already stands: no page is asked again.
                 match ctx.vault.reuse_composed_scope_summary(
@@ -492,4 +493,20 @@ fn fits(label: &str, slice: &str, room: u64) -> Result<bool> {
 /// TURN, `[label] words` and a newline.
 fn render(label: &str, words: &str) -> String {
     format!("[{label}] {words}\n")
+}
+
+/// A sitting composed in pages: its params JSON (instruction, model,
+/// schema, `PAGES_DOMAIN`, window), with no tag written
+/// (`purposes::dreamer_consolidation::SESSION_PAGES_PARAMS`).
+fn session_pages_params_hash(params: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purposes::dreamer_consolidation::SESSION_PAGES_PARAMS)
+        .raw(params)
+        .finish()
+}
+
+/// [`session_pages_params_hash`] for the K door
+/// (`test_doors::fingerprint_keep_dreamer_consolidation_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn session_pages_params_hash_for_test(params: &[u8]) -> [u8; 32] {
+    session_pages_params_hash(params)
 }

@@ -11,6 +11,7 @@ use crate::code_run::types::{
 };
 use crate::error::Result;
 use crate::task_verb::sdk::AgentVerb;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use super::super::{ExecutorCallSite, HostSelfDispatcher};
 use super::connector_wait::{connector_call_answer, held_call_ref};
@@ -31,7 +32,7 @@ impl HostSelfDispatcher<'_> {
             return Ok(None);
         }
         let request_digest =
-            *blake3::hash(&call_identity(call.verb.as_str(), &call.input)).as_bytes();
+            consent_request_digest(&call_identity(call.verb.as_str(), &call.input));
         Ok(Some(CodeConsentCallSite {
             wait_id: consent_wait::code_consent_wait_id(receipt_id, &request_digest)?,
             run_id: site.run_id,
@@ -84,4 +85,19 @@ impl HostSelfDispatcher<'_> {
         }
         Ok(connector_call_answer(verb, outcome))
     }
+}
+
+/// A code consent site's request digest over a verb call's identity bytes
+/// (`purposes::code_run::CONSENT_REQUEST`).
+fn consent_request_digest(identity: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purposes::code_run::CONSENT_REQUEST)
+        .raw(identity)
+        .finish()
+}
+
+/// [`consent_request_digest`] for the K door
+/// (`test_doors::fingerprint_keep_code_run_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn consent_request_digest_for_test(identity: &[u8]) -> [u8; 32] {
+    consent_request_digest(identity)
 }

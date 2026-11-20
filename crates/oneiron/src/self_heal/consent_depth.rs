@@ -14,6 +14,7 @@ use super::{
 use crate::limit_ask::EngineLimit;
 use crate::store::PendingGateConsentRecord;
 use crate::{EntityId, Result, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 
 /// Tray rows one page reads: a traversal unit, never a cut.
@@ -139,15 +140,41 @@ impl DeterministicDetector for ConsentQueueDepthDetector {
         event.actual = Value::from(depth);
         event.delta = Value::from(depth - threshold);
         event.valid_from = self.snapshot_at;
-        let mut hash = blake3::Hasher::new();
-        for o in &queued {
-            hash.update(&o.payload_digest);
-        }
-        hash.update(&self.snapshot_at.to_be_bytes());
-        hash.update(&threshold.to_be_bytes());
-        event.replay.content_hash = *hash.finalize().as_bytes();
+        event.replay.content_hash = depth_content_hash(
+            queued.iter().map(|o| &o.payload_digest),
+            self.snapshot_at,
+            threshold,
+        );
         vec![event]
     }
+}
+
+/// A consent-depth finding's replay hash: each queued consent's payload
+/// digest in tray order, then the snapshot time and the threshold
+/// (`purposes::self_heal::CONSENT_DEPTH`).
+fn depth_content_hash<'a>(
+    payload_digests: impl IntoIterator<Item = &'a [u8; 32]>,
+    snapshot_at: u64,
+    threshold: u64,
+) -> [u8; 32] {
+    let mut hash = LegacyDigest::new(purposes::self_heal::CONSENT_DEPTH);
+    for payload_digest in payload_digests {
+        hash.raw(payload_digest);
+    }
+    hash.raw(&snapshot_at.to_be_bytes())
+        .raw(&threshold.to_be_bytes())
+        .finish()
+}
+
+/// [`depth_content_hash`] for the K door
+/// (`test_doors::fingerprint_keep_self_heal_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn depth_content_hash_for_test(
+    payload_digests: &[[u8; 32]],
+    snapshot_at: u64,
+    threshold: u64,
+) -> [u8; 32] {
+    depth_content_hash(payload_digests, snapshot_at, threshold)
 }
 
 impl Vault {

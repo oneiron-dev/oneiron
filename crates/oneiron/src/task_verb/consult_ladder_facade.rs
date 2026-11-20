@@ -142,6 +142,7 @@ impl Memory<'_> {
                         assigned_ref: None,
                         actor_generation: None,
                         assigned_generation: None,
+                        answered_heads: None,
                         occurred_at: interrupted.interrupted_at,
                     },
                 )?;

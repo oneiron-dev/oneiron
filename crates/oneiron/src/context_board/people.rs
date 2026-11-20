@@ -357,6 +357,22 @@ impl People {
         Ok(())
     }
 
+    /// Sets each person's `about` line as `read` may see it, with its exact
+    /// contributors: the line of the highest band its own floor reads, or a
+    /// higher one a single live Grant of its shows where that Grant reads the
+    /// person and every fact of the line (FIX-LIST
+    /// GRANT-RECEIPT-OTHER-READ-LANES part 4). Only a read made for one
+    /// answer takes it: a staged brief (a run's, an MCP connection's) keeps
+    /// the line its own floor reads, since its bytes are sent again until its
+    /// next boundary, past a revoke or a world kept to this device since
+    /// (review round 2 of #9929).
+    ///
+    /// # Errors
+    /// The read's: a credential no longer live, or a store failure.
+    pub fn set_about_for_reader(&mut self, read: &crate::claim::ScopedRead<'_>) -> Result<()> {
+        read.with_about_lines(|about| self.set_about(about))
+    }
+
     /// The exact contributors stored with this person's current `about` line.
     #[must_use]
     pub(crate) fn about_sources(&self, person: EntityId) -> &[EntityId] {

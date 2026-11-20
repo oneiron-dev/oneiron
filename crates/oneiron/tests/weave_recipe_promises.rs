@@ -14,6 +14,9 @@
 //!   writes nothing again.
 //! - ND-040, changed source (ARCH-0026 :343324, derived claims land "with provenance"): a source
 //!   edited between the draft and its commit refuses the write.
+//! - ARCH-0073 §6, "a re-mention restores the archived record" (FIX
+//!   DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON): an output about a subject PERSON the
+//!   vault cleanup archived after the admission restores her in the output's own write.
 //!
 //! The two ND-040 tests port the quarantined unit tests of `src/dreamer_wake/recipe/tests.rs`
 //! (FIX [LIBTEST-QUARANTINE-DREAMER-WAKE-RECIPE-TESTS]) onto public paths. P2 (llms-full.txt
@@ -45,6 +48,7 @@ use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::skill::{SkillLifecycle, SkillRecord};
 use oneiron::skill_hub::HubFile;
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::{
     DreamerAttemptExecution, DreamerAttemptExecutor, DreamerConsolidationScope, DreamerWakeDriver,
@@ -537,6 +541,37 @@ fn changed_source_between_recipe_draft_and_commit_refuses_the_write() -> Result<
         fixture.output_gate_count()?,
         0,
         "ND-040 changed source: the refusal writes no output Gate receipt"
+    );
+    Ok(())
+}
+
+/// ARCH-0073 §6, "a re-mention restores the archived record" (FIX
+/// DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON): the vault cleanup archives the
+/// recipe's subject PERSON after the owner admitted the recipe. The output the recipe lands
+/// about her is a new mention of her, and its own write restores her, as the promotion
+/// writer's claim does.
+#[test]
+fn recipe_output_about_an_archived_person_restores_her() -> Result<()> {
+    let fixture = Fixture::new(None)?;
+    archive_as_cleanup(&fixture.vault, &fixture.subject)?;
+    assert!(
+        fixture.vault.archived_entity(&fixture.subject)?.is_some(),
+        "the cleanup's archive marker stands on the subject"
+    );
+    let mut runtime = CountingRuntime::default();
+    let ran = fixture.execute(&mut runtime)?;
+    assert!(
+        matches!(ran, DreamerAttemptExecution::Completed { .. }),
+        "the recipe commits its result: {ran:?}"
+    );
+    assert!(
+        fixture.vault.archived_entity(&fixture.subject)?.is_none(),
+        "the output is a new mention of her: it restored her, and she bears no archive marker"
+    );
+    assert_eq!(
+        fixture.outputs()?.len(),
+        1,
+        "the recipe lands one output claim about her"
     );
     Ok(())
 }

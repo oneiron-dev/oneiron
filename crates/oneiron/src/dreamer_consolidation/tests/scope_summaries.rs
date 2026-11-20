@@ -12,7 +12,9 @@ use crate::conversation_dag::{ScopePath, ScopeSelector};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::edge::EdgeKind;
 use crate::memory::{WitnessAuthor, WitnessMessage};
-use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY};
+use crate::registry::{
+    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SUMMARY,
+};
 use crate::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
 
 const SECRET: &str = "the gate code is 4417";
@@ -403,6 +405,17 @@ fn a_reader_who_may_not_read_the_message_reads_no_summary_of_it() -> Result<()> 
 fn a_grant_revoked_during_the_call_still_charges_the_wake() -> Result<()> {
     let (_dir, vault, _clock) = open_clocked_vault();
     let space = EntityId::now();
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &space,
+            ENTITY_TYPE_RELATIONSHIP,
+            occurred(1),
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let (_, conversation) = witness(
         &vault,
         0x6B,

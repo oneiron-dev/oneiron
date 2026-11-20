@@ -5,6 +5,7 @@
 
 use oneiron::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptBinding};
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MemoryResult};
+use oneiron::snapshot_read::ExtractionPolicy;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::coach::define_agent;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
@@ -118,6 +119,19 @@ fn assert_extraction_digest(pin: &Value) {
     );
 }
 
+/// Returns the pin of a served `policy` by the recipe of main at 35406ef709a7
+/// (crates/oneiron/src/snapshot_read/extraction_inputs.rs:392-399): BLAKE3 over
+/// the policy tag and then the policy's JSON bytes, fields in declared order and
+/// no separator, as lowercase hex.
+fn policy_pin_by_base_recipe(policy: &Value) -> ExtractionInputsPageTestResult<String> {
+    let policy: ExtractionPolicy = serde_json::from_value(policy.clone())?;
+    let encoded = serde_json::to_vec(&policy)?;
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"oneiron.dreamer.extraction.policy.v1");
+    hash.update(&encoded);
+    Ok(hash.finalize().to_hex().to_string())
+}
+
 /// Asserts that `revision` is a `blake3:` ref with a 64-character hex digest.
 fn assert_extraction_revision(revision: &Value) {
     let revision = revision
@@ -144,8 +158,8 @@ fn bind_extraction(
 
 /// The bound Dreamer pages its partition's three TURNs in queued order, each
 /// with its conversation, partition, role, learned time and source version,
-/// and the effective policy with its pin, and its bound evidence serves each
-/// turn's current words.
+/// and the effective policy with its pin, which is the base recipe over that
+/// policy, and its bound evidence serves each turn's current words.
 #[test]
 fn the_bound_dreamer_pages_its_partition_turns_with_version_pins()
 -> ExtractionInputsPageTestResult<()> {
@@ -170,6 +184,10 @@ fn the_bound_dreamer_pages_its_partition_turns_with_version_pins()
     assert!(page["policy"]["key_rules"].is_object());
     assert_eq!(page["policy"]["prefilter"]["enabled"], false);
     assert_extraction_digest(&page["policy_pin"]);
+    assert_eq!(
+        page["policy_pin"],
+        policy_pin_by_base_recipe(&page["policy"])?
+    );
     let turns = page["turns"]
         .as_array()
         .unwrap_or_else(|| panic!("turns is an array"));

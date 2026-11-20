@@ -5,15 +5,23 @@
 //!
 //! An `assert_distinct` op asserts through the live `entity.distinct_from`
 //! CLAIM of its pair when there already is one, so the pair's CLAIM may sit
-//! in a world: here the owner's own CLAIM in W. The op writes a type-74
+//! in a world: here a CLAIM proposed in W, which the owner's assertion
+//! promotes in place, so it keeps its world. The op writes a type-74
 //! AssertDistinct ledger event that names the pair and that CLAIM, signed by
 //! an admission disposition, and FIX DISTINCT-EVENT-DEFAULT-PROJECT-STAMP
-//! stamps both rows at the CLAIM's world. A door that judges a row by its
-//! world (`Vault::record_world`, and through it what a device-only world
-//! keeps: `Vault::export_records_in_scope`) must read those rows in W. Before
-//! the fix it read every type-74 row as base reality, so with W kept on this
-//! machine the CLAIM stayed here while its event and disposition were
-//! exported.
+//! stamps both rows at the CLAIM's world. Every door that judges a row by its
+//! world reads it through one resolver, the one behind `Vault::record_world`:
+//! what a device-only world keeps on this machine places a row of this type
+//! by it too (`settings::device_only_withholds`, its last arm). Before the fix
+//! that resolver read every type-74 row as base reality, so with W kept on
+//! this machine the CLAIM stayed here while its event and disposition were
+//! free to leave.
+//!
+//! The scoped export shows neither row on any head: it withholds every signed
+//! ledger row whole, since the Nulled rule changes its binary and text fields
+//! and its body is proof-bound (`batch::export::credential_filter`), so this
+//! test asserts nothing through it (FIX
+//! DISTINCT-EVENT-WORLD-PROOF-EXPORT-PREMISE).
 //!
 //! Each `FIXTURE:` assertion checks the setup, never the fix. The `LEAK:`
 //! assertions are the check.
@@ -25,7 +33,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use oneiron::federation::record_scope::{ScopeView, ScopedRecord};
+use oneiron::federation::record_scope::ScopeView;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::identity_topology::{
     AssertDistinctOp, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp,
@@ -120,23 +128,8 @@ fn dispositions_of(vault: &Vault, event: EntityId) -> Vec<EntityId> {
         .collect()
 }
 
-/// The rows an export to a machine nobody proved carries.
-fn exported(vault: &Vault) -> Vec<ScopedRecord> {
-    let top = Scope::top();
-    vault
-        .export_records_in_scope(&top, &top, &top)
-        .expect("export")
-}
-
-fn held(rows: &[ScopedRecord], ids: &[EntityId]) -> Vec<EntityId> {
-    ids.iter()
-        .copied()
-        .filter(|id| rows.iter().any(|row| row.id == *id))
-        .collect()
-}
-
 #[test]
-fn a_distinct_event_over_a_claim_of_a_kept_world_stays_on_this_machine() {
+fn the_ledger_rows_of_a_distinct_fact_in_a_world_sit_in_that_world() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault =
         Arc::new(open_member_vault(dir.path(), VaultConfig::device(), &[]).expect("fixture vault"));
@@ -155,35 +148,53 @@ fn a_distinct_event_over_a_claim_of_a_kept_world_stays_on_this_machine() {
         .put_entity(&world, ENTITY_TYPE_WORLD, at(1), 1, b"world")
         .expect("put the world");
 
-    // The owner's own distinct fact between two people, in W.
+    // A distinct fact between two people, proposed in W. The raw claim door
+    // holds an Approved row of this critical predicate at the gate's floor
+    // (no owner proof reaches it: gate.pending.criticality_floor), so the
+    // CLAIM lands Proposed, with the source an owner's assertion carries.
     let pair = distinct_pair_key(person(&vault, "Ada"), person(&vault, "Ada"));
     let mut body = ClaimBody::new(
         PREDICATE_ENTITY_DISTINCT_FROM,
         ClaimSubject::Entity(pair.0),
         distinct_claim_value(pair),
         1.0,
-        ClaimApprovalStatus::Approved,
+        ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
     )
     .expect("a distinct claim");
+    body.source = Some(ClaimSource::UserStated);
     body.world = Some(world);
     let kept_claim = EntityId::now();
     vault
         .put_claim(&kept_claim, &body, at(1), 1)
-        .expect("put the distinct claim in W");
+        .expect("propose the distinct claim in W");
     assert_eq!(
         vault.record_world(&kept_claim).expect("world read"),
         Some(Some(world)),
         "FIXTURE: the pair's CLAIM sits in W"
     );
 
-    // Asserting the pair goes through that CLAIM; another pair's assertion
-    // mints its CLAIM in base reality.
+    // The owner's assertion of the pair promotes that CLAIM in place; another
+    // pair's assertion mints its CLAIM in base reality.
     let kept_event = assert_distinct(&vault, pair.0, pair.1);
     assert_eq!(
         asserted_claim(&vault, kept_event),
         kept_claim,
         "FIXTURE: the assertion names the pair's CLAIM in W"
+    );
+    assert_eq!(
+        vault
+            .get_claim(&kept_claim)
+            .expect("claim read")
+            .expect("FIXTURE: the pair's CLAIM is stored")
+            .approval,
+        ClaimApprovalStatus::Auto,
+        "FIXTURE: the owner's assertion promotes the proposed CLAIM"
+    );
+    assert_eq!(
+        vault.record_world(&kept_claim).expect("world read"),
+        Some(Some(world)),
+        "FIXTURE: the promoted CLAIM still sits in W"
     );
     let open_event = assert_distinct(&vault, person(&vault, "Bo"), person(&vault, "Bo"));
     let open_claim = asserted_claim(&vault, open_event);
@@ -198,37 +209,18 @@ fn a_distinct_event_over_a_claim_of_a_kept_world_stays_on_this_machine() {
         Some(None),
         "FIXTURE: the base pair's event sits in base reality"
     );
-    let before = exported(&vault);
     assert_eq!(
-        held(&before, &placed),
-        placed,
-        "FIXTURE: while W goes everywhere, an export carries the assertion in W"
-    );
-
-    vault
-        .keep_world_on_this_machine_for_test(world, true)
-        .expect("keep W on this machine");
-    let after = exported(&vault);
-    assert!(
-        held(&after, &[kept_claim]).is_empty(),
-        "FIXTURE: an export leaves out the CLAIM that W keeps"
-    );
-    assert_eq!(
-        held(&after, &[open_event, open_claim]),
-        [open_event, open_claim],
-        "FIXTURE: an export still carries the base pair's event and CLAIM"
+        vault.record_world(&open_claim).expect("world read"),
+        Some(None),
+        "FIXTURE: the base pair's CLAIM sits in base reality"
     );
 
     for row in &placed {
         assert_eq!(
             vault.record_world(row).expect("world read"),
             Some(Some(world)),
-            "LEAK: the ledger row {row:?} of the distinct fact in W does not sit in W"
+            "LEAK: the ledger row {row:?} of the distinct fact in W does not sit in W, so a W \
+             kept on this machine lets it leave"
         );
     }
-    assert_eq!(
-        held(&after, &placed),
-        Vec::<EntityId>::new(),
-        "LEAK: an export carries the ledger rows of the distinct fact that W keeps"
-    );
 }

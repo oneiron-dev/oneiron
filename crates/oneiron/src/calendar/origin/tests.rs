@@ -5,6 +5,7 @@ use crate::edge::EdgeActorClass;
 fn fixture() -> (tempfile::TempDir, Vault, WriteActor) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let actor = WriteActor::new(
         vault.ensure_embedded_owner_actor().unwrap(),
         EdgeActorClass::Human,
@@ -192,7 +193,7 @@ fn legacy_reads_default_but_originless_calendar_overwrite_refuses() {
     vault
         .put_entity(&event, ENTITY_TYPE_EVENT, time(), 1, &body)
         .unwrap();
-    let claim = ClaimBody::new(
+    let mut claim = ClaimBody::new(
         super::super::claims::PREDICATE_CALENDAR_TIME_KIND,
         ClaimSubject::Entity(event),
         Value::Map(vec![
@@ -204,6 +205,7 @@ fn legacy_reads_default_but_originless_calendar_overwrite_refuses() {
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut claim);
     vault
         .put_claim(&EntityId::now(), &claim, time(), 1)
         .unwrap();
@@ -254,7 +256,7 @@ fn calendar_fields_without_origin_refuse_and_conflicting_origins_fail_closed() {
     let event = vault
         .create_native_calendar_event(&input(), time(), actor)
         .unwrap();
-    let conflicting = ClaimBody::new(
+    let mut conflicting = ClaimBody::new(
         PREDICATE_CALENDAR_ORIGIN,
         ClaimSubject::Entity(event),
         Value::from("imported"),
@@ -263,6 +265,7 @@ fn calendar_fields_without_origin_refuse_and_conflicting_origins_fail_closed() {
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut conflicting);
     vault
         .put_claim(&EntityId::now(), &conflicting, time(), 1)
         .unwrap();
@@ -488,6 +491,8 @@ fn late_origin_binding_preserves_source_invalidation_without_hiding_native_event
         // The deletion fact is durable, not just the temporary unbound gate.
         drop(vault);
         let reopened = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+        reopened
+            .install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         assert_eq!(
             read_event(&reopened, &request).unwrap().is_some(),
             origin != CalendarOrigin::Dreamer
