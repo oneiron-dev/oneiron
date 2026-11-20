@@ -38,7 +38,8 @@ The set_format-occurrence change (2026-10-17) touches `src/edit/verbs/run_format
 and `src/edit_v4.rs`. `set_format` takes an optional 1-based `occurrence` that formats the n-th copy of a
 repeated `expect`, counted the way the ambiguity check counts its matches. A copy the paragraph does not
 hold reads as an expect mismatch. Without `occurrence` a repeated `expect` still refuses. The suite's
-`EditStep::SetRunFormatting` literals do not carry the new field; the suite is outside the workspace.
+`EditStep::SetRunFormatting` literals carry the new field (the suite compiles from the fork's own manifest); the
+suite is outside the workspace.
 The DOCX parse-budget change (2026-10-20, scan C005) adds `src/parse_budget.rs` and touches `src/docx.rs`,
 `src/lib.rs`, `src/runtime.rs`, `src/import.rs`, `src/docx_validate.rs` and `src/redline_extract.rs`. Before any
 reader builds a tree, one pass streams every XML part of the package and charges what the tree builders keep:
@@ -966,8 +967,8 @@ creates for a main part that had none is typed. A package with the correct
 `rels` Default and no conflicting Override is written as before. The fork's
 unit test of the absent case
 (`parse_document_relationships_missing_rels_file_returns_empty`) is rewritten to
-the new rule; no workspace run compiles it, and the wrapper's
-`tests/contract.rs` holds the rule. `tests/stress_manifest.rs` names the text
+the new rule; no workspace run compiles it (`scripts/docedit/run_stemma_fork_unit_tests.sh`
+does), and the wrapper's `tests/contract.rs` holds the rule. `tests/stress_manifest.rs` names the text
 `missing word/_rels/document.xml.rels` as a failure class; the refusal of a
 referencing main part still starts with it.
 
@@ -995,3 +996,40 @@ The linker's and writer's shared collector still knows only `id`, `embed` and
 prefix. The prefix and legacy qualified local name are fallbacks only when
 no namespace is recorded. The header/footer and hyperlink id checks use the
 same rule.
+
+## The fork's own tests (FIX STEMMA-FORK-UNIT-TESTS-RUN-BY-NO-JOB, 2026-11-20)
+
+No source file of the fork changes. Both packages are under `exclude` in the
+root `Cargo.toml`, and the workspace builds `stemma` only as a dependency of
+`oneiron-docedit`. So no workspace run compiles the `#[cfg(test)]` modules under
+`vendor/stemma-engine/src` and `vendor/stemma-diff/src`, or a target under
+either `tests/` directory. `scripts/docedit/run_stemma_fork_unit_tests.sh` runs
+the unit tests of both packages: `cargo test --locked --manifest-path
+<package>/Cargo.toml --lib`. Scoped CI calls it when a file of either package
+changes (the `stemma_fork` output of `scripts/ci/ci_scope.py`) and on every
+full run.
+
+Neither package has a lock file. For its run the script copies the workspace's
+`Cargo.lock` beside each manifest, so the tests use the dependency versions the
+product builds the fork with. It refuses a resolved lock that holds a package
+the workspace lock does not hold, apart from the fork's own two (`stemma` has
+`stemma-diff` as a dev-dependency, which the workspace never resolves), and it
+removes the copies when it ends. A lock file that is already beside a manifest,
+or that appears there during the run, refuses the run: the script makes each
+copy only as a new file and neither overwrites nor removes a lock file it did
+not make.
+
+The script does not run the integration targets. As measured on 2026-11-20
+from the fork's manifests: `stemma`'s `suite` (371 files) compiles and passes in
+about 12 minutes, and `element_fidelity` passes in about 17. `examples_reference`
+and `operations_reference` of `stemma` and `read_model_reference` of
+`stemma-diff` fail: each compares a generated page of the upstream repository
+(`docs/examples.md`, `docs/reference/operations.md`,
+`docs/reference/read-model.md`, one directory above the package) that the
+import did not copy. `untouched_block_fidelity` fails in one test,
+`single_tracked_edit_leaves_untouched_blocks_identical`, after about 17
+minutes: its ratchet counts 121 untouched blocks whose `w:pPr` a single tracked
+edit changes, against the 119 of `tests/untouched_block_fidelity_baseline.txt`
+(unchanged since the import). `redline_invariants` passes with one test and
+ignores five; `corpus_triage`, `redline_word_parity` and `stress_manifest` hold
+only ignored tests, which need an external corpus.
