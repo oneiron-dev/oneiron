@@ -40,7 +40,8 @@ impl RowStates for Resumed<'_> {
         merged: &FoldState,
         _valid: &ValidEntries,
     ) -> BTreeSet<AuthorityEntryHash> {
-        // No chain row is a machine profile.
+        // A resumed chain holds no machine profile; an adopted image's tail
+        // brings its own marks in `marks` (FIX 11760).
         self.marks
             .iter()
             .filter(|(_, proof)| proof.accepted(merged))

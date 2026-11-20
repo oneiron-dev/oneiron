@@ -201,6 +201,13 @@ pub fn image_slip_issuers(
     image.slip_issuers_for_test()
 }
 
+/// The rows `image` keeps as roster marks.
+pub fn image_roster_marks(
+    image: &crate::authority::AuthorityCheckpointV2,
+) -> std::collections::BTreeSet<crate::authority::AuthorityEntryHash> {
+    image.roster_marks_for_test()
+}
+
 /// The rows `image`'s restrictive facts were proved on.
 pub fn image_revoke_fact_rows(
     image: &crate::authority::AuthorityCheckpointV2,
