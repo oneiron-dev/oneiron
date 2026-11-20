@@ -8,7 +8,9 @@ pub use self::collection::{
     CalendarCollectionMember, CalendarRemoteObjectObservation,
     calendar_collection_members_for_operation,
 };
-pub(super) use self::collection::{cancelled_members_in_flight, omission_observed};
+pub(super) use self::collection::{
+    cancelled_members_in_flight, first_write_in_flight, omission_observed,
+};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -491,11 +493,14 @@ fn issue_prepared_upsert(
                 // intentionally rebase. Blind retries remain blocked on this row.
                 let stored = reconcile_remote_object(vault, operation, transport, uid, now);
                 // The row leaves flight in the admission turn, after a
-                // replay's stored copy, when it is this write's own, marked
+                // replay's stored copy, when it is this write's own, was
+                // published as the write's lost receipt would have, marking
                 // the passports it cancels: no pull admits that copy
                 // unmarked in between
-                // (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS). A
-                // replay whose read proved nothing (a failed or empty pull)
+                // (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS), and
+                // none imports a first write's copy as a second EVENT
+                // (CAL-FIRST-WRITE-COPY-PULLED-UNSETTLED-IMPORTS-DUPLICATE-EVENT).
+                // A replay whose read proved nothing (a failed or empty pull)
                 // leaves the proof to the seat's next pull of the resource
                 // (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY). The
                 // copy is published in the row's own writer, under its exact
@@ -503,7 +508,7 @@ fn issue_prepared_upsert(
                 {
                     let _turn = crate::calendar::ingest::admission_turn(vault)?;
                     let mut own = None;
-                    if replay && !row.cancelled_members.is_empty() {
+                    if replay {
                         let copy = match stored.as_ref() {
                             Some(stored) => stored_copy_of(vault, row, stored)?,
                             None => StoredCopy::Unread,
@@ -511,7 +516,9 @@ fn issue_prepared_upsert(
                         match copy {
                             StoredCopy::Own(members) => own = Some(members),
                             StoredCopy::Unread => row.stored_copy_unproven = true,
-                            StoredCopy::Foreign | StoredCopy::Older => {}
+                            StoredCopy::Foreign | StoredCopy::Older => {
+                                own = first_write_members(vault, row)?;
+                            }
                         }
                     }
                     row.state = CalendarWriteOutboxState::ReconcileRequired;
@@ -821,8 +828,8 @@ fn stored_write_marker(ics: &[u8], uid: &str) -> StoredWriteMarker {
     }
 }
 
-/// What the resource a replayed write of members cancelled read back after
-/// its precondition refusal is.
+/// What the resource a replayed write read back after its precondition
+/// refusal is.
 enum StoredCopy {
     /// The write's own copy, stored on an earlier call whose answer was
     /// lost: its members as the provider holds them.
@@ -845,9 +852,9 @@ struct StoredMember {
     content_hash: [u8; 32],
 }
 
-/// Whether `stored` is the write of `row`, a replayed write of members
-/// cancelled that the provider refused on its precondition, stored on an
-/// earlier call whose answer was lost: the precondition then fails on the
+/// Whether `stored` is the write of `row`, a replayed write that the
+/// provider refused on its precondition, stored on an earlier call whose
+/// answer was lost: the precondition then fails on the
 /// ETag the stored copy took. That copy holds exactly the staged members,
 /// each once under the staged UID and its staged RECURRENCE-ID
 /// ([`staged_recurrence_id`]: no passport need resolve the UID, which a
@@ -939,9 +946,43 @@ fn staged_recurrence_id(
     }
 }
 
-/// Writes `row`, a replayed write of members cancelled, after its stored
-/// copy was read, and first publishes that copy when it proved the write's
-/// own (`own`, [`publish_own_stored_copy_in_txn`]), in one writer under the
+/// The staged members of `row`, at the staged SEQUENCE, for its
+/// publication as the write's receipt would have published them, when `row`
+/// is a first write of its EVENT under the UID it minted ([`local_uid`]),
+/// which no EVENT carries yet, and its refused replay read a copy that is
+/// not provably the write's own: another writer's, or one below the staged
+/// SEQUENCE (CAL-FIRST-WRITE-COPY-PULLED-UNSETTLED-IMPORTS-DUPLICATE-EVENT).
+/// Only this write stores a resource under that UID, so the copy is the
+/// write's own resource as another writer changed it since: the write
+/// landed. Its passports take the staged version, and the seat's pull reads
+/// the copy against it, a change of this EVENT, never a second EVENT.
+/// `None` for any other write: the pull admits its copy as the seat's
+/// change of the EVENT its UID resolves to.
+fn first_write_members(
+    vault: &Vault,
+    row: &CalendarWriteOutboxRow,
+) -> Result<Option<Vec<StoredMember>>, CalendarConnectorError> {
+    if row.uid != local_uid(&row.event_ref)
+        || crate::calendar::passport::resolve_event_by_uid(vault, &row.uid)?.is_some()
+    {
+        return Ok(None);
+    }
+    Ok(Some(
+        row.component_hashes
+            .iter()
+            .map(|&(member, content_hash)| StoredMember {
+                member,
+                sequence: row.sequence,
+                content_hash,
+            })
+            .collect(),
+    ))
+}
+
+/// Writes `row`, a replayed write, after its stored copy was read, and
+/// first publishes `own` ([`publish_own_stored_copy_in_txn`]): the copy's
+/// members when it proved the write's own, or a first write's staged
+/// members ([`first_write_members`]). Both happen in one writer under the
 /// row's exact carrier. A replay another call overtook (its receipt settled,
 /// or a later write of the UID staged) writes nothing: no passport takes a
 /// mark from a copy the row no longer stands for. False when it was stale.
@@ -972,9 +1013,10 @@ fn write_replay_proof(
     Ok(true)
 }
 
-/// Publishes the stored copy of `row`, a replayed write of members
-/// cancelled, that proved the write's own ([`stored_copy_of`]), as the
-/// write's lost receipt would have: each staged member's passport on this
+/// Publishes the stored copy of `row`, a replayed write, that proved the
+/// write's own ([`stored_copy_of`]), or a first write's staged members
+/// ([`first_write_members`]), as the write's lost receipt would have: each
+/// staged member's passport on this
 /// seat that is missing, or below the staged SEQUENCE, takes the receipt's
 /// ([`written_passport`]), so it records the written direction
 /// (BK-ECHO-NEWER-RESTORE-DROPS-WRITTEN-DIRECTION), its held sighting (the
@@ -1051,20 +1093,23 @@ fn publish_own_stored_copy_in_txn(
     Ok(())
 }
 
-/// Proves a pulled resource of `uid` while this seat's replayed cancelled
-/// write of it waits on a proof its refusal's read could not give
+/// Proves a pulled resource of `uid` while this seat's replayed write of it
+/// waits on a proof its refusal's read could not give
 /// ([`CalendarWriteOutboxRow::stored_copy_unproven`]), before the pull
 /// admits it, as that read would have proved it: the write's own copy is
 /// published as its lost receipt would have
 /// ([`publish_own_stored_copy_in_txn`]), and another writer's version (a
 /// host cancel, or a live version that ends the write's cancellation) is
-/// admitted as the seat's own change, a held sighting dating it. Either way
-/// the proof is owed no longer
+/// admitted as the seat's own change, a held sighting dating it; a first
+/// write is published first ([`first_write_members`]), so that change
+/// lands on its EVENT. Either way the proof is owed no longer
 /// (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY).
 ///
 /// A version below the staged SEQUENCE proves nothing: the pull may have
 /// read it before the write landed, so the proof stays owed for a later
-/// pull, and the version is admitted as any pulled version is.
+/// pull, and the version is admitted as any pulled version is. A first
+/// write's is the exception: under the UID the write minted, no version
+/// predates the write.
 ///
 /// The caller holds the vault's calendar admission turn.
 pub(super) fn prove_unproven_replay(
@@ -1081,8 +1126,12 @@ pub(super) fn prove_unproven_replay(
     open_outbox(vault, operation, provider, uid, &mut row)?;
     let own = match stored_copy_of(vault, &row, object)? {
         StoredCopy::Own(members) => Some(members),
-        StoredCopy::Foreign => None,
-        StoredCopy::Older | StoredCopy::Unread => return Ok(()),
+        StoredCopy::Foreign => first_write_members(vault, &row)?,
+        StoredCopy::Older => match first_write_members(vault, &row)? {
+            Some(members) => Some(members),
+            None => return Ok(()),
+        },
+        StoredCopy::Unread => return Ok(()),
     };
     row.stored_copy_unproven = false;
     row.updated_at = now;
