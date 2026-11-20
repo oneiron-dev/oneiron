@@ -4,8 +4,9 @@
 use oneiron_contracts::register::Register;
 use oneiron_setting_contract::{LEARNED_SCOPES, ScopeKind};
 
-/// The hand-written `ScopeKind::as_str` table on main 62d2d72f, row for row.
-const HAND_TABLE: [(ScopeKind, &str); 10] = [
+/// The hand-written `ScopeKind::as_str` table on main 62d2d72f, row for row, and the pack row the
+/// pack layer added to it.
+const HAND_TABLE: [(ScopeKind, &str); 11] = [
     (ScopeKind::Vault, "vault"),
     (ScopeKind::World, "world"),
     (ScopeKind::Project, "project"),
@@ -16,6 +17,7 @@ const HAND_TABLE: [(ScopeKind, &str); 10] = [
     (ScopeKind::Agent, "agent"),
     (ScopeKind::Person, "person"),
     (ScopeKind::Repo, "repo"),
+    (ScopeKind::Pack, "pack"),
 ];
 
 #[test]

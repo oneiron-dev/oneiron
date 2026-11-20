@@ -9,7 +9,7 @@ use super::cancel::{
 };
 use crate::check_in::ActClass;
 use crate::error::{Error, Result};
-use crate::setting::{Kind, ScopeKind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, ScopeKind, SettingValue};
 use crate::store::Store;
 
 /// The largest landing reserve a caller may dial, as a percent of the attempt's budget: from
@@ -72,7 +72,7 @@ crate::setting::setting_keys! {
     /// (ONE-1896): 50 unless the owner sets it, from 10 (the default reserve) to 100. A higher
     /// bound lets an attempt hold more of its budget back for landing.
     pub(crate) LANDING_MAX_RESERVE_PERCENT: MaxReservePercent = "attempt_queue.landing.max_reserve_percent" {
-        kind: Kind::new(default_max_reserve).tighter(lower_is_tighter),
+        kind: Kind::new(default_max_reserve).lower(),
     };
     /// How far into its lease, as a percent of the lease timeout, the runtime warns a worker to
     /// land (ONE-1896): 80 unless the owner sets it, from 1 to 100. The warning asks and expiry
@@ -92,7 +92,7 @@ crate::setting::setting_keys! {
     pub(crate) ATTEMPT_QUEUE_AGENT_MAY_FORCE_CANCEL: bool = "attempt_queue.agent_may_force_cancel" {
         kind: Kind::new(owner_forces)
             .strictest(owner_forces)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
         scopes: &[ScopeKind::Vault, ScopeKind::Agent],
         act: ActClass::GrantWiden,
     };

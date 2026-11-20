@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::STRICT_MISSES_BEFORE_DRIFT;
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, SettingValue};
 
 /// Strict misses in a row that retire a program: at least 1.
 #[derive(
@@ -48,7 +48,7 @@ crate::setting::setting_keys! {
     pub(crate) BROWSER_LIBRARY_DRIFT_MISSES: DriftMissCount = "browser.library.drift_misses" {
         kind: Kind::new(default_drift_misses)
             .strictest(fewest_drift_misses)
-            .tighter(lower_is_tighter::<DriftMissCount>),
+            .lower(),
     };
 }
 

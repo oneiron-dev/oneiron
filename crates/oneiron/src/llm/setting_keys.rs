@@ -16,7 +16,7 @@ use crate::check_in::ActClass;
 use crate::error::{Error, Result};
 use crate::setting::{
     EncodedValue, ItemDomain, Kind, ScopeKind, Setter, SettingChange, SettingMode, SettingScope,
-    SettingValue, lower_is_tighter,
+    SettingValue,
 };
 use crate::settings::model_pack::ModelPackPreference;
 
@@ -224,7 +224,7 @@ crate::setting::setting_keys! {
     pub(crate) MODELS_QUOTA_AGENT_MAY_ANSWER: bool = "models.quota.agent_may_answer" {
         kind: Kind::new(owner_answers)
             .strictest(owner_answers)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
         scopes: &[ScopeKind::Vault, ScopeKind::Agent],
         item: Some(ItemDomain { name: "quota answers", admits: quota_choice }),
         act: ActClass::Billing,

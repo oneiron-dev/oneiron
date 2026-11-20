@@ -2,7 +2,7 @@
 //! reads from this file.
 
 use crate::check_in::ActClass;
-use crate::setting::{Kind, ScopeKind, lower_is_tighter};
+use crate::setting::{Kind, ScopeKind};
 
 /// Off: only the owner registers a local repository.
 fn owner_registers() -> bool {
@@ -21,7 +21,7 @@ crate::setting::setting_keys! {
     pub(crate) CODEBASE_REGISTRATION_AGENT_MAY_REGISTER: bool = "codebase.registration.agent_may_register" {
         kind: Kind::new(owner_registers)
             .strictest(owner_registers)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
         scopes: &[ScopeKind::Vault, ScopeKind::Agent],
         act: ActClass::GrantWiden,
     };

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::DEFAULT_MESO_ROUND_TURN_CAP;
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, SettingValue};
 
 /// Admissible TURNs one Meso round takes, at least one.
 #[derive(
@@ -56,7 +56,7 @@ crate::setting::setting_keys! {
     pub(crate) MESO_ROUND_TURN_CAP: MesoRoundTurnCap = "dreamer.consolidation.meso_round_turn_cap" {
         kind: Kind::new(meso_round_turn_cap_default)
             .strictest(least_meso_round_turn_cap)
-            .tighter(lower_is_tighter::<MesoRoundTurnCap>),
+            .lower(),
     };
 }
 

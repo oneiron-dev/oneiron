@@ -3,7 +3,7 @@
 
 use super::recipes::{WakeRecipePolicy, shipped_recipe_policy};
 use super::sieve_doors::MAX_PAGE;
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 
 /// 1000: a page naming no limit, or a larger one, reads this many rows.
 fn sieve_max_page_default() -> u32 {
@@ -23,6 +23,6 @@ crate::setting::setting_keys! {
     pub(crate) SIEVE_MAX_PAGE: u32 = "dreamer_wake.sieve.max_page" {
         kind: Kind::new(sieve_max_page_default)
             .strictest(sieve_max_page_default)
-            .tighter(lower_is_tighter::<u32>),
+            .lower(),
     };
 }
