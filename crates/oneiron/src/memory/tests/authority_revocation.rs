@@ -992,7 +992,6 @@ fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
     // A connected peer: `route_live` would hand it the tombstone the instant
     // the publish leaked one.
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    manager.outbound().attach(tx);
     let window_key = WindowKey::from_timestamp(1);
     let window = manager
         .open_window(&window_key)
@@ -1001,10 +1000,14 @@ fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
     // Control: with the binding live, the same path publishes end to end — so
     // the assertions below pin the refusal, not a broken fixture.
     let warmup = put_person(&vault, 0x97);
+    // FIX 3787/5133: cold-open recovery routes live, so attach after it for an empty baseline.
+    manager.outbound().attach(tx);
     facade_for(&vault, owner)
         .safe_delete(&warmup.to_hex(), SafeDeleteReason::UserHardDelete)
         .expect("control: a bound owner publishes a tombstone");
     rx.try_recv().expect("control: the peer receives it");
+    // FIX 3787/5133: drain control traffic so the refusal sees only the raced delete.
+    while rx.try_recv().is_ok() {}
 
     // Two-phase rendezvous: `arrived` fires once the deleter's gate sidecar is
     // durably staged (its txn committed, no lock held); `resume` releases it

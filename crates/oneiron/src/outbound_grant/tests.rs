@@ -590,7 +590,11 @@ fn a_restore_goes_ahead_past_a_grant_use_and_refuses_a_revocation() -> Result<()
     let error = restore(&destination)
         .err()
         .expect("the restore must be refused");
-    assert!(error.to_string().contains("outbound grants"), "{error}");
+    // FIX 11874: a standing outbound grant is a standing consent Grant row; OUTBOUND_GRANT has no writer.
+    assert!(
+        error.to_string().contains("standing consent grants"),
+        "{error}"
+    );
     assert!(!destination.exists());
     Ok(())
 }
