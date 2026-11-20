@@ -406,6 +406,53 @@ fn material_in_room(
     Ok(render_host_material(&material[..kept]))
 }
 
+/// The transcripts of the native extraction slices over `turns` of
+/// `attempt`, with `material` as its wake's host material and at most `room`
+/// transcript bytes a call, in call order (FIX
+/// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW): the attempt prepared and
+/// its branch opened as native extraction does, and no model run.
+///
+/// # Errors
+///
+/// A missing queue record, an unprepared branch, the branch opening, or the
+/// slicing's own refusal of a room that holds no listing page.
+#[cfg(oneiron_test_support)]
+pub(crate) fn native_slice_transcripts_in_room_for_test(
+    vault: &Vault,
+    attempt: AttemptId,
+    turns: &[EntityId],
+    material: &[String],
+    room: Option<usize>,
+) -> crate::memory::MemoryResult<Vec<String>> {
+    use crate::dreamer_consolidation::wake_plan::AttemptPreparation;
+    use crate::memory::MemoryError;
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    let attempt_entity = EntityId::from_bytes(*attempt.as_bytes()).map_err(crate::Error::from)?;
+    let (scope, _) =
+        crate::snapshot_read::queued_extraction_branch_in_txn(vault, &txn, attempt_entity)?;
+    drop(txn);
+    let wake = PreparedWake::prepare_one(vault, scope, None, attempt).map_err(MemoryError::from)?;
+    let Some(AttemptPreparation::Ready(plan)) = wake.preparation(attempt) else {
+        return Err(MemoryError::bad_request(
+            "the test attempt prepared no branch",
+        ));
+    };
+    let plan = plan.clone();
+    let wake = wake.with_hook_material(material.to_vec());
+    let actor = vault.dreamer_authority().map_err(MemoryError::from)?;
+    let resources =
+        BranchResources::open_prepared(vault, actor, &plan, &wake).map_err(MemoryError::from)?;
+    let config = vault.consolidation_selection().map_err(MemoryError::from)?;
+    let bound = SliceBound {
+        turns: config.extraction_turns_per_child,
+        room,
+    };
+    let (slices, _) = resources
+        .extraction_slices(turns, bound)
+        .map_err(MemoryError::from)?;
+    Ok(slices.into_iter().map(|slice| slice.transcript).collect())
+}
+
 /// The chunk sizes [`fit_chunks`] keeps for items of `lines` bytes cut by
 /// [`room_chunks`] at most `turns` a chunk in `room`, when each built call
 /// is its items' bytes and `unseen` bytes the estimate leaves out, as a

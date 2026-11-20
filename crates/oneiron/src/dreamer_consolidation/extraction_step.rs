@@ -499,25 +499,6 @@ pub(crate) fn native_slice_transcripts_for_test(
     turns: &[EntityId],
     material: &[String],
 ) -> MemoryResult<Vec<(Vec<EntityId>, String)>> {
-    native_slice_transcripts_in_room_for_test(vault, attempt, turns, material, None)
-}
-
-/// [`native_slice_transcripts_for_test`] with at most `room` transcript
-/// bytes a call, as a lent extraction window leaves beside the prompt (FIX
-/// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW).
-///
-/// # Errors
-///
-/// As [`native_slice_transcripts_for_test`], and the slicing's refusal of a
-/// room that holds no listing page.
-#[cfg(oneiron_test_support)]
-pub(crate) fn native_slice_transcripts_in_room_for_test(
-    vault: &crate::Vault,
-    attempt: crate::attempt_queue::AttemptId,
-    turns: &[EntityId],
-    material: &[String],
-    room: Option<usize>,
-) -> MemoryResult<Vec<(Vec<EntityId>, String)>> {
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     let attempt_entity = EntityId::from_bytes(*attempt.as_bytes()).map_err(crate::Error::from)?;
     let (scope, _) =
@@ -541,10 +522,7 @@ pub(crate) fn native_slice_transcripts_in_room_for_test(
     let (slices, _) = resources
         .extraction_slices(
             turns,
-            super::resources::SliceBound {
-                turns: config.extraction_turns_per_child,
-                room,
-            },
+            super::resources::SliceBound::by_count(config.extraction_turns_per_child),
         )
         .map_err(MemoryError::from)?;
     Ok(slices

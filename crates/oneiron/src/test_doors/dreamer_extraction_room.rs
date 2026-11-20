@@ -176,18 +176,13 @@ pub fn room_slice_transcripts(
         &witnessed.turns,
         1_000,
     )?;
-    let slices =
-        crate::dreamer_consolidation::extraction_step::native_slice_transcripts_in_room_for_test(
-            &vault,
-            attempt,
-            &witnessed.turns,
-            material,
-            room,
-        )?;
-    Ok(slices
-        .into_iter()
-        .map(|(_, transcript)| transcript)
-        .collect())
+    crate::dreamer_consolidation::resources::native_slice_transcripts_in_room_for_test(
+        &vault,
+        attempt,
+        &witnessed.turns,
+        material,
+        room,
+    )
 }
 
 /// The chunk sizes the extraction packing keeps for TURN lines of `lines`
