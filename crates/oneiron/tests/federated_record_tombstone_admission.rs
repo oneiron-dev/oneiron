@@ -285,28 +285,14 @@ fn put_claim(vault: &Vault, subject: EntityId, world: Option<EntityId>) -> Entit
     id
 }
 
-/// S exports its named WORLD through the live pact.
+/// S exports its named WORLD's month window, where a CLAIM in that WORLD
+/// lives, through the live pact.
 fn export_world(
     s: &Fixture,
     pact_hex: &str,
     s_world: EntityId,
 ) -> (String, Vec<u8>, oneiron::sync::ConnectDelivery) {
-    s.manager
-        .open_window(&WindowKey::new(WINDOW))
-        .expect("FIXTURE: S window opens");
-    let delivery = SyncClient::export_connect_window_as(
-        &s.manager,
-        &s.proof,
-        &s.issuer,
-        ConnectExportRequest {
-            pact: pact_hex.to_owned(),
-            window_key: WINDOW.to_owned(),
-            world_ref: s_world,
-            facets: vec![],
-            bands: vec![],
-        },
-    )
-    .expect("FIXTURE: S exports its WORLD");
+    let delivery = export_window(s, pact_hex, &world_window(s_world), s_world);
     let window_key = delivery.body.window_key.clone();
     let update = delivery.body.update.clone();
     (window_key, update, delivery)
@@ -643,20 +629,30 @@ fn export_window(
     .expect("FIXTURE: S exports its WORLD's window")
 }
 
-/// The row ids `doc`'s tombstones map names.
-fn tombstone_keys(doc: &LoroDoc) -> BTreeSet<String> {
+/// The keys of `doc`'s map `name`.
+fn map_keys(doc: &LoroDoc, name: &str) -> BTreeSet<String> {
     let mut keys = BTreeSet::new();
-    doc.get_map("tombstones").for_each(|key, _| {
+    doc.get_map(name).for_each(|key, _| {
         keys.insert(key.to_owned());
     });
     keys
 }
 
-/// The row ids an exported update's tombstones map names.
-fn carried_tombstones(update: &[u8]) -> BTreeSet<String> {
+/// The row ids `doc`'s tombstones map names.
+fn tombstone_keys(doc: &LoroDoc) -> BTreeSet<String> {
+    map_keys(doc, "tombstones")
+}
+
+/// The keys of an exported update's map `name`.
+fn carried_keys(update: &[u8], name: &str) -> BTreeSet<String> {
     let doc = LoroDoc::new();
     doc.import(update).expect("FIXTURE: the update imports");
-    tombstone_keys(&doc)
+    map_keys(&doc, name)
+}
+
+/// The row ids an exported update's tombstones map names.
+fn carried_tombstones(update: &[u8]) -> BTreeSet<String> {
+    carried_keys(update, "tombstones")
 }
 
 /// The row ids S's own `window_key` window holds tombstones of.
@@ -668,13 +664,18 @@ fn window_tombstones(s: &Fixture, window_key: &str) -> BTreeSet<String> {
     tombstone_keys(&window.doc)
 }
 
-/// S's CLAIM in its WORLD, sent to B by a Connect delivery of the month that
-/// B lands (the route the receiver tests above take), with the WORLD's month
-/// window, where the CLAIM's delete is published.
+/// S's CLAIM in its WORLD, sent to B by a Connect delivery of the WORLD's
+/// month window, where the CLAIM lives and its delete is published
+/// (`deletion/delete/plan.rs`), with that window's key.
 fn sent_claim(s: &Fixture, b: &Fixture, pact: &ActivePact) -> (String, EntityId) {
     let subject = put_person(&s.vault, "kenji");
     let claim = put_claim(&s.vault, subject, Some(pact.s_world));
-    let delivery = export_window(s, &pact.pact_hex, WINDOW, pact.s_world);
+    let window_key = world_window(pact.s_world);
+    let delivery = export_window(s, &pact.pact_hex, &window_key, pact.s_world);
+    assert!(
+        carried_keys(&delivery.body.update, "entities").contains(&claim.to_hex()),
+        "FIXTURE: the first delivery carries the CLAIM"
+    );
     let rejoined = SyncClient::rejoin_connect_as(&b.manager, &b.proof, delivery)
         .expect("FIXTURE: B rejoins the first delivery");
     assert!(
@@ -688,7 +689,7 @@ fn sent_claim(s: &Fixture, b: &Fixture, pact: &ActivePact) -> (String, EntityId)
             .is_some(),
         "FIXTURE: B holds the CLAIM S sent"
     );
-    (world_window(pact.s_world), claim)
+    (window_key, claim)
 }
 
 /// S's owner hard-deletes `id`; S holds no row of it after.
