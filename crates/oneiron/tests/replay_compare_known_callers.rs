@@ -33,9 +33,11 @@ use oneiron::dreamer_runner::{
 };
 use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::ENTITY_TYPE_PERSON;
-use oneiron::run_tree::{RunAsk, RunAskQuestion};
+use oneiron::run_tree::{
+    RunAsk, RunAskAnswerKind, RunAskQuestion, RunAskState, RunSignalInput, RunSignalKind,
+};
 use oneiron::store::GateDecisionId;
-use oneiron::{AttemptQueue, EntityId, RunTreeAdapter, TimeRange, Vault, VaultConfig};
+use oneiron::{AttemptId, AttemptQueue, EntityId, RunTreeAdapter, TimeRange, Vault, VaultConfig};
 use oneiron_browser::{
     BatchStep, BrowserEngine, ExpectInput, ReplayGuest, WorkflowProgram, WorkflowProof,
 };
@@ -56,6 +58,9 @@ const SECOND_SHAPED_KEY: &str = "AKIA1234567890123457";
 const RUN: &str = "known-callers-run";
 const LEASE: &str = "known-callers-worker";
 const ASK_HANDLE: &str = "archive-unlock";
+/// Whom the ask asks, and the actor whose answer signal answers it.
+const ASK_WHO: &str = "owner";
+const ANSWER_ACTOR: &str = "person:owner";
 const SITE: &str = "example.com";
 
 fn vault() -> TestResult<(tempfile::TempDir, Vault)> {
@@ -101,6 +106,36 @@ fn ask_opened_with(
     words: [&str; 2],
     between: impl FnOnce(&Vault) -> TestResult,
 ) -> TestResult<[oneiron::Result<RunAsk>; 2]> {
+    let (branch, attempt_count) = leased_branch(vault)?;
+    let adapter = RunTreeAdapter::new(vault);
+    let open = |passphrase: &str| {
+        adapter.open_ask(
+            branch,
+            RUN,
+            LEASE,
+            attempt_count,
+            ASK_HANDLE,
+            questions(passphrase),
+        )
+    };
+    let first = open(words[0]);
+    between(vault)?;
+    Ok([first, open(words[1])])
+}
+
+/// The words of an ask that holds `passphrase`.
+fn questions(passphrase: &str) -> Vec<RunAskQuestion> {
+    vec![RunAskQuestion {
+        who: ASK_WHO.to_owned(),
+        prompt: format!("Unlock the archive with {passphrase}?"),
+        options: vec![passphrase.to_owned(), "skip".to_owned()],
+        deadline: None,
+    }]
+}
+
+/// Enqueues an attempt of run `RUN` and leases it to `LEASE`: the branch an
+/// ask opens on, and its attempt count.
+fn leased_branch(vault: &Vault) -> TestResult<(AttemptId, u32)> {
     let outcome = DreamerRunnerStore::new(vault).enqueue(EnqueueDreamerAttempt {
         attempt_type: "known-callers-ask".to_owned(),
         input: rmpv::Value::Nil,
@@ -123,28 +158,7 @@ fn ask_opened_with(
         claimed.id, status.attempt.id,
         "the claim leases this branch"
     );
-    let questions = |passphrase: &str| {
-        vec![RunAskQuestion {
-            who: "owner".to_owned(),
-            prompt: format!("Unlock the archive with {passphrase}?"),
-            options: vec![passphrase.to_owned(), "skip".to_owned()],
-            deadline: None,
-        }]
-    };
-    let adapter = RunTreeAdapter::new(vault);
-    let open = |passphrase: &str| {
-        adapter.open_ask(
-            claimed.id,
-            RUN,
-            LEASE,
-            claimed.attempt_count,
-            ASK_HANDLE,
-            questions(passphrase),
-        )
-    };
-    let first = open(words[0]);
-    between(vault)?;
-    Ok([first, open(words[1])])
+    Ok((claimed.id, claimed.attempt_count))
 }
 
 /// Checks that the ask opened again is the ask its branch holds.
@@ -164,6 +178,113 @@ fn reopened_ask_is_held_ask(answers: [oneiron::Result<RunAsk>; 2]) -> TestResult
 fn an_ask_opened_again_with_a_passphrase_custody_holds_is_its_held_ask() -> TestResult {
     let (_directory, vault) = vault()?;
     reopened_ask_is_held_ask(ask_opened_twice(&vault, HELD_PASSPHRASE)?)
+}
+
+/// FIX KNOWN-ASK-REOPEN-ANSWERS-MASKED-ROW: the ask its first open gives is
+/// the ask its branch holds, as `peek_ask` reads it, the passphrase custody
+/// holds read as its record's handle. Answered, the identical ask opened
+/// again is that ask with its answer. At main 7b962d25 the first open gave
+/// the words as written and the ask opened again gave the held words: one
+/// ask read two ways.
+#[test]
+fn an_ask_with_a_passphrase_custody_holds_opens_as_its_branch_holds_it() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let (branch, attempt_count) = leased_branch(&vault)?;
+    let adapter = RunTreeAdapter::new(&vault);
+    let open = || {
+        adapter.open_ask(
+            branch,
+            RUN,
+            LEASE,
+            attempt_count,
+            ASK_HANDLE,
+            questions(HELD_PASSPHRASE),
+        )
+    };
+    let first = open()?;
+    assert_ne!(
+        first.questions,
+        questions(HELD_PASSPHRASE),
+        "the opened ask holds the passphrase custody holds as its record's handle"
+    );
+    assert_eq!(
+        adapter.peek_ask(branch, RUN, ASK_HANDLE)?,
+        Some(RunAskState::Pending(first.clone())),
+        "the opened ask is the ask its branch holds"
+    );
+    adapter.signal(RunSignalInput {
+        branch,
+        run_id: RUN.to_owned(),
+        key: "archive-unlock-answer".to_owned(),
+        actor: ANSWER_ACTOR.to_owned(),
+        kind: RunSignalKind::AskAnswer {
+            handle: ASK_HANDLE.to_owned(),
+            who: ASK_WHO.to_owned(),
+            answer: "skip".to_owned(),
+            kind: RunAskAnswerKind::Word,
+        },
+    })?;
+    let second = open()?;
+    assert_eq!(
+        second.questions, first.questions,
+        "the identical ask opened again is the ask its first open gave"
+    );
+    assert_eq!(
+        second
+            .answers
+            .iter()
+            .map(|answer| answer.answer.as_str())
+            .collect::<Vec<_>>(),
+        ["skip"],
+        "the identical ask opened again carries its answer"
+    );
+    assert_eq!(
+        adapter.peek_ask(branch, RUN, ASK_HANDLE)?,
+        Some(RunAskState::Ready(second)),
+        "the ask opened again is the ask its branch holds"
+    );
+    Ok(())
+}
+
+/// Blind review round 1 of #9803: the side-row wall reads an ask's handle as
+/// it reads its words, so a handle that holds a passphrase custody holds is
+/// stored with its record's handle in its place. The ask its open gives is
+/// the ask its branch holds, under the handle its branch holds, and the
+/// identical ask opened again with its handle as written is that ask. At
+/// 9d2407c9 the open gave the handle as written, which `peek_ask` does not
+/// know, and the ask opened again refused: its handle met no held handle.
+#[test]
+fn a_handle_holding_a_passphrase_custody_holds_opens_as_its_branch_holds_it() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let (branch, attempt_count) = leased_branch(&vault)?;
+    let adapter = RunTreeAdapter::new(&vault);
+    let handle = format!("unlock-{HELD_PASSPHRASE}");
+    let open = || {
+        adapter.open_ask(
+            branch,
+            RUN,
+            LEASE,
+            attempt_count,
+            &handle,
+            questions(UNHELD_PASSPHRASE),
+        )
+    };
+    let opened = open()?;
+    assert_ne!(
+        opened.handle, handle,
+        "the opened ask holds the passphrase in its handle as its record's handle"
+    );
+    assert_eq!(
+        opened.questions,
+        questions(UNHELD_PASSPHRASE),
+        "the words of the opened ask hold no value custody holds and read as written"
+    );
+    assert_eq!(
+        adapter.peek_ask(branch, RUN, &opened.handle)?,
+        Some(RunAskState::Pending(opened.clone())),
+        "the opened ask is the ask its branch holds, under the handle its branch holds"
+    );
+    reopened_ask_is_held_ask([Ok(opened), open()])
 }
 
 /// Guard: an ask with a passphrase no custody record holds keeps it as
