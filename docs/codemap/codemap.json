@@ -12894,7 +12894,7 @@
      "path": "src/calendar/claims/codec.rs",
      "purpose": "Calendar claim validation dispatch plus MessagePack encode/decode and field helpers",
      "surface": {
-      "crate-vis": 48,
+      "crate-vis": 50,
       "fn": 2
      }
     },
@@ -13044,7 +13044,7 @@
      "path": "src/calendar/connectors/outbound/collection.rs",
      "purpose": "A full listing's omissions, checked against this seat's remote object rows (fix list row 19192)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 2
      }
@@ -13329,7 +13329,7 @@
      "path": "src/calendar/ingest/admission/connector.rs",
      "purpose": "Connector admissions: CalDAV and provider pulls admit through the same gated importer a feed poll runs…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -106162,7 +106162,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/booking_deposit_settlement.rs",
@@ -106220,13 +106220,13 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/booking_host_seat_support/mod.rs",
      "purpose": "The host's own calendar as a connector seat the booking is written to",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 18
      }
     },
     {
