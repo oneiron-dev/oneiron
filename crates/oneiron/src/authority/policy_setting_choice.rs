@@ -93,12 +93,18 @@ pub(crate) struct FoldedPolicySettings {
     /// Well-signed acts without effect: their carrier was not admitted, or
     /// their owner not live, at their parents.
     pub(crate) refused: BTreeSet<AuthorityEntryHash>,
+    /// Each target's acts that wait for the owner's proof and still ask (row
+    /// CARRIER-OWNER-PROOF; the Setting's stage 7b-3): proposals, in no
+    /// frontier, which change nothing until he carries them again from an
+    /// owner device. A target may have them and no frontier.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) asking: BTreeMap<EntityId, BTreeSet<AuthorityEntryHash>>,
 }
 
 impl FoldedPolicySettings {
     /// Whether no setting act folded: a projection an image need not carry.
     pub(super) fn is_empty(&self) -> bool {
-        self.targets.is_empty() && self.refused.is_empty()
+        self.targets.is_empty() && self.refused.is_empty() && self.asking.is_empty()
     }
 
     /// Whether any target's live act rests on how this install counts
@@ -250,6 +256,7 @@ pub(super) fn folded_policy_settings(
         counts: owner_choice_counts(state, &state.policy_settings, pin, counted),
         targets: folded_owner_choices(state, &state.policy_settings, pin, counted),
         refused: refused_owner_choices(&state.policy_settings).to_btree_set(),
+        asking: state.policy_settings.asking_by_target(),
     }
 }
 
@@ -423,46 +430,68 @@ impl Vault {
     }
 
     /// Every setting target the fold names in `txn`, each with its
-    /// revision, what each act a reader of it meets counts for here, and
-    /// where its heads conflict the act the register holds in force: what the
-    /// setting projection compares with the basis it last projected (stage
-    /// 7a-2; the counts and the conflict's act stage 7b-2).
+    /// revision, what each act a reader of it meets counts for here, where its
+    /// heads conflict the act the register holds in force, and its acts that
+    /// wait for the owner's proof and still ask: what the setting projection
+    /// compares with the basis it last projected (stage 7a-2; the counts and
+    /// the conflict's act stage 7b-2; the asking acts stage 7b-3, which a
+    /// target may have with no frontier, at revision zero).
     pub(crate) fn policy_setting_revisions_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<Vec<SettingTargetBasis>> {
         let view = self.authority_view_readonly_in_txn(txn)?;
-        Ok(view
-            .policy_settings
+        let settings = &view.policy_settings;
+        let targets: BTreeSet<EntityId> = settings
             .targets
-            .iter()
-            .map(|(target, folded)| SettingTargetBasis {
-                target: *target,
-                revision: folded.revision(POLICY_SETTING_REVISION_CONTEXT),
-                counts: view
-                    .policy_settings
-                    .counts
-                    .get(target)
-                    .cloned()
-                    .unwrap_or_default(),
-                conflict: !folded.conflict.is_empty(),
-                in_force: folded.in_force.as_ref().map(|head| head.act),
+            .keys()
+            .chain(settings.asking.keys())
+            .copied()
+            .collect();
+        Ok(targets
+            .into_iter()
+            .map(|target| {
+                let folded = settings.targets.get(&target);
+                SettingTargetBasis {
+                    target,
+                    revision: settings.revision(target),
+                    counts: settings.counts.get(&target).cloned().unwrap_or_default(),
+                    conflict: folded.is_some_and(|folded| !folded.conflict.is_empty()),
+                    in_force: folded
+                        .and_then(|folded| folded.in_force.as_ref())
+                        .map(|head| head.act),
+                    asking: settings.asking.get(&target).cloned().unwrap_or_default(),
+                }
             })
             .collect())
     }
 
     /// `target`'s acts as the setting projection reads them (stage 7a-2):
     /// its revision, each live head with its op read back from the log, the
-    /// act the register holds in force, and what each act a reader meets
-    /// counts for here (stage 7b-2). `None` when no act names the target.
+    /// act the register holds in force, what each act a reader meets counts
+    /// for here (stage 7b-2), and its acts that wait for the owner's proof
+    /// and still ask (stage 7b-3). `None` when no act names the target.
     pub(crate) fn setting_slot_fold_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         target: EntityId,
     ) -> Result<Option<SettingSlotFold>> {
         let view = self.authority_view_readonly_in_txn(txn)?;
+        let asking = view
+            .policy_settings
+            .asking
+            .get(&target)
+            .cloned()
+            .unwrap_or_default();
         let Some(folded) = view.policy_settings.targets.get(&target) else {
-            return Ok(None);
+            return Ok((!asking.is_empty()).then(|| SettingSlotFold {
+                revision: [0; 32],
+                live: Vec::new(),
+                in_force: None,
+                conflict: false,
+                counts: ChoiceCounts::new(),
+                asking,
+            }));
         };
         let live = folded
             .live
@@ -485,7 +514,40 @@ impl Vault {
                 .get(&target)
                 .cloned()
                 .unwrap_or_default(),
+            asking,
         }))
+    }
+
+    /// Whether the fold in `txn` holds the setting act `hash` as waiting for
+    /// the owner's proof (row CARRIER-OWNER-PROOF): stored, in no frontier,
+    /// a proposal that changes nothing (stage 7b-3).
+    pub(crate) fn setting_act_waits_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        hash: AuthorityEntryHash,
+    ) -> Result<bool> {
+        Ok(self
+            .authority_view_readonly_in_txn(txn)?
+            .policy_settings
+            .asking
+            .values()
+            .any(|asking| asking.contains(&hash)))
+    }
+
+    /// Every setting act that waits for the owner's proof and still asks,
+    /// with the target it waits on, read in `txn` (stage 7b-3): what the
+    /// setting proposal listing shows.
+    pub(crate) fn asking_setting_acts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<(EntityId, AuthorityEntryHash)>> {
+        Ok(self
+            .authority_view_readonly_in_txn(txn)?
+            .policy_settings
+            .asking
+            .iter()
+            .flat_map(|(target, asking)| asking.iter().map(|hash| (*target, *hash)))
+            .collect())
     }
 
     /// The setting act `hash` names, read back from the log in `txn`, as it
@@ -624,13 +686,17 @@ pub(crate) struct SettingSlotFold {
     /// each live head, and each act one that does not count in full
     /// replaced, followed back.
     pub(crate) counts: ChoiceCounts,
+    /// The row's acts that wait for the owner's proof and still ask (stage
+    /// 7b-3): proposals, which change nothing; the row reads `Pending` while
+    /// one does.
+    pub(crate) asking: BTreeSet<AuthorityEntryHash>,
 }
 
 /// One setting target as the projection pass compares it with the basis it
 /// last projected ([`Vault::policy_setting_revisions_in_txn`]).
 pub(crate) struct SettingTargetBasis {
     pub(crate) target: EntityId,
-    /// Its revision.
+    /// Its revision; zero while no act on it stands.
     pub(crate) revision: [u8; 32],
     /// What each act a reader of it meets counts for here (stage 7b-2).
     pub(crate) counts: ChoiceCounts,
@@ -638,6 +704,8 @@ pub(crate) struct SettingTargetBasis {
     pub(crate) conflict: bool,
     /// The act the register holds in force; `None` when no act stands.
     pub(crate) in_force: Option<AuthorityEntryHash>,
+    /// Its acts that wait for the owner's proof and still ask (stage 7b-3).
+    pub(crate) asking: BTreeSet<AuthorityEntryHash>,
 }
 
 /// One setting act the projection reads: its hash, and its op when the
@@ -713,7 +781,31 @@ impl Vault {
             (owner, ActSurface::ThisInstall),
             rows,
         )?(machine));
-        self.sign_on_frontier_as(key, frontier, op, ts)
+        self.sign_on_frontier_as(key, frontier, op, ts, 0)
+    }
+
+    /// [`Self::sign_setting_act_as`] at `ahead` sequences past the signer's next one here (stage
+    /// 7b-3 tests): landed before an act signed later at the next sequence, it puts that act past
+    /// the signer's sequence floor on this install.
+    pub(crate) fn sign_setting_act_ahead_as(
+        &self,
+        (machine, key): (EntityId, &ed25519_dalek::SigningKey),
+        (owner, frontier): (EntityId, &SettingFrontier),
+        rows: Vec<(RowKey, Option<Vec<u8>>)>,
+        (ts, ahead): (u64, u64),
+    ) -> Result<AuthorityLogEntry> {
+        let rows = rows
+            .into_iter()
+            .map(|(slot, inline)| {
+                let seen = frontier.seen_of(&slot)?;
+                slot_row(slot, seen, setting_value_digest(b"null"), inline)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let op = AuthorityOp::PolicySettingSet(setting_act_of(
+            (owner, ActSurface::ThisInstall),
+            rows,
+        )?(machine));
+        self.sign_on_frontier_as(key, frontier, op, ts, ahead)
     }
 
     /// A move's copy of each carried row of `rows`, naming its acts, as the machine `machine`'s
@@ -737,7 +829,7 @@ impl Vault {
             })
             .collect::<Result<Vec<_>>>()?;
         let op = AuthorityOp::SettingCopy(SettingCopy { machine, rows });
-        self.sign_on_frontier_as(key, frontier, op, ts)
+        self.sign_on_frontier_as(key, frontier, op, ts, 0)
     }
 
     /// `op` signed with the install key `key` on `frontier`'s parents at `ts`, at the key's next
@@ -748,12 +840,13 @@ impl Vault {
         frontier: &SettingFrontier,
         op: AuthorityOp,
         ts: u64,
+        ahead: u64,
     ) -> Result<AuthorityLogEntry> {
         use ed25519_dalek::Signer;
 
         let fold = self.authority_fold()?;
         let signer = AuthorityKey::Ed25519(key.verifying_key().to_bytes());
-        let seq = fold.append_sequences.get(&signer).map_or(1, |seq| seq + 1);
+        let seq = fold.append_sequences.get(&signer).map_or(1, |seq| seq + 1) + ahead;
         let mut entry = AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: fold.vault_id,

@@ -44,6 +44,7 @@ mod learned;
 mod pack;
 mod page_max;
 mod project;
+mod proposal;
 mod publish;
 mod read;
 mod set;
@@ -53,9 +54,9 @@ pub(crate) mod tables;
 use std::marker::PhantomData;
 
 pub use oneiron_setting_contract::{
-    AbsentEnd, ChainOrder, ChangeDirection, EachOrder, EncodedValue, FitCell, Order, Quorum,
-    ReadBy, Resolved, Restore, ScopeKind, SetOrder, Setter, SettingMode, SettingScope,
-    SettingSource, SettingStanding, SettingSync, SettingValue,
+    AbsentEnd, ChainOrder, ChangeDirection, ChangeStanding, EachOrder, EncodedValue, FitCell,
+    Order, Quorum, ReadBy, Resolved, Restore, ScopeKind, SetOrder, Setter, SettingMode,
+    SettingScope, SettingSource, SettingStanding, SettingSync, SettingValue,
 };
 
 pub use self::ask::SettingAsk;
@@ -82,6 +83,7 @@ pub use self::page_max::PageMax;
 pub use self::project::SettingsProjected;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::project::forget_projected_rows_in_txn;
+pub use self::proposal::SettingProposal;
 pub use self::publish::SettingsPublished;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::publish::settings_published_in_txn;

@@ -169,9 +169,9 @@ fn unbacked_rows_in_txn(
 }
 
 /// Signs `rows`, the owner `owner`'s, as one act in a savepoint of `txn`, and names it on each
-/// row's change. Whether it published: a typed refusal of the append, or an act the fold holds
-/// without effect (an owner the log no longer holds live), leaves the rows on this install, and
-/// is logged.
+/// row's change. Whether it published: a typed refusal of the append, an act the fold holds
+/// without effect (an owner the log no longer holds live), or one that waits for an owner key's
+/// proof, leaves the rows on this install, and is logged.
 fn publish_owner_rows_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -202,6 +202,14 @@ fn publish_owner_rows_in_txn(
     if vault.policy_setting_act_refused_in_txn(&savepoint, signed)? {
         tracing::warn!(
             "the owner's setting rows stay on this install: the fold holds their batch act without effect"
+        );
+        return Ok(false);
+    }
+    // A batch act that waits for the owner's proof would change nothing (stage 7b-3): the rows
+    // stay on this install, and the owner's next change from an owner device signs them.
+    if vault.setting_act_waits_in_txn(&savepoint, signed)? {
+        tracing::warn!(
+            "the owner's setting rows stay on this install: their batch act waits for an owner key's proof"
         );
         return Ok(false);
     }

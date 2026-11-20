@@ -476,6 +476,8 @@ fn write_layer_row_in_txn(
             direction: Some(write.direction),
             surface: None,
             signed: None,
+            with: Vec::new(),
+            standing: None,
         },
     )?;
     let row = StoredRow {
