@@ -326,6 +326,13 @@ enum DeviceOwnerKey {
     },
 }
 
+/// This install's owner signing key that a hold found live on the roster:
+/// read from its slot, or opened under the device PIN.
+enum LiveOwnerKey {
+    Slot(OwnerRootSigner),
+    PinBound(Arc<DevicePin>, [u8; 32]),
+}
+
 impl Vault {
     /// This install's owner signing key for this vault, from its
     /// [`SlotKind::OwnerSigning`] keystore slot: the seed is made there from
@@ -629,42 +636,46 @@ impl Vault {
         let slot = self.owner_signing_slot(machine);
         let pin = self.device_pin();
         let step = pin.as_deref().map(DevicePin::step);
-        // The slot is read under the vault's owner signing slot lock, taken
-        // inside the step as at every door that takes both, so a door that
-        // renews the slot is never seen between its delete and its create.
-        let _slot_lock = self
+        // The slot is read, and its key's enrollment checked, under the
+        // vault's owner signing slot lock, taken inside the step as at every
+        // door that takes both, so a door that renews the slot is never seen
+        // between its delete and its create. The key is held once that lock
+        // is let go: a hold asks every signer held for its root, and a
+        // signer's answer may read the slot (REVIEW-9678 P1).
+        let slot_lock = self
             .store
             .owner_signing_slot_lock
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        match slot_seed_bar(keystore.as_ref()).map_err(super::keystore_error)? {
-            Some(SlotSeedBar::PinSet) => match (pin.as_ref(), step) {
-                (Some(pin), Some(step)) => {
-                    self.hold_pin_bound_owner_signer(&step, pin, keystore.as_ref(), &slot)
-                }
-                _ => Err(no_device_pin_here()),
+        let live = match slot_seed_bar(keystore.as_ref()).map_err(super::keystore_error)? {
+            Some(SlotSeedBar::PinSet) => match (pin.as_ref(), step.as_ref()) {
+                (Some(pin), Some(step)) => self
+                    .live_pin_bound_owner_key(step, pin, keystore.as_ref(), &slot)?
+                    .map(|public_key| LiveOwnerKey::PinBound(Arc::clone(pin), public_key)),
+                _ => return Err(no_device_pin_here()),
             },
             // What a forgotten PIN left in the slot is no key.
-            Some(SlotSeedBar::PinForgotten) => Ok(false),
+            Some(SlotSeedBar::PinForgotten) => None,
             None => match keystore.get(&slot).map_err(super::keystore_error)? {
-                Some(seed) => self.hold_owner_signer_if_enrolled(OwnerRootSigner::from_slot(
-                    &seed, &keystore, &slot,
-                )),
-                None => Ok(false),
+                Some(seed) => {
+                    let signer = OwnerRootSigner::from_slot(&seed, &keystore, &slot);
+                    let live = self
+                        .listed_owner_key(&signer.public_key())?
+                        .is_some_and(|listed| listed.live);
+                    live.then_some(LiveOwnerKey::Slot(signer))
+                }
+                None => None,
             },
+        };
+        drop(slot_lock);
+        match live {
+            Some(LiveOwnerKey::Slot(signer)) => self.hold_checkpoint_root_signer(Arc::new(signer)),
+            Some(LiveOwnerKey::PinBound(pin, public_key)) => {
+                self.hold_opened_pin_bound_owner_key(&pin, slot, public_key);
+            }
+            None => return Ok(false),
         }
-    }
-
-    /// Holds `signer` when the roster names its key live as an enrolled
-    /// owner key; true when it is held.
-    fn hold_owner_signer_if_enrolled(&self, signer: OwnerRootSigner) -> Result<bool> {
-        let live = self
-            .listed_owner_key(&signer.public_key())?
-            .is_some_and(|listed| listed.live);
-        if live {
-            self.hold_checkpoint_root_signer(Arc::new(signer));
-        }
-        Ok(live)
+        Ok(true)
     }
 
     /// Whether the roster lists `public_key` as a live key now: the rule a
