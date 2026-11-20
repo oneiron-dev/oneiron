@@ -81,6 +81,8 @@ pub mod shared_env_lane;
 pub mod signing_session;
 pub mod siwc_seat;
 pub mod solved_runs;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod supervised_rerank;
 pub mod system_one_leg;
 pub mod system_one_rung;
 mod vault_acts;
