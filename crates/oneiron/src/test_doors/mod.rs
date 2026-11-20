@@ -173,6 +173,8 @@ pub mod frontier_walk;
 pub mod full_copy_mark;
 pub mod gate_amendment_attribution;
 pub mod gate_receipt_rows;
+#[cfg(feature = "sync")]
+pub mod gate_receipt_unclear;
 pub mod gpu_job;
 pub mod grant_roles;
 pub mod graph_ask_centre;
