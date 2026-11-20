@@ -372,9 +372,13 @@ pub(crate) fn door_refuses_retired_standing(
                 signed_handoff = true;
                 continue;
             }
-            if row(candidate)?
-                .is_some_and(|handoff| entry_signer_keys(&handoff).any(|key| key == signer))
-            {
+            // A closed handoff the door cannot read is no evidence, and its
+            // read error never replaces the refusal: the replicated door's
+            // fold counts rows beside the judged one that its `row` does not
+            // read, and on an adopted vault that read answers a history error.
+            if row(candidate).is_ok_and(|read| {
+                read.is_some_and(|handoff| entry_signer_keys(&handoff).any(|key| key == signer))
+            }) {
                 signed_handoff = true;
                 if before.handoffs.contains(candidate) {
                     handoffs.insert(*candidate);
