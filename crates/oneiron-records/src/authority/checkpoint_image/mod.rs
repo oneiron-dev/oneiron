@@ -102,7 +102,15 @@ use serde::Serialize;
 /// names-the-key gates; Fable pass 29 K3), and a one-machine pick needs a live roster head in
 /// any role, not "yours". This install's own view still reads the removal of the anchor it pins:
 /// an act that removal did not see only narrows here (review #9496 P1).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 50;
+/// 51: the fold holds each act-free enrolment of a machine born of a restore until an entry
+/// signed by a joined machine descends from it, and refuses a revision that changes a
+/// machine's restore origin (row RESTORED-COPIES-ENROL-EACH-OTHER).
+/// 52: a `ReRoot` by a key without the host's stamp never counts while a live owner key with that
+/// stamp stands, and every row above such a move is refused with it (FIX HOSTED-REROOT-FOLD-RULE).
+/// 53: the image's fold and its safety index each hold the keys a closed handoff or appointment
+/// fence holds, the signers a door records handoff evidence for (FIX
+/// RETIRED-STANDING-REFUSAL-RECORDS-HANDOFF-ALARM-FOR-PLAIN-REVOKE).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 53;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

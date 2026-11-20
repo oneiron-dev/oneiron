@@ -131,6 +131,7 @@ pub(in crate::authority) struct OnceParts<'a> {
     pub(in crate::authority) valid_entries: ValidEntries,
     pub(in crate::authority) revoke_facts: RevokeFacts,
     pub(in crate::authority) retired_keys: BTreeSet<AuthorityKey>,
+    pub(in crate::authority) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     pub(in crate::authority) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     /// The rows of each closed conflict (`Retirements::closed_conflicts`).
     pub(in crate::authority) closed_conflicts: Vec<BTreeSet<AuthorityEntryHash>>,
@@ -145,6 +146,7 @@ pub(in crate::authority) struct OnceParts<'a> {
 pub(super) struct Settlement {
     pub(super) revoke_facts: RevokeFacts,
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
+    pub(super) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     pub(super) unsettled: bool,
     pub(super) issues: Vec<AuthorityFoldIssue>,
@@ -199,6 +201,7 @@ impl Once {
             valid_entries,
             revoke_facts,
             retired_keys,
+            handoff_or_appointment_retired_keys,
             closed_handoffs,
             closed_conflicts: _,
             unsettled,
@@ -264,9 +267,8 @@ impl Once {
         let marks = valid_entries
             .iter()
             .filter_map(|hash| {
-                let AuthorityOp::MachineProfile(profile) = &by_hash.get(hash)?.op else {
-                    return None;
-                };
+                let profile =
+                    super::super::stale_roster::filed_machine_profile(&by_hash.get(hash)?.op)?;
                 let chain = states
                     .get(hash)?
                     .machines
@@ -297,6 +299,7 @@ impl Once {
             settlement: Arc::new(Settlement {
                 revoke_facts,
                 retired_keys,
+                handoff_or_appointment_retired_keys,
                 closed_handoffs,
                 unsettled,
                 issues,

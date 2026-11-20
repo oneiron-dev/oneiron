@@ -124,6 +124,15 @@ impl ScopedReadActorKey {
                 fold_scope(&mut hasher, bound)?;
             }
         }
+        // A key a saved lane's basis lifted the relationship gate of on its
+        // owner's live binding alone (blind review P1 on #9716): that owner,
+        // and whether the binding lifts the gate in this snapshot. Any other
+        // key folds nothing more, so its fingerprint is as before.
+        if let Some(owner) = self.relationship_gate_owner {
+            hasher.update(b"relationship_gate_owner");
+            fold_id(&mut hasher, Some(owner));
+            hasher.update([u8::from(!self.relationship_gated_in(vault, &txn)?)]);
+        }
         // A reader homed in no conversation of this vault reads no stamped
         // claim outside a room (RULING SECREAD-HOME-READ-DOORS = B); any
         // other key folds nothing more, so its fingerprint is as before.
@@ -132,6 +141,12 @@ impl ScopedReadActorKey {
             // The room its reader stands in, which it reads stamped claims
             // inside.
             fold_id(&mut hasher, self.standing_room);
+            // A Connect guest's envelope fetch reads stamped claims up to its
+            // grant's ceiling (ANSWER FED-CONNECT-STAMPED-HOME = A).
+            if let Some(ceiling) = self.connect_home_ceiling() {
+                hasher.update(b"connect_home_ceiling");
+                fold_str(&mut hasher, &format!("{ceiling:?}"));
+            }
         }
         Ok(hasher.finalize().into())
     }
@@ -400,6 +415,27 @@ impl ScopedReadActorKey {
         if self.is_homed_unnamed() {
             hasher.update(KEY_FINGERPRINT_HOME_UNNAMED);
             key_fold_id(&mut hasher, self.standing_room);
+            // And the Connect ceiling a guest's envelope fetch reads stamped
+            // claims under (ANSWER FED-CONNECT-STAMPED-HOME = A).
+            if let Some(ceiling) = self.connect_home_ceiling() {
+                hasher.update(KEY_FINGERPRINT_CONNECT_HOME_CEILING);
+                key_fold_json(&mut hasher, &ceiling);
+            }
+        }
+        // Then a key a saved lane's basis took the owner's floor from, which
+        // proves that owner's binding at each read (FIX
+        // SAVED-LANE-MEET-DROPS-OWNER-LIVENESS).
+        if self.vault_owner_ref().is_none()
+            && let Some(owner) = self.owner_binding_ref()
+        {
+            hasher.update(b"withdrawn_floor_owner");
+            key_fold_id(&mut hasher, Some(owner));
+        }
+        // Then a key a saved lane's basis lifted the relationship gate of on
+        // that owner's live binding alone (blind review P1 on #9716).
+        if let Some(owner) = self.relationship_gate_owner {
+            hasher.update(b"relationship_gate_owner");
+            key_fold_id(&mut hasher, Some(owner));
         }
         *hasher.finalize().as_bytes()
     }
@@ -412,6 +448,12 @@ const KEY_FINGERPRINT_DOMAIN: &[u8] = b"oneiron.scoped_read.actor_key_fingerprin
 /// conversation of this vault (`ScopedReadActorKey::homed_unnamed`).
 const KEY_FINGERPRINT_HOME_UNNAMED: &[u8] =
     b"oneiron.scoped_read.actor_key_fingerprint.home_unnamed";
+
+/// [`ScopedReadActorKey::key_fingerprint`]'s fold of the Connect ceiling such
+/// a key reads stamped claims under
+/// (`ScopedReadActorKey::home_cleared_to_connect_ceiling`).
+const KEY_FINGERPRINT_CONNECT_HOME_CEILING: &[u8] =
+    b"oneiron.scoped_read.actor_key_fingerprint.connect_home_ceiling";
 
 fn key_fold_len(hasher: &mut blake3::Hasher, len: usize) {
     hasher.update(&(len as u64).to_be_bytes());

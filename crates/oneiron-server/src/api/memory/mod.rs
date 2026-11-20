@@ -174,7 +174,7 @@ pub(crate) struct CoreMemoryVerbResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(example = 1782357700_u64)]
     at: Option<u64>,
-    /// Target id for single-target verbs.
+    /// Executed target for single-target verbs; absent when post hooks redact it.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     id: Option<String>,
@@ -189,9 +189,10 @@ pub(crate) struct CoreMemoryVerbResponse {
     /// Entity written by `remember`.
     #[serde(skip_serializing_if = "Option::is_none")]
     entity: Option<CoreBatchEntityResult>,
-    /// Delete outcome for delete verbs.
+    /// Delete outcome for delete verbs. Post hooks may redact receipt fields.
     #[serde(skip_serializing_if = "Option::is_none")]
-    delete: Option<CoreMemoryVerbDeleteOutcome>,
+    #[schema(value_type = Option<CoreMemoryVerbDeleteOutcome>)]
+    delete: Option<Value>,
     /// Retract outcome for `retract`.
     #[serde(skip_serializing_if = "Option::is_none")]
     retract: Option<CoreMemoryVerbRetractOutcome>,
@@ -203,23 +204,28 @@ pub(crate) struct CoreMemoryVerbRetractOutcome {
     /// `retracted` when the claim closed, or `pending` when the gate parked a
     /// caller's retract of its own claim for the holder's consent (ARCH-0040
     /// `mcp:5`): the claim stays as it was until the holder settles it.
-    #[schema(example = "retracted")]
-    state: String,
+    /// Absent when post hooks redact the receipt's approval.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, example = "retracted")]
+    state: Option<String>,
     /// The claim door's receipt for a retract judged on its caller's own
     /// actor; for a parked retract, its pending decision (`gate:<hex>`).
     #[serde(skip_serializing_if = "Option::is_none", rename = "receipt_ref")]
     receipt_ref: Option<String>,
 }
 
-/// Delete operation result returned by named delete verbs.
+/// Delete operation result returned by named delete verbs. Hook-redacted fields are absent.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreMemoryVerbDeleteOutcome {
     /// Whether the delete found active local state to erase.
-    existed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    existed: Option<bool>,
     /// Reason applied by the delete operation.
-    reason: CoreMemoryVerbDeleteReason,
-    /// Whether the reason has hard-delete semantics.
-    hard: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<CoreMemoryVerbDeleteReason>,
+    /// Whether the reason has hard-delete semantics; absent when reason is redacted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hard: Option<bool>,
     /// Redaction receipt entity id for hard-delete classes.
     #[serde(skip_serializing_if = "Option::is_none", rename = "receipt_id")]
     #[schema(example = "fedcba9876543210fedcba9876543210")]
@@ -231,8 +237,9 @@ pub(crate) struct CoreMemoryVerbDeleteOutcome {
     /// `applied` when the local delete rail applied it, or
     /// `completion_pending` when the owner's delete was accepted and waits:
     /// erase confirmed, completion pending (FIX 1465).
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(example = "applied")]
-    state: String,
+    state: Option<String>,
 }
 
 /// Typed operation family selected by a named memory verb.
@@ -257,8 +264,11 @@ pub(crate) struct CoreMemoryWatchResponse {
     health: Option<watch::CoreMemoryWatchHealth>,
 }
 
+mod receipts;
 mod timeline;
 mod watch;
+pub(crate) use self::receipts::core_memory_delete_reason;
+use self::receipts::{core_memory_delete_by_role, core_memory_retract_by_facade};
 pub(crate) use self::timeline::{__path_core_memory_timeline, core_memory_timeline};
 // A timeline read that an ask stopped runs again through its route (FIX 1435).
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -412,25 +422,34 @@ pub(crate) async fn core_memory_verb(
                     )
                     .into());
                 }
-                let receipt = core_memory_retract_by_actor(&server, &auth, &id)?;
-                // The claim door answers `pending` only for a parked retract.
-                let state = if receipt.approval == "pending" {
-                    "pending"
-                } else {
-                    "retracted"
-                };
+                let (id, receipt) = core_memory_retract_by_facade(&server, &auth, &id)?;
+                // Only the post-hook approval can report the claim door's state.
+                let state = receipt
+                    .get("approval")
+                    .and_then(Value::as_str)
+                    .map(|approval| {
+                        if approval == "pending" {
+                            "pending"
+                        } else {
+                            "retracted"
+                        }
+                        .to_owned()
+                    });
                 return Ok(Json(CoreMemoryVerbResponse {
                     verb: verb.canonical_name().to_owned(),
                     operation,
                     at: None,
-                    id: Some(id.to_hex()),
+                    id,
                     new_id: None,
                     old_id: None,
                     entity: None,
                     delete: None,
                     retract: Some(CoreMemoryVerbRetractOutcome {
-                        state: state.to_owned(),
-                        receipt_ref: Some(receipt.receipt_ref),
+                        state,
+                        receipt_ref: receipt
+                            .get("receipt_ref")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
                     }),
                 }));
             };
@@ -452,7 +471,7 @@ pub(crate) async fn core_memory_verb(
                 entity: None,
                 delete: None,
                 retract: Some(CoreMemoryVerbRetractOutcome {
-                    state: "retracted".to_owned(),
+                    state: Some("retracted".to_owned()),
                     receipt_ref: None,
                 }),
             }))
@@ -468,57 +487,55 @@ pub(crate) async fn core_memory_verb(
             let id = parse_required_entity_id(req.id.as_deref(), "id")?;
             let (reason, response_reason) = core_memory_delete_reason(verb, req.reason)?;
             // DEL-2 (ARCH-0043, owner DEL-2 = A): a self-hosted root, the dev
-            // mode and an owner-grade token delete as the owner, as before,
-            // with no new read. Any other token is judged by the one delete
-            // authority on its own resolved actor.
-            let owner_door = host_action.is_some() || auth.is_owner_grade();
-            let (existed, receipt_id, sweep_key) = if owner_door {
+            // mode and the owner's own slip delete as the owner. Any other
+            // token, a full-vault slip someone else holds included, is judged
+            // by the one delete authority on its own resolved actor
+            // (OWNER-GRADE-IS-NOT-OWNERSHIP). The owner's delete re-proves
+            // the owner's proof in each writer before it publishes or tears
+            // (FIX MEMORY-DELETE-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
+            let owner = memory_owner_proof(&server, &auth, host_action.is_some())?;
+            let (id, delete) = if let Some(owner) = owner {
                 let failed = |error: oneiron::Error| {
                     tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");
                     core_engine_error("core memory delete failed", error)
                 };
+                #[cfg(oneiron_test_support)]
+                crate::test_doors::memory_owner_commit::run_before_owner_commit(&server.vault);
                 let outcome = server
                     .vault
-                    .delete_entity_with_reason(&id, reason)
+                    .delete_entity_with_reason_as_owner(&owner, &id, reason)
                     .map_err(failed)?;
-                (
-                    outcome.existed,
-                    outcome.receipt_id.map(|id| id.to_hex()),
-                    outcome.sweep_key.as_deref().map(hex_bytes),
-                )
-            } else {
-                let receipt = core_memory_delete_by_role(&server, &auth, &id, response_reason)?;
-                let receipt_id = receipt.receipt_ref.as_deref().map(|receipt| {
-                    receipt
-                        .strip_prefix("redaction:")
-                        .unwrap_or(receipt)
-                        .to_owned()
+                let delete = serde_json::json!(CoreMemoryVerbDeleteOutcome {
+                    existed: Some(outcome.existed),
+                    reason: Some(response_reason),
+                    hard: Some(matches!(
+                        reason,
+                        oneiron::DeleteReason::UserHardDelete
+                            | oneiron::DeleteReason::GdprDelete
+                            | oneiron::DeleteReason::PolicyDelete
+                    )),
+                    receipt_id: outcome.receipt_id.map(|id| id.to_hex()),
+                    sweep_key: outcome.sweep_key.as_deref().map(hex_bytes),
+                    state: Some(
+                        oneiron::memory::DeleteRequestState::Applied
+                            .as_str()
+                            .to_owned()
+                    ),
                 });
-                (receipt.existed, receipt_id, None)
+                (Some(id.to_hex()), delete)
+            } else {
+                core_memory_delete_by_role(&server, &auth, &id, response_reason)?
             };
-            let state = oneiron::memory::DeleteRequestState::Applied;
 
             Ok(Json(CoreMemoryVerbResponse {
                 verb: verb.canonical_name().to_owned(),
                 operation,
                 at: None,
-                id: Some(id.to_hex()),
+                id,
                 new_id: None,
                 old_id: None,
                 entity: None,
-                delete: Some(CoreMemoryVerbDeleteOutcome {
-                    existed,
-                    reason: response_reason,
-                    hard: matches!(
-                        reason,
-                        oneiron::DeleteReason::UserHardDelete
-                            | oneiron::DeleteReason::GdprDelete
-                            | oneiron::DeleteReason::PolicyDelete
-                    ),
-                    receipt_id,
-                    sweep_key,
-                    state: state.as_str().to_owned(),
-                }),
+                delete: Some(delete),
                 retract: None,
             }))
         }
@@ -744,97 +761,6 @@ fn memory_verb_refusal(refusal: oneiron::NamedMemoryVerbRefusal) -> ApiError {
     }
 }
 
-/// The core delete of `id` by a token that is not owner-grade (DEL-2,
-/// ARCH-0043; Engine ruling 13 Nov 02:51 = A). Its actor is resolved as the
-/// facade resolves a writer, and `Memory::safe_delete` judges it on that
-/// actor's handle, the credential's proof bound: the owner path when the
-/// actor is the vault's owner, else the role table (a Member's own item, an
-/// Admin's in-scope item, an agent under a Grant that names `delete`), each
-/// refusal FORBIDDEN and naming its reason. A token that names no actor is
-/// refused `unresolved_actor`.
-///
-/// An account API key (OF-448) names its person and no actor class: it is
-/// judged as that person, a human (Engine rulings 13 Nov 08:20 and 08:30 =
-/// C). The owner's own key deletes on the owner's path, within its scopes.
-/// The key carries no vault slip, so on a rooted vault no other person
-/// stands by it: the engine's owner refusal there answers
-/// `account_key_unbound`. On a rootless vault the role table judges it.
-fn core_memory_delete_by_role(
-    server: &SyncServer,
-    auth: &CoreAuth,
-    id: &oneiron::EntityId,
-    reason: CoreMemoryVerbDeleteReason,
-) -> Result<oneiron::memory::DeleteReceipt, DagWriteError> {
-    let (actor, class, by_account_key) = core_memory_caller(server, auth, "delete")?;
-    let memory = super::scoped_auth::credential_memory(server.vault(), Some(auth), actor, class);
-    let reason = match reason {
-        CoreMemoryVerbDeleteReason::User => oneiron::memory::SafeDeleteReason::UserDelete,
-        CoreMemoryVerbDeleteReason::UserHard => oneiron::memory::SafeDeleteReason::UserHardDelete,
-        CoreMemoryVerbDeleteReason::Gdpr => oneiron::memory::SafeDeleteReason::GdprDelete,
-        CoreMemoryVerbDeleteReason::Policy => oneiron::memory::SafeDeleteReason::PolicyDelete,
-    };
-    Ok(memory
-        .safe_delete(&id.to_hex(), reason)
-        .map_err(|refusal| account_key_unbound(server, by_account_key, refusal, "delete"))?)
-}
-
-/// An account key's refusal of `act`: the key carries no vault slip, so on a
-/// rooted vault no person but the owner stands by it, and the engine's owner
-/// refusal there answers `account_key_unbound` with the remedy (Engine rulings
-/// 13 Nov 08:20 and 08:30 = C). Any other refusal passes unchanged.
-fn account_key_unbound(
-    server: &SyncServer,
-    by_account_key: bool,
-    refusal: oneiron::memory::MemoryError,
-    act: &str,
-) -> oneiron::memory::MemoryError {
-    if by_account_key
-        && refusal.code == oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
-        && server
-            .vault()
-            .authority_vault_id()
-            .is_ok_and(|root| root.is_some())
-    {
-        let remedy = format!(
-            "Present the person's own paired slip (--principal-ref, --actor-class human) to {act} as that person."
-        );
-        return oneiron::memory::MemoryError::new(
-            oneiron::memory::MEMORY_CODE_FORBIDDEN,
-            format!(
-                "account_key_unbound: this key can't {act} in this vault; use your app login or ask the owner"
-            ),
-            &[remedy.as_str()],
-        );
-    }
-    refusal
-}
-
-/// The actor a memory verb judges a caller that is not the vault owner on:
-/// the writer the facade resolves, or the person an account API key names, as
-/// a human (Engine rulings 13 Nov 08:20 and 08:30 = C). The flag says it came
-/// from an account key. A token that names neither is refused
-/// `unresolved_actor`, naming `authority`.
-fn core_memory_caller(
-    server: &SyncServer,
-    auth: &CoreAuth,
-    authority: &str,
-) -> Result<(oneiron::EntityId, oneiron::EdgeActorClass, bool), DagWriteError> {
-    match facade::facade_actor(server, auth) {
-        Ok((actor, class)) => Ok((actor, class, false)),
-        Err(_) => match auth.account_key_principal() {
-            Some(person) => Ok((person, oneiron::EdgeActorClass::Human, true)),
-            None => Err(oneiron::memory::MemoryError::new(
-                oneiron::memory::MEMORY_CODE_FORBIDDEN,
-                format!("unresolved_actor: this token names no actor the {authority} authority can judge"),
-                &[
-                    "Present a slip paired with --principal-ref and --actor-class, an account key that names its person, or the owner's own credential.",
-                ],
-            )
-            .into()),
-        },
-    }
-}
-
 /// The vault owner's proof when a memory verb takes the owner's path, or
 /// `None` for anyone else: a self-hosted root or the dev mode
 /// (`host_action`), whose proof carries that action, or the owner's own slip
@@ -842,9 +768,10 @@ fn core_memory_caller(
 /// holds is not the owner's (OWNER-GRADE-IS-NOT-OWNERSHIP). A host action
 /// whose owner no longer authenticates gets the owner door's refusal. The
 /// lifecycle door checks the proof again in the writer that commits the act,
-/// so a credential revoked, or an owner removed, while the request waits on
-/// that writer commits nothing (FIX
-/// MEMORY-VERB-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
+/// and the delete door in each writer before it publishes or tears, so a
+/// credential revoked, or an owner removed, while the request waits on that
+/// writer commits nothing (FIX MEMORY-VERB-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT,
+/// FIX MEMORY-DELETE-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
 fn memory_owner_proof(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -869,66 +796,4 @@ fn non_owner_supersede_refusal() -> ApiError {
             "A live run supersedes through vault.claims.supersede; the vault owner supersedes any pair here.",
         ],
     )
-}
-
-/// The core retract of `id` by a caller that is not the vault owner: the
-/// claim door `vault.claims.retract` runs ([`oneiron::Memory::claim_retract`]),
-/// on the caller's own actor ([`core_memory_caller`]) with the credential's
-/// proof bound. A human the authority log binds retracts any claim, recorded
-/// as the owner's explicit retraction (the door takes that binding for
-/// ownership: FIX-LIST CLAIM-RETRACT-HUMAN-BINDING-IS-NOT-OWNERSHIP); anyone
-/// else only a claim it wrote, and an agent's retract the gate holds parks
-/// for the holder's consent. An account key on a rooted vault retracting a
-/// claim its person did not write answers `account_key_unbound`, as delete
-/// does. The vault's clock dates it.
-fn core_memory_retract_by_actor(
-    server: &SyncServer,
-    auth: &CoreAuth,
-    id: &oneiron::EntityId,
-) -> Result<oneiron::memory::CommitReceipt, DagWriteError> {
-    let (actor, class, by_account_key) = core_memory_caller(server, auth, "retract")?;
-    let memory = super::scoped_auth::credential_memory(server.vault(), Some(auth), actor, class)
-        .at(auth.locality());
-    Ok(memory.claim_retract(&id.to_hex()).map_err(|refusal| {
-        account_key_unbound(server, by_account_key, refusal, "retract another's claim")
-    })?)
-}
-
-pub(crate) fn core_memory_delete_reason(
-    verb: oneiron::NamedMemoryVerb,
-    requested: Option<CoreMemoryVerbDeleteReason>,
-) -> Result<(oneiron::DeleteReason, CoreMemoryVerbDeleteReason), ApiError> {
-    let response_reason = requested.unwrap_or(match verb {
-        oneiron::NamedMemoryVerb::HardDelete => CoreMemoryVerbDeleteReason::UserHard,
-        _ => CoreMemoryVerbDeleteReason::User,
-    });
-    let reason = match response_reason {
-        CoreMemoryVerbDeleteReason::User => oneiron::DeleteReason::UserDelete,
-        CoreMemoryVerbDeleteReason::UserHard => oneiron::DeleteReason::UserHardDelete,
-        CoreMemoryVerbDeleteReason::Gdpr => oneiron::DeleteReason::GdprDelete,
-        CoreMemoryVerbDeleteReason::Policy => oneiron::DeleteReason::PolicyDelete,
-    };
-    match (verb, response_reason) {
-        (oneiron::NamedMemoryVerb::Delete, CoreMemoryVerbDeleteReason::User) => {}
-        (oneiron::NamedMemoryVerb::Delete, _) => {
-            return Err(ApiError::bad_request(
-                "delete only accepts user_delete; use hard_delete for hard-delete reasons",
-                Some("reason"),
-            ));
-        }
-        (
-            oneiron::NamedMemoryVerb::HardDelete,
-            CoreMemoryVerbDeleteReason::UserHard
-            | CoreMemoryVerbDeleteReason::Gdpr
-            | CoreMemoryVerbDeleteReason::Policy,
-        ) => {}
-        (oneiron::NamedMemoryVerb::HardDelete, CoreMemoryVerbDeleteReason::User) => {
-            return Err(ApiError::bad_request(
-                "hard_delete requires user_hard_delete, gdpr_delete, or policy_delete",
-                Some("reason"),
-            ));
-        }
-        _ => {}
-    }
-    Ok((reason, response_reason))
 }

@@ -163,6 +163,8 @@ mod principal_standing;
 mod readonly_fold;
 mod recover_many;
 mod recovery;
+mod restored_join;
+mod restored_join_door;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
@@ -246,8 +248,8 @@ pub use oneiron_authority::authority::{
     authority_transcript, decode_authority_log_entry_body, effective_slip_comm,
     encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
     genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
-    sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
-    verify_authority_signature,
+    restored_machine_profile_proof_transcript, sign_federation_pact_gesture,
+    validate_authority_log_entry_body_bytes, verify_authority_signature,
 };
 // The custody work body's own types (WILL L04 row 04), its permits in
 // pieces (FIX 11866) and its shared permit set (FIX 12281).
@@ -262,6 +264,12 @@ pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
 pub use oneiron_authority::authority::{
     ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND, ROOT_APPOINTMENT_SUCCESSOR_ROLES, RootAppointment,
     root_appointment_challenge,
+};
+// The owner's word that no other machine is left, which joins one machine
+// born of a restore (row RESTORED-COPIES-ENROL-EACH-OTHER).
+pub use oneiron_authority::authority::{
+    RestoredJoinEnrolment, RestoredMachineJoin, restored_machine_join_inline_seen,
+    restored_machine_join_seen,
 };
 pub use root_appointment_door::RootAppointmentReceipt;
 pub(crate) use root_appointment_door::refuse_unneeded_appointment;
@@ -335,6 +343,7 @@ pub use checkpoint_choice::CheckpointPolicyHead;
 pub use checkpoint_image::*;
 pub use checkpoint_policy::*;
 pub use checkpoint_policy_choice::CheckpointPolicyView;
+pub(crate) use checkpoint_root_attest::HeldRootSigner;
 pub use checkpoint_root_attest::{
     ASK_WORD_PROOF_DOMAIN, AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX, CheckpointRootSigner,
     ROOT_CHECKPOINT_AUTHORITY, ROOT_CHECKPOINT_PICKUP, RootCheckpointAttest,
@@ -407,7 +416,7 @@ pub use log_budget::{
 pub use machine_answers::MachineAnswerLanding;
 pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine, RequestCode,
-    machine_connection_transcript, machine_proof_header_value,
+    SERVING_INSTALL_ROLE, machine_connection_transcript, machine_proof_header_value,
 };
 pub(crate) use machine_profile::YoursProof;
 pub use machine_profile::{
@@ -421,6 +430,7 @@ pub use mesh_machine::{
     MeshAlpnGrant, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshMachineAddress,
     MeshMachineAddressEnvelope, MeshMachineBinding,
 };
+pub use restored_join::RestoredEnrolmentStanding;
 // The vault as its own `/mcp`'s OAuth 2.1 authorization server (FIX 4902 slice B), and the
 // agent tiers it and `oneiron token agent` share.
 pub use agent_tier::AgentTier;
@@ -610,7 +620,9 @@ pub(crate) use readonly_fold::{
 };
 use readonly_fold::{authority_log_rows_in_txn, decode_stored_authority_log_body};
 pub(crate) use recovery::arriving_re_root;
-pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
+pub(crate) use retired_signers::{
+    authority_row_held, authority_row_resident, door_ancestor_row, stored_authority_row,
+};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 
 // Module-internal only: nothing here leaves `authority`.

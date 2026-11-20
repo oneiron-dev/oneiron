@@ -84,10 +84,14 @@ fn a_re_rooted_vault_keeps_engine_claims_and_writers_under_the_new_secret_only()
         .unwrap();
     assert!(readable(&vault, kept) && readable(&vault, retracted));
 
+    let engine_writer_count = vault.engine_machine_actors().unwrap().len();
     let next = HostSlipIssuer::from_secret(b"successor self-host root").unwrap();
     let moved = vault.re_root_host(&old, &next).unwrap();
     assert_eq!(moved.vault_id, vault_id);
-    assert_eq!(moved.writers_enrolled, 6, "every engine writer was live");
+    assert_eq!(
+        moved.writers_enrolled, engine_writer_count,
+        "every engine writer was live"
+    );
     assert_eq!((moved.histories_carried, moved.histories_left), (2, 0));
     assert_eq!(vault.authority_fold().unwrap().vault_id, Some(vault_id));
 

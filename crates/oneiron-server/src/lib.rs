@@ -244,6 +244,9 @@ pub fn build_artifact_app(server: Arc<SyncServer>) -> Router {
 #[path = "../tests/support/fake_llm.rs"]
 mod fake_llm;
 #[cfg(test)]
+#[path = "../tests/support/owner_only_file.rs"]
+mod owner_only_file;
+#[cfg(test)]
 mod test_credentials;
 #[cfg(test)]
 mod test_engine_stack;

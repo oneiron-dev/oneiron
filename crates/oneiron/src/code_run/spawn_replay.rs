@@ -246,6 +246,15 @@ pub(super) fn ask_of(fields: &[(Value, Value)]) -> Option<&Value> {
         .find_map(|(key, value)| (key.as_str() == Some(ASK_KEY)).then_some(value))
 }
 
+/// The place among a spawn request's fields of an ask an erase took, its
+/// typed marker ([`is_erased_ask`]), which holds the erase's fixed words
+/// alone (FIX FENCE-ERASED-FORM-THROUGH-WALL).
+pub(super) fn erased_ask_field(fields: &[(Value, Value)]) -> Option<usize> {
+    fields
+        .iter()
+        .position(|(key, value)| key.as_str() == Some(ASK_KEY) && is_erased_ask(value))
+}
+
 /// A spawn request's fields without its ask.
 pub(super) fn without_ask(fields: &[(Value, Value)]) -> Value {
     Value::Map(

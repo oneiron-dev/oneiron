@@ -202,6 +202,7 @@ fn node_profile(
         seen_world_edits: BTreeSet::new(),
         carrier: carried.as_ref().map(|(carrier, _)| *carrier),
         act: carried.map(|(_, act)| act),
+        restored_from: None,
     }
 }
 

@@ -124,6 +124,12 @@ fn imported_docs_source_body(body: &[u8], kind: u8) -> Option<Value> {
         // NER reads the page text, not the renderer path or registry metadata.
         fields.remove("path");
         fields.remove("registry");
+        // The page's hash and size are taken over its transport bytes (a
+        // byte order mark, CRLF line ends); the normalized text above
+        // already names its content, so a transport-only re-put is no new
+        // source.
+        fields.remove("blake3");
+        fields.remove("byte_size");
     } else if kind == crate::registry::ENTITY_TYPE_ASSET_TEXT {
         // A newly inserted heading renumbers an unchanged chunk, but its
         // text and asset provenance still name the same source content.

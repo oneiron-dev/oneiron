@@ -203,7 +203,7 @@ impl Vault {
         // this install's successor's making and the commit.
         let device_pin = self.device_pin();
         let _step = device_pin.as_deref().map(DevicePin::step);
-        let _slot_lock = install.is_some().then(|| {
+        let slot_lock = install.is_some().then(|| {
             self.store
                 .owner_signing_slot_lock
                 .lock()
@@ -252,6 +252,10 @@ impl Vault {
         self.mark_authority_rows_in_txn(&mut txn, &rows)?;
         txn.commit()?;
         self.note_committed_authority_rows(rows);
+        // The successor is held once the slot lock is let go: a hold asks
+        // every signer held for its root, and a signer's answer may read the
+        // slot (REVIEW-9678 P1).
+        drop(slot_lock);
         if let Some(key) = held {
             self.hold_checkpoint_root_signer(Arc::new(key));
         }
@@ -302,7 +306,10 @@ impl Vault {
 /// that key revoked. A key the roster names live needs no recovery. A run
 /// checked before another run's recovery committed is refused here, before
 /// it drops the seed of that run's successor, a live key
-/// ([`OwnerSigningSlot::fresh_key`]).
+/// ([`OwnerSigningSlot::fresh_key`]). The slot's revoked key signs nothing,
+/// so the slot takes the fresh key's seed at once ([`OwnerSigningSlot::renew`],
+/// under the slot lock the door holds): a later refusal leaves a key no row
+/// names there, which the next run enrols.
 fn this_install_successor(
     fold: &AuthorityFold,
     actor: EntityId,
@@ -315,7 +322,7 @@ fn this_install_successor(
         Some(device) if !device.revoked => {
             return Err(authority_refused(THIS_INSTALL_KEY_LIVE));
         }
-        Some(_) => key = slot.fresh_key()?,
+        Some(_) => key = slot.renew(&slot.fresh_key()?)?.0,
         None => {}
     }
     let public_key = key.public_key();

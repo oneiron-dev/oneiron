@@ -22,7 +22,9 @@ use std::sync::{Arc, Mutex};
 use oneiron::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt,
 };
-use oneiron::calendar::claims::PREDICATE_CALENDAR_ORIGIN;
+use oneiron::calendar::claims::{
+    CalendarStatusBasis, PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_STATUS,
+};
 use oneiron::calendar::ingest::feed_door::{
     self as feed, CalendarIcsFeedConsent, CalendarIcsFeedRequest, CalendarIcsFeedReviewDecision,
     CalendarIcsFeedReviewRequest,
@@ -44,7 +46,8 @@ use oneiron::memory::{
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimSource, EdgeActorClass, EntityId, Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, EdgeActorClass, EntityId,
+    Vault, VaultConfig,
 };
 use oneiron_keystore::MemoryKeystore;
 
@@ -391,6 +394,48 @@ fn calendar(events: &[Event<'_>], etag: &str) -> IcsFetchResponse {
     }
 }
 
+/// [`calendar`] with each VEVENT cancelled (`STATUS:CANCELLED`).
+fn cancelled_calendar(events: &[Event<'_>], etag: &str) -> IcsFetchResponse {
+    let IcsFetchResponse::Complete { etag, body } = calendar(events, etag) else {
+        panic!("the fixture calendar answers a complete body");
+    };
+    IcsFetchResponse::Complete {
+        etag,
+        body: String::from_utf8(body)
+            .expect("the fixture calendar is UTF-8")
+            .replace("END:VEVENT\r\n", "STATUS:CANCELLED\r\nEND:VEVENT\r\n")
+            .into_bytes(),
+    }
+}
+
+/// The live `calendar.status` claims among `claims`: each one's id, basis
+/// and approval.
+fn live_statuses(
+    claims: &[(EntityId, ClaimBody)],
+) -> Vec<(EntityId, CalendarStatusBasis, ClaimApprovalStatus)> {
+    claims
+        .iter()
+        .filter(|(_, body)| {
+            body.predicate == PREDICATE_CALENDAR_STATUS
+                && body.lifecycle == ClaimLifecycleStatus::Active
+        })
+        .map(|(id, body)| {
+            let basis = body
+                .value
+                .as_map()
+                .and_then(|entries| {
+                    entries
+                        .iter()
+                        .find(|(key, _)| key.as_str() == Some("basis"))
+                })
+                .and_then(|(_, value)| value.as_str())
+                .and_then(CalendarStatusBasis::parse)
+                .unwrap_or_else(|| panic!("status claim {id:?} names its basis"));
+            (*id, basis, body.approval)
+        })
+        .collect()
+}
+
 fn assert_all(claims: &[(EntityId, ClaimBody)], approval: ClaimApprovalStatus, why: &str) {
     for (id, body) in claims {
         assert_eq!(
@@ -506,4 +551,58 @@ fn a_flagged_body_s_property_continuation_waits_for_the_owner_too() {
         count(&every_pass),
         "the status counts the poll's and the continuation's held claims"
     );
+}
+
+/// Review round 2 of #9677: a feed's cancellation that the standing consent
+/// holds for the owner (its body flagged) neither blocks a later omission's
+/// cancellation nor gives way to it. When the next complete feed leaves the
+/// EVENT out, the omission's `calendar.status` is admitted beside the held
+/// one and settles under the standing consent, so every read that skips a
+/// proposal (a booking's among them) sees the EVENT cancelled, and the held
+/// cancellation stays live, waiting on the owner. Main superseded the held
+/// cancellation with the omission; the round 1 head admitted no omission
+/// while it stood.
+#[test]
+fn an_omission_cancels_beside_a_held_cancellation_and_leaves_it_waiting() {
+    let f = Fixture::open();
+    let work = f.install("work");
+    f.poll(
+        &work,
+        calendar(&[Event::new("uid-0@work", "weekly sync")], "v1"),
+    );
+    f.approve_first_poll("work");
+
+    // The feed cancels the EVENT in a body the screen flags.
+    f.poll(
+        &work,
+        cancelled_calendar(&[Event::new("uid-0@work", FLAG_MARKER)], "v2"),
+    );
+    let statuses = live_statuses(&f.imported_claims("uid-0@work"));
+    let [(held, CalendarStatusBasis::ImportedCancel, ClaimApprovalStatus::Proposed)] =
+        statuses.as_slice()
+    else {
+        panic!("the flagged cancellation waits on the owner: {statuses:?}");
+    };
+    let held = *held;
+
+    // The next complete feed leaves the EVENT out.
+    f.poll(&work, calendar(&[], "v3"));
+    let statuses = live_statuses(&f.imported_claims("uid-0@work"));
+    assert!(
+        statuses.contains(&(
+            held,
+            CalendarStatusBasis::ImportedCancel,
+            ClaimApprovalStatus::Proposed
+        )),
+        "the held cancellation stays live, waiting on the owner: {statuses:?}"
+    );
+    assert!(
+        statuses.iter().any(|(_, basis, approval)| {
+            *basis == CalendarStatusBasis::ImportedAbsence
+                && *approval == ClaimApprovalStatus::Approved
+        }),
+        "the omission's cancellation is admitted beside it under the standing consent: \
+         {statuses:?}"
+    );
+    assert_eq!(statuses.len(), 2, "two live statuses: {statuses:?}");
 }

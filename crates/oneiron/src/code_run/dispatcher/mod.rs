@@ -182,6 +182,10 @@ pub struct HostSelfDispatcher<'a> {
     /// The host's slip issuer, which signs the leader's subproject spawn
     /// (OF-389). Host configuration; no guest call reaches it.
     pub(super) slip_issuer: Option<&'a crate::authority::HostSlipIssuer>,
+    /// The host's auto checker, lent by the live-run door (FIX
+    /// LIVE-RUN-CHECKER-INJECT): it reviews a live-run claim put as it
+    /// reviews a Dreamer write. Host configuration; no guest call reaches it.
+    pub(super) auto_checker: Option<&'a crate::llm::BoundedAutoChecker>,
     /// The skill bodies the host put in the run's task (FIX 3028), which the
     /// first step's replay capsule tags. Host configuration; no guest call
     /// reaches it.
@@ -263,3 +267,8 @@ pub(crate) use self::agent_verb::kept_reveal_lease;
 pub use self::agent_verb::{SecretUseAnswer, SecretUseRecord, SecretUseStatus, kept_reveal_answer};
 
 pub use self::workflow_dispatch::operations as workflow_operations;
+
+// Door seams for `test_doors::parked_hook_custody`, at the file's end, clear
+// of the import block.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::verb_hooks::{hook_parked_outcome_for_test, parked_note_resumed_for_test};

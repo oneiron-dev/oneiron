@@ -107,6 +107,8 @@ pub use branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
 pub use conflict::*;
 pub(crate) use conflict::{candidate_probe_body, topic_key_canonical_bytes};
 pub use executor::*;
+#[cfg(oneiron_test_support)]
+pub(crate) use extracted_people::mint_named_person_for_test;
 pub(crate) use extracted_people::{
     delete_lineage_origin_in_txn, has_name_span, normalize_name_span, origin_in_txn,
     pin_lineage_origin_in_txn, speaker_admissible_in_txn,

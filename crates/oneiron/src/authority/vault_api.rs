@@ -240,6 +240,14 @@ impl Vault {
                             hash,
                         ),
                     },
+                    &mut |hash| {
+                        super::retired_signers::authority_row_held(
+                            &self.store,
+                            wtxn,
+                            evidence.as_deref(),
+                            hash,
+                        )
+                    },
                 )?
             {
                 return Err(invalid_authority());

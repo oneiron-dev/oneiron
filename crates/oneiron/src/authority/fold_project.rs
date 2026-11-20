@@ -18,6 +18,7 @@ pub(super) struct Settled<'a> {
     /// Already filtered to the settled branches.
     pub(super) revoke_facts: &'a RevokeFacts,
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
+    pub(super) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     pub(super) unsettled: bool,
     pub(super) counted_ancestor_pairs: u64,
@@ -97,6 +98,7 @@ pub(super) fn project_once(
         by_hash,
         revoke_facts,
         retired_keys,
+        handoff_or_appointment_retired_keys,
         closed_handoffs,
         unsettled,
         counted_ancestor_pairs,
@@ -197,6 +199,7 @@ pub(super) fn project_once(
             .as_ref()
             .map_or_else(BTreeMap::new, |state| state.roster.to_btree_map()),
         retired_keys,
+        handoff_or_appointment_retired_keys,
         host_custody: merged
             .as_ref()
             .map_or_else(BTreeSet::new, super::machine_profile::host_custody_closure),
@@ -235,6 +238,9 @@ pub(super) fn project_once(
         actor_bindings,
         machines,
         held_machine_answers,
+        restored_enrolments: merged
+            .as_ref()
+            .map_or_else(BTreeMap::new, super::restored_join::listed),
         waiting_owner_choices: merged.as_ref().map_or_else(BTreeSet::new, |state| {
             super::owner_proof::asking_owner_choices(state)
         }),

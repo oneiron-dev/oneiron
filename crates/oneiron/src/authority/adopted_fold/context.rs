@@ -303,3 +303,27 @@ pub(super) fn seeds_late_fork(image: &AuthorityCheckpointV2, hash: &AuthorityEnt
     }
     true
 }
+
+/// Whether `fold`, a fold past `image`, counts a covered fork
+/// (`SequenceFork`) whose body the image dropped for
+/// [`super::super::checkpoint_image::AUTHORITY_RESIDENCE_BODY_OVERFLOW`] while its
+/// roster holds some key revoked. A fork expires at once when its signer or a
+/// cosigner is revoked (`stale_roster::revoked_fork_approvals`), and only its
+/// body names its cosigners; every other kind that expires so carries its
+/// body (`checkpoint_image::row`). Such a fork is rare: one signer's row
+/// withheld below its own floor.
+pub(super) fn dropped_body_fork_may_expire(
+    image: &AuthorityCheckpointV2,
+    fold: &AuthorityFold,
+) -> bool {
+    image.residence_overflow
+        && fold.roster.values().any(|device| device.revoked)
+        && fold.issues.iter().any(|issue| {
+            matches!(
+                issue,
+                AuthorityFoldIssue::SequenceFork(hash)
+                    if fold.valid_entries.contains(hash)
+                        && image.rows.get(hash).is_some_and(|row| row.body.is_none())
+            )
+        })
+}

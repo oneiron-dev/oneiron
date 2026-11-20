@@ -17,6 +17,7 @@ use crate::llm::{
     BudgetLease, CallEnvelope, ContentPart, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
     ModelId,
 };
+use crate::ports::EdgeDirection;
 use crate::registry::ENTITY_TYPE_CLAIM;
 
 use super::decisions::{MembershipDecisions, judge};
@@ -599,15 +600,18 @@ impl SavedQueryEvaluator<'_> {
         if predicates.is_empty() {
             return Ok((Vec::new(), Vec::new(), false, Vec::new()));
         }
+        // Only an inbound `ClaimOf` from a stored CLAIM is a claim about the
+        // entity, so only such a peer is scanned or counted as withheld.
         let listed = lane.neighborhood_projected(
             &entity_ref,
+            EdgeDirection::In,
             Some(EdgeKind::ClaimOf),
+            Some(ENTITY_TYPE_CLAIM),
             None,
             usize::MAX,
             |_, neighbors| {
                 Ok::<_, Error>(neighbors.map(|rows| {
                     rows.into_iter()
-                        .filter(|row| !row.outbound)
                         .map(|row| row.edge.target)
                         .collect::<Vec<EntityId>>()
                 }))

@@ -206,6 +206,7 @@ impl ServedVault {
             device_class,
             encryption_key,
             machine_proof,
+            restored_from: None,
         };
         self.vault
             .enroll_machine(

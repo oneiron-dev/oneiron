@@ -1,7 +1,8 @@
-//! World privacy P2 acceptance: a world's settings change only through the
-//! owner's door, on a machine the owner marked "yours" that holds the world.
-//! Concurrent edits fold stricter in every order, and no forged entry, generic
-//! write, replayed edit, restore or machine that lost "yours" widens a world.
+//! World privacy P2 acceptance, as re-cut for the mesh (PR1a): a world's
+//! settings change through the owner's door, carried by any live machine in
+//! any role, holding the world or not. Concurrent edits fold stricter in
+//! every order, and no forged entry, generic write, replayed edit, restore or
+//! removed carrier widens a world.
 use super::super::slip_vault::next_entry;
 use super::machine_identity::{Host, host, own_encryption_key, request_for};
 use super::support::RosterHead;
@@ -36,10 +37,10 @@ pub(super) fn enrol_here(host: &Host) -> EntityId {
         )
         .unwrap();
     host.vault
-        .enroll_machine(
+        .set_machine_role(
             &host.owner,
             ActSurface::ThisInstall,
-            &request,
+            request.machine,
             MachineRole::Owned(MachineOwnership::Yours),
             None,
         )
@@ -140,6 +141,62 @@ pub(super) fn stored_entries(vault: &Vault) -> Vec<AuthorityLogEntry> {
         .collect()
 }
 
+/// An owner answer as a live carrier signs it (mesh PR1b, #2982): `carrier`'s
+/// install key signs at `seq`, and carrier plus act name the owner's say-so of
+/// the kind `role` takes (a removal for `Removed`, an answer otherwise).
+/// `base` is the target's current profile for its identity fields; `seen` is
+/// what the answer lists.
+pub(super) fn answer_by(
+    host: &Host,
+    carrier: EntityId,
+    carrier_key: &SigningKey,
+    base: &MachineProfile,
+    role: MachineRole,
+    revision: u64,
+    seen: BTreeSet<AuthorityEntryHash>,
+    parents: Vec<AuthorityEntryHash>,
+    seq: u64,
+) -> AuthorityLogEntry {
+    let kind = if role == MachineRole::Removed {
+        OwnerActKind::MachineRemoval
+    } else {
+        OwnerActKind::MachineAnswer
+    };
+    let profile = MachineProfile {
+        role,
+        revision,
+        seen_world_edits: seen,
+        carrier: Some(carrier),
+        act: Some(OwnerAct::by_owner(
+            host.owner.actor(),
+            kind,
+            base.machine,
+            ActSurface::ThisInstall,
+            [0; 32],
+        )),
+        ..base.clone()
+    };
+    let fold = host.vault.authority_fold().unwrap();
+    sign_ed(
+        unsigned_entry(
+            fold.vault_id,
+            seq,
+            parents,
+            AuthorityOp::MachineProfile(profile),
+            authority_key_from_ed(carrier_key),
+            3,
+        ),
+        carrier_key,
+    )
+}
+
+/// The next sequence of `key`'s install signer on `host`.
+pub(super) fn next_seq(host: &Host, key: &SigningKey) -> u64 {
+    let fold = host.vault.authority_fold().unwrap();
+    let signer = authority_key_from_ed(key);
+    fold.append_sequences.get(&signer).map_or(1, |seq| seq + 1)
+}
+
 /// A machine of the owner's that floods a world with more concurrent edits
 /// than one entry may name never locks the owner out of it: the door replaces
 /// them a share at a time (Wonder P2 round 1, W5).
@@ -183,13 +240,14 @@ fn a_flood_of_concurrent_edits_never_locks_the_door() {
     assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
 }
 
-/// The owner's door names only the rows its standing rests on, never an
-/// unrelated main-log head. A replica that settled a handoff before a row the
-/// old root signed beside it arrived refuses that row, and still takes the
-/// owner's next edit: the world changes on both replicas (Engine ruling
-/// 2026-10-14 on Wonder P2 round 1, W4).
+/// The owner's door names the main-log heads alone (mesh PR1a, contract
+/// S6). A carrier-signed enrol beside a handoff lands on a replica that
+/// settled the handoff (mesh PR1b: the carrier's key vouches, not the old
+/// root), and the replica still takes the owner's next edit: the world
+/// changes on both replicas (Engine ruling 2026-10-14 on Wonder P2 round 1,
+/// W4, as re-cut).
 #[test]
-fn a_replica_that_refused_a_fenced_row_takes_the_next_edit() {
+fn a_replica_that_takes_a_carrier_enrol_beside_a_handoff_takes_the_next_edit() {
     let host = host();
     let world = world_row(&host);
     let here = enrol_here(&host);
@@ -214,20 +272,20 @@ fn a_replica_that_refused_a_fenced_row_takes_the_next_edit() {
         .put_authority_log_entry(&handoff, TimeRange { start: 3, end: 3 }, 3)
         .unwrap();
 
-    // The old root marks another machine beside its handoff: the newest
-    // main-log head here, which the replica refuses.
+    // This install enrols another machine beside the handoff: the newest
+    // main-log head here, which the replica takes too (mesh PR1b: an owner
+    // answer is signed by its carrier's install key, log_structure.rs:607-612,
+    // so no handoff fences it).
     let (other, _) = other_machine(&host, 65, MachineRole::Owned(MachineOwnership::Yours));
-    let fenced = stored_entries(&host.vault)
+    let beside = stored_entries(&host.vault)
         .into_iter()
         .find(|entry| {
             matches!(&entry.op, AuthorityOp::MachineProfile(profile) if profile.machine == other)
         })
         .unwrap();
-    assert!(
-        replica
-            .put_authority_log_entry(&fenced, TimeRange { start: 3, end: 3 }, 3)
-            .is_err()
-    );
+    replica
+        .put_authority_log_entry(&beside, TimeRange { start: 3, end: 3 }, 3)
+        .unwrap();
 
     set(
         &host,
@@ -241,9 +299,8 @@ fn a_replica_that_refused_a_fenced_row_takes_the_next_edit() {
         .find(|entry| matches!(entry.op, AuthorityOp::WorldPrivacy(_)))
         .unwrap();
     assert!(
-        !edit
-            .parent_hashes
-            .contains(&authority_entry_hash(&fenced).unwrap())
+        edit.parent_hashes
+            .contains(&authority_entry_hash(&beside).unwrap())
     );
     replica
         .put_authority_log_entry(&edit, TimeRange { start: 4, end: 4 }, 4)
@@ -347,6 +404,7 @@ fn a_world_orphaned_by_a_shared_key_is_re_picked() {
             seen_world_edits: BTreeSet::new(),
             carrier: None,
             act: None,
+            restored_from: None,
         }),
         3,
     )
@@ -369,12 +427,13 @@ fn a_world_orphaned_by_a_shared_key_is_re_picked() {
     assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
 }
 
-/// A conflicted world with more concurrent edits than one entry may name is
-/// never moved straight to another machine: a share of the consolidation
-/// would grant this machine the world on a replica that missed the last edit.
-/// Moved here first, it then moves on (Sol P2 round 5, F5).
+/// A conflicted world with more concurrent edits than one entry may name
+/// moves straight to another machine through the owner's door (mesh PR1a,
+/// FIX-LIST 10-19 02:16: any live carrier counts; the door needs no holder,
+/// world_privacy_door.rs:1-11, and names the main-log heads alone). Moved
+/// here first, it then moves on too (Sol P2 round 5, F5, as steps).
 #[test]
-fn a_flooded_conflict_moves_here_before_it_moves_on() {
+fn a_flooded_conflict_moves_straight_to_another_machine() {
     let host = host();
     let world = world_row(&host);
     let here = enrol_here(&host);
@@ -412,18 +471,16 @@ fn a_flooded_conflict_moves_here_before_it_moves_on() {
     };
     assert_eq!(read_of(&host, world), conflicted);
 
-    assert!(
-        set(
-            &host,
-            EditOrigin::ThisMachine,
-            world,
-            ReadLocation::OneMachine(other)
-        )
-        .is_err()
-    );
+    set(
+        &host,
+        EditOrigin::ThisMachine,
+        world,
+        ReadLocation::OneMachine(other),
+    )
+    .unwrap();
     let fold = host.vault.authority_fold().unwrap();
-    assert_eq!(fold.worlds[&world].live.len(), 40);
-    assert_eq!(read_of(&host, world), conflicted);
+    assert_eq!(fold.worlds[&world].live.len(), 1);
+    assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(other));
 
     for read in [
         ReadLocation::OneMachine(here),
@@ -434,26 +491,28 @@ fn a_flooded_conflict_moves_here_before_it_moves_on() {
     assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(other));
 }
 
+/// The owner's say-so is the gate, from any linked surface, carried by any
+/// live machine whether it holds the world or not (mesh PR1a, FIX-LIST 10-19
+/// 02:16; world_privacy_door.rs:1-11, :144-185). The serving install carries
+/// even as Unanswered (keystore fixtures, 77497e3d778).
 #[test]
-fn only_the_owner_on_a_machine_holding_the_world_changes_it() {
+fn the_owner_edits_a_world_from_any_surface_without_holding_it() {
     let host = host();
     let world = world_row(&host);
-    // Not yet one of the owner's machines: nothing here may edit.
-    assert!(
-        set(
-            &host,
-            EditOrigin::ThisMachine,
-            world,
-            ReadLocation::MyMachines
-        )
-        .is_err()
-    );
+    // Unanswered but live, this install already carries (owner_act.rs:31-33).
+    set(
+        &host,
+        EditOrigin::ThisMachine,
+        world,
+        ReadLocation::MyMachines,
+    )
+    .unwrap();
     let here = enrol_here(&host);
     let (other, other_key) = other_machine(&host, 61, MachineRole::Owned(MachineOwnership::Yours));
     let (rented, _) = other_machine(&host, 62, MachineRole::Owned(MachineOwnership::Rented));
 
-    // A request from elsewhere never changes a world's settings, a proven
-    // machine of the owner's included; only this machine speaks for itself.
+    // The surface is audit only: a request from elsewhere changes the
+    // settings too, a proven machine of the owner's included.
     for origin in [
         EditOrigin::Peer(PeerMachine::Unknown),
         EditOrigin::Peer(PeerMachine::Proven {
@@ -461,7 +520,7 @@ fn only_the_owner_on_a_machine_holding_the_world_changes_it() {
             key: other_key.verifying_key().to_bytes(),
         }),
     ] {
-        assert!(set(&host, origin, world, ReadLocation::Everywhere).is_err());
+        set(&host, origin, world, ReadLocation::Everywhere).unwrap();
     }
     // A one-machine world lives only on one of the owner's machines, and
     // base reality has no settings.
@@ -483,7 +542,7 @@ fn only_the_owner_on_a_machine_holding_the_world_changes_it() {
         )
         .is_err()
     );
-    assert!(host.vault.world_privacy_change_log().unwrap().is_empty());
+    assert_eq!(host.vault.world_privacy_change_log().unwrap().len(), 3);
 
     let receipt = host
         .vault
@@ -501,18 +560,18 @@ fn only_the_owner_on_a_machine_holding_the_world_changes_it() {
         (receipt.world.as_str(), receipt.machine.as_str()),
         (world.to_hex().as_str(), here.to_hex().as_str())
     );
-    assert_eq!(
-        host.vault.world_privacy_change_log().unwrap(),
-        vec![receipt]
-    );
+    let log = host.vault.world_privacy_change_log().unwrap();
+    assert_eq!(log.len(), 4);
+    assert_eq!(log[3], receipt);
     let fold = host.vault.authority_fold().unwrap();
     assert!(fold.world_readable_on(world, Destination::Machine(here)));
     for destination in [Destination::Machine(other), Destination::Unknown] {
         assert!(!fold.world_readable_on(world, destination));
     }
 
-    // Another of the owner's machines does not hold the world now. Its
-    // well-signed widen (from home, or the cloud) is valid and has no effect.
+    // Another of the owner's machines does not hold the world now, but its
+    // well-signed widen (from home, or the cloud) still counts at full
+    // strength: the fold has no holder rule (world_strength.rs:404-424).
     let widen = edit_by(
         &host,
         other,
@@ -523,10 +582,11 @@ fn only_the_owner_on_a_machine_holding_the_world_changes_it() {
     land(&host, std::slice::from_ref(&widen));
     let fold = host.vault.authority_fold().unwrap();
     assert!(
-        fold.refused_world_edits
+        !fold
+            .refused_world_edits
             .contains(&authority_entry_hash(&widen).unwrap())
     );
-    assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
+    assert_eq!(read_of(&host, world), EffectiveRead::Everywhere);
 }
 
 #[test]
@@ -570,7 +630,8 @@ fn no_agent_writer_root_or_borrowed_key_signs_a_settings_edit() {
     let forged = [
         // An engine writer's agent key, naming the owner's machine.
         edit_by(&host, mine, &writer_key, world, widen.clone()),
-        // A work machine's own key: not one of the owner's.
+        // A work machine's own key: one of the owner's in any role (mesh
+        // PR1a, owner_act.rs:31-33).
         edit_by(&host, work, &work_key, world, widen.clone()),
         // A key that is no machine's at all.
         edit_by(&host, mine, &ed_key(66), world, widen.clone()),
@@ -594,7 +655,7 @@ fn no_agent_writer_root_or_borrowed_key_signs_a_settings_edit() {
         .unwrap();
     // The door holds each edit no install key of the machine it names
     // signed (H72). The work machine's own edit names that machine, so it
-    // lands, and only the fold refuses it.
+    // lands and counts at full strength (mesh PR1a: any live role carries).
     for entry in [&forged[0], &forged[2], &root_edit] {
         let err = host
             .vault
@@ -615,14 +676,18 @@ fn no_agent_writer_root_or_borrowed_key_signs_a_settings_edit() {
     });
 
     let fold = host.vault.authority_fold().unwrap();
-    for entry in forged.iter().chain([&root_edit]) {
+    assert!(
+        fold.valid_entries
+            .contains(&authority_entry_hash(&forged[1]).unwrap())
+    );
+    for entry in [&forged[0], &forged[2], &root_edit] {
         assert!(
             !fold
                 .valid_entries
                 .contains(&authority_entry_hash(entry).unwrap())
         );
     }
-    assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(mine));
+    assert_eq!(read_of(&host, world), EffectiveRead::Everywhere);
 
     // The WORLD body carries no settings: rewriting it changes nothing.
     host.vault
@@ -634,13 +699,14 @@ fn no_agent_writer_root_or_borrowed_key_signs_a_settings_edit() {
             br#"{"read":"everywhere","sealed":"cloud_and_my_machines"}"#,
         )
         .unwrap();
-    assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(mine));
+    assert_eq!(read_of(&host, world), EffectiveRead::Everywhere);
 }
 
-/// A holder's edit stands though its hold rests on a row its own head
-/// revision does not carry: this machine's mark sits on a demotion that never
-/// saw another machine's widening, and only a later "yours" for that machine
-/// makes the widening count (Sol P2 round 6, F5).
+/// A demotion between linked roles takes nothing away (mesh PR1a,
+/// FIX-LIST 10-19 02:16: a role change never revokes a carrier; only removal
+/// does): this machine's mark sits on a demotion that never saw another
+/// machine's widening, and the widening counts throughout (Sol P2 round 6,
+/// F5, as re-cut).
 #[test]
 fn a_hold_resting_on_a_later_mark_still_edits() {
     let host = host();
@@ -679,46 +745,41 @@ fn a_hold_resting_on_a_later_mark_still_edits() {
     assert_eq!(read_of(&host, world), EffectiveRead::Everywhere);
 
     // A branch that never saw the widening demotes the laptop, and this
-    // machine is marked again on top of it.
+    // machine is marked again on top of it, each answer as its live carrier
+    // signs it (mesh PR1b).
     let fold = host.vault.authority_fold().unwrap();
-    let mut seq = fold.append_sequences[&host.issuer.public_key()];
-    let mut parents: Vec<_> = fold.append_heads.iter().copied().collect();
+    let heads: Vec<_> = fold.append_heads.iter().copied().collect();
     let laptop_profile = fold.machine(laptop).unwrap().head().profile.clone();
     let here_profile = fold.machine(here).unwrap().head().profile.clone();
-    let demotion = MachineProfile {
-        role: MachineRole::Owned(MachineOwnership::WorkSchool),
-        revision: laptop_profile.revision + 1,
-        seen_world_edits: BTreeSet::new(),
-        ..laptop_profile
-    };
-    let mark = MachineProfile {
-        revision: here_profile.revision + 1,
-        ..here_profile
-    };
-    let mut branch = Vec::new();
-    for profile in [demotion, mark] {
-        seq += 1;
-        let entry = host
-            .issuer
-            .sign_entry(
-                fold.vault_id,
-                seq,
-                parents,
-                AuthorityOp::MachineProfile(profile),
-                3,
-            )
-            .unwrap();
-        parents = vec![authority_entry_hash(&entry).unwrap()];
-        branch.push(entry);
-    }
-    land(&host, &branch);
-    assert!(matches!(
-        read_of(&host, world),
-        EffectiveRead::Conflicted { .. }
-    ));
+    let demotion = answer_by(
+        &host,
+        laptop,
+        &laptop_key,
+        &laptop_profile,
+        MachineRole::Owned(MachineOwnership::WorkSchool),
+        laptop_profile.revision + 1,
+        BTreeSet::new(),
+        heads,
+        next_seq(&host, &laptop_key),
+    );
+    let demotion_hash = authority_entry_hash(&demotion).unwrap();
+    let mark = answer_by(
+        &host,
+        desk,
+        &desk_key,
+        &here_profile,
+        here_profile.role,
+        here_profile.revision + 1,
+        here_profile.seen_world_edits.clone(),
+        vec![demotion_hash],
+        next_seq(&host, &desk_key),
+    );
+    let mut parents = vec![authority_entry_hash(&mark).unwrap()];
+    land(&host, &[demotion, mark]);
+    assert_eq!(read_of(&host, world), EffectiveRead::Everywhere);
 
-    // The owner marks the laptop "yours" again: the widening counts, and
-    // this machine holds the world on a head its own mark does not carry.
+    // The owner marks the laptop "yours" again: the widening keeps counting,
+    // and this machine holds the world on a head its own mark does not carry.
     host.vault
         .set_machine_role(&host.owner, ActSurface::ThisInstall, laptop, yours, None)
         .unwrap();
@@ -804,7 +865,9 @@ fn concurrent_edits_fold_stricter_in_both_orders() {
         }
     }
 
-    // The vault folds the same; a contender re-picks, a bystander cannot.
+    // The vault folds the same. A contender re-picks; a bystander counts too
+    // (mesh PR1a: any live carrier counts at full strength), so two concurrent
+    // picks conflict, stricter than either.
     land(&host, &[pick_c, everywhere, pick_b]);
     assert_eq!(host.vault.world_privacy(world).unwrap(), conflicted);
     let bystander = edit_by(
@@ -822,11 +885,22 @@ fn concurrent_edits_fold_stricter_in_both_orders() {
         settings(ReadLocation::OneMachine(c)),
     );
     land(&host, &[bystander, repick]);
-    assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(c));
+    assert_eq!(
+        read_of(&host, world),
+        EffectiveRead::Conflicted {
+            contenders: BTreeSet::from([c, d]),
+        }
+    );
 }
 
+/// A world's settings edits are main-log metadata every linked machine folds
+/// (mesh PR1a; `side_world`, crates/oneiron-records/src/authority/world_privacy.rs:91-100:
+/// only key wraps ride a side branch). A replica without them folds a
+/// different main log: its heads, machines and frontiers differ, and an enrol
+/// that descended from an edit does not fold there. Any main-log entry may
+/// hang off an edit, and any world's edit off another's.
 #[test]
-fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
+fn a_replica_without_a_worlds_entries_folds_a_different_main_log() {
     let host = host();
     let here = enrol_here(&host);
     let world = world_row(&host);
@@ -848,8 +922,9 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
     let (later, later_key) = other_machine(&host, 71, MachineRole::Owned(MachineOwnership::Yours));
 
     let entries = stored_entries(&host.vault);
-    // The world's side entries: its settings edits, and the key records the
-    // settings door's ensure step signs once this install has a keystore.
+    // The world's entries: its settings edits (main-log since mesh PR1a) and
+    // the key records the settings door's ensure step signs once this install
+    // has a keystore (side branch only).
     let (edits, main): (Vec<_>, Vec<_>) = entries.iter().cloned().partition(|entry| {
         matches!(
             entry.op,
@@ -869,20 +944,21 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
         .collect();
     let full = fold_authority_log(&entries);
     let without = fold_authority_log(&main);
-    assert_eq!(full.append_heads, without.append_heads);
-    assert_eq!(full.machines, without.machines);
+    assert_ne!(full.append_heads, without.append_heads);
+    assert_ne!(full.machines, without.machines);
     assert_eq!(full.roster, without.roster);
     assert_eq!(full.actor_bindings, without.actor_bindings);
-    // A write stamped with a frontier must not depend on a world's entries.
-    assert_eq!(full.actor_write_frontiers, without.actor_write_frontiers);
-    assert_eq!(
+    // The enrol below descended from the edits (the door names the main-log
+    // heads alone), so without them it does not fold.
+    assert_ne!(full.actor_write_frontiers, without.actor_write_frontiers);
+    assert_ne!(
         full.valid_entries
             .difference(&edit_hashes)
             .copied()
             .collect::<ValidEntries>(),
         without.valid_entries
     );
-    assert!(without.machine(later).is_some_and(RosterHead::mine));
+    assert!(without.machine(later).is_none());
     assert!(without.worlds.is_empty());
     // The second edit took the first as its parent: one live edit, never a
     // main-log head.
@@ -891,7 +967,7 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
     assert!(full.append_heads.is_disjoint(&edit_hashes));
     assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
 
-    // Another world's entry may not hang off this world's side head.
+    // Another world's edit hangs off this world's edit: both are main-log.
     let other_world = world_row(&host);
     let mut crossing = edit_by(
         &host,
@@ -905,14 +981,15 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
     land(&host, std::slice::from_ref(&crossing));
     let fold = host.vault.authority_fold().unwrap();
     let crossing = authority_entry_hash(&crossing).unwrap();
-    assert!(!fold.valid_entries.contains(&crossing));
+    assert!(fold.valid_entries.contains(&crossing));
     assert!(
-        fold.issues
+        !fold
+            .issues
             .contains(&AuthorityFoldIssue::InvalidEntry(crossing))
     );
-    assert_eq!(read_of(&host, other_world), EffectiveRead::Everywhere);
+    assert_eq!(read_of(&host, other_world), EffectiveRead::MyMachines);
 
-    // A main-log entry may not hang off a world edit.
+    // A main-log entry hangs off a world edit.
     let stray = EntityId::now();
     let request = request_for(host.vault_id, stray, &ed_key(72));
     let fold = host.vault.authority_fold().unwrap();
@@ -934,6 +1011,7 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
                 seen_world_edits: BTreeSet::new(),
                 carrier: None,
                 act: None,
+                restored_from: None,
             }),
             2,
         )
@@ -944,11 +1022,10 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
             .authority_fold()
             .unwrap()
             .machine(stray)
-            .is_none()
+            .is_some()
     );
 
-    // Nor may a restrictive one: a revoke hanging off a side head revokes
-    // nothing, so the main state never depends on a world's entries.
+    // So does a restrictive one: a revoke hanging off an edit revokes.
     let fold = host.vault.authority_fold().unwrap();
     let root = host.issuer.public_key();
     let epoch = fold.actor_bindings[&root].epoch;
@@ -970,13 +1047,12 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
     land(&host, std::slice::from_ref(&revoke));
     let fold = host.vault.authority_fold().unwrap();
     assert!(
-        !fold
-            .valid_entries
+        fold.valid_entries
             .contains(&authority_entry_hash(&revoke).unwrap())
     );
     assert_eq!(
         fold.actor_bindings[&root].status,
-        ActorBindingStatus::Active
+        ActorBindingStatus::Revoked
     );
 }
 
@@ -998,6 +1074,9 @@ fn a_replayed_edit_or_a_restore_never_loosens_a_world() {
         .collect();
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
+    host.vault
+        .ensure_vault_key()
+        .expect("mint the vault data key");
     host.vault.snapshot_checkpoint(&image, 100).unwrap();
     set(
         &host,

@@ -42,6 +42,7 @@ impl ImageFold {
             valid_entries,
             revoke_facts,
             retired_keys,
+            handoff_or_appointment_retired_keys,
             closed_handoffs,
             closed_conflicts: _,
             unsettled,
@@ -81,9 +82,8 @@ impl ImageFold {
         let marks = valid_entries
             .iter()
             .filter_map(|hash| {
-                let AuthorityOp::MachineProfile(profile) = &by_hash.get(hash)?.op else {
-                    return None;
-                };
+                let profile =
+                    super::super::stale_roster::filed_machine_profile(&by_hash.get(hash)?.op)?;
                 let chain = states
                     .get(hash)?
                     .machines
@@ -119,6 +119,7 @@ impl ImageFold {
             uncounted,
             revoke_facts,
             retired_keys,
+            handoff_or_appointment_retired_keys,
             closed_handoffs,
             unsettled,
             issues,

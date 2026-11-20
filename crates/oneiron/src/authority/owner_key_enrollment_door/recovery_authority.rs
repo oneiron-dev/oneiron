@@ -13,7 +13,7 @@ pub(crate) enum ActivationPredecessor {
     /// This install's owner key, held on this handle, an enrolled owner key
     /// of kind [`EnrolledOwnerKeyKind::Device`] live with `ROLE_OWNER`. Signs
     /// through [`CheckpointRootSigner::sign_owner_proof`].
-    OwnerKey(Arc<dyn CheckpointRootSigner>),
+    OwnerKey(HeldRootSigner),
     /// This vault's host root, from this install's slot, live under
     /// `require_host`. Signs the way
     /// [`Vault::enrol_recovery_authority_key_as_host`] makes its signature.
@@ -24,7 +24,7 @@ impl ActivationPredecessor {
     /// The roster key the enrolment names as predecessor.
     fn predecessor_key(&self) -> AuthorityKey {
         match self {
-            Self::OwnerKey(signer) => signer.root(),
+            Self::OwnerKey(held) => held.root.clone(),
             Self::HostRoot(issuer) => issuer.public_key(),
         }
     }
@@ -32,7 +32,7 @@ impl ActivationPredecessor {
     /// The predecessor's signature over the enrolment's authority transcript.
     fn sign(&self, vault: &Vault, fold: &AuthorityFold, transcript: &[u8]) -> Result<Vec<u8>> {
         match self {
-            Self::OwnerKey(signer) => signer.sign_owner_proof(vault, fold, transcript),
+            Self::OwnerKey(held) => held.signer.sign_owner_proof(vault, fold, transcript),
             Self::HostRoot(issuer) => Ok(issuer.sign_slip(transcript)),
         }
     }
@@ -268,8 +268,9 @@ impl Vault {
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             (actor, enrolled, fold)
         };
-        for signer in self.checkpoint_root_signers() {
-            let root = signer.root();
+        let signing = self.held_checkpoint_root_signers().into_iter();
+        for held in signing.filter(|held| held.signer.signs_now(self)) {
+            let root = held.root.clone();
             let AuthorityKey::Ed25519(public) = &root else {
                 continue;
             };
@@ -290,7 +291,7 @@ impl Vault {
             // is never R's predecessor: the next key, then the host root,
             // is tried (REVIEW-9488 P1 2).
             if live_owner && !fold.passkey_limited(&root) {
-                return Ok(ActivationPredecessor::OwnerKey(signer));
+                return Ok(ActivationPredecessor::OwnerKey(held));
             }
         }
         let hosted = fold.roster.values().any(|device| {
@@ -652,26 +653,34 @@ impl Vault {
             // accepts, as the stale-roster window renews it, never a
             // custodial copy of its profile (`stale_roster.rs`).
             let accepted = fold.accepted_roster_marks.contains(hash);
-            let supports: Vec<&mut CarrySupport> = match &entry.op {
-                AuthorityOp::MachineProfile(profile) if !anchor => machines
+            // A kit restore's inline join is its R's roster revision of the
+            // machine, so a kit change carries it as a profile row
+            // (REVIEW-9539 round 2 P1).
+            let filed = crate::authority::stale_roster::filed_machine_profile(&entry.op)
+                .filter(|_| !anchor);
+            let supports: Vec<&mut CarrySupport> = match (filed, &entry.op) {
+                (Some(profile), _) => machines
                     .get_mut(&profile.machine)
                     .into_iter()
                     .flatten()
                     .filter(|(head, trusted, _)| *head == profile && (accepted || !*trusted))
                     .map(|(_, _, support)| support)
                     .collect(),
-                AuthorityOp::BindActor {
-                    authority_key,
-                    actor_ref,
-                    actor_class,
-                    epoch,
-                }
-                | AuthorityOp::RebindActor {
-                    authority_key,
-                    actor_ref,
-                    actor_class,
-                    epoch,
-                } => match bindings.get_mut(authority_key) {
+                (
+                    _,
+                    AuthorityOp::BindActor {
+                        authority_key,
+                        actor_ref,
+                        actor_class,
+                        epoch,
+                    }
+                    | AuthorityOp::RebindActor {
+                        authority_key,
+                        actor_ref,
+                        actor_class,
+                        epoch,
+                    },
+                ) => match bindings.get_mut(authority_key) {
                     Some((binding, support))
                         if binding.actor_ref == *actor_ref
                             && binding.actor_class == *actor_class

@@ -42,10 +42,8 @@ fn checkpoint_restore_binds_live_exterior_claim_keys_across_paths() {
     source.ensure_vault_key().expect("mint the vault data key");
     source.snapshot_checkpoint(&image, 100).unwrap();
     let checkpoint_key = source.checkpoint_key().unwrap();
-    let key = root
-        .path()
-        .join(".source.gate-decision-keys")
-        .join(crate::entity_id::bytes_to_hex_lower(&claim_id));
+    // KS-1 typed custody (571efc03606): the pre-typed marker has no key reader.
+    let key = typed_claim_key(&source, &claim_id).unwrap();
     let key_bytes = std::fs::read(&key).unwrap();
     assert!(
         !std::fs::read(&image)
@@ -55,6 +53,13 @@ fn checkpoint_restore_binds_live_exterior_claim_keys_across_paths() {
     );
     let destination_parent = root.path().join("different-parent");
     std::fs::create_dir(&destination_parent).unwrap();
+    // Restore refuses a shared parent; keep it owner-only like restore_tempdir.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&destination_parent, std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+    }
     let destination = destination_parent.join("different-name");
     let (restored, _) = Vault::restore_checkpoint(
         &image,
@@ -252,11 +257,8 @@ fn a_hold_after_an_erase_commits_never_keeps_its_receipts_readable() {
         .snapshot_checkpoint(&image, 100)
         .expect("pre-erase image");
     let checkpoint_key = source.checkpoint_key().expect("checkpoint key");
-    let key = root
-        .path()
-        .join(".source.gate-decision-keys")
-        .join(crate::entity_id::bytes_to_hex_lower(erased.as_bytes()));
-    assert!(key.exists());
+    // KS-1 typed custody (571efc03606): the pre-typed marker has no key reader.
+    assert!(typed_claim_key(&source, erased.as_bytes()).is_some());
 
     // Another caller asks for a hold after the erase commits, just before
     // its finisher destroys the key.
@@ -274,7 +276,11 @@ fn a_hold_after_an_erase_commits_never_keeps_its_receipts_readable() {
     source
         .delete_entity_with_reason(&erased, crate::DeleteReason::UserHardDelete)
         .expect("erase the claim");
-    assert!(!key.exists(), "the erase still destroys the claim key");
+    // KS-1 typed custody (571efc03606): the pre-typed marker has no key reader.
+    assert!(
+        typed_claim_key(&source, erased.as_bytes()).is_none(),
+        "the erase still destroys the claim key"
+    );
     assert_eq!(
         hold.get(),
         Some(false),
@@ -336,6 +342,29 @@ fn claim_with_receipt(vault: &Vault) -> (EntityId, crate::store::GateDecisionRec
         .with_write_txn(|txn| vault.store.append_gate_decision_in_txn(txn, &receipt))
         .expect("append claim receipt");
     (claim, receipt)
+}
+
+/// The live typed-custody entry for a claim's gate-decision key, if present.
+///
+/// Claim keys live in typed custody (`store/key_custody/files.rs`), not the
+/// retired `.gate-decision-keys` layout (`store/key_custody/recovery.rs`:
+/// "No reader of those keys exists").
+fn typed_claim_key(vault: &Vault, claim: &[u8; 16]) -> Option<std::path::PathBuf> {
+    let txn = vault.store.env.read_txn().unwrap();
+    let binding = crate::store::custody_binding_in_txn(&vault.store, &txn).unwrap()?;
+    let subject = binding
+        .subject(crate::store::CustodyKind::ClaimDecision, claim)
+        .unwrap();
+    let path = crate::store::custody_container_path(binding.root())
+        .unwrap()
+        .join(binding.compartment_name())
+        .join(subject.dir_name())
+        .join("g0000000000000000");
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => Some(path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => panic!("custody entry check failed: {e}"),
+    }
 }
 
 /// Commits an erase of `claim` whose finisher has not run (the process
@@ -473,7 +502,6 @@ fn an_erase_in_the_source_never_reaches_its_side_copy() {
 /// restores without the receipts it decrypted.
 #[test]
 fn a_side_restore_copies_no_key_the_source_destroyed_or_committed_to_destroy() {
-    let hex = |claim: &EntityId| crate::entity_id::bytes_to_hex_lower(claim.as_bytes());
     for side in SIDES {
         let root = crate::test_support::restore_tempdir();
         let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
@@ -488,17 +516,21 @@ fn a_side_restore_copies_no_key_the_source_destroyed_or_committed_to_destroy() {
             .delete_entity_with_reason(&destroyed, crate::DeleteReason::UserHardDelete)
             .expect("erase before the restore");
         commit_unfinished_erase(&source, &committed);
-        let source_custody = root.path().join(".source.gate-decision-keys");
-        assert!(source_custody.join(hex(&committed)).exists());
+        // KS-1 typed custody (571efc03606): the pre-typed marker has no key reader.
+        assert!(typed_claim_key(&source, committed.as_bytes()).is_some());
 
         let (_source, copy) = restore_beside(side, source, root.path(), &image);
-        let copy_custody = root.path().join(".copy.gate-decision-keys");
+        // KS-1 typed custody (571efc03606): the pre-typed marker has no key reader.
         assert!(
-            copy_custody.join(hex(&live)).exists(),
+            typed_claim_key(&copy, live.as_bytes()).is_some(),
             "{side:?}: the copy holds its own copy of a live key"
         );
         for claim in [destroyed, committed] {
-            assert!(!copy_custody.join(hex(&claim)).exists(), "{side:?}");
+            // KS-1 typed custody (571efc03606): the pre-typed marker has no key reader.
+            assert!(
+                typed_claim_key(&copy, claim.as_bytes()).is_none(),
+                "{side:?}"
+            );
         }
         let rows = copy.gate_decisions(100).expect("the copy's ledger reads");
         assert!(rows.contains(&live_receipt), "{side:?}");
@@ -644,7 +676,6 @@ fn a_side_restore_refuses_a_source_it_cannot_read() {
 /// never reaches the second copy (Astra A5).
 #[test]
 fn each_side_restore_reads_its_source_when_it_starts() {
-    let hex = |claim: &EntityId| crate::entity_id::bytes_to_hex_lower(claim.as_bytes());
     for side in [Side::Open, Side::Disk] {
         let root = crate::test_support::restore_tempdir();
         let source_path = root.path().join("source");
@@ -667,7 +698,7 @@ fn each_side_restore_reads_its_source_when_it_starts() {
             .expect("side restore")
             .0
         };
-        let (_first, second) = if matches!(side, Side::Open) {
+        let (first, second) = if matches!(side, Side::Open) {
             let state = source.side_restore_source().unwrap();
             let first = restore(&state, "first");
             commit_unfinished_erase(&source, &claim);
@@ -682,19 +713,14 @@ fn each_side_restore_reads_its_source_when_it_starts() {
             drop(source);
             (first, restore(&state, "second"))
         };
+        // KS-1 typed custody (571efc03606): the pre-typed marker has no key reader.
         assert!(
-            root.path()
-                .join(".first.gate-decision-keys")
-                .join(hex(&claim))
-                .exists(),
+            typed_claim_key(&first, claim.as_bytes()).is_some(),
             "{side:?}: the first copy took the key while it was live"
         );
+        // KS-1 typed custody (571efc03606): the pre-typed marker has no key reader.
         assert!(
-            !root
-                .path()
-                .join(".second.gate-decision-keys")
-                .join(hex(&claim))
-                .exists(),
+            typed_claim_key(&second, claim.as_bytes()).is_none(),
             "{side:?}"
         );
         let rows = second

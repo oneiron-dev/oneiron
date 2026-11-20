@@ -239,7 +239,7 @@ async fn usage_event_rejects_unavailable_model_route_match_before_debiting() {
 }
 
 #[tokio::test]
-async fn oversized_usage_money_is_a_client_error() {
+async fn oversized_usage_money_is_recorded_with_price_overflow() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         allow_unauthenticated: true,
         runtime: crate::runtime::RuntimeConfig::for_mode(RuntimeMode::OneironCloud),
@@ -253,7 +253,7 @@ async fn oversized_usage_money_is_a_client_error() {
             "cacheReadPerMillion": 0, "cacheWritePerMillion": 0 },
         "serviceAmount": u64::MAX
     });
-    let response = api_routes(server)
+    let response = api_routes(server.clone())
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -264,5 +264,51 @@ async fn oversized_usage_money_is_a_client_error() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    // FIX 6407: an overflowing price keeps the call's counts and frozen rates;
+    // the event is recorded with price_overflow and no money amount, not refused.
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("usage response body");
+    let body: Value = serde_json::from_slice(&body).expect("usage JSON body");
+    assert_eq!(body["recorded"], Value::from(true));
+    assert_eq!(body["replayed"], Value::from(false));
+    assert_eq!(body["source"], Value::from("oneiron_cloud"));
+    assert!(body["cost"].is_null());
+    assert_eq!(body["unpriced"], Value::from("price_overflow"));
+    assert_eq!(body["rollupStatus"], Value::from("current"));
+    // The key is the hex encoding of owner-a, vault-a, and overflow.
+    let raw = server
+        .vault
+        .sync_state_get("usage:event:6f776e65722d61:7661756c742d61:6f766572666c6f77")
+        .expect("read stored usage event")
+        .expect("usage event was recorded");
+    let stored: Value = rmp_serde::from_slice(&raw).expect("stored usage event");
+    assert!(stored["recordedAt"].as_u64().unwrap() > 0);
+    assert_eq!(
+        stored,
+        json!({
+            "event": {
+                "owner": "owner-a",
+                "vaultId": "vault-a",
+                "idempotencyKey": "overflow",
+                "source": null,
+                "eventType": "inference",
+                "role": null,
+                "occurredAt": null,
+                "agentId": null,
+                "model": null,
+                "service": null,
+                "tokenCounts": payload["tokenCounts"],
+                "costRates": payload["costRates"],
+                "unpriced": "price_overflow",
+                "serviceAmount": u64::MAX,
+                "run": null
+            },
+            "source": "oneiron_cloud",
+            "origin": "posted",
+            "cost": null,
+            "recordedAt": stored["recordedAt"]
+        })
+    );
 }

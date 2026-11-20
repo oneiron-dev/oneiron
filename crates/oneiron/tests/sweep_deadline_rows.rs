@@ -6,7 +6,8 @@
 //!   and the sweep goes on a cadence after it, with no run more; a deadline noted while that run
 //!   goes on survives it, and the next run serves it;
 //! - a deadline whose time comes while its sweep backs off waits for the sweep's retry, and the
-//!   sweep's run then disarms it;
+//!   sweep's run then disarms it; a pull a door made while the interrupted run was in flight
+//!   makes the sweep due once more, a minute after that retry ends (review round 2 of #9300);
 //! - the annotation follow sweep's deadlines never wake a stopped vault;
 //! - the runner: a one-time job that ends done with a `due_by` stays armed until then, and one
 //!   that ends done without one is disarmed.
@@ -188,7 +189,8 @@ fn a_deadline_that_comes_while_its_sweep_backs_off_waits_for_the_run_that_covers
     let started = first + 50;
     fx.at(started);
     plant_start_marker(&fx.vault, &sweep_job(sweep), None, started).expect("a start marker");
-    // A second deadline, noted while that run is in flight: its pull is refused.
+    // A second deadline, noted while that run is in flight: the sweep keeps its due time and
+    // saves the pull for the run that goes on.
     let second = T0 + 10 * MINUTE;
     note_sweep_deadline(&fx.vault, sweep, second).expect("a door notes a second deadline");
     assert_eq!(fx.deadlines(sweep), vec![first, second]);
@@ -213,6 +215,8 @@ fn a_deadline_that_comes_while_its_sweep_backs_off_waits_for_the_run_that_covers
     );
 
     // The sweep's retry walks from the start after both deadlines: it covers and disarms them.
+    // It ends done, so the pull saved while the interrupted run was in flight makes the sweep
+    // due again, never sooner than its first retry after the end (review round 2 of #9300).
     fx.at(second + MINUTE);
     let report = fx.pass();
     assert!(ran_to_its_end(&report, sweep), "{report:#?}");
@@ -222,8 +226,8 @@ fn a_deadline_that_comes_while_its_sweep_backs_off_waits_for_the_run_that_covers
     );
     assert_eq!(
         fx.due(sweep),
-        Some(retry + HOUR),
-        "the sweep goes on a cadence after the retry it ran at"
+        Some(second + 2 * MINUTE),
+        "the saved pull makes the sweep due a minute after its retry ends"
     );
 }
 

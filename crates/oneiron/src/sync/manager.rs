@@ -60,11 +60,13 @@ mod document_api;
 mod live_mirror;
 mod pending_mirror;
 mod promotion;
+pub(crate) mod publication_window;
 mod ready;
 mod recovery_commits;
 mod replacement;
 
 pub(crate) use self::live_mirror::import_scope;
+pub(crate) use self::publication_window::PublicationWindow;
 // FIX 19634: each connection asks for the windows a policy wake readied.
 pub use self::ready::{READY_WINDOWS_PER_PASS, ReadyProgress};
 // FIX 14534: a world eviction waits for, or on the owner's word discards, the
@@ -277,7 +279,7 @@ impl WindowManager {
         // attach mutex, never the registry lock.
         self.attach_to_vault();
         let mut registry = self.lock_registry_settled(key);
-        // A window a sweep holds closed opens once the sweep is done.
+        // A window a sweep or a publication holds closed opens once it is released.
         while self.sweep_fence.holds(key) {
             drop(registry);
             self.sweep_fence.wait_until_open(key);
@@ -465,8 +467,8 @@ impl WindowManager {
     /// The window is marked closed under the registry lock, so no open of it
     /// is under way, and an open that comes during `f` waits and then reads
     /// what `f` wrote, rather than registering the history `f` drops. Opens
-    /// of other windows go through. A window another sweep holds closed is
-    /// left to it, so the mark is released only by the sweep that made it.
+    /// of other windows go through. A window another sweep or a publication
+    /// holds closed is left to it, so the mark is released only by its holder.
     pub(crate) fn while_window_closed<T>(
         &self,
         key: &WindowKey,

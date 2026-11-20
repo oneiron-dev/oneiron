@@ -3,6 +3,9 @@
 
 #[cfg(test)]
 pub(super) mod tests;
+// FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS: the followed-window tombstone answer.
+#[cfg(test)]
+mod tombstone_tests;
 
 mod authority;
 mod bundle_access;
@@ -23,6 +26,7 @@ mod pages;
 mod predict;
 mod search;
 mod secret_same_value;
+mod tombstones;
 mod work;
 pub(crate) use work::{ResidenceWorkCall, ResidenceWorkState};
 
@@ -483,6 +487,9 @@ pub(super) fn run(
             "residence.touch.part" => touch_part(server, auth, peer, request.params, touch_stage),
             "residence.promote" => promote(server, auth, peer, request.params),
             "residence.window.vv" => window_vv(server, auth, peer, request.params),
+            "residence.tombstones" => {
+                tombstones::tombstones(server, auth, peer, request.params, budgets)
+            }
             "residence.predict" => predict::predict(server, auth, peer, request.params),
             "residence.predicted_set" => predict::predicted_set(server, auth, peer, request.params),
             "residence.search" => search(
