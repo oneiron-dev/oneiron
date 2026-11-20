@@ -76,6 +76,10 @@ pub struct SettingSetRequest {
     /// Whether the row is the owner's pin; a value row when absent.
     #[serde(default)]
     pub pin: bool,
+    /// Whether the row is the one a move carried onto a project (stage 6.0): only a clear, which
+    /// releases it as a loose move. Never with `pin`.
+    #[serde(default)]
+    pub carried: bool,
     /// The new value; absent or null clears the row.
     #[serde(default)]
     pub value: Option<serde_json::Value>,
@@ -233,15 +237,21 @@ fn set_request(input: SettingSetRequest) -> MemoryResult<SetSetting> {
         .map(EntityId::from_hex)
         .transpose()
         .map_err(|_| bad_request("check_in_ref is a check-in's 32 hex id".to_owned()))?;
+    let mode = match (input.pin, input.carried) {
+        (true, true) => {
+            return Err(bad_request(
+                "a row is a pin or a carried row, not both".to_owned(),
+            ));
+        }
+        (true, false) => SettingMode::Pin,
+        (false, true) => SettingMode::Carried,
+        (false, false) => SettingMode::Value,
+    };
     Ok(SetSetting {
         key: input.key,
         item: input.item,
         scope: input.scope,
-        mode: if input.pin {
-            SettingMode::Pin
-        } else {
-            SettingMode::Value
-        },
+        mode,
         value: input.value.filter(|value| !value.is_null()),
         expected_revision: input.expected_revision,
         why: input.why,

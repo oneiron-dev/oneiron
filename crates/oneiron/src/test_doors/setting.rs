@@ -280,3 +280,34 @@ pub fn pack_row_revision(vault: &Vault, key: &str, pack: &str) -> Result<Option<
 pub fn lose_pack_row(vault: &Vault, key: &str, pack: &str) -> Result<()> {
     crate::setting::delete_layer_row(vault, key, pack)
 }
+
+/// Runs the move hook for `project` in its own write, as a door that moved it would, with its
+/// lines either side of the move named: `before` and `after`, each the project and then its
+/// ancestors nearest first. Returns how many carried rows it wrote.
+///
+/// # Errors
+///
+/// A key's `on_change` refusal; storage errors.
+#[cfg(feature = "test-support")]
+pub fn carry_settings_between(
+    vault: &Vault,
+    project: EntityId,
+    before: &[EntityId],
+    after: &[EntityId],
+) -> Result<usize> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::setting::carry_between_in_txn(vault, txn, project, before, after)
+    })
+}
+
+/// The lines of `project` a setting read walks: the project, then its ancestors over the stored
+/// parents, nearest first.
+///
+/// # Errors
+///
+/// A stored parent that is not an id; storage errors.
+#[cfg(feature = "test-support")]
+pub fn project_lines(vault: &Vault, project: EntityId) -> Result<Vec<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    vault.project_lines_in_txn(&txn, project)
+}
