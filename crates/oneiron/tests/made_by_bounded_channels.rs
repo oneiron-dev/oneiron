@@ -3,17 +3,21 @@
 //! the call drops takes no place in their fetch. Before, the predicate ran
 //! only after the blend: a stated-only call whose channel fetched only
 //! concluded rows returned nothing while a stated row sat just past the cut.
+//! The temporal window's bound counts only the slice's rows, and a PPR
+//! walk's results take the slice before the blend, so a dropped row neither
+//! counts as a candidate nor seeds an implicit expansion (REVIEW-9842).
 //! Births are stamped through a test door: run the file with
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test made_by_bounded_channels`.
 #![cfg(oneiron_test_support)]
 
+use oneiron::pipeline::RetrievalParams;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::test_doors::sound_match_birth::put_born_at;
 use oneiron::write_envelope::provenance::made_by::{MadeByClass, MadeByPredicate};
 use oneiron::{
-    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
-    TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EdgeKind,
+    EntityId, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
 
 const DAY: u64 = 86_400;
@@ -30,6 +34,9 @@ const CONCLUDED_TEXT: &str = "quokka quokka quokka";
 /// The stated row says it once among eight words, so BM25 ranks it below
 /// every concluded row.
 const STATED_TEXT: &str = "quokka wombat wallaby numbat bilby dingo echidna platypus";
+/// A temporal window bound below `CONCLUDED_ROWS`: with a widening
+/// multiple of 1, a one-row call's window keeps at most this many rows.
+const TIGHT_WINDOW_BOUND: usize = 50;
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -38,11 +45,18 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
+    fixture_with_capture(false)
+}
+
+/// A fixture whose runs record their telemetry when `capture` is set, so a
+/// test reads the run's candidate count.
+fn fixture_with_capture(capture: bool) -> Fixture {
     let dir = tempfile::tempdir().expect("temporary vault");
     let mut config = VaultConfig::device();
     config.dimensions = DIMENSIONS;
     // A vector write needs a declared embedding model.
     config.embedding_model = Some("test/model@v1".to_owned());
+    config.retrieval_telemetry_capture = capture;
     let vault = Vault::open(dir.path(), config).expect("open vault");
     Fixture {
         _dir: dir,
@@ -161,15 +175,75 @@ impl Fixture {
     }
 
     fn temporal(&self, made_by: MadeByPredicate) -> Vec<EntityId> {
+        self.temporal_with(made_by, RetrievalParams::shipped())
+    }
+
+    fn temporal_with(&self, made_by: MadeByPredicate, params: RetrievalParams) -> Vec<EntityId> {
         ids(self
             .vault
             .query()
             .with_temporal_now(NOW)
             .search_temporal(ANCHOR, ANCHOR, 1)
             .boost_recency(0.0)
+            .retrieval_params(params)
             .made_by(made_by)
             .limit(1)
             .run())
+    }
+
+    /// A stated row and a concluded row made from it, with an edge from the
+    /// concluded row to the stated one for a walk to follow.
+    fn concluded_about_stated(&self) -> (EntityId, EntityId) {
+        let stated = self.born(
+            "walk stated",
+            MadeByClass::Stated,
+            &[],
+            (ANCHOR, &far_vector(), STATED_TEXT),
+        );
+        let concluded = self.born(
+            "walk concluded",
+            MadeByClass::Concluded,
+            &[stated],
+            (ANCHOR, &query_vector(), CONCLUDED_TEXT),
+        );
+        self.vault
+            .put_edge(&concluded, EdgeKind::About, &stated, 1.0)
+            .expect("FIXTURE: link the concluded row to the stated one");
+        (stated, concluded)
+    }
+
+    /// A PPR search of `searched` at depth 0, then, when `expand` is
+    /// `Some`, an expansion one hop out from those seeds and the search's
+    /// top results. Returns the result ids and the run's recorded count of
+    /// candidates in scope.
+    fn walk(
+        &self,
+        made_by: MadeByPredicate,
+        searched: &[EntityId],
+        expand: Option<&[EntityId]>,
+    ) -> (Vec<EntityId>, usize) {
+        let mut query = self.vault.query().search_ppr(searched, 0);
+        if let Some(seeds) = expand {
+            query = query.expand_ppr(seeds, 1);
+        }
+        let run = query
+            .made_by(made_by)
+            .limit(10)
+            .capture_retrieval_trace(true)
+            .run_with_telemetry()
+            .expect("query");
+        let run_id = run
+            .run_id
+            .expect("FIXTURE: a captured run names its record");
+        let record = self
+            .vault
+            .retrieval_run(run_id)
+            .expect("read the run record")
+            .expect("FIXTURE: the run record is readable");
+        (
+            run.value.into_iter().map(|row| row.id).collect(),
+            record.total_in_scope,
+        )
     }
 }
 
@@ -263,6 +337,84 @@ fn a_stated_row_past_the_temporal_fetch_is_found() {
         fixture.temporal(MadeByPredicate::Stated),
         [stated],
         "a stated-only call finds the stated row past the concluded ones"
+    );
+}
+
+/// The temporal window's bound counts only the slice's rows: with a bound
+/// of `TIGHT_WINDOW_BOUND` rows, below the concluded rows nearer the anchor,
+/// a stated-only call still finds the stated row. Before, the window kept
+/// its nearest rows up to the bound and the slice then dropped them all
+/// (REVIEW-9842 P1 1).
+#[test]
+fn a_stated_row_past_the_temporal_window_bound_is_found() {
+    let mut fixture = fixture();
+    let stated = fixture.stated_behind_concluded();
+    let tight = RetrievalParams {
+        temporal_widening_multiple: 1,
+        temporal_widening_floor: TIGHT_WINDOW_BOUND,
+        ..RetrievalParams::shipped()
+    };
+    assert!(
+        TIGHT_WINDOW_BOUND < CONCLUDED_ROWS,
+        "FIXTURE: more concluded rows than the window keeps"
+    );
+    let unsliced = fixture.temporal_with(MadeByPredicate::All, tight);
+    assert!(
+        unsliced.len() == 1 && fixture.concluded.contains(&unsliced[0]),
+        "FIXTURE: a concluded row ranks first, got {unsliced:?}"
+    );
+    assert_eq!(
+        fixture.temporal_with(MadeByPredicate::Stated, tight),
+        [stated],
+        "a stated-only call finds the stated row past the window's bound"
+    );
+}
+
+/// A PPR result the slice drops neither counts as a candidate nor seeds an
+/// implicit expansion (REVIEW-9842 P1 2): a stated-only call that searches
+/// from a concluded row finds nothing, counts nothing, and does not expand
+/// from it to the stated row it is about. Before, the concluded row counted
+/// as one candidate and seeded the expansion that found the stated row.
+#[test]
+fn an_out_of_slice_walk_result_neither_counts_nor_seeds() {
+    let fixture = fixture_with_capture(true);
+    let (stated, concluded) = fixture.concluded_about_stated();
+    let (searched, _) = fixture.walk(MadeByPredicate::All, &[concluded], None);
+    assert_eq!(
+        searched,
+        [concluded],
+        "FIXTURE: a depth-0 search returns its seed"
+    );
+    let (expanded, _) = fixture.walk(MadeByPredicate::All, &[concluded], Some(&[]));
+    assert!(
+        expanded.contains(&stated),
+        "FIXTURE: the expansion from the search's result reaches the stated row, got {expanded:?}"
+    );
+    assert_eq!(
+        fixture.walk(MadeByPredicate::Stated, &[concluded], None),
+        (Vec::new(), 0),
+        "a stated-only search counts no concluded candidate"
+    );
+    assert_eq!(
+        fixture
+            .walk(MadeByPredicate::Stated, &[concluded], Some(&[]))
+            .0,
+        Vec::<EntityId>::new(),
+        "a concluded row the call drops seeds no implicit expansion"
+    );
+}
+
+/// Guard: an explicit expansion seed is the caller's own, so a stated-only
+/// call still expands from a concluded seed and finds the stated row.
+#[test]
+fn an_explicit_out_of_slice_seed_still_expands() {
+    let fixture = fixture_with_capture(true);
+    let (stated, concluded) = fixture.concluded_about_stated();
+    assert_eq!(
+        fixture
+            .walk(MadeByPredicate::Stated, &[concluded], Some(&[concluded]))
+            .0,
+        [stated]
     );
 }
 
