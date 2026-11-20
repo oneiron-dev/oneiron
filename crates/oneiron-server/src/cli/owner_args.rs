@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand, ValueEnum};
 
 use super::{
-    RestoreWrapArgs, SecretBindArgs, SecretImportSupplementArgs, SecretPendingArgs,
+    KitPieceArgs, RestoreWrapArgs, SecretBindArgs, SecretImportSupplementArgs, SecretPendingArgs,
     SecretShowSupplementArgs, SecretUnbindArgs, VaultUnlockArgs,
 };
 use crate::config::ServeArgs;
@@ -451,6 +451,13 @@ pub struct VaultKeyRecoveryPresetArgs {
     /// sheet's code is written to, once. Print it and keep it offline.
     #[arg(long, value_name = "FILE")]
     pub sheet_out: Option<PathBuf>,
+
+    /// With `--set nobody-but-me`: the recovery kit that replaces the key
+    /// the box could release, as `recovery-kit confirm` takes it. Give two
+    /// pieces, or one and the passphrase. Without it the switch is refused
+    /// while a generation is live.
+    #[command(flatten)]
+    pub kit: KitPieceArgs,
 
     #[command(flatten)]
     pub unlock: VaultUnlockArgs,
@@ -1494,6 +1501,11 @@ pub struct EmbeddingSpaceProbePutArgs {
 pub struct EmbeddingSpaceProbeDeleteArgs {
     /// The probe's id, 32 hex, as `probes list` names it.
     pub id: String,
+
+    /// Another asker's approved check-in for deleting this probe, 32 hex:
+    /// the delete applies it on your own proof and spends it.
+    #[arg(long, value_name = "HEX")]
+    pub check_in_ref: Option<String>,
 
     #[command(flatten)]
     pub serve: ServeArgs,

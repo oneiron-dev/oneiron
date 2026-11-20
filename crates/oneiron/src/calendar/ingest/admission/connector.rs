@@ -120,9 +120,11 @@ pub(in crate::calendar) fn admit_connector_event<'a>(
 /// live passport, already carries its SEQUENCE and content hash, so nothing
 /// of it is admitted again.
 ///
-/// An uncancelled resource whose passport a tombstone dated
-/// (`cancelled_since`) is the calendar showing the EVENT again: that report
-/// is withdrawn ([`withdraw_tombstone_report`]).
+/// An uncancelled resource at the version of a passport that dates a
+/// cancellation (`cancelled_since`, a held sighting, or the owner's
+/// cancelled write) is the calendar showing the EVENT again: that report is
+/// withdrawn
+/// ([`withdraw_tombstone_report`]).
 ///
 /// For a cancellation, when an admission of pulled bytes committed that
 /// passport (it keeps their archived source), the deposit refund and status
@@ -187,17 +189,37 @@ pub(in crate::calendar) fn defer_connector_cancel<'a>(
 /// absence vote. Only an Outbound passport can stand live with such a date:
 /// an inbound-bearing one flips absent at its tombstone, and its
 /// reappearance is an update whose passport carries no cancellation.
+///
+/// The live version ends a held cancelled one too, as an update does: its
+/// first sighting (`deferred_cancel_seen_at`) goes, so a cancel first seen
+/// later is dated by its own sighting and not by the withdrawn one
+/// (BK-ECHO-DEFERRED-SIGHTING-OUTLIVES-ECHO-RESTORE), and so does a mark of
+/// the owner's cancelled write, which no later cancellation of the shown
+/// EVENT inherits.
+///
+/// Only the passport's own version (its SEQUENCE and content hash) shows the
+/// EVENT again. A version below it is a stale replay, which never regresses
+/// passport state: a live copy a pull read before the owner's cancelled
+/// write settled leaves that write's mark, so the provider's later rewrite
+/// of the cancellation still reads as the owner's own write.
 fn withdraw_tombstone_report(
     admission: &mut PollAdmission<'_>,
     event_ref: EntityId,
     passport: &CalendarPassportValue,
     event: &ParsedVEvent,
 ) -> Result<(), CalendarError> {
-    if passport.cancelled_since.is_none() || passport.presence != CalendarPassportPresence::Live {
+    let dated = passport.cancelled_since.is_some()
+        || passport.deferred_cancel_seen_at.is_some()
+        || passport.written_cancelled;
+    let same_version =
+        event.sequence == passport.last_sequence && event.content_hash == passport.content_hash;
+    if !dated || !same_version || passport.presence != CalendarPassportPresence::Live {
         return Ok(());
     }
     let mut next = passport.clone();
     next.cancelled_since = None;
+    next.deferred_cancel_seen_at = None;
+    next.written_cancelled = false;
     next.last_seen_at = admission.now;
     admission.admit_superseding_passport(event_ref, &next, &screen_body(event))
 }

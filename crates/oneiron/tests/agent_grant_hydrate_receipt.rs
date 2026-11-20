@@ -3,8 +3,9 @@
 //! nothing (FIX-LIST GRANT-RECEIPT-OTHER-READ-LANES, after
 //! GRANT-READ-NARROWING-SAYS-DENY-ALL). The receipt only reports: after the
 //! owner revokes the Grant the same hydrate reads nothing.
-
-use std::time::{SystemTime, UNIX_EPOCH};
+//!
+//! The claim takes the vault's own time (no `occurred_at` or `learned_at`),
+//! so the test reads no wall clock.
 
 use oneiron::memory::Memory;
 use oneiron::{EdgeActorClass, Vault, VaultConfig};
@@ -30,10 +31,6 @@ fn an_agents_hydrate_under_a_live_read_grant_reports_the_grant_not_deny_all() {
     let owner_id = vault.ensure_embedded_owner_actor().expect("the owner");
     let owner = door::owner(&vault).expect("the embedded owner");
 
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("a clock after 1970")
-        .as_secs();
     let remembered = call(
         &owner,
         "vault.remember",
@@ -43,8 +40,6 @@ fn an_agents_hydrate_under_a_live_read_grant_reports_the_grant_not_deny_all() {
             "value": "The harbour survey is due on Friday.",
             "confidence": 0.9,
             "source": "user_stated",
-            "occurred_at": now,
-            "learned_at": now,
         }),
     );
     let claim = remembered

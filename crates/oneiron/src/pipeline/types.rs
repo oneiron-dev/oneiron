@@ -201,6 +201,18 @@ pub(super) struct PipelineFilterConfig<'a> {
     /// audience may not read takes no channel slot. `None` with the owner
     /// alone or outside a pack.
     pub(super) disclosure: Option<&'a crate::disclosure::DisclosureContext>,
+    /// The call's `made_by` slice (Rule A, OF-466) at a bounded result
+    /// channel's admission, so a row the call drops takes no place in a
+    /// vector, text, temporal or typed media fetch
+    /// (`PipelineBuilder::bounded_result_filters`).
+    /// The run's shared config holds `MadeByPredicate::All`: the narrowed
+    /// walk's visibility, the TURN fold, the reranker's words, L2 evidence
+    /// and the trace judge rows that are not results, and admit as before.
+    /// A PPR walk's result list and the phonetic exact-code hits take the
+    /// slice after entity-type authority narrows them
+    /// (`PipelineBuilder::retain_made_by_slice`); the post-blend filter
+    /// still sweeps every candidate.
+    pub(super) made_by: crate::provenance::made_by::MadeByPredicate,
 }
 
 #[derive(Default)]

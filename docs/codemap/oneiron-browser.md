@@ -103,4 +103,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/answer_manifest_guest_pressure.rs` | test | s | — | — | A browser or desktop answer's typed manifest keeps the guest's pressure (FIX… |
 | `tests/draft_from_steps.rs` | test | m | — | — | These tests hold the rule-tier draft contract (FIX [BROWSER-CRATE-RUNS-NO-TEST]) |
 | `tests/draft_from_steps_gaps.rs` | test | m | — | — | These tests cover draft spans, gaps, and input refusals (FIX [BROWSER-CRATE-RUNS-NO-TEST]) |
+| `tests/draft_from_steps_literal_opens_slot.rs` | test | m | — | — | These tests cover FIX [BROWSER-DRAFT-LITERAL-TEXT-WITH-SLOT-BRACES-READS-AS-A-SLOT] |
 | `tests/guest_pressure_answer.rs` | test | m | — | — | A browser or desktop guest's pids-limit hits reach its session's manifest (FIX 8013 follow-up… |
+| `tests/library_run_mode_and_model_free.rs` | test | s | — | — | These tests hold the run mode and model-free contract (FIX [BROWSER-LIBRARY-PLAIN-FUNCTIONS-HELD-BY-NO-TEST]) |
+| `tests/program_origin_and_filled_checks.rs` | test | s | — | — | These tests hold the plain origin and check-filling rules (FIX… |
+| `tests/replay_args_held_out.rs` | test | s | — | — | Tests for the replay held-out check (FIX [BROWSER-LIBRARY-PLAIN-FUNCTIONS-HELD-BY-NO-TEST]) |
+| `tests/switch_source_pressure.rs` | test | m | — | — | A switched engine's receipt names the pids pressure its source guest showed before the switch dropped it… |
+| `tests/workflow_program_shape_and_fill.rs` | test | m | — | — | These tests hold the program shape and fill contract (FIX [BROWSER-LIBRARY-PLAIN-FUNCTIONS-HELD-BY-NO-TEST]) |

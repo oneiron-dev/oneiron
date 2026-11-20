@@ -628,7 +628,10 @@ impl EntityDocument {
 
     /// Export after the selector has admitted this entity. `admission_key` is the
     /// canonical selector encoding, not peer-controlled claims about prior admission.
-    /// Current record use limits apply here, not to the owner's raw replica export.
+    /// Current record use limits apply here and on the owner lane alike: a row a use
+    /// limit keeps for storage only sends no text to any machine, the owner's own
+    /// devices included, which hold it back as they would an erased row (Engine
+    /// ANSWER SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B, 20 Nov 21:19).
     fn export_with_cache(
         &self,
         admission_key: &[u8],
@@ -881,6 +884,7 @@ fn owner_note_admission_for(
             &withhold.worlds_in(vault, txn)?,
             &id,
         )?
+        || crate::store::legal_hold::use_limit_in_txn(&vault.store, txn, &id)?.is_some()
     {
         return Err(Error::sync_protocol(
             SyncProtocolValidation::DocumentAdmissionDenied,

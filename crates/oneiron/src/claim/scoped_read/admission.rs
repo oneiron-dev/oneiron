@@ -687,8 +687,29 @@ impl ScopedRead<'_> {
         filter: &crate::gate::ResolvedRetrievalFilter,
         id: &EntityId,
     ) -> Result<ReadAdmission<()>> {
+        self.admit_entity_held_in(
+            txn,
+            policy,
+            filter,
+            id,
+            &super::access_gate::HeldAuthority::default(),
+        )
+    }
+
+    /// [`Self::admit_entity_in`] under the authority one serving txn holds
+    /// for all its rows (FIX 7462): a key A may stand for then reads a row
+    /// one of its own live Grants admits alone, as its point reads do
+    /// (FIX-LIST SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS).
+    pub(super) fn admit_entity_held_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &crate::gate::PolicyManifestResolution,
+        filter: &crate::gate::ResolvedRetrievalFilter,
+        id: &EntityId,
+        authority: &super::access_gate::HeldAuthority,
+    ) -> Result<ReadAdmission<()>> {
         self.admit_in(txn, id, || {
-            self.is_entity_retrievable_with_policy_in(txn, policy, filter, id)
+            self.is_entity_retrievable_held_in(txn, policy, filter, id, authority)
                 .map(|allowed| allowed.then_some(()))
         })
     }

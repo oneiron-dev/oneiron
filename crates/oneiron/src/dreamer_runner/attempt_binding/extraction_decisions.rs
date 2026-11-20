@@ -96,10 +96,10 @@ fn check_pack_bounds(pack: &ExtractionPack) -> MemoryResult<()> {
     if lengths
         .iter()
         .any(|length| *length > MAX_DECISION_STATE_BYTES)
-        || pack
-            .candidates
-            .iter()
-            .any(|candidate| candidate.evidence.len() > MAX_DECISION_STATE_BYTES)
+        || pack.candidates.iter().any(|candidate| {
+            candidate.evidence.len() > MAX_DECISION_STATE_BYTES
+                || candidate.claim_evidence.len() > MAX_DECISION_STATE_BYTES
+        })
     {
         return Err(MemoryError::bad_request(
             "an extraction pack collection exceeds the native decision state bound",

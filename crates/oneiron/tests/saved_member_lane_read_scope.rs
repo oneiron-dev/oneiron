@@ -147,6 +147,18 @@ fn lane_reads(lane: &ScopedRead<'_>, id: &EntityId) -> TestResult<bool> {
     Ok(read.value.into_iter().next().flatten().is_some())
 }
 
+/// Whether `lane` reads nothing of `id` once its credential is revoked: the
+/// point read is refused because the credential is no longer live (each
+/// read rechecks its holder), or it returns no row. Any other error is the
+/// test's error.
+fn lane_reads_nothing_after_revocation(lane: &ScopedRead<'_>, id: &EntityId) -> TestResult<bool> {
+    match lane.read(&[PointRead::id(*id)], None) {
+        Err(oneiron::Error::InvalidClaimBody("scoped read credential no longer live")) => Ok(true),
+        Ok(read) => Ok(read.value.into_iter().next().flatten().is_none()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 impl Fixture {
     fn new() -> TestResult<Self> {
         let dir = tempfile::tempdir()?;
@@ -296,7 +308,8 @@ fn a_member_saved_lane_reads_while_its_grant_confers_read() -> TestResult {
 }
 
 /// Guard: the revocation check stands. Once the Admin's credential is
-/// revoked, a rebuild reads nothing, and so does a key rebuilt before it.
+/// revoked, a rebuild reads nothing, and so does a key rebuilt before it:
+/// each point read is refused as no longer live, or returns no row.
 #[test]
 fn a_member_saved_lane_reads_nothing_once_its_credential_is_revoked() -> TestResult {
     let fixture = Fixture::new()?;
@@ -308,11 +321,14 @@ fn a_member_saved_lane_reads_nothing_once_its_credential_is_revoked() -> TestRes
         .revoke_capability_slip(&fixture.issuer, fixture.admin_slip.claims.slip_id)?;
     let rebuilt = frozen.narrow(&fixture.vault, key)?;
     assert!(
-        !lane_reads(&fixture.vault.scoped_read(rebuilt), &fixture.unstamped)?,
+        lane_reads_nothing_after_revocation(
+            &fixture.vault.scoped_read(rebuilt),
+            &fixture.unstamped
+        )?,
         "actor=a shared vault's Admin whose credential was revoked; expected its saved lane, rebuilt after the revocation, to read nothing"
     );
     assert!(
-        !lane_reads(&fixture.vault.scoped_read(held), &fixture.unstamped)?,
+        lane_reads_nothing_after_revocation(&fixture.vault.scoped_read(held), &fixture.unstamped)?,
         "actor=a shared vault's Admin whose credential was revoked; expected a key rebuilt from its saved lane before the revocation to read nothing after it"
     );
     Ok(())

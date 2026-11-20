@@ -172,6 +172,10 @@ impl Vault {
             )?;
             self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
             rekeys.finish(&self.store, &mut wtxn)?;
+            // With nothing published, this commit linearizes the delete: its
+            // brief fence settles under this writer (a published one settled
+            // at its publication).
+            self.store.brief_delete_fences.settle(id);
             wtxn.commit()?;
             effects.committed(self);
             pending_cloud_revokes.publish();
@@ -314,6 +318,10 @@ impl Vault {
         self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
 
         rekeys.finish(&self.store, &mut wtxn)?;
+        // With nothing published, this purge linearizes the delete: its brief
+        // fence settles under this writer (a published one settled at its
+        // publication).
+        self.store.brief_delete_fences.settle(id);
         wtxn.commit()?;
         effects.committed(self);
         pending_cloud_revokes.publish();

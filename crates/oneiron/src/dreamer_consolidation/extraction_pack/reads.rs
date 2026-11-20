@@ -156,19 +156,26 @@ pub(in crate::dreamer_consolidation) fn parse_reference(reference: &str) -> Resu
     Ok(id)
 }
 
-/// The eligible (candidate position, listed index) pairs over `subjects` with
+/// The eligible (candidate position, listed index) pairs over `operands` with
 /// the listing in native first-seen order: every claim the bound listing
-/// shows about each subject that its read may correct. Operand evidence is
-/// turn-only, so no candidate restates a listed claim through a claim
-/// locator and every correctable pair is asked, as native asks it.
+/// shows about each subject that its read may correct, except a claim the
+/// candidate restates. Native never asks about a restated claim (FIX 8295),
+/// and a claim left in no pair is not listed. `cited` holds each operand's
+/// admitted claim evidence, by position.
 pub(super) fn correction_sets(
+    operands: &[CandidateOperand],
     subjects: &[EntityId],
+    cited: &[Vec<EntityId>],
     bound: &BoundBranchRead,
 ) -> Result<(Vec<(usize, usize)>, Vec<CorrectionListed>)> {
     let mut entries: Vec<(usize, usize)> = Vec::new();
     let mut listed: Vec<CorrectionListed> = Vec::new();
-    for (position, subject) in subjects.iter().enumerate() {
+    let rows = operands.iter().zip(subjects).zip(cited);
+    for (position, ((operand, subject), cited)) in rows.enumerate() {
         for (claim, predicate, value) in bound.correctable(*subject, bound.scope()) {
+            if cited.contains(&claim) && restates(operand, bound, claim) {
+                continue;
+            }
             let at = match listed.iter().position(|row| row.claim == claim) {
                 Some(at) => at,
                 None => {
@@ -187,10 +194,40 @@ pub(super) fn correction_sets(
     Ok((entries, listed))
 }
 
+/// Whether `operand`, which cites listed `claim`, restates it unchanged: it
+/// carries the head's own predicate and its value as JSON. The subject is the
+/// head's, since the listing shows the head about that subject. This mirrors
+/// the native correction read's restatement rule over the bound prior heads.
+fn restates(operand: &CandidateOperand, bound: &BoundBranchRead, claim: EntityId) -> bool {
+    bound.prior(claim).is_some_and(|prior| {
+        operand.predicate == prior.body.predicate
+            && rmpv_to_json(&prior.body.value) == operand.value
+    })
+}
+
+/// The listed heads `operand` cites as evidence, sorted and deduped: each
+/// reference parsed canonically and each head admitted by the bound read's
+/// cited-head rule, so a candidate never rests on a claim outside the
+/// branch's listing or one that may not corroborate. Which call showed the
+/// head is not checked: `BoundBranchRead::cited_head` says why.
+fn cited_claims(operand: &CandidateOperand, bound: &BoundBranchRead) -> Result<Vec<EntityId>> {
+    let mut cited = operand
+        .claim_evidence
+        .iter()
+        .map(|pin| parse_reference(&pin.claim))
+        .collect::<Result<Vec<_>>>()?;
+    cited.sort_unstable();
+    cited.dedup();
+    for claim in &cited {
+        bound.cited_head(*claim)?;
+    }
+    Ok(cited)
+}
+
 /// The native correction evidence over `checked`: every rebuilt listed claim
-/// in native order, then the asked candidates' source TURNs sorted and
-/// deduped, excluding any TURN already listed. This mirrors the native
-/// correction pack's one evidence set across all its pages.
+/// in native order, then the asked candidates' sources, their cited TURNs
+/// and cited claims, sorted and deduped, excluding any already listed. This
+/// mirrors the native correction pack's one evidence set across all its pages.
 pub(super) fn correction_evidence(checked: &CheckedPack) -> Vec<EntityId> {
     let mut evidence: Vec<EntityId> = checked.listed_ids();
     let mut turns: Vec<EntityId> = checked
@@ -224,11 +261,12 @@ pub(super) fn correction_project(checked: &CheckedPack) -> Option<EntityId> {
 }
 
 /// Every pack candidate checked with the listing its pairs need: each subject
-/// parsed, each predicate grammar checked, each value non-null with turn
-/// evidence, each corrected claim a listed head about its subject, whose
+/// parsed, each cited claim a listed head that may corroborate, each predicate
+/// grammar checked, each value non-null with turn or claim evidence, each
+/// corrected claim a listed head about its subject that it does not restate, whose
 /// predicate, relationship set and topic it then binds as native binds them,
 /// each relationship inside the bound set, each project the common one of
-/// its turns, and each id derived with the native deterministic id.
+/// its sources, and each id derived with the native deterministic id.
 pub(crate) fn check_pack_candidates(
     candidates: &[CandidateOperand],
     bound: &BoundBranchRead,
@@ -236,30 +274,36 @@ pub(crate) fn check_pack_candidates(
     branch: &ConsolidationBranchPlan<EntityId>,
 ) -> Result<CheckedPack> {
     let mut subjects = Vec::with_capacity(candidates.len());
+    let mut cited = Vec::with_capacity(candidates.len());
     for operand in candidates {
         subjects.push(parse_reference(&operand.subject)?);
+        cited.push(cited_claims(operand, bound)?);
     }
-    let (pairs, listed) = correction_sets(&subjects, bound)?;
+    let (pairs, listed) = correction_sets(candidates, &subjects, &cited, bound)?;
     let mut rows = Vec::with_capacity(candidates.len());
-    for (position, (operand, subject)) in candidates.iter().zip(&subjects).enumerate() {
+    let operands = candidates.iter().zip(&subjects).zip(&cited);
+    for (position, ((operand, subject), cited)) in operands.enumerate() {
         validate_predicate(&operand.predicate, false).map_err(|_| {
             invalid_consolidation("extracted candidate's predicate breaks the claim grammar")
         })?;
         if operand.value.is_null() {
             return Err(invalid_consolidation("extracted candidate names no value"));
         }
-        if operand.evidence.is_empty() {
+        if operand.evidence.is_empty() && cited.is_empty() {
             return Err(invalid_consolidation(
-                "extracted candidate needs TURN evidence",
+                "extracted candidate needs TURN or claim evidence",
             ));
         }
-        let mut turn_refs: Vec<EntityId> = operand
+        // A cited claim is a source beside the cited TURNs, as the native
+        // reply parser reads it: it joins the project fold and the refs.
+        let mut source_refs: Vec<EntityId> = operand
             .evidence
             .iter()
             .map(|evidence| parse_reference(&evidence.turn))
             .collect::<Result<Vec<_>>>()?;
-        turn_refs.sort_unstable();
-        turn_refs.dedup();
+        source_refs.extend(cited.iter().copied());
+        source_refs.sort_unstable();
+        source_refs.dedup();
         let corrects_id = operand
             .corrects
             .as_ref()
@@ -303,7 +347,7 @@ pub(crate) fn check_pack_candidates(
                 "extraction relationship crossed branch scope",
             ));
         }
-        let project = bound.evidence_project(&turn_refs)?.ok_or_else(|| {
+        let project = bound.evidence_project(&source_refs)?.ok_or_else(|| {
             invalid_consolidation("extracted candidate's sources share no one branch project")
         })?;
         let input = CandidateAssemblyInput {
@@ -336,7 +380,7 @@ pub(crate) fn check_pack_candidates(
             proposal: PromotionCandidate {
                 claim_id,
                 candidate,
-                evidence_turn_refs: turn_refs,
+                evidence_turn_refs: source_refs,
                 provenance_chain: Vec::new(),
                 supersedes: None,
                 evidence_meet: ClaimSource::Generated,

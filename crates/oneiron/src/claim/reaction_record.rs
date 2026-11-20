@@ -197,6 +197,29 @@ pub(crate) fn validate_reaction_claim_structure(body: &ClaimBody) -> Result<()> 
     Ok(())
 }
 
+/// The index text of a reaction-family claim, or `None` for any other
+/// predicate ([`crate::claim::claim_index_text`]). A reaction is found by its
+/// glyph alone, read by itself so a value the strict decode refuses still gives
+/// its glyph or nothing: never its `by`, its time or its provider id (Engine
+/// ANSWERs REACTION-REACTOR-ID-SURFACES = A and
+/// REACTION-TEXT-REACTOR-NAME-INDEX = A). An echo is connector metadata, never
+/// a second reaction, and is born with no text: it has none.
+pub(crate) fn reaction_index_text(predicate: &str, value: &Value) -> Option<String> {
+    match predicate {
+        PREDICATE_CONVERSATION_REACTION => Some(match value {
+            Value::Map(entries) => entries
+                .iter()
+                .find(|(key, _)| key.as_str() == Some(KEY_GLYPH))
+                .and_then(|(_, glyph)| glyph.as_str())
+                .unwrap_or_default()
+                .to_owned(),
+            _ => String::new(),
+        }),
+        PREDICATE_CONVERSATION_REACTION_ECHO => Some(String::new()),
+        _ => None,
+    }
+}
+
 pub(crate) fn decode_reaction(body: &ClaimBody) -> Option<ReactionValue> {
     (body.predicate == PREDICATE_CONVERSATION_REACTION)
         .then(|| ReactionValue::from_value(&body.value).ok())

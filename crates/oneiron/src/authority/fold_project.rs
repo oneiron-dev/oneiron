@@ -20,6 +20,7 @@ pub(super) struct Settled<'a> {
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
     pub(super) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    pub(super) crossed_revocations: BTreeSet<AuthorityEntryHash>,
     pub(super) unsettled: bool,
     pub(super) counted_ancestor_pairs: u64,
     pub(super) issues: Vec<AuthorityFoldIssue>,
@@ -100,6 +101,7 @@ pub(super) fn project_once(
         retired_keys,
         handoff_or_appointment_retired_keys,
         closed_handoffs,
+        crossed_revocations,
         unsettled,
         counted_ancestor_pairs,
         mut issues,
@@ -212,6 +214,7 @@ pub(super) fn project_once(
                 .collect()
         }),
         closed_handoffs,
+        crossed_revocations,
         genesis_fragile: merged.as_ref().is_some_and(|state| {
             state.genesis_recovery_dismissed && !state.recovery_redundancy_established
         }),

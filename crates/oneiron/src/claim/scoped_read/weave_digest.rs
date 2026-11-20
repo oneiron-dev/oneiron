@@ -562,9 +562,12 @@ impl Vault {
             EdgeActorClass::System => return Err(invalid()),
         };
         let memory = self.memory(id, class);
+        // The period's saved receipt names the live Grants that admitted its
+        // rows, as the reader's own render does.
         let read = memory
             .read_lane(super::ClaimReadStatus::Surfaceable)
-            .map_err(|error| Error::InvalidConfig(format!("weave digest reader: {error}")))?;
+            .map_err(|error| Error::InvalidConfig(format!("weave digest reader: {error}")))?
+            .with_live_grant_receipts();
         match read.render_due_weave_digest(reader, now)? {
             Some(stored) => Ok(Some(stored)),
             None => read.render_due_weave_digest(reader, now),
@@ -872,6 +875,10 @@ impl ScopedRead<'_> {
     /// rechecked on its own under `opener`, the bound reader, or with none
     /// (the owner's proofless background lens) its recorded owner's hook; a
     /// row that no longer reads as saved is withheld alone (OF-499 A2).
+    /// Every other row takes the row gate under one authority held for this
+    /// txn (FIX 7462), so a row a live Grant of this key admits alone serves
+    /// as it does on a point read (FIX-LIST
+    /// SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS).
     pub(super) fn saved_weave_digest_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -887,9 +894,11 @@ impl ScopedRead<'_> {
             WeaveDigestReader::Admin(_) => crate::gate::weave_policy::ADMIN_ROLE,
         };
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let held = self.held_for(None);
         // Even an empty saved report must not reveal historical section names
-        // or an old narrowing receipt to a caller with no current read door.
-        if filter.deny_all {
+        // or an old narrowing receipt to a caller with no current read door:
+        // neither its own floor nor one of its own live Grants reads a row.
+        if self.reads_nothing_held_in(txn, &policy, &filter, &held) {
             return Ok(None);
         }
         let Some(allowed) = crate::gate::weave_policy::effective_resolved(&policy, role, id) else {
@@ -921,7 +930,7 @@ impl ScopedRead<'_> {
             return Ok(None);
         }
         for source in report_sources(&report.value)? {
-            if !self.is_entity_retrievable_with_policy_in(txn, &policy, &filter, &source)? {
+            if !self.is_entity_retrievable_held_in(txn, &policy, &filter, &source, &held)? {
                 return Ok(None);
             }
         }
@@ -955,18 +964,19 @@ impl ScopedRead<'_> {
                         let mut historical =
                             current[..crate::batch::ENTITY_METADATA_HEADER_LEN].to_vec();
                         historical.extend_from_slice(&saved_body);
-                        if !self.is_entity_raw_readable_with_filter_in(
+                        if !self.is_entity_raw_readable_held_in(
                             txn,
                             &policy,
                             id,
                             &historical,
                             &filter,
+                            &held,
                         )? {
                             return Ok(None);
                         }
                         // Readable endpoints are not pair authority: an edge
                         // claim keeps the live lens's exact-relation admission.
-                        if !self.weave_claim_edge_admitted_in(txn, &policy, &filter, body)? {
+                        if !self.weave_claim_edge_admitted_in(txn, &policy, &filter, &held, body)? {
                             return Ok(None);
                         }
                     }
@@ -980,7 +990,7 @@ impl ScopedRead<'_> {
                             return Ok(None);
                         };
                         if !self
-                            .admit_stored_edge_in(txn, &policy, &filter, *source, edge)?
+                            .admit_stored_edge_held_in(txn, &policy, &filter, *source, edge, &held)?
                             .visible()
                         {
                             return Ok(None);
@@ -1027,7 +1037,7 @@ impl ScopedRead<'_> {
         // Each loop row is rechecked on its own: one that no longer reads as
         // saved is withheld alone, never the period (OF-499 A2).
         self.recheck_saved_loop_decisions_in_txn(txn, reader_key, opener, &mut report.value);
-        self.serve_saved_copy_in(txn, &mut report.value)?;
+        self.serve_saved_copy_in(txn, &held, &mut report.value)?;
         self.charge_served(report.value.served_rows());
         Ok(Some(StoredWeaveDigest {
             reader: reader_key,
@@ -1161,8 +1171,10 @@ impl ScopedRead<'_> {
                 return Ok(None);
             }
             // Each row it saves must still serve; a loop decision the
-            // ledger gained since joins the next period (FIX 7694).
-            let current = self.weave_report_in_txn(txn, reader, &row.recipe)?;
+            // ledger gained since joins the next period (FIX 7694). One
+            // authority for this writer's rows and its served copy.
+            let held = self.held_for(None);
+            let current = self.weave_report_held_in_txn(txn, reader, &row.recipe, &held)?;
             if current.receipt != report.receipt
                 || !super::weave_lens::snapshot_still_served(&report.value, &current.value)
             {
@@ -1206,7 +1218,7 @@ impl ScopedRead<'_> {
             }
             // The copy handed back serves as a read of it would.
             let mut served = report;
-            self.serve_saved_copy_in(txn, &mut served.value)?;
+            self.serve_saved_copy_in(txn, &held, &mut served.value)?;
             Ok(Some(StoredWeaveDigest {
                 reader: id,
                 scheduled_for: row.next_due_at,

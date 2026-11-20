@@ -82,13 +82,29 @@ use crate::BrowserError;
 use crate::{BatchStep, BrowserDriver, CheckReceipt, ExpectInput};
 use std::collections::BTreeMap;
 
+/// Whether `text` opens a `{{` slot, as [`fill_text`] reads it.
+fn opens_slot(text: &str) -> bool {
+    text.contains("{{")
+}
+
+/// Whether any string in `value` opens a `{{` slot, as [`fill_slots`]
+/// reads them.
+fn holds_slot_opening(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(text) => opens_slot(text),
+        serde_json::Value::Array(items) => items.iter().any(holds_slot_opening),
+        serde_json::Value::Object(fields) => fields.values().any(holds_slot_opening),
+        _ => false,
+    }
+}
+
 /// Fills every `{{name}}` slot in `value`'s strings from `args`.
 fn fill_slots(
     value: &mut serde_json::Value,
     args: &BTreeMap<String, String>,
 ) -> Result<(), BrowserError> {
     match value {
-        serde_json::Value::String(text) if text.contains("{{") => {
+        serde_json::Value::String(text) if opens_slot(text) => {
             *text = fill_text(text, args).map_err(|gap| match gap {
                 SlotGap::Unclosed => BrowserError::Input("a {{ slot is never closed".to_owned()),
                 SlotGap::Missing(name) => {

@@ -472,66 +472,90 @@ async fn a_paired_core_read_slip_recalls_over_the_websocket() {
 async fn http_recall_and_receipts_defaults_limits_and_error_order_are_preserved() {
     let (_dir, server) = server();
     let auth = auth(&server, "human");
+    // The bare names left the SDK at the canonical verb-name cutover (#1616):
+    // a wrong root is refused with its replacement and never run.
+    for (bare, verb) in [("recall", "vault.recall"), ("receipts", "vault.receipts")] {
+        let reply = rpc(&server, &auth, bare, json!({}));
+        assert_eq!(reply["error"]["code"], "WRONG_ROOT", "{reply}");
+        assert_eq!(reply["error"]["replacement"], verb, "{reply}");
+        assert!(reply.get("result").is_none(), "{reply}");
+    }
     for value in [
         json!({"query":"solar"}),
         json!({"query":"solar","effort":null,"scope":null,
         "limit":null,"format":null,"ignored":true}),
     ] {
-        let reply = rpc(&server, &auth, "recall", value);
-        assert_eq!(reply["result"]["pack_version"], 1);
+        let reply = rpc(&server, &auth, "vault.recall", value);
+        assert_eq!(reply["result"]["pack_version"], 1, "{reply}");
         assert!(reply.get("error").is_none());
     }
-    for value in [
-        json!({}),
-        json!({"limit":null,"ignored":true}),
-        json!({"limit":1000}),
+    // A receipts page has no ceiling (#5059): it holds the requested count
+    // and reports no clamp. Its request refuses an unknown field.
+    for (value, effective_limit) in [
+        (json!({}), 100),
+        (json!({"limit":null}), 100),
+        (json!({"limit":1000}), 1000),
+        (json!({"limit":1001}), 1001),
     ] {
-        assert_eq!(rpc(&server, &auth, "receipts", value)["result"], json!([]));
+        let reply = rpc(&server, &auth, "vault.receipts", value);
+        let page = &reply["result"];
+        assert!(page["receipts"].is_array(), "{reply}");
+        assert_eq!(page["effective_limit"], effective_limit, "{reply}");
+        assert_eq!(page["limit_clamped"], false, "{reply}");
     }
-    for limit in [0, 1001] {
-        let reply = rpc(
-            &server,
-            &auth,
-            "receipts",
-            json!({"query":"solar","limit":limit}),
-        );
-        assert_error(&reply, "BAD_REQUEST");
-        assert_eq!(
-            reply["error"]["message"],
-            "limit must be between 1 and 1000"
-        );
-        assert_eq!(
-            reply["error"]["suggestions"],
-            json!(["Request a smaller page and paginate."])
-        );
-    }
-    // Recall serves a limit past the ceiling at it and says so (F21 H46); a
-    // zero limit is still refused.
     let reply = rpc(
         &server,
         &auth,
-        "recall",
-        json!({"query":"solar","limit":1001}),
+        "vault.receipts",
+        json!({"limit":null,"ignored":true}),
     );
-    assert_eq!(
-        reply["result"]["retrieval_meta"]["limit_clamped"], true,
-        "{reply}"
-    );
-    let reply = rpc(&server, &auth, "recall", json!({"query":"solar","limit":0}));
+    assert_error(&reply, "BAD_REQUEST");
+    let message = reply["error"]["message"].as_str().unwrap();
+    assert!(message.starts_with("invalid SDK request: "), "{reply}");
+    assert!(message.contains("unknown field `ignored`"), "{reply}");
+    let reply = rpc(&server, &auth, "vault.receipts", json!({"limit":0}));
     assert_error(&reply, "BAD_REQUEST");
     assert_eq!(reply["error"]["message"], "limit must be at least 1");
+    assert_eq!(
+        reply["error"]["suggestions"],
+        json!(["Request at least one row."])
+    );
+    // Recall serves the whole requested limit and reports no clamp (#5024,
+    // FIX 56); a zero limit is still refused.
+    let reply = rpc(
+        &server,
+        &auth,
+        "vault.recall",
+        json!({"query":"solar","limit":1001}),
+    );
+    assert!(reply.get("error").is_none(), "{reply}");
+    // The wire leaves a false flag out (`skip_serializing_if = "is_false"`).
+    let meta = &reply["result"]["retrieval_meta"];
+    assert!(meta.is_object(), "{reply}");
+    assert!(meta.get("limit_clamped").is_none(), "{reply}");
+    let reply = rpc(
+        &server,
+        &auth,
+        "vault.recall",
+        json!({"query":"solar","limit":0}),
+    );
+    assert_error(&reply, "BAD_REQUEST");
+    assert_eq!(reply["error"]["message"], "limit must be at least 1");
+    // A body that is no recall request is refused at its decode, before the
+    // limit check and before the actor class is read.
     for value in [
         Value::Null,
         json!({}),
         json!({"query":3}),
         json!({"query":"x","limit":-1}),
     ] {
-        let reply = rpc(&server, &auth, "recall", value);
+        let reply = rpc(&server, &auth, "vault.recall", value);
         assert_error(&reply, "BAD_REQUEST");
-        assert_eq!(reply["error"]["message"], "invalid JSON request body");
+        let message = reply["error"]["message"].as_str().unwrap();
+        assert!(message.starts_with("invalid SDK request: "), "{reply}");
         assert_eq!(
             reply["error"]["suggestions"],
-            json!(["Send a JSON body matching this verb's documented input."])
+            json!(["Fix the request shape and retry."])
         );
     }
     let classless = crate::test_credentials::authenticate(
@@ -539,14 +563,17 @@ async fn http_recall_and_receipts_defaults_limits_and_error_order_are_preserved(
         &format!("scope=core:read;principal_ref={ACTOR}"),
     );
     assert_error(
-        &rpc(&server, &classless, "recall", json!({})),
+        &rpc(&server, &classless, "vault.recall", json!({})),
         "BAD_REQUEST",
     );
     let write_only = crate::test_credentials::authenticate(
         &server,
         &format!("scope=core:write;principal_ref={ACTOR};actor_class=human"),
     );
-    assert_error(&rpc(&server, &write_only, "recall", json!({})), "FORBIDDEN");
+    assert_error(
+        &rpc(&server, &write_only, "vault.recall", json!({})),
+        "FORBIDDEN",
+    );
 }
 
 #[tokio::test]

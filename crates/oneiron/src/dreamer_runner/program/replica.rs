@@ -28,12 +28,20 @@
 //!   keeps its wake on the recording machine, which admits it there. A riding
 //!   wake travels in the base window of its TURN, as `Owed`; only the home
 //!   takes it, when it holds neither that wake nor its admission.
-//!   Once the home decides it, the home writes `Admitted` in its place: the
-//!   terminal row clears the machine that recorded the wake, also through a
-//!   history-free replacement, and that machine never writes its wake over
-//!   it. A machine that is not the home admits no riding wake while a home
-//!   is elected; every other wake, and every wake on a vault with no elected
-//!   home, is admitted where it was recorded, as before.
+//!   The machine that decides a wake writes `Admitted` in its place: the
+//!   home, or the recording machine where it admits the wake itself. The
+//!   terminal row clears the wake wherever it is held, also through a
+//!   history-free replacement, and the recording machine never writes its
+//!   wake over it.
+//! - While another machine is the home, the recording machine admits no wake
+//!   it carried as `Owed`, whether or not the wake still rides. Once such a
+//!   wake stops riding, the machine retracts it and waits for the home's
+//!   answer: a `Released` row lets it admit the wake, whatever rides by then,
+//!   and an `Admitted` row consumes it (`retraction`). A wake that does not
+//!   ride and bears no carried mark is admitted where it was recorded, as is
+//!   every wake on a vault with no elected home and every wake on the home.
+//!   A copy a machine took from a window as the home is admitted by the home
+//!   alone.
 //!
 //! The carried rows trust the vault's own linked machines as the room rows
 //! beside them do; each program still runs under its waking turn's own
@@ -120,15 +128,17 @@ pub(super) enum WakeRow {
         actor: EntityId,
         admission: [u8; 32],
     },
-    /// The home holds no decision of the retracted wake and dropped its copy:
-    /// the recording machine admits it. Ids alone, with the wake's actor.
+    /// The home holds no decision of the retracted wake and keeps no copy of
+    /// it (it dropped the one it took, if any): the recording machine admits
+    /// it. Ids alone, with the wake's actor.
     Released {
         turn: EntityId,
         registration: EntityId,
         actor: EntityId,
         admission: [u8; 32],
     },
-    /// The home decided the wake: its admission's identity, and no more.
+    /// A machine decided the wake (the home, or the recording machine where it
+    /// admits the wake itself): its admission's identity, and no more.
     Admitted {
         turn: EntityId,
         registration: EntityId,
@@ -314,7 +324,8 @@ pub(crate) fn admit_arming_row(map_key: &str, bytes: &[u8]) -> Result<()> {
 
 /// The checks every carried wake row passes, by its bytes alone: whole and
 /// filed under its own turn and registration; an `Owed` row a turn's,
-/// sealed by an authority that rides and holding no owed status.
+/// sealed by an authority that rides, and holding no hold but its lapsed
+/// slip's, which ends by the wake's own expiry.
 pub(crate) fn admit_wake_row(map_key: &str, bytes: &[u8]) -> Result<()> {
     let row = decode_wake(bytes)?;
     if wake_key(row.key()) != map_key {
@@ -414,9 +425,9 @@ pub(crate) fn merge_arming_row_in_txn(
 /// wakes on it and neither the wake nor its admission is; before its
 /// arming, its pinned SKILL and its TURN arrive, or while the TURN's ChildOf
 /// edge is deferred here, it is left in the window, and a held row keeps its
-/// hold. An `Admitted` row consumes the riding wake this machine recorded
-/// under its key, on any machine; a row that names an occurrence's wake is
-/// refused.
+/// hold. An `Admitted` row consumes the wake held under its key on any
+/// machine, one recorded there or a copy taken from a window; a row that
+/// names an occurrence's wake is refused.
 pub(crate) fn merge_wake_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -486,8 +497,9 @@ pub(crate) fn merge_wake_row_in_txn(
 }
 
 /// Consumes, in the caller's writer, the wake an `Admitted` row decided: the
-/// home that admitted it wrote that terminal row, so this machine never
-/// admits it again, whatever its own home role or the arming's state now (a
+/// machine that admitted it (the home, or the recording machine) wrote that
+/// terminal row, or a machine that imported the decision wrote it again, so
+/// this machine never admits it again, whatever its own home role or the arming's state now (a
 /// machine elected home after the old home decided still holds the wake it
 /// recorded). The decision's identity is kept here (`DECIDED`), with or
 /// without a wake to consume, so no later landing of the turn records the
@@ -527,10 +539,11 @@ fn consume_decided_wake_in_txn(
     Ok(RowMerge::Written)
 }
 
-/// Drops, in the caller's writer, the wake this machine recorded under
-/// `map_key` and carried, once the window no longer holds it: an erase took
-/// it (a decided wake arrives as an `Admitted` row instead). The home keeps
-/// what it owes; a wake that neither rides nor bears a carried mark was
+/// Drops, in the caller's writer, the wake held under `map_key` that a
+/// window carried, once the window no longer holds it: an erase took it (a
+/// decided wake arrives as an `Admitted` row instead). The wake is one this
+/// machine recorded, or a copy it took from a window as a former home. The
+/// home keeps what it owes; a wake that neither rides nor bears a carried mark was
 /// never carried. Answers whether a wake went.
 pub(crate) fn drop_wake_row_in_txn(
     vault: &Vault,
@@ -674,8 +687,9 @@ pub(crate) fn owed_wake_arming_row_in_txn(
 }
 
 /// The `Admitted` rows TURN `turn` owes the window from this machine's own
-/// decisions (FIX 5266): each riding wake of the turn this machine admitted
-/// (never an occurrence's, which is admitted where it was recorded),
+/// decisions (FIX 5266): each wake of the turn this machine admitted whose
+/// authority rides (never an occurrence's, which is admitted where it was
+/// recorded),
 /// whether or not a machine carried it as owed (the home admits its own
 /// turns' wakes, which no `Owed` row ever carried), and each decision it
 /// imported. A machine elected home later then holds every decision, and no

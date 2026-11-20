@@ -315,15 +315,29 @@ impl Bridge {
         Ok(initialized)
     }
 
+    /// Writes `message` to the bridge as one line, by the deadline. The
+    /// write runs on a thread of its own, so a bridge that stopped reading
+    /// (suspended, say) never holds the caller past the deadline: the line
+    /// is then not sent whole, its stdin stays with that thread, and
+    /// [`Bridge::close`] ends the bridge, which ends the write.
     fn send(&mut self, message: &Value) -> anyhow::Result<()> {
-        let stdin = self
+        let mut stdin = self
             .stdin
-            .as_mut()
+            .take()
             .ok_or_else(|| anyhow::anyhow!("bridge stdin closed"))?;
         let mut line = serde_json::to_vec(message)?;
         line.push(b'\n');
-        stdin.write_all(&line)?;
-        stdin.flush()?;
+        let (done, written) = mpsc::channel();
+        crate::engine_thread("hook-bridge-stdin".into()).spawn(move || {
+            let wrote = stdin.write_all(&line).and_then(|()| stdin.flush());
+            let _ = done.send((stdin, wrote));
+        })?;
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        let (stdin, wrote) = written.recv_timeout(left).map_err(|_| {
+            anyhow::anyhow!("the bridge took no request before the deadline; it was not sent")
+        })?;
+        wrote?;
+        self.stdin = Some(stdin);
         Ok(())
     }
 

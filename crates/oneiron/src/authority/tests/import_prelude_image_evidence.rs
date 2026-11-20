@@ -61,7 +61,7 @@ fn a_refused_import_names_no_handoff_only_its_prelude_image_covers() {
                 adopted = true;
                 Ok(())
             },
-            |_| Ok(()),
+            |_, _| Ok(()),
         )
         .unwrap_err();
     assert!(adopted, "FIXTURE: the prelude adopted the image");

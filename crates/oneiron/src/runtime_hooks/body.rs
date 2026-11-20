@@ -49,16 +49,6 @@ pub trait HookBodyRuntime: Send + Sync {
     fn runtime_identity(&self) -> Option<String> {
         None
     }
-
-    /// The longest hook input, in bytes, this runtime runs a body with: a
-    /// longer input fails the run before the body starts. `None` when the
-    /// runtime caps nothing, so every input runs. The post chain's strict
-    /// skill-answer refusal reads it (SKILL-POST-HOOK-SEES-LARGE-ANSWER-CARD
-    /// P1-A): a blocking post hook whose input passed it never judged the
-    /// answer.
-    fn message_limit(&self) -> Option<usize> {
-        None
-    }
 }
 
 /// What one body run gave back.
@@ -160,6 +150,9 @@ pub struct HookRunContext {
     /// How the runtime prepared the body it ran (FIX 9208): `None` until a
     /// runtime that prepares reports it.
     preparation: Option<HookPreparation>,
+    /// Whether the runtime never started the body because it could not
+    /// take the input ([`Self::report_input_not_taken`]).
+    input_not_taken: bool,
 }
 
 impl HookRunContext {
@@ -177,6 +170,7 @@ impl HookRunContext {
             verdict_overruns: 0,
             usage: HookBodyUsage::NOT_RUN,
             preparation: None,
+            input_not_taken: false,
         }
     }
 
@@ -262,6 +256,21 @@ impl HookRunContext {
     #[must_use]
     pub const fn preparation(&self) -> Option<&HookPreparation> {
         self.preparation.as_ref()
+    }
+
+    /// The runtime never started the body because it could not take the
+    /// input: larger than its memory holds, so the body never judged it.
+    /// The post chain's skill-answer refusal reads it
+    /// ([SKILL-POST-HOOK-INPUT-BODY-CHANNEL]).
+    pub fn report_input_not_taken(&mut self) {
+        self.input_not_taken = true;
+    }
+
+    /// Whether the runtime never started the body because it could not
+    /// take the input, so the body never judged it.
+    #[must_use]
+    pub const fn input_not_taken(&self) -> bool {
+        self.input_not_taken
     }
 
     /// The run's overrun, read once its body has ended (its worker joined,
