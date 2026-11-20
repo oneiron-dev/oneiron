@@ -32,8 +32,9 @@
 //! that froze no live lane, rebuilds for an asker that is no live owner
 //! under the access gate (FIX SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS). The
 //! basis keeps the actor class that key was proved as, which policy rows
-//! match on: a rebuild reads under it, never under the class its
-//! principal's row type gives (FIX SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS).
+//! match on, or that it named none: a rebuild reads under it, never under
+//! the class its principal's row type gives (FIX
+//! SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS; round 2 review P1 of #9590).
 //!
 //! A rebuilt key carries the lane's credential ([`SavedCredential`]), and
 //! every read under it judges that credential again in its own snapshot: a
@@ -146,7 +147,8 @@ fn earlier_end(first: Option<u64>, second: Option<u64>) -> Option<u64> {
 /// class the live key was proved as: a key built from the principal's row
 /// takes that class, and a caller's key of another class reads nothing
 /// (`ScopedReadActorKey::within_saved_actor_class`, Sol F1 on #8134). A
-/// basis that kept no class leaves the key's own (Astra F1/F2 on #8134).
+/// basis saved before the class was kept leaves the key's own (Astra F1/F2
+/// on #8134); one whose live key named no class reads with none.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NativeReadBasis {
@@ -163,11 +165,18 @@ pub(crate) struct NativeReadBasis {
     /// matched (`scoped_read_actor_matches`): a credential's from its proof,
     /// so an agent-class credential on a PERSON keeps `agent` (FIX
     /// SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS). `None` for a key that
-    /// named no class, and for a basis saved before the class was kept: a
-    /// rebuild then reads under its own key's class, as before (Astra F1/F2
-    /// on #8134).
+    /// named no class (`classless`), and for a basis saved before the class
+    /// was kept: a rebuild of that one reads under its own key's class, as
+    /// before (Astra F1/F2 on #8134).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) actor_class: Option<String>,
+    /// Set when the live key named no class, and so matched no policy row
+    /// bound to one (round 2 review P1 of #9590): each rebuild reads with no
+    /// class, as that key did, and a caller's key that names a class reads
+    /// nothing. Unset on a key that named a class, and on a basis saved
+    /// before this was kept.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) classless: bool,
 }
 
 /// The owner standing a saved lane's live key held ([`NativeReadBasis`]).
@@ -716,7 +725,7 @@ impl FrozenReadLane {
         // SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS).
         if let Some(basis) = &self.native_basis {
             key = key
-                .within_saved_actor_class(basis.actor_class.as_deref(), origin)
+                .within_saved_actor_class(basis.actor_class.as_deref(), basis.classless, origin)
                 .ok_or(Error::InvariantViolation("frozen read lane actor"))?
                 .within_native_basis(basis.clone());
         }
@@ -917,6 +926,7 @@ fn rebuild_without_basis_in(
         grant_gate: NativeGrantGate::Access,
         grant_principal,
         actor_class,
+        classless: false,
     }))
 }
 
