@@ -1863,6 +1863,90 @@ fn a_replay_whose_reconcile_read_failed_keeps_the_deposit_when_the_seat_reports_
 }
 
 #[test]
+fn a_stale_live_copy_read_after_the_owner_cancelled_write_settled_keeps_the_deposit() {
+    // Review round 1 of #9841: the owner's cancelled write settles at the
+    // SEQUENCE after the seat's live copy. A pull read before the write
+    // landed then delivers that live copy: a stale replay, which leaves the
+    // write's mark. The provider's rewrite of the owner's cancellation
+    // before the start is still the owner's own write and moves no money.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let (booked, live, start) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"stale-live-after-settled-cancel",
+        "pi_stale_live_after_settled_cancel",
+    );
+
+    let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::upsert(
+            &live,
+            start,
+            start + 30 * 60,
+            live.sequence,
+            false,
+        )],
+        NOW + 160,
+    )
+    .expect("seat pull");
+    seat.pull_rewritten_own_write(&fixture.vault, &wrote, wrote.sequence + 1, NOW + 170)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_stale_live_after_settled_cancel"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the provider's rewrite of the owner's cancel after a stale live copy moves no money"
+    );
+}
+
+#[test]
+fn a_stale_live_copy_read_while_a_replay_awaits_its_proof_keeps_the_deposit() {
+    // Review round 1 of #9841: the provider stores the owner's cancelled
+    // write, rewrites it, and the answer is lost; the replay is refused and
+    // its reconciliation pull fails, so the proof waits for the seat's next
+    // pull. A pull read before the write landed then delivers the seat's
+    // live copy at the earlier SEQUENCE: it proves nothing, and the proof
+    // still waits. The seat's report of the owner's own copy moves no money.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let (booked, live, start) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"stale-live-before-proof",
+        "pi_stale_live_before_proof",
+    );
+
+    let stored = seat.write_with_lost_answer(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    seat.replay_refused_unread(&fixture.vault, booked.calendar.event_ref, NOW + 170);
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::upsert(
+            &live,
+            start,
+            start + 30 * 60,
+            live.sequence,
+            false,
+        )],
+        NOW + 175,
+    )
+    .expect("seat pull");
+    seat.pull_rewritten_own_write(&fixture.vault, &live, stored, NOW + 180)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_stale_live_before_proof"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the seat's report of the owner's own copy after a stale live copy moves no money"
+    );
+}
+
+#[test]
 fn a_host_cancel_after_a_restore_read_during_the_refused_replay_refunds() {
     // BK-ECHO-MARK-OVER-NEWER-LIVE-RESTORE: the provider stores the owner's
     // cancelled write, rewrites it, and the answer is lost. The replay is
