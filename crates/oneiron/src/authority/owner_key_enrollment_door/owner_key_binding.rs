@@ -32,6 +32,7 @@
 
 use ed25519_dalek::{Signature, VerifyingKey};
 
+use super::owner_authority_closure::{EnrolmentRow, confirmations};
 use super::*;
 
 /// Integrity: the key this binding would name is not a live Ed25519 owner
@@ -146,7 +147,7 @@ impl Vault {
                 authority_key: key.clone(),
                 actor_ref: actor,
                 actor_class: ACTOR_CLASS_HUMAN.into(),
-                epoch: next_binding_epoch(&fold, &key),
+                epoch: self.next_binding_epoch_in_txn(&txn, &fold, &key)?,
             },
             signer: AuthoritySignature {
                 suite: AuthoritySignatureSuite::Ed25519,
@@ -226,7 +227,9 @@ impl Vault {
             return Err(not_valid(NOT_PREPARED_BINDING));
         }
         self.refuse_owner_key_binding_in_txn(&txn, &fold, actor, &key)?;
-        if entry.seq < next_sequence(&fold, &key)? || epoch != next_binding_epoch(&fold, &key) {
+        if entry.seq < next_sequence(&fold, &key)?
+            || epoch != self.next_binding_epoch_in_txn(&txn, &fold, &key)?
+        {
             return Err(not_valid(PREPARED_BINDING_STALE));
         }
         if !signs_strictly(&public_key, &authority_transcript(&entry)?, &signature) {
@@ -262,8 +265,8 @@ impl Vault {
     /// Refuses the owner's binding to `key` on `fold` unless the door's rules
     /// hold: no live `human` binding names `owner`, `key` is a live owner
     /// device key that a counted enrolment of a device key names `owner` for
-    /// (no passkey, no recovery root's authority key), and no live binding
-    /// rests on `key`.
+    /// (no passkey, no recovery root's authority key, no confirmation), and
+    /// no live binding rests on `key`.
     fn refuse_owner_key_binding_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -293,25 +296,85 @@ impl Vault {
 
     /// Whether a counted enrolment of a device's owner key names `owner` for
     /// `key`: an Ed25519 key under the device possession kind, among the
-    /// entries this vault keeps.
+    /// entries this vault keeps. A confirmation is no enrolment: an owner
+    /// key that vouches again for a key only a passkey vouched for names its
+    /// own owner, whom the key was not enrolled for, and the removal of
+    /// that owner does not end the key either
+    /// ([`Vault::owner_authority_closure_in_txn`], one reading of which rows
+    /// confirm). Sibling enrolments of one key on parallel branches each
+    /// stand.
     fn device_key_enrolled_for_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         owner: EntityId,
         key: &AuthorityKey,
     ) -> Result<bool> {
-        let mut enrolled = false;
+        let mut parents: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> = BTreeMap::new();
+        let mut enrolments: Vec<EnrolmentRow> = Vec::new();
+        let mut theirs: Vec<AuthorityEntryHash> = Vec::new();
         self.visit_authority_entries_in_txn(txn, |fold, hash, entry| {
+            if !fold.valid_entries.contains(&hash) {
+                return;
+            }
+            parents.insert(hash, entry.parent_hashes.clone());
             let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op else {
                 return;
             };
-            enrolled |= fold.valid_entries.contains(&hash)
-                && enroll.device.key == *key
-                && enroll.act.owner == owner
+            if enroll.device.key != *key {
+                return;
+            }
+            enrolments.push(EnrolmentRow {
+                hash,
+                key: key.clone(),
+                owner: enroll.act.owner,
+            });
+            if enroll.act.owner == owner
                 && enroll.public_key().is_some()
-                && EnrolledOwnerKeyKind::of(enroll) == EnrolledOwnerKeyKind::Device;
+                && EnrolledOwnerKeyKind::of(enroll) == EnrolledOwnerKeyKind::Device
+            {
+                theirs.push(hash);
+            }
         })?;
-        Ok(enrolled)
+        let confirmed = confirmations(&enrolments, &parents);
+        Ok(theirs.iter().any(|hash| !confirmed.contains(hash)))
+    }
+
+    /// The epoch the next `BindActor` of `key` takes on `fold`: one above
+    /// both the key's last binding, ended or not, and every counted
+    /// `RevokeActor` of the key among the entries this vault keeps, which
+    /// the fold's floor for a new binding takes in (`apply_actor_binding`):
+    /// an owner-proved revoke of a key no binding rests on names any epoch.
+    /// The first is 1, as the host root's binding of its embedded owner
+    /// takes it again ([`Vault::restore_embedded_owner_binding_in_txn`]). A
+    /// floor only a revoke the fold no longer counts holds
+    /// (ONE-REVOKE-DURABILITY) still refuses the binding, and land answers
+    /// that it did not count.
+    ///
+    /// # Errors
+    /// [`invalid_authority`] for a floor at the last epoch; the store's.
+    fn next_binding_epoch_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        key: &AuthorityKey,
+    ) -> Result<u64> {
+        let mut floor = fold
+            .actor_bindings
+            .get(key)
+            .map_or(0, |binding| binding.epoch);
+        self.visit_authority_entries_in_txn(txn, |view, hash, entry| {
+            let AuthorityOp::RevokeActor {
+                authority_key,
+                epoch,
+            } = &entry.op
+            else {
+                return;
+            };
+            if authority_key == key && view.valid_entries.contains(&hash) {
+                floor = floor.max(*epoch);
+            }
+        })?;
+        floor.checked_add(1).ok_or_else(invalid_authority)
     }
 }
 
@@ -325,17 +388,4 @@ fn signs_strictly(public_key: &[u8; 32], message: &[u8], signature: &[u8]) -> bo
         return false;
     };
     key.verify_strict(message, &signature).is_ok()
-}
-
-/// The epoch the next `BindActor` of `key` takes on `fold`: one above the
-/// key's last binding, ended or not, or the first, as the host root's
-/// binding of its embedded owner takes it again
-/// ([`Vault::restore_embedded_owner_binding_in_txn`]). A revocation that
-/// named a higher epoch than the binding it ended raises the fold's floor
-/// past this one; the fold then refuses the binding, and land answers that
-/// it did not count.
-fn next_binding_epoch(fold: &AuthorityFold, key: &AuthorityKey) -> u64 {
-    fold.actor_bindings
-        .get(key)
-        .map_or(1, |binding| binding.epoch.saturating_add(1))
 }
