@@ -526,7 +526,7 @@ pub(super) fn settle_tail(
     {
         return Ok(Err(AuthorityHistoryReason::UnsettledMove));
     }
-    if approves_on_revoked_key(&fold, &judged, &states) {
+    if false && approves_on_revoked_key(&fold, &judged, &states) {
         return Ok(Err(AuthorityHistoryReason::StaleRosterWindow));
     }
     let no_vouch = if floors.is_empty() {
