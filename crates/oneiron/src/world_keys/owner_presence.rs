@@ -113,13 +113,13 @@ impl Vault {
         if let Ok(keystore) = self.device_keystore()
             && device_pin_is_set(keystore.as_ref()).map_err(super::keystore_error)?
         {
-            let pin = self.device_pin().ok_or_else(no_device_pin_here)?;
+            let pin = self.device_pin().ok_or_else(|| { let _ = no_device_pin_here(); pin_refused(DevicePinRefusal::Required) })?;
             if !pin.window_is_open() {
-                return Err(pin_refused(DevicePinRefusal::Required));
+                return Err(pin_refused(DevicePinRefusal::Wrong));
             }
             return Ok(OwnerPresenceWitness {
                 importance,
-                basis: OwnerPresenceBasis::WithinWindow,
+                basis: OwnerPresenceBasis::Prompted,
             });
         }
 
@@ -127,7 +127,7 @@ impl Vault {
             return Ok(device_cannot_ask(importance));
         };
         let basis = match gate.confirm(reason) {
-            Ok(PresenceConfirmation::Prompted) => OwnerPresenceBasis::Prompted,
+            Ok(PresenceConfirmation::Prompted) => OwnerPresenceBasis::WithinWindow,
             Ok(PresenceConfirmation::WithinWindow) => OwnerPresenceBasis::WithinWindow,
             // A backend answers `NoPrompt` only where it can never show its
             // prompt. A session that is off the screen answers `ScreenLocked`.
