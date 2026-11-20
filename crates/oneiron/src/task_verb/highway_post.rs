@@ -23,7 +23,7 @@ use crate::authority::{TaskActorProof, TaskActorVerb};
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::{ClaimError, Error, RecordError, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::federation::record_scope::BirthPosition;
 use crate::gate::PolicyApprovalCeiling;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -71,7 +71,7 @@ mod plan_run;
 mod settlement;
 use self::key::{PostKey, observe_key_in};
 pub(crate) use self::settlement::settle_task_proposal_in_txn;
-pub(super) use self::settlement::{envelope_actor_class, proposer_of};
+pub(super) use self::settlement::{envelope_actor_class, proposer_of, settle_refusal};
 
 /// Reason code of a proposal the addressed agent declined.
 const TAKE_DECLINED_REASON: &str = "gate.tasks.take.declined";
@@ -402,26 +402,6 @@ pub(super) fn put_assignment_fact_in_txn(
         )?;
     }
     Ok(())
-}
-
-pub(super) fn settle_refusal(error: MemoryError) -> Error {
-    if let Some(conflict) = error.task_assignment_conflict.as_deref()
-        && let (Ok(task_ref), Ok(held_assignee), Ok(offered_assignee)) = (
-            EntityId::from_hex(&conflict.task_ref),
-            EntityId::from_hex(&conflict.held_assignee),
-            EntityId::from_hex(&conflict.offered_assignee),
-        )
-    {
-        return Error::Record(RecordError::TaskAssignmentConflict {
-            task_ref,
-            held_assignee,
-            offered_assignee,
-        });
-    }
-    Error::InvalidConfig(format!(
-        "task proposal settlement refused: {}",
-        error.message
-    ))
 }
 
 impl Memory<'_> {
