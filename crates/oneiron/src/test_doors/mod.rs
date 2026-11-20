@@ -285,6 +285,8 @@ pub mod reply_attachments;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;
 pub mod research_continuation;
+#[cfg(feature = "sync")]
+pub mod residence_directive_run;
 pub mod resident_wake_hold;
 pub mod restored_enrolment;
 pub mod retrieval_policy_default_floor;

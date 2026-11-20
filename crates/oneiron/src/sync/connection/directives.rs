@@ -178,7 +178,7 @@ impl SyncConnection {
     /// Runs one directive and records its result. A mode switch, a world
     /// pick, a prune and an open commit with their result; the index read
     /// commits nothing a second run would change, then the result.
-    async fn apply_residence_directive(
+    pub(crate) async fn apply_residence_directive(
         &self,
         pending: &ResidenceDirectiveState,
     ) -> Result<(), TransportError> {
