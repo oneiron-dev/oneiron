@@ -168,7 +168,8 @@ pub fn schedule_backfill_in_lane(
 /// unit, and for a window that closed observed every row one standing label
 /// of its answer was derived from. The windows are read, and their rows
 /// judged, in one snapshot of `lane`, a lane of `vault`, opened as its own
-/// reads open theirs (FIX QUESTION-OUTCOMES-REPLY-SPANS-SNAPSHOTS).
+/// reads open theirs, at one reading of the authority clock (FIX
+/// QUESTION-OUTCOMES-REPLY-SPANS-SNAPSHOTS).
 ///
 /// # Errors
 /// As [`closed_outcome_windows`](super::closed_outcome_windows), and a store
@@ -179,7 +180,7 @@ pub fn closed_outcome_windows_in_lane(
     principal: EntityId,
     question: EntityId,
 ) -> Result<Vec<OutcomeWindowClose>> {
-    lane.with_grant_read_snapshot(|txn| -> Result<Vec<OutcomeWindowClose>> {
+    read_at_one_instant(vault, lane, |txn| -> Result<Vec<OutcomeWindowClose>> {
         let windows = super::windows::standing_windows_in_txn(vault, txn, principal, question)?;
         if reads_as_principal_in(lane, txn) {
             return Ok(windows.into_iter().map(|window| window.close).collect());
@@ -211,12 +212,13 @@ pub fn closed_outcome_windows_in_lane(
 /// `vault.questions.outcomes`' reply as `lane`, a lane of `vault`, reads it:
 /// the labels of [`outcome_labels_in_lane`] and the pairs of
 /// [`calibration_pairs_in_lane`], both read and judged in one snapshot of
-/// the lane, opened as its own reads open theirs, under one judgment of
-/// whether it reads as its principal's own (FIX
+/// the lane, opened as its own reads open theirs, at one reading of the
+/// authority clock, under one judgment of whether it reads as its
+/// principal's own (FIX
 /// QUESTION-OUTCOMES-REPLY-SPANS-SNAPSHOTS). So a status, value or grant
-/// change committed while the reply is read never serves a label beside no
-/// pair the same state would pair, nor an item judged in one state and its
-/// rows in another.
+/// change committed while the reply is read, or a credential's expiry that
+/// falls while it is read, never serves a label beside no pair the same
+/// state would pair, nor an item judged in one state and its rows in another.
 ///
 /// # Errors
 /// As [`outcome_labels_in_lane`] and [`calibration_pairs_in_lane`].
@@ -228,7 +230,7 @@ pub fn question_outcomes_in_lane(
     destination: impl Into<ReadDestination>,
 ) -> Result<QuestionOutcomes> {
     let destination = destination.into();
-    lane.with_grant_read_snapshot(|txn| -> Result<QuestionOutcomes> {
+    read_at_one_instant(vault, lane, |txn| -> Result<QuestionOutcomes> {
         let full = reads_as_principal_in(lane, txn);
         Ok(QuestionOutcomes {
             labels: labels_lane_reads_in_txn(
@@ -259,8 +261,8 @@ pub fn question_outcomes_in_lane(
 /// STORED-OUTCOME-READS-SKIP-SAVED-LANE); for a narrowed one, each of those
 /// whose rows the lane reads: every row it was derived from but the question,
 /// as a calibration pair's. Read and judged in one snapshot of `lane`, a
-/// lane of `vault` ([`question_outcomes_in_lane`] reads them beside the
-/// pairs in one).
+/// lane of `vault`, at one reading of the authority clock
+/// ([`question_outcomes_in_lane`] reads them beside the pairs in one).
 ///
 /// # Errors
 /// As [`outcome_labels`](super::outcome_labels), and a store failure judging
@@ -273,7 +275,7 @@ pub fn outcome_labels_in_lane(
     destination: impl Into<ReadDestination>,
 ) -> Result<Vec<OutcomeLabel>> {
     let destination = destination.into();
-    lane.with_grant_read_snapshot(|txn| {
+    read_at_one_instant(vault, lane, |txn| {
         let full = reads_as_principal_in(lane, txn);
         labels_lane_reads_in_txn(vault, lane, txn, full, principal, question, &destination)
     })
@@ -283,8 +285,8 @@ pub fn outcome_labels_in_lane(
 /// 11827): every pair for a full lane; for a narrowed one, each pair whose
 /// rows the lane reads: every row it was derived from but the question
 /// itself, which lives in a side table and is no row. Read and judged in one
-/// snapshot of `lane`, a lane of `vault` ([`question_outcomes_in_lane`] reads
-/// them beside the labels in one).
+/// snapshot of `lane`, a lane of `vault`, at one reading of the authority
+/// clock ([`question_outcomes_in_lane`] reads them beside the labels in one).
 ///
 /// # Errors
 /// As [`calibration_pairs`](super::calibration_pairs), and a store failure
@@ -297,9 +299,27 @@ pub fn calibration_pairs_in_lane(
     destination: impl Into<ReadDestination>,
 ) -> Result<Vec<CalibrationPair>> {
     let destination = destination.into();
-    lane.with_grant_read_snapshot(|txn| {
+    read_at_one_instant(vault, lane, |txn| {
         let full = reads_as_principal_in(lane, txn);
         pairs_lane_reads_in_txn(vault, lane, txn, full, principal, question, &destination)
+    })
+}
+
+/// `read` in one snapshot of `lane`, a lane of `vault`, opened as its own
+/// reads open theirs, with the authority clock read once for the whole of it
+/// ([`crate::authority::HeldAuthorityReading`]; blind review round 2 of
+/// #9864): every credential, slip and grant the reply judges, the lane's own
+/// and each saved lane's, is judged at that one second, so a narrowed
+/// credential's expiry falling while the reply is read never keeps an item
+/// beside a dropped one.
+fn read_at_one_instant<T>(
+    vault: &Vault,
+    lane: &ScopedRead<'_>,
+    read: impl FnOnce(&heed::RoTxn<'_>) -> Result<T>,
+) -> Result<T> {
+    lane.with_grant_read_snapshot(|txn| -> Result<T> {
+        let _reading = crate::authority::hold_authority_reading_in_txn(&vault.store, txn)?;
+        read(txn)
     })
 }
 
