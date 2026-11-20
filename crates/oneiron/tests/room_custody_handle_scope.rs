@@ -265,6 +265,9 @@ fn a_rooms_erase_keeps_the_identity_of_the_room_value_a_request_names() -> TestR
 /// stays, and the run's end message says what a save of the room keeps: only
 /// the secrets its saved talk names, never one the run alone holds
 /// (REVIEW-10041), since a save carries only the handles its saved rows name.
+/// The check reads the record's bytes and never asks the room for a value,
+/// so the message says the record holds text shaped like a room's secret
+/// handle and never that the room holds a secret (REVIEW-10041 round 2).
 #[test]
 fn a_record_holding_a_room_handle_does_not_move_to_base_on_record() -> TestResult {
     let (_directory, vault) = vault()?;
@@ -289,6 +292,12 @@ fn a_record_holding_a_room_handle_does_not_move_to_base_on_record() -> TestResul
         return Err("an on-record append of a record holding a room handle is refused".into());
     };
     let message = refused.to_string();
+    assert!(
+        message
+            .contains("its record holds text shaped like a secret handle of its off-record room")
+            && !message.contains("holds secrets its off-record room keeps"),
+        "the run's end message says what the record holds, not what the room holds: {message}"
+    );
     assert!(
         message.contains("a save of the room keeps only the secrets its saved talk names")
             && message.contains("never one the run alone holds"),
