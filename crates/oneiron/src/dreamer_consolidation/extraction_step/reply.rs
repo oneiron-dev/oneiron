@@ -5,7 +5,8 @@
 //! claim as a pin at the version the step's request names, the form the
 //! verdict operand takes. A candidate may name a listed relationship by its
 //! label, as a native reply may; the decoded candidate carries that
-//! relationship's id.
+//! relationship's id. A finished step's record reads back through the same
+//! candidate reader ([`recorded_candidate`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -13,7 +14,10 @@ use oneiron_model::llm::LlmResponse;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{ExtractionStepPiece, ListedHead, PreparedExtractionStep};
+use super::{
+    ExtractionStepPiece, ListedHead, PreparedExtractionStep, RecordedExtractionCandidate,
+    RecordedExtractionStep,
+};
 use crate::dreamer_consolidation::call_labels::{
     CallLabelMap, CallSources, CandidateRel, LabelKind, SourceShown, SubjectLabel, new_person,
 };
@@ -25,7 +29,7 @@ use crate::dreamer_consolidation::extracted_people::normalize_name_span;
 use crate::entity_id::EntityId;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::snapshot_read::{EvidenceRange, SourceVersion};
-use crate::verbs::PinnedClaim;
+use crate::verbs::{PinnedClaim, TurnEvidence};
 
 /// Holds the decoded candidates, declarations and candidate skips of one bound reply.
 #[derive(Serialize, Deserialize)]
@@ -577,4 +581,69 @@ pub(super) fn decode_bound_reply(
     .decode(response)
     .map_err(MemoryError::bad_request)?;
     serde_json::to_value(reply).map_err(|error| MemoryError::bad_request(error.to_string()))
+}
+
+/// Reads candidate `index` of a recorded step's reply as the step's receipt
+/// carried it: through the candidate reader that decoded it for the receipt,
+/// over the record's labels and its TURN ranges served again.
+///
+/// The step kept a candidate that the reader takes, whose every quote and
+/// label bound, and whose cited heads may all corroborate. Whether a
+/// correction was asked about it decided only how the step treated a
+/// candidate it did not keep, so the correctable claims are not read here.
+///
+/// # Errors
+///
+/// Why the receipt carried no such candidate about a listed subject.
+pub(super) fn recorded_candidate(
+    step: &RecordedExtractionStep,
+    index: usize,
+) -> Result<RecordedExtractionCandidate, String> {
+    let item = step
+        .candidates
+        .get(index)
+        .ok_or_else(|| format!("the step's reply holds no candidate {index}"))?;
+    let correctable = BTreeMap::new();
+    let sources = BoundReplySources {
+        labels: &step.labels,
+        pieces: &step.pieces,
+        correctable: &correctable,
+        heads: &step.heads,
+        projects: &step.projects,
+        inputs: &step.inputs,
+        relationship: step.relationship.as_ref(),
+    };
+    let skipped = |reason: String| format!("the step skipped candidate {index}: {reason}");
+    let read = sources
+        .read_bound_candidate(index, item, &step.persons, step.authored)
+        .map_err(&skipped)?;
+    if let Some(reason) = read.unbound {
+        return Err(skipped(format!("quote unbound ({reason})")));
+    }
+    if let Some(reason) = sources.claim_fault(&read.cited) {
+        return Err(skipped(format!("claim citation is no evidence ({reason})")));
+    }
+    let candidate = read.candidate;
+    let BoundExtractionSubject::Listed(subject) = candidate.subject else {
+        return Err(format!(
+            "candidate {index} of the step's reply is about a person the reply declares, who has no id to name"
+        ));
+    };
+    Ok(RecordedExtractionCandidate {
+        subject,
+        predicate: candidate.predicate,
+        value: candidate.value,
+        rel: candidate.rel,
+        topic: candidate.topic_key,
+        evidence: candidate
+            .evidence
+            .into_iter()
+            .map(|cited| TurnEvidence {
+                turn: cited.turn,
+                version: cited.version,
+                span: Some(cited.span),
+            })
+            .collect(),
+        claim_evidence: candidate.claim_evidence,
+    })
 }

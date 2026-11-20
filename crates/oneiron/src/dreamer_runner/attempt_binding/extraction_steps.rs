@@ -7,6 +7,9 @@ use tokio::runtime::Handle;
 
 use super::DreamerAttemptBinding;
 use super::extraction_execution::{extraction_loan_unavailable, join_extraction_thread};
+use crate::dreamer_consolidation::extraction_pack::{
+    every_queued_turn_serves_in_txn, extraction_step_hash,
+};
 use crate::dreamer_consolidation::extraction_step::execute_bound_step;
 use crate::dreamer_consolidation::{ExtractionPrompt, RoleCall, StepChargeTally};
 use crate::dreamer_wake::WakePassDeadline;
@@ -171,48 +174,6 @@ impl DreamerAttemptBinding {
         let vault = &*self.vault;
         let (scope, branch) =
             crate::snapshot_read::queued_extraction_branch_in_txn(vault, txn, self.attempt())?;
-        for part in &branch.parts {
-            let key = branch.part_key(part.conversation_ref);
-            for turn in &part.turns {
-                let served = crate::snapshot_read::extraction_turn_in_txn(
-                    vault,
-                    txn,
-                    reads,
-                    reader_scope,
-                    scope,
-                    &key,
-                    *turn,
-                )?;
-                if served.is_none() {
-                    return Ok(false);
-                }
-            }
-        }
-        Ok(true)
+        every_queued_turn_serves_in_txn(vault, txn, reads, reader_scope, (scope, &branch))
     }
-}
-
-/// Decodes the request hash in its only accepted lowercase hexadecimal spelling.
-fn extraction_step_hash(value: &str) -> MemoryResult<[u8; 32]> {
-    if value.len() != 64
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return Err(MemoryError::bad_request(
-            "an extraction step key must be 64 lowercase hex digits",
-        ));
-    }
-    let mut hash = [0; 32];
-    for (out, pair) in hash.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
-        let digit = |byte: u8| {
-            if byte <= b'9' {
-                byte - b'0'
-            } else {
-                byte - b'a' + 10
-            }
-        };
-        *out = digit(pair[0]) * 16 + digit(pair[1]);
-    }
-    Ok(hash)
 }

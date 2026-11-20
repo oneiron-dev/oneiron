@@ -248,3 +248,32 @@ fn correction_facts_read_the_pairs_and_the_operands_that_differ_from_their_head(
         "position 0 by its value token, position 1 by its predicate; positions 2 and 3 prove nothing"
     );
 }
+
+/// A union names the recorded step candidates of every member, each once in member
+/// order, so the engine finds each joined quote in a record. A group whose members
+/// name none carries no `from_steps` key.
+#[test]
+fn a_union_names_the_recorded_candidates_of_every_member() {
+    let step = "5e".repeat(32);
+    let mut first = operand("lives_in", "Kyoto", false, false);
+    first["from_steps"] = json!([{ "step": step, "index": 0 }]);
+    let mut second = operand("lives_in", "Kyoto", false, false);
+    second["from_steps"] = json!([{ "step": step, "index": 3 }, { "step": step, "index": 0 }]);
+    let unions = union_operands(&[first, second], &pair());
+    assert_eq!(
+        unions[0]["from_steps"],
+        json!([{ "step": step, "index": 0 }, { "step": step, "index": 3 }]),
+        "the representative's recorded candidate, then each further member's, each once"
+    );
+    let plain = union_operands(
+        &[
+            operand("lives_in", "Kyoto", false, false),
+            operand("lives_in", "Kyoto", false, false),
+        ],
+        &pair(),
+    );
+    assert!(
+        plain[0].get("from_steps").is_none(),
+        "a union of operands that name no step names none"
+    );
+}

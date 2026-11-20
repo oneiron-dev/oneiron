@@ -7,7 +7,9 @@
 //! carries typed bounded candidate operands, listed and prior claim pins, question keys
 //! with canonical options, and earlier answers for a final round. An operand cites the
 //! served turns it quotes and, as the native reply may, the listed claims it rests on, each
-//! with the version the job read. Nothing here asks a model or writes a row.
+//! with the version the job read. It may name the recorded generation step candidates it
+//! is folded from, which the engine then reads from the steps' own records. Nothing here
+//! asks a model or writes a row.
 //!
 //! Wire forms keep the job from deriving what only the engine knows. An option that names
 //! a candidate is written `candidate:<index into candidates>`; the engine maps each alias
@@ -124,6 +126,27 @@ pub struct CandidateOperand {
     /// candidate that cites only claims still sends `evidence`, as an empty list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub claim_evidence: Vec<PinnedClaim>,
+    /// The recorded generation step candidates this operand is folded from. The engine
+    /// reads each from its step's own record and refuses an operand that differs from
+    /// them: every named candidate is one the step kept about this subject, the
+    /// predicate, value, relationship and topic are one named candidate's, and every
+    /// cited turn quote and cited claim is carried by a named candidate. On a branch
+    /// with no relationship set the operand is then bound to the relationships every
+    /// labelled word of those steps' turns shares. An operand that names none is checked
+    /// by its own fields, and on such a branch is bound over every queued turn.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub from_steps: Vec<RecordedCandidate>,
+}
+
+/// One candidate of a recorded generation step: the step with the candidate's position in
+/// that step's reply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecordedCandidate {
+    /// The step, as its receipt's `step_ref`: 64 lowercase hexadecimal digits.
+    pub step: String,
+    /// The candidate's zero-based position in the step's reply.
+    pub index: usize,
 }
 
 /// One source turn a candidate cites: the turn reference with the version the job read,

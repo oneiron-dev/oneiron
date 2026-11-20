@@ -39,7 +39,7 @@ impl DreamerAttemptBinding {
         memory.prove_read_authority_in_txn(&txn)?;
         let reader_scope = extraction_reader_scope_in_txn(&memory, &txn, None)?;
         let checked = read.read_projected_in_txn(&txn, &[], None, |txn, _| {
-            let (branch, bound) = check_extraction_operands_in_txn(
+            let (branch, bound, relationships) = check_extraction_operands_in_txn(
                 &memory,
                 &read,
                 txn,
@@ -60,6 +60,7 @@ impl DreamerAttemptBinding {
                     turn_read,
                     txn,
                     operands: &pack.candidates,
+                    relationships: &relationships,
                 },
                 branch_subject,
             )

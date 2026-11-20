@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::TurnText;
 use super::call_labels::{CallLabelMap, LabelKind};
 use super::executor::ConsolidationExecutor;
+use super::executor::extraction::{ExtractedPerson, authored_fallback, extraction_reply};
 use super::extraction_pack::{bound_branch_error, extraction_layout_refusal};
 use super::failure_rules::{self, Stage};
 use super::neighbourhood::Neighbourhood;
@@ -27,6 +28,7 @@ use crate::entity_id::EntityId;
 use crate::memory::{ExtractionLayout, ExtractionStepSlice, MemoryError, MemoryResult};
 use crate::snapshot_read::SourceVersion;
 use crate::store::model_step_submission::ModelStepResult;
+use crate::verbs::{PinnedClaim, TurnEvidence};
 use oneiron_model::llm::Scope;
 
 /// One bound extraction step's checked input, snapshotted in validation.
@@ -342,7 +344,25 @@ pub(crate) fn prepare_bound_step(
             (!claims.is_empty()).then_some((id, claims))
         })
         .collect();
-    let heads: BTreeMap<EntityId, ListedHead> = labels
+    let heads = listed_heads(bound, &labels);
+    let projects = landing_projects(bound, pieces, &heads)?;
+    Ok(PreparedExtractionStep {
+        transcript,
+        labels,
+        pieces: pieces.to_vec(),
+        scope: scoped.scope,
+        sources,
+        correctable,
+        heads,
+        projects,
+        inputs,
+    })
+}
+
+/// Each claim `labels` names that `bound` holds as a prior head, as the
+/// reply check reads it.
+fn listed_heads(bound: &BoundBranchRead, labels: &CallLabelMap) -> BTreeMap<EntityId, ListedHead> {
+    labels
         .labelled(LabelKind::Claim)
         .filter_map(|(_, id)| {
             let head = bound.prior(id)?;
@@ -355,25 +375,129 @@ pub(crate) fn prepare_bound_step(
                 },
             ))
         })
-        .collect();
-    let projects = pieces
+        .collect()
+}
+
+/// Where a claim drawn from each TURN of `pieces` alone, and from each of
+/// `heads` alone, may land under the branch's rule.
+///
+/// # Errors
+///
+/// A TURN or head the branch read does not pin.
+fn landing_projects(
+    bound: &BoundBranchRead,
+    pieces: &[ExtractionStepPiece],
+    heads: &BTreeMap<EntityId, ListedHead>,
+) -> MemoryResult<BTreeMap<EntityId, Option<EntityId>>> {
+    pieces
         .iter()
         .map(|piece| piece.turn)
         .chain(heads.keys().copied())
         .map(|id| bound.evidence_project(&[id]).map(|project| (id, project)))
         .collect::<Result<BTreeMap<EntityId, Option<EntityId>>, crate::Error>>()
-        .map_err(bound_branch_error)?;
-    Ok(PreparedExtractionStep {
-        transcript,
-        labels,
-        pieces: pieces.to_vec(),
-        scope: scoped.scope,
-        sources,
-        correctable,
-        heads,
-        projects,
-        inputs,
-    })
+        .map_err(bound_branch_error)
+}
+
+/// One finished bound step read back from its terminal record, so a verdict
+/// operand that names one of its candidates is compared with what the
+/// step's own call produced.
+///
+/// The reply reads through the label table the record keeps and through
+/// each recorded TURN range, served again at its recorded version. The
+/// listed heads and the landing projects are rebuilt from the branch read,
+/// and the relationship set is the step scope's. The caller has proved that
+/// every recorded input version still reads, so these are the rows the step
+/// read.
+pub(crate) struct RecordedExtractionStep {
+    /// Holds the label table the step's call assigned.
+    labels: CallLabelMap,
+    /// Holds each recorded TURN range with its words, served again.
+    pieces: Vec<ExtractionStepPiece>,
+    /// Holds each labelled claim the branch holds as a prior head.
+    heads: BTreeMap<EntityId, ListedHead>,
+    /// Holds the landing project of each cited TURN and labelled prior head.
+    projects: BTreeMap<EntityId, Option<EntityId>>,
+    /// Holds the versions the step's request named.
+    inputs: Vec<SourceVersion>,
+    /// Holds the relationship set of the step's scope: `None` where that
+    /// scope holds none.
+    relationship: Option<BTreeSet<EntityId>>,
+    /// Holds the reply's candidates as the model wrote them, in reply order.
+    candidates: Vec<serde_json::Value>,
+    /// Holds the people the reply declares.
+    persons: Vec<ExtractedPerson>,
+    /// Tells whether an authored fallback wrote the reply.
+    authored: bool,
+}
+
+/// One candidate a recorded step kept about a listed subject, in the form a
+/// verdict operand carries it.
+pub(crate) struct RecordedExtractionCandidate {
+    /// Names the listed subject as lowercase hexadecimal digits.
+    pub(crate) subject: String,
+    /// Holds the proposed predicate.
+    pub(crate) predicate: String,
+    /// Holds the proposed value.
+    pub(crate) value: serde_json::Value,
+    /// Holds the relationship the candidate names, as the step read it back.
+    pub(crate) rel: Option<Vec<String>>,
+    /// Holds the proposed topic.
+    pub(crate) topic: Option<serde_json::Value>,
+    /// Holds each TURN quote that bound, in TURN coordinates at the
+    /// recorded version.
+    pub(crate) evidence: Vec<TurnEvidence>,
+    /// Holds each listed claim the candidate cites, at the recorded version.
+    pub(crate) claim_evidence: Vec<PinnedClaim>,
+}
+
+impl RecordedExtractionStep {
+    /// Reads `record`'s reply for its candidates: `labels` is the record's
+    /// label table, `pieces` its TURN ranges with their words served again
+    /// in recorded order, and `relationship` the step scope's relationship
+    /// set.
+    ///
+    /// # Errors
+    ///
+    /// A label table no call assigns or a reply that breaks the extraction
+    /// contract, neither of which a step records, and a TURN or labelled
+    /// head the branch read does not pin.
+    pub(crate) fn read(
+        bound: &BoundBranchRead,
+        record: &crate::llm::StepRecord,
+        labels: &crate::llm::StepInputLabels,
+        pieces: Vec<ExtractionStepPiece>,
+        relationship: Option<BTreeSet<EntityId>>,
+    ) -> MemoryResult<Self> {
+        let labels = CallLabelMap::from_table(labels).ok_or(crate::Error::InvalidClaimBody(
+            "dreamer step value input_labels names no call's label table",
+        ))?;
+        let reply = extraction_reply(&record.response)?;
+        let heads = listed_heads(bound, &labels);
+        let projects = landing_projects(bound, &pieces, &heads)?;
+        Ok(Self {
+            labels,
+            pieces,
+            heads,
+            projects,
+            inputs: record.versions.clone(),
+            relationship,
+            candidates: reply.candidates,
+            persons: reply.persons,
+            authored: authored_fallback(&record.response),
+        })
+    }
+
+    /// Candidate `index` of the step's reply, as the step's receipt carried
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// Why the receipt carried no such candidate about a listed subject:
+    /// the reply holds no candidate at `index`, the step skipped it (with
+    /// the step's reason), or it is about a person the reply declares.
+    pub(crate) fn candidate(&self, index: usize) -> Result<RecordedExtractionCandidate, String> {
+        reply::recorded_candidate(self, index)
+    }
 }
 
 /// The version of every row whose words the transcript shows, in id

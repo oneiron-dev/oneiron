@@ -250,8 +250,11 @@ fn native_keys(candidate: &CandidateObservation) -> (&str, &str, &str) {
 /// Builds one operand per group with an ordered, exact-deduplicated evidence union.
 ///
 /// Operands have the checked `CandidateOperand` shape. The union spans the members'
-/// cited turns (`evidence`) and their cited listed claims (`claim_evidence`), each
-/// list by itself; a group that cites no claim keeps the key absent. All other
+/// cited turns (`evidence`), their cited listed claims (`claim_evidence`) and the
+/// recorded step candidates they name (`from_steps`), each list by itself; a group
+/// that cites no claim, or names no recorded candidate, keeps that key absent. So
+/// every quote and cited claim of a union is one a recorded candidate it names
+/// carries, as the engine asks of an operand that names any. All other
 /// representative fields, including the representative's own `corrects`, remain
 /// unchanged, so the union keeps the representative's identity, as native assembly
 /// keeps the first member's. The group's merged correction is
@@ -413,10 +416,12 @@ pub(crate) fn union_operands_with_facts(
                 .filter(|_| !facts.differs.contains(&group.representative_index));
             let mut evidence = Vec::new();
             let mut claim_evidence = Vec::new();
+            let mut from_steps = Vec::new();
             for index in &group.member_indexes {
                 for (key, merged) in [
                     ("evidence", &mut evidence),
                     ("claim_evidence", &mut claim_evidence),
+                    ("from_steps", &mut from_steps),
                 ] {
                     if let Some(entries) = operands[*index][key].as_array() {
                         for entry in entries {
@@ -440,6 +445,9 @@ pub(crate) fn union_operands_with_facts(
             operand["evidence"] = Value::Array(evidence);
             if !claim_evidence.is_empty() {
                 operand["claim_evidence"] = Value::Array(claim_evidence);
+            }
+            if !from_steps.is_empty() {
+                operand["from_steps"] = Value::Array(from_steps);
             }
             operand
         })

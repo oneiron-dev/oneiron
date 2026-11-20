@@ -32,6 +32,7 @@ use super::super::settle::decision_pages::{json_len, split_pages};
 use super::super::support::invalid_consolidation;
 use super::super::value_projection::rmpv_to_json;
 use super::observed_beside::route_observed_priors;
+use super::step_records::takes_head_relationship;
 use super::{
     BoundBranchRead, ExtractionRebuildContext, extraction_layout_refusal, select_conflict,
 };
@@ -159,21 +160,35 @@ pub(in crate::dreamer_consolidation) fn parse_reference(reference: &str) -> Resu
 /// The eligible (candidate position, listed index) pairs over `operands` with
 /// the listing in native first-seen order: every claim the bound listing
 /// shows about each subject that its read may correct, except a claim the
-/// candidate restates. Native never asks about a restated claim (FIX 8295),
-/// and a claim left in no pair is not listed. `cited` holds each operand's
-/// admitted claim evidence, by position.
+/// candidate restates and a claim whose relationship set the candidate may
+/// not take. Native never asks about a restated claim (FIX 8295), and a
+/// claim left in no pair is not listed. `cited` holds each operand's
+/// admitted claim evidence and `relationships` the relationship set each
+/// operand is assembled under, both by position.
+///
+/// A correcting candidate takes the relationship set of the head it
+/// corrects, and assembly refuses a set outside the candidate's own
+/// (S63E-RULED: a claim never holds wider than its words' label). A native
+/// candidate that the model binds to such a head is not written. Here that
+/// head is left in no pair, so no read asks about it and no request names it
+/// in `corrects`: the candidate stands on its own proposal, inside its own
+/// set.
 pub(super) fn correction_sets(
     operands: &[CandidateOperand],
     subjects: &[EntityId],
     cited: &[Vec<EntityId>],
-    bound: &BoundBranchRead,
+    (bound, relationships): (&BoundBranchRead, &[Option<BTreeSet<EntityId>>]),
 ) -> Result<(Vec<(usize, usize)>, Vec<CorrectionListed>)> {
     let mut entries: Vec<(usize, usize)> = Vec::new();
     let mut listed: Vec<CorrectionListed> = Vec::new();
     let rows = operands.iter().zip(subjects).zip(cited);
     for (position, ((operand, subject), cited)) in rows.enumerate() {
+        let within = relationships.get(position).and_then(Option::as_ref);
         for (claim, predicate, value) in bound.correctable(*subject, bound.scope()) {
             if cited.contains(&claim) && restates(operand, bound, claim) {
+                continue;
+            }
+            if !takes_head_relationship(bound, claim, within) {
                 continue;
             }
             let at = match listed.iter().position(|row| row.claim == claim) {
@@ -265,21 +280,34 @@ pub(super) fn correction_project(checked: &CheckedPack) -> Option<EntityId> {
 /// grammar checked, each value non-null with turn or claim evidence, each
 /// corrected claim a listed head about its subject that it does not restate, whose
 /// predicate, relationship set and topic it then binds as native binds them,
-/// each relationship inside the bound set, each project the common one of
-/// its sources, and each id derived with the native deterministic id.
+/// each relationship inside the set its operand is assembled under, each
+/// project the common one of its sources, and each id derived with the native
+/// deterministic id.
+///
+/// `relationships` holds, by operand position, the relationship set the shared
+/// operand check fixed for each operand: the branch's own set, or on a branch
+/// with none the set every labelled word the candidate was drawn from shares.
+/// A candidate that names no relationship is assembled under it, as a native
+/// candidate is under its call's scope, and one that names a relationship
+/// stays inside it.
 pub(crate) fn check_pack_candidates(
     candidates: &[CandidateOperand],
-    bound: &BoundBranchRead,
+    (bound, relationships): (&BoundBranchRead, &[Option<BTreeSet<EntityId>>]),
     attempt: AttemptId,
     branch: &ConsolidationBranchPlan<EntityId>,
 ) -> Result<CheckedPack> {
+    if relationships.len() != candidates.len() {
+        return Err(invalid_consolidation(
+            "extraction operands and their relationship sets differ in count",
+        ));
+    }
     let mut subjects = Vec::with_capacity(candidates.len());
     let mut cited = Vec::with_capacity(candidates.len());
     for operand in candidates {
         subjects.push(parse_reference(&operand.subject)?);
         cited.push(cited_claims(operand, bound)?);
     }
-    let (pairs, listed) = correction_sets(candidates, &subjects, &cited, bound)?;
+    let (pairs, listed) = correction_sets(candidates, &subjects, &cited, (bound, relationships))?;
     let mut rows = Vec::with_capacity(candidates.len());
     let operands = candidates.iter().zip(&subjects).zip(&cited);
     for (position, ((operand, subject), cited)) in operands.enumerate() {
@@ -337,10 +365,11 @@ pub(crate) fn check_pack_candidates(
                     .collect::<Result<Vec<_>>>()?,
             ),
         };
-        // A proposed relationship stays inside the bound set even while the
-        // candidate corrects: shared assembly intentionally ignores it then.
+        // A proposed relationship stays inside the operand's set even while
+        // the candidate corrects: shared assembly intentionally ignores it then.
+        let scope_relationship = relationships[position].as_ref();
         if let PackRelationship::Set(ids) = &rel
-            && let Some(allowed) = bound.relationship()
+            && let Some(allowed) = scope_relationship
             && !ids.iter().all(|id| allowed.contains(id))
         {
             return Err(invalid_consolidation(
@@ -366,7 +395,7 @@ pub(crate) fn check_pack_candidates(
             project,
             world: branch.world_ref,
             facet: branch.facet_ref,
-            scope_relationship: bound.relationship(),
+            scope_relationship,
         };
         let candidate = assemble_identity_candidate(&input)?;
         let claim_id = claim_id_for_identity(attempt, &candidate)?;

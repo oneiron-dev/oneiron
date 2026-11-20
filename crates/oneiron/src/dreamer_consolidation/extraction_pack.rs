@@ -31,16 +31,18 @@ mod execution;
 mod finals;
 mod observed_beside;
 mod reads;
+mod step_records;
 
 pub(crate) use super::executor::evidence_version_for_row;
 pub(crate) use super::resources::{BoundBranchInput, BoundBranchRead, project_bound_branch};
 pub(crate) use checks::{
     bound_branch_error, check_extraction_operands_in_txn, check_turn_evidence,
-    extraction_not_served,
+    every_queued_turn_serves_in_txn, extraction_not_served,
 };
 pub(crate) use execution::{CheckedExtractionRead, ExtractionReadExecution, execute_checked_read};
 pub(in crate::dreamer_consolidation) use reads::parse_reference;
 pub(crate) use reads::{CheckedPack, check_pack_candidates};
+pub(crate) use step_records::extraction_step_hash;
 
 use super::ConsolidationBranchPlan;
 use super::support::invalid_consolidation;
@@ -64,6 +66,9 @@ pub(crate) struct ExtractionRebuildContext<'a> {
     pub(crate) txn: &'a heed::RoTxn<'a>,
     /// Borrows the original operands, including their served evidence spans.
     pub(crate) operands: &'a [crate::verbs::CandidateOperand],
+    /// Borrows the relationship set each operand is assembled under, by operand
+    /// position, as the shared operand check returned them.
+    pub(crate) relationships: &'a [Option<std::collections::BTreeSet<EntityId>>],
 }
 
 /// What the checked rebuild returns: the derived candidate ids, the rebuilt
@@ -132,7 +137,12 @@ pub(crate) fn rebuild_checked_pack(
         )
         .into());
     }
-    let checked = reads::check_pack_candidates(&pack.candidates, bound, attempt, branch)?;
+    let checked = reads::check_pack_candidates(
+        &pack.candidates,
+        (bound, context.relationships),
+        attempt,
+        branch,
+    )?;
     let candidate_ids = checked.candidate_ids();
     let scope = bound.scope().clone();
     let (listed, priors, questions, execution) = match pack.read {
