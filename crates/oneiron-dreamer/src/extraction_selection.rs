@@ -264,16 +264,41 @@ fn native_keys(candidate: &CandidateObservation) -> (&str, &str, &str) {
 /// restates a head it cites with the head's own predicate and value. A union that
 /// gained that citation from a member could restate the head its representative was
 /// asked about and answered, and the engine would refuse its `corrects` as naming an
-/// unlisted claim. The operands do not carry the head's predicate and value, so the
-/// citation joins only from a member that proves the union does not restate the head:
-/// one that corrects the same head with the representative's own predicate and value
-/// (`shares_correction`). From any other member it stays out.
+/// unlisted claim. So the citation joins only from a member that proves the union
+/// does not restate the head (`proves_no_restatement`). Here, with the operands
+/// alone, that is a member that corrects the same head with the representative's own
+/// predicate and value. `union_operands_with_correctable` also takes the claims the
+/// checking read may ask each operand to correct. From any other member the citation
+/// stays out.
+///
+/// The operands must have passed their own observations read, each by itself: the
+/// rule rests on what that read took.
 ///
 /// # Panics
 ///
 /// Panics if a group's member index does not name an operand in the supplied request.
 #[must_use]
 pub fn union_operands(operands: &[Value], groups: &CandidateGroups) -> Vec<Value> {
+    union_operands_with_correctable(operands, groups, &BTreeMap::new())
+}
+
+/// Builds the unions of [`union_operands`] with the correction pairs of the read that
+/// checked `operands`.
+///
+/// `correctable` names, for a request position, the listed claims that read may ask
+/// the position to correct. A member that cites the head its representative corrects,
+/// with the representative's own predicate and value, joins that citation when the
+/// read may ask the member about the head, whatever the member's own correction is.
+///
+/// # Panics
+///
+/// Panics if a group's member index does not name an operand in the supplied request.
+#[must_use]
+pub(crate) fn union_operands_with_correctable(
+    operands: &[Value],
+    groups: &CandidateGroups,
+    correctable: &BTreeMap<usize, Vec<String>>,
+) -> Vec<Value> {
     groups
         .groups
         .iter()
@@ -292,9 +317,17 @@ pub fn union_operands(operands: &[Value], groups: &CandidateGroups) -> Vec<Value
                     if let Some(entries) = operands[*index][key].as_array() {
                         for entry in entries {
                             let left_out = key == "claim_evidence"
-                                && corrected.is_some()
-                                && entry["claim"].as_str() == corrected
-                                && !shares_correction(&operands[*index], &operand);
+                                && corrected.is_some_and(|head| {
+                                    let asked = correctable.get(index).is_some_and(|heads| {
+                                        heads.iter().any(|claim| claim == head)
+                                    });
+                                    entry["claim"].as_str() == Some(head)
+                                        && !proves_no_restatement(
+                                            &operands[*index],
+                                            &operand,
+                                            asked,
+                                        )
+                                });
                             if !left_out && !merged.contains(entry) {
                                 merged.push(entry.clone());
                             }
@@ -311,18 +344,40 @@ pub fn union_operands(operands: &[Value], groups: &CandidateGroups) -> Vec<Value
         .collect()
 }
 
-/// Tells whether `member` corrects the head `representative` corrects, with the
-/// representative's own predicate and value.
+/// Tells whether `member`, which cites the head `representative` corrects, proves that
+/// a union with the representative's predicate and value does not restate that head.
 ///
-/// The engine takes a `corrects` only for a head the operand does not restate. Such a
-/// member cites that head and still corrects it, so its predicate and value are not
-/// both the head's. A union with the same predicate and value cannot restate the head
-/// either, whatever it cites.
-fn shares_correction(member: &Value, representative: &Value) -> bool {
-    member["corrects"].is_string()
-        && member["corrects"] == representative["corrects"]
-        && member["predicate"] == representative["predicate"]
+/// It does when it carries the representative's own predicate and value, and its own
+/// observations read either may ask it to correct that head (`asked`) or took its
+/// correction of that head. That read asks about a cited head, and takes a correction
+/// of it, only while the operand does not restate it, so the member's predicate and
+/// value are not both the head's; the union's are the member's. This is a sufficient
+/// test, not the only one: a member with another predicate or value is not taken as
+/// proof here, and its citation stays out.
+fn proves_no_restatement(member: &Value, representative: &Value, asked: bool) -> bool {
+    let corrects_it =
+        member["corrects"].is_string() && member["corrects"] == representative["corrects"];
+    member["predicate"] == representative["predicate"]
         && member["value"] == representative["value"]
+        && (asked || corrects_it)
+}
+
+/// Names, for each request position of `observations`, the listed claims the read may
+/// ask it to correct.
+fn correctable_heads(observations: &Observations) -> BTreeMap<usize, Vec<String>> {
+    observations
+        .candidates
+        .iter()
+        .map(|candidate| {
+            let heads: Vec<String> = candidate
+                .correctable
+                .iter()
+                .filter_map(|at| observations.listed.get(*at))
+                .map(|listed| listed.claim.clone())
+                .collect();
+            (candidate.index, heads)
+        })
+        .collect()
 }
 
 /// Names each listed claim `operand` cites as evidence.
@@ -478,19 +533,21 @@ pub fn observe_and_select(
     policy_pin: &str,
 ) -> Result<ExtractionSelectionPlan, Error> {
     check_policy_pin(&config.policy_pin, policy_pin)?;
-    let (groups, observations) = observe_groups(client, attempt, now_ms, operands, policy_pin)?;
+    let (groups, observations, _) = observe_groups(client, attempt, now_ms, operands, policy_pin)?;
     select(&groups, &observations, now_ms, config)
 }
 
 /// Reads bound operands and their evidence unions under one clock and policy pin.
 /// Every returned index names an original request position, including scope and pair facts.
+/// The third value holds the unions, one per group in group order, built with the
+/// correction pairs of the operands' own read.
 pub(crate) fn observe_groups(
     client: &OneironClient,
     attempt: &str,
     now_ms: u64,
     operands: &[Value],
     policy_pin: &str,
-) -> Result<(CandidateGroups, Observations), Error> {
+) -> Result<(CandidateGroups, Observations, Vec<Value>), Error> {
     let request_indexes: Vec<usize> = operands
         .iter()
         .enumerate()
@@ -508,13 +565,14 @@ pub(crate) fn observe_groups(
         rows[candidate.index] = Some(candidate.clone());
     }
     let groups = group_candidates(&rows);
+    let unions =
+        union_operands_with_correctable(operands, &groups, &correctable_heads(&observations));
     if groups
         .groups
         .iter()
         .any(|group| group.member_indexes.len() > 1)
     {
-        let union = union_operands(operands, &groups);
-        observations = read_observations(client, attempt, now_ms, &union)?;
+        observations = read_observations(client, attempt, now_ms, &unions)?;
         let representatives: Vec<usize> = groups
             .groups
             .iter()
@@ -533,7 +591,7 @@ pub(crate) fn observe_groups(
         }
     }
     check_policy_pin(policy_pin, &observations.policy_pin)?;
-    Ok((groups, observations))
+    Ok((groups, observations, unions))
 }
 
 /// Recognizes only the reply mirror's explicit declared-person subject form.
@@ -615,4 +673,78 @@ fn check_policy_pin(expected: &str, actual: &str) -> Result<(), Error> {
 /// Tests the same finite unit interval as native selection.
 fn unit(value: f64) -> bool {
     value.is_finite() && (0.0..=1.0).contains(&value)
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests the union rule that reads the correction pairs of the checking read.
+
+    use super::*;
+    use serde_json::json;
+
+    /// A member that cites the head its representative corrects, with the
+    /// representative's predicate and value and no correction of its own, joins that
+    /// citation only when its read may ask it about the head.
+    #[test]
+    fn union_keeps_a_citation_of_the_corrected_head_from_a_member_asked_about_it() {
+        let corrected = "c1".repeat(16);
+        let pin = json!({
+            "claim": corrected,
+            "version": {
+                "entity": corrected,
+                "entity_type": 0,
+                "learned_at": 7,
+                "revision": format!("blake3:{}", "ab".repeat(32)),
+            },
+        });
+        let operand = |corrects: bool, cites: bool| {
+            let mut built = json!({
+                "subject": "b1".repeat(16),
+                "predicate": "likes",
+                "value": "coffee",
+                "evidence": [],
+            });
+            if corrects {
+                built["corrects"] = json!(corrected);
+            }
+            if cites {
+                built["claim_evidence"] = json!([pin.clone()]);
+            }
+            built
+        };
+        let operands = vec![operand(true, false), operand(false, true)];
+        let groups = CandidateGroups {
+            groups: vec![CandidateGroup {
+                representative_index: 0,
+                member_indexes: vec![0, 1],
+                corrects: None,
+            }],
+            pending_bindings: Vec::new(),
+        };
+        let both_asked: BTreeMap<usize, Vec<String>> =
+            BTreeMap::from([(0, vec![corrected.clone()]), (1, vec![corrected.clone()])]);
+        let joined = union_operands_with_correctable(&operands, &groups, &both_asked);
+        assert_eq!(
+            joined[0]["claim_evidence"],
+            json!([pin]),
+            "a member the read may ask about the head joins its citation of it"
+        );
+        assert_eq!(
+            joined[0]["corrects"],
+            json!(corrected),
+            "the union keeps its representative's correction"
+        );
+        let member_not_asked: BTreeMap<usize, Vec<String>> = BTreeMap::from([(0, vec![corrected])]);
+        let left_out = union_operands_with_correctable(&operands, &groups, &member_not_asked);
+        assert!(
+            left_out[0].get("claim_evidence").is_none(),
+            "a member the read does not ask about the head restates it: its citation stays out"
+        );
+        assert!(
+            union_operands(&operands, &groups)[0]
+                .get("claim_evidence")
+                .is_none(),
+            "with the operands alone a member with no correction proves nothing"
+        );
+    }
 }

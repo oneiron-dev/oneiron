@@ -188,11 +188,12 @@ impl BoundReplySources<'_> {
 
     /// Resolves a listed entity or a declared person without deriving any identifier.
     ///
-    /// A declared person is available by native's binding rule
-    /// (`extracted_people/bindings.rs`): its trimmed name holds a letter
-    /// once normalized, and each TURN label it declares names a TURN this
-    /// call showed. Any other declaration leaves its candidates a skip, so
-    /// the reply check judges none of their citations.
+    /// A declared person is available when its trimmed name holds a letter
+    /// once normalized, the name test of native's binding
+    /// (`extracted_people/bindings.rs`), and each TURN label it declares
+    /// names a TURN this call showed. The first declaration of a number
+    /// decides. A candidate about a person that is not available is a
+    /// skip, so the reply check judges none of its citations.
     fn subject(
         &self,
         item: &Value,

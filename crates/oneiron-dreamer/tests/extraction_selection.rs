@@ -415,7 +415,8 @@ fn union_leaves_out_a_member_citation_of_the_head_its_representative_corrects() 
 /// union when it corrects the same head with the representative's own predicate and
 /// value: the engine took its correction while it cited the head, so neither it nor the
 /// union restates the head. A member that corrects the head with another proposed
-/// predicate proves nothing about the union, so its citation stays out.
+/// predicate is no such proof for the union, so its citation stays out. The operands
+/// here are synthetic: the test covers which citation joins, not an admissible pack.
 #[test]
 fn union_keeps_a_citation_of_the_corrected_head_from_a_member_that_corrects_it_too() {
     let corrected = "c1".repeat(16);

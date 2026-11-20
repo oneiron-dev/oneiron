@@ -192,7 +192,7 @@ pub fn run(input: Input<'_>) -> Result<Outcome, Error> {
             operand["corrects"] = Value::String(head.clone());
         }
     }
-    let (groups, observations) = extraction_selection::observe_groups(
+    let (groups, observations, unions) = extraction_selection::observe_groups(
         input.client,
         input.attempt,
         input.now_ms,
@@ -205,7 +205,6 @@ pub fn run(input: Input<'_>) -> Result<Outcome, Error> {
             .map_err(|error| Error::Routing(error.into()))?;
     let route = extraction_routing::route(&selection, &observations, input.config)
         .map_err(Error::Routing)?;
-    let unions = extraction_selection::union_operands(&operands, &groups);
     let union_positions: BTreeMap<usize, usize> = groups
         .groups
         .iter()
