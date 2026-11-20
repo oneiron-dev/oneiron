@@ -14,9 +14,11 @@
 //!
 //! The tail it folds is the resumed fold's: ops that leave every earlier
 //! row's fate as it was ([`super::fold_resume::admits_past`]), and an actor
-//! revocation or a slip or Grant withdrawal with every covered row in its
-//! causal past, on a clean image this install judges as it was built, whose
-//! whole tail then folds (FIX 11760), each on a
+//! revocation or a slip or Grant withdrawal, a federation lifecycle act or a
+//! membership execution with every covered row in its causal past, on a
+//! clean image this install judges as it was built, whose whole tail then
+//! folds, or a row of a kind that folds past the image only as rejected,
+//! with no state (FIX 11760), each on a
 //! frontier, tail or covered parent, a world key record on stated parents
 //! alone (FIX 4881). A late fork, a tail row on a covered row off the
 //! frontier, folds on the state the image's replay evidence keeps there
@@ -286,6 +288,7 @@ pub(super) fn capture_adopted_checkpoint_tail(
         states,
         merged,
         writers,
+        issuers,
         uncounted,
         pairs,
         counted_pairs,
@@ -364,7 +367,7 @@ pub(super) fn capture_adopted_checkpoint_tail(
         .collect();
     let stale_approvals = super::stale_roster::stale_roster_subject_approvals(&read_whole, &fold);
     let safety = super::checkpoint_image::CheckpointSafety {
-        issuers: image.safety.issuers.clone(),
+        issuers,
         uncounted,
         pairs,
         counted_pairs,
@@ -593,8 +596,11 @@ fn tail_folds_past(
         parents_stand
             && !retired
             && !image.safety.missing_parents.contains(hash)
-            && (super::fold_resume::admits_past(&image.aggregate.merged, entry, &mut confirms)
-                || serial_withdrawal(image, tail, log, entry))
+            // A serial row first: a confirm a covered one spent folds
+            // rejected and never joins the log's confirms.
+            && (serial_withdrawal(image, tail, log, entry)
+                || serial_fold_past(image, tail, log, entry)
+                || super::fold_resume::admits_past(&image.aggregate.merged, entry, &mut confirms))
     });
     folds_past.then_some((confirms, CoveredFloors::of(floored)))
 }
@@ -724,10 +730,8 @@ fn tail_signers_covered_rows_unfloored(
 
 /// A withdrawal [`super::fold_resume::admits_past`] leaves to the history
 /// that folds past the image all the same (FIX 11760): an actor revocation,
-/// a slip withdrawal or a Grant's, on a clean image this install judges as
-/// it was built, with every covered row in its causal past. No covered row
-/// is concurrent with it, so it changes no covered row's fate; its tail must
-/// then fold whole, and its actor revocations' facts join the image's
+/// a slip withdrawal or a Grant's, under [`folds_serially`]'s conditions. Its tail
+/// must then fold whole, and its actor revocations' facts join the image's
 /// ([`settle::settle_tail`]).
 fn serial_withdrawal(
     image: &AuthorityCheckpointV2,
@@ -735,8 +739,47 @@ fn serial_withdrawal(
     log: AdoptedTail<'_>,
     entry: &AuthorityLogEntry,
 ) -> bool {
-    settle::serial_withdrawal_op(&entry.op)
-        && image.building_pin == log.pin.copied()
+    settle::serial_withdrawal_op(&entry.op) && folds_serially(image, tail, log, entry)
+}
+
+/// Another row [`super::fold_resume::admits_past`] leaves to the history
+/// that folds past the image all the same (FIX 11760), under [`folds_serially`]'s
+/// conditions: a federation lifecycle act or a membership execution, whose
+/// tail must then fold whole, or a row of a kind that folds past only as
+/// rejected ([`settle::folds_rejected_op`]), which must then fold with no
+/// state. A rotation or a non-agent enrollment stands only in a re-root's
+/// pre-handoff line, and only a tail re-root names a tail row in its line,
+/// so such a row folds rejected past the image only in a tail with no
+/// re-root; for the other kinds that condition is only conservative.
+fn serial_fold_past(
+    image: &AuthorityCheckpointV2,
+    tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+    log: AdoptedTail<'_>,
+    entry: &AuthorityLogEntry,
+) -> bool {
+    let op = if settle::serial_fold_past_op(&entry.op) {
+        true
+    } else {
+        settle::folds_rejected_op(image, entry)
+            && !tail
+                .values()
+                .any(|row| matches!(row.op, AuthorityOp::ReRoot { .. }))
+    };
+    op && folds_serially(image, tail, log, entry)
+}
+
+/// Whether the tail row `entry` folds on the image's states as the whole
+/// fold folds it: a clean image this install judges as it was built (its
+/// building pin and peer set), with every covered row in the row's causal
+/// past. No covered row is concurrent with it, so it changes no covered
+/// row's fate, and its parents' states are the whole fold's own.
+fn folds_serially(
+    image: &AuthorityCheckpointV2,
+    tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+    log: AdoptedTail<'_>,
+    entry: &AuthorityLogEntry,
+) -> bool {
+    image.building_pin == log.pin.copied()
         && image.aggregate.peers == *log.peer_consent_roots
         && clean_image(image)
         && covered_past(image, tail, entry)
