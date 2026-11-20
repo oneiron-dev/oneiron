@@ -381,6 +381,8 @@ fn wire_receipt(
         event_id: receipt.consent_event_ref.clone(),
         subject: receipt.subject_ref.to_hex(),
         recorded_by: recorded_by.to_hex(),
+        occurred_at: receipt.occurred_at,
+        requested_occurred_at: receipt.requested_occurred_at,
         replayed: receipt.replayed,
         already_absent: receipt.already_absent,
         deleted_print: receipt.deleted_print,

@@ -66,6 +66,45 @@ fn put_consent_event_once(
     }
 }
 
+/// [`put_consent_event_once`] for a withdrawal `event` whose request asked
+/// for the date `asked` and which is recorded at `event.occurred_at`, the
+/// asked date met with this vault's clock (VOICE-FUTURE-DATED-WITHDRAWAL =
+/// B). The replay compares with that clamp applied: a stored withdrawal under
+/// the same id that differs only by a date at or before `asked` is this
+/// request recorded before, so the recorder's retry stays idempotent after
+/// the clock has moved. Answers the stored date on a replay and `None` on the
+/// first insertion; any other decision stored under the id is refused.
+fn put_withdrawal_once(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    event: &VoiceConsentEventV1,
+    asked: u64,
+) -> Result<Option<u64>> {
+    let key = (
+        event.subject_ref,
+        digest16(b"voice_identity.consent", event.event_id.as_bytes()),
+    );
+    match CONSENT.get(store, txn, &key)? {
+        Some(stored)
+            if stored.occurred_at <= asked
+                && stored
+                    == (VoiceConsentEventV1 {
+                        occurred_at: stored.occurred_at,
+                        ..event.clone()
+                    }) =>
+        {
+            Ok(Some(stored.occurred_at))
+        }
+        Some(_) => Err(invalid_voice(
+            "voice consent event id already names another decision",
+        )),
+        None => {
+            CONSENT.put(store, txn, &key, event)?;
+            Ok(None)
+        }
+    }
+}
+
 impl Vault {
     /// Appends one consent or withdrawal decision to the private consent log.
     ///
@@ -596,9 +635,8 @@ impl Vault {
     /// the owner logs their word, as the owner logged their grant. Either
     /// check runs inside the withdrawal's write transaction, so a proof that
     /// stopped holding while the request waited appends and deletes nothing.
-    /// A withdrawal dated past this vault's clock is refused, as a consent
-    /// is: it would void every grant dated before it until the clock reached
-    /// it.
+    /// A withdrawal dated past this vault's clock is recorded at that clock
+    /// ([`Self::withdraw_voice_consent_admitted`]).
     pub fn withdraw_voice_consent_as(
         &self,
         proof: &AuthenticatedOwner,
@@ -625,11 +663,10 @@ impl Vault {
             &request,
             |txn| {
                 if subject == actor {
-                    proof.revalidate_person_in_txn(self, txn)?;
+                    proof.revalidate_person_in_txn(self, txn).map(drop)
                 } else {
-                    proof.revalidate_in_txn(self, txn)?;
+                    proof.revalidate_in_txn(self, txn).map(drop)
                 }
-                self.consent_dated_by_clock_in_txn(txn, occurred_at)
             },
             |_, ()| Ok(()),
         )
@@ -647,8 +684,8 @@ impl Vault {
     /// Grant that logged it, and so is the subject when they hold a
     /// credential in this vault (VOICE-CONSENT-LOG-MEMBERS: a live member's
     /// withdrawal stands, and the member hears of it); a replay tells no one
-    /// again. A withdrawal dated past this vault's clock is refused, after
-    /// the agent's admission, as a consent is.
+    /// again. A withdrawal dated past this vault's clock is recorded at that
+    /// clock, as at every withdrawal door.
     pub(crate) fn withdraw_voice_consent_logged_by_agent<E: From<Error>>(
         &self,
         agent: EntityId,
@@ -669,15 +706,9 @@ impl Vault {
             ],
             basis,
         };
-        self.withdraw_voice_consent_admitted(
-            &request,
-            |txn| -> std::result::Result<EntityId, E> {
-                let grant = admit_agent(txn)?;
-                self.consent_dated_by_clock_in_txn(txn, occurred_at)?;
-                Ok(grant)
-            },
-            |wtxn, grant| self.tell_of_logged_withdrawal_in_txn(wtxn, &request, grant),
-        )
+        self.withdraw_voice_consent_admitted(&request, admit_agent, |wtxn, grant| {
+            self.tell_of_logged_withdrawal_in_txn(wtxn, &request, grant)
+        })
     }
 
     /// One notice per live owner that `request.recorded_by_ref`, an agent
@@ -856,14 +887,22 @@ impl Vault {
     /// The withdrawal transaction: `admit` runs first inside it, so a
     /// refusal appends and deletes nothing, then the event append, and only
     /// on its first insertion the hard deletion of the subject's print
-    /// family and `on_insert`, handed what `admit` answered.
+    /// family, the voids of the grants dated after it and `on_insert`,
+    /// handed what `admit` answered.
+    ///
+    /// A withdrawal is never refused for its date (VOICE-FUTURE-DATED-WITHDRAWAL
+    /// = B, Engine 21 Nov 05:31: "A withdrawal is never refused"): one dated
+    /// past this vault's clock is recorded at that clock, so it withdraws no
+    /// yes recorded after it, and the receipt states both dates. The
+    /// recorder's retry of the same request is a replay
+    /// ([`put_withdrawal_once`]).
     fn withdraw_voice_consent_admitted<A, E: From<Error>>(
         &self,
         request: &VoiceWithdrawalRequest,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<A, E>,
         on_insert: impl FnOnce(&mut heed::RwTxn<'_>, A) -> Result<()>,
     ) -> std::result::Result<VoiceWithdrawalReceipt, E> {
-        let event = VoiceConsentEventV1 {
+        let asked = VoiceConsentEventV1 {
             event_id: request.event_id.clone(),
             subject_ref: request.subject_ref,
             recorded_by_ref: request.recorded_by_ref,
@@ -872,7 +911,7 @@ impl Vault {
             basis: request.basis.clone(),
             state: VoiceConsentState::Withdrawn,
         };
-        CONSENT.encode_value(&event)?;
+        CONSENT.encode_value(&asked)?;
 
         let _guard = self
             .voice_ref_guard
@@ -880,20 +919,30 @@ impl Vault {
             .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
         let store = &self.store;
         let subject = request.subject_ref;
-        let (tally, replayed) = self.try_with_write_txn_grouped::<_, _, E>(|wtxn| {
-            let admitted = admit(wtxn)?;
-            if put_consent_event_once(store, wtxn, &event)? == ConsentEventWrite::Replayed {
-                return Ok((VoiceDeletionTally::default(), true));
-            }
-            let tally = delete_voice_prints_in_txn(store, wtxn, &subject)?;
-            super::consent_void::void_later_dated_grants_in_txn(store, wtxn, &event)?;
-            on_insert(wtxn, admitted)?;
-            Ok((tally, false))
-        })?;
+        let (tally, replayed, occurred_at) =
+            self.try_with_write_txn_grouped::<_, _, E>(|wtxn| {
+                let admitted = admit(wtxn)?;
+                let clock = self.instant_in_txn(wtxn)?.secs();
+                let event = VoiceConsentEventV1 {
+                    occurred_at: asked.occurred_at.min(clock),
+                    ..asked.clone()
+                };
+                if let Some(stored_at) =
+                    put_withdrawal_once(store, wtxn, &event, asked.occurred_at)?
+                {
+                    return Ok((VoiceDeletionTally::default(), true, stored_at));
+                }
+                let tally = delete_voice_prints_in_txn(store, wtxn, &subject)?;
+                super::consent_void::void_later_dated_grants_in_txn(store, wtxn, &event)?;
+                on_insert(wtxn, admitted)?;
+                Ok((tally, false, event.occurred_at))
+            })?;
 
         Ok(VoiceWithdrawalReceipt {
             consent_event_ref: request.event_id.clone(),
             subject_ref: subject,
+            occurred_at,
+            requested_occurred_at: request.occurred_at,
             replayed,
             already_absent: tally.is_empty(),
             deleted_print: tally.print_rows > 0,
@@ -1000,13 +1049,13 @@ impl Vault {
         })
     }
 
-    /// Refuses a consent decision a door logs, a grant or a withdrawal, dated
-    /// later than this vault's clock, with no allowance (REVIEW-9224 P1):
-    /// enrolment and recognition count a withdrawal only when it is dated at
-    /// or after the grant, so a grant dated even a minute ahead would outlive
-    /// a withdrawal the subject logs in that minute, and a withdrawal dated
-    /// ahead would void every grant before its date. A recorder whose clock
-    /// runs ahead dates by the vault's.
+    /// Refuses a consent a door logs dated later than this vault's clock, with
+    /// no allowance (REVIEW-9224 P1): enrolment and recognition count a
+    /// withdrawal only when it is dated at or after the grant, so a grant
+    /// dated even a minute ahead would outlive a withdrawal the subject logs
+    /// in that minute. A recorder whose clock runs ahead dates by the vault's.
+    /// A withdrawal is never refused for its date; it is recorded at the
+    /// vault's clock instead ([`Self::withdraw_voice_consent_admitted`]).
     fn consent_dated_by_clock_in_txn(&self, txn: &heed::RoTxn<'_>, occurred_at: u64) -> Result<()> {
         if occurred_at > self.instant_in_txn(txn)?.secs() {
             return Err(invalid_voice(
