@@ -37,8 +37,8 @@ const SAVED_PLACE: &str = "off_record.save";
 ///
 /// # Errors
 ///
-/// A row that names a room handle and does not decode, custody and storage
-/// errors.
+/// Custody and storage errors, and a carried row that does not encode
+/// again.
 pub(crate) fn carry_room_secrets_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
@@ -61,17 +61,19 @@ pub(crate) fn carry_room_secrets_in_txn(
         if !names_room_handle(data) || vault.store.port_entity_present(wtxn, id)? {
             continue;
         }
+        // A row that is no one MessagePack value keeps its bytes: a room
+        // handle in it stays as written, naming nothing.
         let mut cursor = data.as_slice();
-        let undecodable = || Error::InvariantViolation("a saved row naming a room handle");
-        let mut tree = PlanTree(rmpv::decode::read_value(&mut cursor).map_err(|_| undecodable())?);
-        if !cursor.is_empty() {
-            return Err(undecodable());
-        }
-        if !carry.value(vault, wtxn, *id, &mut tree.0)? {
+        let Ok(decoded) = rmpv::decode::read_value(&mut cursor) else {
+            continue;
+        };
+        let mut tree = PlanTree(decoded);
+        if !cursor.is_empty() || !carry.value(vault, wtxn, *id, &mut tree.0)? {
             continue;
         }
         let mut body = Vec::with_capacity(data.len());
-        rmpv::encode::write_value(&mut body, &tree.0).map_err(|_| undecodable())?;
+        rmpv::encode::write_value(&mut body, &tree.0)
+            .map_err(|_| Error::InvariantViolation("a carried saved row did not encode"))?;
         data.zeroize();
         *data = body;
     }
