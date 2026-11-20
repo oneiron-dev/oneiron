@@ -24,6 +24,8 @@ fn owner_verbs_require_active_owner_binding_when_rooted() {
             serde_json::json!("calm"),
         ))
         .expect("agent claim");
+    let stranger = put_person(&vault, 0x61);
+    grant_reads(&vault, stranger);
 
     root_vault_binding(&vault, 0x71, owner, "human");
 
@@ -48,7 +50,6 @@ fn owner_verbs_require_active_owner_binding_when_rooted() {
         .expect("bound owner deletes");
 
     // An UNBOUND human actor on the same rooted vault is refused on all three.
-    let stranger = put_person(&vault, 0x61);
     let stranger_facade = facade_for(&vault, stranger);
     let victim = put_person(&vault, 0x62);
     let other_claim = agent_facade
@@ -642,7 +643,7 @@ fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
     use crate::claim::PointRead;
     use crate::federation::ScopeAxis;
     let (_dir, vault) = open_vault();
-    let owner = put_owner(&vault);
+    let owner = put_person(&vault, 0x6D);
     // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
     // (MESSAGE-REL-NAMES = A).
     vault
