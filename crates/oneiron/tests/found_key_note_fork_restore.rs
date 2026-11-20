@@ -8,15 +8,23 @@
 //! too: a merge fork still merges (REVIEW-7904 F1), and a declared rewrite
 //! switches in with the value (REVIEW-7904 F2).
 //!
+//! A merge the write gate holds moves none of the fork's keys to the NOTE,
+//! so no key of text that never landed names the NOTE (REVIEW-9471 F2). A
+//! handle a merge fork wrote on its own, of a key the owner ruled, lands as
+//! the value (REVIEW-9471 F3).
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test found_key_note_fork_restore`.
 
 use std::sync::Arc;
 
 use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::note::{NoteForkReadRequest, NoteProgramEdit, NoteVerdict};
+use oneiron::note::{NoteForkReadRequest, NoteProgramEdit, NoteSpanResolution, NoteVerdict};
 use oneiron::store::GateDecisionId;
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
+use oneiron::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
+};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -337,6 +345,131 @@ fn a_ruling_on_the_notes_own_key_reaches_a_rewrite_that_keeps_its_handle() -> Te
         assert!(
             valued(&markdown) && markdown.contains("Ship it."),
             "the switched NOTE reads the value: {markdown}"
+        );
+    }
+    Ok(())
+}
+
+/// A Proposed CLAIM about `subject` for a citation to name: a pin's target
+/// is a CLAIM, and a Proposed one passes the gate on a raw put.
+fn citable_claim(vault: &Vault, subject: EntityId) -> Result<EntityId, Box<dyn std::error::Error>> {
+    let claim = EntityId::now();
+    let mut body = ClaimBody::new(
+        "profile.note",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("the release notes name the deploy step"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )?;
+    body.source = Some(ClaimSource::UserStated);
+    vault.put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)?;
+    Ok(claim)
+}
+
+/// A NOTE of `owner`'s that cites the span `quote` is in `note`'s markdown.
+fn cite_in_another_note(vault: &Vault, owner: EntityId, note: EntityId, quote: &str) -> TestResult {
+    let markdown = vault.note_document(note)?.markdown;
+    let at = markdown
+        .find(quote)
+        .ok_or("FIXTURE: the quote stands in the NOTE")?;
+    let start = markdown[..at].chars().count();
+    let claim = citable_claim(vault, owner)?;
+    let pin = vault.pin_note_span(note, claim, start, start + quote.chars().count())?;
+    let citing = vault
+        .create_note(
+            "research",
+            "Deploy steps, cited from the release notes.",
+            as_owner(owner),
+        )
+        .map_err(|error| format!("FIXTURE: the citing NOTE is written: {error:?}"))?;
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .cite_note_span(citing, &pin)?;
+    assert!(
+        matches!(
+            vault.resolve_note_pin(&pin)?,
+            NoteSpanResolution::Mapped { .. }
+        ),
+        "FIXTURE: the citation maps its span"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_merge_the_gate_holds_moves_none_of_the_forks_keys_to_the_note() -> TestResult {
+    let (_dir, vault, owner) = open_vault()?;
+    let proof = proof_of(&vault, owner)?;
+    let note = vault
+        .create_note("research", WRITTEN, as_owner(owner))
+        .map_err(|error| format!("FIXTURE: the NOTE is written: {error:?}"))?;
+    cite_in_another_note(&vault, owner, note, "Release notes")?;
+    let base = vault
+        .note_program_document(note)?
+        .ok_or("FIXTURE: the NOTE has a document")?
+        .version();
+    let edit = NoteProgramEdit::WholeText {
+        text: format!("Release memo. Deploy with token={TOKEN}."),
+        timeout_ms: 1_000,
+        base: Some(base),
+    };
+    let fork = vault
+        .fork_note(note, &edit, as_owner(owner))
+        .map_err(|error| format!("FIXTURE: the fork is opened: {error:?}"))?;
+    let handle = found_handle(&vault, &proof, &fork)?;
+
+    let bundle = vault
+        .open_note_proposal(&[fork], "deploy notes", as_owner(owner))
+        .map_err(|error| format!("FIXTURE: the proposal opens: {error:?}"))?;
+
+    assert!(
+        bundle.landed.is_empty() && bundle.waiting.len() == 1,
+        "FIXTURE: the write gate holds a merge that edits a cited span"
+    );
+    for markdown in markdown_reads(&vault, note)? {
+        assert_eq!(markdown, WRITTEN, "FIXTURE: the held merge lands no text");
+    }
+    assert!(
+        vault
+            .found_keys(&proof, false, 10)?
+            .iter()
+            .all(|notice| notice.record != note),
+        "a held merge moves none of the fork's keys to the NOTE"
+    );
+    assert_eq!(
+        found_handle(&vault, &proof, &fork)?,
+        handle,
+        "the fork's key stays with the pending fork"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_handle_a_merge_fork_wrote_on_its_own_lands_as_the_ruled_value() -> TestResult {
+    let (_dir, vault, owner) = open_vault()?;
+    let proof = proof_of(&vault, owner)?;
+    let (note, live) = note_with_token(&vault, owner)?;
+    let handle = found_handle(&vault, &proof, &note)?;
+    let base = vault
+        .note_program_document(note)?
+        .ok_or("FIXTURE: the NOTE has a document")?
+        .version();
+    let edit = NoteProgramEdit::WholeText {
+        text: format!("{live} Fallback: {HANDLE_OPEN}{handle}]."),
+        timeout_ms: 1_000,
+        base: Some(base),
+    };
+    let fork = vault
+        .fork_note(note, &edit, as_owner(owner))
+        .map_err(|error| format!("FIXTURE: the fork is opened: {error:?}"))?;
+    vault.rule_found_key_not_a_secret(&proof, ActSurface::ThisInstall, &handle)?;
+
+    land(&vault, owner, fork, false)?;
+
+    for markdown in markdown_reads(&vault, note)? {
+        assert!(
+            valued(&markdown) && markdown.matches(TOKEN).count() == 2,
+            "the handle the fork wrote lands as the ruled value: {markdown}"
         );
     }
     Ok(())

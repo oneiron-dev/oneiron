@@ -64,6 +64,10 @@ const PROVING_KEY_NAMED_LOST: &str = "a key named as lost is the owner key that 
 /// was written.
 const THIS_INSTALL_KEY_LIVE: &str = "this install's owner signing key is live on the roster; it \
                                      needs no recovery; nothing was written";
+/// While kit-only holds the recovery box holds nothing: only the kit serves.
+/// Nothing was written.
+const RELEASED_UNDER_KIT_ONLY: &str = "under Nobody but me the recovery box holds nothing; bring \
+                                       your recovery kit; nothing was written";
 
 /// What the owner brings to the root's door.
 pub enum RootMaterial {
@@ -126,24 +130,45 @@ impl Vault {
         successor: RootSuccessor,
         lost: &[AuthorityKey],
     ) -> Result<RootRecovery> {
-        let fold = {
-            let txn = self.store.env.read_txn()?;
-            self.authority_view_readonly_in_txn(&txn)?
-        };
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-        let (signer, kit) = match material {
-            RootMaterial::Kit { seed, confirm } => (
-                RecoveryAuthoritySigner::from_seed(&seed, &vault_id)?,
-                Some((seed, confirm)),
-            ),
-            RootMaterial::Released(signer) => (signer, None),
+        // The kit's live generation, if any: old kits read as generation 0 by
+        // construction, and the same kit vouches with generation 1 after a
+        // rotation. A kit with none live falls through to the rooted check,
+        // as a never-enrolled key does. The box's released bytes need no
+        // finder: they name their generation directly.
+        let (signer, kit, released) = match material {
+            RootMaterial::Kit { seed, confirm } => {
+                let found = self.recovery_authority_generations_in_txn(&txn, &seed, &vault_id)?;
+                match found.live {
+                    Some((_, signer)) => (Some(signer), Some((seed, confirm)), false),
+                    None => (None, Some((seed, confirm)), false),
+                }
+            }
+            RootMaterial::Released(signer) => (Some(signer), None, true),
         };
-        if *signer.vault_id() != vault_id {
-            return Err(invalid_authority());
+        // While kit-only holds the box holds nothing: the released key is
+        // refused before the liveness check, so a revoked released key under
+        // kit-only still says so. The writer checks again in its txn.
+        if released && self.recovery_preset_in_txn(&txn)?.is_nobody_but_me() {
+            return Err(authority_refused(RELEASED_UNDER_KIT_ONLY));
         }
-        if live_owner_key(&fold, &signer.authority_key()) {
-            let authority = ActAuthority::Owner(owner.clone(), surface);
-            return self.vouch_with_root_key((owner, &authority), &signer, successor, lost);
+        drop(txn);
+        if let Some(signer) = &signer {
+            if *signer.vault_id() != vault_id {
+                return Err(invalid_authority());
+            }
+            if live_owner_key(&fold, &signer.authority_key()) {
+                let authority = ActAuthority::Owner(owner.clone(), surface);
+                return self.vouch_with_root_key(
+                    (owner, &authority),
+                    signer,
+                    released,
+                    successor,
+                    lost,
+                );
+            }
         }
         if rooted(&fold) {
             return Err(authority_refused(ROOT_KEY_NOT_LIVE));
@@ -168,6 +193,7 @@ impl Vault {
         &self,
         (owner, authority): (&AuthenticatedOwner, &ActAuthority),
         signer: &RecoveryAuthoritySigner,
+        released: bool,
         successor: RootSuccessor,
         lost: &[AuthorityKey],
     ) -> Result<RootRecovery> {
@@ -203,13 +229,19 @@ impl Vault {
         // this install's successor's making and the commit.
         let device_pin = self.device_pin();
         let _step = device_pin.as_deref().map(DevicePin::step);
-        let _slot_lock = install.is_some().then(|| {
+        let slot_lock = install.is_some().then(|| {
             self.store
                 .owner_signing_slot_lock
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
         });
         let mut txn = self.store.env.write_txn()?;
+        // The check that counts: the preset could have flipped between the
+        // pre-check's read txn and this writer. Before the liveness check,
+        // so a revoked released key under kit-only still says so.
+        if released && self.recovery_preset_in_txn(&txn)?.is_nobody_but_me() {
+            return Err(authority_refused(RELEASED_UNDER_KIT_ONLY));
+        }
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         if !live_owner_key(&fold, &root_key) {
             return Err(authority_refused(ROOT_KEY_NOT_LIVE));
@@ -252,6 +284,10 @@ impl Vault {
         self.mark_authority_rows_in_txn(&mut txn, &rows)?;
         txn.commit()?;
         self.note_committed_authority_rows(rows);
+        // The successor is held once the slot lock is let go: a hold asks
+        // every signer held for its root, and a signer's answer may read the
+        // slot (REVIEW-9678 P1).
+        drop(slot_lock);
         if let Some(key) = held {
             self.hold_checkpoint_root_signer(Arc::new(key));
         }
@@ -302,7 +338,10 @@ impl Vault {
 /// that key revoked. A key the roster names live needs no recovery. A run
 /// checked before another run's recovery committed is refused here, before
 /// it drops the seed of that run's successor, a live key
-/// ([`OwnerSigningSlot::fresh_key`]).
+/// ([`OwnerSigningSlot::fresh_key`]). The slot's revoked key signs nothing,
+/// so the slot takes the fresh key's seed at once ([`OwnerSigningSlot::renew`],
+/// under the slot lock the door holds): a later refusal leaves a key no row
+/// names there, which the next run enrols.
 fn this_install_successor(
     fold: &AuthorityFold,
     actor: EntityId,
@@ -315,7 +354,7 @@ fn this_install_successor(
         Some(device) if !device.revoked => {
             return Err(authority_refused(THIS_INSTALL_KEY_LIVE));
         }
-        Some(_) => key = slot.fresh_key()?,
+        Some(_) => key = slot.renew(&slot.fresh_key()?)?.0,
         None => {}
     }
     let public_key = key.public_key();
@@ -333,8 +372,9 @@ fn this_install_successor(
 /// revocations, the enrolment and its binding). The door marks them for the
 /// vault's loaded windows in its write and announces them once it committed,
 /// as the ReRoot writer does (FIX 11993), so the host and every replica see
-/// the lost key revoked without a window reload.
-fn authority_rows_counted_since(
+/// the lost key revoked without a window reload. The owner key removal
+/// doors do the same with the rows their writes counted.
+pub(super) fn authority_rows_counted_since(
     before: &AuthorityFold,
     after: &AuthorityFold,
 ) -> Result<BTreeSet<EntityId>> {

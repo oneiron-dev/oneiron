@@ -9,7 +9,7 @@ use super::world_chain_reads::{edit, fold_under};
 use super::world_hosted::anchor_on;
 use super::world_key_doors::fresh_install;
 use super::world_kit_gate::publish_root;
-use super::world_reissue::sync;
+use super::world_reissue::{sync, with_predecessor};
 use super::*;
 use crate::HostingPrivacyPosture::Hosted;
 use crate::world_keys::RecoveryRootSeed;
@@ -38,6 +38,7 @@ fn every_page(vault: &crate::Vault, limit: usize) -> BTreeMap<RecoveryRootId, us
 fn root_spam_pages_and_never_hides_an_operative_root() {
     let host = host();
     let issuer = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let prepared = issuer.vault.prepare_owner_root(&issuer.owner).unwrap();
     let ours = prepared.seed().public(&host.vault_id).unwrap().id;
     issuer

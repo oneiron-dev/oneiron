@@ -165,6 +165,37 @@ pub(crate) fn referenced_rows(
     vault: &Vault,
     receipt: &ReceiptRecord,
 ) -> Result<Option<Vec<EntityId>>> {
+    let mut rows = record_rows(receipt);
+    if receipt.receipt_kind == ReceiptKind::Share
+        && receipt.outcome == "prepared"
+        && let Some(sequence) = receipt.receipt_id.strip_prefix("share:export:")
+    {
+        let Ok(sequence) = sequence.parse() else {
+            return Ok(None);
+        };
+        let Some(source) = crate::share_travel::export_travel_source_rows(vault, sequence)? else {
+            return Ok(None);
+        };
+        rows.extend(source);
+    }
+    if receipt.receipt_kind == ReceiptKind::Hook {
+        let read = match receipt.fields.get(HOOK_RUN_KEY) {
+            Some(key) => crate::runtime_hooks::hook_run_read_rows(vault, key)?,
+            None => None,
+        };
+        let Some(read) = read else {
+            return Ok(None);
+        };
+        rows.extend(read);
+    }
+    Ok(Some(rows))
+}
+
+/// The rows `receipt`'s own record names ([`referenced_rows`] less the
+/// rows kept beside it): its trigger (a verb hook's invocation trigger
+/// excepted: it names no row), a share's parties, and the rows its
+/// family's [`ROW_FIELDS`] hold.
+pub(crate) fn record_rows(receipt: &ReceiptRecord) -> Vec<EntityId> {
     // A verb hook's trigger is its call's invocation id, not a row
     // (HOOKS-04). A fact hook's trigger is its entity and stays a row.
     let verb_hook_trigger = is_verb_hook_receipt(receipt);
@@ -192,29 +223,7 @@ pub(crate) fn referenced_rows(
             rows.extend(value.split(',').filter_map(row_of));
         }
     }
-    if receipt.receipt_kind == ReceiptKind::Share
-        && receipt.outcome == "prepared"
-        && let Some(sequence) = receipt.receipt_id.strip_prefix("share:export:")
-    {
-        let Ok(sequence) = sequence.parse() else {
-            return Ok(None);
-        };
-        let Some(source) = crate::share_travel::export_travel_source_rows(vault, sequence)? else {
-            return Ok(None);
-        };
-        rows.extend(source);
-    }
-    if receipt.receipt_kind == ReceiptKind::Hook {
-        let read = match receipt.fields.get(HOOK_RUN_KEY) {
-            Some(key) => crate::runtime_hooks::hook_run_read_rows(vault, key)?,
-            None => None,
-        };
-        let Some(read) = read else {
-            return Ok(None);
-        };
-        rows.extend(read);
-    }
-    Ok(Some(rows))
+    rows
 }
 
 /// Whether `receipt` is a verb hook's: a Hook receipt whose `fields` carry

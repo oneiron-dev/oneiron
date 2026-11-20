@@ -275,14 +275,21 @@ fn a_replica_that_takes_a_carrier_enrol_beside_a_handoff_takes_the_next_edit() {
     // This install enrols another machine beside the handoff: the newest
     // main-log head here, which the replica takes too (mesh PR1b: an owner
     // answer is signed by its carrier's install key, log_structure.rs:607-612,
-    // so no handoff fences it).
-    let (other, _) = other_machine(&host, 65, MachineRole::Owned(MachineOwnership::Yours));
+    // so no handoff fences it). The answer carries no roster key's cosign: a
+    // key the handoff retires signs nothing that stands outside its line
+    // (retired_signers.rs), so this install holds no root signer here, and
+    // its live Yours carrier gives a Rented answer, which needs no owner proof.
+    for key in host.vault.authority_fold().unwrap().roster.keys() {
+        host.vault.release_checkpoint_root_signer(key);
+    }
+    let (other, _) = other_machine(&host, 65, MachineRole::Owned(MachineOwnership::Rented));
     let beside = stored_entries(&host.vault)
         .into_iter()
         .find(|entry| {
             matches!(&entry.op, AuthorityOp::MachineProfile(profile) if profile.machine == other)
         })
         .unwrap();
+    assert!(beside.cosigns.is_empty());
     replica
         .put_authority_log_entry(&beside, TimeRange { start: 3, end: 3 }, 3)
         .unwrap();

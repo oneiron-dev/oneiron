@@ -23,10 +23,17 @@ use crate::{EntityId, Vault};
 /// and answers its id with the install key that signs as it. The request is
 /// the enrolment proof its own key signs for this vault, computer class.
 ///
+/// The answer stands only on a handle that holds an owner key's proof, as a
+/// self-host server holds its host root
+/// ([`Vault::hold_checkpoint_root_signer`]); elsewhere it is held for the
+/// owner and names no machine yet (row CARRIER-OWNER-PROOF), so nothing the
+/// machine signs would count.
+///
 /// # Errors
 ///
-/// A vault with no id yet, an enrolment the fold refuses, and storage
-/// errors.
+/// A vault with no id yet, an enrolment the fold refuses,
+/// [`crate::error::RecordError::OwnerKeyRequired`] for an answer held for
+/// the owner's proof, and storage errors.
 pub fn enroll_mine_machine(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -61,13 +68,18 @@ pub fn enroll_mine_machine(
             .to_bytes(),
         restored_from: None,
     };
-    vault.enroll_machine(
+    let landing = vault.enroll_machine(
         owner,
         ActSurface::ThisInstall,
         &request,
         MachineRole::Owned(MachineOwnership::Yours),
         None,
     )?;
+    if landing.held().is_some() {
+        return Err(crate::error::Error::Record(
+            crate::error::RecordError::OwnerKeyRequired,
+        ));
+    }
     Ok((machine, key))
 }
 

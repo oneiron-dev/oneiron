@@ -32,6 +32,14 @@
 //! "task authority". Green on the head. `the_signed_cancel_once_linked_refuses_the_restore`
 //! is a guard on both: once the link arrives, the signed cancel holds the restore.
 //!
+//! The image side reads a fact row the same way: a row the checkpoint holds without its link
+//! counts in no fold of the restored vault (blind review round 2 P1, REVIEW-10064). Before
+//! this fix the compare found the image's row equal to the live one and let the restore drop
+//! a fact whose link arrived after the checkpoint. Red on the base (#10064's head
+//! 8329957d2f88, plus this test): the restore in
+//! `a_signed_cancel_linked_since_the_checkpoint_refuses_the_restore` goes ahead. Green on the
+//! head: it is refused for "task authority".
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features
 //! --test restore_counts_live_task_facts`.
 #![cfg(all(oneiron_test_support, feature = "sync", feature = "test-support"))]
@@ -383,6 +391,34 @@ fn the_signed_cancel_once_linked_refuses_the_restore() {
     );
     let Err(error) = vault.restore() else {
         panic!("restoring the checkpoint would bring the cancelled task back open");
+    };
+    let message = error.to_string();
+    assert!(
+        message.contains("would roll back") && message.contains("task authority"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_signed_cancel_linked_since_the_checkpoint_refuses_the_restore() {
+    let mut vault = rooted_checkpointed();
+    let (row, body) = signed_cancel(&vault);
+    land_replicated_row(&vault.live, row, &body);
+    vault.image = vault.directory.path().join("image-before-the-link");
+    vault
+        .live
+        .snapshot_checkpoint(&vault.image, 150)
+        .expect("snapshot the vault with the cancel's row and not its link");
+    link_to_task(&vault.live, row, vault.task);
+    assert!(
+        vault.cancelled(),
+        "once its link arrives, the cancel its carrier's signature proves counts"
+    );
+    let Err(error) = vault.restore() else {
+        panic!(
+            "the checkpoint holds the cancel's row but not its link, so no fold of the restored \
+             vault counts the cancel: restoring it would bring the cancelled task back open"
+        );
     };
     let message = error.to_string();
     assert!(

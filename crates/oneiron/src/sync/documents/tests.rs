@@ -178,8 +178,10 @@ fn offline_document_journal_survives_eviction_and_clears_only_on_covering_ack() 
     assert_eq!(peer.get_text("body").to_string(), "offline");
 }
 
+/// A live editor's document is erased at the pass, under its writer lock
+/// (HELD-ENTITY-DOCUMENT-DEFERRED): only a writer mid-write defers it.
 #[test]
-fn document_sweep_defers_live_editor_then_erases_snapshot_updates_and_journal() {
+fn document_sweep_erases_live_editors_snapshot_updates_and_journal_unless_writer_busy() {
     use crate::sync::{WindowManager, bridge::Materializer};
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
@@ -193,10 +195,11 @@ fn document_sweep_defers_live_editor_then_erases_snapshot_updates_and_journal() 
     let actor = editor(&vault);
     let doc = manager.documents().open(id).unwrap();
     doc.edit_text(actor, 1, 0, 0, "erase-this").unwrap();
-    assert!(!vault.compact_document_for_sweep(id, true).unwrap());
-    drop(doc);
+    {
+        let _busy = doc.writer.lock().unwrap();
+        assert!(!vault.compact_document_for_sweep(id, true).unwrap());
+    }
     assert!(vault.compact_document_for_sweep(id, true).unwrap());
-    let doc = manager.documents().open(id).unwrap();
     assert_eq!(doc.text().unwrap(), "");
     assert!(doc.pending_frames().unwrap().is_empty());
 }

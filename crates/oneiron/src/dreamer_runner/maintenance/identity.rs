@@ -239,6 +239,37 @@ pub(crate) fn settle_asks_of_turn_for_test(
     })
 }
 
+/// Settles every open ask whose mention is in `turn` as `chosen` at `now`,
+/// as the Dreamer settles one a saved hint or its decision picks: inferred,
+/// under the Dreamer's seal, with its receipt and the inverse the owner's
+/// revert reads (FIX 3327). Returns each settled ask's key.
+#[cfg(oneiron_test_support)]
+pub(crate) fn settle_asks_of_turn_as_dreamer_for_test(
+    vault: &Vault,
+    turn: &EntityId,
+    chosen: EntityId,
+    now: u64,
+) -> Result<Vec<[u8; 32]>> {
+    vault.with_write_txn(|txn| {
+        let open = ASKS.scan(&vault.store, txn)?;
+        let mut settled = Vec::new();
+        for (key, ask) in open.iter().filter(|(_, ask)| ask.turn == *turn) {
+            settle_undo::settle_in_txn(
+                vault,
+                txn,
+                ask,
+                Answer::Is(chosen),
+                (ClaimSource::Inferred, &dreamer_seal()),
+                now,
+            )?;
+            ASKS.delete(&vault.store, txn, key)?;
+            index::sync_ask_membership(&vault.store, txn, key, Some(ask), None)?;
+            settled.push(*key);
+        }
+        Ok(settled)
+    })
+}
+
 /// Stamps every open ask kept separate at `now`, as a nightly decision
 /// that abstains leaves it (`settlement::keep_separate_in_txn`), with no
 /// Dreamer receipt: the test door's way to hold a question out of the due
@@ -558,9 +589,10 @@ impl Memory<'_> {
                 now,
             )?
             else {
-                // One entity answers only when the lane reads it.
+                // One entity answers only when the lane reads it, as it
+                // stands: nothing here restores an archived one.
                 if let [entity] = current.link.entities()
-                    && admission::candidate_in_txn(vault, &admit, txn, entity)?
+                    && admission::linked_in_txn(vault, &admit, txn, entity)?
                 {
                     return Ok(IdentityActNow::Settled {
                         entity: entity.to_hex(),

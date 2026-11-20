@@ -12,7 +12,12 @@
 //! - over MCP (`/mcp/tool-first`, `tools/call self.actor`) the same
 //!   channel-bound credential is refused too (-32020): refused on main
 //!   (`unrestricted`), answered at ab00ee9c (the filtered MCP gate), refused
-//!   after the review fix (review round 1 of #9533).
+//!   after the review fix (review round 1 of #9533);
+//! - over MCP every other host door with the same pair (filtered MCP bounds,
+//!   HTTP admission `lane_record_scope`), read from the verb table, refuses
+//!   the channel-bound credential at the gate as well (FIX
+//!   MCP-FILTERED-HOST-DOOR-CHANNEL-CAVEAT-PARITY): on main only `self.actor`
+//!   is refused there; the others pass the gate and reach their doors.
 //!
 //! Fixture modeled on `crates/oneiron-server/tests/vault_support_grants_doors.rs`
 //! (support mint + facade `post` with a holder-signed binding); channel mint
@@ -46,6 +51,7 @@ use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
+use oneiron_server::mcp::MCP_TOOL_ARGS_SCHEMA_VERSION;
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -469,7 +475,8 @@ fn a_channel_caveat_is_refused_at_self_actor_over_mcp() {
                             "policy_ref": "policy:agent-session",
                             "purpose": "learn our own actor ref",
                         },
-                        "arguments": {},
+                        // Every generated tool requires its `spec`.
+                        "arguments": { "spec": {} },
                     },
                 }),
             )
@@ -482,6 +489,123 @@ fn a_channel_caveat_is_refused_at_self_actor_over_mcp() {
             answer["error"]["data"]["error_code"].as_str(),
             Some("mcp_scope_unprojectable"),
             "the gate refuses the channel caveat: {answer}"
+        );
+    });
+}
+
+/// The verb rows that are host doors under the MCP gate's filtered record
+/// bounds and admitted over HTTP by `lane_record_scope`, as the verb table
+/// (`scripts/sdk/verbs/*.json`) states them, so a new such row is covered.
+/// `execute_code` is left out: MCP serves it as its own endpoint tool, whose
+/// session gate takes no record bound at all (`mcp_execute_code_gate`).
+fn filtered_lane_host_doors() -> Vec<String> {
+    let verbs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/sdk/verbs");
+    let mut rows = Vec::new();
+    for entry in std::fs::read_dir(verbs).expect("FIXTURE: the verb table") {
+        let path = entry.expect("FIXTURE: a verb table entry").path();
+        if path.extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        let row: Value =
+            serde_json::from_slice(&std::fs::read(path).expect("FIXTURE: a verb row's bytes"))
+                .expect("FIXTURE: a verb row is JSON");
+        if row["host_door"] == true
+            && row["mcp_scope"] == "filtered"
+            && row["admission"]["lane_record_scope"] == true
+            && row["name"] != "execute_code"
+        {
+            rows.push(
+                row["name"]
+                    .as_str()
+                    .expect("FIXTURE: a verb row's name")
+                    .to_owned(),
+            );
+        }
+    }
+    rows.sort();
+    rows
+}
+
+/// Over MCP, every host door under the filtered record bounds whose HTTP
+/// admission is `lane_record_scope` refuses a channel-bound credential at
+/// the gate (-32020 `mcp_scope_unprojectable`), before its hooks and its
+/// door, as its facade dispatch refuses one with 403 `record-scope` (FIX
+/// MCP-FILTERED-HOST-DOOR-CHANNEL-CAVEAT-PARITY). A host door runs outside
+/// the engine's scoped read, which applies a channel caveat row by row, so
+/// the filtered bounds cannot carry one to it. Red on main: only `self.actor` is
+/// refused at the gate; every other such door passes the filtered bounds
+/// (record check `Ok(())`) and answers from its door.
+#[test]
+fn every_filtered_lane_host_door_refuses_a_channel_caveat_over_mcp() {
+    run_on_engine_stack("host-door-channel-mcp", || async {
+        let rows = filtered_lane_host_doors();
+        assert!(
+            rows.iter().any(|row| row == SELF_ACTOR) && rows.len() > 1,
+            "FIXTURE: the verb table holds self.actor and other filtered lane host doors: {rows:?}"
+        );
+        let served = served().await;
+        let scope = bounded_scope(
+            ScopeId(EntityId::now()),
+            ScopeId(EntityId::now()),
+            ScopeId(EntityId::now()),
+            &["read", "write"],
+        );
+        let bound = served.channel_holder(0xC6, 0xC5, &scope);
+        assert!(
+            !bound.slip.claims.channels.is_empty(),
+            "FIXTURE: the slip carries a channel caveat"
+        );
+        let caller = Caller::Support(&bound);
+        let (status, reply) = served
+            .mcp(
+                caller,
+                1,
+                "initialize",
+                json!({
+                    "protocolVersion": MCP_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": { "name": "host-door-channel-mcp", "version": "1" },
+                }),
+            )
+            .await;
+        assert_eq!(
+            status, 200,
+            "FIXTURE: the channel-bound slip initializes: {reply}"
+        );
+        assert!(
+            reply.get("error").is_none(),
+            "FIXTURE: the gateway registers the channel-bound slip: {reply}"
+        );
+
+        let mut passed = Vec::new();
+        for (id, row) in (2..).zip(&rows) {
+            let (_, answer) = served
+                .mcp(
+                    caller,
+                    id,
+                    "tools/call",
+                    json!({
+                        "name": row,
+                        "arguments": {
+                            "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+                            "consent": {
+                                "policy_ref": "policy:agent-session",
+                                "purpose": "call a host door under a channel caveat",
+                            },
+                            "arguments": { "spec": {} },
+                        },
+                    }),
+                )
+                .await;
+            if answer["error"]["data"]["error_code"].as_str() != Some("mcp_scope_unprojectable") {
+                passed.push(format!("{row}: {answer}"));
+            }
+        }
+        assert!(
+            passed.is_empty(),
+            "LEAK: a channel-bound credential passes the MCP gate at {} of {} filtered lane host doors: {passed:#?}",
+            passed.len(),
+            rows.len()
         );
     });
 }

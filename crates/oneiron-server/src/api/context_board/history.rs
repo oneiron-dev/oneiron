@@ -12,6 +12,7 @@ use crate::auth::CoreScope;
 use crate::error::ApiError;
 use crate::error::ApiErrorEnvelope;
 use crate::error::EnvelopedApiError;
+use crate::error::ErrorCode;
 use crate::server::SyncServer;
 use axum::extract::Path;
 use axum::extract::State;
@@ -304,7 +305,16 @@ fn release_board_replay(
         return Err(refused());
     }
     if let Some(retrieval) = &request.retrieval {
-        let audience = retrieval.replay_audience(&server.vault, auth)?;
+        // The kept retrieval names its room and its contacts again. One the
+        // caller no longer reads answers as absent to a fresh read; here it
+        // refuses the replay, as every other row the board named does.
+        let audience =
+            retrieval
+                .replay_audience(&server.vault, auth)
+                .map_err(|error| match error.code() {
+                    ErrorCode::NotFound => refused(),
+                    _ => error,
+                })?;
         let admitted = server
             .vault
             .board_documents_admitted(

@@ -275,6 +275,206 @@ fn union_dedupes_evidence_and_keeps_representative_shape() {
     );
 }
 
+/// A group's union carries each member's cited claims once, in member order, and a
+/// group that cites no claim keeps the key absent.
+#[test]
+fn union_carries_the_cited_claims_of_every_member() {
+    let pin = |claim: &str| {
+        json!({
+            "claim": claim,
+            "version": {
+                "entity": claim,
+                "entity_type": 0,
+                "learned_at": 7,
+                "revision": format!("blake3:{}", "ab".repeat(32)),
+            },
+        })
+    };
+    let first = pin(&"c1".repeat(16));
+    let second = pin(&"c2".repeat(16));
+    let operand = |predicate: &str, cited: Option<Value>| {
+        let mut built = json!({
+            "subject": "b1".repeat(16),
+            "predicate": predicate,
+            "value": "tea",
+            "evidence": [],
+        });
+        if let Some(cited) = cited {
+            built["claim_evidence"] = cited;
+        }
+        built
+    };
+    let operands = vec![
+        operand("likes", Some(json!([first.clone()]))),
+        operand("likes", Some(json!([second.clone(), first.clone()]))),
+        operand("dislikes", None),
+    ];
+    let groups = CandidateGroups {
+        groups: vec![
+            CandidateGroup {
+                representative_index: 0,
+                member_indexes: vec![0, 1],
+                corrects: None,
+            },
+            CandidateGroup {
+                representative_index: 2,
+                member_indexes: vec![2],
+                corrects: None,
+            },
+        ],
+        pending_bindings: Vec::new(),
+    };
+    let unions = union_operands(&operands, &groups);
+    assert_eq!(unions.len(), 2, "one union per bound group");
+    assert_eq!(
+        unions[0]["claim_evidence"],
+        json!([first, second]),
+        "each member's cited claims, once, in member order"
+    );
+    assert!(
+        unions[1].get("claim_evidence").is_none(),
+        "a group that cites no claim keeps the key absent"
+    );
+}
+
+/// The head a representative corrects stays out of its union when only another member
+/// cites it, so the union still does not restate the head it was asked about. A
+/// representative that cites the head it corrects keeps that citation, and every other
+/// cited claim joins the union as before.
+#[test]
+fn union_leaves_out_a_member_citation_of_the_head_its_representative_corrects() {
+    let pin = |claim: &str| {
+        json!({
+            "claim": claim,
+            "version": {
+                "entity": claim,
+                "entity_type": 0,
+                "learned_at": 7,
+                "revision": format!("blake3:{}", "ab".repeat(32)),
+            },
+        })
+    };
+    let corrected = "c1".repeat(16);
+    let other = "c2".repeat(16);
+    let operand = |corrects: Option<&str>, cited: Option<Value>| {
+        let mut built = json!({
+            "subject": "b1".repeat(16),
+            "predicate": "likes",
+            "value": "tea",
+            "evidence": [],
+        });
+        if let Some(corrects) = corrects {
+            built["corrects"] = json!(corrects);
+        }
+        if let Some(cited) = cited {
+            built["claim_evidence"] = cited;
+        }
+        built
+    };
+    let operands = vec![
+        operand(Some(&corrected), None),
+        operand(None, Some(json!([pin(&corrected), pin(&other)]))),
+        operand(Some(&corrected), Some(json!([pin(&corrected)]))),
+        operand(None, Some(json!([pin(&corrected), pin(&other)]))),
+        operand(Some(&corrected), None),
+        operand(None, Some(json!([pin(&corrected)]))),
+    ];
+    let group = |representative_index: usize| CandidateGroup {
+        representative_index,
+        member_indexes: vec![representative_index, representative_index + 1],
+        corrects: None,
+    };
+    let groups = CandidateGroups {
+        groups: vec![group(0), group(2), group(4)],
+        pending_bindings: Vec::new(),
+    };
+    let unions = union_operands(&operands, &groups);
+    assert_eq!(unions.len(), 3, "one union per bound group");
+    assert_eq!(
+        unions[0]["corrects"],
+        json!(corrected),
+        "the union keeps its representative's correction"
+    );
+    assert_eq!(
+        unions[0]["claim_evidence"],
+        json!([pin(&other)]),
+        "a member's citation of the corrected head stays out; its other citation joins"
+    );
+    assert_eq!(
+        unions[1]["claim_evidence"],
+        json!([pin(&corrected), pin(&other)]),
+        "a representative that cites the head it corrects keeps that citation"
+    );
+    assert!(
+        unions[2].get("claim_evidence").is_none(),
+        "a union left with no cited claim keeps the key absent"
+    );
+}
+
+/// A member that cites the head its representative corrects joins that citation to the
+/// union when it corrects the same head with the representative's own predicate and
+/// value: the engine took its correction while it cited the head, so neither it nor the
+/// union restates the head. A member that corrects the head with another proposed
+/// predicate is no such proof for the union, so its citation stays out. The operands
+/// here are synthetic: the test covers which citation joins, not an admissible pack.
+#[test]
+fn union_keeps_a_citation_of_the_corrected_head_from_a_member_that_corrects_it_too() {
+    let corrected = "c1".repeat(16);
+    let pin = json!({
+        "claim": corrected,
+        "version": {
+            "entity": corrected,
+            "entity_type": 0,
+            "learned_at": 7,
+            "revision": format!("blake3:{}", "ab".repeat(32)),
+        },
+    });
+    let operand = |predicate: &str, cites: bool| {
+        let mut built = json!({
+            "subject": "b1".repeat(16),
+            "predicate": predicate,
+            "value": "coffee",
+            "evidence": [],
+            "corrects": corrected,
+        });
+        if cites {
+            built["claim_evidence"] = json!([pin.clone()]);
+        }
+        built
+    };
+    let operands = vec![
+        operand("likes", false),
+        operand("likes", true),
+        operand("likes", false),
+        operand("prefers", true),
+    ];
+    let group = |representative_index: usize| CandidateGroup {
+        representative_index,
+        member_indexes: vec![representative_index, representative_index + 1],
+        corrects: Some(corrected.clone()),
+    };
+    let groups = CandidateGroups {
+        groups: vec![group(0), group(2)],
+        pending_bindings: Vec::new(),
+    };
+    let unions = union_operands(&operands, &groups);
+    assert_eq!(unions.len(), 2, "one union per bound group");
+    assert_eq!(
+        unions[0]["claim_evidence"],
+        json!([pin]),
+        "a member that corrects the same head with the same proposal joins its citation"
+    );
+    assert_eq!(
+        unions[0]["corrects"],
+        json!(corrected),
+        "the union keeps its representative's correction"
+    );
+    assert!(
+        unions[1].get("claim_evidence").is_none(),
+        "a member that corrects the head with another predicate keeps its citation out"
+    );
+}
+
 #[test]
 fn required_policy_fields_and_policy_pin_are_enforced() {
     let fixture = load_fixture();

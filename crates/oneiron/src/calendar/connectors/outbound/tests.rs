@@ -408,7 +408,7 @@ fn remote_applied_resume_uses_stored_snapshot_after_a_newer_local_edit() {
             .ics,
     };
     issue_prepared_upsert(
-        &vault, &operation, &transport, &uid, NOW, &mut row, &request,
+        &vault, &operation, &transport, &uid, NOW, &mut row, &request, true,
     )
     .unwrap();
     let row = calendar_write_outbox_rows(&vault).unwrap().remove(0);
@@ -584,6 +584,8 @@ fn a_push_under_a_pending_passport_uid_never_moves_the_uid_index() {
             last_seen_at: NOW,
             presence: CalendarPassportPresence::Live,
             cancelled_since: None,
+            written_cancelled: false,
+            deferred_cancel_seen_at: None,
         }),
         1.0,
         crate::ClaimApprovalStatus::Proposed,

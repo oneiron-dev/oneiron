@@ -23,7 +23,7 @@ mod archive_import;
 #[cfg(feature = "sync")]
 mod residence_read;
 pub use archive_import::ImportedNoteRead;
-pub(crate) use archive_import::{ArchivedNoteAdmission, archived_note_body};
+pub(crate) use archive_import::{ArchivedNoteAdmission, archived_note_body, diary_author_in};
 #[cfg(feature = "sync")]
 pub(crate) use residence_read::opened_note_view;
 mod archive_read;
@@ -74,7 +74,7 @@ pub use proposals::{
 };
 pub(crate) use proposals::{
     NoteEditLanding, erase_fork_actor_in_txn, erase_proposal_actor_in_txn,
-    erase_receipt_actor_in_txn, recovery_fork_value,
+    erase_receipt_actor_in_txn, landing_receipt_note, recovery_fork_value,
 };
 pub use sync_rows::{ACTOR_ERASE_NOTE_REQUEST_RECEIPT, NoteRequestReceiptErase};
 #[cfg(oneiron_test_support)]
@@ -462,6 +462,8 @@ pub(crate) use replica::{
 };
 #[cfg(all(test, feature = "sync"))]
 mod document_tests;
+#[cfg(all(test, feature = "sync"))]
+mod mask_splice_tests;
 #[cfg(all(test, feature = "sync"))]
 mod sync_tests;
 pub(crate) use document::MAX_NOTE_BYTES;

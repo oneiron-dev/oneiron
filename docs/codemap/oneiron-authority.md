@@ -33,10 +33,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/home_candidacy.rs` | src | s | 1 struct · 1 fn · 1 const · 2 crate-vis | HomeCandidacy | A machine's own declaration of itself as a MACRO home candidate (FIX 4898; ARCH-0026: "Election order is… |
 | `src/authority/home_pick.rs` | src | s | 1 struct · 3 fn · 2 const · 2 crate-vis | HomeNodePick | The owner's pick of his vault's home node (DOOR-101 PR2a; ARCH-0026: "The owner picks the home node in… |
 | `src/authority/leave_notice_delegation.rs` | src | s | 1 struct · 1 enum · 8 fn · 4 const | LeaveNoticeDelegation, LeaveNoticeDelegationPurpose | A root's purpose-limited delegation of leave-notice verification to its successor (FIX 7932, Engine 19:59 =… |
-| `src/authority/log_entry_op.rs` | src | m | 1 struct · 1 enum · 12 fn | AuthorityLogEntry, AuthorityOp | The authority op vocabulary and the signed log-entry envelope |
+| `src/authority/log_entry_op.rs` | src | m | 1 struct · 1 enum · 12 fn · 1 crate-vis | AuthorityLogEntry, AuthorityOp | The authority op vocabulary and the signed log-entry envelope |
 | `src/authority/machine_profile.rs` | src | m | 2 struct · 3 enum · 11 fn · 4 const · 5 crate-vis | MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole | The physical machine profile: the owner's signed answer when a machine joins the vault, and its wire codec |
 | `src/authority/membership_execution.rs` | src | m | 2 struct · 1 enum · 5 fn · 1 const · 2 crate-vis | MembershipExecution, MembershipExecutionCause, MembershipHandover | A shared-vault membership change as a carrier-signed AUTHORITY_LOG record (FIX 12335, Engine 13:13 call A)… |
-| `src/authority/mod.rs` | src | s | 45 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
+| `src/authority/mod.rs` | src | s | 46 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
 | `src/authority/origin_cut.rs` | src | s | 1 struct · 3 fn · 2 const · 2 crate-vis | OriginCut | The owner's cut of a repository's origin authority (FIX 15740, Engine 11-06 02:54; ARCH-0068: "Refs are… |
 | `src/authority/owner_act.rs` | src | m | 1 struct · 3 enum · 7 fn · 1 const · 2 crate-vis | ActBy, ActSurface, OwnerAct, OwnerActKind | The owner's act as a signed op carries it (mesh contract §2): one provenance record, [`OwnerAct`], inside… |
 | `src/authority/owner_handover.rs` | src | s | 1 struct · 1 enum · 4 fn · 3 const · 2 crate-vis | OwnerHandover, OwnerHandoverCause | An Owner addition or handover in a shared vault as a signed AUTHORITY_LOG Owner action (ARCH-0043… |
@@ -50,12 +50,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/owner_work/permit_piece.rs` | src | s | 1 struct · 2 fn · 1 const · 3 crate-vis | CustodyPermitPiece | One numbered piece of a custody request's permit set, and its wire codec (FIX 11866) |
 | `src/authority/owner_work/result.rs` | src | m | 2 struct · 4 enum · 9 fn · 3 crate-vis | CustodyRegisterCheck, CustodyUncheckedReason, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkResult, SealedWorkOutput | An executor's result for one owner work request, and its wire codec: the work was enacted, or refused for a… |
 | `src/authority/owner_work/root_basis.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | RootRevisionBasis | A root request's revision basis (FIX 5551): the heads its `seen` is the revision of, as the recorder folded… |
-| `src/authority/policy_setting.rs` | src | s | 1 struct · 1 enum · 8 fn · 2 const · 2 crate-vis | PolicySetting, PolicySettingSet | The owner's act on a vault setting as a signed op (FIX 4624, FIX 5660), and its wire codec |
+| `src/authority/policy_setting.rs` | src | m | 2 struct · 1 enum · 16 fn · 4 const · 3 crate-vis | PolicySetting, PolicySettingRow, PolicySettingSet | The owner's act on a vault setting as a signed op (FIX 4624, FIX 5660), and its wire codec |
 | `src/authority/recovery_ceremony.rs` | src | s | 1 enum · 4 fn · 1 const | GenesisRecoveryStep | Explicit genesis recovery-secret acknowledgement and its visible fragile flag |
 | `src/authority/residence.rs` | src | m | 3 struct · 2 enum · 10 fn · 7 const · 5 crate-vis | PredictedResidenceSet, ResidenceAct, ResidenceDirective, ResidenceResult, ResidenceResultStatus | The owner's residence directives to one of their machines, and each machine's result for one (OF-534) |
 | `src/authority/restored_machine_join.rs` | src | s | 1 struct · 1 enum · 3 fn · 3 const · 3 crate-vis | RestoredJoinEnrolment, RestoredMachineJoin | The owner's word that no other machine of the vault is left, which joins one machine born of a restore (row… |
 | `src/authority/root_appointment.rs` | src | s | 1 struct · 4 fn · 4 const · 3 crate-vis | RootAppointment | The owner anchor's appointment of a successor root key (row OWNER-ANCHOR-ROOT-RECOVERY; Engine RULINGs 14… |
 | `src/authority/seat_claim_binding.rs` | src | s | 1 struct · 1 fn · 1 const | SeatClaimSlipBinding | FIX 10624: the seat claim a seat-child slip carries, signed in its claims beside `grant_ref` and… |
+| `src/authority/setting_copy.rs` | src | s | 3 struct · 3 fn · 1 const · 2 crate-vis | SettingCopy, SettingCopyName, SettingCopyRow | A move's carried setting rows as one engine copy (stage 7a-4; DESIGN 1.6 "A move across machines"), and its… |
 | `src/authority/slip_claims.rs` | src | m | 2 struct · 5 fn · 2 const | SlipClaims, SlipMintAction | Capability-slip payloads as the authority log commits them: the claims a host mints and their shape and… |
 | `src/authority/slip_wire.rs` | src | m | 2 fn · 2 crate-vis | — | Field-by-field signed capability claims and six-axis Scope wire codec |
 | `src/authority/support_delegation.rs` | src | s | 1 struct · 1 enum · 4 fn · 5 const | SupportDelegation, SupportRepair | OF-606: the support delegation a customer's support slip carries, signed in its claims beside `grant_ref`… |
@@ -90,5 +91,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/authority_register_names.rs` | test | s | — | — | The names of 5 name lists in `oneiron-authority`, one line per row, generated from… |
 | `tests/carrier_signature.rs` | test | s | — | — | The carrier signature of a row act (`oneiron_authority::authority::CarrierSignature`, Fable pass 28 DESIGN… |
 | `tests/passkey_owner_signature.rs` | test | m | — | — | A browser passkey signs as an owner root (row WEB-PASSKEY-OWNER-KEY; lead ruling CARRIER-HOSTED-WEB-ACTS =… |
+| `tests/policy_setting_batch.rs` | test | s | — | — | A batch is one act (stage 7a-3, DESIGN 1.6 "What travels"): - a batch lists its further rows under `more`… |
+| `tests/policy_setting_name.rs` | test | s | — | — | The setting an owner act names is its wire text (stage 7a-1, RULING SETTING-7A-SIGNED-ACT-BASE = A): any… |
+| `tests/policy_setting_slot.rs` | test | s | — | — | A setting act names its row and carries its value (stage 7a-2, DESIGN 1.6 "What travels"): - an older act… |
 | `tests/predicted_residence_act.rs` | test | s | — | — | The predicted residence acts (census L7-46 + L10-14; ARCH-0023b #predicted-residence) |
+| `tests/setting_copy_op.rs` | test | s | — | — | A move's carried rows as one copy (stage 7a-4, DESIGN 1.6 "A move across machines"): - a copy round-trips… |
 | `tests/widened_seams.rs` | test | m | — | — | Direct calls into the authority-log checks `oneiron-authority` made `pub` so `oneiron`'s fold and checkpoint… |

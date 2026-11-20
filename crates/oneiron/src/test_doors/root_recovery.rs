@@ -7,12 +7,14 @@ use zeroize::Zeroizing;
 use crate::authority::AuthorityVaultId;
 use crate::world_keys::{RecoveryAuthoritySigner, RecoveryRootSeed};
 
-/// The authority key's own seed that `seed` derives for `vault_id`, as the
-/// recovery box would hold it.
+/// The authority key's own seed that `seed` derives for `vault_id` at
+/// `generation`, as the recovery box would hold it. Generation 0 is today's
+/// bytes exactly.
 #[must_use]
 pub fn released_authority_seed(
     seed: &RecoveryRootSeed,
     vault_id: &AuthorityVaultId,
+    generation: u32,
 ) -> Zeroizing<[u8; 32]> {
-    RecoveryAuthoritySigner::authority_seed(seed, vault_id)
+    RecoveryAuthoritySigner::authority_seed(seed, vault_id, generation)
 }

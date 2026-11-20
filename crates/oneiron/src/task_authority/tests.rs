@@ -119,8 +119,9 @@ fn strict_v3_bodies_round_trip_and_reject_everything_else() {
     cases.push(rewrite_body(&encoded, |entries| {
         entries.push((Value::from("extra"), Value::from(1_u8)));
     }));
-    // A consult's binding generation must name a party in the fact and
-    // contain one or more 32-byte binaries in strictly ascending order.
+    // A binding generation rides only on a consult's party fact, only as
+    // one or more 32-byte binaries in strictly ascending order, and only
+    // for a party the fact names.
     cases.push(rewrite_body(&encoded, |entries| {
         entries.push((
             Value::from(BODY_KEY_ACTOR_GENERATION),

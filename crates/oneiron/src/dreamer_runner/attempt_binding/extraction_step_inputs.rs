@@ -81,7 +81,7 @@ impl DreamerAttemptBinding {
                     attempt: self.lease.attempt(),
                     branch: &branch,
                     caller: None,
-                    destination: None,
+                    destination: self.destination_bound(),
                 },
             )
             .map_err(bound_branch_error)?;

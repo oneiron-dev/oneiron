@@ -151,6 +151,10 @@ pub(crate) fn erase_turn_program_actor_in_txn(
         WAKE.delete(vault, txn, key)?;
         super::index::unindex_wake_in_txn(vault, txn, *actor, *key)?;
     }
+    // And each mark and release kept for one of its wakes, with or without
+    // an owed wake here.
+    #[cfg(feature = "sync")]
+    super::retraction::erase_actor_in_txn(vault, txn, actor)?;
     scrub_actor_admission_instruments_in_txn(vault, txn, actor)?;
     scrub_actor_step_bodies_in_txn(vault, txn, actor).map(drop)
 }

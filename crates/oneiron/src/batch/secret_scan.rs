@@ -29,14 +29,16 @@ pub(crate) use self::lift_history::{
     propose_typed_body_at_in_txn, run_lift_pass, typed_body_at_proposal_due_in_txn,
 };
 pub(crate) use self::mask::admit::{
-    Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, plan_parts_in_txn,
-    predict_masked_body, predict_masked_text, scan_content_in_txn, scan_document_in_txn,
+    Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, admit_tracked_parts_in_txn,
+    plan_parts_in_txn, predict_masked_body, predict_masked_text, scan_content_in_txn,
+    scan_document_in_txn,
 };
 pub(crate) use self::mask::carrier::{
     CarrierText, LiftedKeys, carrier_origin, carrier_text_placeable, carrier_texts_hit_in_txn,
     mark_carrier_text_in_txn, mark_carrier_texts_in_txn, mask_spanning_json, mask_unplaced_json,
 };
 pub(crate) use self::mask::claim_value_plan::plan_masked_claim_value_in_txn;
+pub(crate) use self::mask::custody_form::{custody_record_form, custody_records_named};
 pub(crate) use self::mask::held_template::{MapOrder, held_row_meets};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mask::mark_text_value_in_txn;
@@ -54,7 +56,7 @@ pub(crate) use self::mask::side_row::admit_typed_with_rule;
 pub(crate) use self::mask::side_row::{
     SidePart, TextReplacements, admit_side_parts, admit_side_row, admit_tracked_side_parts,
     admit_typed, admitted_from_known, admitted_from_plan, from_named_tree, named_tree,
-    origin as side_row_origin,
+    origin as side_row_origin, tracked_replacements,
 };
 pub(crate) use self::mask::spool::{
     AdmissionCustody, BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
@@ -62,11 +64,12 @@ pub(crate) use self::mask::spool::{
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
 pub(super) use self::mask::{MaskedClaimBodies, MaskedFiles};
 pub(crate) use self::mask::{
-    file_mints_in_txn, move_mask_origin_in_txn, rebind_mask_origin_in_txn, side_row::admission_form,
+    RoomCarry, carry_room_secrets_in_txn, file_spans, mask_origin_in_txn,
+    seal_promoted_message_ops_in_txn, seal_whole_part_in_txn, span_placed_for,
 };
 pub(crate) use self::mask::{
-    file_spans, mask_origin_in_txn, seal_promoted_message_ops_in_txn, seal_whole_part_in_txn,
-    span_placed_for,
+    file_mints_in_txn, move_mask_origin_in_txn, rebind_mask_origin_in_txn, side_row::NestedBodies,
+    side_row::admission_form, side_row::known_nested_form,
 };
 pub(crate) use self::message_parts::seal_message_parts_in_txn;
 use self::provider_tokens::{classify_token, provider_token_spans};
@@ -88,30 +91,6 @@ use crate::store::Store;
 
 const REASON_DETECTED: &str = "gate.secret_scan.detected";
 
-/// The reason the side-row wall adds when it refuses a fresh secret in a row
-/// an off-record room writes (FIX 2329; Engine RULING FIX-2329-ROOM-CUSTODY
-/// = C): the room holds no custody of its own, and no off-record byte enters
-/// base, so a value no custody record holds cannot take a handle there. The
-/// remedy is to put the value in vault custody first, or to run on record.
-const REASON_OFF_RECORD_FRESH_KEY: &str = "gate.secret_scan.off_record_fresh_key";
-
-/// `refusal`, a refusal of a fresh secret in an off-record room's row, with
-/// [`REASON_OFF_RECORD_FRESH_KEY`] after its own reasons.
-fn off_record_fresh_key_refusal(refusal: Error) -> Error {
-    match refusal {
-        Error::Gate(GateError::GateWriteRejected {
-            outcome,
-            mut reason_codes,
-        }) => {
-            reason_codes.push(REASON_OFF_RECORD_FRESH_KEY);
-            Error::Gate(GateError::GateWriteRejected {
-                outcome,
-                reason_codes,
-            })
-        }
-        other => other,
-    }
-}
 const REASON_AWS_ACCESS_KEY_ID: &str = "gate.secret_scan.aws_access_key_id";
 const REASON_GITHUB_TOKEN: &str = "gate.secret_scan.github_token";
 const REASON_GOOGLE_API_KEY: &str = "gate.secret_scan.google_api_key";

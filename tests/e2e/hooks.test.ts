@@ -859,6 +859,9 @@ suite.test(test, "HOOKS-04", "After-hook redaction is monotone should work", asy
  * foreign effect while an independent owner control advances. The original
  * owner call retains its own authority; no private terminal getter is assumed.
  */
+/* HOOKS-05 is a budget case: in the 20 Nov night it reached its §6b receipt poll 20 s into the 30 s
+ * flow, with §6c, the offer, the Ask, the revoke and a restart still to run. Its stated bound is 90 s
+ * until it is measured. */
 suite.test(test, "HOOKS-05", "Hook sandbox and author scope should work", async () => {
   interface SandboxAuthorScenario {
     version: number;
@@ -1635,7 +1638,7 @@ suite.test(test, "HOOKS-05", "Hook sandbox and author scope should work", async 
       throw new BlockedDoor("inconclusive HOOKS-05 progress proof: the runner reported a drain failure");
     }
   }
-});
+}, 90_000);
 
 /* HOOKS-06 — OF-581, ARCH-0080 host-verbs/verb-outcomes.
  * A real public sitting owns three newly witnessed windows. Independent

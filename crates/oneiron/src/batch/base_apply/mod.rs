@@ -314,6 +314,7 @@ pub(super) fn apply_ops_with_authority_beside(
     let hub_admission = gate_mode.hub_admission.take();
     let refinement_admission = gate_mode.refinement_admission.take();
     let owner_archive_restore = gate_mode.owner_archive_restore.take();
+    let owner_archive_restore_annotators = gate_mode.owner_archive_restore_annotators.take();
     let birth_mask = gate_mode.birth_mask;
     let text_births = std::mem::take(&mut gate_mode.text_births);
     let births = std::mem::take(&mut gate_mode.births);
@@ -424,6 +425,14 @@ pub(super) fn apply_ops_with_authority_beside(
         .transpose()?;
     let write_policy = match (write_policy, owner_archive_restore) {
         (Some(policy), Some(permit)) => Some(policy.with_owner_archive_restore_permit(&permit)),
+        (policy, _) => policy,
+    };
+    let write_policy = match (write_policy, owner_archive_restore_annotators) {
+        (Some(policy), Some((permit, annotators))) => {
+            Some(annotators.iter().fold(policy, |policy, annotator| {
+                policy.with_owner_archive_restore_permit_for_annotator(&permit, *annotator)
+            }))
+        }
         (policy, _) => policy,
     };
     let pending_gate_consent_at_batch_start = persist_gate_pending_consent

@@ -874,10 +874,16 @@ pub(super) fn console_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.console.txt")
 }
 
-/// Where a step's type diagnostics past one reply are kept whole, in a
-/// body the run owns and never in its replay record (FIX 8277).
-pub(super) fn type_diagnostics_output_path(seq: u64, invocation: u64) -> String {
-    format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.{invocation}.type-diagnostics.json")
+/// Where check `check` keeps a step's type diagnostics past one reply
+/// whole, in a body the run owns and never in its replay record (FIX
+/// 8277). Each check of a step has its own path, so its own occurrence: a
+/// failed program's check and the re-entry's at the same step never share
+/// a body descriptor, and releasing one never releases the other's.
+pub(super) fn type_diagnostics_output_path(seq: u64, invocation: u64, check: EntityId) -> String {
+    format!(
+        "{SCRIPT_OUTPUT_DIR}/{seq:06}.{invocation}.{}.type-diagnostics.json",
+        check.to_hex()
+    )
 }
 
 /// The board frames a step's verb answers carried beside their outputs

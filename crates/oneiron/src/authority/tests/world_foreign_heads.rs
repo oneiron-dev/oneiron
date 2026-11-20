@@ -8,6 +8,7 @@ use super::support::{cosign_ed, ed_key, genesis_entry};
 use super::world_chain_reads::{edit, fold_under, hash, seeing};
 use super::world_key_doors::{Fresh, enrol_own, fresh_install, kit_seed, set};
 use super::world_privacy::world_row;
+use super::world_reissue::with_predecessor;
 use super::*;
 use crate::HostingPrivacyPosture::SelfHostLocal;
 use crate::world_keys::{RecoveryRoot, RecoveryRootSeed};
@@ -37,6 +38,7 @@ fn agreed(
 fn forty_foreign_roots_never_crowd_a_root_door() {
     let host = host();
     enrol_own(&host);
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let seed = kit_seed(host.vault_id, prepared.seed());
     host.vault

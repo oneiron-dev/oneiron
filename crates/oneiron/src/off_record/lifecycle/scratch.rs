@@ -134,6 +134,10 @@ impl PreparedScratchSave {
             }
             members.extend(held);
         }
+        // One carry for the save's artifacts: a room handle they name takes
+        // a base custody record, the one a turn of this save moved it to
+        // when one did (ROOM-CUSTODY-SAVED-ARTIFACTS).
+        let mut carry = floor.room_carry()?;
         for artifact in self.artifacts {
             match artifact {
                 PreparedArtifact::Note {
@@ -142,6 +146,9 @@ impl PreparedScratchSave {
                     edges,
                     birth,
                 } => {
+                    if let Some(carry) = carry.as_mut() {
+                        note.carry_room_secrets_in_txn(carry, vault, txn)?;
+                    }
                     note.land_in_txn(vault, txn, self.saver, grant, edges)?;
                     birth.land(vault, txn, grant)?;
                     members.insert(id);
@@ -152,12 +159,15 @@ impl PreparedScratchSave {
                 }
                 PreparedArtifact::Claim {
                     id,
-                    body,
+                    mut body,
                     occurred,
                     learned_at,
                     edges,
                     birth,
                 } => {
+                    if let Some(carry) = carry.as_mut() {
+                        carry_claim_in_txn(carry, vault, txn, id, &mut body)?;
+                    }
                     vault.put_saved_claim_in_txn(
                         txn, &id, &body, occurred, learned_at, self.saver, grant, edges,
                     )?;
@@ -185,6 +195,9 @@ impl PreparedScratchSave {
                         allow_reserved_predicate: false,
                         hub_sync_imported: false,
                     }];
+                    if let Some(carry) = carry.as_mut() {
+                        ops = carry.ops_in_txn(vault, txn, ops)?;
+                    }
                     ops.extend(edges);
                     crate::batch::BatchBuilder::promotion_replay(vault, ops, grant).apply_actor(
                         txn,
@@ -224,6 +237,23 @@ impl PreparedScratchSave {
             kept_messages,
         })
     }
+}
+
+/// `body`, a saved CLAIM `id`'s, with each room handle its opaque values
+/// (`val`, `evid`, `scope`) name moved into the vault's custody by `carry`
+/// (ROOM-CUSTODY-SAVED-ARTIFACTS), before its rows are built from it.
+fn carry_claim_in_txn(
+    carry: &mut crate::batch::secret_scan::RoomCarry,
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    body: &mut ClaimBody,
+) -> Result<()> {
+    carry.value_in_txn(vault, txn, id, &mut body.value)?;
+    for value in [&mut body.evidence, &mut body.scope].into_iter().flatten() {
+        carry.value_in_txn(vault, txn, id, value)?;
+    }
+    Ok(())
 }
 
 struct Selection<'a, 'v> {

@@ -2,12 +2,14 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_persistent_collections::PersistentMap;
+
 use super::*;
 
 /// A row a sequence floor refuses only to restriction (Astra #1430): a world
 /// edit, a grant travel choice, a checkpoint policy choice, a home pick, a
-/// person's conversation training choice, a setting's act, or a machine
-/// revision. The roster rule reads each as a replica with no floor
+/// person's conversation training choice, a setting's act or a move's
+/// setting copy, or a machine revision. The roster rule reads each as a replica with no floor
 /// does; this install never counts what it grants. A frontier join, which
 /// grants nothing, lands so too, so such an act above it keeps its effect;
 /// so does a custody permit piece, which has no effect alone (FIX 11866).
@@ -23,6 +25,8 @@ pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
             | AuthorityOp::ConversationTrainingSet(_)
             | AuthorityOp::ConversationTrainingVaultSet(_)
             | AuthorityOp::PolicySettingSet(_)
+            | AuthorityOp::SettingCopy(_)
+            | AuthorityOp::SettingPackHead(_)
             | AuthorityOp::MachineProfile(_)
             | AuthorityOp::FrontierJoin(_)
             | AuthorityOp::CustodyPermitPiece(_)
@@ -136,6 +140,29 @@ pub(super) fn entry_is_retired(
         && context
             .pre_handoff_entries
             .is_some_and(|permitted| !permitted.contains(&hash))
+}
+
+/// Whether a ReRoot that `signer` signs passes over a serving host: the
+/// parents' roster holds a live owner key with the host's stamp (`ROLE_CLOUD`
+/// or tier `CloudCustodial`, the stamp a hosted vault's root carries,
+/// `HostSlipIssuer::root_device`) while `signer` carries no such stamp. Such
+/// a move revokes the host's live root, and every slip the host minted stops
+/// verifying (NOTE WAYBACK-REROOT-TRACE, 15 Nov 22:02), so the fold never
+/// counts it, whichever door brought the row and whenever it was stored (FIX
+/// [HOSTED-REROOT-FOLD-RULE], A under RULING HOSTED-REROOT-ADMISSION-DOORS =
+/// C). The host's own move, signed by a stamped key, still counts, and a
+/// self-hosted vault's root carries no stamp, so its rows never meet this.
+pub(super) fn re_root_passes_over_a_serving_host(
+    roster: &PersistentMap<AuthorityKey, FoldedDevice>,
+    signer: &AuthorityKey,
+) -> bool {
+    let host_stamped = |device: &FoldedDevice| {
+        device.roles & ROLE_CLOUD != 0 || device.tier == AuthorityTier::CloudCustodial
+    };
+    let host_serves = roster
+        .values()
+        .any(|device| !device.revoked && device.roles & ROLE_OWNER != 0 && host_stamped(device));
+    host_serves && !roster.get(signer).is_some_and(host_stamped)
 }
 
 pub(super) fn active_participant_keys(

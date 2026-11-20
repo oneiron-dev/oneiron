@@ -261,7 +261,7 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
         let control = test_id(0x41);
         let head = test_id(0x48);
         let principal = test_id(0x43);
-        put_raw_entity_row(&vault, &subject, ENTITY_TYPE_PERSON, b"subject")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, test_time(1), 1, b"subject")?;
         put_raw_entity_row(&vault, &principal, ENTITY_TYPE_PERSON, b"reader")?;
         for id in [claim, control, head] {
             put_claim_body(&vault, &id, &reader_body())?;

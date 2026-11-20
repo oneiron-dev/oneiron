@@ -7,7 +7,7 @@ use crate::identity_topology::{
     IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
 };
 use crate::provider_confidence::write_provider_prior;
-use crate::registry::ENTITY_TYPE_PERSON;
+use crate::registry::ENTITY_TYPE_MACHINE;
 use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
 
 fn put_actor(vault: &Vault, id: EntityId, provider: &str) -> Result<()> {
@@ -17,7 +17,7 @@ fn put_actor(vault: &Vault, id: EntityId, provider: &str) -> Result<()> {
     )]))?;
     vault.put_entity(
         &id,
-        ENTITY_TYPE_PERSON,
+        ENTITY_TYPE_MACHINE,
         TimeRange { start: 1, end: 1 },
         1,
         &bytes,

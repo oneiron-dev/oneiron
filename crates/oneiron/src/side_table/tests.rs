@@ -565,6 +565,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "PROJECT_REVISIONS",
         "PROJECT_REVISION_AWAITING_MINT",
         "PROJECT_REVISION_BACKFILL",
+        "PROJECT_ROOM_NARROWING",
         "PROJECT_STRIPPED_PROOF",
         "PROJECT_WIDEN_ASK",
         "PROPOSAL_ACTOR_COUNT",
@@ -572,6 +573,10 @@ fn pre_move_fixture_coverage_is_explicit() {
         "PROPOSAL_SUBMISSION",
         "READ_EXPOSURE",
         "READ_EXPOSURE_RECORD",
+        "READ_SHAPE_PINS",
+        "READ_SHAPE_POSTERIOR",
+        "READ_SHAPE_SCOPE_READER_UNITS",
+        "READ_SHAPE_STAMP",
         "RETRIEVAL_AGE",
         "RETRIEVAL_AGE_BY_RUN",
         "RETRIEVAL_TRACE_KEY_LOCAL",
@@ -650,6 +655,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "SYNC_RESIDENCE_PREDICTED_WINDOW",
         "SYNC_RESIDENCE_PROMOTED_WINDOW",
         "SYNC_RESIDENCE_RETAIN_REFUSED_WINDOW",
+        "SYNC_RESTRICTED_DROPPED_CARRIER",
         "TAGGING_MARKER_SEQUENCE",
         "TAGGING_MENTION_REF",
         "TAGGING_PROVISIONAL",
@@ -685,6 +691,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "VAULT_CLEANUP_TASK_ATTEMPT_ARCHIVE",
         "VAULT_IDENTITY_LOCAL",
         "VAULT_IMPORT_STAMPS",
+        "VAULT_KEY_BOX_HOLD_PENDING",
         "VOICE_OWNER_REF",
         "VOICE_OWNER_REF_OWNER_INDEX",
         "VOICE_REF_IDENTITY",
@@ -695,6 +702,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "WEAVE_DIGEST_SOURCE",
         "WEAVE_WRONG_LINK_LABEL",
         "WIRE_LIMIT_QUESTION",
+        "WORK_TALK_REGISTRATION",
     ]
     .into_iter()
     .collect();

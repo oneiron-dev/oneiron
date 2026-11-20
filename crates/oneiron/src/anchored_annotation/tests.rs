@@ -824,12 +824,14 @@ fn anchored_thread_binds_verified_room_dag_node_without_copy_or_head_mutation() 
         11,
     )?;
     let room = EntityId::now();
-    vault.put_entity(
-        &room,
-        crate::registry::ENTITY_TYPE_CONVERSATION,
-        test_time(12),
+    vault.create_conversation(
+        room,
+        &crate::conversation::ConversationBody {
+            member_ids: vec![human.entity_ref()],
+            ..Default::default()
+        },
+        human,
         12,
-        &[0x80],
     )?;
     crate::conversation_dag::test_support::put_dag_test_policy(&vault, human, true)?;
     crate::conversation_dag::fixtures::grant_reads(&vault, human);
@@ -1119,12 +1121,14 @@ fn a_held_conversation_node_binding_vetoes_rebinding_but_never_stands_in() -> Re
     };
     let (one, two) = (open("A1")?, open("B1")?);
     let room = EntityId::now();
-    vault.put_entity(
-        &room,
-        crate::registry::ENTITY_TYPE_CONVERSATION,
-        test_time(12),
+    vault.create_conversation(
+        room,
+        &crate::conversation::ConversationBody {
+            member_ids: vec![human.entity_ref()],
+            ..Default::default()
+        },
+        human,
         12,
-        &[0x80],
     )?;
     crate::conversation_dag::test_support::put_dag_test_policy(&vault, human, true)?;
     crate::conversation_dag::fixtures::grant_reads(&vault, human);

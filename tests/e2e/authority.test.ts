@@ -279,8 +279,10 @@ suite.test(test, "AUTHORITY-08", "Same-build re-root handoff should work", async
   // A keyed value is always a JSON object (vault.kv.put refuses any other value).
   const facts = catalog.expected<{ namespace: string[]; key: string; value: { text: string }; requestId: string }>("authority-host-note");
   const address = { namespace: facts.namespace, key: facts.key };
+  // The owner states this note. An omitted source means generated output, which
+  // the default manifest leaves to review unless a policy permits the actor (403).
   const written = await engine.client.call("vault.kv.put", {
-    ...address, value: facts.value, request_id: facts.requestId,
+    ...address, value: facts.value, request_id: facts.requestId, source: "user_stated",
   });
   expect(written.item.value).toEqual(facts.value);
   expect((await engine.client.call("vault.kv.get", address))?.value).toEqual(facts.value);

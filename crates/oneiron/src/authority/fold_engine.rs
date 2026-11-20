@@ -564,9 +564,12 @@ pub(super) fn fold_authority_log_once_with(
             valid_entries: ValidEntries::new(),
             roster: BTreeMap::new(),
             retired_keys: BTreeSet::new(),
+            handoff_or_appointment_retired_keys: BTreeSet::new(),
             host_custody: BTreeSet::new(),
             passkey_limited_keys: BTreeSet::new(),
+            host_vouched_passkey_owners: BTreeMap::new(),
             closed_handoffs: BTreeSet::new(),
+            crossed_revocations: BTreeSet::new(),
             genesis_fragile: false,
             federation_pacts: BTreeMap::new(),
             federation_confirms: BTreeMap::new(),
@@ -629,11 +632,13 @@ pub(super) fn fold_authority_log_once_with(
         });
     }
 
+    let handoff_or_appointment_retired_keys = retirements.handoff_or_appointment_retired_keys();
     let kept = capture.map(|_| {
         (
             merged.clone(),
             valid_entries.clone(),
             retired_keys.clone(),
+            handoff_or_appointment_retired_keys.clone(),
             issues.clone(),
         )
     });
@@ -644,7 +649,9 @@ pub(super) fn fold_authority_log_once_with(
             by_hash: &*by_hash,
             revoke_facts: &revoke_facts,
             retired_keys,
+            handoff_or_appointment_retired_keys,
             closed_handoffs: retirements.handoffs(),
+            crossed_revocations: retirements.crossed_revocations(),
             unsettled: retirements.unsettled(),
             counted_ancestor_pairs,
             issues,
@@ -655,8 +662,16 @@ pub(super) fn fold_authority_log_once_with(
         },
         context,
     );
-    if let (Some(capture), Some((Some(merged), valid_entries, retired_keys, issues))) =
-        (capture, kept)
+    if let (
+        Some(capture),
+        Some((
+            Some(merged),
+            valid_entries,
+            retired_keys,
+            handoff_or_appointment_retired_keys,
+            issues,
+        )),
+    ) = (capture, kept)
     {
         capture.record(super::fold_resume::OnceParts {
             by_hash: &by_hash,
@@ -667,7 +682,9 @@ pub(super) fn fold_authority_log_once_with(
             valid_entries,
             revoke_facts,
             retired_keys,
+            handoff_or_appointment_retired_keys,
             closed_handoffs: retirements.handoffs(),
+            crossed_revocations: retirements.crossed_revocations(),
             closed_conflicts: retirements.closed_conflicts(),
             unsettled: retirements.unsettled(),
             counted_ancestor_pairs,
