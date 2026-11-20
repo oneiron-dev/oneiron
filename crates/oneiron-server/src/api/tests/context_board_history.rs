@@ -234,9 +234,11 @@ async fn a_turns_board_reconstructs_after_later_turns_change_it() {
                 .len(),
         );
     }
+    // ARCH-0022: an ungoverned actor reads base reality, so the first
+    // turn records its three base world tiers plus the pinned claim.
     assert_eq!(
         changed,
-        [1, 1, 0],
+        [4, 1, 0],
         "selection claims are written on change only"
     );
 
@@ -504,12 +506,14 @@ async fn a_claim_board_records_under_the_callers_own_capability() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{board:#}");
+    // ARCH-0022: an ungoverned actor reads base reality, so the first
+    // turn records its three base world tiers plus the pinned claim.
     assert_eq!(
         board["board_turn"]["changed_claims"]
             .as_array()
             .unwrap()
             .len(),
-        1
+        4
     );
     let (status, past) = route_json(server.clone(), history(turn, principal)).await;
     assert_eq!(status, StatusCode::OK, "{past:#}");
