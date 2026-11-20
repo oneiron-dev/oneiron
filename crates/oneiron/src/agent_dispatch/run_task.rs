@@ -1214,6 +1214,15 @@ pub(super) fn outlived_root_in(
 /// own retry lineage, which carries the context bound its settled parent
 /// handed it ([`AgentRunTaskBody::into_frozen_parent_projection`]). `None` for
 /// any other try.
+///
+/// The flag and the bound count only on a TASK whose writer proof counts
+/// here ([`AgentRunTaskBody::writer_proven_in`]; Engine ASK
+/// AGENT-RUN-OUTLIVED-ROOT-UNPROVEN-BOUND = A, the handover's rule): a
+/// shared vault's member machine or a federation peer can rewrite the TASK,
+/// and a walk that ended at it would run the try as a root under whatever
+/// bound it names. An unproven one reads as no outlived-root TASK, so the
+/// try is a child whose parent is gone here: it does not run, and its
+/// context and depth walks refuse.
 fn outlived_root_task_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -1230,11 +1239,20 @@ fn outlived_root_task_in(
     else {
         return Ok(None);
     };
-    match agent_run_task_body_in(vault, txn, link.task_ref) {
-        Ok(body) => Ok(body.filter(|body| body.outlived_root)),
-        Err(Error::Record(_)) => Ok(None),
-        Err(error) => Err(error),
+    let body = match agent_run_task_body_in(vault, txn, link.task_ref) {
+        Ok(Some(body)) if body.outlived_root => body,
+        Ok(_) | Err(Error::Record(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !body.writer_proven_in(vault, txn, link.task_ref) {
+        tracing::warn!(
+            reason = super::run_handover::RUN_TASK_WRITER_UNPROVEN,
+            task = %link.task_ref.to_hex(),
+            "an outlived-root run TASK has no writer proof that counts here; its try runs as a child whose parent is gone"
+        );
+        return Ok(None);
     }
+    Ok(Some(body))
 }
 
 /// [`outlived_root_in`] of the try `attempt`, read in `txn`; `false` for a

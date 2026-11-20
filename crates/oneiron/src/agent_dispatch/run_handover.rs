@@ -98,7 +98,7 @@ const WORLD_NOT_READABLE_HERE: &str = "world_not_readable_here";
 const RUN_TASK_UNREADABLE: &str = "run_task_unreadable";
 /// No writer proof that counts here stands behind the TASK's frozen fields
 /// (`super::run_writer_proof`), so its payload is not re-created here.
-const RUN_TASK_WRITER_UNPROVEN: &str = "run_task_writer_unproven";
+pub(super) const RUN_TASK_WRITER_UNPROVEN: &str = "run_task_writer_unproven";
 /// A try of the run is leased, landing or paused here.
 const TRY_HELD_HERE: &str = "try_held_here";
 /// The run's newest try here ended another way than failed.
