@@ -2575,6 +2575,57 @@ fn a_host_cancel_held_back_by_a_refused_owner_write_refunds_by_its_first_sightin
 }
 
 #[test]
+fn a_host_cancel_below_a_refused_replay_whose_proof_is_owed_refunds_by_its_first_sighting() {
+    // Review round 1 of #10020: as above, but the refused replay's
+    // reconciliation read fails, so its row owes the proof of the stored
+    // copy. The host's cancellation sits below the SEQUENCE the write staged,
+    // so it is never the write's own copy and no pull proves anything from
+    // it: it must not wait for that proof. The next pull reads it as the
+    // host's cancel, dated by its first sighting, before the start, and it
+    // refunds whole.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let (booked, live, start) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"unproven-held-host-cancel",
+        "pi_unproven_held_host_cancel",
+    );
+    let host_cancel = SeatChange::upsert(&live, start, start + 30 * 60, live.sequence, true);
+
+    seat.write_unsent(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    seat.pull(
+        &fixture.vault,
+        std::slice::from_ref(&host_cancel),
+        NOW + 160,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_unproven_held_host_cancel"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the cancellation held back while the owner's write is in flight moves no money yet"
+    );
+
+    seat.replay_refused_unread(&fixture.vault, booked.calendar.event_ref, start + 60);
+    seat.pull(
+        &fixture.vault,
+        std::slice::from_ref(&host_cancel),
+        start + 120,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_unproven_held_host_cancel"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the host's cancellation below the staged SEQUENCE waits for no proof and refunds whole"
+    );
+}
+
+#[test]
 fn a_host_cancel_that_keeps_an_earlier_write_marker_refunds_after_the_refused_replay() {
     // BK-ECHO-MARK-TAKES-HOST-CANCEL-AT-STAGED-SEQUENCE: the owner's
     // cancelled write never reaches the provider. The host cancels the
