@@ -258,5 +258,38 @@ fn a_saved_claim_names_the_base_record_of_the_room_secret_it_quotes() -> TestRes
         "the value keeps its one base record"
     );
     assert_eq!(vault_custody_record_count(vault)?, 1);
+
+    // A claim whose whole value is the bare room handle, as a field the
+    // wall lifts whole holds it, lands holding the bare base handle of the
+    // same record (REVIEW-10003).
+    let bare = handle
+        .strip_prefix("[secret ")
+        .and_then(|rest| rest.strip_suffix(']'))
+        .ok_or("a bracketed room handle")?
+        .to_owned();
+    let whole = EntityId::now();
+    memory
+        .claim_upsert_in_session(
+            &session,
+            &scoped_claim(whole, owned.actor, facet, project, &bare),
+        )
+        .map_err(at("stage the bare-handle room CLAIM"))?;
+    session
+        .save_artifact_as(&owned.owner, &whole.to_hex())
+        .map_err(at("the owner's bare-handle room save"))?;
+    let saved_whole = vault
+        .get_claim(&whole)
+        .map_err(at("read the bare-handle CLAIM"))?
+        .ok_or("the bare-handle CLAIM landed")?;
+    let base_bare = base
+        .strip_prefix("[secret ")
+        .and_then(|rest| rest.strip_suffix(']'))
+        .ok_or("a bracketed base handle")?;
+    assert_eq!(
+        saved_whole.value.as_str(),
+        Some(base_bare),
+        "the saved whole value is the bare base handle, never {bare}"
+    );
+    assert_eq!(vault_custody_record_count(vault)?, 1);
     Ok(())
 }

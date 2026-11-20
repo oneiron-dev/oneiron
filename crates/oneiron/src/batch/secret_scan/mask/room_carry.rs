@@ -57,13 +57,6 @@ pub(crate) fn carry_room_secrets_in_txn(
     }
 }
 
-/// Whether `data` holds a room handle's opening, as written.
-fn names_room_handle(data: &[u8]) -> bool {
-    let open = room_handle_open();
-    data.windows(open.len())
-        .any(|window| window == open.as_bytes())
-}
-
 /// `[secret r`: how a room handle opens in a text.
 fn room_handle_open() -> String {
     format!("{HANDLE_OPEN}{}", crate::session_overlay::ROOM_SECRET_SIGIL)
@@ -117,7 +110,7 @@ impl RoomCarry {
             let BatchOp::Put { id, data, .. } = op else {
                 continue;
             };
-            if !names_room_handle(data) || vault.store.port_entity_present(wtxn, id)? {
+            if !self.names_kept_handle(data) || vault.store.port_entity_present(wtxn, id)? {
                 continue;
             }
             // A row that is no one MessagePack value keeps its bytes: a room
@@ -137,6 +130,15 @@ impl RoomCarry {
             *data = body;
         }
         Ok(ops.into_ops())
+    }
+
+    /// Whether `data` holds, as written, the handle of a secret the room
+    /// keeps: bare, or in a text.
+    fn names_kept_handle(&self, data: &[u8]) -> bool {
+        self.kept.iter().any(|secret| {
+            data.windows(secret.handle.len())
+                .any(|window| window == secret.handle.as_bytes())
+        })
     }
 
     /// `value`, a value `record` writes, with each room handle in its texts
@@ -210,6 +212,16 @@ impl RoomCarry {
         record: EntityId,
         text: &str,
     ) -> Result<Option<CarriedText>> {
+        // A whole text that is a bare room handle takes the bare base handle,
+        // as a field a mask lifted whole holds one (REVIEW-10003).
+        if is_room_secret_handle(text) {
+            return Ok(self
+                .base_handle(vault, wtxn, record, text)?
+                .map(|base| CarriedText {
+                    spans: vec![(0..text.len(), 0..base.len())],
+                    text: base,
+                }));
+        }
         if !text.contains(&room_handle_open()) {
             return Ok(None);
         }
