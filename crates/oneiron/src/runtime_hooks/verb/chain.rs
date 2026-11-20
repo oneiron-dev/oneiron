@@ -40,6 +40,14 @@ use run::RunRecord;
 /// The host verb a pre-hook may never skip: a skipped compaction overflows
 /// the next turn (ARCH-0080 §5).
 const COMPACT: &str = "host.compact";
+/// The skill-answer verb, whose post chain judges the answer's whole body:
+/// a blocking post hook whose body never started on it, because the
+/// runtime could not take it, refuses the call
+/// ([`Chain::skill_answer_unjudged`]).
+const SKILL_CALL: &str = "self.skills.call";
+/// Why that refusal stops the call: the hook never saw the answer.
+const SKILL_ANSWER_TOO_LARGE: &str =
+    "the skill answer is too large for the live post hook to judge";
 /// Why a resumed chain in a build without the sandbox runs no hook.
 const NO_SANDBOX: &str = "this build runs no hook sandbox";
 
@@ -396,6 +404,10 @@ struct Chain<'c> {
     /// The source rows of each room Hook receipt in the tail, by its ref: a
     /// hook reads one only while its own view shows them all (FIX 5429).
     room_sources: Vec<(String, Vec<EntityId>)>,
+    /// The call's result as its producer gave it, kept once a post hook's
+    /// Redact narrows the view: a later hook's input names its rows from it
+    /// (review round 2 of #9643).
+    origin: Option<Value>,
     runs: Vec<RunRecord<'c>>,
     blocks: Vec<(EntityId, HookBlock, Vec<LineageLink>)>,
     /// Queued outcomes, each with the proposal it lands, if any.
@@ -436,6 +448,7 @@ impl<'c> Chain<'c> {
             now,
             tail,
             room_sources,
+            origin: None,
             runs: Vec::new(),
             blocks: Vec::new(),
             intents: Vec::new(),
@@ -596,7 +609,10 @@ impl<'c> Chain<'c> {
 
     /// Runs the post-hooks over the caller's view of `result`. Redacts
     /// narrow the view; a failed blocking hook hides a read's result and is
-    /// recorded on a write, whose commit stands.
+    /// recorded on a write, whose commit stands. A skill answer a blocking
+    /// post hook's body never started on, because the runtime could not
+    /// take it, is refused instead ([`Self::skill_answer_unjudged`]): its
+    /// caller never reads the unjudged body.
     fn post(mut self, hooks: &[Hook<'c>], args: &Value, result: Value) -> Result<Stopped<Value>> {
         let mut view = result;
         let mut hidden = None;
@@ -609,6 +625,7 @@ impl<'c> Chain<'c> {
                     if let Some(capture) = &self.read_capture {
                         capture.changed();
                     }
+                    self.origin.get_or_insert_with(|| view.clone());
                     for path in &paths {
                         redact::hide(&mut view, path);
                     }
@@ -622,6 +639,14 @@ impl<'c> Chain<'c> {
                         hidden = Some(self.hide(binding));
                         break;
                     }
+                    if self.skill_answer_unjudged() {
+                        self.fail_safe("skipped");
+                        hidden = Some(VerbHookStop::Skipped {
+                            hook: hook_name(binding),
+                            reason: bounded(SKILL_ANSWER_TOO_LARGE),
+                        });
+                        break;
+                    }
                     self.fail_safe("recorded");
                 }
                 None => {}
@@ -630,6 +655,21 @@ impl<'c> Chain<'c> {
         self.commit()?;
         self.apply();
         Ok(hidden.map_or(Ok(view), Err))
+    }
+
+    /// Whether this post chain's last run left a skill answer unjudged: the
+    /// call is a skill answer (`self.skills.call`, a write, read whole so
+    /// its post chain judges the body itself), and the blocking hook's run
+    /// failed with its body never started on the answer, because the
+    /// runtime could not take it. Only then does the chain refuse the
+    /// call; every other verb, and every other failure, keeps the
+    /// recorded write behaviour above.
+    fn skill_answer_unjudged(&self) -> bool {
+        self.call.verb == SKILL_CALL
+            && self
+                .runs
+                .last()
+                .is_some_and(|run| run.token == "failed" && run.input_not_taken)
     }
 
     /// The verb engine's own checks on an outcome its binding accepted; the

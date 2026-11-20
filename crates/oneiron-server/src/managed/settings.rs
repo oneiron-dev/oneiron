@@ -163,8 +163,10 @@ pub(super) fn prepare(
     let Some(path) = &managed.settings_file else {
         return Ok(None);
     };
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("read settings file {}", path.display()))?;
+    // Hypnos places the file root's, at mode 0640 for the vault's group: one
+    // any user can write is refused before it is read (FIX
+    // MANAGED-SETTINGS-FILE-MODE-UNCHECKED).
+    let raw = crate::config::merge::read_host_placed_config_file(path)?;
     let mut table: toml::Table = crate::config::parse_toml(path, &raw)?;
     refuse_supervisor_leaves(&table)?;
     refuse_unknown(&table)?;
@@ -544,5 +546,26 @@ mod tests {
         }
         let other: toml::Table = "[runtime]\nseat_host = false\n".parse().unwrap();
         assert!(refuse_supervisor_leaves(&other).is_ok());
+    }
+
+    /// A settings path outside the vault is refused for tenant isolation, a
+    /// kept reason that no size lifts, and the refusal names the self-host
+    /// route (census L9-61; RULING L9-61-ISOLATION = A).
+    #[test]
+    fn a_settings_path_outside_the_vault_names_tenant_isolation_and_the_self_host_route() {
+        let table: toml::Table = "[import]\nqueue = true\n".parse().unwrap();
+        let refused = refuse_default_import_roots(&table).unwrap_err();
+        let ManagedError::SettingsRefused { field, reason, .. } = &refused else {
+            panic!("{refused:?}");
+        };
+        assert_eq!(field, "import.queue");
+        assert_eq!(*reason, SettingsRefusal::OutsideVault);
+        let message = refused.to_string();
+        assert!(message.contains("tenant isolation"), "{message}");
+        assert!(
+            message.contains("a self-hosted vault's settings may name paths outside it"),
+            "{message}"
+        );
+        assert!(!message.contains("capacity"), "{message}");
     }
 }

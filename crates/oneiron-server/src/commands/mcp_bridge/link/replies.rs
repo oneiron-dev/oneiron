@@ -7,6 +7,13 @@ use tokio::sync::mpsc;
 
 use super::{Inbound, RPC_ANSWER_ENVELOPE_BYTES};
 
+/// The HTTP answer a socket call carries back.
+#[derive(Deserialize)]
+pub(super) struct SocketAnswer {
+    pub(super) status: u16,
+    pub(super) body: String,
+}
+
 pub(super) struct ReplyWaiter {
     pub(super) chunks: mpsc::UnboundedSender<Inbound>,
     pub(super) sent: usize,

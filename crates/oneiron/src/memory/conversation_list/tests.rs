@@ -12,7 +12,7 @@ use crate::access_grant::{
 use crate::edge::EdgeActorClass;
 use crate::federation::scope_codec::read_preset;
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
-use crate::registry::ENTITY_TYPE_PERSON;
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use crate::test_util::entity;
 use crate::{DeleteReason, TimeRange, Vault, VaultConfig, WriteActor};
 
@@ -25,9 +25,11 @@ fn said(author: WitnessAuthor, content: &str, space: Option<EntityId>) -> Witnes
         author,
         message_type: "dialogue".to_owned(),
         content: content.to_owned(),
+        parts: None,
         metadata: space.map(|space| serde_json::json!({"rel": space.to_hex()})),
         is_visible: true,
         order: 0,
+        quote: None,
     }
 }
 
@@ -44,8 +46,11 @@ fn witness(
         .witness(&WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
+            project: None,
             messages: vec![message],
             occurred_at: at,
+            assertions: Default::default(),
         })
         .expect("witness a turn");
 }
@@ -204,6 +209,19 @@ fn rooted_reader_with(
             b"scoped reader",
         )
         .expect("put the reader");
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A): the spaces these fixtures witness with.
+    for space in [entity(SPACE), entity(0x69)] {
+        vault
+            .put_entity(
+                &space,
+                ENTITY_TYPE_RELATIONSHIP,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"relationship",
+            )
+            .expect("put the relationship space");
+    }
     setup(&vault, owner, reader);
 
     // In a vault with no authority root every human PERSON reads as its
@@ -243,6 +261,7 @@ fn rooted_reader_with(
                 created_at: crate::unix_seconds_now(),
                 revoked_at: None,
                 expires_at: None,
+                companion_bounds: None,
             },
         )
         .expect("the reader's message grant");
@@ -1268,6 +1287,7 @@ fn a_world_the_credential_cannot_read_adds_no_count() {
                     ENTITY_TYPE_CONVERSATION,
                     TimeRange { start: AT, end: AT },
                     AT,
+                    None,
                     &body,
                 )
                 .commit()

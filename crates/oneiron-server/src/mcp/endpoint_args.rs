@@ -387,10 +387,8 @@ impl McpVerbArguments {
             }
         }
         validate_optional_nonblank(tool, "arguments.key", self.key.as_deref())?;
-        // The WRITER's bound, applied before any persistence: a label the
-        // engine's board row ceiling cannot render is refused here rather than
-        // stored and then made to reject the whole TASKS section on every later
-        // render (ONE-1704 repair).
+        // A present label must be nonblank. The writer keeps a label of any
+        // length; only its board row preview is bounded (FIX 52).
         if let Some(label) = self.label.as_deref() {
             oneiron::task_verb::check_task_label(label).map_err(|error| {
                 McpToolValidationError::field(tool, "arguments.label", error.message)

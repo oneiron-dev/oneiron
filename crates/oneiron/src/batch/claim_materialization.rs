@@ -128,6 +128,19 @@ impl ClaimMaterialization {
             binding.validate_actor(&vault.store, txn)?;
             bindings.push(binding);
         }
+        // A demotion is the engine's act, not the owner's answer: an open
+        // question on a held claim leaves the tray while the write is judged
+        // and is restated on the body the claim then stores (S17-1 = A).
+        let claim_id = *id;
+        let question =
+            crate::claim::held_question::open_owner_question_in_txn(&vault.store, txn, &claim_id)?;
+        if question.is_some() {
+            vault.store.remove_pending_gate_consent_in_txn(
+                txn,
+                &claim_id,
+                crate::store::TrayRemoval::Silent,
+            )?;
+        }
         // No binding still means the existing first-party local policy, not
         // authority inferred from evidence. The pipeline refreshes a consumed
         // binding from the finalized row, atomically with the edge update.
@@ -143,7 +156,16 @@ impl ClaimMaterialization {
             ApplyOpsGateMode::new(false, false)
                 .with_claim_materializations(bindings)
                 .with_verified_claim_transitions(vec![transition]),
-        )
+        )?;
+        match question {
+            Some(question) => crate::claim::held_question::restate_owner_question_in_txn(
+                &vault.store,
+                txn,
+                &question,
+                &claim_id,
+            ),
+            None => Ok(()),
+        }
     }
 
     /// The writer's envelope for a stored claim, rebuilt from its private
@@ -703,6 +725,20 @@ pub(crate) fn apply_owner_bound_claim_puts_with_transitions(
     transitions: Vec<super::VerifiedClaimTransition>,
     persist_pending: bool,
 ) -> Result<()> {
+    let gate_mode =
+        ApplyOpsGateMode::new(false, persist_pending).with_verified_claim_transitions(transitions);
+    apply_owner_bound_claim_puts_in_mode(vault, txn, ops, bindings, gate_mode)
+}
+
+/// [`apply_owner_bound_claim_puts_with_transitions`] under `gate_mode`, which
+/// gets `bindings` as its claim materializations.
+fn apply_owner_bound_claim_puts_in_mode(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    ops: Vec<BatchOp>,
+    bindings: Vec<ClaimMaterialization>,
+    gate_mode: ApplyOpsGateMode,
+) -> Result<()> {
     let mut remaining = bindings.iter();
     for op in &ops {
         if matches!(
@@ -743,16 +779,16 @@ pub(crate) fn apply_owner_bound_claim_puts_with_transitions(
         vault
             .text_index_trusted
             .load(std::sync::atomic::Ordering::Acquire),
-        ApplyOpsGateMode::new(false, persist_pending)
-            .with_claim_materializations(bindings)
-            .with_verified_claim_transitions(transitions),
+        gate_mode.with_claim_materializations(bindings),
     )
 }
 
 mod demotion;
 mod lifecycle;
+mod provenance_puts;
 mod succession;
 use demotion::demotion_body;
+pub(crate) use provenance_puts::apply_provenance_claim_puts;
 pub(crate) use succession::SuccessionWriter;
 
 #[cfg(test)]

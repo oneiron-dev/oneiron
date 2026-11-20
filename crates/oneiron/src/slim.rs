@@ -528,13 +528,12 @@ fn map_intent_ledger_error(error: IntentLedgerError) -> Error {
         IntentLedgerError::InvalidRecord(_)
         | IntentLedgerError::InvalidTransition { .. }
         | IntentLedgerError::InvalidInput(_)
+        | IntentLedgerError::Calendar(_)
         | IntentLedgerError::InvalidBoundActor
         | IntentLedgerError::FailureResultIneligible
         | IntentLedgerError::Step(_) => Error::CorruptedIndex(ERR_INTENT_LEDGER_ROW),
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-SLIM-TESTS]: the lib test target's type check fails here (19 errors: E0609 x19); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

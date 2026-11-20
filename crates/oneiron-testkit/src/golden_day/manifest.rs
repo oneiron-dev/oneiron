@@ -11,7 +11,7 @@
 
 /// The manifest's version, written into every golden dump. Bump it with any
 /// change below, and regenerate the golden file in the same commit.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// How one key's value is normalised.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,8 +218,8 @@ pub const MANIFEST: &[(&str, FieldClass)] = &[
     ("event_kind", Exact),
     ("source_op", Exact),
     ("detail", Exact),
-    // The authority clock's reading (see AUTHORITY_CLOCK_KEYS below).
-    ("advisory_ts", Measured),
+    // The authority clock's reading, which the fake clock drives (clock.rs).
+    ("advisory_ts", Exact),
     ("signer_key", Opaque("key")),
     ("cosigner_keys", Opaque("key")),
     ("seq", Exact),
@@ -233,22 +233,6 @@ pub const MANIFEST: &[(&str, FieldClass)] = &[
     ("elapsed_ms", Measured),
     ("overrun_ms", Measured),
     ("callback_ms", Measured),
-];
-
-/// The keys of a `vault.authority.audit` row that read the vault's authority
-/// clock: the store clock at the store's first authority read, plus the real
-/// seconds since (`oneiron::authority::first_seen_clock`). A fresh process
-/// can move them by a second or more, and the gaps between them too (job
-/// 1113-162552-5b5f: the same rows 1800000001 in one process, 1800000000 in
-/// the next), so [`super::GoldenDayRun::normalise`] masks them in that stream
-/// as [`FieldClass::Measured`], before it sorts the rows. Elsewhere these
-/// keys keep their class in [`MANIFEST`].
-pub const AUTHORITY_CLOCK_KEYS: &[&str] = &[
-    "advisory_ts",
-    "learned_at",
-    "occurred_start",
-    "occurred_end",
-    "expires_at",
 ];
 
 #[cfg(test)]

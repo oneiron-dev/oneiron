@@ -27,14 +27,11 @@ impl WeaveItemKey {
         crate::entity_id::bytes_to_hex_lower(&self.bytes())
     }
 
-    pub(in crate::claim::scoped_read) fn from_hex(hex: &str) -> Option<Self> {
+    pub(crate) fn from_hex(hex: &str) -> Option<Self> {
         if hex.len() != Self::WIDTH * 2 || !hex.is_ascii() {
             return None;
         }
-        let mut bytes = [0; Self::WIDTH];
-        for (index, byte) in bytes.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).ok()?;
-        }
+        let bytes = oneiron_hex::decode_vec(hex)?;
         Self::decode_key(&bytes)
     }
 }

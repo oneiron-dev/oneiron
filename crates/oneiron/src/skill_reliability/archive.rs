@@ -1,12 +1,8 @@
 //! Imported reliability history is inert data, not a local posterior or synced base.
 use super::{PREDICATE_SKILL_RELIABILITY, codec::invalid};
 use crate::{
-    Vault,
     claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject},
-    entity_id::EntityId,
-    error::{Error, Result},
-    temporal::TimeRange,
-    vault::live_entity_row_in_txn,
+    error::Result,
 };
 use rmpv::Value;
 
@@ -49,36 +45,4 @@ pub(crate) fn validate_imported_reliability(body: &ClaimBody) -> Result<()> {
         return Err(invalid("foreign reliability must remain inert"));
     }
     Ok(())
-}
-impl Vault {
-    pub(crate) fn restore_reliability_claim_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        id: &EntityId,
-        body: &ClaimBody,
-        occurred: TimeRange,
-        learned_at: u64,
-    ) -> Result<()> {
-        if imported_reliability_body(body)? != *body {
-            return Err(invalid("reliability restore needs an imported proposal"));
-        }
-        let ClaimSubject::Entity(skill) = body.subject else {
-            return Err(invalid("reliability archive subject"));
-        };
-        if self.store.off_record_sessions.contains_entity(&skill)?
-            || !live_entity_row_in_txn(&self.store, txn, &skill)?.is_live()
-        {
-            return Err(Error::EntityNotFound);
-        }
-        let row = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &skill)?
-            .ok_or(Error::EntityNotFound)?;
-        let header = crate::batch::EntityMetadataHeader::parse(&row)
-            .ok_or(Error::CorruptedIndex("reliability archive skill"))?;
-        if header.entity_type != crate::registry::ENTITY_TYPE_SKILL {
-            return Err(invalid("reliability archive subject must be SKILL"));
-        }
-        // No outcome ledger, projection base, confidence cache, floor action,
-        // native receipt or existing observed head is changed by archive intake.
-        self.put_reserved_claim_in_txn(txn, id, body, occurred, learned_at)
-    }
 }

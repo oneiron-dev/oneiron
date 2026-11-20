@@ -256,7 +256,7 @@ pub(super) async fn bind(
             .with_browser_planner(Arc::clone(&browser))
             .with_host_meter(guard)
             .with_reader_window_tokens(
-                super::dreamer::dream_windows(models)
+                super::dreamer::reader_windows(models)
                     .get(&seat.model)
                     .copied()
                     .unwrap_or(0),
@@ -659,10 +659,21 @@ impl CodeModeBackend {
                 .as_ref()
                 .is_some_and(|caller| caller.keeps_no_record(&self.vault));
             let record_request = self.caller.as_ref().map(|_| call.request.clone());
+            // FIX 6999: the host data routing added after the staged messages,
+            // the browser planner's handoff, has no row witness. A call that
+            // carries any names no rows, as its refreshed capture keeps none.
+            let sources = sources.filter(|_| call.request.messages.len() <= staged_len);
             let run = self
                 .models
-                .funded_run(CODE_MODE_RUN, self.guard.clone(), self.payer.clone())
-                .sourced(sources);
+                .funded_run(CODE_MODE_RUN, self.guard.clone(), self.payer.clone());
+            // A step of a run whose caller keeps no model-call record names
+            // none of the rows its prompt read, nor their worlds (census L5-25).
+            let run = if no_record_at_arrival {
+                run.off_record()
+            } else {
+                run
+            };
+            let run = run.sourced(sources);
             let live = self
                 .lease
                 .clone()

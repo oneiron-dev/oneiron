@@ -55,7 +55,12 @@ pub(in crate::sync::connection) fn upgrade_request(
     if let Some(credential) = slip {
         binding = Some(
             credential
-                .sign_upgrade(vault, vault.store.clock.wall_now(), &mut request)
+                .sign_upgrade(
+                    vault,
+                    config.authority_checkpoint_pin.as_ref(),
+                    vault.store.clock.wall_now(),
+                    &mut request,
+                )
                 .map_err(str::to_owned)?,
         );
     } else if !bearer.is_empty() {

@@ -1,5 +1,6 @@
 //! Conditional calendar event outcome writes.
-//! Entries: `record_event_outcome_in_txn`, `record_machine_event_outcome`.
+//! Entries: `record_event_outcome_in_txn`, `record_machine_event_outcome`,
+//! `event_outcome_cites`.
 //! Defines its own items.
 
 use super::*;
@@ -123,6 +124,40 @@ pub fn record_machine_event_outcome(
     vault.with_write_txn_grouped(|txn| {
         record_event_outcome_in_txn(vault, txn, event_ref, &value, source, Some(anchor)).map(Some)
     })
+}
+
+/// Whether an outcome claim on `event_ref`, live or not, cites `evidence` as
+/// its audit anchor: that machine evidence has earned its outcome already.
+///
+/// # Errors
+///
+/// Store read errors propagate.
+pub(in crate::calendar) fn event_outcome_cites(
+    vault: &Vault,
+    event_ref: EntityId,
+    evidence: EntityId,
+) -> Result<bool> {
+    let anchor = evidence.to_hex();
+    for claim_id in vault.claims_for_subject(&event_ref)? {
+        let Some(claim) = vault.get_claim(&claim_id)? else {
+            continue;
+        };
+        if claim.predicate == PREDICATE_CALENDAR_EVENT_OUTCOME
+            && claim
+                .evidence
+                .as_ref()
+                .and_then(rmpv::Value::as_map)
+                .is_some_and(|entries| {
+                    entries.iter().any(|(key, value)| {
+                        key.as_str() == Some("evidence_ref")
+                            && value.as_str() == Some(anchor.as_str())
+                    })
+                })
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The claim-evidence map one outcome's audit anchor is stored as.

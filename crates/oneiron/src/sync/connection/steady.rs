@@ -74,6 +74,11 @@ impl SyncConnection {
         let mut sealed_relay =
             tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
         sealed_relay.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // The right device PINs this connection has seen (row OCS-OWNER-PIN):
+        // each new one owes a residence upkeep that starts after it, see the
+        // housekeeping tick.
+        let mut seen_right_pins = self.manager.vault().device_pin_right_pins();
+        let mut right_pin_upkeep_owed = false;
         // One staged import body pass at a time (FIX 12408): its producer's
         // socket runs off this loop, and its frames are handled here.
         let mut staged_pump: Option<crate::sync::client::StagedBodyPump> = None;
@@ -563,6 +568,18 @@ impl SyncConnection {
                                     )));
                                 }
                             }
+                            // Each followed window this device holds no rows of
+                            // takes its tombstone id set again (FOLLOWED-WORLD-
+                            // TIER1-TOMBSTONE-IDS): a delete the home made during
+                            // this session reaches a window it refuses to us.
+                            match crate::sync::client::refresh_followed_tombstones(&manager, &config).await {
+                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Followed tombstone refresh failed: {error}"
+                                    )));
+                                }
+                            }
                             // The checkpoint roots of the owner's policy, once the
                             // history is in (FIX 4882): a root held here attests the
                             // home's image, and the home's root this machine's.
@@ -596,6 +613,18 @@ impl SyncConnection {
                                     "Custody relay failed: {error}"
                                 )));
                             }
+                            // The owner's names for his machines and each machine's own
+                            // report, to and from the residence home
+                            // (MACHINE-NAMES-CARRIER = B): a home out of reach leaves
+                            // them to the next pass.
+                            match crate::sync::client::exchange_machine_names(manager.vault(), &config).await {
+                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Machine name exchange failed: {error}"
+                                    )));
+                                }
+                            }
                         }));
                     }
                 }
@@ -607,6 +636,25 @@ impl SyncConnection {
                 // Loro's Rust EphemeralStore has no internal timer. Its
                 // sends and writes are one batch (FIX 12036).
                 _ = ephemeral_housekeeping.tick(), if !gate.paused() => {
+                    // A right device PIN opened its window since the last
+                    // look: a residence upkeep is owed that starts after it,
+                    // so its checkpoint root exchange attests with the owner
+                    // key that window lets sign. An upkeep that runs now
+                    // began before the PIN and may be past its exchange, so
+                    // the next one is brought forward only once that one has
+                    // ended; until then it stays owed. Right PINs that come
+                    // before it starts share it.
+                    let right_pins = self.manager.vault().device_pin_right_pins();
+                    if right_pins != seen_right_pins {
+                        seen_right_pins = right_pins;
+                        right_pin_upkeep_owed = true;
+                    }
+                    if right_pin_upkeep_owed
+                        && upkeep.sealed.as_ref().is_none_or(tokio::task::JoinHandle::is_finished)
+                    {
+                        right_pin_upkeep_owed = false;
+                        sealed_relay.reset_immediately();
+                    }
                     let Some(_batch) = gate.admit().await else {
                         continue;
                     };

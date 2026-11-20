@@ -92,6 +92,7 @@ impl MemberLane {
 /// the writer, so a grant, pact or selection that narrowed after the
 /// admission's read refuses the write. So does a world whose privacy came
 /// to keep it off the machine `peer` the socket proved (Astra T2).
+#[derive(Debug)]
 pub(crate) struct MemberPromotedWrite {
     pub(crate) rows: oneiron::sync::residence::PromotedWindowRows,
     pub(crate) scope: oneiron::FederationGrantScope,

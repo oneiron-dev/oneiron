@@ -13,7 +13,9 @@
 //! spawn its host answered `AskerErased` keeps that cause in its marker and
 //! its answer (FIX 9183).
 
+use std::cell::OnceCell;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use rmpv::Value;
 
@@ -28,7 +30,8 @@ use super::support::{
 };
 use super::types::{SelfAgentSpawnResult, SelfDispatchOutcome, SelfEffect};
 use crate::attempt_queue::AttemptId;
-use crate::batch::secret_scan::admitted_from;
+use crate::batch::secret_scan::{admitted_from_known, admitted_from_plan};
+use crate::store::known_value_index::KnownValues;
 use crate::team::SpawnErasure;
 use crate::{EntityId, Result};
 
@@ -60,28 +63,93 @@ impl ReplayRequestMatch {
     }
 }
 
+/// How a replay's compare reads the values base custody holds now (FIX
+/// REPLAY-COMPARE-KNOWN-MATCHER). The side-row wall gives a value custody
+/// holds its record's handle in a row whose scope decides with custody, a
+/// value no shape rule places too, so that row is read against the call
+/// made again with these values, as a template: each handle it holds meets
+/// only a value of its own record, and every other byte only itself (FIX
+/// REPLAY-COMPARE-KNOWN-OTHER-CALLERS, FIX RECEIPT-RECORDS-CALL-HELD-INPUT).
+pub(crate) type BaseKnownRead<'a> = &'a dyn Fn() -> Result<Option<Arc<KnownValues>>>;
+
+/// One compare's base known values: read through its [`BaseKnownRead`] on
+/// the first ask, and only when the compare without them missed, then kept
+/// for the rest of that compare. A compare with no read in reach (a record
+/// read in memory) has none.
+pub(crate) struct CompareKnown<'a> {
+    read: Option<BaseKnownRead<'a>>,
+    held: OnceCell<Option<Arc<KnownValues>>>,
+}
+
+impl<'a> CompareKnown<'a> {
+    pub(crate) const fn new(read: Option<BaseKnownRead<'a>>) -> Self {
+        Self {
+            read,
+            held: OnceCell::new(),
+        }
+    }
+
+    /// The values base custody holds, read on the first ask.
+    ///
+    /// # Errors
+    ///
+    /// The read's own.
+    pub(crate) fn get(&self) -> Result<Option<Arc<KnownValues>>> {
+        if let Some(known) = self.held.get() {
+            return Ok(known.clone());
+        }
+        let known = match self.read {
+            Some(read) => read()?,
+            None => None,
+        };
+        Ok(self.held.get_or_init(|| known).clone())
+    }
+
+    /// Whether `held`, a live row the side-row wall stored, is what
+    /// admitting `offered` stored: with the values base custody holds where
+    /// a read is in reach ([`admitted_from_known`]), so a custody that knows
+    /// no value leaves the two to meet as written; with no read in reach,
+    /// each handle and each secret the plan places as the plan's one
+    /// stand-in ([`admitted_from_plan`]).
+    ///
+    /// # Errors
+    ///
+    /// A value the wall cannot read, or the read's own.
+    pub(crate) fn admits(&self, held: &Value, offered: &Value) -> Result<bool> {
+        match self.read {
+            Some(_) => admitted_from_known(held, offered, || self.get()),
+            None => admitted_from_plan(held, offered),
+        }
+    }
+}
+
 /// `stored`, the request a row of `effect` recorded, against `offered`, the
-/// request its call makes now under the row's own bridge stamp. Pure: it
-/// reads and writes nothing. An erased request meets `offered` by its
+/// request its call makes now under the row's own bridge stamp. It writes
+/// nothing, and it reads only the values base custody holds, through
+/// `base_known`, once the compare without them misses (FIX
+/// REPLAY-COMPARE-KNOWN-MATCHER). An erased request meets `offered` by its
 /// identity alone (FIX 6534): a hit or drift, never a wildcard and never a
 /// spawn's miss, so no call runs fresh in an erased row's place.
 ///
 /// # Errors
 ///
-/// A request the side-row wall cannot compare: unreadable.
+/// A request the side-row wall cannot compare: unreadable; or the read of
+/// base custody's values.
 pub(super) fn replay_request_match(
     effect: SelfEffect,
     stored: &Value,
     offered: &Value,
+    base_known: Option<BaseKnownRead<'_>>,
 ) -> Result<ReplayRequestMatch> {
+    let known = CompareKnown::new(base_known);
     if let Some(erased) = ErasedRequest::of(stored) {
-        return erased.meets(offered);
+        return erased.meets_known(offered, &known);
     }
-    if stored == offered || admitted_from(stored, offered)? {
+    if stored == offered || known.admits(stored, offered)? {
         return Ok(ReplayRequestMatch::Hit);
     }
     if effect == SelfEffect::AgentsSpawn {
-        return spawn_match(stored, offered);
+        return spawn_match(stored, offered, &known);
     }
     Ok(ReplayRequestMatch::Drift)
 }
@@ -90,17 +158,22 @@ pub(super) fn replay_request_match(
 /// of its target took its ask and every other field is the same (FIX 9180),
 /// else a miss when the two differ only in the project or the objectives
 /// asked for.
-fn spawn_match(stored: &Value, offered: &Value) -> Result<ReplayRequestMatch> {
-    if barrier_hit(stored, offered)? {
+fn spawn_match(
+    stored: &Value,
+    offered: &Value,
+    known: &CompareKnown<'_>,
+) -> Result<ReplayRequestMatch> {
+    if barrier_hit(stored, offered, known)? {
         return Ok(ReplayRequestMatch::Hit);
     }
-    if erased_hit(stored, offered)? {
+    if erased_hit(stored, offered, known)? {
         return Ok(ReplayRequestMatch::Hit);
     }
     let (Some(stored), Some(offered)) = (without_intent(stored), without_intent(offered)) else {
         return Ok(ReplayRequestMatch::Drift);
     };
-    Ok(if stored == offered || admitted_from(&stored, &offered)? {
+    let missed = stored == offered || known.admits(&stored, &offered)?;
+    Ok(if missed {
         ReplayRequestMatch::SpawnMiss
     } else {
         ReplayRequestMatch::Drift
@@ -130,7 +203,7 @@ fn without_intent(request: &Value) -> Option<Value> {
 /// every other field is the same, its project and objectives included, a
 /// field the side-row wall masked matching the secrets it holds. A nil ask
 /// on either side is never this arm's.
-fn erased_hit(stored: &Value, offered: &Value) -> Result<bool> {
+fn erased_hit(stored: &Value, offered: &Value, known: &CompareKnown<'_>) -> Result<bool> {
     let (Value::Map(stored), Value::Map(offered)) = (stored, offered) else {
         return Ok(false);
     };
@@ -138,7 +211,7 @@ fn erased_hit(stored: &Value, offered: &Value) -> Result<bool> {
         return Ok(false);
     }
     let (stored, offered) = (without_ask(stored), without_ask(offered));
-    Ok(stored == offered || admitted_from(&stored, &offered)?)
+    Ok(stored == offered || known.admits(&stored, &offered)?)
 }
 
 /// The content-free marker of an undispatched spawn barrier: no call ran,
@@ -155,7 +228,7 @@ pub(super) fn is_barrier_ask(value: &Value) -> bool {
 /// A stored barrier and a live spawn request are the same call when every
 /// field except the ask text matches. The call never ran, so no target proof
 /// is needed for that identity.
-fn barrier_hit(stored: &Value, offered: &Value) -> Result<bool> {
+fn barrier_hit(stored: &Value, offered: &Value, known: &CompareKnown<'_>) -> Result<bool> {
     let (Value::Map(stored), Value::Map(offered)) = (stored, offered) else {
         return Ok(false);
     };
@@ -163,7 +236,7 @@ fn barrier_hit(stored: &Value, offered: &Value) -> Result<bool> {
         return Ok(false);
     }
     let (stored, offered) = (without_ask(stored), without_ask(offered));
-    Ok(stored == offered || admitted_from(&stored, &offered)?)
+    Ok(stored == offered || known.admits(&stored, &offered)?)
 }
 
 /// The ask a spawn request's fields hold, when they hold the key.
@@ -171,6 +244,15 @@ pub(super) fn ask_of(fields: &[(Value, Value)]) -> Option<&Value> {
     fields
         .iter()
         .find_map(|(key, value)| (key.as_str() == Some(ASK_KEY)).then_some(value))
+}
+
+/// The place among a spawn request's fields of an ask an erase took, its
+/// typed marker ([`is_erased_ask`]), which holds the erase's fixed words
+/// alone (FIX FENCE-ERASED-FORM-THROUGH-WALL).
+pub(super) fn erased_ask_field(fields: &[(Value, Value)]) -> Option<usize> {
+    fields
+        .iter()
+        .position(|(key, value)| key.as_str() == Some(ASK_KEY) && is_erased_ask(value))
 }
 
 /// A spawn request's fields without its ask.

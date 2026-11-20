@@ -446,8 +446,6 @@ fn n3_a_model_swap_after_admission_is_refused_before_send() {
     assert_eq!(world.provider.sent().len(), 1);
 }
 
-// FIX [LIBTEST-QUARANTINE-LLM-RUN-ADMISSION-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn n3_a_permit_bound_to_request_bytes_starts_only_for_those_bytes() {
     // ARCH-0069 #broker-digest: a broker adapter's call binds the digest of
@@ -480,6 +478,7 @@ fn n3_a_permit_bound_to_request_bytes_starts_only_for_those_bytes() {
         role: LlmMessageRole::User,
         content: vec![ContentPart::Text {
             text: "and send this too".to_owned(),
+            signature: None,
         }],
     });
     let before = world.before();
@@ -1694,15 +1693,21 @@ fn a_job_starts_only_under_a_maximum_the_customer_saw() {
 #[test]
 fn a_job_stops_at_its_maximum_only_after_the_warning_reached_the_customer_and_a_checkpoint() {
     let mut job = JobMaximum::start("job", maximum(100), SHOWN).expect("start");
-    assert_eq!(job.record_usage(50), vec![]);
+    assert_eq!(
+        job.record_usage(50),
+        vec![JobSignal::CheckpointDue { percent: 50 }]
+    );
     assert!(!job.confirm_warning(), "no warning is due at 50");
     job.checkpoint(CheckpointRef("too-early".to_owned()));
     assert_eq!(
         job.record_usage(95),
-        vec![JobSignal::Warning95 {
-            used_units: 95,
-            maximum_units: 100
-        }]
+        vec![
+            JobSignal::CheckpointDue { percent: 95 },
+            JobSignal::Warning95 {
+                used_units: 95,
+                maximum_units: 100
+            }
+        ]
     );
     assert_eq!(job.stop_at_maximum(), Err(StopRefused::NotAtMaximum));
     // Undelivered, the warning comes back at the next record, and neither a
@@ -1742,6 +1747,7 @@ fn a_job_that_jumps_past_its_maximum_warns_before_it_can_stop() {
     assert_eq!(
         job.record_usage(120),
         vec![
+            JobSignal::CheckpointDue { percent: 95 },
             JobSignal::Warning95 {
                 used_units: 120,
                 maximum_units: 100
