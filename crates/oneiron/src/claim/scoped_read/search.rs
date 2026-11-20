@@ -907,8 +907,14 @@ impl crate::store::retrieval_values::CandidateGate for RecallCandidateGate<'_, '
         // A recall plan resolves its filter with no request beyond its
         // lane's bound caller filter (FIX 3977).
         let held = self.read.held_for(None);
+        #[cfg(oneiron_test_support)]
+        let snapshot = crate::test_doors::recall_gate_judgements::open_snapshot();
         Box::new(
             move |_: &crate::store::StoreRead<'_>, rtxn: &heed::RoTxn<'_>, id: &EntityId| {
+                #[cfg(oneiron_test_support)]
+                if std::ptr::eq(rtxn, txn) {
+                    crate::test_doors::recall_gate_judgements::record_judgement(snapshot, id);
+                }
                 self.read
                     .snapshot_candidate_in(txn, &held, rtxn, self.policy, self.filter, id)
             },
