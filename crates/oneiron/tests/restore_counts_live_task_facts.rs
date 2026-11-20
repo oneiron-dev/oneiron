@@ -13,6 +13,16 @@
 //! `a_cancel_this_install_wrote_since_the_checkpoint_still_refuses_the_restore` is a guard on
 //! both: a counted fact still holds the restore.
 //!
+//! A row that counts is still bounded by the fold's actor rules: an Owner fact whose maker
+//! derives another task, or an assignment by an actor who does not own the task, is skipped
+//! by the fold, so it moves no authority either (FIX TASK-FACT-RESTORE-COUNT-SKIPS-ADMISSION).
+//! Red on the base (#9438's head 975dbdc69e1e): the restores in
+//! `an_owner_fact_whose_maker_derives_another_task_does_not_refuse_the_restore` and
+//! `an_assignment_by_an_actor_who_does_not_own_the_task_does_not_refuse_the_restore` are
+//! refused for "task authority". Green on the head.
+//! `the_owners_own_assignment_since_the_checkpoint_still_refuses_the_restore` is a guard on
+//! both: a fact the fold admits still holds the restore.
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features
 //! --test restore_counts_live_task_facts`.
 #![cfg(all(oneiron_test_support, feature = "sync", feature = "test-support"))]
@@ -26,6 +36,9 @@ use oneiron::registry::ENTITY_TYPE_TASK;
 use oneiron::sync::client::ImportTier;
 use oneiron::sync::replay::{ReplicatedEntity, replay_entity};
 use oneiron::task_verb::TaskCreateSpec;
+use oneiron::test_doors::task_fact_actor::{
+    proved_standing, write_unjudged_fact, write_unjudged_owner_fact,
+};
 use oneiron::{
     EdgeActorClass, EdgeKind, EntityId, TASK_AUTHORITY_FACT_SCHEMA_VERSION,
     TASK_AUTHORITY_FACT_SUBKIND, TaskAuthorityFactKind, TimeRange, Vault, VaultConfig,
@@ -192,6 +205,90 @@ fn a_cancel_this_install_wrote_since_the_checkpoint_still_refuses_the_restore() 
     );
     let Err(error) = vault.restore() else {
         panic!("restoring the checkpoint would bring the cancelled task back open");
+    };
+    let message = error.to_string();
+    assert!(
+        message.contains("would roll back") && message.contains("task authority"),
+        "{message}"
+    );
+}
+
+#[test]
+fn an_owner_fact_whose_maker_derives_another_task_does_not_refuse_the_restore() {
+    let vault = checkpointed();
+    let stranger = EntityId::now();
+    write_unjudged_owner_fact(
+        &vault.live,
+        vault.task,
+        stranger,
+        EntityId::now(),
+        EntityId::now(),
+    )
+    .expect("this install writes an Owner fact past the door's maker check");
+    let standing = proved_standing(&vault.live, vault.task)
+        .expect("the task's facts read")
+        .expect("the owner's own Owner fact counts");
+    assert_eq!(
+        standing.owner, vault.owner,
+        "an Owner fact whose maker derives another task is skipped by the live fold"
+    );
+    if let Err(error) = vault.restore() {
+        panic!(
+            "an Owner fact the live fold skips moved no task authority, \
+             so the restore goes ahead; it was refused: {error}"
+        );
+    }
+}
+
+#[test]
+fn an_assignment_by_an_actor_who_does_not_own_the_task_does_not_refuse_the_restore() {
+    let vault = checkpointed();
+    let (stranger, strangers_agent) = (EntityId::now(), EntityId::now());
+    write_unjudged_fact(
+        &vault.live,
+        vault.task,
+        TaskAuthorityFactKind::Assigned,
+        stranger,
+        Some(strangers_agent),
+    )
+    .expect("this install writes the stranger's assignment past the door's actor check");
+    let standing = proved_standing(&vault.live, vault.task)
+        .expect("the task's facts read")
+        .expect("the owner's own Owner fact counts");
+    assert_eq!(
+        standing.assignee, None,
+        "an assignment by an actor who does not own the task is skipped by the live fold"
+    );
+    if let Err(error) = vault.restore() {
+        panic!(
+            "an assignment the live fold skips moved no task authority, \
+             so the restore goes ahead; it was refused: {error}"
+        );
+    }
+}
+
+#[test]
+fn the_owners_own_assignment_since_the_checkpoint_still_refuses_the_restore() {
+    let vault = checkpointed();
+    let agent = EntityId::now();
+    write_unjudged_fact(
+        &vault.live,
+        vault.task,
+        TaskAuthorityFactKind::Assigned,
+        vault.owner,
+        Some(agent),
+    )
+    .expect("this install writes the owner's assignment, as the stranger's above");
+    let standing = proved_standing(&vault.live, vault.task)
+        .expect("the task's facts read")
+        .expect("the owner's own Owner fact counts");
+    assert_eq!(
+        standing.assignee,
+        Some(agent),
+        "the owner's assignment counts"
+    );
+    let Err(error) = vault.restore() else {
+        panic!("restoring the checkpoint would take the owner's assignment back");
     };
     let message = error.to_string();
     assert!(
