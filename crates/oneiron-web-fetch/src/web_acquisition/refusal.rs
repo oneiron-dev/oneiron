@@ -21,8 +21,8 @@ pub enum HostedEgressRefusal {
     /// Hosted infrastructure: loopback, "this host", link-local, a cloud
     /// metadata endpoint or one of the node's own addresses.
     Infrastructure,
-    /// A private network (RFC1918, CGNAT, ULA) no operator origin admits
-    /// (FIX 7657).
+    /// A private network (RFC1918, CGNAT, ULA) that no operator network or
+    /// origin admits (FIX 7657).
     PrivateNetwork,
 }
 
@@ -94,7 +94,7 @@ impl HostedEgressRefusal {
                 "For tenant isolation, a hosted node never fetches the infrastructure it runs on; a self-hosted node fetches this address."
             }
             Self::PrivateNetwork => {
-                "For tenant isolation, a hosted node refuses private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7) outside the origins its hosting operator allows; a self-hosted node fetches this address, or the hosting operator can allow its named private origin."
+                "For tenant isolation, a hosted node refuses private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7) outside the private networks and origins its hosting operator allows; a self-hosted node fetches this address, or the hosting operator can allow its private network or its named private origin."
             }
         }
     }
@@ -118,7 +118,7 @@ impl std::fmt::Display for HostedEgressRefusal {
             ),
             Self::PrivateNetwork => write!(
                 f,
-                "web fetch refused ({HOSTED_PRIVATE_NETWORK_REASON}): on a hosted node, the destination is a private-network address outside the hosting operator's allowed origins, and for tenant isolation hosted nodes refuse private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7); a self-hosted node fetches it, or the hosting operator can allow its named private origin"
+                "web fetch refused ({HOSTED_PRIVATE_NETWORK_REASON}): on a hosted node, the destination is a private-network address outside the private networks and origins the hosting operator allows, and for tenant isolation hosted nodes refuse private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7); a self-hosted node fetches it, or the hosting operator can allow its private network or its named private origin"
             ),
         }
     }
