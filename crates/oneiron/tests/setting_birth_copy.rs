@@ -31,7 +31,7 @@
 
 use std::sync::Arc;
 
-use oneiron::authority::{HostSlipIssuer, MachineRole};
+use oneiron::authority::{HostSlipIssuer, MachineOwnership, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::Memory;
 use oneiron::setting::{
@@ -101,7 +101,10 @@ impl Fixture {
         fx
     }
 
-    /// Gives the vault its authority root, and this install the identities that carry acts.
+    /// Gives the vault its authority root, and this install the identities that carry acts, as
+    /// the owner's own machine: its engine acts stand with no owner key's proof (row
+    /// CARRIER-OWNER-PROOF). An install that is not his waits for that proof on every engine act
+    /// it carries, here the births and the pack's head, and a waiting birth is no live head.
     fn root(&mut self) {
         let issuer = self
             .vault
@@ -114,7 +117,7 @@ impl Fixture {
             .provision_engine_machine_identities(&issuer)
             .expect("engine machine identities");
         self.vault
-            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .ensure_serving_install_profile(&issuer, MachineRole::Owned(MachineOwnership::Yours))
             .expect("serving install profile");
         self.issuer = Some(issuer);
     }
