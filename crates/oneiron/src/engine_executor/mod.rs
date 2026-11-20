@@ -60,7 +60,7 @@ pub(crate) use self::record::{executor_config_hash_for_test, step_state_hash_for
 pub use self::run_position::{CodeRunPosition, code_run_position};
 // FIX 17594: the host's self-brief port a native run's requests carry.
 pub use self::self_brief::{
-    BriefBoundary, BriefCandidateToken, BriefPrefix, FoldBoundary, SelfBriefPort,
+    BriefBoundary, BriefCandidateToken, BriefPrefix, BriefRecheck, FoldBoundary, SelfBriefPort,
 };
 // FIX OFF-RECORD-RUN-POLICY-REFUSAL-500: a session's refusal of a run's act.
 pub use self::session_refusal::is_session_act_refusal;
