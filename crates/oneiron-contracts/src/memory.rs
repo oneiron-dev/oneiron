@@ -22,5 +22,5 @@ pub use self::error::{
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     MEMORY_CODE_PACED_HOLD, MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER,
     MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial, MemoryPending, MemoryPolicyDenial,
-    MemoryPolicyExceptionProposal, MemoryResult, MemoryWrongRoot,
+    MemoryPolicyExceptionProposal, MemoryResult, MemoryWrongRoot, TaskAssignmentConflict,
 };

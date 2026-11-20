@@ -190,6 +190,7 @@ fn error_of_envelope(envelope: ApiErrorEnvelope) -> Option<MemoryError> {
         message: envelope.error.message,
         suggestions,
         successor_short_id: None,
+        task_assignment_conflict: None,
         extraction_layout: None,
         gate_denial: None,
         read_receipt: envelope.narrowing,

@@ -644,7 +644,10 @@ impl TaskAuthorityFacts {
 /// whose facts fail the read (a suppressed fact) still takes its cancel, and
 /// the vault owner's force still stops its branches. An Owner fact must
 /// derive its task's id from its maker and owner, and no other kind may name
-/// a maker ([`TaskAuthorityFact::commits_to_its_task`]).
+/// a maker ([`TaskAuthorityFact::commits_to_its_task`]). An Assigned or
+/// HumanAssigned fact naming another binding than the fold already holds is
+/// refused with [`RecordError::TaskAssignmentConflict`], so no write commits
+/// a fork later reads fail on; the same binding rewrites as a set duplicate.
 pub(crate) fn put_task_authority_fact_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -655,18 +658,46 @@ pub(crate) fn put_task_authority_fact_in_txn(
             "task authority fact's maker does not derive its task id",
         ));
     }
-    if !matches!(
+    let folded = if matches!(
         fact.kind,
         TaskAuthorityFactKind::Owner | TaskAuthorityFactKind::Cancelled
-    ) && !vault
-        .task_authority_facts_in(&*wtxn, fact.task_ref)?
-        .admits(&fact)
-    {
-        return Err(Error::InvariantViolation(
-            "task authority fact names an actor that may not make it",
-        ));
+    ) {
+        None
+    } else {
+        let folded = vault.task_authority_facts_in(&*wtxn, fact.task_ref)?;
+        if !folded.admits(&fact) {
+            return Err(Error::InvariantViolation(
+                "task authority fact names an actor that may not make it",
+            ));
+        }
+        Some(folded)
+    };
+    if let Some(folded) = folded.as_ref() {
+        refuse_second_assignment(&fact, folded)?;
     }
     write_task_authority_fact_in_txn(vault, wtxn, fact)
+}
+
+/// Refuses an Assigned or HumanAssigned fact whose binding differs from the one the fold
+/// already holds: writing it would commit a fork every later read fails on. A fact naming
+/// the held binding is a set duplicate and writes as today, as does a fact naming no
+/// assignee, which the fold judges as it always did.
+fn refuse_second_assignment(fact: &TaskAuthorityFact, folded: &TaskAuthorityFacts) -> Result<()> {
+    let held = match fact.kind {
+        TaskAuthorityFactKind::Assigned => folded.assigned,
+        TaskAuthorityFactKind::HumanAssigned => folded.human_assigner,
+        _ => return Ok(()),
+    };
+    if let (Some(held_binding), Some(offered)) = (held, fact.assigned_ref)
+        && (fact.actor_ref, offered) != held_binding
+    {
+        return Err(Error::Record(RecordError::TaskAssignmentConflict {
+            task_ref: fact.task_ref,
+            held_assignee: held_binding.1,
+            offered_assignee: offered,
+        }));
+    }
+    Ok(())
 }
 
 /// [`write_task_authority_fact_in_txn`] for the test door that stands in for a
