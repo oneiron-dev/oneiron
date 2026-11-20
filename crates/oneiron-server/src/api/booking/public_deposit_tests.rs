@@ -13,6 +13,9 @@
 //! payment captured refunds it; a refund Stripe holds pending stays owed
 //! and is never made twice. The Muse Spark blind review's case (16 Nov): a
 //! refund owed while the key is withheld waits, and runs once it is back.
+//! The fake lists a payment's refunds as Stripe does, newest first and a page
+//! at a time, so a refund past the first page is found
+//! (FIX [BK-DEPOSIT-REFUND-LIST-ONE-PAGE]).
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -308,13 +311,32 @@ async fn list_refunds(
         query.clone(),
     );
     let stripe = stripe.lock().expect("fake stripe");
-    let data: Vec<Value> = stripe
+    // Stripe lists a payment's refunds newest first, at most `limit` (10 when
+    // unset) to a page, from the refund after `starting_after`.
+    let limit = query
+        .get("limit")
+        .map_or(10, |limit| limit.parse().expect("refund list limit"));
+    let listed: Vec<&FakeRefund> = stripe
         .refunds
         .iter()
+        .rev()
         .filter(|refund| Some(&refund.payment_intent) == query.get("payment_intent"))
+        .collect();
+    let start = query.get("starting_after").map_or(0, |after| {
+        listed
+            .iter()
+            .position(|refund| &refund.id == after)
+            .expect("starting_after names a listed refund")
+            + 1
+    });
+    let data: Vec<Value> = listed[start..]
+        .iter()
+        .take(limit)
+        .copied()
         .map(refund_json)
         .collect();
-    axum::Json(json!({ "object": "list", "data": data, "has_more": false }))
+    let has_more = listed.len() > start + data.len();
+    axum::Json(json!({ "object": "list", "data": data, "has_more": has_more }))
 }
 
 /// A loopback Stripe on this runtime; its origin.
@@ -1454,5 +1476,109 @@ async fn a_hand_refund_stands_once_the_rows_own_refund_ended_failed() {
         refund_posts(&stripe),
         1,
         "no refund was asked once the payment held the hand refund"
+    );
+}
+
+/// Stripe lists a payment's refunds at most 100 to a page, newest first. The
+/// settle row's own refund, still pending behind 100 refunds the owner tried
+/// by hand and Stripe failed, sits on the second page: the next pass reads
+/// every page, finds it under its key and makes no second one, which Stripe's
+/// one-day key would not stop (FIX [BK-DEPOSIT-REFUND-LIST-ONE-PAGE]).
+#[tokio::test]
+async fn a_pending_refund_past_the_first_page_of_refunds_is_not_made_again() {
+    let terms = any_notice_terms();
+    let (fixture, stripe) = deposit_fixture_with(terms.clone(), SECRET_KEY).await;
+    let slots = fixture.slots().await;
+    let (payment_id, cancel_token) = paid_booking(
+        &fixture,
+        &stripe,
+        selected(&slots[0]),
+        "refund-past-first-page",
+        &terms,
+    )
+    .await;
+    fixture
+        .dispatch(
+            "booking.cancel",
+            cancel(cancel_token, "cancel-refund-past-first-page"),
+        )
+        .await
+        .expect("cancel");
+    let owed = DepositState::RefundDue {
+        amount_minor: 5_000,
+    };
+    assert_eq!(deposit_state(&fixture, &payment_id), owed);
+
+    // Three passes an hour and a second apart, the last one now.
+    let now = now_secs().expect("clock");
+    let pass_at = |pass: u64| now - (2 - pass) * 3_601;
+
+    // The row asks for the refund, and Stripe holds it pending.
+    stripe.lock().expect("fake stripe").refund_status = Some("pending".to_owned());
+    let drain = run_settle_pass(&fixture, pass_at(0)).await;
+    assert_eq!(drain.failed, 0, "a pending refund never fails for good");
+    assert_eq!(drain.refunded, 0, "a pending refund is no refund");
+    assert_eq!(refund_posts(&stripe), 1, "guard: the row asked once");
+
+    // The owner tries 100 refunds by hand, and Stripe fails each one: the
+    // row's own refund is now the 101st, on the second page.
+    {
+        let mut stripe = stripe.lock().expect("fake stripe");
+        for attempt in 1..=100 {
+            stripe.refunds.push(refund_by_hand(
+                &format!("re_by_hand_{attempt}"),
+                &payment_id,
+                5_000,
+                "failed",
+            ));
+        }
+        stripe.refund_status = None;
+    }
+    let drain = run_settle_pass(&fixture, pass_at(1)).await;
+    assert_eq!(
+        refund_posts(&stripe),
+        1,
+        "the pending refund past the first page was never made twice"
+    );
+    assert_eq!(drain.failed, 0, "a pending refund never fails for good");
+    assert_eq!(drain.refunded, 0, "a pending refund is no refund");
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        owed,
+        "the refund stays owed while Stripe holds it"
+    );
+    assert!(
+        stripe
+            .lock()
+            .expect("fake stripe")
+            .calls
+            .iter()
+            .any(|(call, query, _)| call == "GET /v1/refunds"
+                && query.contains_key("starting_after")),
+        "guard: the pass read the second page"
+    );
+
+    // Stripe finishes the row's refund; the next pass finds it by its key.
+    {
+        let mut stripe = stripe.lock().expect("fake stripe");
+        assert!(
+            stripe.refunds[0].settle_key.is_some(),
+            "guard: the first refund is the row's own"
+        );
+        stripe.refunds[0].status = "succeeded".to_owned();
+    }
+    let drain = run_settle_pass(&fixture, pass_at(2)).await;
+    assert_eq!(drain.failed, 0);
+    assert_eq!(drain.refunded, 1);
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::Refunded {
+            amount_minor: 5_000
+        }
+    );
+    assert_eq!(
+        refund_posts(&stripe),
+        1,
+        "the refund was asked for once, under the row's key"
     );
 }
