@@ -108,6 +108,8 @@ pub use roster::{ProjectRosterWriteOutcome, ProjectRosterWriteRequest};
 #[cfg(test)]
 mod review_tests;
 pub(crate) use leader_chat::CHAT_FIELD as LEADER_CHAT_FIELD;
+#[cfg(oneiron_test_support)]
+pub(crate) use leader_chat::bind_leader_chat_in_txn;
 pub use leader_chat::{LEADER_CHAT_RULE_PREDICATE, LeaderChat};
 pub(crate) use leader_chat::{
     admit_turn as admit_leader_chat_turn, admit_witness as admit_leader_chat_witness,

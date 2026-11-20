@@ -435,6 +435,28 @@ pub(crate) mod test_support {
         Ok(())
     }
 
+    /// Copies room `room`'s ledger rows and revision row from `from` into `to`, with no room
+    /// record beside them.
+    pub(crate) fn copy_ledger(
+        from: &crate::Vault,
+        to: &crate::Vault,
+        room: EntityId,
+    ) -> Result<()> {
+        let rtxn = from.store.env.read_txn()?;
+        let rows = MEMBERSHIP_ROWS.scan_from(from, &rtxn, room.as_bytes())?;
+        let sequence = MEMBERSHIP_SEQ.get(from, &rtxn, &room)?;
+        drop(rtxn);
+        let mut txn = to.store.env.write_txn()?;
+        for (key, row) in &rows {
+            MEMBERSHIP_ROWS.put(to, &mut txn, key, row)?;
+        }
+        if let Some(count) = sequence {
+            MEMBERSHIP_SEQ.put(to, &mut txn, &room, &count)?;
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
     /// Rewrites row `ordinal` of room `room`'s ledger with `visible_from`.
     pub(crate) fn set_row_visible_from(
         vault: &crate::Vault,

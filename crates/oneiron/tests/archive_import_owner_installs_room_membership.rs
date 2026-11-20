@@ -33,11 +33,12 @@
 //!   `CONVERSATION_MEMBERSHIP_SEQ` or `CONVERSATION_ROLE_GRANT` row of that room, where the
 //!   export before the hold carried two, one and one.
 //! * `a_room_whose_member_is_no_live_person_here_stays_out_of_the_owner_restore`
-//!   (REVIEW-9446 P1-2): the hosted source use-limits yuki, so its archive carries the room
-//!   and its ledger but no yuki record. An owner restore into a vault without yuki, and one
-//!   into a vault that holds yuki's soft-deleted shell, each goes on, keeps the room out under
+//!   (REVIEW-9446 P1-2): the source user-deletes yuki, so its archive carries the room and its
+//!   ledger but no yuki record. An owner restore into a vault without yuki, and one into a
+//!   vault that holds yuki's soft-deleted shell, each goes on, keeps the room out under
 //!   `RoomNotSeatedHere`, lands no ledger row and counts the three ledger envelopes held back
-//!   as `missing_live_entity`; owen still lands.
+//!   as `missing_live_entity`; owen still lands. (Round 2: a use-limited yuki now keeps the
+//!   whole ledger out of the archive, test 10, so this fixture deletes her instead.)
 //! * `an_incomplete_room_ledger_keeps_the_room_out_of_the_owner_restore` (REVIEW-9446 P1-3;
 //!   door `test_doors::archive_room_ledger`): the source's ledger lost its revision row, so
 //!   the archive carries two ledger rows and no `CONVERSATION_MEMBERSHIP_SEQ`; the owner
@@ -47,10 +48,36 @@
 //!   P1-4; same door): owen's archived Join opens his window ten units after his join, which
 //!   the membership door never writes; the owner restore goes on, keeps the room out and
 //!   counts the three ledger envelopes held back as `invalid_value`.
+//! * `a_whole_vault_export_withholds_the_ledger_of_a_deleted_room` (REVIEW-9446 round 2 P1-1):
+//!   the source holds the room's ledger live and, after an actorless import of its own
+//!   archive, inert as well; once the room is user-deleted the export carries no
+//!   `CONVERSATION_MEMBERSHIP_ROW` or `CONVERSATION_MEMBERSHIP_SEQ` row of it, where it
+//!   carried two and one before.
+//! * `a_whole_vault_export_withholds_a_ledger_that_names_a_use_limited_member`
+//!   (round 2 P1-2): on a hosted source yuki joins and leaves, then a customer hold refuses her
+//!   privacy erase; the export still carries the room but no row or revision of its ledger,
+//!   where it carried three and one before the hold.
+//! * `an_identical_ledger_of_a_deleted_room_is_held_back_not_unchanged` (round 2 P1-3; door
+//!   `copy_room_ledger`): a carrier vault holds the source room's ledger with no room record,
+//!   so its archive carries that ledger alone; the owner restore into the source after the
+//!   room's user delete counts both ledger tables held back as `missing_live_entity`, none
+//!   unchanged live, and a repeat counts the inert copies unchanged.
+//! * `an_intermediate_join_window_keeps_the_room_out_of_the_owner_restore` (round 2 P1-4;
+//!   door `set_room_ledger_row_visible_from`): owen's plain Join at 20 opens his window at 10,
+//!   between the room's origin and his join, with no speaker handoff; the owner restore goes
+//!   on, keeps the room out and counts the three ledger envelopes held back as
+//!   `invalid_value`.
+//! * `an_unbound_leader_chat_stays_out_of_the_owner_restore` (round 2 P1-5; door
+//!   `open_bound_leader_chat`): the source's leader chat room carries its binding, which the
+//!   destination's project door never made; the owner restore goes on, keeps the room out
+//!   under `RoomNotSeatedHere` and counts its ledger envelopes held back as
+//!   `missing_live_entity`; owen and yuki land.
 //!
 //! Tests 5 and 6 use public doors only and run red at the review test commit (the round-1
 //! head with #9721 merged, plus tests 5 and 6), where tests 1-4 pass. Tests 7 and 8 use the
-//! door the fix commit adds and run green only.
+//! door the fix commit adds and run green only. Tests 9 to 13 run red at the round-2 test
+//! commit (the round-2 head with these tests and the round-2 doors, no fix), where tests 1 to
+//! 8 pass.
 //!
 //! New report counts are read through `serde_json::to_value` of the SIDE-1 summary, so this
 //! file compiles where the landing is absent; an absent field fails its assertion as a
@@ -77,6 +104,7 @@ use oneiron::{
 use retained_side_rows::{
     export_whole, open_later_vault, open_source_vault, owner_proof, retained_rows, rows_for,
 };
+use std::collections::BTreeSet;
 
 /// A fixed entity id from one repeated byte. The banned bytes (00, 11, 42,
 /// 47, A1..A6, D7, E1, FF) belong to other fixtures.
@@ -749,6 +777,24 @@ fn stored(vault: &Vault, id: EntityId) -> bool {
         .is_some()
 }
 
+/// Every delete signs as this install.
+fn install_keystore(vault: &Vault) {
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+}
+
+/// Whether whole-vault `archive` carries a record of `id`, read through `reader`.
+fn archive_carries(reader: &Vault, archive: &[u8], id: EntityId) -> bool {
+    reader
+        .read_whole_vault_archive(archive)
+        .expect("read the archive")
+        .evidence_ledger
+        .entities
+        .iter()
+        .any(|entity| entity.id == id.to_hex())
+}
+
 /// `room` stayed archive data on `dest`: no row and no ledger row of it, named under
 /// `RoomNotSeatedHere` in `receipt`, and none of its ledger envelopes installed.
 fn assert_room_kept_out(
@@ -818,14 +864,20 @@ fn a_whole_vault_export_withholds_the_ledger_and_roles_of_a_use_limited_room() {
 
 #[test]
 fn a_room_whose_member_is_no_live_person_here_stays_out_of_the_owner_restore() {
-    let (_source_dir, source) = open_hosted_source_vault();
+    let (_source_dir, source) = open_source_vault();
     let now = source.now_recorded_at();
     let occurred = TimeRange {
         start: now,
         end: now,
     };
     let (room, owen, yuki) = seat_room(&source, occurred, now);
-    use_limit(&source, yuki);
+    install_keystore(&source);
+    assert!(
+        source
+            .delete_entity(&yuki)
+            .expect("FIXTURE: user-delete yuki on the source"),
+        "FIXTURE: yuki existed on the source"
+    );
     let archive = export_whole(&source);
     assert_eq!(
         room_tuples(
@@ -843,7 +895,7 @@ fn a_room_whose_member_is_no_live_person_here_stays_out_of_the_owner_restore() {
         .expect("the owner restore into a vault without yuki goes on past the room");
     assert!(
         !stored(&absent, yuki),
-        "FIXTURE: the archive carries no record of the use-limited yuki"
+        "FIXTURE: the archive carries no record of the deleted yuki"
     );
     assert_room_kept_out(&absent, &receipt, room, "a destination without yuki");
     assert!(
@@ -853,6 +905,7 @@ fn a_room_whose_member_is_no_live_person_here_stays_out_of_the_owner_restore() {
 
     let (_shell_dir, shell) = open_later_vault();
     put_person_at(&shell, yuki, b"yuki", occurred, now);
+    install_keystore(&shell);
     assert!(
         shell
             .delete_entity(&yuki)
@@ -984,6 +1037,354 @@ fn a_join_visible_after_its_time_keeps_the_room_out_of_the_owner_restore() {
             held_back(&summary, table),
             vec![("invalid_value".to_owned(), rows)],
             "the {table} envelopes are held back as an invalid ledger: {summary}"
+        );
+    }
+    assert!(
+        stored(&dest, owen) && stored(&dest, yuki),
+        "owen and yuki still land"
+    );
+}
+
+#[test]
+fn a_whole_vault_export_withholds_the_ledger_of_a_deleted_room() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let (room, _owen, _yuki) = seat_room(
+        &source,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    );
+    let tables = [
+        ("CONVERSATION_MEMBERSHIP_ROW", 2),
+        ("CONVERSATION_MEMBERSHIP_SEQ", 1),
+    ];
+    let before = export_whole(&source);
+    for (table, rows) in tables {
+        assert_eq!(
+            room_tuples(&retained_rows(&before), table, room),
+            rows,
+            "FIXTURE: before the delete the archive carries the room's {table} rows"
+        );
+    }
+    // The actorless import keeps every archived ledger envelope as an inert copy beside
+    // the live ledger, so both export loops meet the room.
+    let receipt = source
+        .import_whole_vault_archive_from(Cursor::new(&before))
+        .expect("FIXTURE: the actorless import of the source's own archive succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    for (table, rows) in tables {
+        assert_eq!(
+            table_count(&summary, table, "inserted_rows"),
+            Some(rows),
+            "FIXTURE: the source keeps an inert copy of each {table} envelope: {summary}"
+        );
+    }
+
+    install_keystore(&source);
+    assert!(
+        source
+            .delete_entity(&room)
+            .expect("FIXTURE: user-delete the room"),
+        "FIXTURE: the room existed before its delete"
+    );
+    assert!(
+        source
+            .is_deleted_shell(&room)
+            .expect("FIXTURE: read the room's shell"),
+        "FIXTURE: a user delete keeps the room's shell and its ledger"
+    );
+    let after = export_whole(&source);
+    assert!(
+        !archive_carries(&source, &after, room),
+        "FIXTURE: the archive carries no record of the deleted room"
+    );
+    for (table, _) in tables {
+        assert_eq!(
+            room_tuples(&retained_rows(&after), table, room),
+            0,
+            "LEAK: the archive carries no live or inert {table} row of the deleted room"
+        );
+    }
+}
+
+#[test]
+fn a_whole_vault_export_withholds_a_ledger_that_names_a_use_limited_member() {
+    let (_source_dir, source) = open_hosted_source_vault();
+    let now = source.now_recorded_at();
+    let (room, owen, yuki) = seat_room(
+        &source,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    );
+    let owner = source
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the source names its embedded owner actor");
+    source
+        .leave_member(
+            room,
+            yuki,
+            WriteActor::new(owner, EdgeActorClass::Human),
+            now + 1,
+        )
+        .expect("FIXTURE: yuki leaves the room");
+    assert_eq!(
+        source.members(room).expect("FIXTURE: read the members"),
+        vec![owen],
+        "FIXTURE: only owen is a current member"
+    );
+    let tables = [
+        ("CONVERSATION_MEMBERSHIP_ROW", 3),
+        ("CONVERSATION_MEMBERSHIP_SEQ", 1),
+    ];
+    let before = retained_rows(&export_whole(&source));
+    for (table, rows) in tables {
+        assert_eq!(
+            room_tuples(&before, table, room),
+            rows,
+            "FIXTURE: before the hold the archive carries the room's {table} rows"
+        );
+    }
+
+    use_limit(&source, yuki);
+    let archive = export_whole(&source);
+    assert!(
+        archive_carries(&source, &archive, room),
+        "FIXTURE: the archive still carries the unrestricted room"
+    );
+    assert!(
+        !archive_carries(&source, &archive, yuki),
+        "FIXTURE: the archive carries no record of the use-limited yuki"
+    );
+    for (table, _) in tables {
+        assert_eq!(
+            room_tuples(&retained_rows(&archive), table, room),
+            0,
+            "LEAK: the archive carries no {table} row of a ledger naming the use-limited yuki"
+        );
+    }
+}
+
+#[test]
+fn an_identical_ledger_of_a_deleted_room_is_held_back_not_unchanged() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let (room, _owen, _yuki) = seat_room(
+        &source,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    );
+    let source_rows = retained_rows(&export_whole(&source));
+    let (_carrier_dir, carrier) = open_later_vault();
+    archive_room_ledger::copy_room_ledger(&source, &carrier, room)
+        .expect("FIXTURE: copy the room's ledger into the carrier");
+    let archive = export_whole(&carrier);
+    assert!(
+        !archive_carries(&carrier, &archive, room),
+        "FIXTURE: the carrier's archive carries no room record"
+    );
+    let carried = retained_rows(&archive);
+    for (table, rows) in [
+        ("CONVERSATION_MEMBERSHIP_ROW", 2),
+        ("CONVERSATION_MEMBERSHIP_SEQ", 1),
+    ] {
+        let room_rows = |rows: &[(String, Vec<u8>, Vec<u8>)]| {
+            rows_for(rows, table)
+                .into_iter()
+                .filter(|(_, key, _)| key.starts_with(room.as_bytes()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            room_rows(&carried).len(),
+            rows,
+            "FIXTURE: the carrier's archive carries the room's {table} rows"
+        );
+        assert_eq!(
+            room_rows(&carried),
+            room_rows(&source_rows),
+            "FIXTURE: the carried {table} rows are the source's byte for byte"
+        );
+    }
+
+    install_keystore(&source);
+    assert!(
+        source
+            .delete_entity(&room)
+            .expect("FIXTURE: user-delete the room"),
+        "FIXTURE: the room existed before its delete"
+    );
+    for pass in ["first", "repeat"] {
+        let receipt = source
+            .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner_proof(&source))
+            .unwrap_or_else(|err| panic!("the {pass} owner restore succeeds: {err:?}"));
+        let summary =
+            serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+        for (table, rows) in [
+            ("CONVERSATION_MEMBERSHIP_ROW", 2),
+            ("CONVERSATION_MEMBERSHIP_SEQ", 1),
+        ] {
+            assert_eq!(
+                held_back(&summary, table),
+                vec![("missing_live_entity".to_owned(), rows)],
+                "the {pass} restore holds back the deleted room's {table} envelopes: {summary}"
+            );
+            assert_eq!(
+                table_count(&summary, table, "unchanged_live_rows").unwrap_or_default(),
+                0,
+                "the {pass} restore counts no {table} row unchanged live: {summary}"
+            );
+            if pass == "repeat" {
+                assert_eq!(
+                    table_count(&summary, table, "unchanged_rows"),
+                    Some(rows),
+                    "the repeat finds the inert {table} copies the first restore kept: {summary}"
+                );
+            }
+        }
+        assert!(
+            source
+                .is_deleted_shell(&room)
+                .expect("read the room's shell"),
+            "the room stays a deleted shell after the {pass} restore"
+        );
+    }
+}
+
+#[test]
+fn an_intermediate_join_window_keeps_the_room_out_of_the_owner_restore() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let (room, owen, yuki) = seat_room_with_join_at(
+        &source,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        now + 20,
+    );
+    let joined = source
+        .membership_ledger(room)
+        .expect("FIXTURE: read the source ledger");
+    assert_eq!(
+        (
+            joined[0].action,
+            joined[0].person,
+            joined[0].visible_from,
+            joined[0].handoff.is_none()
+        ),
+        (MembershipAction::Join, owen, Some(0), true),
+        "FIXTURE: row 0 is owen's plain Join, visible from the room's origin"
+    );
+    archive_room_ledger::set_room_ledger_row_visible_from(&source, room, 0, Some(now + 10))
+        .expect("FIXTURE: open owen's window between the origin and his join");
+    let archive = export_whole(&source);
+    assert_eq!(
+        room_tuples(
+            &retained_rows(&archive),
+            "CONVERSATION_MEMBERSHIP_ROW",
+            room
+        ),
+        2,
+        "FIXTURE: the archive carries the room's two ledger rows"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner_proof(&dest))
+        .expect("the owner restore goes on past a room whose Join no door wrote");
+    assert_room_kept_out(&dest, &receipt, room, "the destination");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    for (table, rows) in [
+        ("CONVERSATION_MEMBERSHIP_ROW", 2),
+        ("CONVERSATION_MEMBERSHIP_SEQ", 1),
+    ] {
+        assert_eq!(
+            held_back(&summary, table),
+            vec![("invalid_value".to_owned(), rows)],
+            "the {table} envelopes are held back as an invalid ledger: {summary}"
+        );
+    }
+    assert!(
+        stored(&dest, owen) && stored(&dest, yuki),
+        "owen and yuki still land"
+    );
+}
+
+#[test]
+fn an_unbound_leader_chat_stays_out_of_the_owner_restore() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let occurred = TimeRange {
+        start: now,
+        end: now,
+    };
+    let chat = fixed_id(0x6E);
+    let owen = fixed_id(0x6C);
+    let yuki = fixed_id(0x6D);
+    put_person_at(&source, owen, b"owen", occurred, now);
+    put_person_at(&source, yuki, b"yuki", occurred, now);
+    let owner = source
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the source names its embedded owner actor");
+    archive_room_ledger::open_bound_leader_chat(
+        &source,
+        chat,
+        [fixed_id(0x6F), fixed_id(0x70)],
+        [owen, yuki],
+        WriteActor::new(owner, EdgeActorClass::Human),
+        now,
+    )
+    .expect("FIXTURE: the source opens the leader chat");
+    assert_eq!(
+        source
+            .members(chat)
+            .expect("FIXTURE: read the members")
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([owen, yuki]),
+        "FIXTURE: the leader chat seats owen and yuki"
+    );
+    let archive = export_whole(&source);
+    assert!(
+        archive_carries(&source, &archive, chat),
+        "FIXTURE: the archive carries the leader chat room"
+    );
+    assert_eq!(
+        room_tuples(
+            &retained_rows(&archive),
+            "CONVERSATION_MEMBERSHIP_ROW",
+            chat
+        ),
+        2,
+        "FIXTURE: the archive carries the chat's two ledger rows"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner_proof(&dest))
+        .expect("the owner restore goes on past a leader chat this vault never bound");
+    assert_room_kept_out(&dest, &receipt, chat, "the destination");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    for (table, rows) in [
+        ("CONVERSATION_MEMBERSHIP_ROW", 2),
+        ("CONVERSATION_MEMBERSHIP_SEQ", 1),
+    ] {
+        assert_eq!(
+            held_back(&summary, table),
+            vec![("missing_live_entity".to_owned(), rows)],
+            "the chat's {table} envelopes are held back with the room: {summary}"
         );
     }
     assert!(
