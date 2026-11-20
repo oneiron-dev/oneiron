@@ -492,7 +492,9 @@ impl Vault {
     /// revalidated inside the write transaction that closes `old_id`, so a
     /// request admitted on an owner credential that is revoked, or whose
     /// person stops owning this vault, while it waits on the writer commits
-    /// nothing (FIX MEMORY-VERB-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
+    /// nothing (FIX MEMORY-VERB-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT). The
+    /// revalidated owner closes `old_id` as its closer (FIX
+    /// OWNER-SUPERSEDE-ROUTE-NAMES-NO-CLOSER).
     pub fn supersede_claim_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -515,14 +517,23 @@ impl Vault {
         close: impl FnOnce(&Self, &heed::RwTxn<'_>) -> Result<bool>,
     ) -> Result<bool> {
         let mut wtxn = self.store.env.write_txn()?;
-        if let Some(owner) = owner {
-            owner.revalidate_in_txn(self, &wtxn)?;
-        }
+        // The owner's act closes as the owner: the revalidated owner is the
+        // old head's closer, so the Gate judges the owner's supersession and
+        // not the old head's own author (FIX
+        // OWNER-SUPERSEDE-ROUTE-NAMES-NO-CLOSER, the twin of
+        // OWNER-RETRACT-ROUTE-NAMES-NO-CLOSER).
+        let closer = match owner {
+            Some(owner) => Some(crate::WriteActor::new(
+                owner.revalidate_in_txn(self, &wtxn)?,
+                crate::edge::EdgeActorClass::Human,
+            )),
+            None => None,
+        };
         if !close(self, &wtxn)? {
             return Ok(false);
         }
         let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-        self.supersede_claim_in_txn(&mut wtxn, new_id, old_id, now)?;
+        self.supersede_claim_in_txn_as(&mut wtxn, new_id, old_id, now, closer)?;
         rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         self.store.notify_proactivity_changes();
