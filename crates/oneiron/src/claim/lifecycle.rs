@@ -68,6 +68,23 @@ fn lifecycle_close_end_in(
     )
 }
 
+/// The closer an owner door's close names: `owner` revalidated in `txn`, as
+/// the human actor the Gate judges the close as (FIX 8655's verified closer).
+/// No proof, no closer: the plain door's close keeps every source-trust check
+/// under the claim's own envelope.
+fn owner_closer_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+) -> Result<Option<crate::WriteActor>> {
+    owner
+        .map(|owner| owner.revalidate_in_txn(vault, txn))
+        .transpose()
+        .map(|actor| {
+            actor.map(|actor| crate::WriteActor::new(actor, crate::edge::EdgeActorClass::Human))
+        })
+}
+
 /// The family a want derived from behaviour is minted into, beside the
 /// user's own statement (ARCH-0003, ruled 2026-07-29).
 pub(super) const PREFERENCE_PREDICATE_PREFIX: &str = "preference.";
@@ -492,7 +509,10 @@ impl Vault {
     /// revalidated inside the write transaction that closes `old_id`, so a
     /// request admitted on an owner credential that is revoked, or whose
     /// person stops owning this vault, while it waits on the writer commits
-    /// nothing (FIX MEMORY-VERB-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
+    /// nothing (FIX MEMORY-VERB-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT). The
+    /// revalidated owner is the close's closer, so the Gate judges the close
+    /// as the owner's, not under the old head's own envelope (FIX
+    /// OWNER-RETRACT-ROUTE-NAMES-NO-CLOSER).
     pub fn supersede_claim_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -515,14 +535,12 @@ impl Vault {
         close: impl FnOnce(&Self, &heed::RwTxn<'_>) -> Result<bool>,
     ) -> Result<bool> {
         let mut wtxn = self.store.env.write_txn()?;
-        if let Some(owner) = owner {
-            owner.revalidate_in_txn(self, &wtxn)?;
-        }
+        let closer = owner_closer_in_txn(self, &wtxn, owner)?;
         if !close(self, &wtxn)? {
             return Ok(false);
         }
         let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-        self.supersede_claim_in_txn(&mut wtxn, new_id, old_id, now)?;
+        self.supersede_claim_in_txn_as(&mut wtxn, new_id, old_id, now, closer)?;
         rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         self.store.notify_proactivity_changes();
@@ -794,7 +812,12 @@ impl Vault {
     /// revalidated inside the write transaction that closes `id`, so a
     /// request admitted on an owner credential that is revoked, or whose
     /// person stops owning this vault, while it waits on the writer commits
-    /// nothing (FIX MEMORY-VERB-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
+    /// nothing (FIX MEMORY-VERB-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT). The
+    /// revalidated owner is the close's closer, as on
+    /// [`Memory::claim_retract`](crate::memory::Memory::claim_retract): an
+    /// approved claim of imported lineage whose tray row is gone closes as
+    /// the owner's act, not under its own author's pending source trust (FIX
+    /// OWNER-RETRACT-ROUTE-NAMES-NO-CLOSER).
     pub fn retract_claim_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -811,9 +834,7 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        if let Some(owner) = owner {
-            owner.revalidate_in_txn(self, &wtxn)?;
-        }
+        let closer = owner_closer_in_txn(self, &wtxn, owner)?;
         let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         // The typed door does not merely AUTHORIZE an expression-preference
         // retraction; it restores the direct predecessor as part of closing the
@@ -827,7 +848,7 @@ impl Vault {
                 "expression preference lifecycle is owned by retract_expression_preference",
             ));
         }
-        self.retract_claim_in_txn(&mut wtxn, id, now)?;
+        self.retract_claim_in_txn_as(&mut wtxn, id, now, closer)?;
         rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         self.store.notify_proactivity_changes();
