@@ -743,7 +743,12 @@ impl RecordingJsHost<'_, '_> {
                     // admitted entry (`hooked` is `None` only there).
                     ReadAnswer::Text(text) => match hooked.take() {
                         Some(own) => self.judge_text_answer(seq, own, &text)?,
-                        None => self.hold_admitted_text(seq, text)?,
+                        None => {
+                            return Err(Error::Refused(
+                                "the skill answer nests too deep for the live post hook to judge"
+                                    .to_owned(),
+                            ));
+                        }
                     },
                 };
                 SelfDispatchOutcome::SkillCall(SelfSkillCallResult {
