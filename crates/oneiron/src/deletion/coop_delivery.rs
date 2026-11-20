@@ -47,6 +47,7 @@ pub use reply_setting::{
 };
 pub use setting_answer::{
     ERASE_REQUEST_SETTING_DECLINE_CODE, ERASE_REQUEST_SETTING_DECLINE_REVIEW_SECS,
+    ERASE_REQUEST_SETTING_HONOUR_CODE,
 };
 
 pub use types::{

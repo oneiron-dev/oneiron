@@ -37,8 +37,8 @@ use rmpv::Value;
 
 use crate::Vault;
 use crate::authority::{
-    AuthorityVaultId, ConnectOffer, ConnectOfferTerms, FederationGrantActivation, HostSlipIssuer,
-    federation_grant_activation,
+    AuthorityFold, AuthorityVaultId, ConnectOffer, ConnectOfferTerms, FederationGrantActivation,
+    HostSlipIssuer, federation_grant_activation,
 };
 use crate::batch::BatchOp;
 use crate::claim::{
@@ -301,6 +301,73 @@ fn inquiry_join_world(company_vault_id: &AuthorityVaultId, pact_id: &[u8; 32]) -
         }
     }
     Err(refused("no local WORLD id derives from this Connect pact"))
+}
+
+/// Whether the live grant `grant` is `seat`'s inquiry edge on the company
+/// side, as [`Vault::join_inquiry_edge_in_txn`] mints it: bound to end with
+/// that seat, and `propose` alone over the one WORLD the id of its pact
+/// `pact_id` fixes ([`inquiry_join_world`]). A Connect grant the member's
+/// leave releases for any other reason is no inquiry edge (review round 2
+/// of #9195).
+fn is_seat_inquiry_grant_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    local: &AuthorityVaultId,
+    grant: &EntityId,
+    pact_id: &[u8; 32],
+    seat: ConnectMemberLeaveBinding,
+) -> Result<bool> {
+    let LiveEntityRow::Live {
+        entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+        body,
+    } = live_entity_row_in_txn(&vault.store, txn, grant)?
+    else {
+        return Ok(false);
+    };
+    let Ok(body) = decode_federation_grant_body(&body) else {
+        return Ok(false);
+    };
+    let reciprocal = inquiry_edge_scope(inquiry_join_world(local, pact_id)?, PROPOSE_VERB_CLASS);
+    Ok(body.detach_on_member_leave == Some(seat)
+        && body.authority_scope.worlds == reciprocal.worlds
+        && body.authority_scope.verbs == reciprocal.verbs)
+}
+
+/// Whether `seat` already carries a live inquiry edge here: a grant its
+/// member's leave releases that is the seat's inquiry edge
+/// ([`is_seat_inquiry_grant_in_txn`]) for a pact that binds it, with that
+/// pact Active or Suspended. An unpacted grant joins no edge, and a terminal
+/// pact has ended its edge.
+fn seat_carries_inquiry_edge_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    local: &AuthorityVaultId,
+    seat: ConnectMemberLeaveBinding,
+) -> Result<bool> {
+    for grant in
+        vault.live_bound_connect_grants_in_txn(txn, seat.shared_vault_id, seat.person_ref)?
+    {
+        let live = match federation_grant_activation(fold, &grant) {
+            FederationGrantActivation::Active => true,
+            FederationGrantActivation::Inactive(status) => !status.is_terminal(),
+            FederationGrantActivation::Unpacted => false,
+        };
+        if !live {
+            continue;
+        }
+        for pact_id in fold
+            .federation_grant_bindings
+            .get(&grant)
+            .into_iter()
+            .flatten()
+        {
+            if is_seat_inquiry_grant_in_txn(vault, txn, local, &grant, pact_id, seat)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Refuses an inquiry edge to `company` while this vault has a live Connect
@@ -752,45 +819,38 @@ impl Vault {
                 "an inquiry edge joins only its member's own seat in this shared vault",
             ));
         }
+        // The offer names its member, its exact repeat included (review
+        // round 2 of #9195): a repeat answers only an offer the first call
+        // would have taken.
+        if join.member_name.trim().is_empty() {
+            return Err(refused(
+                "an inquiry edge offered at joining names its member",
+            ));
+        }
         let connect = &join.connect;
         let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let local = fold
+            .vault_id
+            .ok_or_else(|| refused("this vault has no authority root yet"))?;
+        let seat = ConnectMemberLeaveBinding {
+            shared_vault_id,
+            person_ref: member,
+        };
         if let Some(pact) = fold.federation_pacts.get(&connect.pact_id) {
             let grant = pact.grant_ref;
-            let seat = ConnectMemberLeaveBinding {
-                shared_vault_id,
-                person_ref: member,
-            };
-            let seats_edge = match live_entity_row_in_txn(&self.store, txn, &grant)? {
-                LiveEntityRow::Live {
-                    entity_type: ENTITY_TYPE_FEDERATION_GRANT,
-                    body,
-                } => decode_federation_grant_body(&body)?.detach_on_member_leave == Some(seat),
-                _ => false,
-            };
-            if !seats_edge {
+            if !is_seat_inquiry_grant_in_txn(self, txn, &local, &grant, &connect.pact_id, seat)? {
                 return Err(refused(
                     "that Connect offer's pact is not this seat's inquiry edge",
                 ));
             }
             return Ok(self.accept_connect_in_txn(txn, issuer, grant, connect)?.1);
         }
-        if join.member_name.trim().is_empty() {
-            return Err(refused(
-                "an inquiry edge offered at joining names its member",
-            ));
-        }
         // One edge per seat (ARCH-0043 #inquiry-edge: "Every member seat
         // carries an inquiry edge"; FIX INQUIRY-EDGE-ONE-PER-SEAT). The exact
-        // repeat was answered above, so a seat grant that still stands here
+        // repeat was answered above, so a live inquiry edge of the seat here
         // belongs to another pact: a second edge, refused before any WORLD,
         // grant or pact is written.
-        let seat_edges = self.live_bound_connect_grants_in_txn(txn, shared_vault_id, member)?;
-        if seat_edges.iter().any(|grant| {
-            !matches!(
-                federation_grant_activation(&fold, grant),
-                FederationGrantActivation::Inactive(status) if status.is_terminal()
-            )
-        }) {
+        if seat_carries_inquiry_edge_in_txn(self, txn, &fold, &local, seat)? {
             return Err(refused("this member seat already carries an inquiry edge"));
         }
         // The WORLD is named for the seat's PERSON as this vault holds it,
@@ -804,9 +864,6 @@ impl Vault {
             .chars()
             .take(48)
             .collect();
-        let local = fold
-            .vault_id
-            .ok_or_else(|| refused("this vault has no authority root yet"))?;
         let world = inquiry_join_world(&local, &connect.pact_id)?;
         // A member who leaves and joins again gets a new WORLD, so its name
         // carries the pact's own part.

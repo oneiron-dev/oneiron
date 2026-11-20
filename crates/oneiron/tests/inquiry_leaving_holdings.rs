@@ -32,7 +32,8 @@ use oneiron::deletion::{
     COOP_DELETION_PEER_PATH, CooperativeDeletionAnswer, CooperativeDeletionDeliveryStatus,
     CooperativeDeletionDispositionKind, CooperativeDeletionIngress,
     ERASE_REQUEST_SETTING_DECLINE_CODE, ERASE_REQUEST_SETTING_DECLINE_REVIEW_SECS,
-    EraseRequestReply, EraseRequestReplySource, IncomingCooperativeDeletion, LegalHoldTarget,
+    ERASE_REQUEST_SETTING_HONOUR_CODE, EraseRequestReply, EraseRequestReplySource,
+    IncomingCooperativeDeletion, LegalHoldTarget,
 };
 use oneiron::federation::{FederationGrantRole, SharedVaultChange, pact_foreign_world};
 use oneiron::inquiry::{
@@ -912,7 +913,11 @@ fn honour_erases_the_covered_copies_and_keeps_a_held_one() {
     assert_eq!(answered.len(), 1, "the one filed ask: {answered:?}");
     let answer = answered[0].disposition.as_ref().expect("an answer");
     assert_eq!(answer.kind, CooperativeDeletionDispositionKind::Delete);
-    assert_eq!(answer.reason_code, None);
+    assert_eq!(
+        answer.reason_code.as_deref(),
+        Some(ERASE_REQUEST_SETTING_HONOUR_CODE),
+        "the setting's delete choice says it is the setting's"
+    );
     assert_eq!(answer.recorded_at, now);
     assert_eq!(
         answer.deleted,
