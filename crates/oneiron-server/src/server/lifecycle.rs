@@ -66,6 +66,7 @@ pub(super) enum LifecycleJobKind {
     OwnerWork,
     MergeQueueChecks,
     HookRegen,
+    DeviceBurstDrain,
 }
 
 /// The lifecycle loop and the housekeeping pass it last started, beside the
@@ -205,6 +206,9 @@ impl SyncServer {
                 // hooks' intents again (ARCH-0080 §8); the pass returns at
                 // once when none is due.
                 server.start_hook_regen_pass(&admit).await;
+                // An own device's held burst lands once the device's rate is
+                // back at its baseline, with no human step (L7-41).
+                server.start_device_burst_drain(&admit).await;
             }
         });
         LifecycleScheduler {

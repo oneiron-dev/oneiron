@@ -34,7 +34,7 @@ mod selector;
 
 pub use device::{
     DeviceBurstAdmission, DeviceBurstWork, DevicePeer, admit_device_window_update,
-    ready_device_work,
+    ready_device_work, record_device_refusal,
 };
 pub use selector::{PreparedSelectorFetch, prepare_selector_fetch, replay_selector_fetch};
 
