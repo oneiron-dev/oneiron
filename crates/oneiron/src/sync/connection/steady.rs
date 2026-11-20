@@ -74,6 +74,15 @@ impl SyncConnection {
         let mut sealed_relay =
             tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
         sealed_relay.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // A member lane's thin copies take the home's deletes on the same
+        // cadence; the connect took every set, so the first round is one
+        // period out (review round 2 of #8364).
+        let member_tombstone_period = Duration::from_secs(SEALED_RELAY_INTERVAL_SECS);
+        let mut member_tombstone_refresh = tokio::time::interval_at(
+            Instant::now() + member_tombstone_period,
+            member_tombstone_period,
+        );
+        member_tombstone_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // The right device PINs this connection has seen (row OCS-OWNER-PIN):
         // each new one owes a residence upkeep that starts after it, see the
         // housekeeping tick.
@@ -630,6 +639,35 @@ impl SyncConnection {
                                 Err(error) => {
                                     let _ = events.send(SyncEvent::Error(format!(
                                         "Machine name exchange failed: {error}"
+                                    )));
+                                }
+                            }
+                        }));
+                    }
+                }
+
+                // A member lane runs none of that owner-machine upkeep, yet a
+                // thin copy it fetched takes the home's deletes here: a
+                // promoted window's come in its own exchange, an unpromoted
+                // copy's only by this refresh (review round 2 of #8364).
+                _ = member_tombstone_refresh.tick(),
+                    if !gate.paused() && self.config.client_config.member_lane && peer_session.is_none() => {
+                    if upkeep.member_tombstones.as_ref().is_none_or(tokio::task::JoinHandle::is_finished) {
+                        // A pause leaves the round due at the thaw.
+                        let Some(batch) = gate.admit().await else {
+                            member_tombstone_refresh.reset_immediately();
+                            continue;
+                        };
+                        let manager = std::sync::Arc::clone(&self.manager);
+                        let config = self.client_config();
+                        let events = event_tx.clone();
+                        upkeep.member_tombstones = Some(tokio::spawn(async move {
+                            let _batch = batch;
+                            match crate::sync::client::refresh_followed_tombstones(&manager, &config).await {
+                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Followed tombstone refresh failed: {error}"
                                     )));
                                 }
                             }
