@@ -43,7 +43,9 @@ use oneiron::registry::{
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::coach::define_agent;
 use oneiron::test_doors::room_facet_set::{create_owner_project, set_room_facets};
-use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
+use oneiron::verbs::{
+    AgentGrantMintRequest, AgentGrantRevokeRequest, mint_agent_grant_as, revoke_agent_grant_as,
+};
 use oneiron::workspace_roster::ProjectRecord;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use serde_json::json;
@@ -268,6 +270,18 @@ impl Fixture {
     /// answer inside the Grant's facets.
     fn agent_reading_in(&self, facets: &BTreeSet<EntityId>) -> TestResult<EntityId> {
         let agent = define_agent(&self.vault)?;
+        self.grant_reading_in(agent, facets)?;
+        Ok(agent)
+    }
+
+    /// The owner's live `read` Grant to `agent` over MESSAGE and CLAIM rows
+    /// placed in `facets` alone, every other axis covering every row; returns
+    /// the Grant's row.
+    fn grant_reading_in(
+        &self,
+        agent: EntityId,
+        facets: &BTreeSet<EntityId>,
+    ) -> TestResult<EntityId> {
         let mut authority_scope = Scope::top();
         authority_scope.bands =
             ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_MESSAGE, ENTITY_TYPE_CLAIM]));
@@ -292,7 +306,23 @@ impl Fixture {
             minted.grant.confers,
             "precondition: the agent's Grant confers"
         );
-        Ok(agent)
+        Ok(minted.grant.grant_ref)
+    }
+
+    /// The owner's revoke of the agent Grant `grant`.
+    fn revoke_grant(&self, grant: EntityId) -> TestResult {
+        let revoked = revoke_agent_grant_as(
+            &self.vault,
+            &self.owner_proof,
+            ActSurface::ThisInstall,
+            AgentGrantRevokeRequest {
+                grant_ref: grant,
+                seen: None,
+            },
+        )
+        .map_err(|error| format!("the owner revokes the agent's Grant: {error:?}"))?;
+        assert!(revoked.changed, "precondition: the revoke lands");
+        Ok(())
     }
 
     /// `agent`'s own saved graph question over `units`.
@@ -836,6 +866,96 @@ fn an_agents_fresh_answer_lands_in_a_facet_its_grant_reads() -> TestResult {
     assert!(
         fixture.agent_reads(agent, Fixture::answer_claim(&again)),
         "the agent reads its fresh answer back"
+    );
+    Ok(())
+}
+
+/// FIX STANDING-ANSWER-FACET-LIMITED-REPLAY-TEST: a facet-limited agent's
+/// answer on a row read in two facets lands at the lower, which its Grant
+/// reads, and a second ask replays it. Once the agent's only Grant reads the
+/// higher facet alone, it no longer reads that answer, and its next ask does
+/// not replay it: a fresh answer lands at the higher facet, and that one
+/// replays.
+#[test]
+fn a_facet_limited_agent_replays_its_answer_only_while_its_grant_reads_the_answers_facet()
+-> TestResult {
+    let fixture = open()?;
+    let work = fixture.put_row(ENTITY_TYPE_FACET, "work")?;
+    let health = fixture.put_row(ENTITY_TYPE_FACET, "health")?;
+    let (low, high) = (work.min(health), work.max(health));
+    let (_project, room) = fixture.project_room_reading(&BTreeSet::from([low, high]))?;
+    let message = fixture.message_in_room(room, "The ward rota is posted on Mondays.")?;
+    let agent = define_agent(&fixture.vault)?;
+    let lower = fixture.grant_reading_in(agent, &BTreeSet::from([low]))?;
+    let question = fixture.agent_question(agent, vec![message])?;
+    let first = fixture
+        .agent_ask(agent, question, message)
+        .map_err(|error| {
+            format!("the agent's answer on a room MESSAGE lands; it refused: {error}")
+        })?;
+    let recorded = Fixture::answer_claim(&first);
+    assert_eq!(
+        fixture.answer_facet(&first)?,
+        low,
+        "precondition: the answer on a row read in two facets lands at the lower, which the \
+         agent's Grant reads"
+    );
+
+    let replayed = fixture
+        .agent_ask(agent, question, message)
+        .map_err(|error| {
+            format!(
+                "a second ask under a Grant over the answer's facet replays the recorded \
+                 answer; it refused: {error}"
+            )
+        })?;
+    assert_eq!(
+        Fixture::answer_claim(&replayed),
+        recorded,
+        "a second ask on the unchanged MESSAGE under a Grant over the answer's facet replays \
+         the recorded answer"
+    );
+    assert!(
+        fixture.agent_reads(agent, recorded),
+        "the agent reads its recorded answer back"
+    );
+
+    // Control: the agent's only Grant now reads the higher facet alone.
+    fixture.revoke_grant(lower)?;
+    fixture.grant_reading_in(agent, &BTreeSet::from([high]))?;
+    assert!(
+        !fixture.agent_reads(agent, recorded),
+        "a Grant over the higher facet alone does not read the answer at the lower"
+    );
+    let again = fixture
+        .agent_ask(agent, question, message)
+        .map_err(|error| {
+            format!(
+                "the agent's answer under a Grant over the higher facet lands; it refused: \
+                 {error}"
+            )
+        })?;
+    let fresh = Fixture::answer_claim(&again);
+    assert_ne!(
+        fresh, recorded,
+        "an ask under a Grant that does not read the recorded answer's facet does not replay it"
+    );
+    assert_eq!(
+        fixture.answer_facet(&again)?,
+        high,
+        "the fresh answer lands at the facet the agent's Grant reads"
+    );
+    assert!(
+        fixture.agent_reads(agent, fresh),
+        "the agent reads its fresh answer back"
+    );
+    let replayed_fresh = fixture
+        .agent_ask(agent, question, message)
+        .map_err(|error| format!("a further ask replays the fresh answer; it refused: {error}"))?;
+    assert_eq!(
+        Fixture::answer_claim(&replayed_fresh),
+        fresh,
+        "a further ask under the Grant over the higher facet replays the answer there"
     );
     Ok(())
 }
