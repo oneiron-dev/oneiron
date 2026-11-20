@@ -87,3 +87,42 @@ impl ScopeTops {
         Some(Self(tops))
     }
 }
+
+/// [`ScopeTops::past`] over each of `tails` in turn from the tops of `base`,
+/// each tail's rows parents first: whether it takes each one. Past a tail it
+/// declines, the next base is every row so far, as a full fold captures it.
+/// For the scope-tops door (FIX [ADOPTED-FOLD-TAIL-WALK-SIGNER-COST]).
+#[cfg(oneiron_test_support)]
+pub(in crate::authority) fn scope_tops_tails_taken_for_door(
+    base: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    tails: &[BTreeMap<AuthorityEntryHash, AuthorityLogEntry>],
+) -> Vec<bool> {
+    let mut rows: Vec<(AuthorityEntryHash, &AuthorityLogEntry)> =
+        base.iter().map(|(hash, entry)| (*hash, entry)).collect();
+    let mut tops = ScopeTops::of(&rows);
+    let mut taken = Vec::new();
+    for tail in tails {
+        let base_rows: BaseRows = rows
+            .iter()
+            .map(|(hash, entry)| (*hash, Arc::new(RowSummary::of(entry))))
+            .collect();
+        let new_rows: BTreeMap<_, _> = tail
+            .iter()
+            .filter(|(hash, _)| !base_rows.contains_key(*hash))
+            .map(|(hash, entry)| (*hash, entry))
+            .collect();
+        let links = new_rows
+            .iter()
+            .map(|(hash, entry)| (*hash, entry.parent_hashes.clone()))
+            .collect();
+        let order = crate::authority::checkpoint_image::parents_first_of(&links);
+        let next = tops.past(&base_rows, &new_rows, &order);
+        taken.push(next.is_some());
+        rows.extend(new_rows);
+        tops = match next {
+            Some(next) => next,
+            None => ScopeTops::of(&rows),
+        };
+    }
+    taken
+}
