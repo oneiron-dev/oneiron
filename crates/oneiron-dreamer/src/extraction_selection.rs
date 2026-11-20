@@ -356,14 +356,17 @@ impl CorrectionFacts {
     /// The read asks an operand about a head it cites only while the operand does
     /// not restate it. So a member the read may ask about `head` carries a predicate
     /// and value that are not both the head's, and a union with that same predicate
-    /// and value does not restate the head. With no read fact for the member, only
-    /// its own correction of `head`, which its read took, stands for that case.
-    /// These are sufficient tests, not every one. A member the read may ask about
-    /// `head` that proposes another predicate or value proves nothing about the
-    /// union, and its citation stays out. So does the citation of a member the read
-    /// does not ask about `head`: a missing pair does not show that the member
-    /// restates the head, since the read also leaves out a head that none of the
-    /// recorded candidates the member names may be asked about in its own step.
+    /// and value does not restate the head. A member the read does not ask about a
+    /// head it cites restates it: the head's predicate and value are the member's,
+    /// and a union with another predicate or value does not restate the head. That
+    /// second case holds only for a member that names at most one recorded
+    /// candidate. The read also leaves a pair out when none of the recorded
+    /// candidates an operand names may be asked about the head in its own step, so
+    /// for a member folded from several a missing pair proves nothing. With no read
+    /// fact for the member, only its own correction of `head`, which its read took,
+    /// stands for the first case. These are sufficient tests, not every one: a
+    /// member the read may ask about `head` that proposes another predicate or value
+    /// proves nothing about the union, and its citation stays out.
     fn keeps_citation(
         &self,
         position: usize,
@@ -373,11 +376,14 @@ impl CorrectionFacts {
     ) -> bool {
         let same_proposal = member["predicate"] == representative["predicate"]
             && member["value"] == representative["value"];
-        same_proposal
-            && match self.correctable.get(&position) {
-                Some(heads) => heads.iter().any(|claim| claim == head),
-                None => member["corrects"].as_str() == Some(head),
-            }
+        let folded_from_several = member["from_steps"]
+            .as_array()
+            .is_some_and(|named| named.len() > 1);
+        match self.correctable.get(&position) {
+            Some(heads) if heads.iter().any(|claim| claim == head) => same_proposal,
+            Some(_) => !same_proposal && !folded_from_several,
+            None => same_proposal && member["corrects"].as_str() == Some(head),
+        }
     }
 }
 

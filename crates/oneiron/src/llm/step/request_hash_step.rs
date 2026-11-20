@@ -28,8 +28,7 @@ use super::step_result::step_result;
 use super::step_state::STEP_STATE;
 use super::step_state::{step_state_erased, step_state_read};
 use super::types::{
-    KEY_INPUT_CORRECTABLE, KEY_INPUT_LABELS, KEY_INPUT_RANGES, KEY_INPUT_SOURCES,
-    KEY_INPUT_VERSIONS,
+    KEY_INPUT_LABELS, KEY_INPUT_RANGES, KEY_INPUT_SLICE, KEY_INPUT_SOURCES, KEY_INPUT_VERSIONS,
 };
 use super::{DurableStepError, DurableStepResult, StepOutcome, StepProgression};
 use crate::Vault;
@@ -61,18 +60,6 @@ pub(crate) struct StepInputRange {
     pub(crate) end: u64,
 }
 
-/// The listed claims a bound step's scope lets a candidate about one labelled subject
-/// correct: the prior heads about `subject` that the step's attenuated scope reads and
-/// writes, in listing order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct StepInputCorrectable {
-    /// The labelled subject.
-    pub(crate) subject: EntityId,
-    /// The claims about it a candidate of this step may be asked to correct.
-    pub(crate) claims: Vec<EntityId>,
-}
-
 /// What a bound step's call showed its model, beside the words themselves. A reply names rows
 /// by call labels and binds its quotes against the shown words, so a saved reply is read back
 /// through these facts. They hold ids and offsets, never words.
@@ -84,8 +71,9 @@ pub(crate) struct StepCallInputs {
     pub(crate) ranges: Vec<StepInputRange>,
     /// Every row the call was read from, in id order, each once.
     pub(crate) sources: Vec<EntityId>,
-    /// The correctable claims of each labelled subject that holds any, in subject order.
-    pub(crate) correctable: Vec<StepInputCorrectable>,
+    /// The listed entities of the native slice the cited TURNs lie in, in id order: the
+    /// step's scope keeps the heads the listing shows of these, and of the branch's thing.
+    pub(crate) slice: Vec<EntityId>,
 }
 
 /// Names `versions` in `request`'s host provider options, the versions of every source row
@@ -137,9 +125,9 @@ pub(crate) fn bind_step_call_inputs(
     )?;
     bind_host_option(
         request,
-        KEY_INPUT_CORRECTABLE,
-        &inputs.correctable,
-        "dreamer step input correctable claims did not encode",
+        KEY_INPUT_SLICE,
+        &inputs.slice,
+        "dreamer step input slice did not encode",
     )
 }
 
@@ -168,7 +156,7 @@ fn bind_host_option<T: Serialize + ?Sized>(
 /// The input facts `request` names in its host provider options, each as the record key it
 /// is kept under with the one JSON string the terminal record keeps there, in pinned key
 /// order: the source versions, then the call labels, the TURN ranges, the source rows and the
-/// correctable claims. A fact the request does not name is left out.
+/// slice's entities. A fact the request does not name is left out.
 ///
 /// # Errors
 ///
@@ -198,18 +186,18 @@ pub(super) fn step_input_records(request: &LlmRequest) -> Result<Vec<(&'static s
         "dreamer step input sources did not decode",
         "dreamer step input sources did not encode",
     )?;
-    let correctable = host_option_record::<Vec<StepInputCorrectable>>(
+    let slice = host_option_record::<Vec<EntityId>>(
         request,
-        KEY_INPUT_CORRECTABLE,
-        "dreamer step input correctable claims did not decode",
-        "dreamer step input correctable claims did not encode",
+        KEY_INPUT_SLICE,
+        "dreamer step input slice did not decode",
+        "dreamer step input slice did not encode",
     )?;
     Ok([
         (KEY_INPUT_VERSIONS, versions),
         (KEY_INPUT_LABELS, labels),
         (KEY_INPUT_RANGES, ranges),
         (KEY_INPUT_SOURCES, sources),
-        (KEY_INPUT_CORRECTABLE, correctable),
+        (KEY_INPUT_SLICE, slice),
     ]
     .into_iter()
     .filter_map(|(key, record)| record.map(|record| (key, record)))
@@ -309,8 +297,8 @@ pub(crate) struct StepRecord {
     /// The shown range of each cited TURN, in request order; `None` for a record that keeps
     /// none.
     pub(crate) ranges: Option<Vec<StepInputRange>>,
-    /// The correctable claims of each labelled subject; `None` for a record that keeps none.
-    pub(crate) correctable: Option<Vec<StepInputCorrectable>>,
+    /// The listed entities of the step's native slice; `None` for a record that keeps none.
+    pub(crate) slice: Option<Vec<EntityId>>,
 }
 
 /// The terminal record of one request-hash step in the caller's snapshot, when the caller
@@ -424,7 +412,7 @@ pub(crate) fn request_hash_step_record_in_txn(
         versions: decoded.input_versions.unwrap_or_default(),
         labels: decoded.input_labels,
         ranges: decoded.input_ranges,
-        correctable: decoded.input_correctable,
+        slice: decoded.input_slice,
     })
 }
 

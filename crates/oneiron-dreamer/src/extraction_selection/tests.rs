@@ -135,7 +135,7 @@ fn union_keeps_a_citation_of_the_corrected_head_from_a_member_asked_about_it() {
     let left_out = union_operands_with_facts(&operands, &pair(), &facts(false, false));
     assert!(
         left_out[0].get("claim_evidence").is_none(),
-        "a member the read does not ask about the head proves nothing: its citation stays out"
+        "a member the read does not ask about the head restates it: its citation stays out"
     );
     assert!(
         union_operands(&operands, &pair())[0]
@@ -167,20 +167,31 @@ fn union_keeps_every_citation_of_the_corrected_head_when_the_read_proves_it_diff
     );
 }
 
-/// A member the read does not ask about the head it cites proves nothing by that
-/// alone: the read also leaves the pair out for a member folded from recorded
-/// candidates whose steps could not ask about the head, and such a member need not
-/// restate it. So its citation stays out, whatever the representative proposes.
+/// A member the read does not ask about the head it cites restates that head, so
+/// the head's predicate and value are the member's: a representative with another
+/// value does not restate it, and the citation joins. A member folded from several
+/// recorded candidates proves nothing by a missing pair, since the read also leaves
+/// the pair out when none of those candidates may be asked about the head: its
+/// citation stays out.
 #[test]
-fn union_leaves_out_a_citation_from_a_member_the_read_does_not_ask_about_the_head() {
-    let operands = vec![
+fn union_keeps_a_citation_from_a_member_that_restates_the_head_with_another_value() {
+    let mut operands = vec![
         operand("likes", "Coffee", true, false),
         operand("likes", "coffee", false, true),
     ];
+    let joined = union_operands_with_facts(&operands, &pair(), &facts(false, false));
+    assert_eq!(
+        joined[0]["claim_evidence"],
+        json!([pin()]),
+        "the head carries the member's value, not the representative's"
+    );
+    let step = "ab".repeat(32);
+    operands[0]["from_steps"] = json!([{"step": step, "index": 0}]);
+    operands[1]["from_steps"] = json!([{"step": step, "index": 1}, {"step": step, "index": 2}]);
     let left_out = union_operands_with_facts(&operands, &pair(), &facts(false, false));
     assert!(
         left_out[0].get("claim_evidence").is_none(),
-        "a missing pair alone does not show that the member restates the head"
+        "a missing pair proves no restatement for a member folded from several candidates"
     );
 }
 

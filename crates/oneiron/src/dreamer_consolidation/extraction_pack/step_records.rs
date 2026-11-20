@@ -23,15 +23,18 @@
 //! candidate folds under the correction it was given, and no record holds that answer.
 //! So the candidate is assembled once without a correction and once for each listed head
 //! it may be asked to correct, and it folds when one of those assemblies has the
-//! operand's keys. A candidate that folds under none lends the operand no evidence.
+//! operand's keys. A candidate that matches under no such answer lends the operand no
+//! evidence.
 //!
 //! The heads a named candidate may be asked to correct are the ones its own step may ask
 //! it about, as the native correction read picks them for a candidate of that slice: the
-//! listed heads about its subject that the step's own scope held, which the step's record
-//! keeps, except a head the candidate cites and restates ([`NamedCandidate::askable`]). A
-//! candidate folds only under those answers, and an operand that names recorded candidates
-//! is offered, and may correct, only a head one of them may be asked about
-//! ([`OperandBound::askable`]).
+//! listed heads about its subject that the step's own scope keeps, except a head the
+//! candidate cites and restates ([`NamedCandidate::askable`]). A step's scope keeps the
+//! heads its native slice's listing shows, and the step's record names that slice's
+//! entities, so the kept listing is cut from the branch's listing by the record and never
+//! by grouping the TURNs again. A candidate folds only under those answers, and an
+//! operand that names recorded candidates is offered, and may correct, only a head one of
+//! them may be asked about ([`OperandBound::askable`]).
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,6 +44,7 @@ use super::super::ConsolidationBranchPlan;
 use super::super::extraction_step::{
     ExtractionStepPiece, RecordedExtractionCandidate, RecordedExtractionStep,
 };
+use super::super::neighbourhood::Neighbourhood;
 use super::super::routing::candidate_keys;
 use super::BoundBranchRead;
 use super::checks::{check_turn_evidence, every_queued_turn_serves_in_txn};
@@ -86,9 +90,9 @@ struct RecordedStep {
     /// Holds the relationship set the step's call assembled its candidates under:
     /// `None` is unbound.
     relationship: Option<BTreeSet<EntityId>>,
-    /// Holds, for each labelled subject, the listed claims the step's scope let a
-    /// candidate about it correct, as the step's record keeps them.
-    correctable: BTreeMap<EntityId, Vec<EntityId>>,
+    /// Holds the listing the step's scope keeps: the branch's listing cut to the
+    /// entities of the step's native slice, which the step's record names.
+    kept: Neighbourhood,
 }
 
 /// What the shared operand check fixed for one operand.
@@ -117,7 +121,8 @@ impl NamedCandidate {
     ///
     /// Its askable heads are the ones the native correction read picks for a candidate
     /// of the step's slice: each listed head about its subject that the step's own scope
-    /// held, as the step recorded them, except a head the candidate cites and restates.
+    /// keeps, which is each one the step's kept listing shows, except a head the
+    /// candidate cites and restates.
     fn of(
         bound: &BoundBranchRead,
         step: &RecordedStep,
@@ -135,13 +140,12 @@ impl NamedCandidate {
             claim_evidence: candidate.claim_evidence.clone(),
             from_steps: vec![reference.clone()],
         };
-        let recorded = parse_reference(&alone.subject)
+        let askable = parse_reference(&alone.subject)
             .ok()
-            .and_then(|subject| step.correctable.get(&subject));
-        let askable = recorded
             .into_iter()
-            .flatten()
-            .copied()
+            .flat_map(|subject| bound.correctable(subject, bound.scope()))
+            .map(|(claim, ..)| claim)
+            .filter(|claim| step.kept.shows(*claim))
             .filter(|claim| {
                 let head = claim.to_hex();
                 let cited = alone.claim_evidence.iter().any(|pin| pin.claim == head);
@@ -279,15 +283,12 @@ fn read_recorded_step(
             "an extraction operand names a step whose record keeps no call labels; a step recorded before records kept them cannot be named",
         ));
     };
-    let Some(correctable) = &record.correctable else {
+    let Some(slice) = &record.slice else {
         return Err(MemoryError::bad_request(
-            "an extraction operand names a step whose record keeps no correctable claims; a step recorded before records kept them cannot be named",
+            "an extraction operand names a step whose record keeps no native slice; a step recorded before records kept it cannot be named",
         ));
     };
-    let correctable = correctable
-        .iter()
-        .map(|row| (row.subject, row.claims.clone()))
-        .collect();
+    let kept = bound.neighbourhood().slice(slice);
     let mut pieces = Vec::with_capacity(ranges.len());
     let mut turns = BTreeSet::new();
     for range in ranges {
@@ -335,7 +336,7 @@ fn read_recorded_step(
         reply,
         turns,
         relationship,
-        correctable,
+        kept,
     })
 }
 
@@ -400,13 +401,13 @@ fn compare_operand(
 /// `relationship` is the set the operand is assembled under. A candidate is assembled as
 /// its step's call assembled it, once under each correction answer it may have been
 /// given: none, and each listed head its own step may ask it to correct
-/// ([`NamedCandidate::askable`]), where the branch still lists that head. It folds when
-/// one of those assemblies has the operand's keys. Which answer the candidate was given
-/// is not proved, since no record holds it. A candidate that proposes another value, or
-/// one whose identity no answer of its own step makes the operand's, folds under none:
-/// native keeps it in another group, so here it lends the operand neither a quote nor a
-/// cited claim. A head another step may ask about is no answer for it, and neither is
-/// the operand's own correction unless its own step may ask it about that head.
+/// ([`NamedCandidate::askable`]). It folds when one of those assemblies has the operand's
+/// keys. Which answer the candidate was given is not proved, since no record holds it. A
+/// candidate that proposes another value, or one whose identity no answer of its own
+/// step makes the operand's, matches under no such answer: native keeps it in another
+/// group, so here it lends the operand neither a quote nor a cited claim. A head another
+/// step may ask about is no answer for it, and neither is the operand's own correction
+/// unless its own step may ask it about that head.
 ///
 /// An operand that does not assemble by itself is left to the candidate check that
 /// follows this one, which refuses it by name.

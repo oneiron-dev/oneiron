@@ -78,13 +78,16 @@ pub(crate) struct PreparedExtractionStep {
     /// Holds the version of every row whose words the transcript shows,
     /// in id order, as the request names them.
     inputs: Vec<SourceVersion>,
+    /// Names the listed entities the cited TURNs co-mention, in id order:
+    /// the mention set of the one native slice they lie in.
+    slice: Vec<EntityId>,
 }
 
 impl PreparedExtractionStep {
     /// What this step's call shows beside its words, as its request names it
     /// and its record keeps it: the row behind each label, the served byte
     /// range of each piece in request order, the sources in id order, each
-    /// once, and the correctable claims of each labelled subject.
+    /// once, and the listed entities of its native slice.
     fn call_inputs(&self) -> crate::llm::StepCallInputs {
         let sources: BTreeSet<EntityId> = self.sources.iter().copied().collect();
         crate::llm::StepCallInputs {
@@ -99,14 +102,7 @@ impl PreparedExtractionStep {
                 })
                 .collect(),
             sources: sources.into_iter().collect(),
-            correctable: self
-                .correctable
-                .iter()
-                .map(|(subject, claims)| crate::llm::StepInputCorrectable {
-                    subject: *subject,
-                    claims: claims.clone(),
-                })
-                .collect(),
+            slice: self.slice.clone(),
         }
     }
 }
@@ -364,6 +360,7 @@ pub(crate) fn prepare_bound_step(
         heads,
         projects,
         inputs,
+        slice: entities,
     })
 }
 

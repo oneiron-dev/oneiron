@@ -22,9 +22,9 @@ pub const DREAMER_STEP_VALUE_SCHEMA_VERSION: u64 = 1;
 /// version of every row the step's request was read from. `input_labels`,
 /// `input_ranges` and `input_sources` name what its call showed: the row behind
 /// each call label, the byte range of each cited TURN, and every row the call
-/// was read from. `input_correctable` names, for each labelled subject, the
-/// listed claims the step's scope lets a candidate about it correct. They hold
-/// ids and offsets, never words.
+/// was read from. `input_slice` names the listed entities of the native slice
+/// the step's TURNs lie in, whose heads the step's scope keeps. They hold ids
+/// and offsets, never words.
 pub const DREAMER_STEP_VALUE_KEYS: [&str; 19] = [
     "schema_version",
     "job_id",
@@ -44,7 +44,7 @@ pub const DREAMER_STEP_VALUE_KEYS: [&str; 19] = [
     "input_labels",
     "input_ranges",
     "input_sources",
-    "input_correctable",
+    "input_slice",
 ];
 
 /// Current pinned `dreamer.trap` claim value schema version.
