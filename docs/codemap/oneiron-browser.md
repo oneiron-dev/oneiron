@@ -104,3 +104,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/draft_from_steps.rs` | test | m | — | — | These tests hold the rule-tier draft contract (FIX [BROWSER-CRATE-RUNS-NO-TEST]) |
 | `tests/draft_from_steps_gaps.rs` | test | m | — | — | These tests cover draft spans, gaps, and input refusals (FIX [BROWSER-CRATE-RUNS-NO-TEST]) |
 | `tests/guest_pressure_answer.rs` | test | m | — | — | A browser or desktop guest's pids-limit hits reach its session's manifest (FIX 8013 follow-up… |
+| `tests/switch_source_pressure.rs` | test | m | — | — | A switched engine's receipt names the pids pressure its source guest showed before the switch dropped it… |
