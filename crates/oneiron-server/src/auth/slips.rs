@@ -5,8 +5,12 @@ use oneiron_vault_contract::BINDING_HEADER;
 use serde::Deserialize;
 
 /// The facade doors an invitee's own slip (FIX 1925) reaches: its
-/// invitation's list, acceptance (plain or with a member credential) and decline.
-/// Anywhere else it holds no scope.
+/// invitation's list, acceptance (plain or with a member credential) and
+/// decline. Anywhere else it holds no scope. The acceptance with the seat's
+/// inquiry edge is not among them: its exact retry must stand after the
+/// acceptance spends the invitation, and so its slips, so it takes the
+/// invitee's own independent credential; a slip holder accepts with a
+/// credential, then attaches the edge (`vault.members.inquiry_edge.attach`).
 pub(crate) const INVITEE_DOORS: [&str; 4] = [
     "vault.members.invitations",
     "vault.members.accept",
