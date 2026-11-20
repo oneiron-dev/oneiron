@@ -382,10 +382,11 @@ impl PipelineBuilder<'_> {
             )?;
             return Ok(scores);
         };
-        // Only rows the call's predicate admits take places under the scans'
-        // caps, count toward the rounds and take places in the bound, for a
-        // scope alone as for a slice (TEMPORAL-READER-SCAN-CAP-REFUSED-ROWS),
-        // and the walk below takes the bound's cut as it reaches each row.
+        // Only rows the call's predicate admits count toward the rounds and
+        // take places in the bound, and a row it refuses holds no place under
+        // a scan's cap that a row it admits is denied, for a scope alone as for
+        // a slice (TEMPORAL-READER-SCAN-CAP-REFUSED-ROWS). The walk below
+        // takes the bound's cut as it reaches each row.
         // The memory lane's kinds are checked in that walk after the cut, so
         // no row past the cut is read for them.
         let reader = ReadableRows::new(predicate, filters.deadline);

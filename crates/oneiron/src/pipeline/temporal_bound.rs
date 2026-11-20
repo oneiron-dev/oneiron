@@ -136,11 +136,11 @@ impl TemporalCandidates {
 /// (its scope, then its made_by slice), asked at most once per row, by the
 /// window's scans, the channel's rounds and the scope walk after them alike.
 /// A row it refuses never counts toward either of the channel's stops and
-/// never takes a place in its bounded rows: a scan asks it once its cap
-/// would leave a row behind, so neither does such a row take a place under
-/// an endpoint scan's cap, the query range's or the spanner buffer's
-/// (TEMPORAL-READER-SCAN-CAP-REFUSED-ROWS). So whether such a row exists
-/// cannot move what the reader gets back (DEC-0005: no name, no count).
+/// never takes a place in its bounded rows. Nor does it hold a place under a
+/// scan's cap that a row it reads is denied: an endpoint scan, the query
+/// range's scan and the spanner buffer ask it once their cap would leave a
+/// row behind (TEMPORAL-READER-SCAN-CAP-REFUSED-ROWS). So whether such a row
+/// exists cannot move what the reader gets back (DEC-0005: no name, no count).
 pub(super) struct ReadableRows<'p, 'f> {
     predicate: &'p SnapshotCandidateFilter<'f>,
     deadline: Option<&'p RetrievalDeadline>,

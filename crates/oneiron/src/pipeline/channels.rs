@@ -98,8 +98,9 @@ fn checkpoint(deadline: Option<&RetrievalDeadline>) -> Result<()> {
 /// that would leave a row behind asks the call's reader, if it has one,
 /// about each row in that order and keeps the first `cap` rows it reads, so
 /// a row it refuses takes no place; rows that fit under the cap stay
-/// unasked. Returns whether the cap left behind a row the reader was not
-/// asked about: any row past `cap`, with no reader.
+/// unasked. Returns whether the cap left behind a row the reader may read:
+/// a row past the last one it kept (asked or not), or, with no reader, any
+/// row past `cap`.
 fn keep_first_places<T>(
     rows: &mut Vec<T>,
     cap: usize,
@@ -433,15 +434,16 @@ pub(super) fn collect_temporal_candidates(
         // used later in `temporal_window()`. Since `per_scan_cap` is 4x the
         // final result limit, anything outside this top-k cannot enter the
         // final top-k after exact scoring. The buffer fills to twice the cap
-        // before it drops back to the cap, so a spanner costs amortized
-        // constant work however large the cap is. A spanner the call's reader
-        // refuses takes no place in it: each drop asks the reader about the
-        // best spanners in order first (`keep_first_places`).
+        // before it drops back to the cap. Without a reader each drop is a
+        // linear selection, so a spanner costs amortized constant work however
+        // large the cap is. With one, each drop sorts the buffer and asks the
+        // reader about the best spanners in order (`keep_first_places`), about
+        // log(cap) work per spanner, and keeps at most the cap: a spanner the
+        // reader refuses holds no place a spanner it reads is denied.
         let reader = collection.reader;
         let mut spanners = Vec::<TemporalCandidateScore>::new();
         let trim_threshold = per_scan_cap.saturating_mul(2);
-        // Whether the buffer dropped a spanner the reader was not asked
-        // about, which it may read.
+        // Whether the buffer dropped a spanner the reader may read.
         let mut left_behind = false;
         // Every spanner is read, so the exact top-k is kept: past the index's
         // threshold row the scan raises one check and reads on.
