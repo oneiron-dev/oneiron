@@ -258,8 +258,17 @@ fn apply_remote_change(
             // which dates the cancellation if the write proves not to be the
             // stored copy (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
             // A VEVENT is the staged member its UID and staged RECURRENCE-ID
-            // name, whatever exception claims the member holds now.
-            let in_flight = cancelled_members_in_flight(vault, operation, &primary.uid)?;
+            // name, whatever exception claims the member holds now. The write
+            // may be in flight on another seat of the calendar, which shares
+            // its passports
+            // (CAL-SECOND-SEAT-CANCELLED-VERSION-MISSES-OTHER-SEAT-WRITE).
+            // Only a copy that carries a cancelled VEVENT asks: no other copy
+            // is held back here.
+            let in_flight = if feed.events.iter().any(|parsed| parsed.cancelled) {
+                cancelled_members_in_flight(vault, system, &primary.uid)?
+            } else {
+                Vec::new()
+            };
             if !in_flight.is_empty() {
                 let mut cancelled = Vec::new();
                 for parsed in feed.events.iter().filter(|parsed| parsed.cancelled) {

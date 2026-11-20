@@ -9,9 +9,10 @@
 //! carries the row as it read it, and its admission
 //! ([`omission_observed`]) lands only while the row is still that one
 //! and no upsert of the UID is in flight; else it stays owed. A pulled
-//! cancelled version of a member an upsert in flight writes cancelled
-//! ([`cancelled_members_in_flight`]) stays owed the same way, and so does a
-//! pulled copy of a first write any seat has not settled
+//! cancelled version of a member an upsert in flight on any seat of the
+//! calendar writes cancelled ([`cancelled_members_in_flight`]) stays owed
+//! the same way, and so does a pulled copy of a first write any seat has not
+//! settled
 //! ([`first_write_unsettled`]). A provider's report of a resource gone stays
 //! held while an upsert of its UID on any seat of the calendar is unsettled
 //! ([`unsettled_writes_of`]).
@@ -209,17 +210,25 @@ pub(crate) fn omission_observed(
     Ok(upsert_in_flight(vault, &txn, &scope, operation, uid)?.is_none())
 }
 
-/// The members an upsert of `uid` still in flight (prepared or remotely
-/// applied, not yet settled) writes cancelled, each with the RECURRENCE-ID
-/// its staged VEVENT carries under `uid` ([`super::staged_recurrence_id`]);
-/// empty when none is in flight. A pulled cancelled version of such a member
-/// may be that write coming back before its settlement marks the member's
-/// passport `written_cancelled`, and would read as a host cancel that moves
-/// deposit money, so the pull leaves the resource owed and reads it again
-/// once the write settles (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
-/// The pull matches its VEVENTs to them by that identity, whatever
-/// exception claims a member holds now; a first write's copy is held back
-/// before, whole ([`first_write_unsettled`]).
+/// The members an upsert of `uid` under `system` still in flight on any seat
+/// of the vault (prepared or remotely applied, not yet settled) writes
+/// cancelled, each with the RECURRENCE-ID its staged VEVENT carries under
+/// `uid` ([`super::staged_recurrence_id`]); empty when none is in flight. A
+/// pulled cancelled version of such a member may be that write coming back
+/// before its settlement marks the member's passport `written_cancelled`,
+/// and would read as a host cancel that moves deposit money, so the pull
+/// leaves the resource owed and reads it again once the write settles
+/// (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS). Seats of one calendar
+/// share its system and its passports but not their outboxes
+/// ([`UnsettledWrites`]), so another seat's pull of the version reads the
+/// writing seat's row too
+/// (CAL-SECOND-SEAT-CANCELLED-VERSION-MISSES-OTHER-SEAT-WRITE). The pull
+/// matches its VEVENTs to them by that identity, whatever exception claims a
+/// member holds now; a first write's copy is held back before, whole
+/// ([`first_write_unsettled`]).
+///
+/// The read scans every seat's outbox rows, so the pull asks it only for a
+/// copy that carries a cancelled VEVENT. It opens no row's sealed values.
 ///
 /// The caller holds the vault's calendar admission turn, in which a write
 /// publishes its prepared row and settles, so neither lands between this
@@ -227,27 +236,38 @@ pub(crate) fn omission_observed(
 ///
 /// # Errors
 ///
-/// Scope and storage failures, and a stored member that is no entity id.
+/// Storage failures, and a stored member that is no entity id.
 pub(crate) fn cancelled_members_in_flight(
     vault: &Vault,
-    operation: &CalendarConnectorOperation,
+    system: &str,
     uid: &str,
 ) -> Result<Vec<(EntityId, Option<u64>)>, CalendarConnectorError> {
-    let scope = operation.literal_scope()?;
     // Drop the table reader before a row staged without its RECURRENCE-IDs
     // reads its members' claims.
-    let stored = {
+    let rows = {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        upsert_in_flight(vault, &txn, &scope, operation, uid)?
+        OUTBOX.scan_from(&vault.store, &txn, OUTBOX_ROW_TAG)?
     };
-    let Some(row) = stored else {
-        return Ok(Vec::new());
-    };
-    let row = row.into_row()?;
-    row.cancelled_members
-        .iter()
-        .map(|&member| Ok((member, super::staged_recurrence_id(vault, &row, member)?)))
-        .collect()
+    let mut members = Vec::new();
+    for (_, stored) in rows {
+        let in_flight = matches!(
+            stored.state,
+            CalendarWriteOutboxState::Prepared | CalendarWriteOutboxState::RemoteApplied
+        );
+        if !in_flight
+            || stored.action != CalendarWriteAction::Upsert
+            || stored.system != system
+            || stored.uid != uid
+            || stored.cancelled_members.is_empty()
+        {
+            continue;
+        }
+        let row = stored.into_row()?;
+        for &member in &row.cancelled_members {
+            members.push((member, super::staged_recurrence_id(vault, &row, member)?));
+        }
+    }
+    Ok(members)
 }
 
 /// Whether a first write of `uid` on any seat of the vault has not bound
