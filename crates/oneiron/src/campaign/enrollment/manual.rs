@@ -5,11 +5,11 @@
 use super::reconcile::{IntakeSource, effective_member_in_txn, reconcile};
 use crate::campaign::claims::{
     CampaignMemberChannel, CampaignMemberState, CampaignMemberValue, PREDICATE_CAMPAIGN_MEMBER,
-    counterparty_do_not_contact_in_txn, encode_campaign_member_value,
+    do_not_contact_subjects_in_txn, encode_campaign_member_value, subjects_do_not_contact_in_txn,
 };
 use crate::campaign::surface::{CampaignLifecycle, campaign_type_byte, owned_campaign_in_txn};
 use crate::claim::{ClaimBody, ClaimSubject};
-use crate::ports::TombstoneStoreRead;
+use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::write_envelope::ClaimCandidate;
 use crate::{EntityId, Error, Result, Vault};
 
@@ -70,6 +70,22 @@ pub(crate) fn manual_enrollment_candidate_in_txn(
             "manual enrollment cannot supply machine derivation",
         ));
     }
+    // The person's own do-not-contact heads, plus those on every PERSON that
+    // carries one of its replicated party keys (a same-key twin or merge
+    // shell): the subjects the send gate reads for the same address. A
+    // person with no party key is checked on its own heads alone.
+    let mut subjects = vec![person];
+    if let Some(record) = vault.store.port_entity_record(txn, &person)? {
+        for party_key in crate::store::person_party_keys::person_body_party_keys(&record.body) {
+            subjects.extend(do_not_contact_subjects_in_txn(
+                &vault.store,
+                txn,
+                &party_key,
+            )?);
+        }
+    }
+    subjects.sort_unstable();
+    subjects.dedup();
     let mut channels = std::collections::BTreeSet::new();
     for CampaignMemberChannel {
         channel,
@@ -83,13 +99,7 @@ pub(crate) fn manual_enrollment_candidate_in_txn(
             ));
         }
         require_channel_sender_in_txn(vault, txn, channel, *sender_ref)?;
-        if counterparty_do_not_contact_in_txn(
-            &vault.store,
-            txn,
-            &person.to_hex(),
-            Some(channel),
-            "all",
-        )? {
+        if subjects_do_not_contact_in_txn(&vault.store, txn, &subjects, Some(channel), "all")? {
             return Err(Error::InvalidClaimBody(
                 "suppression forbids campaign enrollment on this channel",
             ));

@@ -1,7 +1,7 @@
 //! Federation admission validators for AUTHORITY_LOG and pack-instance rows.
-//! Each reads in the caller's read txn, never a reader or writer of its own:
-//! admission holds that txn while it validates, and LMDB gives one thread one
-//! read slot (FIX 10162).
+//! Each judges the row in the caller's read txn. If the authority door needs
+//! committed evidence for a refusal, it reads on a separate thread: LMDB
+//! gives one thread one read slot (FIX 10162).
 
 use heed::RoTxn;
 
@@ -84,6 +84,7 @@ pub(super) fn admit_federated_authority_log(
     if !crate::authority::authority_row_resident(&vault.store, txn, &entry)?
         && crate::authority::door_refuses_retired_standing(
             &vault.store,
+            vault.privacy_posture(),
             &local,
             &hash,
             &entry,

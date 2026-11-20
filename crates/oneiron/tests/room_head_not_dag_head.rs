@@ -233,6 +233,7 @@ fn speak_trunk(fixture: &Fixture) -> TestResult<EntityId> {
         }],
         occurred_at: fixture.vault.now_recorded_at(),
         assertions: Default::default(),
+        project: None,
     })?;
     Ok(turn)
 }

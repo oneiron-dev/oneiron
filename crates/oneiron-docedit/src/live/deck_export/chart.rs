@@ -233,7 +233,7 @@ pub(super) fn born(
     let labels: Vec<String> = if categories.is_empty() {
         (1..=points).map(|at| at.to_string()).collect()
     } else {
-        categories.clone()
+        categories
     };
     let mut columns = vec![column("", ColumnKind::Text)];
     if series.is_empty() {

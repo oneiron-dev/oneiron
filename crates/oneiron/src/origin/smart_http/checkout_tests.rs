@@ -1,5 +1,5 @@
 //! Stock Git checkout-to-door round trip with a live epoch-fenced lease.
-use super::tests::{PublicationTestOrigin, git, served_repo};
+use super::tests::{PublicationTestOrigin, git, owner_principal, served_repo};
 use super::*;
 use crate::checkout::lease::*;
 
@@ -25,6 +25,39 @@ impl CheckoutLiveness for Liveness {
     }
 }
 
+/// A live TASK with standing for a checkout lease's `task_ref`: a lease
+/// push's liveness fence and BYOA execute both require the TASK to be a live
+/// entity row with uncancelled standing.
+fn checkout_task(vault: &Vault, now: u64) -> EntityId {
+    let holder = EntityId::now();
+    vault
+        .put_entity(
+            &holder,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+            b"checkout-task-holder",
+        )
+        .expect("task holder");
+    vault
+        .memory(holder, crate::edge::EdgeActorClass::Human)
+        .tasks_create(
+            &crate::task_verb::TaskCreateSpec::new(
+                rmpv::Value::from("checkout-task"),
+                None,
+                None,
+                Some(now),
+            )
+            .with_assignee(crate::task_verb::TaskAssignee::Peer { actor_ref: holder }),
+        )
+        .expect("checkout task")
+        .task_ref
+        .expect("task ref")
+}
+
 #[test]
 fn real_checkout_remote_push_redeems_a_lease_and_never_copies_upstream_secret() {
     // A caller-supplied wall second can lead the vault's monotone authority
@@ -32,10 +65,8 @@ fn real_checkout_remote_push_redeems_a_lease_and_never_copies_upstream_secret() 
     // between the claim and the real credential door instead of racing it.
     let now = crate::unix_seconds_now();
     let clock = crate::store::ports::ManualClock::new(now);
-    let config = crate::VaultConfig {
-        store_clock: clock.bundle(),
-        ..Default::default()
-    };
+    let mut config = crate::VaultConfig::device();
+    config.store_clock = clock.bundle();
     let _dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(_dir.path(), config).unwrap());
     let (_source, repo_dir, _, head) = served_repo(&vault);
@@ -43,13 +74,14 @@ fn real_checkout_remote_push_redeems_a_lease_and_never_copies_upstream_secret() 
     // inherit it. The fixture source is copied as a bare repo, so remove the
     // clone's local-origin URL before it enters door custody.
     git(&repo_dir, &["remote", "remove", "origin"]);
-    let principal = EntityId::now();
+    let principal = owner_principal(&vault);
     let origin = PublicationTestOrigin::start(&vault, principal);
+    let task_ref = checkout_task(&vault, now);
     let mut leases = CheckoutLeaseService::new(&vault, Facts, Liveness::default());
     let grant = leases
         .claim(CheckoutClaimRequest {
             checkout_id: CheckoutId::from_bytes(*EntityId::now().as_bytes()).unwrap(),
-            task_ref: EntityId::now(),
+            task_ref,
             repo_ref: RepoRef::LocalFolder {
                 path: repo_dir.to_string_lossy().into_owned(),
                 commit: head.as_str().to_owned(),
@@ -70,6 +102,7 @@ fn real_checkout_remote_push_redeems_a_lease_and_never_copies_upstream_secret() 
             name: "checkout.upstream".into(),
             class: crate::secret_custody::CustodyClass::CustodyPortable,
             device_only: false,
+            model_reveal_allowed: false,
             value_bytes: secret.to_vec(),
             status: crate::secret_custody::SecretCustodyStatus::Active,
             registered_at: now,
@@ -235,8 +268,8 @@ impl crate::dispatch_byoa::ByoaCliExecutor for CheckoutRustBuild<'_> {
             ));
         }
         Ok(crate::dispatch_byoa::ByoaExhaust {
-            stdout: b"checkout build succeeded".to_vec(),
-            stderr: output.stderr,
+            stdout: crate::dispatch_byoa::ByoaStream::from(b"checkout build succeeded".to_vec()),
+            stderr: crate::dispatch_byoa::ByoaStream::from(output.stderr),
             ..Default::default()
         })
     }
@@ -253,26 +286,19 @@ fn leased_door_checkout_build_captures_exhaust_and_reclaims_fail_closed() {
     let now = crate::unix_seconds_now();
     let clock = crate::store::ports::ManualClock::new(now);
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(
-        Vault::open(
-            dir.path(),
-            crate::VaultConfig {
-                store_clock: clock.bundle(),
-                ..Default::default()
-            },
-        )
-        .unwrap(),
-    );
+    let mut config = crate::VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
     let (_source, repo_dir, _, head) = served_repo(&vault);
     git(&repo_dir, &["remote", "remove", "origin"]);
-    let principal = EntityId::now();
+    let principal = owner_principal(&vault);
     let origin = PublicationTestOrigin::start(&vault, principal);
     let wire = GitWire::new(&vault)
         .unwrap()
         .with_checkout_door(&origin.door_base_url())
         .unwrap();
     let checkout_id = CheckoutId::from_bytes(*EntityId::now().as_bytes()).unwrap();
-    let task_ref = EntityId::now();
+    let task_ref = checkout_task(&vault, now);
     let repo_ref = RepoRef::LocalFolder {
         path: repo_dir.to_string_lossy().into_owned(),
         commit: head.as_str().to_owned(),
@@ -304,8 +330,10 @@ fn leased_door_checkout_build_captures_exhaust_and_reclaims_fail_closed() {
                 checkout_id,
                 egress_profile_ref: "test/no-network".into(),
                 credential_handles: vec![],
+                staged_input: None,
             }),
             task_ref: Some(task_ref),
+            dev_refs: None,
             parent_attempt_id: None,
             run_id: Some("checkout-build".into()),
             dedupe_key: None,
@@ -337,30 +365,13 @@ fn leased_door_checkout_build_captures_exhaust_and_reclaims_fail_closed() {
                 attempt_count: attempt.attempt_count,
             },
             crate::code_sandbox::microvm::ExecutionBudget::new(60, 128, 8),
-            &leases,
             &mut executor,
             now + 3,
         )
         .unwrap();
     assert!(dir.path().join("build.rmeta").exists());
-    let terminal = dispatcher
-        .capture_terminal_exhaust(CaptureByoaExhaust {
-            attempt_id: attempt.id,
-            lease_owner: "builder".into(),
-            attempt_count: attempt.attempt_count,
-            disposition: ByoaTerminalDisposition::Completed,
-            exhaust,
-            reason: None,
-            now: now + 4,
-        })
-        .unwrap();
-    let bytes = vault
-        .read_blob_artifact_version(&terminal.artifact_id, 1)
-        .unwrap()
-        .unwrap();
-    let (_, _, stored) = decode_byoa_exhaust(&bytes).unwrap();
-    assert_eq!(stored.stdout, b"checkout build succeeded");
-
+    // FIX 7130: a BYOA-bound checkout epoch stands only while its attempt
+    // runs, so the build result is pushed before the terminal capture.
     git(&tree, &["add", "--", "lib.rs"]);
     git(
         &tree,
@@ -380,6 +391,20 @@ fn leased_door_checkout_build_captures_exhaust_and_reclaims_fail_closed() {
         git(&repo_dir, &["rev-parse", "refs/heads/checkout-build"]),
         pushed
     );
+    let terminal = dispatcher
+        .capture_terminal_exhaust(CaptureByoaExhaust {
+            attempt_id: attempt.id,
+            lease_owner: "builder".into(),
+            attempt_count: attempt.attempt_count,
+            disposition: ByoaTerminalDisposition::Completed,
+            exhaust,
+            reason: None,
+            now: now + 4,
+        })
+        .unwrap();
+    let (_, _, stored) =
+        decode_byoa_exhaust(&vault, &terminal.artifact_id, terminal.artifact_version).unwrap();
+    assert!(stored.stdout.is(b"checkout build succeeded"));
     let fence = CheckoutLeaseFence {
         checkout_id,
         epoch: first.epoch,

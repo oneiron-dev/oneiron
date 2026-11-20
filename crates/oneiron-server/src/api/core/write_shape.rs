@@ -88,19 +88,25 @@ pub(crate) fn core_entity_timestamps(
 }
 
 /// The announcement authority `auth` writes a TURN at (FIX 5968), from the
-/// credential and never from the body: an owner-grade one is the owner's,
-/// and a host root or the dev mode is the owner's only while its host action
-/// holds, so a hosted operator's root is not. Any other writer, a delegated
-/// `core:write` holder included, keeps its TURN without platform styling.
+/// credential and never from the body. Only the vault's owner publishes as
+/// the platform, so it is the owner's exactly where the owner door
+/// ([`crate::api::owner`]) proves `auth` his: a self-hosted root or the dev
+/// mode while its host action holds, his managed supervisor's action, or his
+/// own full human slip. A full-scope slip another holder carries is a scope,
+/// not ownership (OWNER-GRADE-IS-NOT-OWNERSHIP), and a hosted operator's
+/// root is not him; they and every other writer, a delegated `core:write`
+/// holder included, keep their TURN without platform styling.
 pub(crate) fn announcement_authority(
     server: &SyncServer,
     auth: &CoreAuth,
 ) -> AnnouncementAuthority {
-    let owner = match crate::api::host_action::host_action_of(server.vault(), auth) {
-        Some(action) => action.is_ok(),
-        None => auth.is_owner_grade(),
-    };
-    if owner {
+    owner_announcement_authority(crate::api::owner(auth, server).is_ok())
+}
+
+/// The announcement authority of a writer the owner door proved the vault's
+/// owner (`is_owner`), or did not.
+pub(crate) fn owner_announcement_authority(is_owner: bool) -> AnnouncementAuthority {
+    if is_owner {
         AnnouncementAuthority::Owner
     } else {
         AnnouncementAuthority::Writer

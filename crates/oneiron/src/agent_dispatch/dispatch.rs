@@ -596,6 +596,17 @@ impl<'a> AgentDispatcher<'a> {
                     dispatch_input.funding.clone(),
                     input.now,
                 )?;
+                // RUN-BUDGET-SPENT = B, RUNBUDGET-ADVANCE-FLOW = A: a root
+                // launch projected past its root's room asks the owner now;
+                // the run starts as before.
+                if requested_parent.is_none() && launch.plan.over_available {
+                    super::run_budget_ask::queue_forecast_ask_in_txn(
+                        self.vault,
+                        wtxn,
+                        status.attempt.id,
+                        &launch.statement,
+                    )?;
+                }
                 if let Some(powers) = child_powers {
                     crate::agent_def::stage_agent_powers_in_txn(
                         &self.vault.store,

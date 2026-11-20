@@ -17,7 +17,7 @@ use oneiron::web_fetch::HostedEgressGuard;
 /// The feed transport's error string.
 pub fn get_ics_feed(egress: Option<Arc<HostedEgressGuard>>, url: &str) -> Result<u16, String> {
     let admitted = crate::calendar_host::admit_feed_url(url, egress.as_deref())?;
-    let client = crate::calendar_host::feed_client(egress)
+    let client = crate::calendar_host::client(egress)
         .map_err(|_| "ICS HTTP client unavailable".to_owned())?;
     crate::calendar_host::get_admitted(&client, admitted, None).map(|response| response.status)
 }

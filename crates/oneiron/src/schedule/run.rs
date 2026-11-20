@@ -4,17 +4,30 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use serde::{Deserialize, Serialize};
 
-use super::arm::{ARM_VERB, DUE, ROWS, ScheduleRow, due_key, parse_row_key, store_row_in_txn};
-use super::{ArmBy, Armed, EngineZones, JobSpec, Late, Ran, job_named, retry_after};
+use super::arm::{
+    ARM_VERB, DUE, ROWS, ScheduleRow, disarm_in_txn, due_key, parse_row_key, row_key,
+    store_row_in_txn,
+};
+use super::{
+    ArmBy, Armed, Drive, EngineZones, JobPass, JobResult, JobSpec, Late, Ran, job_named,
+    retry_after,
+};
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::Result;
-use crate::store::housekeeping_schedule::{Deadline, HousekeepingBudget};
+use crate::error::{ErrorKind, Result};
+use crate::llm::model_pack::AccessSnapshot;
+use crate::store::housekeeping_report::SweepWork;
+use crate::store::housekeeping_schedule::HousekeepingBudget;
 
 /// The most runs one pass makes, whatever its budget: a job that always answers "more" waits for
 /// the next pass.
 const RUNS_PER_PASS: usize = 1_000;
+
+/// A test's stand-in for the process dying inside a job: the runner lets a
+/// panic carrying it unwind past its catch.
+#[cfg(test)]
+pub(crate) struct InjectedCrash;
 
 /// What a run's first write decides: the job and its arming to run, or why nothing runs.
 type Start = std::result::Result<(&'static JobSpec, Armed), JobOutcome>;
@@ -23,6 +36,14 @@ type Start = std::result::Result<(&'static JobSpec, Armed), JobOutcome>;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScheduleRunReport {
     pub runs: Vec<JobRun>,
+}
+
+impl ScheduleRunReport {
+    /// Whether the pass stopped at the most runs one pass makes, so due rows may wait for the
+    /// next.
+    pub(crate) fn at_run_bound(&self) -> bool {
+        self.runs.len() >= RUNS_PER_PASS
+    }
 }
 
 /// One due job, and what became of it.
@@ -35,6 +56,12 @@ pub struct JobRun {
     /// The occurrence it served.
     pub due_at: u64,
     pub outcome: JobOutcome,
+    /// A housekeeping sweep's account of its work; not part of the report's wire form.
+    #[serde(skip)]
+    pub sweep_work: Option<SweepWork>,
+    /// The kind of the error a failed run returned; not part of the report's wire form.
+    #[serde(skip)]
+    pub error_kind: Option<ErrorKind>,
 }
 
 /// What became of one due job.
@@ -43,8 +70,11 @@ pub struct JobRun {
 pub enum JobOutcome {
     /// It ran to the end of its work.
     Done,
-    /// It stopped at its budget and is due again at once.
+    /// It stopped at its budget and is due again at once; a job that starts once a pass goes on
+    /// at the next pass.
     More,
+    /// It ran to the end of its work but left items, and is due again after the backoff.
+    ItemsFailed,
     /// It failed, and is due again after the backoff.
     Failed { error: String },
     /// It panicked, and is due again after the backoff.
@@ -59,11 +89,62 @@ pub enum JobOutcome {
     UnknownJob,
 }
 
-/// The first due-index entry due by `now`: its due time and its row's key.
+/// Whether the `SCHEDULE` key `row_key` is a row of one of `jobs`: its code, then 0x00.
+fn row_of_any(row_key: &[u8], jobs: &[&JobSpec]) -> bool {
+    jobs.iter().any(|spec| {
+        row_key
+            .strip_prefix(spec.code.as_bytes())
+            .is_some_and(|rest| rest.first() == Some(&0))
+    })
+}
+
+/// The job code of the `SCHEDULE` key `row_key`: its bytes before the first 0x00.
+fn row_code(row_key: &[u8]) -> Option<&str> {
+    let split = row_key.iter().position(|byte| *byte == 0)?;
+    std::str::from_utf8(&row_key[..split]).ok()
+}
+
+/// Whether this node runs the row under `row_key`, read in `txn`: its job's
+/// [`JobSpec::runs_here`], read once per job code and kept in `here` for the pass. A row of a job
+/// this build does not know counts as run here, so its run parks it. A read that fails is logged,
+/// and the job's rows wait for the next pass.
+fn runs_here_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row_key: &[u8],
+    here: &mut Vec<(&'static str, bool)>,
+) -> bool {
+    let Some(spec) = row_code(row_key).and_then(job_named) else {
+        return true;
+    };
+    if let Some((_, runs)) = here.iter().find(|(code, _)| *code == spec.code) {
+        return *runs;
+    }
+    let runs = (spec.runs_here)(vault, txn).unwrap_or_else(|error| {
+        tracing::warn!(
+            job = spec.code,
+            kind = ?error.kind(),
+            %error,
+            "whether this node runs a job could not be read; its due rows wait for the next pass"
+        );
+        false
+    });
+    here.push((spec.code, runs));
+    runs
+}
+
+/// The first due-index entry due by `now` whose row is not one of `ran_once`, the rows of the
+/// once-a-pass jobs this pass has started, is a row of one of the jobs `only` names when it names
+/// any, is not a row of a job its host drives ([`Drive::Host`]), and is a row of a job this node
+/// runs (`here`, what the pass read of each job's [`JobSpec::runs_here`]): its due time and its
+/// row's key.
 fn first_due_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     now: u64,
+    ran_once: &[Vec<u8>],
+    only: Option<&[&JobSpec]>,
+    here: &mut Vec<(&'static str, bool)>,
 ) -> Result<Option<(u64, Vec<u8>)>> {
     for entry in DUE.iter_raw_from(&vault.store, txn, &[])? {
         let (key, _) = entry?;
@@ -71,7 +152,24 @@ fn first_due_in_txn(
             continue;
         };
         let due = u64::from_be_bytes(*due);
-        return Ok((due <= now).then(|| (due, row_key.to_vec())));
+        if due > now {
+            return Ok(None);
+        }
+        if ran_once.iter().any(|ran| ran.as_slice() == row_key) {
+            continue;
+        }
+        if only.is_some_and(|jobs| !row_of_any(row_key, jobs)) {
+            continue;
+        }
+        if row_code(row_key)
+            .and_then(job_named)
+            .is_some_and(|spec| spec.drive == Drive::Host)
+        {
+            continue;
+        }
+        if runs_here_in_txn(vault, txn, row_key, here) {
+            return Ok(Some((due, row_key.to_vec())));
+        }
     }
     Ok(None)
 }
@@ -85,48 +183,191 @@ impl Vault {
     /// Storage errors reading or writing the schedule; a job's own failure is a row of the
     /// report.
     pub fn run_due(&self, budget: HousekeepingBudget) -> Result<ScheduleRunReport> {
-        self.run_due_until(&budget.deadline())
+        self.run_due_with(budget, &AccessSnapshot::new())
     }
 
-    /// [`Self::run_due`] until `deadline`.
-    pub(crate) fn run_due_until(&self, deadline: &Deadline) -> Result<ScheduleRunReport> {
+    /// [`Self::run_due`] on a host whose model offers hold `access`, which it lends to the runs.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::run_due`].
+    pub fn run_due_with(
+        &self,
+        budget: HousekeepingBudget,
+        access: &AccessSnapshot,
+    ) -> Result<ScheduleRunReport> {
+        let deadline = budget.deadline();
+        self.run_due_until(&JobPass {
+            deadline: &deadline,
+            access,
+        })
+    }
+
+    /// [`Self::run_due`] within `pass`. A pass starts at least one due job, so it makes
+    /// progress however its budget was spent before it, unless its host asked it to stop. A job
+    /// that starts once a pass ([`JobSpec::once_per_pass`]) is not started again in it.
+    pub(crate) fn run_due_until(&self, pass: &JobPass<'_>) -> Result<ScheduleRunReport> {
         let _pass = self
             .housekeeping
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.run_due_held(pass, None)
+    }
+
+    /// [`Self::run_due_until`] for the rows of the jobs `only` names alone: a host loop that
+    /// serves its own job sooner than the housekeeping tick (the model-seat watcher, the
+    /// resident pump's outage step) runs them here. It takes the runner without waiting: while
+    /// a housekeeping pass holds it, it runs nothing and answers `None`, and that pass runs the
+    /// rows that are due. A failed run is logged here, since no pass report carries it; its row
+    /// backs off as in a pass.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::run_due`].
+    pub(crate) fn run_due_of(
+        &self,
+        only: &[&JobSpec],
+        pass: &JobPass<'_>,
+    ) -> Result<Option<ScheduleRunReport>> {
+        let _pass = match self.housekeeping.try_lock() {
+            Ok(held) => held,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(None),
+        };
+        let report = self.run_due_held(pass, Some(only))?;
+        for run in &report.runs {
+            if matches!(
+                run.outcome,
+                JobOutcome::Failed { .. } | JobOutcome::Panicked
+            ) {
+                tracing::warn!(
+                    job = %run.job,
+                    outcome = ?run.outcome,
+                    "a due job run ahead of the housekeeping pass failed; its row backs off"
+                );
+            }
+        }
+        Ok(Some(report))
+    }
+
+    /// The runner's loop, under the runner its caller holds: every due row, or the rows of the
+    /// jobs `only` names, of the jobs this node runs.
+    fn run_due_held(
+        &self,
+        pass: &JobPass<'_>,
+        only: Option<&[&JobSpec]>,
+    ) -> Result<ScheduleRunReport> {
+        let deadline = pass.deadline;
         let mut report = ScheduleRunReport::default();
-        while report.runs.len() < RUNS_PER_PASS && !deadline.passed() {
+        let mut ran_once: Vec<Vec<u8>> = Vec::new();
+        let mut here: Vec<(&'static str, bool)> = Vec::new();
+        while report.runs.len() < RUNS_PER_PASS
+            && !deadline.stopped()
+            && (report.runs.is_empty() || !deadline.passed())
+        {
             let now = self.now_recorded_at();
             let due = {
                 let txn = self.store.env.read_txn()?;
-                first_due_in_txn(self, &txn, now)?
+                first_due_in_txn(self, &txn, now, &ran_once, only, &mut here)?
             };
             let Some((due_at, key)) = due else {
                 break;
             };
-            if let Some(run) = self.run_one(&key, due_at, deadline)? {
-                report.runs.push(run);
+            // `None`: the row was armed again for later, and nothing ran.
+            let Some(run) = self.run_one(&key, due_at, pass)? else {
+                continue;
+            };
+            // Only a run that started takes a once-a-pass job's start: an interrupted run's
+            // cleared marker, a lapsed occurrence or a withdrawn arming ran nothing, and the job
+            // runs in this pass when it is due.
+            let started = !matches!(
+                run.outcome,
+                JobOutcome::Interrupted
+                    | JobOutcome::Lapsed
+                    | JobOutcome::Withdrawn
+                    | JobOutcome::UnknownJob
+            );
+            if started && job_named(&run.job).is_some_and(|spec| spec.once_per_pass) {
+                ran_once.push(key);
             }
+            report.runs.push(run);
         }
         Ok(report)
     }
 
-    /// When a stopped vault must run next for a job that wakes its host, or `None`.
+    /// Runs `job` about `subject` alone, now, whatever its due time: a support holder's repair
+    /// of one sweep. The run answers a "run now". A start marker an interrupted run left counts
+    /// as its failure, and the job then runs. `None` when the job is not armed, or its host
+    /// drives it ([`Drive::Host`]).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors reading or writing the schedule; the job's own failure is its outcome.
+    pub(crate) fn run_job_now(
+        &self,
+        job: &str,
+        subject: Option<EntityId>,
+        pass: &JobPass<'_>,
+    ) -> Result<Option<JobRun>> {
+        if job_named(job).is_some_and(|spec| spec.drive == Drive::Host) {
+            return Ok(None);
+        }
+        let _pass = self
+            .housekeeping
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let key = row_key(job, subject);
+        let due = self.with_write_txn_grouped(|txn| {
+            let Some(prior) = ROWS.get(&self.store, txn, &key)? else {
+                return Ok(None);
+            };
+            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            let row = ScheduleRow {
+                requested_at: Some(prior.requested_at.map_or(now, |earlier| earlier.min(now))),
+                ..prior.clone()
+            };
+            store_row_in_txn(&self.store, txn, &key, Some(&prior), Some(&row))?;
+            Ok(Some(row.due_at()))
+        })?;
+        let Some(due_at) = due else {
+            return Ok(None);
+        };
+        // `None`: another write armed the job again for later between the two writes.
+        let Some(run) = self.run_one(&key, due_at, pass)? else {
+            return Ok(None);
+        };
+        if run.outcome != JobOutcome::Interrupted {
+            return Ok(Some(run));
+        }
+        // The marker is cleared and the request kept: the job runs now.
+        let due_at = {
+            let txn = self.store.env.read_txn()?;
+            ROWS.get(&self.store, &txn, &key)?.map(|row| row.due_at())
+        };
+        match due_at {
+            Some(due_at) => Ok(self.run_one(&key, due_at, pass)?.or(Some(run))),
+            None => Ok(Some(run)),
+        }
+    }
+
+    /// When a stopped vault must run next for a job that wakes its host and that this node runs
+    /// ([`JobSpec::runs_here`]), or `None`. A row of a job its host drives counts as any other.
     ///
     /// # Errors
     ///
     /// Storage errors.
     pub(crate) fn schedule_wake_at(&self) -> Result<Option<u64>> {
         let txn = self.store.env.read_txn()?;
+        let mut here: Vec<(&'static str, bool)> = Vec::new();
         for entry in DUE.iter_raw_from(&self.store, &txn, &[])? {
             let (key, _) = entry?;
             let Some((due, row_key)) = key.split_first_chunk::<8>() else {
                 continue;
             };
-            let wakes = parse_row_key(row_key)
-                .and_then(|(job, _)| job_named(&job))
+            let wakes = row_code(row_key)
+                .and_then(job_named)
                 .is_some_and(|spec| spec.wakes_host);
-            if wakes {
+            if wakes && runs_here_in_txn(self, &txn, row_key, &mut here) {
                 return Ok(Some(u64::from_be_bytes(*due)));
             }
         }
@@ -142,7 +383,7 @@ impl Vault {
     /// again in between. A row armed for later is not due yet: nothing runs, nothing is
     /// reported (`None`), and the index entry the pass read, no longer the row's own, goes
     /// (review round 2 of #8026, P1 on this file).
-    fn run_one(&self, key: &[u8], indexed_due: u64, deadline: &Deadline) -> Result<Option<JobRun>> {
+    fn run_one(&self, key: &[u8], indexed_due: u64, pass: &JobPass<'_>) -> Result<Option<JobRun>> {
         let (job, subject) = parse_row_key(key).unwrap_or_default();
         let started = self.with_write_txn_grouped(|txn| {
             let row = ROWS.get(&self.store, txn, &key.to_vec())?;
@@ -184,6 +425,8 @@ impl Vault {
             subject: subject.map(|subject| subject.to_hex()),
             due_at,
             outcome: JobOutcome::Done,
+            sweep_work: None,
+            error_kind: None,
         };
         let (spec, armed) = match started {
             Ok(started) => started,
@@ -192,23 +435,45 @@ impl Vault {
                 return Ok(Some(run));
             }
         };
-        let ran = catch_unwind(AssertUnwindSafe(|| (spec.run)(self, &armed, deadline)));
+        let ran = catch_unwind(AssertUnwindSafe(|| (spec.run)(self, &armed, pass)));
+        // A test's injected crash ends the pass as a dead process would: past
+        // this catch, with the job's start marker committed.
+        #[cfg(test)]
+        let ran = match ran {
+            Err(payload) if (*payload).is::<InjectedCrash>() => std::panic::resume_unwind(payload),
+            ran => ran,
+        };
         run.outcome = match &ran {
-            Ok(Ok(Ran::Done)) => JobOutcome::Done,
-            Ok(Ok(Ran::More { .. })) => JobOutcome::More,
-            Ok(Ok(Ran::Failed)) => JobOutcome::Failed {
-                error: "the job reported a failure".to_owned(),
+            Ok(Ok(result)) => match result.ran {
+                Ran::Done => JobOutcome::Done,
+                Ran::More { .. } => JobOutcome::More,
+                Ran::ItemsFailed => JobOutcome::ItemsFailed,
+                Ran::Failed => JobOutcome::Failed {
+                    error: "the job reported a failure".to_owned(),
+                },
             },
-            Ok(Err(error)) => JobOutcome::Failed {
-                error: error.to_string(),
-            },
+            Ok(Err(error)) => {
+                run.error_kind = Some(error.kind());
+                JobOutcome::Failed {
+                    error: error.to_string(),
+                }
+            }
             Err(_) => JobOutcome::Panicked,
         };
         let ran = match ran {
-            Ok(Ok(ran)) => ran,
-            Ok(Err(_)) | Err(_) => Ran::Failed,
+            Ok(Ok(result)) => {
+                run.sweep_work = result.sweep_work.clone();
+                result
+            }
+            Ok(Err(_)) | Err(_) => JobResult::of(Ran::Failed),
         };
         self.with_write_txn_grouped(|txn| {
+            // A run that ended done and what it served commit together.
+            if matches!(ran.ran, Ran::Done) {
+                for (job, subject) in &ran.served {
+                    disarm_in_txn(&self.store, txn, job, Some(*subject))?;
+                }
+            }
             let Some(row) = ROWS.get(&self.store, txn, &key.to_vec())? else {
                 // Disarmed while it ran.
                 return Ok(());
@@ -273,9 +538,11 @@ impl Vault {
             store_row_in_txn(&self.store, txn, key, Some(&row), None)?;
             return Ok(Err(JobOutcome::Withdrawn));
         }
+        let requested = row.answering || row.requested_at.is_some();
         let marked = ScheduleRow {
             started_at: Some(now),
             requested_at: None,
+            answering: requested,
             ..row.clone()
         };
         store_row_in_txn(&self.store, txn, key, Some(&row), Some(&marked))?;
@@ -289,6 +556,7 @@ impl Vault {
                 due_at,
                 cursor: row.cursor,
                 armed_by: row.armed_by.map(|armed| armed.actor),
+                requested,
             },
         )))
     }
@@ -328,32 +596,69 @@ fn next_occurrence(row: &ScheduleRow, now: u64) -> Option<u64> {
 }
 
 /// The row after a run that ended at `end`, or `None` when the job is done for good.
-/// - done: the next occurrence ([`next_occurrence`]): a deadline is done, a repeating job is due
-///   at its next occurrence after now, its failures and cursor cleared;
+/// - done: the next occurrence ([`next_occurrence`]): a repeating job is due at its next
+///   occurrence after now, or at the run's `due_by` when that is earlier but never sooner than its
+///   first retry after the end; a deadline is done, unless its run answered a `due_by`, at which
+///   it is due again, never sooner than its first retry after the end; either way its failures,
+///   cursor, answered request and pull cleared. The time a door pulled the job to while the run
+///   went on (`pulled_to`) counts as the run's `due_by` when it is earlier;
 /// - more: due again at once, going on from its cursor;
+/// - items failed: due again after the backoff, its cursor cleared;
 /// - failed: due again after the backoff, its cursor kept.
 ///
-/// A retry or a resumed run keeps the occurrence it serves (`resume_at`), so neither moves the
-/// trigger's grid.
-fn finished(spec: &JobSpec, row: ScheduleRow, ran: &Ran, end: u64) -> Option<ScheduleRow> {
+/// A run that did not end done leaves the request it answered for the run that goes on. A retry
+/// or a resumed run keeps the occurrence it serves (`resume_at`), so neither moves the trigger's
+/// grid.
+fn finished(spec: &JobSpec, row: ScheduleRow, result: &JobResult, end: u64) -> Option<ScheduleRow> {
     let row = ScheduleRow {
         started_at: None,
         finished_at: end,
         ..row
     };
-    match ran {
-        Ran::Done => next_occurrence(&row, end).map(|next_due_at| ScheduleRow {
-            next_due_at,
-            resume_at: None,
-            failures: 0,
-            cursor: None,
-            ..row
-        }),
+    match &result.ran {
+        Ran::Done => {
+            // Work a door made due while the run went on, after the run read its own, counts as
+            // the run's `due_by` (review round 2 of #9300, P1). A `due_by` already past means
+            // soon, never again in this pass.
+            let due_by = result
+                .due_by
+                .into_iter()
+                .chain(row.pulled_to)
+                .min()
+                .map(|due_by| due_by.max(end.saturating_add(spec.retry_first_secs)));
+            let next_due_at = match (next_occurrence(&row, end), due_by) {
+                (Some(next), Some(due_by)) => Some(due_by.min(next)),
+                (next, due_by) => next.or(due_by),
+            };
+            next_due_at.map(|next_due_at| ScheduleRow {
+                next_due_at,
+                resume_at: None,
+                failures: 0,
+                cursor: None,
+                answering: false,
+                pulled_to: None,
+                ..row
+            })
+        }
         Ran::More { cursor } => Some(ScheduleRow {
             resume_at: Some(end),
             cursor: Some(cursor.clone()),
             ..row
         }),
+        Ran::ItemsFailed => {
+            let failures = row.failures.saturating_add(1);
+            let retry = retry_after(
+                failures,
+                spec.retry_first_secs,
+                spec.retry_cap(&row.trigger),
+            );
+            Some(ScheduleRow {
+                resume_at: Some(end.saturating_add(retry)),
+                failures,
+                cursor: None,
+                ..row
+            })
+        }
         Ran::Failed => {
             let failures = row.failures.saturating_add(1);
             let retry = retry_after(
@@ -372,11 +677,16 @@ fn finished(spec: &JobSpec, row: ScheduleRow, ran: &Ran, end: u64) -> Option<Sch
 
 /// A row armed again while a run of its earlier arming ran, after that run ended at `end`: the
 /// new arming stands, due no sooner than the run's first retry after its end, so a job that arms
-/// itself again at once never runs in a loop. Its occurrence stays where the arming put it, and
-/// its last run is the one that ended at `end`.
+/// itself again at once never runs in a loop. Its occurrence stays where the arming put it, or
+/// where a door pulled it to while the run went on when that is earlier, and its last run is the
+/// one that ended at `end`.
 fn armed_again(spec: &JobSpec, row: ScheduleRow, end: u64) -> ScheduleRow {
     let floor = end.saturating_add(spec.retry_first_secs);
     let row = ScheduleRow {
+        next_due_at: row
+            .pulled_to
+            .map_or(row.next_due_at, |pulled| pulled.min(row.next_due_at)),
+        pulled_to: None,
         finished_at: end,
         ..row
     };

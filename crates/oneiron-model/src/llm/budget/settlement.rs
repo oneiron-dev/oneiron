@@ -4,7 +4,7 @@
 
 use super::state::BudgetState;
 use super::{
-    BudgetDenied, BudgetGuard, BudgetLease, BudgetSettlement, LeaseState, apply_usage_for_lease,
+    BudgetDenied, BudgetGuard, BudgetLease, BudgetSettlement, LeaseOutcome, apply_usage_for_lease,
     release_reservations_for_lease,
 };
 
@@ -22,28 +22,17 @@ impl BudgetGuard {
         let mut state = self.lock_state();
         state.check_lease_provenance(lease)?;
         let increment = absolute_used_units.saturating_sub(state.used_units);
-        let mut settled = None;
-        {
-            let Some(record) = state.leases.get_mut(lease.id()) else {
-                return Err(BudgetDenied::LeaseInvalid);
-            };
-            match record.state {
-                LeaseState::Open => {
-                    record.state = LeaseState::Settled {
-                        charged_units: if record.metered { increment } else { 0 },
-                    };
-                    settled = Some(record.clone());
-                }
-                LeaseState::Settled { .. } => {}
-                LeaseState::Aborted => return Err(BudgetDenied::LeaseInvalid),
-            }
-        }
-        if let Some(record) = settled {
+        if let Some(record) = state.leases.remove(lease.id()) {
+            record.close(LeaseOutcome::Settled {
+                charged_units: if record.metered { increment } else { 0 },
+            });
             release_reservations_for_lease(&mut state, &record);
             if record.metered {
                 state.used_units = state.used_units.max(absolute_used_units);
                 apply_usage_for_lease(&mut state, &record, increment);
             }
+        } else {
+            refuse_unless_settled(lease)?;
         }
         let ladder_events = state.fire_ladder_events();
         let read = state.read();
@@ -74,28 +63,17 @@ pub(super) fn settle_usage_locked(
 ) -> Result<BudgetSettlement, BudgetDenied> {
     state.check_lease_provenance(lease)?;
     let absolute_used_units = state.used_units.saturating_add(call_used_units);
-    let mut settled = None;
-    {
-        let Some(record) = state.leases.get_mut(lease.id()) else {
-            return Err(BudgetDenied::LeaseInvalid);
-        };
-        match record.state {
-            LeaseState::Open => {
-                record.state = LeaseState::Settled {
-                    charged_units: if record.metered { call_used_units } else { 0 },
-                };
-                settled = Some(record.clone());
-            }
-            LeaseState::Settled { .. } => {}
-            LeaseState::Aborted => return Err(BudgetDenied::LeaseInvalid),
-        }
-    }
-    if let Some(record) = settled {
+    if let Some(record) = state.leases.remove(lease.id()) {
+        record.close(LeaseOutcome::Settled {
+            charged_units: if record.metered { call_used_units } else { 0 },
+        });
         release_reservations_for_lease(state, &record);
         if record.metered {
             state.used_units = absolute_used_units;
             apply_usage_for_lease(state, &record, call_used_units);
         }
+    } else {
+        refuse_unless_settled(lease)?;
     }
     let ladder_events = state.fire_ladder_events();
     let read = state.read();
@@ -103,4 +81,14 @@ pub(super) fn settle_usage_locked(
         read,
         ladder_events,
     })
+}
+
+/// A settlement of a lease the meter's table no longer holds open: a no-op
+/// for a lease that already settled, on any settlement API; refused for one
+/// that aborted, or that this meter never issued.
+fn refuse_unless_settled(lease: &BudgetLease) -> Result<(), BudgetDenied> {
+    match lease.closed.outcome() {
+        Some(LeaseOutcome::Settled { .. }) => Ok(()),
+        Some(LeaseOutcome::Aborted) | None => Err(BudgetDenied::LeaseInvalid),
+    }
 }

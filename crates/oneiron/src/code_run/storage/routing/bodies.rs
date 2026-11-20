@@ -57,11 +57,27 @@ impl ExecutorStorage<'_> {
         sources: &[EntityId],
         receipt: Option<(&mut CodeRunReplayRecord, &mut CodeRunReplayGeneration)>,
     ) -> Result<std::result::Result<CodeRunRawOutput, serde_json::Value>> {
+        self.publish_code_run_reply_sourced(path, spool, owner, sources, None, receipt)
+    }
+
+    /// [`Self::publish_code_run_reply`] with the occurrence's complete input
+    /// rows, or `None` when any constituent is unknown (FIX 7104): a later
+    /// read of the reply releases it by those rows' worlds.
+    pub(crate) fn publish_code_run_reply_sourced(
+        &self,
+        path: String,
+        spool: BodySink,
+        owner: EntityId,
+        sources: &[EntityId],
+        input_rows: Option<Vec<EntityId>>,
+        receipt: Option<(&mut CodeRunReplayRecord, &mut CodeRunReplayGeneration)>,
+    ) -> Result<std::result::Result<CodeRunRawOutput, serde_json::Value>> {
         let published = match self {
-            Self::Canonical(vault) => vault
-                .publish_admitted_code_run_output(path, spool, true, owner, sources, receipt)?,
+            Self::Canonical(vault) => vault.publish_admitted_code_run_output(
+                path, spool, owner, sources, input_rows, receipt,
+            )?,
             Self::Session(binding) => {
-                let published = binding.publish_admitted_reply(path, spool, owner)?;
+                let published = binding.publish_admitted_reply(path, spool, owner, input_rows)?;
                 if let ReplyBody::Published(output) = &published {
                     binding.record_reply_sources(owner, output, sources)?;
                     if let Some((receipt, _)) = receipt {

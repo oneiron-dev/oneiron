@@ -137,6 +137,7 @@ pub fn issue_checkout_lease(
     let row = CheckoutLeaseRow {
         session_hash: session_digest(session_key),
         expires_at,
+        deposit_key: None,
     };
     booking_writer(vault, |wtxn| {
         CHECKOUT_LEASE

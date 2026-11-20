@@ -3,7 +3,7 @@
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, Result};
-use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::store::{ManifestDbs, StoreRead};
 use crate::{EntityId, Vault};
@@ -49,6 +49,19 @@ pub(crate) fn word_sources_through_in(
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     let names = |needle: &[u8]| body.windows(needle.len()).any(|window| window == needle);
+    // A machine birth control's words are those of the signed body it
+    // embeds (FIX MACHINE-HISTORY-SOURCE-LINEAGE-SUBJECT-MOVE).
+    if header.entity_type == ENTITY_TYPE_CLAIM
+        && names(crate::claim::history_store::MACHINE_BIRTH_PREDICATE.as_bytes())
+    {
+        match carried_machine_birth(raw, body) {
+            CarriedBirth::Revision(birth) => {
+                return word_sources_through_in(vault, dbs, txn, id, &birth);
+            }
+            CarriedBirth::Unjudged => return Ok(WordSources::Unresolved),
+            CarriedBirth::NotBirth => {}
+        }
+    }
     let epoch = match header.entity_type {
         ENTITY_TYPE_SUMMARY => {
             match crate::compaction::stored_epoch_in(&vault.store, txn, id, body)? {
@@ -158,6 +171,9 @@ pub(crate) fn word_sources_through_in(
         {
             return Ok(finding_notice_sources(body));
         }
+        crate::registry::ENTITY_TYPE_PSYCH_PROFILE => {
+            return profile_word_sources_through_in(vault, dbs, txn, body);
+        }
         _ => return Ok(WordSources::Own),
     };
     Ok(match sources {
@@ -179,6 +195,43 @@ pub(crate) fn word_sources_through_in(
         ) => WordSources::Unresolved,
         Err(error) => return Err(error),
     })
+}
+
+/// What a machine birth control carries for a reader of its words.
+enum CarriedBirth {
+    /// The revision is no machine birth control (or does not decode as a
+    /// CLAIM): its words are judged as before.
+    NotBirth,
+    /// A birth control whose signed birth or embedded body does not decode,
+    /// or whose embedded body is itself a machine history control: it names
+    /// nothing a reader can judge.
+    Unjudged,
+    /// The control's own metadata header, then the signed initial body it
+    /// embeds: the revision its words are those of.
+    Revision(Vec<u8>),
+}
+
+/// [`CarriedBirth`] of the stored CLAIM revision `raw`, whose body is `body`.
+fn carried_machine_birth(raw: &[u8], body: &[u8]) -> CarriedBirth {
+    let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(body, true) else {
+        return CarriedBirth::NotBirth;
+    };
+    let Some(initial) = crate::claim::history_store::machine_birth_initial_body(&claim) else {
+        return CarriedBirth::NotBirth;
+    };
+    let Ok(initial) = initial else {
+        return CarriedBirth::Unjudged;
+    };
+    let judged =
+        crate::write_envelope::claim_body::decode_claim_body(&initial, true).is_ok_and(|birth| {
+            crate::claim::history_store::machine_history_kind(&birth.predicate).is_none()
+        });
+    if !judged {
+        return CarriedBirth::Unjudged;
+    }
+    let mut revision = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+    revision.extend_from_slice(&initial);
+    CarriedBirth::Revision(revision)
 }
 
 /// The summary whose words the stored revision `raw` carries: the summary a
@@ -247,6 +300,71 @@ fn finding_notice_sources(body: &[u8]) -> WordSources {
         }
         _ => WordSources::Unresolved,
     }
+}
+
+/// The word sources of a PSYCH_PROFILE body (FIX
+/// PSYCH-PROFILE-DERIVED-SOURCE-CONJUNCT-MISSES-CITED-CLAIMS): the record each
+/// typed source names, whose words the profile was built from (FIX 11766),
+/// and every record those words came from in turn (review round 1 of #9923):
+/// a cited intent quotes the MESSAGE it cites, so the profile carries that
+/// MESSAGE's words too. Profile landing names its sources in the body and the
+/// dependency index, never as a `DerivedFrom` edge, so a reader reads the
+/// profile only while it reads each one, and a C6 use limit on one withholds
+/// it from the owner too (FIX 1496 S8). A body of an earlier schema, or one
+/// that does not decode, names no source a reader can judge, and neither
+/// does a cited record whose own sources no longer resolve; a profile with no
+/// source is its own. A cited id with no stored row stays named: a reader
+/// refuses it.
+fn profile_word_sources_through_in(
+    vault: &Vault,
+    dbs: &StoreRead<'_>,
+    txn: &RoTxn<'_>,
+    body: &[u8],
+) -> Result<WordSources> {
+    let Some(mut pending) = profile_typed_sources(body) else {
+        return Ok(WordSources::Unresolved);
+    };
+    let mut named = std::collections::BTreeSet::new();
+    while let Some(source) = pending.pop() {
+        if !named.insert(source) {
+            continue;
+        }
+        let Some(raw) = dbs.port_entity_raw_wiped(txn, &source)? else {
+            continue;
+        };
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        // A cited profile adds its typed sources to this one walk, so one
+        // visited set holds however profiles cite each other.
+        let carried = if header.entity_type == crate::registry::ENTITY_TYPE_PSYCH_PROFILE {
+            profile_typed_sources(&raw[ENTITY_METADATA_HEADER_LEN..])
+                .map_or(WordSources::Unresolved, WordSources::From)
+        } else {
+            word_sources_through_in(vault, dbs, txn, &source, &raw)?
+        };
+        match carried {
+            WordSources::Own => {}
+            WordSources::From(sources) => pending.extend(sources),
+            WordSources::Unresolved => return Ok(WordSources::Unresolved),
+        }
+    }
+    if named.is_empty() {
+        return Ok(WordSources::Own);
+    }
+    Ok(WordSources::From(named.into_iter().collect()))
+}
+
+/// The record each typed source of the PSYCH_PROFILE body `body` names;
+/// `None` for a body that does not decode as the current schema.
+fn profile_typed_sources(body: &[u8]) -> Option<Vec<EntityId>> {
+    let profile = crate::psych_profile::decode_psych_profile_body(body).ok()?;
+    Some(
+        profile
+            .sources
+            .iter()
+            .map(|source| source.document_ref)
+            .collect(),
+    )
 }
 
 /// The predicate an owner's stated intent is kept under

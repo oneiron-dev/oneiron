@@ -152,15 +152,12 @@ impl Inventory {
             .find(|(name, _)| *name == crate_name)
             .map_or("", |(_, dir)| *dir);
         let file = &file[base.len() + 1..];
-        let module = Path::new(file)
-            .parent()
-            .map(|parent| {
-                parent
-                    .iter()
-                    .map(|part| part.to_string_lossy().into_owned())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let module = Path::new(file).parent().map_or_default(|parent| {
+            parent
+                .iter()
+                .map(|part| part.to_string_lossy().into_owned())
+                .collect()
+        });
         let mut inventory = Self {
             index,
             decls: IndexMap::new(),

@@ -24,8 +24,8 @@ pub(super) use schedule::TickDetails;
 #[cfg(oneiron_test_support)]
 pub(crate) use schedule::tick_input_hash_for_test;
 pub(crate) use schedule::{
-    hold_task_tick_in_txn, index_task_due_in_txn, next_tick_release_at, release_due_ticks,
-    release_task_tick_hold_in_txn, releases_here, task_tick_held_in_txn, task_tick_waiting_in_txn,
+    TASK_TICK_JOB, hold_task_tick_in_txn, index_task_due_in_txn, release_task_tick_hold_in_txn,
+    releases_here, task_tick_held_in_txn, task_tick_waiting_in_txn,
 };
 #[cfg(oneiron_test_support)]
 pub(crate) use settlement::settlement_input_hash_for_test;

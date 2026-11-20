@@ -262,8 +262,10 @@ fn a_courtesy_delete_leg_is_unreachable_after_seven_days_by_default() {
     );
 }
 
-/// An enabled agent the owner of `fixture` creates, with a live owner Grant naming
-/// `vault.settings.set` and the give-up key's own line: a holder of that one key.
+/// An enabled agent the owner of `fixture` creates, with a live owner Grant naming `read`,
+/// `vault.settings.set` and the give-up key's own line: a holder of that one key. A Grant
+/// without `read` confers nothing, so its agent could set no key (FIX
+/// WAVE10-PROOF-GRANT-NOT-CONFERRING).
 fn give_up_holder(fixture: &Fixture) -> EntityId {
     let agent = EntityId::now();
     create_agent_definition_as(
@@ -284,6 +286,7 @@ fn give_up_holder(fixture: &Fixture) -> EntityId {
     .expect("the owner creates an enabled, active agent definition");
     let mut authority_scope = Scope::top();
     authority_scope.verbs = ScopeAxis::Some(BTreeSet::from([
+        "read".to_owned(),
         "vault.settings.set".to_owned(),
         set_line(GIVE_UP_KEY),
     ]));

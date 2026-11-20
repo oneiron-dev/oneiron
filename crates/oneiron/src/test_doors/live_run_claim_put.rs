@@ -1,14 +1,17 @@
 //! Doors for `tests/live_run_claim_put.rs` (#6881, review 6881 P1): the gate
 //! fixtures (`gate::live_run_claim_put_fixture`): the checker vault, the claim,
-//! the first-party agent's id and the claim write door with a checker injected.
+//! the first-party agent's id and the claim write door with a checker injected;
+//! and the run's claim put as a live-run door makes it, with the host's checker
+//! lent (FIX LIVE-RUN-CHECKER-INJECT).
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
 use crate::Result;
-use crate::claim::{ClaimApprovalStatus, ClaimBody};
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ScopedReadActorKey};
+use crate::code_run::{HostSelfDispatcher, SelfDispatchOutcome, SelfMemoryPutClaimCall};
 use crate::entity_id::EntityId;
 use crate::llm::BoundedAutoChecker;
 use crate::vault::Vault;
-use crate::write_envelope::WriteEnvelope;
+use crate::write_envelope::{WriteActor, WriteEnvelope};
 
 /// A vault whose only policy manifest lets the first-party agent land
 /// Generated Auto writes, naming the host checker `knob` when one is given.
@@ -59,4 +62,52 @@ pub fn gate_claim_write(
 #[must_use]
 pub fn first_party_connector_actor_id() -> EntityId {
     crate::gate::live_run_claim_put_fixture::first_party_connector_actor_id()
+}
+
+/// `actor`'s run `run` as the live-run door builds it: lent the host's auto
+/// checker (`HostSelfDispatcher::with_auto_checker`, as `on_live_run` lends
+/// `decision_host().auto_checker()`), without the live run's acquired lease.
+///
+/// # Errors
+/// The dispatcher's.
+#[doc(hidden)]
+pub fn live_run_dispatcher<'a>(
+    vault: &'a Vault,
+    actor: WriteActor,
+    run: &str,
+    host_checker: &'a BoundedAutoChecker,
+) -> Result<HostSelfDispatcher<'a>> {
+    Ok(HostSelfDispatcher::new(vault, actor, run)?.with_auto_checker(host_checker))
+}
+
+/// The run's claim put asking what `HostSelfDispatcher::put_claim_from_host`
+/// asks of the gates for a claim whose predicate is not critical (FIX 3983):
+/// Auto first, and when a gate pends the Auto request, Proposed, so it lands
+/// with its pending review. Without the live run's acquired lease. `read_as`
+/// is the key the claim's subject must resolve under; the live-run door passes
+/// none, so its writer's own read key answers.
+///
+/// # Errors
+/// The gate's refusal, or the store's.
+#[doc(hidden)]
+pub fn put_claim_as_live_run(
+    run: &HostSelfDispatcher<'_>,
+    call: SelfMemoryPutClaimCall,
+    read_as: Option<&ScopedReadActorKey>,
+) -> Result<SelfDispatchOutcome> {
+    match run.dispatch_memory_put_claim_requesting(
+        call.clone(),
+        read_as.cloned(),
+        ClaimApprovalStatus::Auto,
+        true,
+    ) {
+        Err(error) if crate::gate::gate_rejection_pends(&error) => run
+            .dispatch_memory_put_claim_requesting(
+                call,
+                read_as.cloned(),
+                ClaimApprovalStatus::Proposed,
+                true,
+            ),
+        outcome => outcome,
+    }
 }

@@ -410,6 +410,16 @@ pub(crate) fn holds_custody_carrier_in_txn(
         .is_some_and(|held| held.pieces().contains(transition)))
 }
 
+/// Whether this vault holds a custody transition of the record `id`: one it
+/// signed, or one a window brought (FILE-CUSTODY-MERGE-AFTER-REWRAP).
+pub(crate) fn custody_transition_held_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(TRANSITIONS.get(store, txn, &HexId(*id))?.is_some())
+}
+
 /// The record id and record, value out, of the latest live transition this
 /// vault holds under `name`: what an install the value was never sealed to
 /// knows of a portable secret. Revoked ones are left out.
@@ -569,6 +579,7 @@ fn request_admits(fold: &AuthorityFold, transition: &CustodyTransition) -> bool 
                     fold.machine(request.executor),
                     &fold.roster,
                     &transition.signer,
+                    fold.pinned_root.as_ref(),
                 )
         }
     }
@@ -705,6 +716,15 @@ pub(crate) fn apply_custody_transition_in_txn(
         return Ok(CustodyApplied::Kept);
     }
     super::put_secret_custody_in_txn(vault, wtxn, &transition.id, &record, at)?;
+    // A record this install minted for the same value, which never left it,
+    // merges into the one now open here (FILE-CUSTODY-MERGE-AFTER-REWRAP).
+    super::duplicate_merge::merge_local_duplicates_in_txn(
+        vault,
+        wtxn,
+        &transition.id,
+        &record,
+        at,
+    )?;
     Ok(CustodyApplied::Written)
 }
 
