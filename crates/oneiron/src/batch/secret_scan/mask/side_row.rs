@@ -464,6 +464,25 @@ pub(crate) fn admit_seeded_parts(
     Ok(admitted(scope, wtxn, origins, parts, seed, |_| true, pass)?.is_some())
 }
 
+/// [`admit_seeded_parts`], tracked (FIX 6144): the same pass, which also
+/// keeps where each handle went in each text it masked, for a writer that
+/// puts the handles into its own copy of those texts at their spans (a
+/// NOTE's live body). `None` when the parts are written as given.
+pub(crate) fn admit_tracked_seeded_parts(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    origins: &[(EntityId, &str)],
+    parts: &mut [SidePart],
+    seed: &mut Lifted,
+) -> Result<Option<TextReplacements>> {
+    let pass = Pass {
+        tracked: true,
+        ..Pass::default()
+    };
+    let scope = Scope::of(dbs, wtxn)?;
+    admitted(scope, wtxn, origins, parts, seed, |_| true, pass)
+}
+
 /// [`admit_seeded_parts`] as its plan alone (FIX 21363), for a replay that
 /// proves what an earlier admission stored: `vault`'s switch and kept values
 /// and the caller's `known` matcher plan the parts, and its custody door is

@@ -29,8 +29,9 @@ pub(crate) use self::lift_history::{
     propose_typed_body_at_in_txn, run_lift_pass, typed_body_at_proposal_due_in_txn,
 };
 pub(crate) use self::mask::admit::{
-    Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, plan_parts_in_txn,
-    predict_masked_body, predict_masked_text, scan_content_in_txn, scan_document_in_txn,
+    Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, admit_tracked_parts_in_txn,
+    plan_parts_in_txn, predict_masked_body, predict_masked_text, scan_content_in_txn,
+    scan_document_in_txn,
 };
 pub(crate) use self::mask::carrier::{
     CarrierText, LiftedKeys, carrier_origin, carrier_text_placeable, carrier_texts_hit_in_txn,

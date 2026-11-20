@@ -207,7 +207,7 @@ fn restore_pending_forks_in_txn(
         } else if fork.rewrite && view.markdown.contains(text_form) {
             let writer = WriteActor::new(actor, EdgeActorClass::Human);
             let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, writer)?;
-            carrier.restore_body(&view.markdown.replace(text_form, as_text(value)?), stamp)?;
+            carrier.restore_body(&[(text_form, as_text(value)?)], stamp)?;
             // Stored as `store_doc` stores a fork that keeps its operations.
             record_token_uses_in_txn(vault, txn, note, &carrier.doc, None)?;
             NOTE_PROPOSAL_DOC.put(&vault.store, txn, &key, &snapshot(&carrier.doc)?)?;
@@ -270,7 +270,13 @@ pub(super) fn restore_kept_handles_in_candidate_in_txn(
     }
     let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, actor)?;
     if body != markdown {
-        candidate.restore_body(&body, stamp)?;
+        // The same replacements, in the same order, spliced into the body
+        // with no diff over it (FIX LORO-TEXT-UPDATE-UNBOUNDED-DIFF-CALLERS).
+        let values = kept
+            .iter()
+            .map(|(text_form, value)| Ok((text_form.as_str(), as_text(value)?)))
+            .collect::<Result<Vec<_>>>()?;
+        candidate.restore_body(&values, stamp)?;
     }
     if titled != title
         && let Some(text) = &titled

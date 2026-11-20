@@ -1,6 +1,7 @@
 //! NOTE entity-document operations, stable cursors and citation provenance.
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 use crate::EntityId;
 use crate::config::bm25::NoteTextField;
@@ -410,20 +411,28 @@ impl NoteDocument {
         editable_fields(&self.doc.get_map(META))
     }
 
-    /// Rewrites the live body to `text` by the smallest edits that make it:
-    /// a mask on write's handles in place of the spans it lifted (OF-067).
-    /// Every other character keeps its identity, and the cursors on it.
-    pub(super) fn mask_body(&self, text: &str) -> Result<()> {
-        self.doc
-            .get_text(BODY)
-            .update(
-                text,
-                loro::UpdateOptions {
-                    timeout_ms: None,
-                    use_refined_diff: true,
-                },
-            )
-            .map_err(|_| invalid("NOTE mask update"))?;
+    /// Puts a mask on write's handles in the live body in place of the spans
+    /// it lifted (OF-067): `replaced` holds, in order, each span of the body
+    /// the mask lifted and the span its handle takes in `masked`, the body
+    /// as masked (FIX 6144). Each handle is spliced in at its span, the last
+    /// first, and no diff runs over the body, so every other character keeps
+    /// its identity, and the cursors on it, at any size (FIX
+    /// LORO-TEXT-UPDATE-UNBOUNDED-DIFF-CALLERS). Spans that do not make
+    /// `masked` of the live body refuse before any edit.
+    pub(super) fn mask_body(
+        &self,
+        replaced: &[(Range<usize>, Range<usize>)],
+        masked: &str,
+    ) -> Result<()> {
+        let body = self.doc.get_text(BODY);
+        if spliced(&body.to_string(), replaced, masked).as_deref() != Some(masked) {
+            return Err(invalid("NOTE mask spans"));
+        }
+        for (span, handle) in replaced.iter().rev() {
+            body.delete_utf8(span.start, span.len())
+                .and_then(|()| body.insert_utf8(span.start, &masked[handle.clone()]))
+                .map_err(|_| invalid("NOTE mask update"))?;
+        }
         self.doc
             .commit_with(CommitOptions::new().commit_msg("oneiron.note/v1 mask_on_write"));
         Ok(())
@@ -442,19 +451,26 @@ impl NoteDocument {
         Ok(())
     }
 
-    /// Rewrites the live body to `text` by the smallest edits that make it,
-    /// as [`Self::mask_body`] does, its commit naming the ruling person's
-    /// stamp token `stamp`: a found key's value back where the mask left its
-    /// handle (FIX L6-03-NOTE-RULING-KEEPS-DOC-HANDLE).
-    pub(super) fn restore_body(&self, text: &str, stamp: ActorStamp) -> Result<()> {
-        let options = loro::UpdateOptions {
-            timeout_ms: None,
-            use_refined_diff: true,
-        };
-        self.doc
-            .get_text(BODY)
-            .update(text, options)
-            .map_err(|_| invalid("NOTE restore update"))?;
+    /// Puts found keys' values back where the mask left their handles, its
+    /// commit naming the ruling person's stamp token `stamp` (FIX
+    /// L6-03-NOTE-RULING-KEEPS-DOC-HANDLE): for each `(text_form, value)` of
+    /// `values` in turn, each place the live body then holds `text_form`
+    /// takes `value`, as [`str::replace`] puts it. Each value is spliced in
+    /// at its places, the last first, as [`Self::mask_body`] puts its
+    /// handles, and no diff runs over the body, so every other character
+    /// keeps its identity, and the cursors on it, at any size (FIX
+    /// LORO-TEXT-UPDATE-UNBOUNDED-DIFF-CALLERS).
+    pub(super) fn restore_body(&self, values: &[(&str, &str)], stamp: ActorStamp) -> Result<()> {
+        let body = self.doc.get_text(BODY);
+        for &(text_form, value) in values {
+            let text = body.to_string();
+            let places: Vec<usize> = text.match_indices(text_form).map(|(at, _)| at).collect();
+            for at in places.into_iter().rev() {
+                body.delete_utf8(at, text_form.len())
+                    .and_then(|()| body.insert_utf8(at, value))
+                    .map_err(|_| invalid("NOTE restore update"))?;
+            }
+        }
         commit_stamped(&self.doc, stamp);
         Ok(())
     }
@@ -690,6 +706,22 @@ impl NoteDocument {
         }
         Ok(true)
     }
+}
+
+/// `text` with each span of `replaced` taking the span of `masked` it
+/// names, in order: `None` when a span runs backwards, overlaps the one
+/// before it, or falls outside its text or off a char boundary there.
+fn spliced(text: &str, replaced: &[(Range<usize>, Range<usize>)], masked: &str) -> Option<String> {
+    let mut out = String::with_capacity(masked.len());
+    let mut from = 0;
+    for (span, handle) in replaced {
+        out.push_str(text.get(from..span.start)?);
+        text.get(span.clone())?;
+        out.push_str(masked.get(handle.clone())?);
+        from = span.end;
+    }
+    out.push_str(text.get(from..)?);
+    Some(out)
 }
 
 /// The engine stamp of a live write, naming the writer's stamp token in the
