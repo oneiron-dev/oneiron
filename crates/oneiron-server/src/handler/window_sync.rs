@@ -544,24 +544,7 @@ pub(super) async fn handle_window_sync(
                 let batch_ref =
                     device_update_batch_ref(&device, &key, update, row_admission.is_some())
                         .map_err(map_update_admission_err)?;
-                let Some(claim) = server.claim_device_burst_landing(batch_ref.clone()) else {
-                    tracing::info!(
-                        window = %key,
-                        batch_ref = %batch_ref,
-                        "an own device's burst is landing at its home already"
-                    );
-                    return super::window_copy::acknowledge_held(
-                        conn_state,
-                        &key,
-                        window_key,
-                        sub_tag,
-                        residence_seq,
-                        update,
-                        &doc.oplog_vv(),
-                        &receipt,
-                        direct_tx,
-                    );
-                };
+                let claim = server.claim_device_burst_landing(batch_ref.clone());
                 let carried = inserts.ids().collect::<Vec<_>>();
                 let admitted = match row_admission {
                     Some(admission) => admit_device_residence_update(

@@ -123,9 +123,7 @@ impl SyncServer {
     pub(crate) async fn drain_device_bursts(&self) -> oneiron::Result<usize> {
         let mut landed = 0;
         for work in oneiron::sync::federation_burst::ready_device_work(self.vault())? {
-            let Some(claim) = self.claim_device_burst_landing(work.batch_ref()) else {
-                continue;
-            };
+            let claim = self.claim_device_burst_landing(work.batch_ref());
             let landing = crate::handler::land_retained_device_update(self, &work).await;
             let end = DeviceBurstEnd::of(&landing);
             if let Err(failure) = &landing {
