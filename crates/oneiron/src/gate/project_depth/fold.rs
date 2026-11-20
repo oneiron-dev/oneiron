@@ -324,9 +324,12 @@ fn edit_disposition(
         return Ok(ProjectDepthDisposition::Pending);
     };
     let actor = EntityId::from_hex(&edit.actor_ref)?;
+    // A passkey the host vouched for binds its owner for their verbs and
+    // writes alone: its edits stay quarantined (row PASSKEY-SELF-BIND).
     if binding.actor_ref != actor
         || binding.actor_class != "human"
         || binding.status != ActorBindingStatus::Active
+        || fold.host_vouched_passkey_limited(&key)
     {
         return Ok(ProjectDepthDisposition::Quarantined);
     }

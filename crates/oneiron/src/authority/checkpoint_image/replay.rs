@@ -295,6 +295,7 @@ fold_state_fields!(
     passkey_contexts,
     passkey_vouched_keys,
     passkey_vouch_confirmations,
+    host_vouched_passkey_owners,
 );
 
 impl ReplayEvidence {

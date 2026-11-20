@@ -109,17 +109,18 @@ impl ClosureRow {
 
 /// One counted owner key enrolment, before the closure knows whether the
 /// fold read it as an enrolment or a confirmation.
-struct EnrolmentRow {
-    hash: AuthorityEntryHash,
-    key: AuthorityKey,
-    owner: EntityId,
+pub(super) struct EnrolmentRow {
+    pub(super) hash: AuthorityEntryHash,
+    pub(super) key: AuthorityKey,
+    pub(super) owner: EntityId,
 }
 
 /// The counted owner key enrolments the fold read as confirmations: each
 /// one with a counted enrolment of the same key among its ancestors in
 /// `parents` (a counted entry's parents are counted). A key whose enrolment
 /// is not among the visited rows reads as fresh, so its row signs it in.
-fn confirmations(
+/// The binding door reads the same set ([`Vault::prepare_owner_key_binding_as`]).
+pub(super) fn confirmations(
     enrolments: &[EnrolmentRow],
     parents: &BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>>,
 ) -> BTreeSet<AuthorityEntryHash> {
