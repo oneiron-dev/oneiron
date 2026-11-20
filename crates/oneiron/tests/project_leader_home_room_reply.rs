@@ -16,20 +16,24 @@
 //! in its home room.
 //!
 //! Red on main (by assertion): there `lead`'s claim of owen's unaddressed
-//! turn settles NotAddressed, so the two answer tests and the replaced-leader
-//! test fail at that claim. The other-agent test passes on both.
+//! turn settles NotAddressed, so every test in which the leader claims an
+//! unaddressed turn fails at that claim. The other-agent test and the
+//! erased-speaker test pass on both.
 //!
-//! A claim whose holder the turn no longer speaks to holds it for no one, so
-//! a claimant the turn speaks to takes it over until it is answered
-//! (ROOM-CLAIM-TAKEOVER = A, Engine 21 Nov 03:04; FIX
-//! ROOM-CLAIM-HELD-AFTER-SPEECH-STANDING-ENDS), and another machine's copy of
-//! the replaced claim leaves the takeover standing. Red before it (by
-//! assertion): the new leader's claim of a turn its replaced leader holds
-//! settles HeldBy, so the takeover test and the replica test fail there. The
-//! two tests where the claim stays pass on both.
+//! Review round 1 (REVIEW-9956) added the rest. A claim whose holder the
+//! turn no longer speaks to holds it for no one, so a claimant the turn
+//! speaks to takes it over until it is answered (ROOM-CLAIM-TAKEOVER = A,
+//! Engine 21 Nov 03:04; FIX ROOM-CLAIM-HELD-AFTER-SPEECH-STANDING-ENDS), and
+//! another machine's copy of the replaced claim leaves the takeover standing
+//! (P1-1). A turn that names only people names no agent (P1-3). An erased
+//! speaker's turn is no person's, read without an error (P1-2). Red at the
+//! round-1 head 2a6b5c00dbf: the takeover and replica tests (the new
+//! leader's claim settles HeldBy), the person-name test (NotAddressed) and
+//! the erased-speaker test (the claim errs). The two tests where the claim
+//! stays pass there.
 //!
-//! The replica test reads the claim rows through the door
-//! `test_doors::room_claim_merge`; the others use public paths only.
+//! The replica and erased-speaker tests reach crate rows through the door
+//! `test_doors::room_turn_claims`; the others use public paths only.
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features --test project_leader_home_room_reply`.
 
@@ -547,7 +551,7 @@ fn an_answered_turn_keeps_its_claim() -> TestResult {
 #[cfg(oneiron_test_support)]
 #[test]
 fn a_replica_copy_of_a_replaced_claim_leaves_the_takeover() -> TestResult {
-    use oneiron::test_doors::room_claim_merge::{held_claim, merge_replicated_claim};
+    use oneiron::test_doors::room_turn_claims::{held_claim, merge_replicated_claim};
     use oneiron::workspace_roster::RoomClaimReceipt;
 
     let fixture = Fixture::open()?;
@@ -589,6 +593,53 @@ fn a_replica_copy_of_a_replaced_claim_leaves_the_takeover() -> TestResult {
         held_claim(&fixture.vault, second)?,
         Some(carried),
         "the carried takeover holds the turn"
+    );
+    Ok(())
+}
+
+/// REVIEW-9956 P1-3: a turn that names only a person names no agent, so the
+/// leader still answers it. owen binds `@owen` to himself and names only
+/// that handle, so the turn's names hold owen alone.
+///
+/// Red on main and at the round-1 head: the leader's claim settles
+/// NotAddressed.
+#[test]
+fn the_leader_answers_a_turn_naming_only_a_person() -> TestResult {
+    let fixture = Fixture::open()?;
+    fixture
+        .vault
+        .bind_room_handle(fixture.room, "@owen", fixture.owen)?;
+    let asked = fixture.owen_speaks(serde_json::json!({"room_mentions": ["@owen"]}))?;
+    let claimed = fixture.claim(fixture.lead, asked)?;
+    assert!(
+        claimed_by(&claimed, fixture.lead),
+        "the leader claims a turn that names only a person: {claimed:?}"
+    );
+    let answer = fixture.reply(fixture.lead, asked)?;
+    assert!(
+        fixture.landed(answer, fixture.lead)?,
+        "the leader's answer lands"
+    );
+    Ok(())
+}
+
+/// REVIEW-9956 P1-2: an erased speaker's turn is no person's, so it does not
+/// speak to the leader, and the claim door says so rather than failing.
+/// owen speaks, and his turns are then erased to the erased marker, as an
+/// actor erase leaves them.
+///
+/// Green on main; red at the round-1 head, where the claim errs on the
+/// erased marker.
+#[cfg(oneiron_test_support)]
+#[test]
+fn an_erased_speakers_turn_does_not_speak_to_the_leader() -> TestResult {
+    let fixture = Fixture::open()?;
+    let asked = fixture.owen_speaks(serde_json::json!({}))?;
+    oneiron::test_doors::room_turn_claims::erase_turn_actor(&fixture.vault, fixture.owen)?;
+    assert_eq!(
+        fixture.claim(fixture.lead, asked)?,
+        RoomClaimOutcome::NotAddressed,
+        "an erased speaker's turn speaks to no leader"
     );
     Ok(())
 }

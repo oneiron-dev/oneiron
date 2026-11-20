@@ -301,13 +301,13 @@ pub mod resident_wake_hold;
 pub mod restored_enrolment;
 pub mod retrieval_policy_default_floor;
 pub mod reveal_ask_window;
-pub mod room_claim_merge;
 pub mod room_facet_limit;
 pub mod room_facet_set;
 #[cfg(feature = "sync")]
 pub mod room_fact_marks;
 pub mod room_speaker_entries;
 pub mod room_turn_backfill;
+pub mod room_turn_claims;
 pub mod root_appointment;
 pub mod root_recovery;
 pub mod roster_slot_reservation;

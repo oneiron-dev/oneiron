@@ -282,8 +282,11 @@ pub(super) fn agent_spoken_to_in_txn(
 /// no agent, on the trunk or in one of the room's threads. A replaced leader
 /// stands on nothing at once. A turn that names an agent stays that agent's,
 /// and an agent's turn never counts, so no two agents answer each other
-/// here. It adds no seat, task or scope: the leader still stands on its
-/// seat, and the claim and witness doors read this same rule.
+/// here. A turn that names only people names no agent (REVIEW-9956 P1-3).
+/// An erased speaker, or a speaker or name this vault does not read as a
+/// PERSON, is no person here, never an error (REVIEW-9956 P1-2). It adds no
+/// seat, task or scope: the leader still stands on its seat, and the claim
+/// and witness doors read this same rule.
 pub(in crate::workspace_roster::rooms) fn leader_answers_turn_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -291,16 +294,26 @@ pub(in crate::workspace_roster::rooms) fn leader_answers_turn_in_txn(
     agent: EntityId,
     turn: &RoomTurn,
 ) -> Result<bool> {
-    if !turn.addressed_agents.is_empty() || turn.room_id != room.to_hex() {
+    if turn.room_id != room.to_hex() {
         return Ok(false);
     }
-    let speaker = EntityId::from_hex(&turn.actor)?;
     let now = vault.store.clock.now_recorded_at();
-    if !matches!(
-        participant_in_txn(vault, txn, speaker, now)?,
-        Some(JoinSubject::Person(_))
-    ) {
+    let person = |actor: &str| -> Result<bool> {
+        let Ok(actor) = EntityId::from_hex(actor) else {
+            return Ok(false);
+        };
+        Ok(matches!(
+            participant_in_txn(vault, txn, actor, now)?,
+            Some(JoinSubject::Person(_))
+        ))
+    };
+    if !person(&turn.actor)? {
         return Ok(false);
+    }
+    for named in &turn.addressed_agents {
+        if !person(named)? {
+            return Ok(false);
+        }
     }
     let Some(project) = super::hosting::room_project_in(vault, txn, room)? else {
         return Ok(false);

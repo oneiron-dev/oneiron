@@ -677,7 +677,11 @@ impl Memory<'_> {
             // agent in its home room (ARCH-0067:485), as the witness reads it.
             let named = addressed.addressed_agents.contains(&self.actor().to_hex());
             let task = claimant.held_task_in_txn(self.vault(), txn, &addressed)?;
+            // The leader's reading runs only when naming and a task leave
+            // an agent unaddressed (REVIEW-9956 P1-2).
             let leads = claimant.is_agent()
+                && !named
+                && task.is_none()
                 && participation::leader_answers_turn_in_txn(
                     self.vault(),
                     txn,
