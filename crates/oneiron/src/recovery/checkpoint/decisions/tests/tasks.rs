@@ -83,6 +83,7 @@ fn mint(
                 assigned_generation: None,
                 answered_heads: None,
                 occurred_at: 10,
+                maker: None,
             },
         )
     })

@@ -18,9 +18,10 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::federation::record_scope::BirthPosition;
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::task_authority::TaskMaker;
 use crate::write_envelope::WriteActor;
 
-use super::consts::{TASK_CREATE_PROPOSAL_PREDICATE, TASK_SETTLE_ID_DOMAIN};
+use super::consts::{TASK_CREATE_PROPOSAL_PREDICATE, TASK_POST_STAMP_KEY, TASK_SETTLE_ID_DOMAIN};
 use super::create_origin::{TaskCreateOrigin, proposal_origin_in};
 use super::create_spec::TaskCreateSpec;
 use super::create_validation::validate_task_create_in;
@@ -35,6 +36,61 @@ use super::wire_decode::{
 
 fn invalid(field: &'static str) -> MemoryError {
     MemoryError::from(Error::Record(RecordError::InvalidTaskBody(field)))
+}
+
+/// The maker commitment and the owner of the TASK an approved create
+/// proposal lands (FIX TASK-ID-COMMITS-TO-MAKER): its proposer makes it,
+/// under the settle derive of its claim as the nonce, for the owner a
+/// brief-less create names, else for itself; a post's owner is its proposer.
+/// The settling doors and every reader that finds the landed TASK from its
+/// proposal take the id from here ([`settled_task_ref`]).
+///
+/// # Errors
+///
+/// A claim naming no producer, or an owner field that does not decode.
+pub(super) fn settled_task_identity(
+    claim_id: EntityId,
+    claim: &ClaimBody,
+) -> Result<(TaskMaker, EntityId)> {
+    let proposer = crate::claim::session_claim_producer(claim)
+        .ok_or(Error::InvariantViolation("task proposal names no producer"))?;
+    let maker = TaskMaker {
+        maker_ref: proposer,
+        nonce: EntityId::derive(TASK_SETTLE_ID_DOMAIN, &[claim_id.as_bytes()])?,
+    };
+    let owner = match &claim.value {
+        Value::Map(entries) => match task_body_optional(entries, TASK_POST_STAMP_KEY)? {
+            Some(_) => proposer,
+            None => proposal_owner_ref(entries)
+                .map_err(settle_refusal)?
+                .unwrap_or(proposer),
+        },
+        _ => proposer,
+    };
+    Ok((maker, owner))
+}
+
+/// The TASK an approved create proposal lands ([`settled_task_identity`]).
+///
+/// # Errors
+///
+/// As [`settled_task_identity`].
+pub(super) fn settled_task_ref(claim_id: EntityId, claim: &ClaimBody) -> Result<EntityId> {
+    let (maker, owner) = settled_task_identity(claim_id, claim)?;
+    maker.task_ref(owner)
+}
+
+/// The owner a brief-less create proposal names, if it names one: the one
+/// decoder of the field, so the settled TASK's id and its Owner fact agree.
+fn proposal_owner_ref(entries: &[(Value, Value)]) -> MemoryResult<Option<EntityId>> {
+    task_body_optional(entries, "owner_ref")?
+        .map(|value| {
+            value
+                .as_str()
+                .and_then(|hex| EntityId::from_hex(hex).ok())
+                .ok_or_else(|| invalid("tasks.proposal.owner_ref"))
+        })
+        .transpose()
 }
 
 /// Decodes the stored value of one brief-less `tasks.create` proposal:
@@ -58,14 +114,7 @@ pub(super) fn decode_task_create_proposal(value: &Value) -> MemoryResult<TaskCre
                 .ok_or_else(|| invalid("tasks.proposal.label"))
         })
         .transpose()?;
-    let owner_ref = task_body_optional(entries, "owner_ref")?
-        .map(|value| {
-            value
-                .as_str()
-                .and_then(|hex| EntityId::from_hex(hex).ok())
-                .ok_or_else(|| invalid("tasks.proposal.owner_ref"))
-        })
-        .transpose()?;
+    let owner_ref = proposal_owner_ref(entries)?;
     let mut spec = TaskCreateSpec::new(
         task_body_field(entries, "spec")?.clone(),
         label,
@@ -124,10 +173,11 @@ pub(super) fn decode_task_create_proposal(value: &Value) -> MemoryResult<TaskCre
 }
 
 /// Lands one approved brief-less create proposal inside the approving
-/// transaction: the TASK at the id the claim derives, its route, and the
-/// assignment fact a stamped post writes. An id already landed changes
-/// nothing; a spec that no longer validates (expired, amended into an
-/// invalid shape) fails the approval. The opener never settles its own.
+/// transaction: the TASK at the id its proposer, its owner and the claim
+/// derive ([`settled_task_identity`]), its route, and the assignment fact a
+/// stamped post writes. An id already landed changes nothing; a spec that no
+/// longer validates (expired, amended into an invalid shape) fails the
+/// approval. The opener never settles its own.
 pub(super) fn settle_create_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -137,8 +187,10 @@ pub(super) fn settle_create_in_txn(
     now: u64,
 ) -> Result<()> {
     let proposer = proposer_of(claim, approver)?;
-    let task_ref = EntityId::derive(TASK_SETTLE_ID_DOMAIN, &[claim_id.as_bytes()])?;
-    if vault.get_raw_in(wtxn, &task_ref)?.is_some() {
+    // The owner the stored spec names is decoded before the id, which
+    // commits to it.
+    let (maker, owner) = settled_task_identity(claim_id, claim)?;
+    if vault.get_raw_in(wtxn, &maker.task_ref(owner)?)?.is_some() {
         return Ok(());
     }
     let class = envelope_actor_class(claim).ok_or(Error::Record(RecordError::InvalidTaskBody(
@@ -164,27 +216,28 @@ pub(super) fn settle_create_in_txn(
         .require_settled_plan_admission_in(wtxn, spec.assignee, None, approver)
         .map_err(settle_refusal)?;
     memory
-        .land_settled_create_in_txn(wtxn, task_ref, claim_id, &spec, origin.as_ref(), now)
+        .land_settled_create_in_txn(wtxn, (maker, owner), claim_id, &spec, origin.as_ref(), now)
         .map_err(settle_refusal)
 }
 
 impl Memory<'_> {
     /// The landing half of [`settle_create_in_txn`], as the proposer: the
-    /// spec validated at approval time, the TASK minted with the stored
-    /// owner or else the proposer, filed under its parent, routed in the same
-    /// transaction under the creator the proposal witnessed, and an addressed
-    /// standard task's Assigned fact.
+    /// spec validated at approval time, the TASK minted for the stored
+    /// owner or else the proposer (`identity`, [`settled_task_identity`]),
+    /// filed under its parent, routed in the same transaction under the
+    /// creator the proposal witnessed, and an addressed standard task's
+    /// Assigned fact.
     fn land_settled_create_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        task_ref: EntityId,
+        identity: (TaskMaker, EntityId),
         claim_id: EntityId,
         spec: &TaskCreateSpec,
         origin: Option<&TaskCreateOrigin>,
         now: u64,
     ) -> MemoryResult<()> {
         let validated = validate_task_create_in(self.vault(), &*wtxn, spec, now)?;
-        let owner = spec.owner_ref.unwrap_or_else(|| self.actor());
+        let owner = identity.1;
         let provenance = Value::Map(vec![
             (Value::from("surface"), Value::from("facade")),
             (
@@ -193,9 +246,9 @@ impl Memory<'_> {
             ),
             (Value::from("proposal_ref"), Value::from(claim_id.to_hex())),
         ]);
-        self.mint_task_at_in_txn(
+        let task_ref = self.mint_task_at_in_txn(
             wtxn,
-            (task_ref, owner),
+            identity,
             &validated,
             spec.label.clone(),
             &provenance,

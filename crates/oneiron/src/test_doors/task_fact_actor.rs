@@ -1,10 +1,12 @@
-//! Door for `tests/task_fact_actor_rule.rs` (Fable pass 28 R5 part 2): writes one TASK
+//! Door for `tests/task_fact_actor_rule.rs` (Fable pass 28 R5 part 2) and
+//! `tests/task_id_commits_to_maker.rs` (FIX TASK-ID-COMMITS-TO-MAKER): writes one TASK
 //! authority fact under this install's carrier, through the mint door or past its actor
-//! check, and reads what a TASK's facts prove about who may act on it.
+//! check, and reads what a TASK's facts prove about who may act on it. It also hands a
+//! fact row to the step a replicated put takes when it refuses a row deleted here.
 
 use crate::error::Result;
 use crate::task_authority::{
-    TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
+    TaskAuthorityFact, TaskAuthorityFactKind, TaskMaker, put_task_authority_fact_in_txn,
     write_unjudged_task_authority_fact_in_txn,
 };
 use crate::{EntityId, Vault};
@@ -38,6 +40,7 @@ fn fact_at(
         assigned_generation: None,
         answered_heads: None,
         occurred_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
+        maker: None,
     })
 }
 
@@ -79,6 +82,73 @@ pub fn write_unjudged_fact(
     })
 }
 
+/// An Owner fact naming `owner` as `task`'s owner under the maker commitment of `maker`
+/// and `nonce`.
+fn owner_fact_at(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    task: EntityId,
+    owner: EntityId,
+    maker: EntityId,
+    nonce: EntityId,
+) -> Result<TaskAuthorityFact> {
+    let mut fact = fact_at(vault, txn, task, TaskAuthorityFactKind::Owner, owner, None)?;
+    fact.maker = Some(TaskMaker {
+        maker_ref: maker,
+        nonce,
+    });
+    Ok(fact)
+}
+
+/// Mints an Owner fact naming `owner` as `task`'s owner, under the maker commitment of
+/// `maker` and `nonce`, through the mint door.
+///
+/// # Errors
+///
+/// As `put_task_authority_fact_in_txn`, which refuses an Owner fact whose maker commitment
+/// does not derive `task` with `owner`.
+pub fn mint_owner_fact(
+    vault: &Vault,
+    task: EntityId,
+    owner: EntityId,
+    maker: EntityId,
+    nonce: EntityId,
+) -> Result<EntityId> {
+    vault.with_write_txn(|txn| {
+        let fact = owner_fact_at(vault, txn, task, owner, maker, nonce)?;
+        put_task_authority_fact_in_txn(vault, txn, fact)
+    })
+}
+
+/// [`mint_owner_fact`] past the door's check: the Owner fact a member machine whose door
+/// lacks the check would carry, signed by this install's carrier.
+///
+/// # Errors
+///
+/// As the fact's write.
+pub fn write_unjudged_owner_fact(
+    vault: &Vault,
+    task: EntityId,
+    owner: EntityId,
+    maker: EntityId,
+    nonce: EntityId,
+) -> Result<EntityId> {
+    vault.with_write_txn(|txn| {
+        let fact = owner_fact_at(vault, txn, task, owner, maker, nonce)?;
+        write_unjudged_task_authority_fact_in_txn(vault, txn, fact)
+    })
+}
+
+/// The id of the TASK `maker` mints for `owner` under `nonce`
+/// (`task_authority::task_ref_of_maker`).
+///
+/// # Errors
+///
+/// A derivation that lands in the reserved id range.
+pub fn task_ref_of_maker(maker: EntityId, owner: EntityId, nonce: EntityId) -> Result<EntityId> {
+    crate::task_authority::task_ref_of_maker(maker, owner, nonce)
+}
+
 /// What `task`'s facts prove about who may act on it, or `None` when no Owner fact proves
 /// an owner.
 ///
@@ -94,4 +164,23 @@ pub fn proved_standing(vault: &Vault, task: EntityId) -> Result<Option<ProvedSta
             assignee: standing.assignee,
             taker: standing.taker.map(|taker| taker.actor),
         }))
+}
+
+/// The step a replicated put takes when it refuses row `fact` because its id was deleted
+/// here (`task_authority::note_suppressed_fact_in_txn`), with `body` the TASK row's body:
+/// a fact that proves itself here marks its task, so the task's facts read as a refusal.
+///
+/// # Errors
+///
+/// As the write transaction.
+pub fn note_refused_fact(vault: &Vault, fact: EntityId, body: &[u8]) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        crate::task_authority::note_suppressed_fact_in_txn(
+            &vault.store,
+            txn,
+            &fact,
+            crate::registry::ENTITY_TYPE_TASK,
+            body,
+        )
+    })
 }

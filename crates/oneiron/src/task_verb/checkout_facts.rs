@@ -87,6 +87,7 @@ impl Memory<'_> {
                 assigned_generation: None,
                 answered_heads: None,
                 occurred_at: now,
+                maker: None,
             },
         )?;
         Ok(())
