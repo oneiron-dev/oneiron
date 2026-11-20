@@ -82,9 +82,9 @@
 //! durable step's retry delay wakes its waker from a timer thread, so the
 //! pass runs on the calling thread under a waker that unparks it. It is
 //! polled on a stack segment as large as the stack the server gives an engine
-//! thread (32 MiB), not on the calling thread's own stack: a dev-build turn
-//! wake overran a libtest thread's default 2 MiB inside its micro
-//! consolidation.
+//! thread (32 MiB), not on the calling thread's own stack, so the calling
+//! thread's size never decides whether a pass completes. A test of the pass's
+//! own depth asks for the calling thread's stack ([`PassStack`]).
 
 use std::fmt;
 use std::future::Future;
@@ -165,6 +165,18 @@ const MAX_POLLS: usize = 100_000;
 /// dev-build turn wake overflowed inside its micro consolidation (golden day,
 /// 20 Nov) and completed on a 1 GiB stack.
 const ENGINE_THREAD_STACK_BYTES: usize = 32 * 1024 * 1024;
+
+/// The native stack a pass is polled on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum PassStack {
+    /// A stack segment of 32 MiB, the stack the server gives each engine
+    /// thread: the pass's depth never depends on the calling thread.
+    #[default]
+    EngineThread,
+    /// The calling thread's own stack: a test of how much stack a pass needs
+    /// runs it on a thread of the size it checks.
+    CallingThread,
+}
 
 /// Which wake a pass runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -529,10 +541,12 @@ pub struct DreamerPass<'b> {
     budget: PassBudget,
     run_id: String,
     lease_owner: String,
+    stack: PassStack,
 }
 
 impl<'b> DreamerPass<'b> {
-    /// A pass whose model calls `backend` answers, on the default budget.
+    /// A pass whose model calls `backend` answers, on the default budget,
+    /// polled on an engine-sized stack segment.
     #[must_use]
     pub fn new(backend: &'b ScriptedBackend) -> Self {
         Self {
@@ -540,7 +554,15 @@ impl<'b> DreamerPass<'b> {
             budget: PassBudget::default(),
             run_id: "oneiron-testkit-dreamer-pass".to_owned(),
             lease_owner: "oneiron-testkit".to_owned(),
+            stack: PassStack::default(),
         }
+    }
+
+    /// The same pass polled on `stack`.
+    #[must_use]
+    pub fn with_stack(mut self, stack: PassStack) -> Self {
+        self.stack = stack;
+        self
     }
 
     /// The same pass on `budget`.
@@ -667,9 +689,8 @@ impl<'b> DreamerPass<'b> {
             destination_bound: None,
         };
         let cancel = WakeCancellation::new();
-        let tally = match block_on(driver.run_wake_pass(input, &mut executor, &cancel))
-            .ok_or(DreamerPassError::Stalled)?
-        {
+        let pass = driver.run_wake_pass(input, &mut executor, &cancel);
+        let tally = match block_on(self.stack, pass).ok_or(DreamerPassError::Stalled)? {
             Ok(tally) => tally,
             Err(error) => {
                 let queue = queue_rows(vault, &store).map_err(|read| read.to_string());
@@ -973,21 +994,27 @@ impl Wake for ThreadWaker {
 
 /// Polls `future` on this thread until it is ready, parking between polls
 /// until its waker unparks the thread; `None` after [`MAX_POLLS`] polls.
-/// Every poll runs on a stack segment of [`ENGINE_THREAD_STACK_BYTES`]; the
-/// future is boxed first, so only a pointer to it crosses onto the segment.
-fn block_on<F: Future>(future: F) -> Option<F::Output> {
-    let mut future = Box::pin(future);
-    stacker::grow(ENGINE_THREAD_STACK_BYTES, move || {
+/// On [`PassStack::EngineThread`] every poll runs on a stack segment of
+/// [`ENGINE_THREAD_STACK_BYTES`]; the future is boxed first, so only a
+/// pointer to it crosses onto the segment.
+fn block_on<F: Future>(stack: PassStack, future: F) -> Option<F::Output> {
+    let boxed = Box::pin(future);
+    let poll = move || {
+        let mut pinned = boxed;
         let waker = Waker::from(Arc::new(ThreadWaker(thread::current())));
         let mut context = Context::from_waker(&waker);
         for _ in 0..MAX_POLLS {
-            if let Poll::Ready(output) = future.as_mut().poll(&mut context) {
+            if let Poll::Ready(output) = pinned.as_mut().poll(&mut context) {
                 return Some(output);
             }
             thread::park();
         }
         None
-    })
+    };
+    match stack {
+        PassStack::EngineThread => stacker::grow(ENGINE_THREAD_STACK_BYTES, poll),
+        PassStack::CallingThread => poll(),
+    }
 }
 
 fn refused(what: &str, error: &dyn fmt::Display) -> DreamerPassError {
