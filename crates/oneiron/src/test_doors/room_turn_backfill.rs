@@ -34,7 +34,8 @@ pub struct BackfillCounts {
     pub skipped_undecodable: u64,
     /// Thread replies whose DAG parent keeps no row, left with no row.
     pub skipped_unrowed_parent: u64,
-    /// Records of a spawned sub-session, left with no row.
+    /// Records of a spawned sub-session other than its thread replies, left
+    /// with no row.
     pub skipped_sub_session: u64,
 }
 

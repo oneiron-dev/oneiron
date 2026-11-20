@@ -622,11 +622,13 @@ fn append_at_in_txn(
     };
     // THREAD-TASK-EVERY-ROOM: every TURN, trunk or thread, in any room,
     // keeps its room row and stages its wakes in this write, as a witness
-    // turn does. A record of a spawned sub-session is neither: it never
-    // enters the trunk (`set_head_in_txn` refuses it) and answers no
-    // thread, so it keeps no room row, which would read as an empty trunk
-    // turn; the sub-session's own scope read lists it.
-    if spawning_turn.is_none() {
+    // turn does. A thread reply in a spawned sub-session is a thread turn
+    // like any other: the room's thread reads list it from its row. The
+    // sub-session's other records are neither: they never enter the trunk
+    // (`set_head_in_txn` refuses them) and answer no thread, so they keep
+    // no room row, which would read as an empty trunk turn; the
+    // sub-session's own scope read lists them.
+    if thread || spawning_turn.is_none() {
         crate::workspace_roster::record_native_room_turn_in_txn(vault, txn, input, &appended)?;
     }
     Ok(appended)

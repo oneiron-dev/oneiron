@@ -18,10 +18,11 @@
 //!   one the home witness never admitted, so it is left out as well. A TURN
 //!   whose stored body or DAG parent does not decode gets no row either, and
 //!   the open goes on. Each skip is counted by kind.
-//! - No row for a record of a spawned sub-session: it never enters the
-//!   trunk and answers no thread, and its native write keeps no row. One
-//!   whose sub-session placement does not resolve is skipped as one that
-//!   does not decode.
+//! - No row for a record of a spawned sub-session other than a thread
+//!   reply: it never enters the trunk and answers no thread, and its native
+//!   write keeps no row. A thread reply in a sub-session is rowed as every
+//!   thread reply is. One whose sub-session placement does not resolve is
+//!   skipped as one that does not decode.
 //! - A thread reply is rowed only when the turn it answers keeps a row,
 //!   present or written in the same pass. A reply under an erased or
 //!   skipped reply gets no row, and neither does any reply under it: every
@@ -74,8 +75,8 @@ pub(crate) struct RoomTurnBackfill {
     /// Thread replies whose DAG parent keeps no row, such as one under an
     /// erased reply: no row, as the native writer keeps none for them.
     pub(crate) skipped_unrowed_parent: u64,
-    /// Records of a spawned sub-session: no row, as the native writer keeps
-    /// none for them.
+    /// Records of a spawned sub-session other than its thread replies: no
+    /// row, as the native writer keeps none for them.
     pub(crate) skipped_sub_session: u64,
 }
 
@@ -293,7 +294,11 @@ fn recorded_shape(
     body: &[u8],
     home: bool,
 ) -> Result<std::result::Result<RecordedShape, Skip>> {
-    if crate::conversation_dag::is_sub_session_record(&vault.store, txn, &id)? {
+    // A thread reply in a spawned sub-session keeps its row, as its native
+    // write keeps one; the sub-session's other records keep none.
+    if !crate::conversation_dag::is_thread_record(&vault.store, txn, &id)?
+        && crate::conversation_dag::is_sub_session_record(&vault.store, txn, &id)?
+    {
         return Ok(Err(Skip::SubSession));
     }
     let Some(actor) = crate::conversation::record_author(body)? else {
