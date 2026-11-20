@@ -5,8 +5,11 @@
 //! its receipt reads the terminal record in one snapshot. Both share the moved result
 //! converter with the owner doors. The request names the version of every source row it was
 //! read from, and the terminal record keeps them, so a receipt answers only while each of
-//! them still reads for its caller at that version.
+//! them still reads for its caller at that version. The request also names what its call
+//! showed (the row behind each call label, the range of each cited TURN, every row read),
+//! and the terminal record keeps each, so a saved reply can be read back through them.
 
+use std::collections::BTreeMap;
 #[cfg(oneiron_test_support)]
 use std::ops::Bound;
 
@@ -23,17 +26,49 @@ use super::step_result::step_result;
 #[cfg(oneiron_test_support)]
 use super::step_state::STEP_STATE;
 use super::step_state::{step_state_erased, step_state_read};
-use super::types::KEY_INPUT_VERSIONS;
+use super::types::{KEY_INPUT_LABELS, KEY_INPUT_RANGES, KEY_INPUT_SOURCES, KEY_INPUT_VERSIONS};
 use super::{DurableStepError, DurableStepResult, StepOutcome, StepProgression};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::code_run::HOST_PROVIDER_OPTIONS;
-use crate::entity_id::bytes_to_hex_lower;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::model_step_effect::StepEffectBinding;
 use crate::snapshot_read::SourceVersion;
 use crate::store::model_step_submission::{ModelStepResult, ModelStepRetryPolicy};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+
+/// The row behind each label of one call: each label prefix letter with its rows in label
+/// order, the row at index `i` being labelled `i + 1`.
+pub(crate) type StepInputLabels = BTreeMap<String, Vec<EntityId>>;
+
+/// The words of one cited TURN a bound step's call showed: bytes `start..end` of the TURN's
+/// text at the version the request names for that TURN.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StepInputRange {
+    /// The cited TURN.
+    pub(crate) turn: EntityId,
+    /// The first shown byte, in TURN coordinates.
+    pub(crate) start: u64,
+    /// One past the last shown byte, in TURN coordinates.
+    pub(crate) end: u64,
+}
+
+/// What a bound step's call showed its model, beside the words themselves. A reply names rows
+/// by call labels and binds its quotes against the shown words, so a saved reply is read back
+/// through these facts. They hold ids and offsets, never words.
+#[derive(Debug)]
+pub(crate) struct StepCallInputs {
+    /// The row behind each call label.
+    pub(crate) labels: StepInputLabels,
+    /// The shown range of each cited TURN, in request order.
+    pub(crate) ranges: Vec<StepInputRange>,
+    /// Every row the call was read from, in id order, each once.
+    pub(crate) sources: Vec<EntityId>,
+}
 
 /// Names `versions` in `request`'s host provider options, the versions of every source row
 /// the request was read from. They are part of the request hash, and the terminal record
@@ -46,8 +81,53 @@ pub(crate) fn bind_step_input_versions(
     request: &mut LlmRequest,
     versions: &[SourceVersion],
 ) -> Result<()> {
-    let value = serde_json::to_value(versions)
-        .map_err(|_| Error::InvariantViolation("dreamer step input versions did not encode"))?;
+    bind_host_option(
+        request,
+        KEY_INPUT_VERSIONS,
+        versions,
+        "dreamer step input versions did not encode",
+    )
+}
+
+/// Names `inputs` in `request`'s host provider options, each fact under its own key. They
+/// are part of the request hash, and the terminal record keeps each.
+///
+/// # Errors
+///
+/// A fact that does not serialize.
+pub(crate) fn bind_step_call_inputs(
+    request: &mut LlmRequest,
+    inputs: &StepCallInputs,
+) -> Result<()> {
+    bind_host_option(
+        request,
+        KEY_INPUT_LABELS,
+        &inputs.labels,
+        "dreamer step input labels did not encode",
+    )?;
+    bind_host_option(
+        request,
+        KEY_INPUT_RANGES,
+        &inputs.ranges,
+        "dreamer step input ranges did not encode",
+    )?;
+    bind_host_option(
+        request,
+        KEY_INPUT_SOURCES,
+        &inputs.sources,
+        "dreamer step input sources did not encode",
+    )
+}
+
+/// Names `fact` under `key` in `request`'s host provider options, the namespace no adapter
+/// reads.
+fn bind_host_option<T: Serialize + ?Sized>(
+    request: &mut LlmRequest,
+    key: &str,
+    fact: &T,
+    unencoded: &'static str,
+) -> Result<()> {
+    let value = serde_json::to_value(fact).map_err(|_| Error::InvariantViolation(unencoded))?;
     let options = request
         .provider_options
         .entry(HOST_PROVIDER_OPTIONS.to_owned())
@@ -56,30 +136,75 @@ pub(crate) fn bind_step_input_versions(
         *options = serde_json::Value::Object(serde_json::Map::new());
     }
     if let serde_json::Value::Object(options) = options {
-        options.insert(KEY_INPUT_VERSIONS.to_owned(), value);
+        options.insert(key.to_owned(), value);
     }
     Ok(())
 }
 
-/// The source versions `request` names in its host provider options, as the one JSON
-/// string the terminal record keeps; `None` when it names none.
+/// The input facts `request` names in its host provider options, each as the record key it
+/// is kept under with the one JSON string the terminal record keeps there, in pinned key
+/// order: the source versions, then the call labels, the TURN ranges and the source rows. A
+/// fact the request does not name is left out.
 ///
 /// # Errors
 ///
-/// A named value that is not a list of source versions.
-pub(super) fn step_input_versions(request: &LlmRequest) -> Result<Option<String>> {
+/// A named value that does not read as its fact.
+pub(super) fn step_input_records(request: &LlmRequest) -> Result<Vec<(&'static str, String)>> {
+    let versions = host_option_record::<Vec<SourceVersion>>(
+        request,
+        KEY_INPUT_VERSIONS,
+        "dreamer step input versions did not decode",
+        "dreamer step input versions did not encode",
+    )?;
+    let labels = host_option_record::<StepInputLabels>(
+        request,
+        KEY_INPUT_LABELS,
+        "dreamer step input labels did not decode",
+        "dreamer step input labels did not encode",
+    )?;
+    let ranges = host_option_record::<Vec<StepInputRange>>(
+        request,
+        KEY_INPUT_RANGES,
+        "dreamer step input ranges did not decode",
+        "dreamer step input ranges did not encode",
+    )?;
+    let sources = host_option_record::<Vec<EntityId>>(
+        request,
+        KEY_INPUT_SOURCES,
+        "dreamer step input sources did not decode",
+        "dreamer step input sources did not encode",
+    )?;
+    Ok([
+        (KEY_INPUT_VERSIONS, versions),
+        (KEY_INPUT_LABELS, labels),
+        (KEY_INPUT_RANGES, ranges),
+        (KEY_INPUT_SOURCES, sources),
+    ]
+    .into_iter()
+    .filter_map(|(key, record)| record.map(|record| (key, record)))
+    .collect())
+}
+
+/// What `request` names under `key` in its host provider options, read as a `T` and encoded
+/// as one JSON string; `None` when it names nothing there.
+fn host_option_record<T: DeserializeOwned + Serialize>(
+    request: &LlmRequest,
+    key: &str,
+    undecoded: &'static str,
+    unencoded: &'static str,
+) -> Result<Option<String>> {
     let Some(value) = request
         .provider_options
         .get(HOST_PROVIDER_OPTIONS)
-        .and_then(|options| options.get(KEY_INPUT_VERSIONS))
+        .and_then(|options| options.get(key))
     else {
         return Ok(None);
     };
-    let versions: Vec<SourceVersion> = serde_json::from_value(value.clone())
-        .map_err(|_| Error::InvalidClaimBody("dreamer step input versions did not decode"))?;
-    serde_json::to_string(&versions)
+    let fact: T =
+        serde_json::from_value(value.clone()).map_err(|_| Error::InvalidClaimBody(undecoded))?;
+    serde_json::to_string(&fact)
         .map(Some)
-        .map_err(|_| Error::InvalidClaimBody("dreamer step input versions did not encode"))
+        .map_err(|_| Error::InvalidClaimBody(unencoded))
 }
 
 /// Builds the receipt of a bound submit from its execution outcome. The hash comes from the
