@@ -11,14 +11,23 @@
 //! turn is cut away. The whole turn's pins (FIX 9837) ride the entry. When a
 //! piece pass does not end accepted, or the entry does not fit, the entry
 //! falls back to the turn's head that fits, with a marker naming the cut.
+//!
+//! A piece summary may quote what its pass read beside the turn's bytes: a
+//! self-written pass's worn home (FIX 4817) and, on the live fork, its
+//! prefix rows (FIX 9463). The entry carries the piece summaries only while
+//! every home part they wore still reads at the revision its words were read
+//! at, and the entry's receipt takes what they read as its own, so the
+//! landing fence, the summary's withdrawal dependencies and its check
+//! material's erasure reach it (#10050 review, round 1).
 
 use std::fmt::Write as _;
 use std::ops::Range;
 
 use super::{Pass, file_pass, run_pass};
 use crate::compaction::{
-    CompactionBackend, CompactionDriver, CompactionGatePolicy, CompactionRequest,
-    CompactionWindowMessage, compaction_input_tokens,
+    CompactionBackend, CompactionDriver, CompactionExecution, CompactionGatePolicy,
+    CompactionHomeRef, CompactionRequest, CompactionWindowMessage, compaction_home_worn_parts,
+    compaction_input_tokens,
 };
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault, count_context_pack_tokens};
@@ -51,8 +60,8 @@ impl TurnPieces {
     /// The plan for `message`, a turn whose text alone does not fit `room`
     /// beside a reply of `budget`, with the whole turn's `pins`. `None` when
     /// no plan fits: the room holds no piece beside its marker, the piece
-    /// summaries cannot fit one entry above the gate's `floor`, or no head
-    /// fits beside its cut marker and the pins.
+    /// summaries cannot fit one entry at the gate's `floor` or above it, or
+    /// no head fits beside its cut marker and the pins.
     pub(super) fn plan(
         message: &CompactionWindowMessage,
         pins: &[String],
@@ -82,7 +91,8 @@ impl TurnPieces {
         let overhead = input_tokens(message, entry_text(text.len(), &unwritten), pins, budget);
         // A tenth is kept back for each summary's escapes inside the entry.
         let piece_budget = budget.min((room.checked_sub(overhead)? / 10 * 9).checked_div(pieces)?);
-        if piece_budget <= floor {
+        // The gate accepts a summary of exactly `floor` tokens.
+        if piece_budget < floor {
             return None;
         }
         let total_tokens = count_context_pack_tokens(text) as u64;
@@ -131,17 +141,81 @@ impl TurnPieces {
     }
 }
 
+/// What the piece passes whose summaries a turn's entry carries read beside
+/// the turn's bytes: each home part a pass wore whole, at the revision its
+/// words were read at (FIX 4817), with the writer whose home it is, and on
+/// the live fork each row its captured prefix was read from (FIX 9463).
+#[derive(Debug, Default)]
+pub(super) struct PieceInputs {
+    home: Vec<(EntityId, CompactionHomeRef)>,
+    prefix_sources: Vec<EntityId>,
+}
+
+impl PieceInputs {
+    /// Takes what `execution`, an accepted piece pass's record, read.
+    fn wear(&mut self, execution: &CompactionExecution) {
+        for part in compaction_home_worn_parts(&execution.home) {
+            let worn = (execution.writer, part.clone());
+            if !self.home.contains(&worn) {
+                self.home.push(worn);
+            }
+        }
+        for row in &execution.prefix_sources {
+            if !self.prefix_sources.contains(row) {
+                self.prefix_sources.push(*row);
+            }
+        }
+    }
+
+    /// Whether every home part the pieces wore still reads in `vault` at the
+    /// revision its words were read at, as the landing fence reads it.
+    fn stand(&self, vault: &Vault) -> Result<bool> {
+        if self.home.is_empty() {
+            return Ok(true);
+        }
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        for (writer, part) in &self.home {
+            if !crate::compaction::home_pins::worn_part_stands_in(
+                &vault.store,
+                &txn,
+                *writer,
+                part,
+            )? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Adds what the pieces read to `execution`, the entry pass's record,
+    /// beside its own home and prefix rows: the entry's words carry theirs.
+    pub(super) fn carry_into(&self, execution: &mut CompactionExecution) {
+        for (_, part) in &self.home {
+            if !execution.home.contains(part) {
+                execution.home.push(part.clone());
+            }
+        }
+        for row in &self.prefix_sources {
+            if !execution.prefix_sources.contains(row) {
+                execution.prefix_sources.push(*row);
+            }
+        }
+    }
+}
+
 /// The turn's entry request for `sealed`, a flight over one turn read in
 /// pieces by `plan`: one pass per piece on `backend`, each judged by
 /// `policy`, then `sealed` re-sealed with the piece summaries as the turn's
-/// text. A piece pass that does not end accepted, or an entry that does not
-/// fit the plan's room beside the pins, re-seals it with the turn's head and
-/// the cut instead. Every pass's paid calls are filed as `job`'s steps.
+/// text, with what those piece passes read. A piece pass that does not end
+/// accepted, an entry that does not fit the plan's room beside the pins, or
+/// a home part a piece pass wore that no longer reads at its revision
+/// re-seals it with the turn's head and the cut instead, and nothing the
+/// pieces read rides it. Every pass's paid calls are filed as `job`'s steps.
 ///
 /// # Errors
 ///
-/// A sealed flight over more than one turn, and a piece request or a re-seal
-/// the driver refuses.
+/// A sealed flight over more than one turn, a piece request or a re-seal
+/// the driver refuses, and a home read that fails.
 pub(super) fn entry_request(
     vault: &Vault,
     driver: &mut CompactionDriver,
@@ -150,7 +224,7 @@ pub(super) fn entry_request(
     plan: &TurnPieces,
     policy: &CompactionGatePolicy,
     job: EntityId,
-) -> Result<CompactionRequest> {
+) -> Result<(CompactionRequest, PieceInputs)> {
     let [message] = sealed.window.as_slice() else {
         return Err(Error::InvariantViolation(
             "a turn read in pieces flies alone",
@@ -158,18 +232,22 @@ pub(super) fn entry_request(
     };
     let text = message.content.as_str();
     let mut summaries = Vec::with_capacity(plan.ranges.len());
+    let mut worn = PieceInputs::default();
     for range in &plan.ranges {
         let piece = sealed.for_piece(vault, piece_text(text, range), plan.piece_budget)?;
         let (pass, execution) = run_pass(backend, &piece, policy);
         if let Some(mut execution) = execution {
             file_pass(vault, job, &mut execution);
+            if matches!(pass, Pass::Accepted(..)) {
+                worn.wear(&execution);
+            }
         }
         let Pass::Accepted(gated, _) = pass else {
             break;
         };
         summaries.push((range.clone(), gated.summary_text().to_owned()));
     }
-    let entry = (summaries.len() == plan.ranges.len())
+    let mut entry = (summaries.len() == plan.ranges.len())
         .then(|| entry_text(text.len(), &summaries))
         .filter(|entry| {
             input_tokens(
@@ -179,16 +257,26 @@ pub(super) fn entry_request(
                 sealed.summary_token_budget,
             ) <= plan.room
         });
-    let content = entry.unwrap_or_else(|| {
-        let head = &text[..plan.head_end];
-        head_text(
-            text,
-            plan.head_end,
-            plan.total_tokens,
-            count_context_pack_tokens(head) as u64,
-        )
-    });
-    driver.reseal_window_texts(vec![content])
+    // The piece summaries are sent on only while every home part their
+    // passes wore still reads at its revision: an erased or edited part's
+    // words never ride the entry.
+    if entry.is_some() && !worn.stand(vault)? {
+        entry = None;
+    }
+    let (content, worn) = match entry {
+        Some(entry) => (entry, worn),
+        None => {
+            let head = &text[..plan.head_end];
+            let head = head_text(
+                text,
+                plan.head_end,
+                plan.total_tokens,
+                count_context_pack_tokens(head) as u64,
+            );
+            (head, PieceInputs::default())
+        }
+    };
+    Ok((driver.reseal_window_texts(vec![content])?, worn))
 }
 
 /// The rendered input of one request over `message` with `content` as its

@@ -425,7 +425,8 @@ impl ConversationFlight<'_> {
     pub fn fly(self, vault: &Vault) -> ConversationFlightOutcome {
         let backend = std::sync::Arc::clone(self.driver.backend());
         // A turn read in pieces lands its entry, written from the piece
-        // summaries (FIX-LIST COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS).
+        // summaries (FIX-LIST COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS),
+        // with what those piece passes read.
         let entry = match &self.pieces {
             None => None,
             Some(plan) => match pieces::entry_request(
@@ -448,7 +449,7 @@ impl ConversationFlight<'_> {
                 }
             },
         };
-        let request = entry.as_ref().unwrap_or(&self.request);
+        let request = entry.as_ref().map_or(&self.request, |(entry, _)| entry);
         let (pass, mut execution) = run_pass(backend.as_ref(), request, &self.policy);
         if let Some(execution) = execution.as_mut() {
             file_pass(vault, self.job, execution);
@@ -456,6 +457,11 @@ impl ConversationFlight<'_> {
         let outcome = match (pass, execution) {
             (Pass::Accepted(gated, material), Some(mut execution)) => {
                 execution.evidence = Some(CompactionEvidence::Conversation(self.evidence.clone()));
+                // The entry's words carry the piece summaries', so its
+                // receipt carries what their passes read (#10050 review).
+                if let Some((_, read)) = &entry {
+                    read.carry_into(&mut execution);
+                }
                 let (first, last) = (
                     request.turn_start,
                     request
