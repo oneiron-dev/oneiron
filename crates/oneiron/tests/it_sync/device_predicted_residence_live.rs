@@ -1156,3 +1156,146 @@ fn a_prediction_without_its_live_parent_is_refused() {
         },
     );
 }
+
+/// A predicted document whose subscribe fails with more than an admission refusal (a WORLD row,
+/// which holds no text plane: a kind the machine and its home disagree on) holds back neither the
+/// other documents nor the eviction of what the set dropped, and leaves no subscription row that
+/// every reconnect's requests would fail on; the pass answers the fault after it evicted.
+#[test]
+fn a_document_fault_still_evicts_and_leaves_no_subscription() {
+    run_async(
+        "a_document_fault_still_evicts_and_leaves_no_subscription",
+        || async {
+            let device = Device::open();
+            let window = WindowKey::for_world(now_secs(), device.founder);
+            let turn = predicted_turn(&device);
+            let predicted = Arc::new(PredictedHome::default());
+            let (url, _seen) = start_home(Arc::clone(&predicted)).await;
+            let connection = device_connection(&device, url);
+            let parent = issue(
+                &device,
+                ResidenceAct::SyncPredicted {
+                    window_budget: 8,
+                    document_budget: 16,
+                },
+            );
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the level applies"),
+                1
+            );
+            let first = predicted_set(&[window.clone()], &[]);
+            serve(&predicted, &first);
+            append_prediction(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &first,
+            )
+            .expect("the first prediction");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the first prediction applies"),
+                1
+            );
+            // The window as fetched: its prediction marker and its promotion.
+            device
+                .vault
+                .sync_state_put(&format!("pr:w:{window}"), &[])
+                .expect("the prediction marker");
+            device
+                .vault
+                .sync_state_put(&format!("rp:w:{window}"), &[1])
+                .expect("the promotion marker");
+            // A second prediction drops the window and names a WORLD row and a TURN as
+            // documents, strictly after the first.
+            tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+            let second = predicted_set(&[], &[device.granted, turn]);
+            let second_body = serve(&predicted, &second);
+            let prediction = append_prediction(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &second,
+            )
+            .expect("the second prediction");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the second prediction applies"),
+                1
+            );
+            assert_eq!(
+                result_of(&device, prediction),
+                Some(ResidenceResultStatus::Applied)
+            );
+            assert_eq!(
+                device
+                    .vault
+                    .sync_state_get("pr:t")
+                    .expect("pr:t reads")
+                    .expect("the adopted set"),
+                second_body
+            );
+            let fault = run_predicted_pass(&connection)
+                .await
+                .expect_err("the WORLD row's subscribe fault is the pass's answer");
+            assert!(
+                device
+                    .vault
+                    .sync_state_get(&format!("pr:w:{window}"))
+                    .expect("the marker reads")
+                    .is_none(),
+                "the dropped window is evicted after the fault: {fault}"
+            );
+            assert!(
+                device
+                    .vault
+                    .sync_state_get(&format!("rp:w:{window}"))
+                    .expect("the promotion reads")
+                    .is_none(),
+                "the dropped window is demoted after the fault: {fault}"
+            );
+            assert_eq!(
+                *predicted.vvs.lock().expect("the vv asks"),
+                vec![window.as_str().to_owned()]
+            );
+            assert!(
+                device
+                    .vault
+                    .sync_state_get(&format!("ds:e:{}", device.granted.to_hex()))
+                    .expect("the subscription reads")
+                    .is_none(),
+                "a document whose request cannot be built leaves no subscription row"
+            );
+            assert!(
+                device
+                    .vault
+                    .sync_state_get(&format!("pr:e:{}", device.granted.to_hex()))
+                    .expect("the marker reads")
+                    .is_none(),
+                "the faulted document is not marked"
+            );
+            assert!(
+                device
+                    .vault
+                    .sync_state_get(&format!("ds:e:{}", turn.to_hex()))
+                    .expect("the subscription reads")
+                    .is_some(),
+                "the other predicted document subscribes"
+            );
+            assert!(
+                device
+                    .vault
+                    .sync_state_get(&format!("pr:e:{}", turn.to_hex()))
+                    .expect("the marker reads")
+                    .is_some(),
+                "the other predicted document is marked"
+            );
+        },
+    );
+}

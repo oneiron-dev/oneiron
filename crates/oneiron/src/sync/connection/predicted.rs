@@ -93,6 +93,22 @@ async fn unless_home_offline(
     }
 }
 
+/// The first fault of two stages that both ran: `earlier`'s, else `later`'s. A later fault behind
+/// an earlier one is logged, never lost.
+fn first_fault(
+    earlier: Result<(), TransportError>,
+    later: Result<(), TransportError>,
+) -> Result<(), TransportError> {
+    match (earlier, later) {
+        (Err(fault), Err(behind)) => {
+            tracing::warn!(error = %behind, "predicted residence fault behind an earlier one");
+            Err(fault)
+        }
+        (Err(fault), Ok(())) | (Ok(()), Err(fault)) => Err(fault),
+        (Ok(()), Ok(())) => Ok(()),
+    }
+}
+
 impl SyncConnection {
     /// Runs the predicted level's upkeep each time it wakes, or the app shell's report on the
     /// open vault changes: one pass under the host's admission, a pause waited out (FIX
@@ -120,7 +136,9 @@ impl SyncConnection {
 
     /// Runs one predicted upkeep pass: ask when due and the fetch gate is open, fetch the
     /// adopted set's windows and documents, and evict what the set dropped, at any time. A
-    /// federation lane does nothing. The home's outage ends the pass quietly.
+    /// federation lane does nothing. The home's outage ends the pass quietly. A fault in one
+    /// stage holds back no later stage, eviction least of all: the pass answers its first fault
+    /// once every stage ran.
     pub(crate) async fn run_predicted_pass(&self) -> Result<(), TransportError> {
         if self.config.client_config.federation_peer.is_some() {
             return Ok(());
@@ -140,15 +158,24 @@ impl SyncConnection {
             let empty = PredictedResidenceSet::default();
             return unless_home_offline(self.evict_predictions(&empty)).await;
         }
-        if self.fetch_gate_open() {
-            unless_home_offline(self.maybe_ask_prediction()).await?;
-            let target = self.predicted_target()?;
-            unless_home_offline(self.fetch_predicted_windows(&target)).await?;
-            self.fetch_predicted_documents(&target)?;
-            return unless_home_offline(self.evict_predictions(&target)).await;
-        }
+        let gate_open = self.fetch_gate_open();
+        let mut pass = if gate_open {
+            unless_home_offline(self.maybe_ask_prediction()).await
+        } else {
+            Ok(())
+        };
         let target = self.predicted_target()?;
-        unless_home_offline(self.evict_predictions(&target)).await
+        if gate_open {
+            pass = first_fault(
+                pass,
+                unless_home_offline(self.fetch_predicted_windows(&target)).await,
+            );
+            pass = first_fault(pass, self.fetch_predicted_documents(&target));
+        }
+        first_fault(
+            pass,
+            unless_home_offline(self.evict_predictions(&target)).await,
+        )
     }
 
     /// The accepted residence directives naming `machine`, oldest first, read in one
@@ -262,7 +289,8 @@ impl SyncConnection {
     }
 
     /// Subscribes the target's entity documents through the document registry. A document this
-    /// machine holds no row for waits for its window; any other failure holds the pass back.
+    /// machine holds no row for waits for its window; any other subscribe failure is the stage's
+    /// fault once the other documents ran.
     fn fetch_predicted_documents(
         &self,
         target: &PredictedResidenceSet,
@@ -277,6 +305,7 @@ impl SyncConnection {
                 .ok_or(TransportError::InvalidPayload(
                     "a prediction needs this machine's residence selector",
                 ))?;
+        let mut stage = Ok(());
         for id in &target.documents {
             let marker = HexId(*id);
             if read_rows(vault, |txn| {
@@ -293,10 +322,10 @@ impl SyncConnection {
                 Err(error) if admission_denied(&error) => {
                     tracing::warn!(%error, document = %id.to_hex(), "predicted document not subscribed");
                 }
-                Err(error) => return Err(storage(error)),
+                Err(error) => stage = first_fault(stage, Err(storage(error))),
             }
         }
-        Ok(())
+        stage
     }
 
     /// Evicts what the target dropped: predicted windows demote through the demotion path, and

@@ -198,6 +198,13 @@ impl DocumentRegistry {
         // FIX 10872: a marked source held here crosses only as its copy
         // stream, so its subscription and request go under its copy id.
         let stream = self.copy_stream(id)?;
+        // The request is built before the subscription row is written: a
+        // document whose request cannot be built leaves no row for every
+        // reconnect's `request_frames` to fail on.
+        let frame = match stream {
+            Some(stream) => self.copy_request_frame(stream, selector)?,
+            None => self.request_frame(id, selector)?,
+        };
         self.vault.with_write_txn_grouped(|txn| {
             match stream {
                 Some(stream) => {
@@ -212,10 +219,6 @@ impl DocumentRegistry {
             }
             Ok(())
         })?;
-        let frame = match stream {
-            Some(stream) => self.copy_request_frame(stream, selector)?,
-            None => self.request_frame(id, selector)?,
-        };
         let _ = self.notices.send(frame);
         Ok(())
     }
