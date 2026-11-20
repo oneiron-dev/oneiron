@@ -285,7 +285,8 @@ fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
     // 8565).
     super::sync_work::drain_retained_sync_work(vault);
     // Verb calls a budget window paced end unrun once their deadline passes
-    // (FIX 8753); only the host's settler runs their turns.
+    // (FIX 8753); only the paced line's row runs their turns, where its
+    // host installed its turn runner.
     if let Err(error) = vault.expire_paced_verb_calls(PACED_VERB_EXPIRE_PER_PASS) {
         tracing::warn!(%error, "paced verb calls not expired");
     }
@@ -550,7 +551,7 @@ fn lapse_envelope(vault: &Vault) -> Result<WriteEnvelope> {
 /// obligation, and the owner's run compacts every window; either first
 /// unloads the windows no caller holds, so the compaction can reach them.
 fn hard_erase(vault: &Vault, owner_asked: bool) -> Result<HardEraseWork> {
-    let windows_unloaded = if owner_asked || super::schedule::erase_obligation_waiting(vault)? {
+    let windows_unloaded = if owner_asked || super::jobs::erase_obligation_waiting(vault)? {
         unload_idle_windows(vault)
     } else {
         0

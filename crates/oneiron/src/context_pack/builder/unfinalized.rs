@@ -60,6 +60,7 @@ impl<'a> ContextPackBuilder<'a> {
     ///
     /// Propagates a failed assembly.
     pub fn run_unfinalized_with_telemetry(self) -> Result<UnfinalizedContextPack<'a>> {
+        let edge_hops = self.edge_hop;
         let run = self.run_unfinalized()?;
         Ok(UnfinalizedContextPack {
             value: run.pack,
@@ -70,6 +71,7 @@ impl<'a> ContextPackBuilder<'a> {
             replay_config: run.replay_config,
             critical: run.critical,
             world_share: run.world_share,
+            edge_hops,
         })
     }
 

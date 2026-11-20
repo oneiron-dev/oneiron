@@ -48,5 +48,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/wire.rs` | src | s | 13 crate-vis | — | Private, bounded launcher/supervisor protocol |
 | `tests/fence_launcher_stdin_hold.rs` | test | s | — | — | The fence launcher's stdin hold (FIX 8013): a launcher started with `ONEIRON_FENCE_HOLD_UNTIL_STDIN_CLOSES`… |
 | `tests/guest_pids_limit.rs` | test | s | — | — | The pids limit a container launch passes: physical, not the manifest count |
+| `tests/guest_pressure_fenced.rs` | test | s | — | — | A fenced guest's pids-pressure reads (FIX [GUEST-PRESSURE-FENCED-ZERO-INSPECT-UNTESTED]): `observe_pressure`… |
 | `tests/guest_pressure_lease.rs` | test | s | — | — | A guest's pids-limit hits read through its session lease (FIX 8013 follow-ups… |
 | `tests/runner_fence.rs` | test | m | — | — | The runner fence (canon `#runner-fence`, row L8-27): a runner the daemon starts cannot read or write the… |

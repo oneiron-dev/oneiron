@@ -41,7 +41,8 @@ use oneiron::MemoryError;
 use oneiron_remote::{InProcessReply, InProcessRequest, InProcessStream, InProcessTransport};
 use oneiron_server::embedded::{
     BlockingConnection, BlockingEngine, EmbeddedReply, EmbeddedRequest, EngineErrorKind,
-    embedded_serve_config, engine_error_kind, engine_memory_error, host_limits, unix_millis,
+    FetchConditions, embedded_serve_config, engine_error_kind, engine_memory_error, host_limits,
+    unix_millis,
 };
 use oneiron_vault_contract::host_adapters::AppHost;
 use zeroize::Zeroizing;
@@ -162,6 +163,12 @@ impl EmbeddedEngine {
         // Crash output never carries world text: the engine's hook goes in
         // before any vault opens (owner ruling 2026-10-14, fix 6).
         oneiron::panic_report::install_panic_hook();
+        let machine_reported_name = options
+            .as_ref()
+            .and_then(|options| options.machine_reported_name.clone());
+        let machine_reported_model = options
+            .as_ref()
+            .and_then(|options| options.machine_reported_model.clone());
         let dimensions: Option<usize> = options.and_then(|options| options.dimensions).lower()?;
         let device_class = crate::host_device_class(device_class.as_deref())?;
         let path = PathBuf::from(path);
@@ -172,6 +179,13 @@ impl EmbeddedEngine {
         if let Some(device_class) = device_class {
             config.device_class = device_class;
         }
+        // A declared name or model stands in for the one the config declares.
+        if machine_reported_name.is_some() {
+            config.machine_reported_name = machine_reported_name.clone();
+        }
+        if machine_reported_model.is_some() {
+            config.machine_reported_model = machine_reported_model.clone();
+        }
         let limits = limits.unwrap_or_default();
         let limits = host_limits(limits.memory_bytes, limits.cpu_millis_per_second);
         let engine =
@@ -181,6 +195,8 @@ impl EmbeddedEngine {
             options: oneiron_remote::OpenOptions {
                 dimensions,
                 device_class,
+                machine_reported_name,
+                machine_reported_model,
                 hold_checkpoint_root_signer: false,
             },
             closed: Arc::new(AtomicBool::new(false)),
@@ -285,6 +301,18 @@ impl EmbeddedEngine {
     /// engine serves again first, over the same vault.
     pub fn wake(&self) -> Result<(), OneironError> {
         self.engine.wake().map_err(engine_failure)
+    }
+
+    /// What the app shell observes about fetching predictions on this
+    /// machine: whether it is on an unmetered network and on power. A phone at
+    /// the predicted level asks and fetches only while both hold, closed until
+    /// the app reports; the report holds across `stop`, `wake` and every
+    /// reconnect. Report again on each change the network and power monitors
+    /// see.
+    pub fn set_fetch_conditions(&self, unmetered: bool, powered: bool) -> Result<(), OneironError> {
+        self.engine
+            .set_fetch_conditions(FetchConditions { unmetered, powered })
+            .map_err(engine_failure)
     }
 
     /// The app is backgrounding: drain, stop every worker, keep the vault

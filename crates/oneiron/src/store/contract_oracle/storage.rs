@@ -8,6 +8,7 @@ use crate::{
     error::{Error, Result},
     side_table::{self, Named, SideTable},
 };
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -264,7 +265,7 @@ fn schema_bytes_diff(
         .zip(right)
         .position(|(l, r)| l != r)
         .unwrap_or(shorter);
-    let hex = |bytes: Option<&[u8]>| bytes.map(|bytes| blake3::hash(bytes).to_hex().to_string());
+    let hex = |bytes: Option<&[u8]>| bytes.map(|bytes| ContentHash::of(bytes).to_hex());
     diffs.push(ContractDiff::SchemaBytesDrift {
         contract: name.to_owned(),
         offset: u64::try_from(offset).unwrap_or(u64::MAX),

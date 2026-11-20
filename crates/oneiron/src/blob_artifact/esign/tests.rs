@@ -1,4 +1,5 @@
 use super::ledger::append;
+use super::model::{EsignAuthenticationMethod, EsignSigningEvidence, EsignSigningIntent};
 use super::*;
 use crate::{EntityId, Error, Result, TimeRange, Vault, VaultConfig};
 fn actor() -> EsignAuditActor {
@@ -6,6 +7,14 @@ fn actor() -> EsignAuditActor {
         actor: "test-owner".into(),
         ip: Some("127.0.0.1".into()),
         user_agent: Some("test".into()),
+    }
+}
+fn signing_evidence() -> EsignSigningEvidence {
+    EsignSigningEvidence {
+        authentication_method: EsignAuthenticationMethod::Person,
+        disclosure_version: None,
+        consent: true,
+        intent: EsignSigningIntent::Direct,
     }
 }
 fn document(artifact: EntityId) -> EsignDocument {
@@ -17,6 +26,7 @@ fn document(artifact: EntityId) -> EsignDocument {
         title: "Agreement".into(),
         sequential: true,
         expires_at: 1000,
+        token_expires_at: None,
         items: vec![EsignItem {
             artifact_ref: artifact.to_hex(),
             original_version: 1,
@@ -33,6 +43,7 @@ fn document(artifact: EntityId) -> EsignDocument {
                 expires_at: 1000,
                 principal_ref: None,
                 automated: false,
+                natural_person: None,
             })
             .collect(),
         fields: vec![EsignField {
@@ -52,6 +63,7 @@ fn document(artifact: EntityId) -> EsignDocument {
         }],
         full_trail_appendix: true,
         lifecycle: None,
+        project: None,
         commitments: Vec::new(),
     }
 }
@@ -70,6 +82,11 @@ fn setup_with(
 ) -> Result<(tempfile::TempDir, Vault, EntityId, EsignDocument)> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), config)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    // These tests cover e-sign behavior, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     let person = EntityId::now();
     vault.put_entity(
         &person,
@@ -108,10 +125,8 @@ fn setup_with(
 fn capability_preview_and_signature_share_injected_time_and_ids() -> Result<()> {
     use crate::ports::{ChangeLogStore, ManualClock};
     let clock = ManualClock::new(100);
-    let config = VaultConfig {
-        store_clock: clock.bundle(),
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
     let (_dir, vault, document, doc) = setup_with(config, 200)?;
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     crate::test_util::bind_test_owner(&vault, owner);
@@ -222,7 +237,9 @@ fn claims_enforce_required_fields_sequential_promotion_and_seal_only_terminals()
             id,
             EsignEvent::Signed {
                 recipient: first.clone(),
-                next: None
+                next: None,
+                evidence: signing_evidence(),
+                items: doc.items.clone(),
             },
             5
         )
@@ -241,6 +258,8 @@ fn claims_enforce_required_fields_sequential_promotion_and_seal_only_terminals()
         EsignEvent::Signed {
             recipient: first,
             next: Some(second.clone()),
+            evidence: signing_evidence(),
+            items: doc.items.clone(),
         },
         6,
     )?;
@@ -261,6 +280,8 @@ fn claims_enforce_required_fields_sequential_promotion_and_seal_only_terminals()
         EsignEvent::Signed {
             recipient: second,
             next: None,
+            evidence: signing_evidence(),
+            items: doc.items.clone(),
         },
         8,
     )?;
@@ -314,7 +335,12 @@ fn void_and_expiry_are_unsealed_and_never_trigger_sealing() -> Result<()> {
                 id,
                 EsignEvent::Sealed {
                     rejected: false,
-                    item_sha256: vec![[1; 32]]
+                    item_sha256: vec![[1; 32]],
+                    item_profiles: vec![SealProfileEvidence {
+                        requested: SealProfile::BaselineB,
+                        achieved: SealProfile::BaselineB,
+                        degraded: Vec::new(),
+                    }],
                 },
                 1002
             )
@@ -391,6 +417,7 @@ fn send_request(
                 content_ref: None,
                 idempotency_key: Some(key.into()),
                 dedupe_key: Some(key.into()),
+                mention: None,
             },
             OutboundIntentTrigger {
                 source: OutboundIntentSource::AgentImmediate,
@@ -561,7 +588,7 @@ fn capability_ceremony_gates_turn_date_consent_and_default_closed_automation() -
         )?,
         SigningOutcome::ConsentRequired
     );
-    assert_eq!(
+    assert!(matches!(
         vault.execute_signing_action(
             first,
             &SigningAction::Complete {
@@ -571,8 +598,8 @@ fn capability_ceremony_gates_turn_date_consent_and_default_closed_automation() -
             None,
             None
         )?,
-        SigningOutcome::HumanActionRequired
-    );
+        SigningOutcome::HeldForOwner { .. }
+    ));
     vault.set_signing_principals(
         &owner,
         &[SigningPrincipal {
@@ -970,6 +997,7 @@ fn signing_field_save_survives_reopen_without_rotating_the_bearer() -> Result<()
     let audit = vault.esign_audit(id)?;
     drop(vault);
     let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    reopened.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let resumed =
         reopened.execute_signing_action(&tokens[0].1, &SigningAction::Load, None, None)?;
     assert_eq!(resumed, SigningOutcome::Page(saved));
@@ -1008,6 +1036,7 @@ fn audit_chain_survives_document_deletion_and_reopen() -> Result<()> {
 
     drop(vault);
     let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    reopened.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     assert!(reopened.get_blob_artifact(&id)?.is_none());
     assert_eq!(reopened.esign_audit(id)?, audit);
     Ok(())
@@ -1290,6 +1319,8 @@ fn deleted_documents_refuse_every_capability_door_but_retain_audit() -> Result<(
         assert_eq!(vault.esign_audit(id)?, audit);
         drop(vault);
         let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+        reopened
+            .install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         assert!(
             reopened
                 .esign_pdf_for_capability(token, 0, None, None)
@@ -1373,6 +1404,11 @@ fn actionable_recipient_is_required_for_send_and_seal_but_not_draft_editing() ->
                 EsignEvent::Sealed {
                     rejected: false,
                     item_sha256: vec![[1; 32]],
+                    item_profiles: vec![SealProfileEvidence {
+                        requested: SealProfile::BaselineB,
+                        achieved: SealProfile::BaselineB,
+                        degraded: Vec::new(),
+                    }],
                 },
                 now
             )
@@ -1772,6 +1808,7 @@ fn unrenderable_fields_are_refused_before_save_and_final_signature_without_locki
             audit: &vault.esign_audit(id)?,
             canonical_url: &format!("https://example.test/sign#{}", token.expose_for_delivery()),
             signature_images: &std::collections::BTreeMap::new(),
+            pinned_buffer_bytes: 0,
         },
     )
     .unwrap();
@@ -1820,6 +1857,8 @@ fn committed_signature_or_decline_wins_expiry_and_void_while_sealing() -> Result
                 EsignEvent::Signed {
                     recipient: first.clone(),
                     next: None,
+                    evidence: signing_evidence(),
+                    items: doc.items.clone(),
                 },
                 6,
             )?;
@@ -1838,6 +1877,8 @@ fn committed_signature_or_decline_wins_expiry_and_void_while_sealing() -> Result
                 EsignEvent::Signed {
                     recipient: second,
                     next: None,
+                    evidence: signing_evidence(),
+                    items: doc.items.clone(),
                 },
                 8,
             )?;
@@ -1976,6 +2017,7 @@ fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_g
                     content_ref: None,
                     idempotency_key: None,
                     dedupe_key: None,
+                    mention: None,
                 },
                 OutboundIntentTrigger::record_transition(notice.event_ref.clone().unwrap()),
             ),
@@ -2084,7 +2126,13 @@ fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_g
         crate::connector_key::ConnectorKeyRecord::active("email", None, Vec::new(), 1066),
     )?;
     let pending = vault.propose_connector_charter(&key_id, "never send on email", 1067)?;
-    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1068)?;
+    vault.approve_connector_charter(
+        &key_id,
+        pending.text_hash,
+        pending.compiled_hash,
+        "owner",
+        1068,
+    )?;
     let mut denied_request = request(&other_notice, 1070, "hard-deny", true, true);
     denied_request.channel_identity_ref = Some(original_sender);
     let denied_result = vault.dispatch_esign_notice(&other, denied_request).unwrap();
@@ -2105,6 +2153,10 @@ fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_g
     }
     drop(vault);
     let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    // This reopen restores the seed marker; the built-in pack gate is not under test.
+    reopened
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     for entry in &expected {
         assert!(reopened.receipts(receipt_query.clone())?.contains(entry));
         let scan = reopened.scan_receipts(receipt_query.clone())?;
@@ -2167,6 +2219,8 @@ fn completed_recipient_window_cannot_expire_a_different_pending_signer() -> Resu
         EsignEvent::Signed {
             recipient: doc.recipients[0].id.clone(),
             next: None,
+            evidence: signing_evidence(),
+            items: doc.items.clone(),
         },
         6,
     )?;
@@ -2222,8 +2276,10 @@ fn a_restore_never_reopens_a_ceremony_rejected_since() -> Result<()> {
     );
 
     let destination = backups.path().join("restored");
+    let key = vault.checkpoint_key()?;
     let error = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &destination,
         VaultConfig::default(),
         &vault,
@@ -2289,6 +2345,8 @@ fn a_held_event_never_blocks_a_decline_or_a_void() -> Result<()> {
             read_frontier_hash: [0x72; 32],
             reason_codes: vec!["gate.pending.critical_confirm_attached".to_owned()],
             dreamer_run_id: None,
+            predicate: None,
+            expires_at: None,
         };
         vault.with_write_txn(|txn| vault.store.put_pending_gate_consent_in_txn(txn, &pending))?;
         assert!(vault.esign_document(id).is_err(), "a held chain read back");

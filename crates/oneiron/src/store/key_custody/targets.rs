@@ -48,6 +48,9 @@ use super::retirement::{RetireCause, RetirementIntent};
 
 mod drain;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::drain::drain_ack_digest_for_test;
+
 const TARGETS: &str = "targets";
 const ACKS: &str = "acks";
 const OBLIGATIONS: &str = "obligations";

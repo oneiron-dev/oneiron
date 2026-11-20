@@ -102,7 +102,7 @@ impl DecodeAdmission for BaseAdmission {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let bytes = wide(bytes);
         let credit = state.spare.min(bytes);
         state.spare -= credit;

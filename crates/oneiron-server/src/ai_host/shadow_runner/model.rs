@@ -198,7 +198,10 @@ impl Gateway<'_> {
             kept: Arc::clone(&kept),
             host: self.server.run_receipts(),
         });
-        let run = crate::models::undeclared_run(run_id, guard, runtime.host_account(), sink);
+        // The call carries the rows the captured request was read from, as
+        // its capsule names them (FIX 7104), or `None`, unknown.
+        let run = crate::models::undeclared_run(run_id, guard, runtime.host_account(), sink)
+            .sourced(prepared.source_rows().map(<[EntityId]>::to_vec));
         let cancel = self.cancel;
         let may_send = move || !cancel.is_cancelled();
         let wait = ladder.exact_replay_wait();

@@ -65,14 +65,12 @@ impl RawValue for RuleOutcomeRow {
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
         let outcome = OutcomeRow::from_raw(bytes)?;
         let value = decode_value(bytes)?;
-        let source = map_entry(&value, KEY_SOURCE)
-            .and_then(|source| {
-                Some(RuleOutcomeSource {
-                    receipt: map_str(source, "receipt")?.to_owned(),
-                    card: map_str(source, "card")?.to_owned(),
-                })
-            })
-            .ok_or(invalid("rule skill outcome is missing its source"))?;
+        let missing = || invalid("rule skill outcome is missing its source");
+        let source = map_entry(&value, KEY_SOURCE)?.ok_or_else(missing)?;
+        let source = RuleOutcomeSource {
+            receipt: map_str(source, "receipt")?.ok_or_else(missing)?.to_owned(),
+            card: map_str(source, "card")?.ok_or_else(missing)?.to_owned(),
+        };
         Ok(Self { outcome, source })
     }
 }

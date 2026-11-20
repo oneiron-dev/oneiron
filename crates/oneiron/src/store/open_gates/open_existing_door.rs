@@ -203,6 +203,12 @@ impl Store {
             authority_handoff_equivocations: crate::authority::HandoffEquivocations::default(),
             project_forks: crate::workspace_roster::ProjectForks::default(),
             delete_guards: hooks.delete_guards,
+            brief_delete_fences: crate::deletion::BriefDeleteFences::default(),
+            #[cfg(feature = "sync")]
+            tombstone_publications_in_flight:
+                crate::deletion::TombstonePublicationsInFlight::default(),
+            #[cfg(feature = "sync")]
+            predicted_pushes: crate::sync::residence::PredictedPushes::default(),
             scope_stamps: hooks.scope_stamps,
             project_writes: hooks.project_writes,
             record_hooks: hooks.record_hooks,
@@ -228,6 +234,7 @@ impl Store {
             body_seal: crate::store::BodySealSlot::default(),
             reader_job_runner: std::sync::RwLock::new(None),
             drafter_serving: std::sync::RwLock::new(None),
+            mail_host: crate::mail_pack::MailHostSlot::default(),
             result_memory: std::sync::RwLock::new(std::sync::Arc::new(
                 crate::store::result_memory::ResultMemoryPool::new(
                     config
@@ -263,6 +270,7 @@ impl Store {
             staged_import_admission_lock: Mutex::new(()),
             #[cfg(feature = "sync")]
             staged_import_confirm_lock: Mutex::new(()),
+            owner_signing_slot_lock: Mutex::new(()),
             #[cfg(test)]
             test_hooks: crate::store::TestHooks::default(),
         });
