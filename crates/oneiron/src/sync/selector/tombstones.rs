@@ -5,9 +5,12 @@
 //! to one world, or to base reality, takes one only where the position its
 //! delete captured lies in the worlds it selects (FOLLOWED-WORLD-TIER1-
 //! TOMBSTONE-IDS, blind review 2 of #9592): a hard delete took the row's
-//! carrier out of the window, so the selector keeps no row to judge. A member
-//! who is not an Owner takes one only of a row it reads at the relationship
-//! gate (OPUS-LEAKS, SELECTOR-TOMBSTONE-LABEL).
+//! carrier out of the window, so the selector keeps no row to judge. A
+//! selector narrowed to some facets or bands takes one only where that
+//! position lies in the facets and the bands it selects too
+//! (SELECTOR-FACET-BAND-EXPORT-DROPS-BODYLESS-TOMBSTONES). A member who is not
+//! an Owner takes one only of a row it reads at the relationship gate
+//! (OPUS-LEAKS, SELECTOR-TOMBSTONE-LABEL).
 
 use std::collections::BTreeSet;
 
@@ -18,7 +21,7 @@ use crate::access_grant::AccessContext;
 use crate::deletion::decode_tombstone_value;
 use crate::deletion::tombstone_scope::{deleted_relationship_read_in, deleted_scope_in};
 use crate::entity_id::EntityId;
-use crate::federation::{Scope, ScopeAxis, ScopeId};
+use crate::federation::{Scope, ScopeAxis, ScopeId, SelectorRange};
 
 /// What a narrower grant gets of a tombstone whose delete left no scope it
 /// can judge here: no captured row, a row bound to another request, a value
@@ -29,9 +32,12 @@ const UNPROVEN_TOMBSTONE_EXPORTED: bool = false;
 /// keep.
 pub(super) struct TombstoneExport<'g> {
     grant: &'g Scope,
-    /// No facet filter and no band filter: the fallback that carries
-    /// tombstones beyond the kept rows.
-    open: bool,
+    /// The facets a selector narrowed to some facets selects; `None` for one
+    /// that bounds no facet.
+    facets: Option<&'g ScopeAxis<ScopeId>>,
+    /// The type-byte bands a selector narrowed to some bands selects; `None`
+    /// for one that bounds no band.
+    bands: Option<&'g ScopeAxis<SelectorRange>>,
     /// The worlds a selector narrowed to one world or to base reality
     /// selects; `None` for the All-world selector, which bounds no world.
     worlds: Option<&'g ScopeAxis<ScopeId>>,
@@ -43,7 +49,8 @@ pub(super) struct TombstoneExport<'g> {
 impl<'g> TombstoneExport<'g> {
     pub(super) fn new(
         grant: &'g Scope,
-        open: bool,
+        facets: Option<&'g ScopeAxis<ScopeId>>,
+        bands: Option<&'g ScopeAxis<SelectorRange>>,
         worlds: Option<&'g ScopeAxis<ScopeId>>,
     ) -> Self {
         // Judged as the kept rows are, with every axis open but the verb.
@@ -53,17 +60,18 @@ impl<'g> TombstoneExport<'g> {
         };
         Self {
             grant,
-            open,
+            facets,
+            bands,
             worlds,
             unrestricted: grant.admits("read", &every_record, &Scope::top()),
         }
     }
 
     /// Whether the tombstone `value` of `id`, a row this export does not
-    /// keep, still travels. Under a selector narrowed to some worlds, it
-    /// travels only where its delete's captured position lies in them or in
-    /// base reality, which every such selector selects (`SyncSelectorWorld`),
-    /// so an unrestricted grant's export proves that position too.
+    /// keep, still travels. Under a selector narrowed to some worlds, facets
+    /// or bands, it travels only where its delete's captured position lies in
+    /// what the selector selects on each of those axes, so an unrestricted
+    /// grant's export proves that position too.
     pub(super) fn admits(
         &self,
         vault: &Vault,
@@ -71,10 +79,8 @@ impl<'g> TombstoneExport<'g> {
         id: &EntityId,
         value: &[u8],
     ) -> bool {
-        if !self.open {
-            return false;
-        }
-        if self.unrestricted && self.worlds.is_none() {
+        let unbounded = self.worlds.is_none() && self.facets.is_none() && self.bands.is_none();
+        if self.unrestricted && unbounded {
             return true;
         }
         let Some(request) = decode_tombstone_value(value).request_id else {
@@ -82,13 +88,39 @@ impl<'g> TombstoneExport<'g> {
         };
         match deleted_scope_in(&vault.store, txn, id, &request) {
             Ok(Some(scope)) => {
-                self.worlds.is_none_or(|worlds| {
-                    scope.worlds == crate::federation::base_world_axis()
-                        || scope.worlds.is_narrowing_of(worlds)
-                }) && (self.unrestricted || self.grant.admits("read", &scope, &Scope::top()))
+                self.selects(vault, &scope)
+                    && (self.unrestricted || self.grant.admits("read", &scope, &Scope::top()))
             }
             Ok(None) | Err(_) => UNPROVEN_TOMBSTONE_EXPORTED,
         }
+    }
+
+    /// Whether the captured position `scope` lies in what the selector
+    /// selects, judged as a kept row is: a world position in the selected
+    /// worlds or in base reality, which every such selector selects
+    /// (`SyncSelectorWorld`); facets that are some and all selected; and each
+    /// captured type byte in a selected band
+    /// ([`super::scope::selector_identity`]). A captured axis that names no
+    /// value is no position on it.
+    fn selects(&self, vault: &Vault, scope: &Scope) -> bool {
+        let worlds = self.worlds.is_none_or(|worlds| {
+            scope.worlds == crate::federation::base_world_axis()
+                || scope.worlds.is_narrowing_of(worlds)
+        });
+        let facets = self
+            .facets
+            .is_none_or(|facets| !scope.facets.is_bottom() && scope.facets.is_narrowing_of(facets));
+        let bands = self.bands.is_none_or(|bands| match &scope.bands {
+            ScopeAxis::Some(kinds) => {
+                !kinds.is_empty()
+                    && kinds.iter().all(|kind| {
+                        super::scope::selector_identity(vault, *kind)
+                            .is_some_and(|band| bands.contains(&band))
+                    })
+            }
+            ScopeAxis::All | ScopeAxis::Bottom => false,
+        });
+        worlds && facets && bands
     }
 }
 
