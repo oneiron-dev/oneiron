@@ -6,8 +6,8 @@
 //! delete captured lies in the worlds it selects (FOLLOWED-WORLD-TIER1-
 //! TOMBSTONE-IDS, blind review 2 of #9592): a hard delete took the row's
 //! carrier out of the window, so the selector keeps no row to judge. A
-//! selector narrowed to some bands takes one only where the type its delete
-//! captured lies in a band it selects
+//! selector narrowed to some bands takes one only where the row type its
+//! delete captured lies in a band it selects
 //! (SELECTOR-FACET-BAND-EXPORT-DROPS-BODYLESS-TOMBSTONES). A selector narrowed
 //! to some facets keeps a row by the row's `FacetOf` stamps, so it takes one
 //! only where every stamp its delete captured names a facet it selects, as it
@@ -24,7 +24,9 @@ use heed::RoTxn;
 use crate::Vault;
 use crate::access_grant::AccessContext;
 use crate::deletion::decode_tombstone_value;
-use crate::deletion::tombstone_scope::{deleted_record_scope_in, deleted_relationship_read_in};
+use crate::deletion::tombstone_scope::{
+    DeletedRecordScope, deleted_record_scope_in, deleted_relationship_read_in,
+};
 use crate::entity_id::EntityId;
 use crate::federation::{Scope, ScopeAxis, ScopeId, SelectorRange};
 
@@ -97,7 +99,7 @@ impl<'g> TombstoneExport<'g> {
         };
         match deleted_record_scope_in(&vault.store, txn, id, &request) {
             Ok(Some(captured)) => {
-                self.selects(vault, &captured.scope, &captured.facet_of)
+                self.selects(vault, &captured)
                     && (self.unrestricted
                         || self.grant.admits("read", &captured.scope, &Scope::top()))
             }
@@ -105,34 +107,35 @@ impl<'g> TombstoneExport<'g> {
         }
     }
 
-    /// Whether the captured position `scope` and `FacetOf` stamps `facet_of`
-    /// lie in what the selector selects, judged as a kept row is: stamps
-    /// that each name a selected facet, as a seed is chosen and a row with
-    /// an unselected stamp is withheld ([`super::scope::facet_scope_by_source`],
-    /// [`super::scope::entity_selector_decision`]; the captured scope facet is
-    /// not what the selector selects by); a world position in the selected
-    /// worlds or in base reality, which every such selector selects
-    /// (`SyncSelectorWorld`); and each captured type byte (a record scope's
-    /// band axis holds the row's type) in a selected band
-    /// ([`super::scope::selector_identity`]). A band axis that names no type
-    /// is no position on it.
-    fn selects(&self, vault: &Vault, scope: &Scope, facet_of: &BTreeSet<ScopeId>) -> bool {
+    /// Whether the delete's capture `captured` lies in what the selector
+    /// selects, judged as a kept row is:
+    /// - facets: `FacetOf` stamps that each name a selected facet, as a seed
+    ///   is chosen and a row with an unselected stamp is withheld
+    ///   ([`super::scope::facet_scope_by_source`],
+    ///   [`super::scope::entity_selector_decision`]). The captured scope
+    ///   facet is not what the selector selects by.
+    /// - worlds: a world position in the selected worlds or in base reality,
+    ///   which every such selector selects (`SyncSelectorWorld`).
+    /// - bands: the row's header type in a selected band
+    ///   ([`super::scope::selector_identity`], as `entity_selector_decision`
+    ///   bands a kept row). The scope's band axis is its disclosure position,
+    ///   not the row's type, so it does not decide the band. A capture with
+    ///   no type is in no band.
+    fn selects(&self, vault: &Vault, captured: &DeletedRecordScope) -> bool {
+        let scope = &captured.scope;
         let facets = self.facets.is_none_or(|facets| {
-            !facet_of.is_empty() && facet_of.iter().all(|facet| facets.contains(facet))
+            !captured.facet_of.is_empty()
+                && captured.facet_of.iter().all(|facet| facets.contains(facet))
         });
         let worlds = self.worlds.is_none_or(|worlds| {
             scope.worlds == crate::federation::base_world_axis()
                 || scope.worlds.is_narrowing_of(worlds)
         });
-        let bands = self.bands.is_none_or(|bands| match &scope.bands {
-            ScopeAxis::Some(kinds) => {
-                !kinds.is_empty()
-                    && kinds.iter().all(|kind| {
-                        super::scope::selector_identity(vault, *kind)
-                            .is_some_and(|band| bands.contains(&band))
-                    })
-            }
-            ScopeAxis::All | ScopeAxis::Bottom => false,
+        let bands = self.bands.is_none_or(|bands| {
+            captured
+                .entity_type
+                .and_then(|kind| super::scope::selector_identity(vault, kind))
+                .is_some_and(|band| bands.contains(&band))
         });
         facets && worlds && bands
     }

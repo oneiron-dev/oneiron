@@ -43,6 +43,15 @@ pub(crate) struct DeletedRecordScope {
     /// before the field existed has none, and its tombstone travels as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) relationship_read: Option<RelationshipRead>,
+    /// The type byte of the record's header, which a selector narrowed to
+    /// some bands judges a kept row by. The scope's band axis is the record's
+    /// disclosure position, which need not be its own type (a scoped touch
+    /// names CLAIM), so it cannot stand in for it
+    /// (SELECTOR-FACET-BAND-EXPORT-DROPS-BODYLESS-TOMBSTONES, REVIEW-10010
+    /// round 2). A capture written before the field existed has none, and its
+    /// tombstone stays off such a selector, as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) entity_type: Option<u8>,
     /// The FACETs the record's stored `FacetOf` edges named, each only where
     /// both ends sit on the ONE-1645 table by their stored types, as the
     /// selector's read mirror honors a stamp
@@ -175,6 +184,7 @@ fn capture_in_txn(
                 (
                     scope,
                     live_relationship_read(store, txn, id, &raw),
+                    EntityMetadataHeader::parse(&raw).map(|header| header.entity_type),
                     live_facet_stamps(store, txn, id, &raw),
                 )
             })
@@ -182,10 +192,11 @@ fn capture_in_txn(
         None => None,
     };
     let row = match (captured, held) {
-        (Some((scope, relationship_read, facet_of)), held) => DeletedRecordScope {
+        (Some((scope, relationship_read, entity_type, facet_of)), held) => DeletedRecordScope {
             scope,
             request: request.copied().or(held.and_then(|row| row.request)),
             relationship_read: Some(relationship_read),
+            entity_type,
             facet_of,
         },
         (None, Some(held)) => {
@@ -196,6 +207,7 @@ fn capture_in_txn(
                 scope: held.scope,
                 request: request.copied(),
                 relationship_read: held.relationship_read,
+                entity_type: held.entity_type,
                 facet_of: held.facet_of,
             }
         }
