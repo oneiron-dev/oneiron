@@ -109,8 +109,28 @@ pub(super) async fn search_page_by_deadline(
 ) -> Result<ScopedSearchResponse, ApiError> {
     let admission = admit_deep_retrieval(&server, page.depth)?;
     match budget {
-        None => search_page(&server, page, admission.as_ref(), None),
+        None => {
+            {
+                static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    eprintln!(
+                        "TRACE DEADLINE thread={} site=search_page arm=None",
+                        std::thread::current().name().unwrap_or("-")
+                    );
+                }
+            }
+            search_page(&server, page, admission.as_ref(), None)
+        }
         Some(budget) => {
+            {
+                static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    eprintln!(
+                        "TRACE DEADLINE thread={} site=search_page arm=Some",
+                        std::thread::current().name().unwrap_or("-")
+                    );
+                }
+            }
             let count_mode = page.count_mode;
             let auth = page.auth.clone();
             let filter = page.filter.clone();
@@ -153,29 +173,102 @@ pub(super) async fn read_by_deadline(
 ) -> Result<ScopedSearchResponse, ApiError> {
     let job = deadline_job(&server, &auth);
     let (publish, ready) = std::sync::mpsc::sync_channel(1);
+    {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+            eprintln!(
+                "TRACE DEADLINE thread={} site=before_spawn runtime={} elapsed={:?} budget={:?}",
+                std::thread::current().name().unwrap_or("-"),
+                &tokio::runtime::Handle::current().id(),
+                &Instant::now().duration_since(arrived),
+                &budget
+            );
+        }
+    }
     let task = tokio::task::spawn_blocking(move || {
+        {
+            static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                eprintln!(
+                    "TRACE DEADLINE thread={} site=blocking_start elapsed={:?}",
+                    std::thread::current().name().unwrap_or("-"),
+                    &Instant::now().duration_since(arrived)
+                );
+            }
+        }
         let _job = job;
         let deadline = RetrievalDeadline::hard(arrived, budget);
         // SCAN C030: the door answers at the deadline, so a read the pool
         // starts past it reads nothing, and one whose cut page was ready only
         // past it reads no further.
         if Instant::now() >= deadline.answer_at() {
+            {
+                static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    eprintln!(
+                        "TRACE DEADLINE thread={} site=blocking_return return=unread elapsed={:?}",
+                        std::thread::current().name().unwrap_or("-"),
+                        &Instant::now().duration_since(arrived)
+                    );
+                }
+            }
             return Ok(unread_page(count_mode));
         }
         let cut = cut_page(&server, &auth, count_mode, filter.as_ref())?;
         if Instant::now() >= deadline.answer_at() {
+            {
+                static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    eprintln!(
+                        "TRACE DEADLINE thread={} site=blocking_return return=cut elapsed={:?}",
+                        std::thread::current().name().unwrap_or("-"),
+                        &Instant::now().duration_since(arrived)
+                    );
+                }
+            }
             return Ok(cut);
         }
         // The door reads at most one; a closed slot is moot.
         let _ = publish.try_send(cut);
+        {
+            static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                eprintln!(
+                    "TRACE DEADLINE thread={} site=blocking_return return=read elapsed={:?}",
+                    std::thread::current().name().unwrap_or("-"),
+                    &Instant::now().duration_since(arrived)
+                );
+            }
+        }
         read(&server, &deadline)
     });
     let due = tokio::time::Instant::from_std(arrived + budget);
     match tokio::time::timeout_at(due, task).await {
         Ok(joined) => {
+            {
+                static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    eprintln!(
+                        "TRACE DEADLINE thread={} site=timeout_at outcome=Ok_joined join_ok={}",
+                        std::thread::current().name().unwrap_or("-"),
+                        &joined.is_ok()
+                    );
+                }
+            }
             joined.unwrap_or_else(|_| Err(ApiError::internal_server_error("search did not finish")))
         }
-        Err(_) => Ok(ready.try_recv().unwrap_or_else(|_| unread_page(count_mode))),
+        Err(_) => {
+            {
+                static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    eprintln!(
+                        "TRACE DEADLINE thread={} site=timeout_at outcome=Err_elapsed",
+                        std::thread::current().name().unwrap_or("-")
+                    );
+                }
+            }
+            Ok(ready.try_recv().unwrap_or_else(|_| unread_page(count_mode)))
+        }
     }
 }
 

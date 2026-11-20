@@ -526,6 +526,17 @@ pub(crate) async fn search_text(
     )?;
     let page_limit = params.limit;
     let deadline = search_deadline(params.deadline_ms)?;
+    {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+            eprintln!(
+                "TRACE DEADLINE thread={} site=search_text deadline={:?} runtime={}",
+                std::thread::current().name().unwrap_or("-"),
+                &deadline,
+                &tokio::runtime::Handle::current().id()
+            );
+        }
+    }
     // An opened machine asks its home alongside its own page (OF-534).
     let home = ask_home(
         Arc::clone(server.vault()),

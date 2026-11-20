@@ -127,11 +127,65 @@ impl Vault {
         owner: &AuthenticatedOwner,
         batch: &ImportedClaimBatch,
     ) -> Result<ConsentReceipt> {
+        {
+            static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                eprintln!(
+                    "TRACE BULK thread={} site=effect",
+                    std::thread::current().name().unwrap_or("-")
+                );
+            }
+        }
         let digest = self.imported_claim_batch_effect(owner, batch)?.digest();
+        {
+            static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                eprintln!(
+                    "TRACE BULK thread={} site=decision_slot",
+                    std::thread::current().name().unwrap_or("-")
+                );
+            }
+        }
         let slot = decision_slot(batch)?;
+        {
+            static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                eprintln!(
+                    "TRACE BULK thread={} site=write_txn",
+                    std::thread::current().name().unwrap_or("-")
+                );
+            }
+        }
         self.with_write_txn_grouped(|txn| {
+            {
+                static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    eprintln!(
+                        "TRACE BULK thread={} site=revalidate",
+                        std::thread::current().name().unwrap_or("-")
+                    );
+                }
+            }
             owner.revalidate_in_txn(self, txn)?;
+            {
+                static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    eprintln!(
+                        "TRACE BULK thread={} site=deny_consent",
+                        std::thread::current().name().unwrap_or("-")
+                    );
+                }
+            }
             let receipt = self.deny_consent_in_txn(txn, owner, digest)?;
+            {
+                static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    eprintln!(
+                        "TRACE BULK thread={} site=take_decision_slot",
+                        std::thread::current().name().unwrap_or("-")
+                    );
+                }
+            }
             self.take_decision_slot_in_txn(txn, &slot, receipt.decision_id())?;
             Ok(receipt)
         })

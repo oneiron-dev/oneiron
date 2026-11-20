@@ -327,6 +327,27 @@ async fn board_host_mcp_get_loaded_and_changed_only_ride_existing_frames() {
     server.vault.supersede_claim(&next, &old, 3).unwrap();
     drop(observation_lock);
     let query = query.await;
+    fn trace_body(value: &Value) -> Value {
+        match value {
+            Value::String(text) => Value::String(text.chars().take(300).collect()),
+            Value::Array(items) => Value::Array(items.iter().map(trace_body).collect()),
+            Value::Object(fields) => Value::Object(
+                fields
+                    .iter()
+                    .map(|(key, value)| (key.clone(), trace_body(value)))
+                    .collect(),
+            ),
+            value => value.clone(),
+        }
+    }
+    eprintln!(
+        "TRACE CLASS thread={} site=mcp_response body={}",
+        std::thread::current().name().unwrap_or("-"),
+        format!("{}", &trace_body(&query))
+            .chars()
+            .take(2700)
+            .collect::<String>()
+    );
     assert_eq!(
         query["result"]["structuredContent"]["output"]["response"]["items"][0]["id"],
         old.to_hex()

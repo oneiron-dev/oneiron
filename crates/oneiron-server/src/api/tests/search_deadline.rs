@@ -83,6 +83,11 @@ fn raw_search_answers_by_its_deadline_when_it_could_not_read_yet() {
         std::thread::sleep(BUSY);
     });
     busy.recv().expect("the blocking pool is busy");
+    eprintln!(
+        "TRACE DEADLINE thread={} site=test_runtime runtime={}",
+        std::thread::current().name().unwrap_or("-"),
+        &runtime.handle().id()
+    );
     // No deep retrieval host serves this server: paid depth is refused.
     let (refused, refusal) = runtime.block_on(route_json_auth(
         server.clone(),

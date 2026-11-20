@@ -319,56 +319,145 @@ fn class_judge_in(
     reader: &ClassReader<'_>,
     view: &ClassView<'_>,
     authority: &HeldAuthority,
+    trace: &mut [(&str, Option<bool>); 26],
 ) -> Result<bool> {
     let key = reader.key;
     let record = view.record();
-    if reader.grant.is_none() && key.relationship_gated_in(vault, txn)? {
+    if reader.grant.is_none() && {
+        let observed = key.relationship_gated_in(vault, txn)?;
+        trace[4].1 = Some(observed);
+        observed
+    } {
         let read = RelationshipRead::Gated {
             kind: ENTITY_TYPE_CLAIM,
             space: view.rel.clone(),
             private: view.private,
             record: record.clone(),
         };
-        if !authority.relationship_allows_in(vault, txn, key.principal_ref, |context| {
-            read.allowed_by_snapshot(context)
-        })? {
+        if !{
+            let observed =
+                authority.relationship_allows_in(vault, txn, key.principal_ref, |context| {
+                    read.allowed_by_snapshot(context)
+                })?;
+            trace[5].1 = Some(observed);
+            observed
+        } {
+            {
+                static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    eprintln!(
+                        "TRACE CLASS thread={} site=relationship",
+                        std::thread::current().name().unwrap_or("-")
+                    );
+                }
+            }
             return Ok(false);
         }
     }
-    if !key.guest_bound_admits_at(vault, txn, || Ok(Some(record.clone())))
-        || !key.facets_allow_placed_in(vault, txn, &view.facets)?
-        || !key.admits_principal(view.principal)
-        || (view.mined_preference && view.principal.is_none())
-        || !reader.status.admits_status(
+    if !{
+        let observed = key.guest_bound_admits_at(vault, txn, || Ok(Some(record.clone())));
+        trace[6].1 = Some(observed);
+        observed
+    } || !{
+        let observed = key.facets_allow_placed_in(vault, txn, &view.facets)?;
+        trace[7].1 = Some(observed);
+        observed
+    } || !{
+        let observed = key.admits_principal(view.principal);
+        trace[8].1 = Some(observed);
+        observed
+    } || {
+        let observed = view.mined_preference && view.principal.is_none();
+        trace[9].1 = Some(observed);
+        observed
+    } || !{
+        let observed = reader.status.admits_status(
             reader.filter,
             (view.generic_readable, view.exact_store),
             view.approval,
             view.lifecycle,
             view.stale,
-        )
-        || !crate::pipeline::claim_scalars_ceiling_allowed(
+        );
+        trace[10].1 = Some(observed);
+        observed
+    } || !{
+        let observed = crate::pipeline::claim_scalars_ceiling_allowed(
             reader.filter,
             view.sensitivity_band,
             view.confidence,
             view.salience,
-        )
-    {
+        );
+        trace[11].1 = Some(observed);
+        observed
+    } {
+        {
+            static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                eprintln!(
+                    "TRACE CLASS thread={} site={} allowed=false",
+                    std::thread::current().name().unwrap_or("-"),
+                    if trace[6].1 == Some(false) {
+                        "guest_bound"
+                    } else if trace[7].1 == Some(false) {
+                        "facets"
+                    } else if trace[8].1 == Some(false) {
+                        "principal"
+                    } else if trace[9].1 == Some(true) {
+                        "mined_principal"
+                    } else if trace[10].1 == Some(false) {
+                        "status"
+                    } else {
+                        "ceiling"
+                    }
+                );
+            }
+        }
         return Ok(false);
     }
     // A named room's standing lifts the conversation home only while this
     // serving snapshot finds the reader standing in the room (DEC-0006
     // `#home-clearance`); the verdict is held for this snapshot alone.
-    if crate::disclosure::scope_home_band(view.scope).is_some()
-        && key.room_standing_lapsed_in(vault, txn)?
-    {
+    if {
+        let observed = crate::disclosure::scope_home_band(view.scope).is_some();
+        trace[12].1 = Some(observed);
+        observed
+    } && {
+        let observed = key.room_standing_lapsed_in(vault, txn)?;
+        trace[13].1 = Some(observed);
+        observed
+    } {
+        {
+            static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                eprintln!(
+                    "TRACE CLASS thread={} site=room_standing_lapsed",
+                    std::thread::current().name().unwrap_or("-")
+                );
+            }
+        }
         return Ok(false);
     }
-    Ok(crate::gate::claim_read_policy_allows(
-        &reader.policy,
-        key,
-        &view.read_view(record),
-        reader.grant.or(key.authority_scope()),
-    ))
+    Ok({
+        let observed = crate::gate::claim_read_policy_allows(
+            &reader.policy,
+            key,
+            &view.read_view(record),
+            reader.grant.or(key.authority_scope()),
+        );
+        trace[14].1 = Some(observed);
+        if !observed {
+            {
+                static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    eprintln!(
+                        "TRACE CLASS thread={} site=policy allowed=false",
+                        std::thread::current().name().unwrap_or("-")
+                    );
+                }
+            }
+        }
+        observed
+    })
 }
 
 impl ScopedRead<'_> {
@@ -398,66 +487,218 @@ impl ScopedRead<'_> {
         authority: &HeldAuthority,
         grant: Option<&Scope>,
     ) -> Result<Option<bool>> {
-        if !self.reads_by_class() || raw.len() <= ENTITY_METADATA_HEADER_LEN {
-            return Ok(None);
-        }
-        if !self.row_stands_in(rtxn, id, raw, header, authority.asks_use_of(id))? {
-            return Ok(Some(false));
-        }
-        let Ok(body) = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true) else {
-            return Ok(None);
-        };
-        if crate::claim::history_store::machine_history_kind(&body.predicate).is_some() {
-            return Ok(None);
-        }
-        let Ok(principal) = claim_principal_id(&body) else {
-            return Ok(None);
-        };
-        // A view that does not build takes the row admission, which judges
-        // the row whole again.
-        let Ok(facets) = self.claim_facet_refs_in(rtxn, id) else {
-            return Ok(None);
-        };
-        let Some(view) = ClassView::of(&body, principal, facets) else {
-            return Ok(None);
-        };
-        let reader = self.class_reader(policy, filter, grant);
-        let class = view.key(&reader);
-        let verdicts = authority.class_verdicts();
-        let held = verdicts.held(&reader, &class);
-        // A class held refused refuses the row before its per-item conjuncts
-        // (L02 05:4x): a damaged row then reads as refused rather than as its
-        // error, which still fails closed. A class held readable runs them
-        // every time.
-        if held == Some(false) {
-            return Ok(Some(false));
-        }
-        // The split's failure order (L02 04:5x condition 4): every per-item
-        // conjunct that can fail runs first, in the row admission's order,
-        // so its error is the read's whatever the class; only then is the
-        // class verdict read, or judged and held. A class conjunct's error is
-        // never held and propagates as the row admission's does.
-        if !self.per_item_judge_in(rtxn, id, raw, &body, principal, authority)? {
-            return Ok(Some(false));
-        }
-        let verdict = match held {
-            Some(verdict) => verdict,
-            None => {
-                let verdict = class_judge_in(self.vault, rtxn, &reader, &view, authority)?;
-                verdicts.hold(&reader, class, verdict);
-                verdict
+        let mut trace: [(&str, Option<bool>); 26] = [
+            ("row_stands", None),
+            ("class_cached", None),
+            ("class_verdict", None),
+            ("per_item", None),
+            ("relationship_gated", None),
+            ("relationship", None),
+            ("guest_bound", None),
+            ("facets", None),
+            ("principal", None),
+            ("mined_principal", None),
+            ("status", None),
+            ("ceiling", None),
+            ("home_band", None),
+            ("room_standing_lapsed", None),
+            ("policy", None),
+            ("live_support", None),
+            ("preference_principal", None),
+            ("mined_preference", None),
+            ("preference_in_force", None),
+            ("credential_scope", None),
+            ("proof_live", None),
+            ("causal", None),
+            ("audience", None),
+            ("provenance", None),
+            ("esign", None),
+            ("coreference", None),
+        ];
+        let observed = (|| {
+            if !self.reads_by_class() || raw.len() <= ENTITY_METADATA_HEADER_LEN {
+                return Ok(None);
             }
-        };
-        // A provenance Claim's named records, an e-sign Claim's signing
-        // document and originals, and a coreference (status or consent)
-        // Claim's endpoints are the row's own, never its class's: judged
-        // last, for an admitted row only.
-        Ok(Some(
-            verdict
-                && self.provenance_cited_readable_in(rtxn, policy, &body, authority)?
-                && self.esign_document_readable_in(rtxn, policy, &body)?
-                && self.coreference_endpoints_readable_in(rtxn, policy, id, &body, authority)?,
-        ))
+            if !{
+                let observed =
+                    self.row_stands_in(rtxn, id, raw, header, authority.asks_use_of(id))?;
+                trace[0].1 = Some(observed);
+                observed
+            } {
+                {
+                    static N: std::sync::atomic::AtomicUsize =
+                        std::sync::atomic::AtomicUsize::new(0);
+                    if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                        eprintln!(
+                            "TRACE CLASS thread={} site=row_stands claim={:?}",
+                            std::thread::current().name().unwrap_or("-"),
+                            &id
+                        );
+                    }
+                }
+                return Ok(Some(false));
+            }
+            let Ok(body) = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true) else {
+                return Ok(None);
+            };
+            if crate::claim::history_store::machine_history_kind(&body.predicate).is_some() {
+                return Ok(None);
+            }
+            let Ok(principal) = claim_principal_id(&body) else {
+                return Ok(None);
+            };
+            // A view that does not build takes the row admission, which judges
+            // the row whole again.
+            let Ok(facets) = self.claim_facet_refs_in(rtxn, id) else {
+                return Ok(None);
+            };
+            let Some(view) = ClassView::of(&body, principal, facets) else {
+                return Ok(None);
+            };
+            let reader = self.class_reader(policy, filter, grant);
+            let class = view.key(&reader);
+            let verdicts = authority.class_verdicts();
+            let held = verdicts.held(&reader, &class);
+            // A class held refused refuses the row before its per-item conjuncts
+            // (L02 05:4x): a damaged row then reads as refused rather than as its
+            // error, which still fails closed. A class held readable runs them
+            // every time.
+            trace[1].1 = Some(held.is_some());
+            trace[2].1 = held;
+            if held == Some(false) {
+                {
+                    static N: std::sync::atomic::AtomicUsize =
+                        std::sync::atomic::AtomicUsize::new(0);
+                    if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                        eprintln!(
+                            "TRACE CLASS thread={} site=cached_class claim={:?}",
+                            std::thread::current().name().unwrap_or("-"),
+                            &id
+                        );
+                    }
+                }
+                return Ok(Some(false));
+            }
+            // The split's failure order (L02 04:5x condition 4): every per-item
+            // conjunct that can fail runs first, in the row admission's order,
+            // so its error is the read's whatever the class; only then is the
+            // class verdict read, or judged and held. A class conjunct's error is
+            // never held and propagates as the row admission's does.
+            if !{
+                let observed =
+                    self.per_item_judge_in(rtxn, id, raw, &body, principal, authority, &mut trace)?;
+                trace[3].1 = Some(observed);
+                observed
+            } {
+                {
+                    static N: std::sync::atomic::AtomicUsize =
+                        std::sync::atomic::AtomicUsize::new(0);
+                    if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                        eprintln!(
+                            "TRACE CLASS thread={} site=per_item claim={:?}",
+                            std::thread::current().name().unwrap_or("-"),
+                            &id
+                        );
+                    }
+                }
+                return Ok(Some(false));
+            }
+            let verdict = match held {
+                Some(verdict) => verdict,
+                None => {
+                    let verdict =
+                        class_judge_in(self.vault, rtxn, &reader, &view, authority, &mut trace)?;
+                    verdicts.hold(&reader, class, verdict);
+                    verdict
+                }
+            };
+            trace[2].1 = Some(verdict);
+            // A provenance Claim's named records, an e-sign Claim's signing
+            // document and originals, and a coreference (status or consent)
+            // Claim's endpoints are the row's own, never its class's: judged
+            // last, for an admitted row only.
+            Ok(Some(
+                verdict
+                    && {
+                        let observed =
+                            self.provenance_cited_readable_in(rtxn, policy, &body, authority)?;
+                        trace[23].1 = Some(observed);
+                        if !observed {
+                            {
+                                static N: std::sync::atomic::AtomicUsize =
+                                    std::sync::atomic::AtomicUsize::new(0);
+                                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                                    eprintln!(
+                                        "TRACE CLASS thread={} site=provenance claim={:?} allowed=false",
+                                        std::thread::current().name().unwrap_or("-"),
+                                        &id
+                                    );
+                                }
+                            }
+                        }
+                        observed
+                    }
+                    && {
+                        let observed = self.esign_document_readable_in(rtxn, policy, &body)?;
+                        trace[24].1 = Some(observed);
+                        if !observed {
+                            {
+                                static N: std::sync::atomic::AtomicUsize =
+                                    std::sync::atomic::AtomicUsize::new(0);
+                                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                                    eprintln!(
+                                        "TRACE CLASS thread={} site=esign claim={:?} allowed=false",
+                                        std::thread::current().name().unwrap_or("-"),
+                                        &id
+                                    );
+                                }
+                            }
+                        }
+                        observed
+                    }
+                    && {
+                        let observed = self.coreference_endpoints_readable_in(
+                            rtxn, policy, id, &body, authority,
+                        )?;
+                        trace[25].1 = Some(observed);
+                        if !observed {
+                            {
+                                static N: std::sync::atomic::AtomicUsize =
+                                    std::sync::atomic::AtomicUsize::new(0);
+                                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                                    eprintln!(
+                                        "TRACE CLASS thread={} site=coreference claim={:?} allowed=false",
+                                        std::thread::current().name().unwrap_or("-"),
+                                        &id
+                                    );
+                                }
+                            }
+                        }
+                        observed
+                    },
+            ))
+        })();
+        {
+            // The decisive read comes late in its test, after the setup's
+            // reads: this one summary site keeps 1800 lines, not 40.
+            static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let seq = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if seq < 1800 {
+                eprintln!(
+                    "TRACE CLASS thread={} site=claim seq={} claim={:?} class_verdict={:?} result={} conjuncts={:?}",
+                    std::thread::current().name().unwrap_or("-"),
+                    seq,
+                    &id,
+                    &trace[2].1,
+                    format!("{:?}", &observed)
+                        .chars()
+                        .take(300)
+                        .collect::<String>(),
+                    &trace
+                );
+            }
+        }
+        observed
     }
 
     /// Whether this lane's CLAIM rows may be judged by class: neither its
@@ -490,24 +731,102 @@ impl ScopedRead<'_> {
         body: &ClaimBody,
         principal: Option<EntityId>,
         authority: &HeldAuthority,
+        trace: &mut [(&str, Option<bool>); 26],
     ) -> Result<bool> {
-        if !crate::claim::has_live_support_in_txn(&self.store_read(), rtxn, body)? {
+        if !{
+            let observed = crate::claim::has_live_support_in_txn(&self.store_read(), rtxn, body)?;
+            trace[15].1 = Some(observed);
+            observed
+        } {
+            {
+                static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    eprintln!(
+                        "TRACE CLASS thread={} site=live_support claim={:?} conjuncts={:?}",
+                        std::thread::current().name().unwrap_or("-"),
+                        &id,
+                        &trace
+                    );
+                }
+            }
             return Ok(false);
         }
         // A mined preference with no principal is the class's to refuse.
-        if principal.is_some()
-            && crate::edit_distance::miner::is_mined_preference(&body.predicate)
-            && !self.preference_in_force_in(rtxn, id, body)?
-        {
+        if {
+            let observed = principal.is_some();
+            trace[16].1 = Some(observed);
+            observed
+        } && {
+            let observed = crate::edit_distance::miner::is_mined_preference(&body.predicate);
+            trace[17].1 = Some(observed);
+            observed
+        } && !{
+            let observed = self.preference_in_force_in(rtxn, id, body)?;
+            trace[18].1 = Some(observed);
+            observed
+        } {
+            {
+                static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    eprintln!(
+                        "TRACE CLASS thread={} site=preference_in_force claim={:?} conjuncts={:?}",
+                        std::thread::current().name().unwrap_or("-"),
+                        &id,
+                        &trace
+                    );
+                }
+            }
             return Ok(false);
         }
-        if !self.credential_allows_row_in(rtxn, id)
-            || !self.proof_live_in(rtxn)?
-            || !self.claim_causally_admitted_in(rtxn, id, body)?
-        {
+        if !{
+            let observed = self.credential_allows_row_in(rtxn, id);
+            trace[19].1 = Some(observed);
+            observed
+        } || !{
+            let observed = self.proof_live_in(rtxn)?;
+            trace[20].1 = Some(observed);
+            observed
+        } || !{
+            let observed = self.claim_causally_admitted_in(rtxn, id, body)?;
+            trace[21].1 = Some(observed);
+            observed
+        } {
+            {
+                static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    eprintln!(
+                        "TRACE CLASS thread={} site={} claim={:?} allowed=false",
+                        std::thread::current().name().unwrap_or("-"),
+                        if trace[19].1 == Some(false) {
+                            "credential_scope"
+                        } else if trace[20].1 == Some(false) {
+                            "proof_live"
+                        } else {
+                            "causal"
+                        },
+                        &id
+                    );
+                }
+            }
             return Ok(false);
         }
         self.audience_readable_raw_in(rtxn, id, raw, authority)
+            .inspect(|observed| {
+                trace[22].1 = Some(*observed);
+                if !*observed {
+                    {
+                        static N: std::sync::atomic::AtomicUsize =
+                            std::sync::atomic::AtomicUsize::new(0);
+                        if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                            eprintln!(
+                                "TRACE CLASS thread={} site=audience claim={:?} allowed=false",
+                                std::thread::current().name().unwrap_or("-"),
+                                &id
+                            );
+                        }
+                    }
+                }
+            })
     }
 
     /// The reader this lane's class verdicts are judged and held for under

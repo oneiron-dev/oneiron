@@ -153,11 +153,16 @@ fn a_batch_carries_one_decision_whichever_owner_comes_first() -> Result<()> {
     let other = second_owner(&vault);
     let approved = vault.approve_imported_claim_batch(&owner, &batch)?;
     for decider in [&owner, &other] {
-        assert!(spent(
-            vault
-                .decline_imported_claim_batch(decider, &batch)
-                .unwrap_err()
-        ));
+        let decline = vault.decline_imported_claim_batch(decider, &batch);
+        eprintln!(
+            "TRACE BULK thread={} site=second_decline result={}",
+            std::thread::current().name().unwrap_or("-"),
+            format!("{:?}", &decline)
+                .chars()
+                .take(300)
+                .collect::<String>()
+        );
+        assert!(spent(decline.unwrap_err()));
     }
     assert!(spent(
         vault
