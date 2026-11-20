@@ -22,7 +22,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use oneiron::authority::{ActSurface, HostSlipIssuer};
+use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::llm::decision::questions::{
@@ -276,12 +276,17 @@ impl Fixture {
 
     /// The owner's live `read` Grant to `agent` over MESSAGE and CLAIM rows
     /// placed in `facets` alone, every other axis covering every row; returns
-    /// the Grant's row.
+    /// the Grant's row. This install's live machine profile carries the
+    /// owner's agent Grant act, as a serving start or `init` enrols it (FIX
+    /// 4648).
     fn grant_reading_in(
         &self,
         agent: EntityId,
         facets: &BTreeSet<EntityId>,
     ) -> TestResult<EntityId> {
+        self.vault
+            .ensure_serving_install_profile(&self.issuer, MachineRole::Unanswered)
+            .map_err(|error| format!("this install's live machine profile: {error:?}"))?;
         let mut authority_scope = Scope::top();
         authority_scope.bands =
             ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_MESSAGE, ENTITY_TYPE_CLAIM]));
