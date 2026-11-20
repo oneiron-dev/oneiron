@@ -71,6 +71,12 @@ impl ScopedRead<'_> {
         if self.actor_key.reads_as_vault_owner() {
             return Ok(true);
         }
+        // A row whose floor is not known whole here reads to no one else
+        // (#9289 review 2 P1-1, P1-2); the source-audience walk judges the
+        // owner's read of it.
+        if crate::source_audience::floor_waits_in(self.vault, txn, id)? {
+            return Ok(false);
+        }
         let header = crate::batch::EntityMetadataHeader::parse(raw)
             .ok_or(Error::CorruptedIndex("entity header"))?;
         if matches!(

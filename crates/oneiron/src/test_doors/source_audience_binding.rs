@@ -17,15 +17,29 @@ use crate::{EntityId, Vault};
 /// Storage, encoding, or source-audience admission failures.
 pub fn bound_row(vault: &Vault, reader: EntityId) -> Result<(EntityId, EntityId)> {
     let row = EntityId::now();
+    let policy = bound_row_read_by(vault, row, &[reader])?;
+    Ok((row, policy))
+}
+
+/// [`bound_row`] with the id `row`, under a new source policy read by each
+/// of `readers`; the first one makes it. Returns the policy id.
+///
+/// # Errors
+///
+/// No reader, or storage, encoding, or source-audience admission failures.
+pub fn bound_row_read_by(vault: &Vault, row: EntityId, readers: &[EntityId]) -> Result<EntityId> {
+    let by = *readers
+        .first()
+        .ok_or_else(|| Error::InvalidConfig("a source policy needs a reader".into()))?;
     let at = vault.now_recorded_at();
     let body = conversation_body(&row)?;
     vault.with_write_txn(|txn| {
         let policy = source_audience::create_source_policy_in_txn(
             vault,
             txn,
-            [reader].into_iter().collect(),
+            readers.iter().copied().collect(),
             false,
-            reader,
+            by,
             at,
         )?;
         let birth = SourceAudienceBirth::mint_in(vault, txn, &policy)?;
@@ -42,7 +56,7 @@ pub fn bound_row(vault: &Vault, reader: EntityId) -> Result<(EntityId, EntityId)
             )
             .apply(txn)?;
         source_audience::bind_record_in_txn(vault, txn, &row, &policy)?;
-        Ok((row, policy))
+        Ok(policy)
     })
 }
 
