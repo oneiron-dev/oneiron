@@ -23,8 +23,8 @@ use super::super::resource::read_blob_ref;
 use super::super::seat::CalendarConnectorError;
 use super::{
     CalendarWriteAction, CalendarWriteOutboxState, LOCAL_UID_DOMAIN, OUTBOX, OUTBOX_ROW_TAG,
-    OutboxKey, REMOTE_OBJECT, REMOTE_OBJECT_TAG, RemoteObjectKey, derive_outbox_id, local_uid,
-    open_cursor, remote_object_digest, remote_projection,
+    OutboxKey, REMOTE_OBJECT, REMOTE_OBJECT_TAG, RemoteObjectKey, StoredWriteMarker,
+    derive_outbox_id, local_uid, open_cursor, remote_object_digest, remote_projection,
 };
 use crate::entity_id::EntityId;
 use crate::vault::Vault;
@@ -210,9 +210,9 @@ pub(crate) fn omission_observed(
     Ok(upsert_in_flight(vault, &txn, &scope, operation, uid)?.is_none())
 }
 
-/// The members an upsert of `uid` under `system` still in flight on any seat
-/// of the vault (prepared or remotely applied, not yet settled, or refused
-/// with its stored copy's proof owed:
+/// The members an upsert of `uid` still in flight on any seat of the vault
+/// (prepared or remotely applied, not yet settled, or refused with its
+/// stored copy's proof owed:
 /// [`super::CalendarWriteOutboxRow::stored_copy_unproven`]) writes
 /// cancelled, each with the RECURRENCE-ID its staged VEVENT carries under
 /// `uid` ([`super::staged_recurrence_id`]); empty when none is in flight. A
@@ -220,30 +220,37 @@ pub(crate) fn omission_observed(
 /// before its settlement marks the member's passport `written_cancelled`,
 /// and would read as a host cancel that moves deposit money, so the pull
 /// leaves the resource owed and reads it again once the write settles
-/// (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS). Seats of one calendar
-/// share its system and its passports but not their outboxes
-/// ([`UnsettledWrites`]), so another seat's pull of the version reads the
-/// writing seat's row too
-/// (CAL-SECOND-SEAT-CANCELLED-VERSION-MISSES-OTHER-SEAT-WRITE). Only the
-/// writing seat's pull proves a refused replay's copy (`unproven_replay`
-/// reads that seat's own row), so until it does, the row holds the members
-/// as one in flight does, but only for a copy none of whose VEVENTs,
-/// `lowest_sequence` the lowest SEQUENCE among them, sits below the staged
-/// SEQUENCE: a provider that stores the write keeps or raises it, so such a
-/// copy is never the write's own (`stored_copy_of`) and may be the host's
-/// own cancel, which must land (review round 1 of #10020). The pull matches
-/// its VEVENTs to them by that identity, whatever exception claims a member
+/// (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS). The pull matches its
+/// VEVENTs to them by that identity, whatever exception claims a member
 /// holds now; a first write's copy is held back before, whole
 /// ([`first_write_unsettled`]).
 ///
-/// A row is one of `uid` under `system` when its readable strings name them,
-/// or when its key is the one its writing seat's scope derives for them on
-/// `calendar_ref`, the pulling seat's calendar: a side-table write may hold
-/// a string as a custody handle, but the key is derived from the literal
-/// names, as the pulling seat finds its own row (`upsert_in_flight`).
+/// Seats of one calendar share its system and its passports but not their
+/// outboxes ([`UnsettledWrites`]), so the pulling seat reads every seat's
+/// rows (CAL-SECOND-SEAT-CANCELLED-VERSION-MISSES-OTHER-SEAT-WRITE). Its own
+/// write in flight holds any cancelled version, as before: its own write
+/// call settles it or refuses it. Only the writing seat moves or proves a
+/// row, and its owner may stop it with the row unsettled, so any other row,
+/// and a refused replay's even on its own seat (no pull proves a copy
+/// below its write), holds only a copy that may be its write's own
+/// (`stored_copy_of`): no VEVENT, `lowest_sequence` the lowest
+/// SEQUENCE among them, below the staged SEQUENCE, which a provider storing
+/// the write keeps or raises; and no write marker other than the staged one,
+/// which the write keeps on every call. Any other copy is another writer's,
+/// may be the host's own cancel, and must land (reviews of #10020). A copy
+/// with no marker, from a provider or client that drops unknown properties,
+/// stays held.
+///
+/// A row is one of `uid` under the pulling seat's system when its readable
+/// strings name them, or when its key is the one its writing seat's scope
+/// derives for them on the pulling seat's calendar: a side-table write may
+/// hold a string as a custody handle, but the key is derived from the
+/// literal names, as the pulling seat finds its own row
+/// (`upsert_in_flight`).
 ///
 /// The read scans every seat's outbox rows, so the pull asks it only for a
-/// copy that carries a cancelled VEVENT. It opens no row's sealed values.
+/// copy that carries a cancelled VEVENT; `ics` is that copy. It opens no
+/// row's sealed values.
 ///
 /// The caller holds the vault's calendar admission turn, in which a write
 /// publishes its prepared row and settles, so neither lands between this
@@ -251,14 +258,25 @@ pub(crate) fn omission_observed(
 ///
 /// # Errors
 ///
-/// Storage failures, and a stored member that is no entity id.
+/// Scope and storage failures, and a stored member that is no entity id.
 pub(crate) fn cancelled_members_in_flight(
     vault: &Vault,
-    system: &str,
-    calendar_ref: &str,
+    operation: &CalendarConnectorOperation,
     uid: &str,
+    ics: &[u8],
     lowest_sequence: u32,
 ) -> Result<Vec<(EntityId, Option<u64>)>, CalendarConnectorError> {
+    let seat = &operation.registration().seat;
+    let system = seat.config.system.as_str();
+    let calendar_ref = seat.config.calendar_ref.as_str();
+    let own_row = derive_outbox_id(
+        &operation.literal_scope()?,
+        system,
+        calendar_ref,
+        uid,
+        CalendarWriteAction::Upsert,
+    );
+    let copy_marker = super::stored_write_marker(ics, uid);
     // Drop the table reader before a row staged without its RECURRENCE-IDs
     // reads its members' claims.
     let rows = {
@@ -267,10 +285,18 @@ pub(crate) fn cancelled_members_in_flight(
     };
     let mut members = Vec::new();
     for (_, stored) in rows {
+        let may_be_own = lowest_sequence >= stored.sequence
+            && match (stored.write_marker, &copy_marker) {
+                (Some(staged), StoredWriteMarker::One(marker)) => *marker == staged,
+                (Some(_), StoredWriteMarker::Conflicting) => false,
+                _ => true,
+            };
         let in_flight = match stored.state {
-            CalendarWriteOutboxState::Prepared | CalendarWriteOutboxState::RemoteApplied => true,
+            CalendarWriteOutboxState::Prepared | CalendarWriteOutboxState::RemoteApplied => {
+                may_be_own || stored.outbox_id == own_row
+            }
             CalendarWriteOutboxState::ReconcileRequired => {
-                stored.stored_copy_unproven && lowest_sequence >= stored.sequence
+                stored.stored_copy_unproven && may_be_own
             }
             CalendarWriteOutboxState::Committed => false,
         };

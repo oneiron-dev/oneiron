@@ -262,7 +262,9 @@ fn apply_remote_change(
             // name, whatever exception claims the member holds now. The write
             // may be in flight on another seat of the calendar, which shares
             // its passports
-            // (CAL-SECOND-SEAT-CANCELLED-VERSION-MISSES-OTHER-SEAT-WRITE).
+            // (CAL-SECOND-SEAT-CANCELLED-VERSION-MISSES-OTHER-SEAT-WRITE);
+            // such a row, which this seat never settles, holds only a copy
+            // that may be its write's own (its SEQUENCE and write marker).
             // Only a copy that carries a cancelled VEVENT asks: no other copy
             // is held back here.
             let in_flight = if feed.events.iter().any(|parsed| parsed.cancelled) {
@@ -274,9 +276,9 @@ fn apply_remote_change(
                     .unwrap_or(primary.sequence);
                 cancelled_members_in_flight(
                     vault,
-                    system,
-                    &seat.config.calendar_ref,
+                    operation,
                     &primary.uid,
+                    &object.ics,
                     lowest_sequence,
                 )?
             } else {
