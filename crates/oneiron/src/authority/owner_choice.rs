@@ -178,6 +178,32 @@ pub(super) struct OwnerChoiceOp<'a, P> {
     pub(super) persons_own_narrowing: bool,
 }
 
+/// One choice on its frontier as [`choice_landing`] judges it: an owner act's
+/// target, `seen` and owner, or an engine statement's, which names no owner
+/// (stage 7a-4, a move's setting copy).
+pub(super) struct ChoiceAt<'a, P> {
+    /// The frontier.
+    pub(super) target: EntityId,
+    /// The live choices its parents carry, under `context`.
+    pub(super) seen: [u8; 32],
+    /// The owner who decided; `None` for an engine statement, which no owner
+    /// makes and whose landing therefore tests no owner's liveness.
+    pub(super) owner: Option<EntityId>,
+    /// The carrier: the machine whose install key signed the choice.
+    pub(super) machine: EntityId,
+    /// The value chosen; `None` for a clear.
+    pub(super) choice: Option<&'a P>,
+    /// The kind's revision domain, which `seen` is under.
+    pub(super) context: &'static [u8],
+    /// The choice lies outside a proving owner-key enrolment's line
+    /// ([`OwnerChoiceOp::needs_proof_off_the_line`]).
+    pub(super) needs_proof_off_the_line: bool,
+    /// A person's own narrowing of their own row
+    /// ([`OwnerChoiceOp::persons_own_narrowing`]); `false` for an engine
+    /// statement.
+    pub(super) persons_own_narrowing: bool,
+}
+
 /// What a valid choice does to its register ([`OwnerChoiceState::land`]).
 pub(super) enum OwnerChoiceLanding<P> {
     /// Valid without effect: its carrier was not admitted, or its owner not
@@ -230,6 +256,36 @@ pub(super) fn owner_choice_landing<P: Clone>(
     entry: &AuthorityLogEntry,
     op: OwnerChoiceOp<'_, P>,
     hash: AuthorityEntryHash,
+    counting: (Option<&PinnedRoot>, InstallCounted<'_>),
+    restriction_only: bool,
+) -> std::result::Result<OwnerChoiceLanding<P>, AuthorityFoldIssue> {
+    let at = ChoiceAt {
+        target: op.act.target,
+        seen: op.act.seen,
+        owner: Some(op.act.owner),
+        machine: op.machine,
+        choice: op.choice,
+        context: op.context,
+        needs_proof_off_the_line: op.needs_proof_off_the_line,
+        persons_own_narrowing: op.persons_own_narrowing,
+    };
+    choice_landing(state, register, entry, at, hash, counting, restriction_only)
+}
+
+/// [`owner_choice_landing`] of a choice named by its target, `seen` and owner
+/// alone ([`ChoiceAt`]). With no owner, the choice is an engine statement:
+/// the same carrier, sequence and `seen` tests, and no owner liveness test.
+/// The owner-proof gate (row CARRIER-OWNER-PROOF) holds for it as for every
+/// carried choice, so a carrier that is not the owner's machine cannot put a
+/// statement in force where the vault holds a key that proves the owner's
+/// acts; and an engine statement is never the owner's own choice, so it ends
+/// no waiting choice's ask.
+pub(super) fn choice_landing<P: Clone>(
+    state: &FoldState,
+    register: &OwnerChoiceState<P>,
+    entry: &AuthorityLogEntry,
+    op: ChoiceAt<'_, P>,
+    hash: AuthorityEntryHash,
     (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
 ) -> std::result::Result<OwnerChoiceLanding<P>, AuthorityFoldIssue> {
@@ -250,12 +306,8 @@ pub(super) fn owner_choice_landing<P: Clone>(
     {
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
-    let live = register
-        .frontiers
-        .get(&op.act.target)
-        .into_iter()
-        .flat_map(|frontier| frontier.live.keys().copied());
-    if op.act.seen != act_revision(op.context, live) {
+    let live = register.live_choices(op.target);
+    if op.seen != act_revision(op.context, live) {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
     let roster = StandingView::Under(MachineAdmitter::Roster);
@@ -264,7 +316,11 @@ pub(super) fn owner_choice_landing<P: Clone>(
     let narrow_only = !standing.admits_owner_act_signer(op.machine, &key, StandingView::Install);
     let carrier_is_mine = standing.trusted_key(op.machine, roster) == Some(key);
     drop(standing);
-    if !admitted || !super::owner_act::owner_live_at(state, op.act.owner) {
+    if !admitted
+        || op
+            .owner
+            .is_some_and(|owner| !super::owner_act::owner_live_at(state, owner))
+    {
         return Ok(OwnerChoiceLanding::Refused(hash));
     }
     // Outside a proving owner-key enrolment's line (row
@@ -276,7 +332,7 @@ pub(super) fn owner_choice_landing<P: Clone>(
         && !op.persons_own_narrowing
     {
         return Ok(OwnerChoiceLanding::Waiting {
-            target: op.act.target,
+            target: op.target,
             hash,
         });
     }
@@ -286,12 +342,12 @@ pub(super) fn owner_choice_landing<P: Clone>(
         && super::owner_proof::not_mine_carriers_need_proof(state)
     {
         return Ok(OwnerChoiceLanding::Waiting {
-            target: op.act.target,
+            target: op.target,
             hash,
         });
     }
     Ok(OwnerChoiceLanding::Recorded {
-        target: op.act.target,
+        target: op.target,
         hash,
         settings: SignedOwnerChoice {
             choice: op.choice.cloned(),
@@ -302,11 +358,22 @@ pub(super) fn owner_choice_landing<P: Clone>(
         narrow_only,
         marks,
         restriction_only,
-        owners: proof.is_some() || carrier_is_mine,
+        owners: op.owner.is_some() && (proof.is_some() || carrier_is_mine),
     })
 }
 
 impl<P> OwnerChoiceState<P> {
+    /// `target`'s live choices: what its next choice's `seen` covers.
+    pub(super) fn live_choices(
+        &self,
+        target: EntityId,
+    ) -> impl Iterator<Item = AuthorityEntryHash> + '_ {
+        self.frontiers
+            .get(&target)
+            .into_iter()
+            .flat_map(|frontier| frontier.live.keys().copied())
+    }
+
     /// The values of `target`'s live choices: what its next choice
     /// supersedes (an origin cut's epoch floor, FIX 15740).
     pub(super) fn live_values(&self, target: EntityId) -> impl Iterator<Item = &P> {

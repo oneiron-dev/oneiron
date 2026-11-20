@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use oneiron_authority::authority::{
     ActSurface, POLICY_SETTING_INLINE_MAX, setting_slot_target, setting_value_digest,
 };
-use oneiron_setting_contract::{RowKey, ScopeKind};
+use oneiron_setting_contract::{RowKey, ScopeKind, SettingMode};
 
 use super::change::{change_in_txn, record_signed_entry_in_txn};
 use super::project::{json_bytes, rooted_in_txn, travels};
@@ -127,8 +127,10 @@ fn unbacked_rows_in_txn(
         let Some(slot) = RowKey::decode(&key) else {
             continue;
         };
+        // A carried row is the engine's: a move's copy carries it (stage 7a-4).
         if slot.name != spec.name
-            || !travels(spec, slot.mode)
+            || !travels(spec)
+            || slot.mode == SettingMode::Carried
             || slot.scope.kind() == ScopeKind::Pack
             || !spec.admits_scope(slot.scope.kind())
             || spec.check_item(slot.item.as_deref()).is_err()
