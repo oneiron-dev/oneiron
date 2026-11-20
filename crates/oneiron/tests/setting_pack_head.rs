@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use oneiron::authority::{HostSlipIssuer, MachineRole};
+use oneiron::authority::{HostSlipIssuer, MachineOwnership, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::Memory;
 use oneiron::setting::{ENGINE_PACK, ENGINE_PACK_VERSION, PackApplied};
@@ -74,7 +74,9 @@ impl Fixture {
         }
     }
 
-    /// A rooted vault whose install carries acts.
+    /// A rooted vault whose install, the owner's own machine, carries acts: its engine acts
+    /// stand with no owner key's proof (row CARRIER-OWNER-PROOF). An install that is not his
+    /// waits for that proof on every engine act it carries, here the door's head.
     fn rooted() -> Self {
         let mut fx = Self::unrooted();
         let issuer = fx.vault.bootstrap_host_slip_issuer().expect("host issuer");
@@ -83,7 +85,7 @@ impl Fixture {
             .provision_engine_machine_identities(&issuer)
             .expect("engine machine identities");
         fx.vault
-            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .ensure_serving_install_profile(&issuer, MachineRole::Owned(MachineOwnership::Yours))
             .expect("serving install profile");
         fx.issuer = Some(issuer);
         fx
