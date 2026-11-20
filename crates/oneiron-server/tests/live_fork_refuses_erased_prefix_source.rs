@@ -380,7 +380,7 @@ fn stored_claim(vault: &Vault, subject: EntityId, words: &str) -> EntityId {
     let body = ClaimBody::new(
         "profile.note",
         ClaimSubject::Entity(subject),
-        serde_json::Value::from(words),
+        rmpv::Value::from(words),
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
