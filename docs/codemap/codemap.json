@@ -5309,7 +5309,7 @@
      "purpose": "The authority log's fold bounds, and the store-door checks that keep a stored log inside them (H72)",
      "surface": {
       "const": 2,
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 2,
       "re-export": 1
      }
@@ -5337,6 +5337,16 @@
      "purpose": "The owner's reserve under the fold's memory floor (FIX [AUTHORITY-LOG-SIGNER-FLOOD]): the stored log's…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/log_budget/owner_signed_work.rs",
+     "purpose": "Whether a row a result answers is the owner's own signed word (row…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -5957,7 +5967,7 @@
      "path": "src/authority/owner_proof.rs",
      "purpose": "An owner act's proof (row CARRIER-OWNER-PROOF; the lead's rulings 15 Nov 12:1x and 13:2x, FIX…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 2
      }
     },
@@ -12210,13 +12220,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/booking/lifecycle/deposit/refund.rs",
      "purpose": "A deposit's refund rules, each in the booking writer's commit: a visitor's cancel or reschedule refunds by…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -55991,7 +56001,7 @@
      "path": "src/memory/conflict_settle.rs",
      "purpose": "The authorised responder's door to a parked contradiction (OF-023)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "fn": 8,
       "re-export": 1
      }
@@ -88241,7 +88251,7 @@
      "surface": {
       "crate-vis": 5,
       "enum": 2,
-      "fn": 15,
+      "fn": 17,
       "struct": 2
      }
     },
@@ -100754,7 +100764,8 @@
      "purpose": "Typed booking-page discovery, public lifecycle calls and calendar occupancy inputs",
      "surface": {
       "enum": 3,
-      "re-export": 1,
+      "fn": 2,
+      "re-export": 2,
       "struct": 1
      }
     },
@@ -107483,6 +107494,14 @@
      "notable": [],
      "path": "tests/authority_log_owner_reserve_owner_work_requests.rs",
      "purpose": "Row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, part 2d: the owner work requests the vault owner's own acts…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/authority_log_owner_reserve_owner_work_results.rs",
+     "purpose": "Row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, part 2e: an owner work result carries the owner key's proof…",
      "surface": {}
     },
     {
@@ -115311,6 +115330,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/selector_tombstone_of_summary_with_erased_source.rs",
+     "purpose": "A band-narrowed federation selector window carries the delete of an epoch summary whose source was erased…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/self_board_doors.rs",
      "purpose": "The `self.board.*` doors keep the agent-managed board layout promises (BOARD-LAYOUT = A, owner ruling…",
      "surface": {}
@@ -117212,7 +117239,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 321,
+     "files": 322,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -118873,8 +118900,8 @@
    },
    "over_bar": 307,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8326,
-   "test_files": 2100
+   "source_files": 8327,
+   "test_files": 2102
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -159597,7 +159624,7 @@
      "path": "src/api/facade/booking_doors.rs",
      "purpose": "Typed booking-page discovery, published lifecycle and constraint front",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -167143,13 +167170,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/hook/session_binding.rs",
      "purpose": "What a session's starts bound, recorded by each `session-start` for the session's hand-over (REVIEW-9834)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -177049,7 +177076,7 @@
      "path": "src/server/device_burst_drain.rs",
      "purpose": "The home's drain of its own devices' retained bursts (L7-41)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -178086,7 +178113,7 @@
      "path": "src/test_doors/device_burst_drain.rs",
      "purpose": "Door for `tests/device_burst_replay.rs`: one pass of the home's drain of its own devices' retained bursts…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -180104,7 +180131,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/device_burst_replay.rs",
@@ -180423,6 +180450,14 @@
      "notable": [],
      "path": "tests/home_clearance_read_doors.rs",
      "purpose": "Home clearance on the read doors (L5-02 PR 3, RULING SECREAD-HOME-READ-DOORS = B)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/hook_codex_fork_binding.rs",
+     "purpose": "`oneiron hook --host codex session-start` for a Codex fork (FIX-LIST HOOK-HAND-OVER-CODEX-FORK-PARENT-TURNS…",
      "surface": {}
     },
     {
@@ -181062,7 +181097,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/member_sync_lane.rs",
@@ -181070,7 +181105,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/member_sync_socket.rs",
@@ -183091,7 +183126,7 @@
    "over_bar": 68,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2062,
-   "test_files": 530
+   "test_files": 531
   },
   "oneiron-setting-contract": {
    "files": [
@@ -208913,6 +208948,9 @@
       "BookingConstraintTurnInput",
       "BookingConstraintTurnRequest",
       "BookingConstraintTurnWindow",
+      "BookingDepositRefundReceipt",
+      "BookingDepositRefundRequest",
+      "BookingDepositRefundState",
       "BookingPageTokenRequest",
       "BookingPageTokenResponse",
       "BookingRescheduleRequest",
@@ -208921,8 +208959,8 @@
      "path": "src/verbs/calendar.rs",
      "purpose": "Moved from `crates/oneiron/src/verbs/calendar.rs` (lib split W3: wire types below the lib)",
      "surface": {
-      "enum": 2,
-      "struct": 6
+      "enum": 3,
+      "struct": 8
      }
     },
     {
