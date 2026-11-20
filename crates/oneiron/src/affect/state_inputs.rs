@@ -232,8 +232,13 @@ struct Signal<'a> {
 }
 
 /// One measured signal as an observed claim, keyed by its own bytes: the
-/// same measurement twice is one claim. It cites every record it counted;
-/// past `limits.maintenance_row_items` it asks and still cites them all.
+/// same measurement twice is one claim. `counted_refs` lists every record it
+/// counted, as hex: an audit list, not a citation. A signal is an aggregate
+/// number, so it stays served after the records it counted are deleted, as
+/// the composite index that carries the same numbers does; a `refs` key would
+/// read as a consolidation envelope and fail live support (Engine
+/// AFFECT-SIGNAL-REFS-CITATION = B). Past `limits.maintenance_row_items` it
+/// asks and still lists them all.
 fn put_signal_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -259,7 +264,7 @@ fn put_signal_in_txn(
         (Value::from("window_end"), Value::from(window.end)),
         (Value::from("target"), Value::from(signal.target)),
         (
-            Value::from("refs"),
+            Value::from("counted_refs"),
             Value::Array(
                 signal
                     .refs
