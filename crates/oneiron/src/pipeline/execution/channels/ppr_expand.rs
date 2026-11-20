@@ -55,7 +55,10 @@ impl PipelineBuilder<'_> {
     // Implicit seed selection reads the PRELIMINARY blend above,
     // whose scores are decay-free, so seed choice depends only on
     // relevance. The D19 gate has already run, so a dead claim
-    // still never seeds; decay simply does not participate.
+    // still never seeds; decay simply does not participate. Every
+    // list that blend fused holds only the call's made_by slice, so
+    // a row the call drops never seeds implicitly; an explicit seed
+    // is the caller's own and stays.
     //
     // Returns `None` when `expand_ppr` is not configured.
     pub(super) fn expand_ppr_stage(
@@ -232,6 +235,13 @@ impl PipelineBuilder<'_> {
                 &mut ppr_results,
                 &self.read,
                 rtxn,
+                metadata_cache,
+                claim_gate,
+            )?;
+            self.retain_made_by_slice(
+                rtxn,
+                &mut ppr_results,
+                inputs.filter_config,
                 metadata_cache,
                 claim_gate,
             )?;

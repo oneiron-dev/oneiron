@@ -467,7 +467,14 @@ impl PipelineBuilder<'_> {
             {
                 diagnostics.succeeded.push(RetrievalSignal::Ppr);
                 record_ppr_cache_outcome(&mut diagnostics, ppr.cache);
-                let ppr_results = ppr.scores;
+                let mut ppr_results = ppr.scores;
+                self.retain_made_by_slice(
+                    rtxn,
+                    &mut ppr_results,
+                    filter_config,
+                    &mut metadata_cache,
+                    &mut claim_gate,
+                )?;
                 let deferred_cache_write = ppr.deferred_cache_write;
                 ppr_channel_index = Some(acc.admit_channel(
                     RetrievalSignal::Ppr,

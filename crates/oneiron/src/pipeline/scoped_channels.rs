@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use heed::RoTxn;
 
 use crate::corpus::CorpusScope;
@@ -18,7 +20,7 @@ use super::temporal_bound::{
 };
 use super::types::{
     ClaimStatusGateCache, EntityMetadataCache, FacetMode, PipelineFilterConfig, RelMode,
-    ScoredEntity, TemporalSearchConfig, WorldScope,
+    ScoredEntity, SnapshotCandidateFilter, TemporalSearchConfig, WorldScope,
 };
 
 impl PipelineBuilder<'_> {
@@ -136,6 +138,19 @@ impl PipelineBuilder<'_> {
         if !scoped {
             return Ok(false);
         }
+        self.made_by_slice_admits(rtxn, id, metadata, gate)
+    }
+
+    /// Whether the call's `made_by` slice admits `id`. An unborn claim's
+    /// class is its admitted body's source, read into `gate` when `gate` has
+    /// not judged the row yet.
+    pub(super) fn made_by_slice_admits(
+        &self,
+        rtxn: &RoTxn<'_>,
+        id: &crate::EntityId,
+        metadata: &mut EntityMetadataCache,
+        gate: &mut ClaimStatusGateCache,
+    ) -> Result<bool> {
         made_by_admits(&self.read, rtxn, id, self.made_by, || {
             if !gate.decisions.contains_key(id) {
                 claim_status_gate_allows(&self.read, rtxn, id, metadata, gate)?;
@@ -146,6 +161,42 @@ impl PipelineBuilder<'_> {
                 .and_then(Option::as_ref)
                 .and_then(|body| body.made_by_class()))
         })
+    }
+
+    /// Keeps the rows of a PPR walk's result list that the call's `made_by`
+    /// slice admits, before the list joins a blend. A row the slice drops
+    /// takes no rank in the fusion, counts as no candidate and seeds no
+    /// implicit expansion (REVIEW-9842). The walk's transit and an explicit
+    /// seed stay as the run's shared scope has them. As in a bounded
+    /// channel's cut, the slice reads an unborn claim's body in a probe
+    /// gate, and only the kept rows' answers join `claim_gate`, so a dropped
+    /// row adds no suppression.
+    pub(super) fn retain_made_by_slice(
+        &self,
+        rtxn: &RoTxn<'_>,
+        results: &mut Vec<ScoredEntity>,
+        filters: PipelineFilterConfig<'_>,
+        metadata: &mut EntityMetadataCache,
+        claim_gate: &mut ClaimStatusGateCache,
+    ) -> Result<()> {
+        if self.made_by == crate::provenance::made_by::MadeByPredicate::All {
+            return Ok(());
+        }
+        let mut probe_gate = claim_gate.fresh(filters.authority_filter.include_stale);
+        for scored in results.iter() {
+            if let Some(decision) = claim_gate.decisions.get(&scored.id) {
+                probe_gate.decisions.insert(scored.id, decision.clone());
+            }
+        }
+        let mut kept = Vec::with_capacity(results.len());
+        for scored in std::mem::take(results) {
+            if self.made_by_slice_admits(rtxn, &scored.id, metadata, &mut probe_gate)? {
+                kept.push(scored);
+            }
+        }
+        import_claim_gate_decisions_for_scores(claim_gate, &mut probe_gate, &kept);
+        *results = kept;
+        Ok(())
     }
 
     pub(super) fn scoped_temporal_results(
@@ -170,9 +221,35 @@ impl PipelineBuilder<'_> {
                 || self.memory_category,
             &self.params,
         )?);
+        // A made_by slice joins the reader's predicate, after the call's own:
+        // only rows it admits count toward the rounds' stops and take places
+        // in the window's bound, so rows it drops cannot fill the window
+        // ahead of the rows it keeps (REVIEW-9842).
+        let slice_caches = RefCell::new((
+            EntityMetadataCache::default(),
+            claim_gate.fresh(filters.authority_filter.include_stale),
+        ));
+        let in_slice = |store: &crate::store::StoreRead<'_>,
+                        txn: &RoTxn<'_>,
+                        id: &crate::EntityId|
+         -> Result<bool> {
+            if let Some(scope) = filters.candidate_filter
+                && !scope(store, txn, id)?
+            {
+                return Ok(false);
+            }
+            let (metadata, gate) = &mut *slice_caches.borrow_mut();
+            self.made_by_slice_admits(txn, id, metadata, gate)
+        };
+        let predicate: Option<&SnapshotCandidateFilter<'_>> =
+            if self.made_by == crate::provenance::made_by::MadeByPredicate::All {
+                filters.candidate_filter
+            } else {
+                Some(&in_slice)
+            };
         // Widen the collector's window, scan caps and score truncation, not
         // the request sigma settles on.
-        let Some(predicate) = filters.candidate_filter else {
+        let Some(predicate) = predicate else {
             let mut scores = execute_temporal(
                 &self.read,
                 rtxn,

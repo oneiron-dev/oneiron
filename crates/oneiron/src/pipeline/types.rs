@@ -208,7 +208,9 @@ pub(super) struct PipelineFilterConfig<'a> {
     /// The run's shared config holds `MadeByPredicate::All`: the narrowed
     /// walk's visibility, the TURN fold, the reranker's words, L2 evidence
     /// and the trace judge rows that are not results, and admit as before.
-    /// The post-blend filter still sweeps every candidate.
+    /// A PPR walk's result list takes the slice after the walk
+    /// (`PipelineBuilder::retain_made_by_slice`); the post-blend filter
+    /// still sweeps every candidate.
     pub(super) made_by: crate::provenance::made_by::MadeByPredicate,
 }
 

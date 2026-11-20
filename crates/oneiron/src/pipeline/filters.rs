@@ -182,10 +182,11 @@ pub(super) fn import_claim_gate_decisions_for_scores(
 /// Whether the call's `made_by` predicate admits `id` (Rule A, OF-466): a
 /// row's stamped birth names its class; a row with none falls back to its
 /// claim's source, which `claim_class` reads only then. Unknown never
-/// matches. The post-blend filter, the sound match's cut and the bounded
+/// matches. The post-blend filter, the sound match's cut, the bounded
 /// channels' admission ([`pipeline_candidate_matches_filters_and_gate`] under
-/// a config's `made_by`) all ask here, so a row the call drops sets no cut it
-/// then leaves (review #8107) and takes no place in a bounded fetch.
+/// a config's `made_by`) and a PPR walk's result list all ask here, so a row
+/// the call drops sets no cut it then leaves (review #8107), takes no place
+/// in a bounded fetch and seeds no implicit expansion.
 pub(super) fn made_by_admits(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
