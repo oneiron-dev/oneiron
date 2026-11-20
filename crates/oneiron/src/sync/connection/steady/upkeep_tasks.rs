@@ -21,6 +21,11 @@ pub(in crate::sync::connection) struct UpkeepTasks {
     pub(super) tombstone: Option<JoinHandle<()>>,
     /// This connection's owed machine-history rounds (FIX 3820).
     pub(super) machine_history: Vec<JoinHandle<()>>,
+    /// This connection's member-lane round: the tombstone id sets of the
+    /// windows it holds thin read copies of, on the sealed relay's cadence,
+    /// where a member lane runs no owner-machine upkeep (review round 2 of
+    /// #8364).
+    pub(super) member_tombstones: Option<JoinHandle<()>>,
     /// The async rounds of earlier connections still running.
     earlier_rounds: Vec<JoinHandle<()>>,
     /// The blocking jobs of earlier connections still running.
@@ -38,6 +43,7 @@ impl Default for UpkeepTasks {
             sealed: None,
             tombstone: None,
             machine_history: Vec::new(),
+            member_tombstones: None,
             earlier_rounds: Vec::new(),
             earlier_blocking: Vec::new(),
             jobs_running,
@@ -52,6 +58,7 @@ impl UpkeepTasks {
     pub(super) fn retire_slots(&mut self) {
         self.earlier_rounds.extend(self.sealed.take());
         self.earlier_rounds.append(&mut self.machine_history);
+        self.earlier_rounds.extend(self.member_tombstones.take());
         self.earlier_blocking.extend(self.tombstone.take());
         self.earlier_rounds.retain(|task| !task.is_finished());
         self.earlier_blocking.retain(|task| !task.is_finished());

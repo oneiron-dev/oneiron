@@ -397,6 +397,15 @@ impl SyncClient {
                     return Ok(Vec::new());
                 }
                 let window = self.ensure_window(window_key)?;
+                // A member lane sends no update the home's vector already
+                // covers: the home judges even an empty one as a write, and
+                // closes the socket of a member whose grant reads only
+                // (review round 2 of #8364). A real edit still goes, under
+                // the home's write gate.
+                if self.config.member_lane && server_vv.includes_vv(&window.doc.oplog_vv()) {
+                    self.note_home_window_vv(window_key, server_vv)?;
+                    return Ok(Vec::new());
+                }
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
                     return Ok(vec![replacement_request(window_key)?]);
                 };
