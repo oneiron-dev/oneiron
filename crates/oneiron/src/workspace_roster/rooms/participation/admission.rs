@@ -332,7 +332,7 @@ pub(in crate::workspace_roster::rooms) fn leader_answers_turn_in_txn(
 /// person, and a holder this vault knows as neither, keep their claim: a
 /// person claims only a turn that names no agent, and a turn's names never
 /// change.
-pub(super) fn claim_holder_released_in_txn(
+pub(in crate::workspace_roster::rooms) fn claim_holder_released_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
