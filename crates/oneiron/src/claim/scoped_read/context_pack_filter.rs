@@ -1,9 +1,18 @@
 //! Final actor-bound context-pack filtering before rendering and telemetry.
+use std::collections::HashMap;
+
 use super::access_gate::HeldAuthority;
 use super::*;
 use crate::context_pack::{ComposedFieldProducers, ContextPack};
 use crate::serialize::empty_context::{EmptyContext, EmptyReason};
 use crate::serialize::pack_accounting::PackCriticalAccounting;
+
+/// The walk's hop limit the filter keeps for a pack handed to it without
+/// one ([`ScopedRead::filter_context_pack`]): a neighbor stays only one edge
+/// from a kept result, the rule every pack had before. A pack run's own
+/// filter ([`crate::context_pack::UnfinalizedContextPack::filter_scoped_under`])
+/// keeps the hop limit its walk ran with.
+const DEFAULT_PACK_EDGE_HOPS: u32 = 1;
 
 impl ScopedRead<'_> {
     pub fn filter_context_pack(&self, pack: &mut ContextPack) -> Result<ScopedReadReceipt> {
@@ -24,6 +33,7 @@ impl ScopedRead<'_> {
             pack,
             &PackCriticalAccounting::default(),
             disclosure,
+            DEFAULT_PACK_EDGE_HOPS,
         )
     }
 
@@ -32,17 +42,21 @@ impl ScopedRead<'_> {
     /// only while this read admits it in the filter's snapshot: a critical
     /// row the filter kept, or one a budget cut that this read would
     /// retrieve and `disclosure` admits. A hidden candidate never counts
-    /// (FIX 9760). With no accounting, only the kept rows count.
+    /// (FIX 9760). With no accounting, only the kept rows count. A neighbor
+    /// stays within `edge_hops` edges of a kept result, the hop limit the
+    /// pack's walk ran with.
     pub(crate) fn filter_context_pack_critical_under(
         &self,
         pack: &mut ContextPack,
         critical: &PackCriticalAccounting,
         disclosure: Option<&crate::disclosure::DisclosureContext>,
+        edge_hops: u32,
     ) -> Result<ScopedReadReceipt> {
         self.filter_context_pack_listing_producers(
             pack,
             critical,
             disclosure,
+            edge_hops,
             &mut ComposedFieldProducers::default(),
         )
     }
@@ -57,6 +71,7 @@ impl ScopedRead<'_> {
         pack: &mut ContextPack,
         critical: &PackCriticalAccounting,
         disclosure: Option<&crate::disclosure::DisclosureContext>,
+        edge_hops: u32,
         producers: &mut ComposedFieldProducers,
     ) -> Result<ScopedReadReceipt> {
         let rtxn = self.grant_read_txn()?;
@@ -144,6 +159,8 @@ impl ScopedRead<'_> {
                     &filter,
                     &mut neighbors,
                     &results,
+                    edge_hops,
+                    &held,
                 )?;
             let suppressed = auxiliary_suppressed
                 .saturating_add(result_rows_suppressed)
@@ -263,13 +280,23 @@ impl ScopedRead<'_> {
             if admission.visible()
                 && self.add_turn_content(rtxn, policy, disclosure, &mut entity, producers)?
             {
-                self.filter_context_entity_edges(rtxn, policy, filter, &mut entity)?;
+                self.filter_context_entity_edges(rtxn, policy, filter, &mut entity, held)?;
                 kept.push(entity);
             }
         }
         Ok((kept, claims_suppressed, suppressed))
     }
 
+    /// Keeps the neighbors a chain of at most `edge_hops` edges reaches from
+    /// a kept result through kept neighbors, as the pack walk expands: each
+    /// step follows a kept row's reachable peers
+    /// ([`Self::context_entity_reachable_targets_in`]). A neighbor the walk
+    /// reached only through a row this read withholds, or past the hop
+    /// limit, stays out (review round 2 of #9849).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one snapshot's policy, filter and held authority, the rows and the walk's hop limit"
+    )]
     fn retain_neighbors_reachable_from_results(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -277,35 +304,35 @@ impl ScopedRead<'_> {
         filter: &ResolvedRetrievalFilter,
         neighbors: &mut Vec<ContextEntity>,
         results: &[ContextEntity],
+        edge_hops: u32,
+        held: &HeldAuthority,
     ) -> Result<(usize, usize)> {
+        let positions: HashMap<EntityId, usize> = neighbors
+            .iter()
+            .enumerate()
+            .map(|(position, entity)| (entity.id, position))
+            .collect();
         let mut reachable_ids = HashSet::new();
-        for entity in results {
-            if let Some(edges) = entity.edges.as_ref() {
-                reachable_ids.extend(
-                    edges
-                        .iter()
-                        .filter(|edge| context_pack_edge_can_reach_neighbor(edge))
-                        .map(|edge| edge.target),
-                );
-                continue;
-            }
-            let admitted = self.admitted_edges_in(
-                rtxn,
-                policy,
-                filter,
-                &entity.id,
-                EdgeDirection::Out,
-                None,
-                usize::MAX,
-                usize::MAX,
-                false,
-            )?;
-            for edge in admitted.edges {
-                let info = edge.info();
-                if context_pack_edge_can_reach_neighbor(&info) {
-                    reachable_ids.insert(info.target);
+        let mut frontier: Vec<&ContextEntity> = results.iter().collect();
+        for _ in 0..edge_hops {
+            let mut next = Vec::new();
+            for entity in frontier {
+                for target in
+                    self.context_entity_reachable_targets_in(rtxn, policy, filter, entity, held)?
+                {
+                    if let Some(neighbor) = positions
+                        .get(&target)
+                        .and_then(|position| neighbors.get(*position))
+                        && reachable_ids.insert(target)
+                    {
+                        next.push(neighbor);
+                    }
                 }
             }
+            if next.is_empty() {
+                break;
+            }
+            frontier = next;
         }
         let mut claims_suppressed = 0;
         let mut rows_suppressed = 0;
@@ -324,6 +351,48 @@ impl ScopedRead<'_> {
         }
         *neighbors = kept;
         Ok((claims_suppressed, rows_suppressed))
+    }
+
+    /// The peers a kept row's edges make reachable neighbors: the row's own
+    /// edges this filter kept, or, for a row that carries none, its out-edges
+    /// admitted under `held`, the authority that judged the rows, so a peer a
+    /// live Grant admits stays reachable from a row that Grant admits
+    /// (FIX-LIST SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS). Only an edge the
+    /// pack walk follows reaches a peer ([`context_pack_edge_can_reach_neighbor`]).
+    fn context_entity_reachable_targets_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        entity: &ContextEntity,
+        held: &HeldAuthority,
+    ) -> Result<Vec<EntityId>> {
+        if let Some(edges) = entity.edges.as_ref() {
+            return Ok(edges
+                .iter()
+                .filter(|edge| context_pack_edge_can_reach_neighbor(edge))
+                .map(|edge| edge.target)
+                .collect());
+        }
+        let admitted = self.admitted_edges_held_in(
+            rtxn,
+            policy,
+            filter,
+            &entity.id,
+            EdgeDirection::Out,
+            None,
+            usize::MAX,
+            usize::MAX,
+            false,
+            held,
+        )?;
+        Ok(admitted
+            .edges
+            .into_iter()
+            .map(|edge| edge.info())
+            .filter(context_pack_edge_can_reach_neighbor)
+            .map(|info| info.target)
+            .collect())
     }
 
     /// The claim's `FacetOf` targets, read through the same accessor as every
@@ -374,17 +443,25 @@ impl ScopedRead<'_> {
         Ok(facets)
     }
 
+    /// Keeps the edges of a kept row whose relation and peer this read
+    /// admits under `held`, the authority that judged the row: an edge
+    /// between two rows a live Grant admits stays with its row
+    /// (FIX-LIST SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS). Each kept edge
+    /// reads as this snapshot stores it, its short id kept: one retracted
+    /// since the assembly carries its retracted flag, so it reaches no
+    /// neighbor (review round 2 of #9849).
     fn filter_context_entity_edges(
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
         entity: &mut ContextEntity,
+        held: &HeldAuthority,
     ) -> Result<()> {
         let Some(edges) = entity.edges.as_mut() else {
             return Ok(());
         };
-        let admitted = self.admitted_edges_in(
+        let admitted = self.admitted_edges_held_in(
             rtxn,
             policy,
             filter,
@@ -394,16 +471,26 @@ impl ScopedRead<'_> {
             usize::MAX,
             usize::MAX,
             false,
+            held,
         )?;
-        let permitted: HashSet<_> = admitted
+        let mut current: HashMap<_, _> = admitted
             .edges
             .into_iter()
             .map(|edge| {
                 let info = edge.info();
-                (info.kind, info.target)
+                ((info.kind, info.target), info)
             })
             .collect();
-        edges.retain(|edge| permitted.contains(&(edge.kind, edge.target)));
+        edges.retain_mut(|edge| {
+            let Some(stored) = current.remove(&(edge.kind, edge.target)) else {
+                return false;
+            };
+            *edge = EdgeInfo {
+                target_short_id: edge.target_short_id.take(),
+                ..stored
+            };
+            true
+        });
         Ok(())
     }
 
@@ -468,8 +555,11 @@ impl ScopedRead<'_> {
     }
 }
 
+/// Whether a kept row's edge makes its peer a reachable neighbor: a kind
+/// the pack walk expands across ([`crate::context_pack::walk_expands_edge_kind`])
+/// and not retracted, as the walk judges each edge.
 fn context_pack_edge_can_reach_neighbor(edge: &EdgeInfo) -> bool {
-    !matches!(edge.kind, EdgeKind::ChildOf | EdgeKind::AssignedTo)
+    crate::context_pack::walk_expands_edge_kind(edge.kind)
         && !edge
             .provenance
             .is_some_and(|flags| flags.confirmation_status == EdgeConfirmationStatus::Retracted)

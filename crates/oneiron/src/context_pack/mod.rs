@@ -36,6 +36,7 @@ pub use builder::{
     ContextPackBuilder, SerializedContextPack, UnfinalizedContextPack, select_critical_pack_rows,
 };
 pub use composed_producers::ComposedFieldProducers;
+pub(crate) use edge_walk::walk_expands_edge_kind;
 pub use empty_pack::{EmptyContext, EmptyReason, refresh_projected_empty_context};
 pub(crate) use l2_base::L2BaseCache;
 pub use l2_base::L2BaseSummary;
