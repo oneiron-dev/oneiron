@@ -682,11 +682,13 @@ impl Vault {
     /// retracted ([`mirror_turn_program_wake_answers`]). Housekeeping runs it
     /// on every pass, after it admits what is owed. A base window this vault
     /// owes such a row that is not loaded is opened first, as a flush opens
-    /// one: its open writes the row from this vault's marks, stores it and
-    /// routes it (FIX TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN). An
-    /// entry is cleared once its window took this pass's rows; a window that
-    /// did not open keeps its entry for the next pass. Every other window
-    /// opened later writes its rows as it opens.
+    /// one: its open writes the row from this vault's marks and decisions,
+    /// stores it and routes it (FIX
+    /// TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN). An entry is cleared
+    /// once its window holds the rows: this pass opened it, or mirrored into
+    /// it, whether or not the mirror had anything left to write. A window
+    /// that did not open keeps its entry for the next pass. Every other
+    /// window opened later writes its rows as it opens.
     pub(crate) fn refresh_turn_program_wake_answers_in_live_windows(&self) {
         let owed = self.open_windows_owed_turn_program_wake_rows();
         let mut took = owed

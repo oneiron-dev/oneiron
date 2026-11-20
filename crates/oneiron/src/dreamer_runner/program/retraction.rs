@@ -630,23 +630,26 @@ impl RowsOwed {
     }
 
     /// Clears, in one writer, each entry read here that names one of
-    /// `windows`: those windows took this machine's rows after the entries
-    /// were read. An entry noted again since stands for the same row, which
-    /// its window took too: a wake's answer on one machine never changes
-    /// once it is known.
+    /// `windows` and still names it: those windows hold this machine's rows
+    /// as of a moment after the entries were read. An entry noted again
+    /// since under the same window stands for the same row, which that
+    /// window holds too: the row a machine owes for a retraction (its own
+    /// `Retracted`, or its answer to one) does not change once it owes it.
+    /// An entry noted since under another window stays.
     pub(crate) fn clear(&self, vault: &Vault, windows: &[WindowKey]) -> Result<()> {
-        let taken: Vec<&ActorWakeKey> = self
+        let taken: Vec<&(ActorWakeKey, String)> = self
             .0
             .iter()
             .filter(|(_, window)| windows.iter().any(|key| key.as_str() == window))
-            .map(|(key, _)| key)
             .collect();
         if taken.is_empty() {
             return Ok(());
         }
         vault.with_write_txn_grouped(|txn| {
-            for key in &taken {
-                ROW_OWED.delete(vault, txn, *key)?;
+            for (key, window) in &taken {
+                if ROW_OWED.get(vault, &*txn, key)?.as_ref() == Some(window) {
+                    ROW_OWED.delete(vault, txn, key)?;
+                }
             }
             Ok(())
         })

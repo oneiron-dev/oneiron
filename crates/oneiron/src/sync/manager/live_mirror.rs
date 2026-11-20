@@ -442,7 +442,9 @@ impl WindowManager {
     /// Opens each of `windows` that is not loaded, as a flush opens one
     /// ([`Self::open_window_for_room_fact_flush`]): a cold open writes what
     /// this vault owes the window, persists it and routes it, and the window
-    /// stays loaded among the flush-kept ones ([`Self::keep_flush_window`]).
+    /// joins the flush-kept ones ([`Self::keep_flush_window`], which unloads
+    /// the least recently used beyond [`ROOM_FACT_FLUSH_WINDOWS_KEPT`], so a
+    /// window opened early in a long call may be unloaded again by its end).
     /// Answers the windows this call opened; one that did not open is logged
     /// and left out (FIX TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN).
     pub(crate) fn open_windows_owed_rows(
