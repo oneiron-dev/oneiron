@@ -1522,6 +1522,84 @@ fn a_second_seat_s_tombstone_while_the_first_seat_s_cancelled_write_is_in_flight
 }
 
 #[test]
+fn a_second_seat_s_cancelled_version_of_the_first_seat_s_write_in_flight_is_no_host_cancel() {
+    // CAL-SECOND-SEAT-CANCELLED-VERSION-MISSES-OTHER-SEAT-WRITE: as the
+    // tombstone above, but the provider keeps the engine's cancel as a
+    // cancelled version of the resource. The second seat pulls that version
+    // while the first seat's write of it is still in flight: the shared
+    // passport is not marked yet, so the version may be the engine's own
+    // cancel coming back. It stays owed until the write settles, and is
+    // then the engine's own cancel.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let second = seat.install_second_seat(&fixture.vault, "seat:host-second");
+    let booked = written_only_booking(
+        &fixture,
+        &seat,
+        b"second-seat-cancelled-version",
+        "pi_second_seat_cancelled_version",
+    );
+    fixture
+        .cancel(&booked.cancel_token, NOW + 60)
+        .expect("the visitor cancels");
+    let stored = seat.write_with_lost_answer(&fixture.vault, booked.calendar.event_ref, NOW + 70);
+
+    second
+        .pull(
+            &fixture.vault,
+            &[seat.stored_own_write(&booked.calendar.uid)],
+            NOW + 80,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        cancel_statuses(
+            &fixture,
+            &booked.calendar.event_ref,
+            CalendarStatusBasis::ImportedCancel
+        ),
+        0,
+        "the second seat's cancelled version of the write before it settles is no host cancel"
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_second_seat_cancelled_version"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the second seat's cancelled version of the write in flight moves no money"
+    );
+
+    let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 90);
+    assert_eq!(
+        wrote.sequence, stored,
+        "the next write resumes the one in flight"
+    );
+    second
+        .pull(
+            &fixture.vault,
+            &[seat.stored_own_write(&booked.calendar.uid)],
+            NOW + 120,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        cancel_statuses(
+            &fixture,
+            &booked.calendar.event_ref,
+            CalendarStatusBasis::ImportedCancel
+        ),
+        0,
+        "the second seat's cancelled version of the settled write is no host cancel"
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_second_seat_cancelled_version"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the cancelled version of the engine's own cancelled write moves no money"
+    );
+}
+
+#[test]
 fn a_copy_whose_sync_answer_names_a_deleted_booking_s_uid_keeps_the_delete() {
     // Review round 2 of #9936: a sync answer carries the host's delete of a
     // booking written only to their seat beside a copy whose answer names
