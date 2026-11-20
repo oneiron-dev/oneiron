@@ -401,7 +401,7 @@ impl PipelineBuilder<'_> {
             }
 
             if let Some(config) = &self.temporal_search
-                && let Some(temporal_results) =
+                && let Some((temporal_results, temporal_withheld)) =
                     self.run_stage(RetrievalSignal::Temporal, stages.next(), || {
                         let mut config = config.clone();
                         config.limit = fusion_fetch_limit(config.limit);
@@ -419,6 +419,7 @@ impl PipelineBuilder<'_> {
                     })?
             {
                 diagnostics.succeeded.push(RetrievalSignal::Temporal);
+                acc.clamped_at_fetch.extend(temporal_withheld);
                 acc.admit_channel(
                     RetrievalSignal::Temporal,
                     temporal_results,
@@ -508,8 +509,9 @@ impl PipelineBuilder<'_> {
             }
 
             // The rows a clamped pack's audience may not read, kept out of
-            // the blend below (exact phonetic hits, and the rows of a list no
-            // bounded fetch asked); the preselection counts them.
+            // the blend below (exact phonetic hits, the rows of a list no
+            // bounded fetch asked, and the rows a fetch kept out of its
+            // window); the preselection counts them.
             let mut clamped_before_blend: Vec<crate::EntityId> = Vec::new();
             // Entity-type authority can narrow each channel before fusion.
             // CLAIM scalar constraints use the decoded post-fusion stage below.
@@ -568,6 +570,13 @@ impl PipelineBuilder<'_> {
                     }
                 }
             }
+            self.count_rows_clamped_at_fetch(
+                rtxn,
+                std::mem::take(&mut acc.clamped_at_fetch),
+                filter_config,
+                &claim_gate,
+                &mut clamped_before_blend,
+            )?;
             if acc.ranked_lists.is_empty() {
                 return Ok(RetrievalTxnOutput {
                     revisions: HashMap::new(),

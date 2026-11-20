@@ -3,6 +3,7 @@
 use super::admit::{AdmitSignal, ChannelAccumulator};
 use super::turn_fold;
 use crate::bm25::Bm25Config;
+use crate::disclosure::DisclosureContext;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::pipeline::builder::PipelineBuilder;
@@ -200,7 +201,7 @@ impl PipelineBuilder<'_> {
             .as_ref()
             .map(|(query, limit)| (query.as_str(), fusion_fetch_limit(*limit)));
         if let Some((query, limit)) = &text_search
-            && let Some((text_results, exhausted)) =
+            && let Some((text_results, exhausted, withheld)) =
                 self.run_stage(RetrievalSignal::Text, stages_left, || {
                     self.text_stage(
                         rtxn,
@@ -213,6 +214,7 @@ impl PipelineBuilder<'_> {
         {
             diagnostics.succeeded.push(RetrievalSignal::Text);
             text_exhausted = exhausted;
+            acc.clamped_at_fetch.extend(withheld);
             text_channel_index = Some(acc.admit_channel(
                 RetrievalSignal::Text,
                 text_results,
@@ -264,6 +266,7 @@ impl PipelineBuilder<'_> {
                             exact_posting_matches_scope: &mut retry_exact_posting_matches_scope,
                             private_note_ids: inputs.private_note_ids,
                         },
+                        (inputs.filter_config.disclosure, &mut acc.clamped_at_fetch),
                     )?
                 } else {
                     self.vault.text_scoped_in_txn(
@@ -324,7 +327,9 @@ impl PipelineBuilder<'_> {
     }
     /// The text stage itself: the scoped BM25 read, read on while folded
     /// turns are short, then cut to the run's own scope. Every candidate its
-    /// scope gate reads is a deadline checkpoint.
+    /// scope gate reads is a deadline checkpoint. Also returns the rows a
+    /// clamped pack's read kept out of its window
+    /// ([`Self::search_text_candidates`]).
     fn text_stage(
         &self,
         rtxn: &RoTxn<'_>,
@@ -332,7 +337,7 @@ impl PipelineBuilder<'_> {
         inputs: &TextChannelInputs<'_>,
         mut prefix_probe_claim_gate: ClaimStatusGateCache,
         (metadata_cache, claim_gate): (&mut EntityMetadataCache, &mut ClaimStatusGateCache),
-    ) -> Result<(Vec<ScoredEntity>, bool)> {
+    ) -> Result<(Vec<ScoredEntity>, bool, Vec<EntityId>)> {
         let scoped_text_limit = self.text_channel_limit(if inputs.overrides.widen_channel_limits {
             retry_channel_limit(limit)
         } else {
@@ -380,7 +385,11 @@ impl PipelineBuilder<'_> {
         let fold_cap = self.text_channel_limit(candidate_limit.saturating_mul(PER_SCAN_CAP_FACTOR));
         let mut fold_metadata = EntityMetadataCache::default();
         let mut fetch_limit = candidate_limit;
+        // The rows the last read kept out of its window: a longer read for
+        // folded turns places them anew.
+        let mut withheld = Vec::new();
         let (mut text_results, mut text_exhausted) = loop {
+            withheld.clear();
             let mut rows = if self.memory_category {
                 self.search_text_candidates(
                     rtxn,
@@ -391,6 +400,7 @@ impl PipelineBuilder<'_> {
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
                         private_note_ids: inputs.private_note_ids,
                     },
+                    (inputs.filter_config.disclosure, &mut withheld),
                 )?
             } else {
                 self.vault.text_scoped_in_txn(
@@ -458,7 +468,7 @@ impl PipelineBuilder<'_> {
             &mut prefix_probe_claim_gate,
             &text_results,
         );
-        Ok((text_results, text_exhausted))
+        Ok((text_results, text_exhausted, withheld))
     }
     /// Keeps the rows of a widened text read that the run's own scope
     /// admits, up to `requested` results. A run that folds each MESSAGE into
@@ -510,13 +520,19 @@ impl PipelineBuilder<'_> {
     }
 
     /// The memory lane's text read: every posting through the lane's kinds
-    /// and, when `filter_all`, through the run's whole scope as well.
+    /// and, when `filter_all`, through the run's whole scope as well, which
+    /// asks a clamp first. Read through the lane alone, a clamped pack's
+    /// read asks the clamp's own-row test too, so a row the audience could
+    /// not read whatever its status takes no place in the read's `limit`,
+    /// and hands such rows back in `withheld` while they rank inside the
+    /// places a read without the clamp gives the lane's rows.
     fn search_text_candidates<F>(
         &self,
         rtxn: &RoTxn<'_>,
         config: &Bm25Config,
         (query, limit, filter_all): (&str, usize, bool),
         options: crate::bm25::Bm25SearchOptions<'_, F>,
+        (clamp, withheld): (Option<&DisclosureContext>, &mut Vec<EntityId>),
     ) -> Result<Vec<crate::pipeline::ScoredEntity>>
     where
         F: FnMut(&EntityId) -> Result<bool>,
@@ -548,9 +564,27 @@ impl PipelineBuilder<'_> {
         } else if self.memory_category {
             // Category admission consumes no claim body. D19 decisions made by
             // prefix/widening probes remain reusable by fusion and projection.
+            // Hidden rows that outrank a readable one would fill the window
+            // and leave it only before the blend, cutting the readable row
+            // out of the run (REVIEW-9980 round 1), so the clamp asks first.
+            // The read judges rows best first until its window is full (with
+            // a port walk pending, every posting in index order), so a hidden
+            // row among the first `limit` lane rows it judges held a place
+            // the window gave it before: the pack counts it as it did then.
+            let mut clamp_metadata = EntityMetadataCache::default();
+            let mut places = 0_usize;
             let mut category = |id: &EntityId| {
-                super::super::super::capabilities::CapabilityLane::Memory
-                    .admits(&self.read, rtxn, id)
+                if !super::super::super::capabilities::CapabilityLane::Memory
+                    .admits(&self.read, rtxn, id)?
+                {
+                    return Ok(false);
+                }
+                let hidden = clamp_hides_row(&self.read, rtxn, id, clamp, &mut clamp_metadata)?;
+                if hidden && places < limit {
+                    withheld.push(*id);
+                }
+                places = places.saturating_add(1);
+                Ok(!hidden)
             };
             crate::bm25::search_text_category_with_recency(
                 &self.read,

@@ -21,7 +21,7 @@ use super::temporal_bound::{
 };
 use super::types::{
     ClaimStatusGateCache, EntityMetadataCache, FacetMode, PipelineFilterConfig, RelMode,
-    ScoredEntity, SnapshotCandidateFilter, TemporalSearchConfig, WorldScope,
+    ScoredEntity, TemporalSearchConfig, WorldScope,
 };
 
 impl PipelineBuilder<'_> {
@@ -330,13 +330,6 @@ impl PipelineBuilder<'_> {
         let Some(clamp) = filters.disclosure else {
             return Ok(Vec::new());
         };
-        let admission = filters.candidate_filter;
-        let scope = PipelineFilterConfig {
-            candidate_filter: None,
-            deadline: None,
-            disclosure: None,
-            ..self.bounded_result_filters(filters)
-        };
         let mut kept = Vec::with_capacity(results.len());
         let mut clamped = Vec::new();
         for scored in std::mem::take(results) {
@@ -344,12 +337,7 @@ impl PipelineBuilder<'_> {
                 kept.push(scored);
                 continue;
             }
-            if let Some(admits) = admission
-                && !admits(&self.read, rtxn, &scored.id)?
-            {
-                continue;
-            }
-            if meets_every_check_but_the_clamp(&self.read, rtxn, &scored.id, scope, claim_gate)? {
+            if self.clamp_withheld_row_counts(rtxn, &scored.id, filters, claim_gate)? {
                 clamped.push(scored.id);
             }
         }
@@ -357,6 +345,58 @@ impl PipelineBuilder<'_> {
         Ok(clamped)
     }
 
+    /// Adds to `clamped` each of `ids`, rows a clamped pack's fetches kept
+    /// out of their windows (the channel accumulator's `clamped_at_fetch`),
+    /// that counts among the rows the clamp withheld, as
+    /// [`Self::retain_rows_the_clamp_admits`] counts the rows it drops; each
+    /// row once.
+    pub(super) fn count_rows_clamped_at_fetch(
+        &self,
+        rtxn: &RoTxn<'_>,
+        ids: Vec<crate::EntityId>,
+        filters: PipelineFilterConfig<'_>,
+        claim_gate: &ClaimStatusGateCache,
+        clamped: &mut Vec<crate::EntityId>,
+    ) -> Result<()> {
+        for id in ids {
+            if !clamped.contains(&id)
+                && self.clamp_withheld_row_counts(rtxn, &id, filters, claim_gate)?
+            {
+                clamped.push(id);
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether a row a clamped pack's clamp keeps out of a list counts among
+    /// the rows it withheld: the call's candidate filter admits it, and it
+    /// meets every other check of the call
+    /// ([`meets_every_check_but_the_clamp`]).
+    fn clamp_withheld_row_counts(
+        &self,
+        rtxn: &RoTxn<'_>,
+        id: &crate::EntityId,
+        filters: PipelineFilterConfig<'_>,
+        claim_gate: &ClaimStatusGateCache,
+    ) -> Result<bool> {
+        if let Some(admits) = filters.candidate_filter
+            && !admits(&self.read, rtxn, id)?
+        {
+            return Ok(false);
+        }
+        let scope = PipelineFilterConfig {
+            candidate_filter: None,
+            deadline: None,
+            disclosure: None,
+            ..self.bounded_result_filters(filters)
+        };
+        meets_every_check_but_the_clamp(&self.read, rtxn, id, scope, claim_gate)
+    }
+
+    /// The temporal channel's list for the call's scope, and the rows a
+    /// clamped pack's unnarrowed list kept out of its cut because the
+    /// audience could not read them whatever their status, among the places
+    /// the cut would have given them without the clamp.
     pub(super) fn scoped_temporal_results(
         &self,
         rtxn: &RoTxn<'_>,
@@ -365,7 +405,7 @@ impl PipelineBuilder<'_> {
         filters: PipelineFilterConfig<'_>,
         metadata_cache: &mut EntityMetadataCache,
         claim_gate: &mut ClaimStatusGateCache,
-    ) -> Result<Vec<ScoredEntity>> {
+    ) -> Result<(Vec<ScoredEntity>, Vec<crate::EntityId>)> {
         let filters = self.bounded_result_filters(filters);
         let mut scoped_config = config.clone();
         scoped_config.widened = Some(scoped_temporal_channel_limit(
@@ -389,27 +429,36 @@ impl PipelineBuilder<'_> {
             EntityMetadataCache::default(),
             claim_gate.fresh(filters.authority_filter.include_stale),
         ));
-        let in_slice = |store: &crate::store::StoreRead<'_>,
-                        txn: &RoTxn<'_>,
-                        id: &crate::EntityId|
+        let sliced = self.made_by != crate::provenance::made_by::MadeByPredicate::All;
+        // A clamped pack's audience joins the reader too: a row it could not
+        // read whatever its status counts toward no stop and takes no place
+        // under a scan's cap or in the bound, so hidden rows nearer the
+        // anchor cannot cut a row it may read out of the run before the
+        // clamp drops them (REVIEW-9980 round 1).
+        let clamp = filters.disclosure;
+        let clamp_metadata = RefCell::new(EntityMetadataCache::default());
+        let in_reader = |store: &crate::store::StoreRead<'_>,
+                         txn: &RoTxn<'_>,
+                         id: &crate::EntityId|
          -> Result<bool> {
             if let Some(scope) = filters.candidate_filter
                 && !scope(store, txn, id)?
             {
                 return Ok(false);
             }
+            if clamp_hides_row(store, txn, id, clamp, &mut clamp_metadata.borrow_mut())? {
+                return Ok(false);
+            }
+            if !sliced {
+                return Ok(true);
+            }
             let (metadata, gate) = &mut *slice_caches.borrow_mut();
             self.made_by_slice_admits(txn, id, metadata, gate)
         };
-        let predicate: Option<&SnapshotCandidateFilter<'_>> =
-            if self.made_by == crate::provenance::made_by::MadeByPredicate::All {
-                filters.candidate_filter
-            } else {
-                Some(&in_slice)
-            };
+        let narrowed = filters.candidate_filter.is_some() || sliced;
         // Widen the collector's window, scan caps and score truncation, not
         // the request sigma settles on.
-        let Some(predicate) = predicate else {
+        if !narrowed && clamp.is_none() {
             let mut scores = execute_temporal(
                 &self.read,
                 rtxn,
@@ -427,8 +476,8 @@ impl PipelineBuilder<'_> {
                 self.has_strict_text_scope_filter(),
                 (metadata_cache, claim_gate),
             )?;
-            return Ok(scores);
-        };
+            return Ok((scores, Vec::new()));
+        }
         // Only rows the call's predicate admits count toward the rounds and
         // take places in the bound, and a row it refuses holds no place under
         // a scan's cap that a row it admits is denied, for a scope alone as for
@@ -436,7 +485,7 @@ impl PipelineBuilder<'_> {
         // takes the bound's cut as it reaches each row.
         // The memory lane's kinds are checked in that walk after the cut, so
         // no row past the cut is read for them.
-        let reader = ReadableRows::new(predicate, filters.deadline);
+        let reader = ReadableRows::new(&in_reader, filters.deadline);
         let (mut scores, cut) = execute_temporal_for_reader(
             &self.read,
             rtxn,
@@ -447,6 +496,41 @@ impl PipelineBuilder<'_> {
             filters.deadline,
             &reader,
         )?;
+        if !narrowed {
+            // A clamped pack's unnarrowed list: the cut keeps the rows the
+            // list kept with no clamp asked, less the hidden ones, and the
+            // list is cut as before.
+            let mut kept = Vec::with_capacity(scores.len());
+            for scored in scores {
+                if cut.keeps(&self.read, rtxn, &scored.id)? {
+                    kept.push(scored);
+                }
+            }
+            if self.memory_category {
+                super::capabilities::retain_memory_candidates(&mut kept, &self.read, rtxn)?;
+            }
+            // Best first under the request's sigma: a hidden row among the
+            // first `limit` held a place in the cut before, and the pack
+            // counts it as it did then.
+            let mut withheld = Vec::new();
+            let mut readable = Vec::with_capacity(kept.len());
+            for (place, scored) in kept.into_iter().enumerate() {
+                if reader.reads(&self.read, rtxn, &scored.id)? {
+                    readable.push(scored);
+                } else if place < config.limit {
+                    withheld.push(scored.id);
+                }
+            }
+            self.truncate_to_scope(
+                &mut readable,
+                rtxn,
+                config.limit,
+                filters,
+                self.has_strict_text_scope_filter(),
+                (metadata_cache, claim_gate),
+            )?;
+            return Ok((readable, withheld));
+        }
         let memory = self.memory_category;
         let kept = |store: &crate::store::StoreRead<'_>,
                     txn: &RoTxn<'_>,
@@ -467,7 +551,7 @@ impl PipelineBuilder<'_> {
             self.has_strict_text_scope_filter(),
             (metadata_cache, claim_gate),
         )?;
-        Ok(scores)
+        Ok((scores, Vec::new()))
     }
 
     /// `filters` for a bounded result channel's own admission and cut
