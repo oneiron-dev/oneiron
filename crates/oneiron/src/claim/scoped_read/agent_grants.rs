@@ -181,6 +181,37 @@ impl ScopedRead<'_> {
         false
     }
 
+    /// Whether a read that asked nothing of its own ([`Self::held_for`]
+    /// `(None)`) reads no row at all in `rtxn`: `filter` (B) denies all and,
+    /// for a reader A may stand for, none of the live Grants `held` holds in
+    /// `rtxn` reads a row alone either. A door that answers nothing to a
+    /// reader who reads nothing asks this, not B alone, once its rows take
+    /// the held row gate, since an identity agent's own floor reads nothing
+    /// (FIX-LIST SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS). It only skips:
+    /// every row the door serves still takes the row gate.
+    pub(super) fn reads_nothing_held_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        held: &HeldAuthority,
+    ) -> bool {
+        if !filter.deny_all {
+            return false;
+        }
+        let Some(reader) = self.grant_reader() else {
+            return true;
+        };
+        if matches!(held.grants().asked(), AskedFilter::Unknown) {
+            return true;
+        }
+        let grants = held.grants().of(reader, || {
+            reader_grants_or_empty_in(self.vault, rtxn, reader)
+        });
+        self.candidates_under_grants(policy, filter, None, &grants)
+            .deny_all
+    }
+
     /// The candidates a search under `filter` may rank (FIX 7528): the rows
     /// `filter` (B, resolved from `requested`) reads and, for a reader A may
     /// stand for, the rows each of its own live Grants reads alone under

@@ -515,7 +515,7 @@ impl ScopedRead<'_> {
             return Ok(Some(vec![id]));
         }
         let body = decode_claim_body(&record.body, true)?;
-        if !self.weave_claim_edge_admitted_in(txn, &read.policy, &read.filter, &body)? {
+        if !self.weave_claim_edge_admitted_in(txn, &read.policy, &read.filter, &read.held, &body)? {
             return Ok(None);
         }
         Ok(Some(match body.subject {
