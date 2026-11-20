@@ -86,7 +86,7 @@ impl Vault {
         leave_out: bool,
         seen: Option<PolicyRevision>,
     ) -> Result<ConversationTrainingView> {
-        let importance = if leave_out {
+        let importance = if !leave_out {
             OwnerActImportance::Ordinary
         } else {
             OwnerActImportance::Important

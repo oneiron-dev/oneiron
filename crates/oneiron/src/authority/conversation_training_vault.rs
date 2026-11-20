@@ -306,7 +306,7 @@ impl Vault {
         allow_opt_out: bool,
         seen: Option<PolicyRevision>,
     ) -> Result<ConversationLearningView> {
-        let importance = if on {
+        let importance = if !on {
             OwnerActImportance::Important
         } else {
             OwnerActImportance::Ordinary

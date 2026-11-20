@@ -124,7 +124,13 @@ impl Vault {
     ) -> Result<CheckpointPolicyView> {
         let (owner, surface) = match authority {
             ActAuthority::Owner(owner, surface) => (owner, *surface),
-            ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
+            ActAuthority::Agent(_) => {
+                let _witness = self.owner_presence(
+                    OwnerActImportance::Important,
+                    owner_presence_reasons::CHECKPOINT_POLICY,
+                )?;
+                return Err(authority_refused(OWNER_ONLY));
+            }
         };
         // The proof is this handle's before the confirm, as the paced turn's
         // key read it before the writer: a proof of another handle never

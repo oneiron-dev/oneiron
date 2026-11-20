@@ -370,7 +370,7 @@ impl Vault {
         role: MachineRole,
         seen: Option<[u8; 32]>,
     ) -> Result<MachineAnswerLanding> {
-        let witness = self.owner_presence(OwnerActImportance::Important, SET_MACHINE_ROLE)?;
+        let witness = self.owner_presence(OwnerActImportance::Ordinary, SET_MACHINE_ROLE)?;
         let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
