@@ -9,7 +9,9 @@
 //! under the filter still answers its ordinary calls, inputs read through
 //! regions included, and every verb of the probe answers under its list.
 //! A pinned first-party build named `probe` (an operator-trusted pack's)
-//! runs under the fixed tier list, not the probe's: its fork kills it.
+//! runs under the fixed tier list, not the probe's: its fork kills it. So
+//! does one named `image`, not under the host's image organ's list: its
+//! `getcwd` answers.
 //! Linux only: macOS has no seccomp.
 #![cfg(target_os = "linux")]
 
@@ -391,5 +393,39 @@ fn a_pinned_first_party_build_named_probe_runs_under_the_fixed_tier_list() {
     assert!(
         matches!(forked, Err(HostError::Crashed(_))),
         "a pinned build named probe forks nothing: {forked:?}",
+    );
+}
+
+#[test]
+fn a_pinned_first_party_build_named_image_runs_under_the_fixed_tier_list() {
+    let (_dir, vault) = vault();
+    let builds = tempfile::tempdir().expect("tempdir");
+    // The probe's bytes as an operator-trusted pack build named `image`,
+    // answering as that organ: pinned to their blake3 and first party.
+    let bytes = std::fs::read(PROBE).expect("the probe binary");
+    let mut spec = install_pinned_binary(
+        builds.path(),
+        "image",
+        &bytes,
+        Hash32::of(&bytes),
+        OrganTier::FirstParty,
+    )
+    .expect("the pinned build");
+    spec.args = vec!["--organ-name".into(), "image".into()];
+    spec.verbs = vec!["probe.reach".into()];
+    let image_host = OrganHost::new(HostConfig::default());
+    image_host.install(spec);
+    // The host's image organ's list names no file call; the fixed tier
+    // list names `getcwd`, which `std::env::current_dir` makes.
+    let mut read_cwd = call("probe.reach", reach("cwd", None, 0), Vec::new());
+    read_cwd.organ = "image".into();
+    let answered = image_host
+        .call(&vault, read_cwd)
+        .expect("a pinned build named image reads its working directory");
+    // The raw call answers the path's length, its NUL included.
+    assert!(
+        report_i64(&answered.report, "returned").is_some_and(|len| len > 0),
+        "getcwd answers: {:?}",
+        answered.report,
     );
 }

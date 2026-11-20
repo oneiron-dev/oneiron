@@ -56,8 +56,9 @@ pub(super) fn inet_socket(in_child: bool) -> Value {
 /// `set_limits`: its open-file limit set to what it reads, with
 /// `prlimit64`. `name`: the calling thread named with
 /// `prctl(PR_SET_NAME)`. `dumpable`: a read of its dumpable flag with
-/// `prctl(PR_GET_DUMPABLE)`. Answers the call's return and errno, as
-/// [`one_call`] does in the organ itself.
+/// `prctl(PR_GET_DUMPABLE)`. `cwd`: a read of its working directory with
+/// `getcwd`, as `std::env::current_dir` makes it. Answers the call's
+/// return and errno, as [`one_call`] does in the organ itself.
 pub(super) fn reach_process(which: &str, pid: Option<i64>, nice: i64) -> Value {
     let target = pid.unwrap_or_else(|| i64::from(std::process::id()));
     let target = libc::c_long::try_from(target).unwrap_or(-1);
@@ -69,7 +70,8 @@ pub(super) fn reach_process(which: &str, pid: Option<i64>, nice: i64) -> Value {
     // signal 0 sends nothing, a limit read is only read and a limit set
     // is the one just read, the memfd is this process's own (closed
     // below), the nice value set is the current one, and the dumpable
-    // flag is only read.
+    // flag and the working directory are only read, the latter into a
+    // buffer on this stack of the length passed.
     let returned = unsafe {
         match which {
             "signal" => libc::syscall(libc::SYS_tgkill, target, target, zero),
@@ -125,6 +127,10 @@ pub(super) fn reach_process(which: &str, pid: Option<i64>, nice: i64) -> Value {
                 c"probe-named".as_ptr(),
             ),
             "dumpable" => libc::syscall(libc::SYS_prctl, libc::c_long::from(libc::PR_GET_DUMPABLE)),
+            "cwd" => {
+                let mut path = [0_u8; 4096];
+                libc::syscall(libc::SYS_getcwd, path.as_mut_ptr(), path.len())
+            }
             _ => -1,
         }
     };
