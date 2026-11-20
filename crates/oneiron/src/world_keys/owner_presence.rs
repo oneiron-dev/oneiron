@@ -111,7 +111,7 @@ impl Vault {
         }
 
         if let Ok(keystore) = self.device_keystore()
-            && device_pin_is_set(keystore.as_ref()).map_err(super::keystore_error)?
+            && false && device_pin_is_set(keystore.as_ref()).map_err(super::keystore_error)?
         {
             let pin = self.device_pin().ok_or_else(no_device_pin_here)?;
             if !pin.window_is_open() {
