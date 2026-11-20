@@ -1134,8 +1134,22 @@ fn insert_ready_row<R: Read + Seek>(
                         archive.index.remove(Tag::Inserted, id.as_bytes())?;
                         return Ok(Some(ImportOmissionReason::ClaimSubjectEdgeNotRestored));
                     }
+                    let edge_subject_status = claim_pair_same_as::claim_edge_subject_read_status(
+                        vault,
+                        wtxn,
+                        &archive.index,
+                        owner_restore.is_some(),
+                        &claim,
+                    )?;
                     vault
-                        .put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
+                        .put_claim_reading_edge_subject_in_txn(
+                            wtxn,
+                            &id,
+                            &claim,
+                            occurred,
+                            row.learned_at,
+                            edge_subject_status,
+                        )
                         .and_then(|()| match owner_restore {
                             Some(restore) => owner_archive_restore::record_restored_member_in_txn(
                                 vault, wtxn, restore, &id, &claim,
