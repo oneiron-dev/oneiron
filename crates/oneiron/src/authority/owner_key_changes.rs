@@ -21,7 +21,14 @@
 //! holds a signer of: a removal whose signer a sibling handoff, appointment
 //! or counted revocation ended yields to it and ends nothing, so when its
 //! key ended all the same (a sibling `ReRoot` that fenced both keys, say),
-//! the removal is not why, and it lists nothing.
+//! the removal is not why, and it lists nothing. And only one that crossed:
+//! the key it removes signed a removal of its signer on a branch that never
+//! saw it, which the fold refused the same way. A removal whose signer
+//! another crossing ended yielded to that crossing: when C and A remove each
+//! other and A also removes B, A's removal of B ends nothing, so if B ended
+//! by a crossing of its own with D, the list names D's removal of B alone.
+//! The fold names no closed fence of a refused row, so a ring of three or
+//! more removals, each of the next one's signer, lists none of them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -39,8 +46,8 @@ pub enum OwnerKeyChangeKind {
     Removed,
     /// The key ended, and no counted removal names it: this `RevokeDevice`
     /// of it is one the fold refused only because its own signer's key ended
-    /// too, by a removal on a branch that never saw this entry (two removals
-    /// that cross end both keys and count neither entry).
+    /// too, by a removal that this key signed on a branch that never saw this
+    /// entry (two removals that cross end both keys and count neither entry).
     RemovedByEndedKey,
 }
 
@@ -72,8 +79,8 @@ impl Vault {
     /// enrolment entry, as [`Self::enrolled_owner_keys`] does; a key that
     /// two counted entries removed lists both removals. A key that ended
     /// with no counted removal lists each removal of it that a key of the
-    /// owner's signed and the fold refused for its signer alone, where only
-    /// removals that cross ended that signer
+    /// owner's signed and the fold refused for its signer alone, where the
+    /// removal it crossed, signed by the key it removes, ended that signer
     /// ([`OwnerKeyChangeKind::RemovedByEndedKey`]). Empty before any
     /// enrolment.
     ///
@@ -128,11 +135,15 @@ impl Vault {
     }
 }
 
-/// The settled fences that can make a refused removal yield, and the
-/// authority DAG of the rows this vault keeps, to place them against it.
+/// The settled fences that can make a refused removal yield, the refused
+/// removals it can cross, and the authority DAG of the rows this vault
+/// keeps, to place them against it.
 struct SignerFences<'a> {
     /// Each key's counted `RevokeDevice` rows.
     revocations: BTreeMap<&'a AuthorityKey, Vec<AuthorityEntryHash>>,
+    /// The `RevokeDevice` rows the fold refused for their signer alone
+    /// (`RetiredSigner`).
+    refused_revocations: Vec<(AuthorityEntryHash, &'a AuthorityLogEntry)>,
     /// The closed handoffs, settled or in conflict, and the counted root
     /// appointments.
     handoffs: Vec<AuthorityEntryHash>,
@@ -145,12 +156,20 @@ impl<'a> SignerFences<'a> {
     fn of(fold: &AuthorityFold, rows: &'a [(AuthorityEntryHash, AuthorityLogEntry)]) -> Self {
         let mut fences = Self {
             revocations: BTreeMap::new(),
+            refused_revocations: Vec::new(),
             handoffs: fold.closed_handoffs.iter().copied().collect(),
             parents: BTreeMap::new(),
         };
         for (hash, entry) in rows {
             fences.parents.insert(*hash, &entry.parent_hashes);
             if !fold.valid_entries.contains(hash) {
+                if matches!(entry.op, AuthorityOp::RevokeDevice { .. })
+                    && fold
+                        .issues
+                        .contains(&AuthorityFoldIssue::RetiredSigner(*hash))
+                {
+                    fences.refused_revocations.push((*hash, entry));
+                }
                 continue;
             }
             match &entry.op {
@@ -193,6 +212,38 @@ impl<'a> SignerFences<'a> {
         })
     }
 
+    /// Whether the refused removal `entry`, at `hash`, crossed: a removal
+    /// the fold refused the same way (`RetiredSigner`), on a branch that
+    /// never saw it, revokes a signer of `entry`, and the key `entry`
+    /// revokes signed it. The two hold each other's signers, so their fences
+    /// close together and each ends its key, unless a settled fence makes
+    /// either yield ([`Self::fence_a_signer_of`]). A removal whose signer
+    /// another crossing ended yielded to that crossing and ended nothing
+    /// (REVIEW-9584 round 2).
+    fn crossed(
+        &self,
+        fold: &AuthorityFold,
+        hash: AuthorityEntryHash,
+        entry: &AuthorityLogEntry,
+    ) -> bool {
+        let AuthorityOp::RevokeDevice { revoked_key } = &entry.op else {
+            return false;
+        };
+        self.refused_revocations.iter().any(|(other, crossing)| {
+            let AuthorityOp::RevokeDevice {
+                revoked_key: crossing_revoked,
+            } = &crossing.op
+            else {
+                return false;
+            };
+            self.concurrent(*other, hash)
+                && super::retired_signers::entry_signer_keys(crossing).any(|key| key == revoked_key)
+                && super::retired_signers::entry_signer_keys(entry)
+                    .any(|key| key == crossing_revoked)
+                && !self.fence_a_signer_of(fold, *other, crossing)
+        })
+    }
+
     /// Whether `a` and `b` are on branches that never saw each other.
     fn concurrent(&self, a: AuthorityEntryHash, b: AuthorityEntryHash) -> bool {
         a != b && !self.descends(a, b) && !self.descends(b, a)
@@ -220,8 +271,9 @@ impl<'a> SignerFences<'a> {
 /// The owner key change `entry`, at `hash`, is on `fold`: a counted
 /// enrolment that stands for its key among `enrolled`, a counted
 /// `RevokeDevice` of a key an enrolment names, or a `RevokeDevice` of such a
-/// key that ended it uncounted ([`ended_by_a_refused_removal`], and no fence
-/// of `fences` made it yield; `hosted` is as
+/// key that ended it uncounted ([`ended_by_a_refused_removal`], no fence of
+/// `fences` made it yield, and it crossed a removal of its signer,
+/// [`SignerFences::crossed`]; `hosted` is as
 /// [`AuthorityFold::proves_owner_acts`] takes it). None for any other entry.
 fn owner_key_change(
     fold: &AuthorityFold,
@@ -246,6 +298,7 @@ fn owner_key_change(
             } else if ended_by_a_refused_removal(fold, hash, key)
                 && signed_by_a_key_of_the_owners(fold, hosted, entry)
                 && !fences.fence_a_signer_of(fold, hash, entry)
+                && fences.crossed(fold, hash, entry)
             {
                 (OwnerKeyChangeKind::RemovedByEndedKey, key)
             } else {
@@ -271,8 +324,9 @@ fn owner_key_change(
 /// branch and only a removal of its signer, on a branch that never saw it,
 /// refused it. A refused entry of any other kind (a bad signature, a signer
 /// the roster never held) is no removal and lists nothing. The caller also
-/// asks who signed it ([`signed_by_a_key_of_the_owners`]) and whether a
-/// settled fence made it yield ([`SignerFences::fence_a_signer_of`]).
+/// asks who signed it ([`signed_by_a_key_of_the_owners`]), whether a settled
+/// fence made it yield ([`SignerFences::fence_a_signer_of`]) and whether it
+/// crossed the removal that ended its signer ([`SignerFences::crossed`]).
 fn ended_by_a_refused_removal(
     fold: &AuthorityFold,
     hash: AuthorityEntryHash,

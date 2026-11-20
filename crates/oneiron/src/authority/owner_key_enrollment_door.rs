@@ -161,7 +161,7 @@ pub struct EnrolledOwnerKey {
     /// A counted enrollment marks the key the recovery root's authority key,
     /// whatever [`Self::kind`] says of the listed one. With a machine in
     /// [`Self::device_machines`] the key is both, and the recovery kit ends
-    /// when that machine's removal, or the key's own, ends the key.
+    /// when that machine's removal ends the key; the key door refuses it.
     pub recovery_authority: bool,
 }
 

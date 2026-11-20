@@ -321,22 +321,35 @@ pub(super) fn last_device_key_confirmation(
 
 /// What a removal answers when it would end the last owner key held on a
 /// device and the owner has not confirmed (the owner's ruling AUTH-5): 409,
-/// state `last_device_key`, with what remains, and whether it would also
-/// end the recovery kit's key. Nothing was written.
+/// state `last_device_key`, with whether it would also end the recovery
+/// kit's key, and what proves a change of the owner's after it: a recovery
+/// kit's key that stays live still gives the owner's proof, so the vault
+/// keeps asking for it; with none, the vault takes the host's word until a
+/// key is enrolled again. Nothing was written.
 pub(super) fn last_device_key_refusal(remaining: RemainingOwnerKeys) -> ApiError {
-    let recovery = if remaining.ends_recovery_root {
-        "it also ends the recovery kit's key"
-    } else if remaining.recovery_root {
-        "the recovery kit's key stays enrolled"
+    let ends = if remaining.ends_recovery_root {
+        "this ends the last owner key held on a device, and the recovery kit's key with it"
     } else {
-        "no recovery kit's key stays enrolled"
+        "this ends the last owner key held on a device"
+    };
+    let after = match (remaining.recovery_root, remaining.ends_recovery_root) {
+        (true, false) => {
+            "The recovery kit's key stays enrolled and still proves a change of the owner's, \
+             so the vault keeps asking for an owner key's proof: until a key is enrolled on a \
+             device again, only the recovery kit's key gives it."
+        }
+        (true, true) => {
+            "Another recovery kit's key stays enrolled and still proves a change of the \
+             owner's, so the vault keeps asking for an owner key's proof: until a key is \
+             enrolled on a device again, only that key gives it."
+        }
+        (false, _) => {
+            "After it no owner key proves a change of the owner's: until one is enrolled \
+             again, the vault takes the host's word for them."
+        }
     };
     ApiError::new(
-        format!(
-            "this ends the last owner key held on a device; {recovery}. After it no owner key \
-             on a device proves a change of the owner's: until one is enrolled again, the vault \
-             takes the host's word for them. Nothing was written."
-        ),
+        format!("{ends}. {after} Nothing was written."),
         ApiErrorDetails::InvalidState {
             state: Some(LAST_DEVICE_KEY.to_owned()),
         },
