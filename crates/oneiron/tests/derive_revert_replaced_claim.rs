@@ -5,13 +5,17 @@
 //! DERIVE-REVERT-GENERATED-CLAIM). Such a claim stands again as a fresh copy
 //! under a new id, written as its original author, and the revert's receipt
 //! names the copy. A copy the Gate refuses leaves the claim closed and the
-//! `supersede` item listed as left.
+//! `supersede` item listed as left. The copy of a claim the batch itself
+//! landed is taken back with that claim's item, and a copy reads only where
+//! the claim it restores reads (review round 1 of #10048).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test derive_revert_replaced_claim`.
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use std::collections::BTreeSet;
 
 use oneiron::claim::{ClaimBody, ClaimSource};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
@@ -22,9 +26,11 @@ use oneiron::test_doors::derive::{
     Claim, Committed, Derived, Named, Supersede, commit, commit_claims, define_auto_agent,
     grant_derive_rows,
 };
+use oneiron::test_doors::source_audience::land_source_bound_artifact;
+use oneiron::test_doors::source_audience_binding::reads;
 use oneiron::test_doors::steward::dreamer;
 use oneiron::test_support::{bind_host_owner, test_host_issuer};
-use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
+use oneiron::{EdgeActorClass, EdgeKind, EntityId, Vault, WriteActor};
 use serde_json::json;
 
 const READER: &str = "reader";
@@ -440,4 +446,123 @@ fn the_owners_revert_of_a_dreamer_claim_stands_an_agents_generated_claim_again()
     assert_copy_of(&fixture, *copy, tea);
     assert_eq!(author(&fixture.body(*copy)), Some(agent));
     assert_eq!(fixture.standing_copies(tea), vec![*copy]);
+}
+
+#[test]
+fn a_claim_the_batch_itself_replaced_stands_under_no_id_after_the_revert() {
+    let fixture = fixture();
+    // One batch lands two claims and replaces the first by the second.
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-replace-own",
+        &[
+            Derived::Claim(fixture.claim("tea", "preference.tea")),
+            Derived::Claim(fixture.claim("green_tea", "preference.tea")),
+            Derived::Supersede(Supersede {
+                local: "replace_tea",
+                new: Named::Local("green_tea"),
+                old: Named::Local("tea"),
+            }),
+        ],
+    )
+    .expect("the batch commits");
+    assert!(
+        committed.items.iter().all(|item| item.landed),
+        "{:?}",
+        committed.items
+    );
+    let (tea, green_tea) = (committed.items[0].rows[0], committed.items[1].rows[0]);
+    assert_eq!(fixture.lifecycle(tea), "superseded");
+    assert_eq!(fixture.lifecycle(green_tea), "active");
+
+    let receipt = fixture
+        .vault
+        .derive_revert(
+            WriteActor::new(fixture.dreamer, EdgeActorClass::System),
+            None,
+            committed.batch,
+        )
+        .expect("the Dreamer reverts its own batch");
+    assert_eq!(
+        receipt.reverted,
+        vec![
+            "replace_tea".to_owned(),
+            "green_tea".to_owned(),
+            "tea".to_owned()
+        ]
+    );
+    assert!(receipt.left.is_empty(), "{:?}", receipt.left);
+    // The copy that stood in for `tea` went with the `tea` item.
+    assert!(receipt.copied.is_empty(), "{:?}", receipt.copied);
+    assert!(fixture.standing_copies(tea).is_empty());
+    let standing: Vec<EntityId> = fixture
+        .vault
+        .claims_for_subject(&fixture.person)
+        .expect("the person's claims")
+        .into_iter()
+        .filter(|id| fixture.lifecycle(*id) == "active")
+        .collect();
+    assert!(
+        standing.is_empty(),
+        "the revert leaves no claim of the batch standing: {standing:?}"
+    );
+}
+
+#[test]
+fn a_fresh_copy_reads_only_where_the_claim_it_restores_reads() {
+    let fixture = fixture();
+    let tea = fixture.landed(
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-tea",
+        "tea",
+        "preference.tea",
+    );
+    let (replacing, _) = fixture.dreamer_replaces(tea);
+    // The claim's one support is a row of a mailbox one person reads. It is
+    // attached after the supersession, so no batch reads under the
+    // mailbox's policy.
+    let owner = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    let (insider, outsider) = (EntityId::now(), EntityId::now());
+    let mailbox =
+        land_source_bound_artifact(&fixture.vault, BTreeSet::from([insider]), false, owner, 1)
+            .expect("a mailbox row");
+    fixture
+        .vault
+        .put_edge(&mailbox.row, EdgeKind::Supports, &tea, 1.0)
+        .expect("the claim's support");
+    assert!(
+        reads(&fixture.vault, tea, &[insider]).expect("the read"),
+        "FIXTURE: the mailbox's reader reads the claim learned from it"
+    );
+    assert!(
+        !reads(&fixture.vault, tea, &[outsider]).expect("the read"),
+        "FIXTURE: a person outside the mailbox's policy does not read the claim"
+    );
+
+    let receipt = fixture
+        .vault
+        .derive_revert(
+            WriteActor::new(fixture.dreamer, EdgeActorClass::System),
+            None,
+            replacing.batch,
+        )
+        .expect("the Dreamer reverts its own batch");
+    let [(_, replaced, copy)] = receipt.copied.as_slice() else {
+        panic!("one fresh copy: {:?}", receipt.copied);
+    };
+    assert_eq!(*replaced, tea);
+    assert!(
+        reads(&fixture.vault, *copy, &[insider]).expect("the read"),
+        "the mailbox's reader reads the copy of its claim"
+    );
+    assert!(
+        !reads(&fixture.vault, *copy, &[outsider]).expect("the read"),
+        "the copy read to a person outside the policy its claim was learned under"
+    );
 }

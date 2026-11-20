@@ -123,8 +123,9 @@ impl Vault {
     /// its recorded revision; an item changed since, one whose kind has no
     /// inverse here, or one whose inverse refuses is left standing and
     /// listed. A claim an undone item had replaced that does not reopen
-    /// stands again as a fresh copy, which the receipt names. The revert
-    /// keeps its own receipt.
+    /// stands again as a fresh copy, which the receipt names; the copy of a
+    /// claim this batch itself landed is taken back with that claim's item
+    /// and named nowhere. The revert keeps its own receipt.
     ///
     /// # Errors
     ///
@@ -173,6 +174,8 @@ impl Vault {
         let mut left = Vec::new();
         let mut copied = Vec::new();
         let mut reverted_rows = std::collections::BTreeSet::new();
+        // Each fresh copy this revert wrote, by the claim it restores.
+        let mut stand_ins = std::collections::BTreeMap::<EntityId, EntityId>::new();
         for item in record.items.iter().rev().filter(|item| item.landed) {
             let read: &heed::RoTxn<'_> = txn;
             let mut current = Vec::with_capacity(item.rows.len());
@@ -193,7 +196,27 @@ impl Vault {
                 left.push((item.local.clone(), REVERT_CHANGED_SINCE.to_owned()));
                 continue;
             }
-            if owner.is_none() && self.inverse_lifts_restriction_in(txn, item)? {
+            // A claim this batch landed and a later item of it replaced
+            // stands, if at all, as the fresh copy an inverse above wrote.
+            // The claim's own inverse takes that copy back in its place, so
+            // the revert leaves nothing of a claim the batch itself wrote
+            // (review round 1 of #10048).
+            let stand_in = (item.kind == "claim")
+                .then(|| item.rows.first().and_then(|row| stand_ins.get(row)))
+                .flatten()
+                .copied();
+            let stood;
+            let judged = match stand_in {
+                Some(copy) => {
+                    stood = ItemRecord {
+                        rows: vec![copy],
+                        ..item.clone()
+                    };
+                    &stood
+                }
+                None => item,
+            };
+            if owner.is_none() && self.inverse_lifts_restriction_in(txn, judged)? {
                 left.push((item.local.clone(), REVERT_LIFTS_RESTRICTION.to_owned()));
                 continue;
             }
@@ -205,7 +228,7 @@ impl Vault {
                     savepoint,
                     &record.actor,
                     reverter,
-                    item,
+                    judged,
                     now_ms,
                     &reverted_rows,
                 )
@@ -213,11 +236,14 @@ impl Vault {
                 Ok(Some(copies)) => {
                     reverted_rows.extend(item.rows.iter().copied());
                     reverted.push(item.local.clone());
-                    copied.extend(
-                        copies
-                            .into_iter()
-                            .map(|(replaced, copy)| (item.local.clone(), replaced, copy)),
-                    );
+                    if let Some(retired) = stand_in {
+                        copied.retain(|(_, _, copy)| *copy != retired);
+                        stand_ins.retain(|_, copy| *copy != retired);
+                    }
+                    for (replaced, copy) in copies {
+                        stand_ins.insert(replaced, copy);
+                        copied.push((item.local.clone(), replaced, copy));
+                    }
                 }
                 Ok(None) => {
                     left.push((item.local.clone(), REVERT_NO_INVERSE.to_owned()));

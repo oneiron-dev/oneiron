@@ -10,6 +10,9 @@
 //!
 //! The copy carries the member's predicate, value, confidence, window and
 //! axes under a new id, and is born of the member and of the reverted write.
+//! It derives from the member (a `derived_from` edge), so the policies the
+//! member's words were learned under bind the copy as they bind the member:
+//! a reader who does not read the member does not read its copy.
 //! An unsigned member's copy is written as the writer the engine attested for
 //! that exact row (never as an actor its evidence merely names), in the
 //! member's own facet and project and over its whole recorded lineage. The
@@ -22,7 +25,9 @@
 //!
 //! Both attempts run in savepoints that hand their post-commit work to the
 //! write's owner ([`crate::batch::savepoint_in_txn`]), so a reopened or
-//! copied claim reaches the live windows as any other write does.
+//! copied claim reaches the live windows as any other write does: the copy
+//! through the batch door, the reopen through the rows and the removed link
+//! the lifecycle queues for it.
 
 use rmpv::Value;
 
@@ -311,6 +316,11 @@ impl MemberCopy<'_> {
                 at,
             )
             .made_by(&copy, birth)
+            // The copy's words are the member's: it derives from the member,
+            // so it reads, travels and is held only where the member is, a
+            // use limit on the member binds it, and it is withdrawn with
+            // the member's row (review round 1 of #10048).
+            .edge(&copy, EdgeKind::DerivedFrom, &self.loser, 1.0)
             .apply(txn)?;
         // The copy stands the member's claim again: about a PERSON under a
         // cleanup archive, it restores her in the revert's transaction
