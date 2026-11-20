@@ -57,7 +57,7 @@ use super::hosted_selection::{self, HostedAuthMode, HostedDiscovery, HostedVault
 use super::recall::{Bridge, RpcRefusal};
 use crate::cli::ContinueArgs;
 use crate::commands::credential_file::PairedCredentialFile;
-use crate::commands::mcp_bridge::{INVOCATION_META, UNANSWERED_ERROR_KINDS, mint_invocation};
+use crate::commands::mcp_bridge::{self, INVOCATION_META, UNANSWERED_ERROR_KINDS, mint_invocation};
 
 /// How long the whole hand-off may take, the import of a long session and
 /// the push of a large tree included.
@@ -143,6 +143,8 @@ pub(crate) trait ContinueRemote {
     ) -> anyhow::Result<ContinueOutsideWorkCheckView>;
     /// Whether the selection can push: a paired slip.
     fn can_push(&self) -> bool;
+    /// The longest spec one call carries ([`carried_bytes`]).
+    fn carried_bytes(&self) -> usize;
     fn import(
         &mut self,
         request: &HookTranscriptImportRequest,
@@ -203,7 +205,8 @@ fn steps(remote: &mut dyn ContinueRemote, plan: &Plan, out: &mut dyn Write) -> a
         session.request.subagents.len(),
         session.path.display()
     )?;
-    let imported = remote.import(&session.request)?;
+    let calls = transcript::calls_within(&session, remote.carried_bytes())?;
+    let imported = import_calls(remote, &calls)?;
     writeln!(
         out,
         "Imported: conversation {}{}.",
@@ -429,22 +432,75 @@ fn passed_over(skipped: &[SkippedRunnerSeatView]) -> String {
 /// mcp` as the selection's own credential, in its own mode, under the
 /// consent `policy_ref` names. The bridge's stderr goes nowhere, as the
 /// local import's does: a hand-over's output is not the host's.
+///
+/// Only the log of the event's own session `session` goes, and only in
+/// calls the selection's carrier takes ([`transcript::calls_within`]): a log
+/// too long for it is refused before any bridge starts, so no hand-over
+/// sends a call that could never land.
 pub(super) fn hand_over_hosted(
     oneiron: &Path,
     vault: &HostedVault,
+    session: &str,
     log: &Path,
     policy_ref: String,
     deadline: Instant,
 ) -> anyhow::Result<()> {
-    let session = transcript::read_hook_log(log)?;
+    let logs = transcript::read_hook_log(log, session)?;
+    let calls = transcript::calls_within(&logs, carried_bytes(vault.auth_mode))?;
     let mut remote = Hosted::open(oneiron, vault, policy_ref, Stdio::null(), deadline)?;
-    let imported = remote.call::<HookTranscriptImportView>(
-        "vault.imports.hook_transcript",
-        &session.request,
-        "land this session's log in the selected vault",
-    );
+    let mut landed = Ok(());
+    for call in &calls {
+        landed = remote
+            .call::<HookTranscriptImportView>(
+                "vault.imports.hook_transcript",
+                call,
+                "land this session's log in the selected vault",
+            )
+            .map(drop);
+        if landed.is_err() {
+            break;
+        }
+    }
     remote.bridge.close();
-    imported.map(drop)
+    landed
+}
+
+/// What `oneiron mcp` adds to a call's spec on the way: the JSON-RPC line
+/// around it, the `_meta` the bridge adds, and the socket's frame.
+const CALL_ENVELOPE_BYTES: usize = 16 * 1024;
+
+/// The longest spec one call carries for a selection signed in in `mode`.
+/// The owner's calls go over the vault's socket alone, so within its frame;
+/// any other's go over HTTP past the socket's frame, so within the longest
+/// line `oneiron mcp` reads.
+fn carried_bytes(mode: HostedAuthMode) -> usize {
+    let line = match mode {
+        HostedAuthMode::Owner => mcp_bridge::SOCKET_MAX_OUTBOUND_FRAME,
+        HostedAuthMode::Slip | HostedAuthMode::OAuth => mcp_bridge::MAX_FRAME_BYTES,
+    };
+    line - CALL_ENVELOPE_BYTES
+}
+
+/// Lands the calls of one session's logs ([`transcript::calls_within`]) in
+/// turn, their answers as one: the session's CONVERSATION, every
+/// conversation each call reported, and the last review named.
+fn import_calls(
+    remote: &mut dyn ContinueRemote,
+    calls: &[HookTranscriptImportRequest],
+) -> anyhow::Result<HookTranscriptImportView> {
+    let mut landed: Option<HookTranscriptImportView> = None;
+    for call in calls {
+        let view = remote.import(call)?;
+        landed = Some(match landed {
+            None => view,
+            Some(mut all) => {
+                all.conversations.extend(view.conversations);
+                all.review = view.review.or(all.review);
+                all
+            }
+        });
+    }
+    landed.ok_or_else(|| anyhow::anyhow!("no call carried the session's log"))
 }
 
 /// The selected hosted vault, spoken to through one `oneiron mcp`.
@@ -570,6 +626,10 @@ impl ContinueRemote for Hosted<'_> {
 
     fn can_push(&self) -> bool {
         self.vault.auth_mode == HostedAuthMode::Slip
+    }
+
+    fn carried_bytes(&self) -> usize {
+        carried_bytes(self.vault.auth_mode)
     }
 
     fn import(
@@ -709,6 +769,10 @@ pub(crate) mod test_support {
 
         fn can_push(&self) -> bool {
             self.script.can_push
+        }
+
+        fn carried_bytes(&self) -> usize {
+            usize::MAX
         }
 
         fn import(

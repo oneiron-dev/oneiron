@@ -7,8 +7,8 @@
 //!   and recalls a short block for the project ([`recall`]).
 //! - `prompt` recalls a short block for the prompt from the bound vault.
 //! - `hand-over` queues the session's log for the running `serve` to import,
-//!   or sends a Claude Code log to the selected hosted vault the session's
-//!   start bound and recorded ([`hand_over`], [`session_binding`]).
+//!   or sends a Claude Code log to the selected hosted vault every start of
+//!   the session bound and recorded ([`hand_over`], [`session_binding`]).
 //! - `bind` binds a vault as `session-start` does and prints it as JSON, for
 //!   a plugin that runs inside its host (Hermes's memory provider).
 //!
@@ -138,10 +138,12 @@ fn session_start(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
         args.common.settings_file.as_deref(),
         deadline,
     );
-    // The session's hand-over sends its log to a hosted vault only when
-    // this start bound it.
-    if let Some(session) = session_id(&event) {
-        session_binding::record(session, bound.hosted.as_ref());
+    // A Claude Code session's hand-over sends its log only to the vault
+    // every start of it bound.
+    if import_source(host) == HistorySource::ClaudeCode
+        && let Some(session) = session_id(&event)
+    {
+        session_binding::record(session, bound.hosted.as_ref(), resumed(&event));
     }
     let mut said = bound.lines;
     let Some(url) = bound.url else {
@@ -253,12 +255,15 @@ fn recall_auth<'a>(
 /// config named, else of the running local vault, else of the default
 /// config, under the settings file named, else the running vault's own when
 /// the import takes that vault's config. With no config named, a Claude
-/// Code log goes instead to the selected hosted vault where the session's
-/// start bound that vault and it is still selected
-/// ([`bind::hand_over_target`]): through `vault.imports.hook_transcript`, as
-/// the selection's own credential, with nothing queued here. A send that
-/// fails is sent again whole by the session's next hand-over, and the import
-/// lands only what is new. Its output is not the host's.
+/// Code log goes by what the session's starts bound
+/// ([`bind::hand_over_target`]): to the selected hosted vault where every
+/// start bound that one and it is still selected, through
+/// `vault.imports.hook_transcript` as the selection's own credential, when
+/// the log is the event's own session's, with nothing queued here; nowhere
+/// where they bound a hosted vault no longer selected, or more than one
+/// vault. A send that fails is sent again whole by the session's next
+/// hand-over, and the import lands only what is new. Its output is not the
+/// host's.
 fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     let Some(event) = read_event() else {
         return;
@@ -275,19 +280,22 @@ fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     // The hosted vault takes only a Claude Code log, and a config named here
     // is a local queue's.
     let may_send = args.config.is_none() && import_source(host) == HistorySource::ClaudeCode;
-    let running = match bind::hand_over_target(session_id(&event).filter(|_| may_send)) {
-        HandOverTarget::Hosted(vault) => {
+    let session = session_id(&event).filter(|_| may_send);
+    let running = match (session, bind::hand_over_target(session)) {
+        (Some(session), HandOverTarget::Hosted(vault)) => {
             let policy_ref = format!("policy:{}-hooks", host.as_str());
             let _ = continue_command::hand_over_hosted(
                 &oneiron,
                 &vault,
+                session,
                 Path::new(transcript),
                 policy_ref,
                 deadline,
             );
             return;
         }
-        HandOverTarget::Local(running) => running.unwrap_or_default(),
+        (_, HandOverTarget::Hosted(_) | HandOverTarget::Withheld) => return,
+        (_, HandOverTarget::Local(running)) => running.unwrap_or_default(),
     };
     let mut command = oneiron_spawn::command(oneiron);
     command
@@ -350,6 +358,16 @@ fn session_id(event: &Map<String, Value>) -> Option<&str> {
         .get("session_id")
         .and_then(Value::as_str)
         .filter(|session| !session.is_empty())
+}
+
+/// Whether a session start goes on from turns that ran before it: Claude
+/// Code's `source` is not `startup` or `clear` (a resume, a compaction), or
+/// is not named.
+fn resumed(event: &Map<String, Value>) -> bool {
+    !matches!(
+        event.get("source").and_then(Value::as_str),
+        Some("startup" | "clear")
+    )
 }
 
 /// The git repository's folder name, else the working directory's.
