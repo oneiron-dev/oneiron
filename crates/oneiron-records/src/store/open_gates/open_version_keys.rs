@@ -3,6 +3,17 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v43 (FIX RETIRED-STANDING-REFUSAL-RECORDS-HANDOFF-ALARM-FOR-PLAIN-REVOKE;
+/// RULING REVOKED-KEY-ALARM-FIX-PATH = A): stored authority-log rows and
+/// saved handoff alarm rows keep their bytes and their meaning. A stored
+/// checkpoint image changes shape: its fold and its safety index each gain
+/// the keys a closed handoff or appointment fence holds, the only signers a
+/// door records handoff evidence for, so a refused late row of a key that
+/// only a revocation retired raises no handoff alarm. The authority fold
+/// schema moves 52 -> 53 with it, and an image of schema 52 no longer
+/// decodes. No old-shape reader or migration is provided (the lead's M-1
+/// stored-change rule, path "loud").
+///
 /// v42 (FIX HOSTED-REROOT-FOLD-RULE): stored authority-log rows keep their
 /// bytes and change meaning. A `ReRoot` signed by a key without the host's
 /// stamp (`ROLE_CLOUD` or tier `CloudCustodial`) no longer counts while the
@@ -275,7 +286,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 42;
+pub const STORAGE_ABI_VERSION: u16 = 43;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

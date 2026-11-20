@@ -50,10 +50,14 @@ pub struct AuthorityFold {
     pub valid_entries: ValidEntries,
     /// Fold-derived active/revoked roster.
     pub roster: BTreeMap<AuthorityKey, FoldedDevice>,
-    /// Keys a handoff (`ReRoot`) or a revocation (`RevokeDevice`) retired.
-    /// They stay revoked on every branch: no entry they sign stands outside
-    /// that row's own ancestry.
+    /// Keys a handoff (`ReRoot`), a counted root appointment or a revocation
+    /// (`RevokeDevice`) retired. They stay revoked on every branch: no entry
+    /// they sign stands outside that row's own ancestry.
     pub retired_keys: BTreeSet<AuthorityKey>,
+    /// The keys of `retired_keys` that a closed handoff or appointment fence
+    /// holds, whether or not a revocation holds them too. A door records
+    /// handoff evidence (OF-166) for these signers alone.
+    pub(super) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     /// Every key in the host's custody, as the fold's custody walk judged it
     /// on the merged history: read through [`AuthorityFold::in_host_custody`]
     /// (FIX 12196).
