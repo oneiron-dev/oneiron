@@ -8,6 +8,7 @@
 //! later edit is other bytes and lands once the limit has lifted. The row's erase forgets them.
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::ContentHash;
 
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
@@ -21,7 +22,7 @@ const DROPPED: SideTable<HexId, Vec<u8>, Raw> =
 const DIGEST_LEN: usize = 32;
 
 fn digest(blob: &[u8]) -> [u8; DIGEST_LEN] {
-    *blake3::hash(blob).as_bytes()
+    ContentHash::of(blob).into_bytes()
 }
 
 /// Whether the ingest dropped `blob`, a carrier of the row `id`, before.
