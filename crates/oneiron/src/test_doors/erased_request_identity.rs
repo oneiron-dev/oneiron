@@ -143,6 +143,29 @@ pub fn store_fields_call_in_room(
     Ok([agent, run])
 }
 
+/// Puts the replay record of `run` that `session`'s room holds again, as
+/// `agent`'s run, through the session's storage on its route now: into base
+/// once the stretch is on record, as an on-record append of a run the room
+/// began writes its whole record (REVIEW-10003 round 2).
+///
+/// # Errors
+///
+/// The record cannot be read in the room, or the put's refusal.
+pub fn put_room_record_again(
+    session: &OffRecordSession<'_>,
+    [agent, run]: [EntityId; 2],
+) -> Result<()> {
+    let record = session
+        .routed_side_read(|rtxn, read| replay_rows::get(&read, rtxn, &run))?
+        .ok_or(Error::InvariantViolation(
+            "the room holds no record of the run",
+        ))?;
+    let expected = Some(record.generation()?);
+    ExecutorStorage::for_session(session, agent)?
+        .put_owned_code_run_replay_record(&record, expected, run, agent)
+        .map(drop)
+}
+
 /// The one call `record` holds.
 fn first_call(record: Option<CodeRunReplayRecord>) -> Result<CodeRunBridgeCall> {
     record
