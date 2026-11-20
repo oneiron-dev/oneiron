@@ -914,6 +914,28 @@ impl Vault {
         ))
     }
 
+    /// [`Self::live_window`] for a tombstone publication to `key`. With no
+    /// live window, `key` stays held closed until the returned hold drops:
+    /// no open or replacement of it reads the persisted state the publication
+    /// rewrites and then puts back the state from before it
+    /// ([`crate::sync::WindowManager::publication_window`]). Lookup only, as
+    /// [`Self::live_window`] is.
+    #[cfg(feature = "sync")]
+    pub(crate) fn publication_window(
+        &self,
+        key: &crate::window_key::WindowKey,
+    ) -> crate::sync::manager::PublicationWindow {
+        let manager = self
+            .live_window_manager
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .upgrade();
+        match manager {
+            Some(manager) => manager.publication_window(key),
+            None => crate::sync::manager::PublicationWindow::Closed { _hold: None },
+        }
+    }
+
     /// Returns every registry-owned live window without faulting any closed
     /// month into memory. Promotion uses this because a newly unfenced target
     /// can release incident edges whose source belongs to another open month.

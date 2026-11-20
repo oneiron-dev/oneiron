@@ -272,7 +272,12 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     conflicts.extend(delete_wins(&candidate, &written)?);
     // A marker whose soft delete is still publishing it is left to that
     // publication, which re-proves the delete first. The held set is locked
-    // before the snapshot opens and through the selection.
+    // before the snapshot opens and through the selection. A publication to
+    // this closed window holds it closed from its lookup through its commit
+    // (`WindowManager::publication_window`), and this replacement waited for
+    // it: a held marker's publication either committed before `old` was
+    // read, which then carries its tombstone, or finds this window
+    // registered and publishes through it.
     let pending: Vec<_> = {
         let held = vault.store.tombstone_publications_in_flight.lock();
         let rtxn = vault.store.env.read_txn()?;

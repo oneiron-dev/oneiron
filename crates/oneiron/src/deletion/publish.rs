@@ -211,6 +211,7 @@ impl Vault {
         use crate::store::loro_document::{doc_version_vector, entity_carriers};
         use crate::store::window_protocol::DELETION_TOMBSTONE_ORIGIN;
         use crate::sync::bridge::with_deletion_tombstone_observer_a_suppressed;
+        use crate::sync::manager::PublicationWindow;
         use crate::sync::schema::create_window_doc;
         use crate::sync::window::{load_window_from_state, merge_persisted_state_into_doc};
         use crate::window_key::WindowKey;
@@ -218,7 +219,18 @@ impl Vault {
 
         let window_key = WindowKey::new(window_label);
 
-        if let Some((window, materializer, manager)) = self.live_window(&window_key) {
+        // A closed window stays held closed from this lookup through the
+        // transient publish txn's commit: a replacement that read its state
+        // before that commit would install over the tombstone the state from
+        // before it, and delete its `u:w:` row with the window's other
+        // pending updates.
+        let publication = self.publication_window(&window_key);
+        if let PublicationWindow::Live {
+            window,
+            materializer,
+            manager,
+        } = &publication
+        {
             // Live path: merge the on-disk record first (clobber guard —
             // a tombstone persisted transiently while this window was open
             // must survive the snapshot export below), then commit the
@@ -420,6 +432,7 @@ impl Vault {
             },
         )?;
         wtxn.commit()?;
+        drop(publication);
         self.notify_tombstone_publication(id, &window_key, value);
         Ok(true)
     }
