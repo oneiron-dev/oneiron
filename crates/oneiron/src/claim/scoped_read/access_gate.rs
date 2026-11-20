@@ -56,7 +56,9 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (RelationshipScope, bool) {
 /// ([`Self::judge_cited_coreference`]); only that row leaves its endpoint
 /// check to the walk. The seventh holds each room's admission of a
 /// retrieval hit for this read in this serving txn ([`Self::room_verdicts`],
-/// L9-52); no other row checks share it.
+/// L9-52); no other row checks share it. The eighth names the one record a
+/// named read judges through its cleanup archive
+/// ([`Self::reading_archive_of`]).
 #[derive(Default)]
 pub(super) struct HeldAuthority(
     RefCell<Option<AccessContextSnapshot>>,
@@ -66,6 +68,7 @@ pub(super) struct HeldAuthority(
     bool,
     Option<EntityId>,
     RoomVerdicts,
+    Option<EntityId>,
 );
 
 impl HeldAuthority {
@@ -80,6 +83,7 @@ impl HeldAuthority {
             false,
             None,
             RoomVerdicts::default(),
+            None,
         )
     }
 
@@ -95,6 +99,7 @@ impl HeldAuthority {
             self.4,
             self.5,
             RoomVerdicts::default(),
+            self.7,
         )
     }
 
@@ -112,13 +117,14 @@ impl HeldAuthority {
             self.4,
             self.5,
             RoomVerdicts::default(),
+            self.7,
         )
     }
 
     /// A peer's row checks in this read's serving txn: its own relationship
-    /// authority and legal non-use conjunct, under its own floor alone, and
-    /// this read's Grants and class verdicts, where it reads its own actor's
-    /// entry and its own reader's verdicts.
+    /// authority, legal non-use conjunct and archive conjunct, under its own
+    /// floor alone, and this read's Grants and class verdicts, where it reads
+    /// its own actor's entry and its own reader's verdicts.
     pub(super) fn for_peer(&self) -> Self {
         Self(
             RefCell::default(),
@@ -128,7 +134,20 @@ impl HeldAuthority {
             self.4,
             self.5,
             RoomVerdicts::default(),
+            None,
         )
+    }
+
+    /// These row checks for a named read of `id` through its cleanup archive
+    /// (ARCH-0055 section 10, archive-visible: "The archive stays visible to
+    /// the resolver"): `id`'s row lifts only the archive's own conjuncts, so
+    /// a removal, a stale mark, a legal-hold use limit, a stale body and a
+    /// withdrawn source still refuse it, and every other gate of the lane
+    /// judges it as before. Every other row, each source `id` was written
+    /// from and every peer's check included, keeps the archive conjunct.
+    pub(super) fn reading_archive_of(mut self, id: EntityId) -> Self {
+        self.7 = Some(id);
+        self
     }
 
     /// `judge` over the row checks of a record an `edge.provenance` or
@@ -167,6 +186,7 @@ impl HeldAuthority {
             true,
             id,
             RoomVerdicts::default(),
+            None,
         );
         let judged = judge(&cited);
         *self.0.borrow_mut() = cited.0.into_inner();
@@ -190,6 +210,12 @@ impl HeldAuthority {
     /// read that asks it on its own.
     pub(super) fn asks_use_of(&self, id: &EntityId) -> bool {
         self.1.as_ref() == Some(id)
+    }
+
+    /// Whether the read judges `id` through its cleanup archive
+    /// ([`Self::reading_archive_of`]).
+    pub(super) fn reads_archive_of(&self, id: &EntityId) -> bool {
+        self.7.as_ref() == Some(id)
     }
 
     /// The Grants this serving txn holds, by reader.

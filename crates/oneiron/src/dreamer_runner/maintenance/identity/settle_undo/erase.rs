@@ -36,6 +36,9 @@ impl SettleInverse {
         if self.entity == *id {
             changed |= self.hint_before.take().is_some();
             changed |= self.hint_after.take().is_some();
+            // The archive the pick lifted: its mint evidence hashes the
+            // erased record.
+            changed |= self.restored.take().is_some();
         }
         changed |= hints::erase_snapshot(&mut self.hint_before, id);
         changed |= hints::erase_snapshot(&mut self.hint_after, id);
