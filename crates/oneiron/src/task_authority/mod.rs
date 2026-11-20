@@ -1425,9 +1425,11 @@ impl Vault {
     /// Each root door calls it once the root is minted with this install's signer loaded,
     /// every later open that profiles this install calls it again, and every start whose
     /// keystore loads this install's signer calls it through
-    /// [`Self::adopt_unsigned_task_facts_logged`]. So a root whose adoption failed or was cut
-    /// off adopts at the next start, and so does a fact a door wrote while no signer was
-    /// loaded. With no root, no signer or nothing to adopt it writes nothing. It runs in one
+    /// [`Self::adopt_unsigned_task_facts_logged`], once more after the start's own root and
+    /// profile stand. So a root whose adoption failed or was cut off adopts at the next start,
+    /// a start that roots the vault after its keystore loaded the signer adopts at once, and
+    /// so does a fact a door wrote while no signer was loaded at the next start that loads
+    /// one. With no root, no signer or nothing to adopt it writes nothing. It runs in one
     /// transaction, so a failure leaves no twin, and a second call finds nothing left to
     /// adopt. Returns how many twins it wrote.
     pub fn adopt_unsigned_task_facts(&self) -> Result<usize> {
@@ -1440,18 +1442,20 @@ impl Vault {
         self.with_write_txn(|wtxn| self.adopt_task_facts_in_txn(wtxn))
     }
 
-    /// [`Self::adopt_unsigned_task_facts`] for a start that has just loaded this install's
-    /// signer: a fact a door wrote unsigned while no signer was loaded is adopted at the
-    /// next start that loads one. A vault no root roots yet adopts nothing here; its root
-    /// door adopts. It never fails the start: a failure is warned, and the next start tries
-    /// again. Returns how many twins it wrote, or 0 on a failure.
+    /// [`Self::adopt_unsigned_task_facts`] for a start: once its keystore has loaded this
+    /// install's signer, and again once the start's own root and this install's profile
+    /// stand. A fact a door wrote unsigned while no signer was loaded is adopted at the next
+    /// start that loads one, and a fact written before the root at the start that roots the
+    /// vault. A vault no root roots yet adopts nothing here. It never fails the start: a
+    /// failure is warned, and the next start tries again. Returns how many twins it wrote,
+    /// or 0 on a failure.
     pub fn adopt_unsigned_task_facts_logged(&self) -> usize {
         match self.adopt_unsigned_task_facts() {
             Ok(adopted) => {
                 if adopted > 0 {
                     tracing::info!(
                         adopted,
-                        "the task facts written while no signer was loaded were adopted"
+                        "the task facts this install wrote unsigned were adopted"
                     );
                 }
                 adopted
@@ -1460,7 +1464,7 @@ impl Vault {
                 tracing::warn!(
                     kind = ?error.kind(),
                     reason = %error,
-                    "the task facts written while no signer was loaded were not adopted; \
+                    "the task facts this install wrote unsigned were not adopted; \
                      the next start tries again"
                 );
                 0
