@@ -7272,7 +7272,7 @@
      "path": "src/authority/tests/world_reissue.rs",
      "purpose": "World privacy P6b acceptance across a root re-issue (contract §4, checks 7c and 7e): every install is a new…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 13
      }
     },
     {
@@ -29761,7 +29761,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 50,
+      "crate-vis": 51,
       "re-export": 15
      }
     },
@@ -29933,6 +29933,16 @@
       "enum": 2,
       "fn": 7,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/tombstone_publications_in_flight.rs",
+     "purpose": "The soft deletes whose `pt:` pending-tombstone marker has committed with their scrub while their own…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -36337,7 +36347,7 @@
      "path": "src/dreamer_runner/program/retraction.rs",
      "purpose": "The acknowledged retraction of a carried wake (FIX TURNPROGRAM-LATE-WITHHOLD-DOUBLE-DECIDE)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 20
      }
     },
     {
@@ -40676,13 +40686,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/skill_call.rs",
      "purpose": "One callable bridge entry between turns of an attached, leased run",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -86328,7 +86338,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/federated.rs",
@@ -87934,7 +87944,7 @@
      "path": "src/sync/ingest/message_writer.rs",
      "purpose": "Which machine wrote a MESSAGE row's exact bytes (FIX 12113)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -87976,7 +87986,7 @@
      "path": "src/sync/ingest/peer_import.rs",
      "purpose": "Which rows of a window a federation peer's import brought (Docs Q04)",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -88128,7 +88138,7 @@
      "path": "src/sync/manager/live_mirror.rs",
      "purpose": "The live mirror: rows a local commit writes reach the window docs this manager has loaded",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -90579,7 +90589,7 @@
      "path": "src/sync/window/tombstones.rs",
      "purpose": "Tombstone apply/export/replay plus window rebuild from updates",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 3
      }
     },
@@ -95816,7 +95826,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 332,
+      "mod": 333,
       "re-export": 2
      }
     },
@@ -96790,6 +96800,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/slip_store_fault.rs",
+     "purpose": "Damage one stored share entity row and one stored sharedInvitation row in place, past every write door, so a…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/snapshot_page_accounting.rs",
      "purpose": "Door for `tests/snapshot_page_ended_during_read.rs` (FIX SNAPSHOT-PAGE-STALE-BOUNDS-NO-EXPIRY): one step…",
      "surface": {
@@ -97084,14 +97104,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CappedRedactRuntime",
       "RedactRuntime",
       "StoredFeedbackProbe"
      ],
      "path": "src/test_doors/typed_reply_handle.rs",
      "purpose": "Doors for `tests/typed_reply_handle.rs` (census L8-13): a Redact post-hook binder with a fake hook runtime…",
      "surface": {
-      "fn": 3,
-      "struct": 2
+      "fn": 7,
+      "struct": 3
      }
     },
     {
@@ -111226,6 +111247,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_binding_ends_at_person_merge.rs",
+     "purpose": "A co-Owner merged or split away holds no owner standing, though its owner binding outlives the op (FIX…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -113590,6 +113619,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/skill_post_hook_large_answer.rs",
+     "purpose": "FIX 25025 (Engine RULING 22:31, option A): a skill-call post hook sees a large skill answer's whole body…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -113611,6 +113648,14 @@
      "notable": [],
      "path": "tests/slack_install_sweep.rs",
      "purpose": "UC-12 PR 1 (FIX SLACK-INSTALL-ROWS-NEVER-SWEPT): the pending Slack install table gets the sweep its module…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/slip_store_fault_not_refusal.rs",
+     "purpose": "A slip over an undecodable stored row is the vault failing to answer, not the credential failing to verify…",
      "surface": {}
     },
     {
@@ -114163,6 +114208,14 @@
      "notable": [],
      "path": "tests/turn_program_recorder_retraction.rs",
      "purpose": "A riding turn-program wake whose recording machine can no longer carry it (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/turn_program_retraction_row_cold_window.rs",
+     "purpose": "A retraction's rows and a window that is not loaded (FIX TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN)",
      "surface": {}
     },
     {
@@ -115341,7 +115394,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116419,7 +116472,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 341,
+     "files": 342,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116594,10 +116647,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 304,
+   "over_bar": 303,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8223,
-   "test_files": 1969
+   "source_files": 8225,
+   "test_files": 1973
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -158929,7 +158982,7 @@
      "path": "src/api/facade/skill_execution_doors.rs",
      "purpose": "Skill calls on the caller's attached run and owner-anchored pack outcomes",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -176663,6 +176716,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/admitted_skill_call_large_view_spill.rs",
+     "purpose": "[ADMITTED-SKILL-CALL-LARGE-POST-VIEW-SPILL] (FIX-LIST 29927): an admitted `self.skills.call` whose post-hook…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/agent_definition_served_batch.rs",
      "purpose": "The served row doors follow ARCH-0053:20 on their credential's agent slice: `vault.batch`, and the…",
      "surface": {}
@@ -180029,7 +180090,7 @@
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2042,
-   "test_files": 504
+   "test_files": 505
   },
   "oneiron-setting-contract": {
    "files": [
