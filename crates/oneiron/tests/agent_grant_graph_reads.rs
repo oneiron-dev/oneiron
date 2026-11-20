@@ -4,8 +4,8 @@
 //! and vault.productivity.tree. Their anchor and peer checks took the agent
 //! key's own floor alone, which reads nothing, so each answered no edge
 //! (FIX-LIST SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS, part 2a). vault.neighbors
-//! also reports that Grant's reach in its receipt, not deny_all. After the
-//! owner revokes the Grant none of them reads the edge.
+//! and `edges_out` also report that Grant's reach in their receipt, not
+//! deny_all. After the owner revokes the Grant none of them reads the edge.
 //!
 //! Public paths only: the embedded owner's door, `Vault::put_edge`, the
 //! agent's own `Vault::memory` handle and `Vault::scoped_read` of its key.
@@ -245,21 +245,38 @@ fn an_agents_edges_out_under_a_live_read_grant_list_the_edge() {
             .scoped_read(key)
             .edges_out(&fixture.source)
             .expect("the agent's edges_out");
-        read.value.map(|edges| {
+        let listed = read.value.map(|edges| {
             edges
                 .iter()
                 .filter(|edge| edge.kind == EdgeKind::Supports && edge.target == fixture.target)
                 .count()
-        })
+        });
+        (listed, read.receipt)
     };
+    let (listed, receipt) = edges_to_target();
     assert_eq!(
-        edges_to_target(),
+        listed,
         Some(1),
         "the live Grant admits the centre and its peer, yet edges_out lists no edge to it"
     );
+    for (scope, read) in [
+        ("requested", &receipt.requested),
+        ("actor_ceiling", &receipt.actor_ceiling),
+        ("applied", &receipt.applied),
+    ] {
+        assert!(
+            !read.deny_all,
+            "the {scope} scope of edges_out's receipt denies all under the live Grant: {receipt:?}"
+        );
+    }
+    assert!(
+        !receipt.narrowed_axes.iter().any(|axis| axis == "deny_all")
+            && !receipt.replan_hint.iter().any(|hint| hint == "deny_all"),
+        "edges_out's receipt names deny_all under the live Grant: {receipt:?}"
+    );
     fixture.revoke();
     assert!(
-        edges_to_target().is_none_or(|count| count == 0),
+        edges_to_target().0.is_none_or(|count| count == 0),
         "edges_out still lists the edge after the revoke"
     );
 }
