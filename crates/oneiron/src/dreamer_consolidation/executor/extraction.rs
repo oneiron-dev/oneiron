@@ -7,7 +7,7 @@ use crate::dreamer_consolidation::call_labels::{CallLabelMap, CandidateRel};
 use crate::dreamer_consolidation::extracted_people::MintNamespace;
 use crate::dreamer_consolidation::provenance::KeptDecision;
 use crate::dreamer_consolidation::roles::DEFAULT_BUDGET_TOKENS;
-use oneiron_model::llm::ModelLocality;
+use oneiron_model::llm::OWN_SERVER_ONLY_PARAM;
 use serde_json::{Value as JsonValue, json};
 
 pub(in crate::dreamer_consolidation) use super::decisions::identity_choice::identity_round_specs;
@@ -47,24 +47,24 @@ const EXTRACTION_ANSWER_TOKENS: u64 = 8_192;
 /// The output limit param every adapter folds into its provider's own field.
 const MAX_TOKENS_PARAM: &str = "max_tokens";
 
-/// The output limit and sampling a claim extraction call sends to a model at
-/// `locality`. An own server or an on-device model gets `max_tokens`, the
-/// default level's thinking budget plus [`EXTRACTION_ANSWER_TOKENS`], so a
-/// thought that spends its whole budget still leaves the answer its room.
-/// With no limit sent, the house EXL3 server capped the thought and the
-/// answer together at 4,096 tokens, and the answer got what the thought left.
-/// It also gets the sampling RESEARCH-1232 measured the ruled recipe with
-/// (the Qwen card's values): temperature 0.7, top_p 0.8, top_k 20, min_p 0,
-/// presence_penalty 1.5, frequency_penalty 0, repetition_penalty 1, so a
-/// server default never picks them. A hosted API is sent neither, as it is
-/// sent no thinking budget: its thought has no engine cap, so a total the
-/// engine picked would cut answers, and a hosted reasoning API refuses some
-/// of these sampling fields.
-fn extraction_params(locality: ModelLocality) -> BTreeMap<String, JsonValue> {
-    if locality == ModelLocality::ThirdParty {
-        return BTreeMap::new();
-    }
-    BTreeMap::from([
+/// The output limit and sampling a claim extraction call sends to an own
+/// server or an on-device model. `max_tokens` is the default level's thinking
+/// budget plus [`EXTRACTION_ANSWER_TOKENS`], so a thought that spends its
+/// whole budget still leaves the answer its room. With no limit sent, the
+/// house EXL3 server capped the thought and the answer together at 4,096
+/// tokens, and the answer got what the thought left. The sampling is the one
+/// RESEARCH-1232 measured the ruled recipe with (the Qwen card's values):
+/// temperature 0.7, top_p 0.8, top_k 20, min_p 0, presence_penalty 1.5,
+/// frequency_penalty 0, repetition_penalty 1, so a server default never picks
+/// it. [`OWN_SERVER_ONLY_PARAM`] names every one of them, so a hosted API is
+/// sent none, as it is sent no thinking budget: its thought has no engine cap,
+/// so a total the engine picked would cut answers, and a hosted reasoning API
+/// refuses some of these sampling fields. The call carries them whatever its
+/// seat's widest route is: a seat whose own server comes before a hosted rung
+/// is ThirdParty, yet its own server answers first, and the wire of the rung
+/// that answers keeps or drops them.
+fn extraction_params() -> BTreeMap<String, JsonValue> {
+    let mut params = BTreeMap::from([
         (
             MAX_TOKENS_PARAM.to_owned(),
             json!(DEFAULT_BUDGET_TOKENS + EXTRACTION_ANSWER_TOKENS),
@@ -76,7 +76,13 @@ fn extraction_params(locality: ModelLocality) -> BTreeMap<String, JsonValue> {
         ("presence_penalty".to_owned(), json!(1.5)),
         ("frequency_penalty".to_owned(), json!(0.0)),
         ("repetition_penalty".to_owned(), json!(1.0)),
-    ])
+    ]);
+    let own_server_only: Vec<JsonValue> = params.keys().map(|key| json!(key)).collect();
+    params.insert(
+        OWN_SERVER_ONLY_PARAM.to_owned(),
+        JsonValue::Array(own_server_only),
+    );
+    params
 }
 
 impl ConsolidationExecutor<'_> {
@@ -98,7 +104,7 @@ impl ConsolidationExecutor<'_> {
 
     /// The extraction request over `source` in `prompt`'s words, `source_rule`
     /// before it: a NOTE review's rule is `note_classification`'s (OF-073).
-    /// It carries [`extraction_params`] for its model's locality.
+    /// It carries [`extraction_params`].
     pub(in crate::dreamer_consolidation) fn request_over(
         call: &RoleCall<'_>,
         prompt: &ExtractionPrompt,
@@ -154,7 +160,7 @@ impl ConsolidationExecutor<'_> {
             }.with_purpose_defaults(),
             messages,
             tools: Vec::new(),
-            params: extraction_params(locality),
+            params: extraction_params(),
             provider_options: BTreeMap::new(),
             host_segments: None,
         })
