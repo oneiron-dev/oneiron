@@ -51,6 +51,7 @@ pub mod mcp_run_claim_lane;
 pub mod mcp_surface;
 pub mod media_job_spend;
 pub mod memory_owner_commit;
+pub mod memory_timeline_projection;
 #[cfg(unix)]
 pub mod merge_queue_checker_pressure;
 pub mod model_licence;
