@@ -22,8 +22,10 @@ use crate::Vault;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::ClaimReadStatus;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 
 /// The domain of a restored consolidated link's grant-use effect digest.
 const RESTORED_CONSOLIDATED_SAME_AS_DOMAIN: &[u8] = b"oneiron:restored-consolidated-same-as:v1";
@@ -115,6 +117,37 @@ pub(super) fn claim_pair_proof(
         restore_receipt_ref: text(&grant[split + 1..])?,
         status_claim,
     }))
+}
+
+/// The mode the live Owners read archived claim `claim`'s EdgeRef subject at
+/// when this import puts it, read in `txn`: [`ClaimReadStatus::Recorded`] on
+/// the owner's restore for a `core.coreference.status` claim on a `same_as`
+/// link between two CLAIMs that [`claim_pair_proof`] proves, since the
+/// link's two restored CLAIMs come back proposed, as every imported claim
+/// does, and the Surfaceable mode admits no proposed claim (FIX
+/// OWNER-RESTORE-OF-GRANTED-CLAIM-PAIR-LINK-ABORTS: the put refused the
+/// restored link as `EntityNotFound` and the whole restore aborted);
+/// [`ClaimReadStatus::Surfaceable`] for every other claim and door. The put
+/// still reads the exact live link and both its ends.
+pub(super) fn claim_edge_subject_read_status(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    inserted: &ArchiveIndex<'_>,
+    owner_restore: bool,
+    claim: &ClaimBody,
+) -> Result<ClaimReadStatus> {
+    if owner_restore
+        && claim.predicate == crate::claim::PREDICATE_COREFERENCE_STATUS
+        && let ClaimSubject::Edge {
+            source,
+            kind: EdgeKind::SameAs,
+            target,
+        } = claim.subject
+        && claim_pair_proof(vault, txn, inserted, source, target)?.is_some()
+    {
+        return Ok(ClaimReadStatus::Recorded);
+    }
+    Ok(ClaimReadStatus::Surfaceable)
 }
 
 /// The first active `core.coreference.status` claim the archive carries on
