@@ -204,6 +204,10 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
     }
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    // This test covers native-send/CID-5 gating, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     let id = EntityId::now();
     let actor = EntityId::now();
     vault.put_entity(
