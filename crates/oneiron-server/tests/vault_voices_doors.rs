@@ -79,7 +79,7 @@ use oneiron::authority::{
     CapabilitySlip, HostSlipIssuer, PairingPrincipal, pairing_binding_transcript,
 };
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::inbox::{NotificationKind, decode_notification_body};
+use oneiron::inbox::decode_notification_body;
 use oneiron::registry::{ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON};
 use oneiron::voice_identity::{
     VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState, VoiceEmbeddingFamily,
@@ -1787,7 +1787,8 @@ impl Served {
             .filter_map(|id| self.vault.get(&id).expect("a notification row"))
             .map(|body| decode_notification_body(&body).expect("a notification body"))
             .filter(|body| {
-                body.kind == NotificationKind::VoiceRecognitionWithdrawalLoggedForSubject
+                serde_json::to_value(body.kind).ok()
+                    == Some(json!("voice_recognition_withdrawal_logged_for_subject"))
                     && body.recipient.as_deref() == Some(recipient.as_str())
             })
             .map(|body| (body.source.result, body.source.detail))
