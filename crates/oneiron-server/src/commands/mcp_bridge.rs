@@ -76,12 +76,22 @@ const MAX_IN_FLIGHT: usize = 8;
 const MAX_FRAME_BYTES: usize = crate::config::REQUEST_BODY_FLOOR_MIN_BYTES as usize;
 
 /// The longest request frame the bridge writes to the server's socket: the
-/// server's default bound on an inbound socket frame. The server closes the
-/// socket on a longer one, failing every request in flight on it, so a
-/// longer request goes over HTTP instead, which reads bodies up to the
-/// request floor; the owner's, with no other carrier, is refused unsent. A
-/// server set to a lower bound still closes on a frame between the two.
-const SOCKET_MAX_OUTBOUND_FRAME: usize = crate::config::server_config::DEFAULT_MAX_FRAME_SIZE;
+/// lesser of the server's default bound on an inbound socket frame and the
+/// longest app payload it decodes (`MAX_DECODED_PAYLOAD_BYTES`) behind the
+/// frame's tag byte. The server closes the socket on a frame past either,
+/// failing every request in flight on it, so a longer request goes over
+/// HTTP instead, which reads bodies up to the request floor; the owner's,
+/// with no other carrier, is refused unsent. A server set to a lower frame
+/// bound still closes on a frame between the two.
+const SOCKET_MAX_OUTBOUND_FRAME: usize = {
+    let frame = crate::config::server_config::DEFAULT_MAX_FRAME_SIZE;
+    let tagged_payload = oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES + 1;
+    if tagged_payload < frame {
+        tagged_payload
+    } else {
+        frame
+    }
+};
 
 /// The largest answer the bridge takes from the server for one request.
 const MAX_REPLY_BYTES: usize = 16 * 1024 * 1024;
