@@ -81,6 +81,7 @@ mod weave_serve;
 mod weave_trigger;
 pub(crate) use claim_admission::{ClaimReadStatus, ClaimReadStatusExt};
 pub use frozen::FrozenReadLane;
+pub use graph_reads::TimelineRecordProjection;
 pub use named_reads::NamedSlot;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};

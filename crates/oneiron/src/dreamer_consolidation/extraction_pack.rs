@@ -23,13 +23,15 @@
 //! consumes the pack's earlier answers against the canonical options of the questions they
 //! answer. Every rebuild refusal fails closed toward `BAD_REQUEST` in the bound handler,
 //! which maps these errors by message plus the typed layout. The execution carries the
-//! checked owned rows out of the one validation transaction and runs them unsourced,
-//! since the extraction call source rows are unknown.
+//! checked owned rows out of the one validation transaction and runs them under the rows
+//! their input was read from, where the operand check knows those rows.
 
 mod checks;
+mod correction_listing;
 mod execution;
 mod finals;
 mod observed_beside;
+mod read_sources;
 mod reads;
 mod step_records;
 
@@ -245,7 +247,7 @@ pub(crate) fn rebuild_checked_pack(
         listed,
         priors,
         questions,
-        execution,
+        execution: execution.with_candidate_sources(context.bounds),
     })
 }
 

@@ -27,7 +27,10 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Instant;
 
-use oneiron::ingest::history::{HookTranscriptImportView, HookTranscriptSource};
+use oneiron::ingest::history::{
+    HookTranscriptImportRequest, HookTranscriptImportView, HookTranscriptPartView,
+    HookTranscriptSource,
+};
 
 use super::transcript::SessionLogs;
 use super::{Hosted, transcript};
@@ -43,8 +46,10 @@ use crate::commands::hook::hosted_selection::HostedVault;
 ///
 /// Only the log of the event's own session `session` goes ([`host_log`]),
 /// and only in calls the selection's carrier takes
-/// ([`transcript::calls_within`]): a log too long for it is refused before
-/// any bridge starts, so no hand-over sends a call that could never land.
+/// ([`transcript::calls_within`]); over the owner's socket, a request longer
+/// than one call goes in parts ([`land`]). A log too long even for that is
+/// refused before any bridge starts, so no hand-over sends a call that could
+/// never land.
 pub(in crate::commands::hook) fn hand_over_hosted(
     oneiron: &Path,
     vault: &HostedVault,
@@ -55,23 +60,47 @@ pub(in crate::commands::hook) fn hand_over_hosted(
     deadline: Instant,
 ) -> anyhow::Result<()> {
     let logs = host_log(host, log, session)?;
-    let calls = transcript::calls_within(&logs, transcript::carried_bytes(vault.auth_mode))?;
+    let carried = transcript::carried_bytes(vault.auth_mode);
+    let calls =
+        transcript::calls_within(&logs, carried, transcript::staged_bytes(vault.auth_mode))?;
     let mut remote = Hosted::open(oneiron, vault, policy_ref, Stdio::null(), deadline)?;
     let mut landed = Ok(());
     for call in &calls {
-        landed = remote
-            .call::<HookTranscriptImportView>(
-                "vault.imports.hook_transcript",
-                call,
-                "land this session's log in the selected vault",
-            )
-            .map(drop);
+        landed = land(&mut remote, call, carried);
         if landed.is_err() {
             break;
         }
     }
     remote.bridge.close();
     landed
+}
+
+/// Why a hand-over's calls are made, as their consent names it.
+const PURPOSE: &str = "land this session's log in the selected vault";
+
+/// Lands `request` over `remote`: in one `vault.imports.hook_transcript`
+/// call when its spec fits `carried` bytes, else in
+/// `vault.imports.hook_transcript_part` calls ([`transcript::parts`]), the
+/// last of which lands it.
+fn land(
+    remote: &mut Hosted<'_>,
+    request: &HookTranscriptImportRequest,
+    carried: usize,
+) -> anyhow::Result<()> {
+    if serde_json::to_vec(request)?.len() <= carried {
+        return remote
+            .call::<HookTranscriptImportView>("vault.imports.hook_transcript", request, PURPOSE)
+            .map(drop);
+    }
+    let mut imported = None;
+    for part in transcript::parts(request, carried)? {
+        let view: HookTranscriptPartView =
+            remote.call("vault.imports.hook_transcript_part", &part, PURPOSE)?;
+        imported = view.imported;
+    }
+    imported.map(drop).ok_or_else(|| {
+        anyhow::anyhow!("the hosted vault took the session's log in parts but did not land it")
+    })
 }
 
 /// The log at `path` that `host`'s event of the session `session` names,

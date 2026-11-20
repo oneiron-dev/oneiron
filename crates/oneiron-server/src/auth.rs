@@ -32,6 +32,7 @@ mod seat_model_door;
 mod slips;
 pub(crate) use binding_admission::{
     AUTHORITY_CLOCK_REPAIR_PATH, SUPPORT_REPAIR_PATH, admit_http_binding, admit_owner_proof,
+    door_refusal,
 };
 pub(crate) use client_address::{ClientAddress, client_address};
 pub(crate) use left_notices::left_notice_routes;
@@ -939,7 +940,7 @@ pub(crate) fn mint_core_token_v2(auth_secret: &str, claims: &str) -> String {
     format!("{CORE_TOKEN_V2_PREFIX}{claims}.{}", mac.to_hex())
 }
 
-fn bearer_token(headers: &HeaderMap) -> Result<Option<&str>, ApiError> {
+pub(crate) fn bearer_token(headers: &HeaderMap) -> Result<Option<&str>, ApiError> {
     let Some(value) = headers.get(AUTHORIZATION) else {
         return Ok(None);
     };
