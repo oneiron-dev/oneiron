@@ -376,10 +376,10 @@ pub mod verb_hook_ask;
 pub mod voice_generation_epoch;
 pub mod wake_d1_park_release;
 pub mod wake_envelope_ack;
-#[cfg(feature = "sync")]
-pub mod work_talk_replay;
 pub mod weave_arc_rederive;
 pub mod witness_project;
+#[cfg(feature = "sync")]
+pub mod work_talk_replay;
 pub mod workaround_skills;
 pub mod workspace_onboarding_halt;
 pub mod workspace_token;
