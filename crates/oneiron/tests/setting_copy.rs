@@ -19,19 +19,20 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use oneiron::authority::{HostSlipIssuer, MachineRole};
+use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::setting::{
     SetSetting, SetSettingOutcome, Setter, SettingCaller, SettingChange, SettingMode, SettingScope,
-    SettingSource,
+    SettingSource, SettingStanding,
 };
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::setting::{
-    EnrolledMachine, SlotName, carry_settings_between, enroll_machine_with_key,
-    forget_projected_setting_rows, land_setting_copy_from, ordered_cap_read, set_setting_as_engine,
-    setting_change, setting_frontier_of, setting_slot_heads,
+    EnrolledMachine, SettingFrontier, SlotName, carry_settings_between, enroll_machine_with_key,
+    forget_projected_setting_rows, land_setting_act_from, land_setting_copy_from, ordered_cap_read,
+    set_setting_as_engine, setting_change, setting_frontier_of, setting_slot_heads,
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_authority::authority::{
@@ -55,6 +56,12 @@ struct Fixture {
     _issuer: Option<HostSlipIssuer>,
     owner: EntityId,
     owner_proof: AuthenticatedOwner,
+}
+
+/// Another machine of the owner's, with its MACHINE id for removal.
+struct Other {
+    signer: EnrolledMachine,
+    machine: EntityId,
 }
 
 impl Fixture {
@@ -166,6 +173,61 @@ impl Fixture {
 
     fn second_machine(&self, seed: u8) -> EnrolledMachine {
         enroll_machine_with_key(&self.vault, &self.owner_proof, seed).expect("enrolled")
+    }
+
+    fn machines(&self) -> BTreeSet<EntityId> {
+        self.vault
+            .authority_fold()
+            .expect("the fold")
+            .machines
+            .keys()
+            .copied()
+            .collect()
+    }
+
+    fn other_machine(&self, seed: u8) -> Other {
+        let before = self.machines();
+        let signer = self.second_machine(seed);
+        let added: Vec<EntityId> = self.machines().difference(&before).copied().collect();
+        let [machine] = added.as_slice() else {
+            panic!("one machine enrolled: {added:?}");
+        };
+        Other {
+            signer,
+            machine: *machine,
+        }
+    }
+
+    /// The owner removes `other` on this install, as in the setting count proofs.
+    fn removes(&self, other: &Other) {
+        self.vault
+            .set_machine_role(
+                &self.owner_proof,
+                ActSurface::ThisInstall,
+                other.machine,
+                MachineRole::Removed,
+                None,
+            )
+            .expect("the owner removes the machine");
+    }
+
+    /// Where the acts on `CAP`'s project value row stand now.
+    fn frontier(&self, line: EntityId) -> SettingFrontier {
+        setting_frontier_of(&self.vault, &[value_row(line)]).expect("frontier")
+    }
+
+    /// A peer signs on the saved frontier of `CAP`'s project value row and lands here.
+    fn lands_from(&self, other: &Other, at: &SettingFrontier, line: EntityId, value: u64) {
+        land_setting_act_from(
+            &self.vault,
+            &other.signer,
+            self.owner,
+            at,
+            value_row(line),
+            Some(json!(value)),
+            T0,
+        )
+        .expect("the act is stored");
     }
 }
 
@@ -471,5 +533,168 @@ fn a_copy_that_leaves_out_a_head_it_replaces_is_no_valid_entry() {
         fx.cap_at(&[moved, new]).0,
         6,
         "and meets it: the looser line widens nothing"
+    );
+}
+
+/// A copy gives what the named safe move gives its source row, not its raw value.
+#[test]
+fn a_copy_of_a_safe_move_gives_what_that_act_gives_its_row() {
+    let fx = Fixture::rooted();
+    let other = fx.other_machine(0x64);
+    let mover = fx.second_machine(0x65);
+    let (source, moved) = (EntityId::now(), EntityId::now());
+    // CAP meets by minimum: 6 is strictly narrower than 9.
+    fx.owner_caps(source, 6).expect("the owner's narrow act");
+    let before_removal = fx.frontier(source);
+    fx.removes(&other);
+    fx.lands_from(&other, &before_removal, source, 9);
+    assert_eq!(
+        fx.cap_at(&[source]).0,
+        6,
+        "the safe widening gives the narrow 6 it replaced on its source row"
+    );
+    let live = setting_slot_heads(&fx.vault, value_row(source)).expect("the source heads");
+    assert_eq!(
+        live.len(),
+        1,
+        "the safe move is the source row's one live act"
+    );
+
+    // A peer's copy has no mover-local bound that could hide a raw-value read.
+    let frontier = setting_frontier_of(&fx.vault, &[carried(moved)]).expect("frontier");
+    let (_, counted) = land_setting_copy_from(
+        &fx.vault,
+        &mover,
+        &frontier,
+        &[(carried(moved), vec![(value_row(source), live[0])])],
+        T0,
+    )
+    .expect("the copy lands");
+    assert!(counted, "the live mover's copy counts in full");
+    assert_eq!(
+        fx.cap_at(&[moved]).0,
+        6,
+        "the copy gives what the safe move gives its row, not its own value"
+    );
+}
+
+/// A copy still reads its named safe move by its count after a later act replaces it.
+/// Rebuilding from the log must not use the named act's raw value or the source's new value.
+#[test]
+fn a_copy_reads_a_named_act_by_its_count_after_a_later_act_replaces_it() {
+    let fx = Fixture::rooted();
+    let other = fx.other_machine(0x66);
+    let mover = fx.second_machine(0x67);
+    let (source, moved) = (EntityId::now(), EntityId::now());
+    // CAP meets by minimum: 6 is strictly narrower than 9; the later 8 is distinct from both.
+    fx.owner_caps(source, 6).expect("the owner's narrow act");
+    let before_removal = fx.frontier(source);
+    fx.removes(&other);
+    fx.lands_from(&other, &before_removal, source, 9);
+    assert_eq!(
+        fx.cap_at(&[source]).0,
+        6,
+        "the safe widening gives the narrow 6 it replaced on its source row"
+    );
+    let live = setting_slot_heads(&fx.vault, value_row(source)).expect("the source heads");
+    assert_eq!(
+        live.len(),
+        1,
+        "the safe move is the source row's one live act"
+    );
+    let named = live[0];
+    let frontier = setting_frontier_of(&fx.vault, &[carried(moved)]).expect("frontier");
+    let (_, counted) = land_setting_copy_from(
+        &fx.vault,
+        &mover,
+        &frontier,
+        &[(carried(moved), vec![(value_row(source), named)])],
+        T0,
+    )
+    .expect("the copy lands");
+    assert!(counted, "the live mover's copy counts in full");
+
+    fx.owner_caps(source, 8).expect("the owner's later act");
+    assert_eq!(
+        fx.cap_at(&[source]).0,
+        8,
+        "the owner's later act counts in full on the source row"
+    );
+    assert!(
+        !setting_slot_heads(&fx.vault, value_row(source))
+            .expect("the source heads")
+            .contains(&named),
+        "the later owner act replaced the safe move the copy named"
+    );
+    fx.take_the_log_alone();
+    assert_eq!(
+        fx.cap_at(&[moved]).0,
+        6,
+        "the copy keeps the named act's safe count after replacement and rebuild from the log"
+    );
+}
+
+/// A copy follows a named act's count when a later concurrent entry holds that act back.
+/// The destination must tighten without a new act on its carried row.
+#[test]
+fn a_copy_follows_its_named_acts_count_when_a_later_entry_holds_it_back() {
+    let fx = Fixture::rooted();
+    let other = fx.other_machine(0x68);
+    let mover = fx.second_machine(0x69);
+    let (source, moved, elsewhere) = (EntityId::now(), EntityId::now(), EntityId::now());
+    // CAP meets by minimum: 6 is strictly narrower than 9.
+    fx.owner_caps(source, 6).expect("the owner's narrow act");
+    let before_widening = fx.frontier(source);
+    let concurrent = fx.frontier(elsewhere);
+    fx.lands_from(&other, &before_widening, source, 9);
+    assert_eq!(
+        fx.cap_at(&[source]).0,
+        9,
+        "the live carrier's widening counts in full before the concurrent entry arrives"
+    );
+    let live = setting_slot_heads(&fx.vault, value_row(source)).expect("the source heads");
+    assert_eq!(
+        live.len(),
+        1,
+        "the widening is the source row's one live act"
+    );
+    let frontier = setting_frontier_of(&fx.vault, &[carried(moved)]).expect("frontier");
+    let (copy, counted) = land_setting_copy_from(
+        &fx.vault,
+        &mover,
+        &frontier,
+        &[(carried(moved), vec![(value_row(source), live[0])])],
+        T0,
+    )
+    .expect("the copy lands");
+    assert!(counted, "the separate mover's copy counts in full");
+    assert_eq!(
+        fx.cap_at(&[moved]).0,
+        9,
+        "the copy initially gives the named widening's full value"
+    );
+
+    // The same signer advances on old parents that exclude its widening and the copy.
+    // Its higher-sequence sibling floors the widening; the separate mover is unaffected.
+    fx.lands_from(&other, &concurrent, elsewhere, 5);
+    let read = ordered_cap_read(&fx.vault, &[SettingScope::Project(source)])
+        .expect("the source read after its count moves");
+    assert_eq!(
+        (read.value, read.standing),
+        (6, SettingStanding::Held),
+        "the named widening now counts as held and gives the narrow 6 it replaced"
+    );
+    fx.vault
+        .project_settings()
+        .expect("the pass rechecks the copy");
+    assert_eq!(
+        fx.carried_heads(moved),
+        vec![copy],
+        "the destination still has exactly its original copy and no new act"
+    );
+    assert_eq!(
+        fx.cap_at(&[moved]).0,
+        6,
+        "the unchanged copy follows its named act's new safe count without a new destination act"
     );
 }
