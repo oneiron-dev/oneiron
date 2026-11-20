@@ -360,6 +360,7 @@ pub mod sync_parted_row_binding;
 #[cfg(feature = "sync")]
 pub mod sync_whole_row_binding;
 pub mod task_ask_role_routing;
+pub mod task_fact_actor;
 pub mod task_refusal_output;
 pub mod tombstone_replay;
 #[cfg(feature = "sync")]
