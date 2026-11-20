@@ -3,7 +3,9 @@
 //! that reads that scope once the row is gone (FIX 10161). The facets the
 //! record was stamped into go with it, because a selector narrowed to some
 //! facets selects a row by those stamps and the delete sweeps them out of the
-//! window (SELECTOR-FACET-EXPORT-DROPS-BODYLESS-TOMBSTONES).
+//! window (SELECTOR-FACET-EXPORT-DROPS-BODYLESS-TOMBSTONES). So do the
+//! worlds whose words it carried, because the delete takes the edges and
+//! sources the device-only check reads them by (REVIEW-10024).
 //!
 //! A capture never fails, delays or rolls back the delete it runs in: an error
 //! is logged, and the tombstone is then not exported to a narrower grant.
@@ -20,6 +22,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::settings::CarriedWorlds;
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::{ManifestDbs, Store};
 use oneiron_authority::federation::{Scope, ScopeId};
@@ -62,6 +65,17 @@ pub(crate) struct DeletedRecordScope {
     /// its tombstone stays off such a selector, as before.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(crate) facet_of: BTreeSet<ScopeId>,
+    /// The worlds whose words the record carried, its sources' among them,
+    /// as the device-only check reads a live row
+    /// ([`crate::settings::carried_worlds_in`]). The delete takes the row's
+    /// `InWorld` edges and sources with it, so an export judges the
+    /// tombstone of a purged row against the worlds it keeps off its
+    /// destination by these (REVIEW-10024). A read that failed is unknown,
+    /// which keeps the tombstone home while any world is flagged. A capture
+    /// written before the field existed has none, and its tombstone is
+    /// judged as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) carried_worlds: Option<CarriedWorlds>,
 }
 
 /// One deleted record's captured scope. Key: hex32 (entity id).
@@ -186,19 +200,23 @@ fn capture_in_txn(
                     live_relationship_read(store, txn, id, &raw),
                     EntityMetadataHeader::parse(&raw).map(|header| header.entity_type),
                     live_facet_stamps(store, txn, id, &raw),
+                    live_carried_worlds(store, txn, id),
                 )
             })
         }
         None => None,
     };
     let row = match (captured, held) {
-        (Some((scope, relationship_read, entity_type, facet_of)), held) => DeletedRecordScope {
-            scope,
-            request: request.copied().or(held.and_then(|row| row.request)),
-            relationship_read: Some(relationship_read),
-            entity_type,
-            facet_of,
-        },
+        (Some((scope, relationship_read, entity_type, facet_of, carried_worlds)), held) => {
+            DeletedRecordScope {
+                scope,
+                request: request.copied().or(held.and_then(|row| row.request)),
+                relationship_read: Some(relationship_read),
+                entity_type,
+                facet_of,
+                carried_worlds: Some(carried_worlds),
+            }
+        }
         (None, Some(held)) => {
             if request.is_none() || request == held.request.as_ref() {
                 return Ok(());
@@ -209,6 +227,7 @@ fn capture_in_txn(
                 relationship_read: held.relationship_read,
                 entity_type: held.entity_type,
                 facet_of: held.facet_of,
+                carried_worlds: held.carried_worlds,
             }
         }
         (None, None) => return Ok(()),
@@ -280,6 +299,24 @@ fn facet_stamps(
         }
     }
     Ok(stamps)
+}
+
+/// The worlds whose words the live row `id` carries, its sources' among them
+/// ([`crate::settings::carried_worlds_in`]). A read that fails names no
+/// world: unknown, so the tombstone stays home while any world is flagged,
+/// and the capture still lands.
+fn live_carried_worlds(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> CarriedWorlds {
+    crate::settings::carried_worlds_in(store, txn, id).unwrap_or_else(|error| {
+        tracing::warn!(
+            %error,
+            entity = %id.to_hex(),
+            "deleted record's worlds not captured; its tombstone stays home while any world is device-only"
+        );
+        CarriedWorlds {
+            worlds: BTreeSet::new(),
+            unknown: true,
+        }
+    })
 }
 
 fn warn_uncaptured(id: &EntityId, error: &Error) {
