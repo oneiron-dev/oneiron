@@ -11,7 +11,7 @@
 //! BUDGET-CEILING): the prediction entry carries only the set's digest and counts, the set body
 //! is content-addressed, and only the target machine fetches it, by digest, over its connection.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use oneiron_retrieval::pipeline::ScoredEntity;
 
@@ -49,12 +49,53 @@ pub(crate) const PREDICT_DEPTH: u32 = 2;
 /// (that module keeps its own `STANDARD_PPR_ALPHA` private).
 const PREDICT_PPR_ALPHA: f32 = 0.15;
 /// The shortest spacing between two predictions the home pushes one machine under one parent, in
-/// authority-clock seconds: half the machine's shortest ask spacing (an hour after a reconnect,
-/// `sync::connection::predicted`), so an honest machine's ask is never held back, while a machine
-/// that asks more often appends at most one signed entry per spacing to the owner's authority log
-/// (FIX PREDICTED-DIRECTIVES-GROW-AUTHORITY-LOG). Signed entries are never compacted away: canon
-/// keeps authority history and offloads it (dec-0005, tiered authority history, 2026-09-26).
+/// recorded-clock seconds: half the machine's shortest ask spacing (an hour after a reconnect, on
+/// its own wall clock, `sync::connection::predicted`), so an honest machine's ask is never held
+/// back, while a machine that asks more often appends at most one signed entry per spacing to the
+/// owner's authority log (FIX PREDICTED-DIRECTIVES-GROW-AUTHORITY-LOG). Signed entries are never
+/// compacted away: canon keeps authority history and offloads it (dec-0005, tiered authority
+/// history, 2026-09-26).
 const PREDICT_PUSH_MIN_SECS: u64 = 30 * 60;
+
+/// When this home last pushed each machine a prediction under each parent, in recorded-clock
+/// seconds: the reference of [`PREDICT_PUSH_MIN_SECS`]. Held in memory only, so a restarted home
+/// answers a machine's next ask however long it was down, and the signed entries keep their
+/// authority-clock dates, which a prediction from another home's clock never moves.
+#[derive(Debug, Default)]
+pub(crate) struct PredictedPushes(std::sync::Mutex<HashMap<(EntityId, EntityId), u64>>);
+
+impl PredictedPushes {
+    /// Whether this home pushed `machine` a prediction under `parent` less than the spacing
+    /// before `now`. A clock set back since then holds nothing back.
+    fn recent(&self, machine: EntityId, parent: EntityId, now: u64) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&(machine, parent))
+            .and_then(|pushed| now.checked_sub(*pushed))
+            .is_some_and(|age| age < PREDICT_PUSH_MIN_SECS)
+    }
+
+    /// Notes a push to `machine` under `parent` at `now`.
+    fn note(&self, machine: EntityId, parent: EntityId, now: u64) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert((machine, parent), now);
+    }
+
+    /// Moves every noted push `secs` into the past, as that much time passing does.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn age(&self, secs: u64) {
+        let mut pushes = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for pushed in pushes.values_mut() {
+            *pushed = pushed.saturating_sub(secs);
+        }
+    }
+}
 
 /// What the home did with one machine's ask.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,29 +273,6 @@ fn keep_ranked_documents(
     hysteresis_keep(&ranked, previous, budget)
 }
 
-/// Whether the home's last prediction for `machine` under `parent` is younger than
-/// [`PREDICT_PUSH_MIN_SECS`] at `now`. `states` run in log order, oldest first. A prediction
-/// dated after `now` (another home's clock) holds nothing back.
-fn last_prediction_is_recent(
-    states: &[ResidenceDirectiveState],
-    machine: EntityId,
-    parent: EntityId,
-    now: u64,
-) -> bool {
-    states
-        .iter()
-        .rev()
-        .find(|state| {
-            state.directive.machine == machine
-                && matches!(
-                    &state.directive.act,
-                    ResidenceAct::Predicted { parent: named, .. } if *named == parent
-                )
-        })
-        .and_then(|state| now.checked_sub(state.directive.issued_at))
-        .is_some_and(|age| age < PREDICT_PUSH_MIN_SECS)
-}
-
 impl Vault {
     /// Records that this home served `entity` to the proved `machine` on a residence touch: one
     /// seed of that machine's next prediction. A promotion records nothing, so the machine's own
@@ -330,7 +348,13 @@ impl Vault {
         let states = directive_states_in_txn(self, &txn)?;
         let parent = live_predicted_parent(&states, machine)?;
         let now = self.instant_in_txn(&txn)?.secs();
-        if last_prediction_is_recent(&states, machine, parent.id, now) {
+        // The spacing runs on the recorded clock, checked and noted under this writer.
+        let recorded = self.store.clock.now_recorded_at();
+        if self
+            .store
+            .predicted_pushes
+            .recent(machine, parent.id, recorded)
+        {
             txn.abort();
             return Ok(PredictedResidenceAnswer::Unchanged);
         }
@@ -351,7 +375,7 @@ impl Vault {
         )?;
         let (windows, documents) = self.prediction_units(&txn, &scores)?;
         let (previous, prediction_exists) =
-            self.previous_predicted_set(&txn, &states, machine, parent.id)?;
+            self.previous_predicted_set(&txn, &states, machine, parent.id, now)?;
         let set = PredictedResidenceSet {
             windows: keep_ranked_windows(&windows, &previous.windows, parent.window_budget),
             documents: keep_ranked_documents(
@@ -365,6 +389,9 @@ impl Vault {
             return Ok(PredictedResidenceAnswer::Unchanged);
         }
         let pushed = self.push_prediction(&mut txn, issuer, machine, &parent, now, &set)?;
+        self.store
+            .predicted_pushes
+            .note(machine, parent.id, recorded);
         txn.commit()?;
         Ok(PredictedResidenceAnswer::Pushed(pushed))
     }
@@ -466,17 +493,20 @@ impl Vault {
     }
 
     /// The machine's previous predicted set under `parent`: the body of its last `Predicted`
-    /// directive under that parent, and whether such a prediction exists. Empty when it has none,
-    /// or no longer holds its body.
+    /// directive under that parent dated no later than `now`, and whether such a prediction
+    /// exists. Empty when it has none, or no longer holds its body. A prediction dated ahead by
+    /// another home's clock is not this home's previous one.
     fn previous_predicted_set(
         &self,
         txn: &heed::RoTxn<'_>,
         states: &[ResidenceDirectiveState],
         machine: EntityId,
         parent: EntityId,
+        now: u64,
     ) -> Result<(PredictedResidenceSet, bool)> {
         let last = states.iter().rev().find(|state| {
             state.directive.machine == machine
+                && state.directive.issued_at <= now
                 && matches!(
                     &state.directive.act,
                     ResidenceAct::Predicted { parent: named, .. } if *named == parent

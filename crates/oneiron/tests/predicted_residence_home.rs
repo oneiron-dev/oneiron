@@ -24,7 +24,9 @@ use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::sync::WindowKey;
 use oneiron::sync::residence::{PredictedResidenceAnswer, ResidenceDirectiveState};
-use oneiron::test_doors::predicted_residence::predict_residence_withholding;
+use oneiron::test_doors::predicted_residence::{
+    age_predicted_pushes, predict_residence_withholding,
+};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
@@ -265,17 +267,9 @@ fn predict(fixture: &Fixture) -> PredictedResidenceAnswer {
 /// (`PREDICT_PUSH_MIN_SECS` in `sync/residence/predict.rs`, crate-private).
 const PUSH_SPACING_SECS: u64 = 30 * 60;
 
-/// Moves the home's authority clock to the push spacing past the machine's latest prediction.
+/// Lets the push spacing pass since the home's last push, as time passing does.
 fn advance_past_push_spacing(fixture: &Fixture) {
-    let latest = predictions_of(fixture)
-        .iter()
-        .map(|state| state.directive.issued_at)
-        .max()
-        .expect("a prediction to space from");
-    fixture
-        .vault
-        .advance_authority_clock_for_test(latest + PUSH_SPACING_SECS)
-        .expect("the authority clock advances");
+    age_predicted_pushes(&fixture.vault, PUSH_SPACING_SECS);
 }
 
 /// The predictions naming the fixture's machine.

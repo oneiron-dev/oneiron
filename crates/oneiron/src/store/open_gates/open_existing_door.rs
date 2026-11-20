@@ -206,6 +206,8 @@ impl Store {
             #[cfg(feature = "sync")]
             tombstone_publications_in_flight:
                 crate::deletion::TombstonePublicationsInFlight::default(),
+            #[cfg(feature = "sync")]
+            predicted_pushes: crate::sync::residence::PredictedPushes::default(),
             scope_stamps: hooks.scope_stamps,
             project_writes: hooks.project_writes,
             record_hooks: hooks.record_hooks,

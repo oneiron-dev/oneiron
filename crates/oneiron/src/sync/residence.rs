@@ -136,6 +136,7 @@ pub use policy::{
 pub(crate) use policy::{
     device_world_pick_in, set_device_sync_preference_in_txn, set_device_world_pick_in_txn,
 };
+pub(crate) use predict::PredictedPushes;
 pub use predict::PredictedResidenceAnswer;
 #[cfg(oneiron_test_support)]
 pub(crate) use predict::WithholdingNodes;
