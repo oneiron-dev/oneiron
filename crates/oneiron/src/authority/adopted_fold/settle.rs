@@ -45,8 +45,15 @@ pub(super) struct SettledTail {
     /// serial tail actor or device revocation's (FIX 11760).
     pub(super) revoke_facts: crate::authority::revoke_proof::RevokeFacts,
     /// The keys closed fences hold: the image's, with each key a serial tail
-    /// device revocation retired ([`serial_revocation_fences`]).
+    /// device revocation ([`serial_revocation_fences`]) or re-root
+    /// ([`serial_handoff_fence`]) retired (FIX 11760).
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
+    /// The keys of `retired_keys` a closed handoff or appointment fence
+    /// holds: the image's, with each key a serial tail re-root retired.
+    pub(super) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
+    /// The handoffs whose fences are closed: the image's, with each serial
+    /// tail re-root (FIX 11760).
+    pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     /// What the whole install fold's fold with no vouch makes of the tail.
     pub(super) no_vouch: NoVouchPast,
 }
@@ -93,6 +100,58 @@ pub(super) fn serial_fold_past_op(op: &AuthorityOp) -> bool {
 /// (FOLDPAST-COVERED-APPROVAL-CLOCK; [`super::fold_adopted_checkpoint_tail`]).
 pub(super) fn serial_roster_revoke_op(op: &AuthorityOp) -> bool {
     matches!(op, AuthorityOp::RevokeDevice { .. })
+}
+
+/// Whether `op` is a re-root, which the tail folds past the image only
+/// serially, every covered row in its causal past, and as the tail's one
+/// handoff (FIX 11760, [`super::serial_fold_past`]). Its tail then folds
+/// whole, and the handoff settles as the whole fold settles it
+/// ([`serial_handoff_fence`]). A covered approval on a key it retires
+/// expires on this install's own first sight of it, as after a device
+/// revocation ([`serial_roster_revoke_op`]).
+pub(super) fn serial_handoff_op(op: &AuthorityOp) -> bool {
+    matches!(op, AuthorityOp::ReRoot { .. })
+}
+
+/// The keys the serial re-root `handoff` fences, as the whole fold's
+/// settlement reads them (`retired_signers`, `Fence::of`): every key in its
+/// parents' rosters, live or revoked, other than its successor's. Every
+/// covered row is in its causal past, so its line holds them all: its fence
+/// refuses no covered row and no covered handoff. No covered fence refuses
+/// it or a row in its line: the serial fold reads only a clean image
+/// ([`super::clean_image`]), whose covered rows all folded valid, so none is
+/// signed outside a covered fence, and no tail row is signed by a key the
+/// image retired ([`super::tail_folds_past`]). It is the tail's one handoff,
+/// so its fence closes and it settles. None where its fence could refuse a
+/// tail row outside its line (one beside it or above it signed by a key it
+/// fences): the whole fold drops such a row with its descendants, which only
+/// the whole history folds here. This test is stricter than the whole fold's
+/// (`Fence::signed_outside`): it exempts no genesis, no anchored row and no
+/// row of another vault, so such a row outside the line asks for the whole
+/// history even where the whole fold settles the handoff. None too where a
+/// parent has no state here.
+fn serial_handoff_fence(
+    handoff: &AuthorityEntryHash,
+    judged: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    seed: &BTreeMap<AuthorityEntryHash, FoldState>,
+) -> Option<BTreeSet<AuthorityKey>> {
+    let entry = judged.get(handoff)?;
+    let AuthorityOp::ReRoot { new_device } = &entry.op else {
+        return None;
+    };
+    let mut keys = BTreeSet::new();
+    for parent in &entry.parent_hashes {
+        let state = states.get(parent).or_else(|| seed.get(parent))?;
+        keys.extend(
+            state
+                .roster
+                .keys()
+                .filter(|key| **key != new_device.key)
+                .cloned(),
+        );
+    }
+    (!signed_outside_tail_line(handoff, &keys, judged, states)).then_some(keys)
 }
 
 /// Whether the tail row `entry` is of a kind the tail folds past the image
@@ -287,7 +346,10 @@ pub(super) fn settle_tail(
     // withdrawal its branch proves past it, which only the whole history
     // proves. The image's facts then gain each actor revocation's own.
     let withdrawal = tail.values().any(|entry| serial_withdrawal_op(&entry.op));
-    let serial = withdrawal || tail.values().any(|entry| serial_fold_past_op(&entry.op));
+    let serial = withdrawal
+        || tail
+            .values()
+            .any(|entry| serial_fold_past_op(&entry.op) || serial_handoff_op(&entry.op));
     if serial && tail.keys().any(|hash| !states.contains_key(hash)) {
         return Ok(None);
     }
@@ -322,6 +384,25 @@ pub(super) fn settle_tail(
     };
     let mut retired_keys = image.safety.retired_keys.clone();
     retired_keys.extend(revoked);
+    // A serial re-root's fence closes as in the whole fold (FIX 11760): it
+    // retires every key it fences, a handoff's retirement, and its handoff
+    // joins the closed ones. No tail row with a state stands on a key a tail
+    // fence holds outside its line, and every covered row is in each line,
+    // so no restrictive fact stands on a retired key: the facts forget none.
+    let mut handoff_or_appointment_retired_keys =
+        image.safety.handoff_or_appointment_retired_keys.clone();
+    let mut closed_handoffs = image.safety.closed_handoffs.clone();
+    for (hash, entry) in &judged {
+        if !serial_handoff_op(&entry.op) {
+            continue;
+        }
+        let Some(fenced) = serial_handoff_fence(hash, &judged, &states, &seed) else {
+            return Ok(None);
+        };
+        retired_keys.extend(fenced.iter().cloned());
+        handoff_or_appointment_retired_keys.extend(fenced);
+        closed_handoffs.insert(*hash);
+    }
     let mut merged = image.aggregate.merged.clone();
     let mut writers = image.safety.writers.clone();
     for state in states.values() {
@@ -372,11 +453,8 @@ pub(super) fn settle_tail(
             by_hash: &projected,
             revoke_facts: &revoke_facts,
             retired_keys: retired_keys.clone(),
-            handoff_or_appointment_retired_keys: image
-                .safety
-                .handoff_or_appointment_retired_keys
-                .clone(),
-            closed_handoffs: image.safety.closed_handoffs.clone(),
+            handoff_or_appointment_retired_keys: handoff_or_appointment_retired_keys.clone(),
+            closed_handoffs: closed_handoffs.clone(),
             crossed_revocations: image.safety.crossed_revocations.clone(),
             unsettled: image.safety.unsettled,
             counted_ancestor_pairs: counted_pairs,
@@ -433,6 +511,8 @@ pub(super) fn settle_tail(
         final_merged,
         revoke_facts,
         retired_keys,
+        handoff_or_appointment_retired_keys,
+        closed_handoffs,
         no_vouch,
     }))
 }
