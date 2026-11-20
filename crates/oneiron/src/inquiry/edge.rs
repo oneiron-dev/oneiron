@@ -317,9 +317,12 @@ fn refuse_live_connect_in_txn(
     Ok(())
 }
 
-/// The inquiry edge to `company`, with no expiry, that no pact binds yet:
-/// what an earlier prepare left when its offer was lost or never accepted.
-/// The next prepare offers it again rather than minting a second edge.
+/// The inquiry edge to `company` on the member defaults
+/// ([`InquiryEdgeRequest::member_defaults`]), with no expiry, that no pact
+/// binds yet: what an earlier prepare left when its offer was lost or never
+/// accepted. The next prepare offers it again rather than minting a second
+/// edge. An unbound edge the owner minted on other terms is never offered:
+/// the join advertises the defaults, which the member changes after it.
 fn unbound_inquiry_edge_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -339,11 +342,20 @@ fn unbound_inquiry_edge_in_txn(
         if let Some(edge) = inquiry_edge_in_txn(vault, txn, &grant)?
             && edge.company_vault_id == *company
             && edge.expires_at.is_none()
+            && has_member_default_terms(&edge.terms)
         {
             return Ok(Some(edge));
         }
     }
     Ok(None)
+}
+
+/// Whether `terms` are the member defaults an edge minted by
+/// [`InquiryEdgeRequest::member_defaults`] holds; the opened WORLD aside.
+fn has_member_default_terms(terms: &InquiryTerms) -> bool {
+    terms.tier_ceiling == InquiryTierCeiling::default()
+        && terms.check_in_modes == InquiryKeepModes::default()
+        && terms.keep_allowed == InquiryKeep::default()
 }
 
 /// The inquiry edge `grant` names, with the grant it decodes from, when it
