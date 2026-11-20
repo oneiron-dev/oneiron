@@ -1036,7 +1036,7 @@ impl Vault {
     #[allow(clippy::unnecessary_wraps, clippy::too_many_arguments)]
     pub(super) fn write_crdt_tombstone_due(
         &self,
-        id: &EntityId,
+        _id: &EntityId,
         _window_ts: u64,
         _window_label: &str,
         _value: &TombstoneValueV2,
@@ -1055,9 +1055,6 @@ impl Vault {
         // sync-enabled boot that later replays it replays a deletion that WAS
         // authorized when its transaction committed — the value of `false` must
         // never be faked to `true` to "simplify" the callers.
-        // The brief fence settles here all the same: with no publication to
-        // bracket, a refusal past this point keeps the fence, fail-closed.
-        self.store.brief_delete_fences.settle(id);
         Ok(false)
     }
 }

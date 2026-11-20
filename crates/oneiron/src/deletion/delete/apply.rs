@@ -398,6 +398,8 @@ impl Vault {
                 // `scrub_is_the_linearization_point` is `!authority_settled`, so
                 // there the flag is already `true` and stays untouched.
                 authority_settled = true;
+                // The brief fence settles under this linearizing writer.
+                self.store.brief_delete_fences.settle(id);
             }
             if existed && window_label.contains('@') {
                 // The shell loses its world body in this commit. Preserve the

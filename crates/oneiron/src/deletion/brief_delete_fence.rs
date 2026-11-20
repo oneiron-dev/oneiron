@@ -10,15 +10,18 @@
 //! reservation, but only a row its own flight created, and only when no other
 //! delete of the id is in flight and none linearized: a refused delete never
 //! takes away a fence an earlier delete left, and of two racing deletes the
-//! refused one never strands the one that goes on. The set belongs to the
-//! vault's store and is never persisted: a crash keeps every row it held, the
-//! fail-closed direction.
+//! refused one never strands the one that goes on. A committed row deletion
+//! fence of the id keeps the row too: the row stored under the id is deleted
+//! now, whichever delete deleted it (an ungated policy delete holds no
+//! reservation). The set belongs to the vault's store and is never persisted:
+//! a crash keeps every row it held, the fail-closed direction.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::side_table::HexId;
 use crate::store::Store;
 
 #[cfg(test)]
@@ -109,7 +112,11 @@ impl BriefDeleteFences {
     /// Drops the hold [`Self::leave_unless_last_releasable`] found to be the
     /// last one on a releasable row, and removes the row under the writer.
     /// The writer first, then the set, as `reserve` takes them; the set is
-    /// read again, since a delete may have joined or settled meanwhile.
+    /// read again, since a delete may have joined or settled meanwhile. A row
+    /// deletion fence the writer reads for the id keeps the row: the row under
+    /// the id is deleted now, by a delete that may hold no reservation and may
+    /// have linearized before this one reserved, when its settlement found no
+    /// hold.
     fn release_last(&self, store: &Store, id: &EntityId) {
         let Ok(mut txn) = store.env.write_txn() else {
             self.leave(id);
@@ -125,7 +132,9 @@ impl BriefDeleteFences {
         }
         let releasable = holders.releasable;
         held.remove(id);
-        if releasable {
+        if releasable
+            && let Ok(false) = super::ROW_DELETION_FENCE.contains(store, &txn, &HexId(*id))
+        {
             crate::share::release_brief_delete(store, &mut txn, id)
                 .and_then(|()| txn.commit().map_err(Into::into))
                 .ok();

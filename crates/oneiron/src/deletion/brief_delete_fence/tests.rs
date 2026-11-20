@@ -172,3 +172,26 @@ fn a_refusal_keeps_the_fence_a_publication_settled_before_its_release() {
     );
     assert!(no_hold_left(&vault));
 }
+
+/// A delete that holds no fence (an ungated policy delete) deletes the row
+/// before a user delete reserves the id: its settlement found no hold, and
+/// the user delete, refused, created the reservation. The row deletion fence
+/// that delete committed keeps the reservation: the row is deleted now.
+#[test]
+fn a_refusal_keeps_the_fence_of_a_row_another_delete_deleted() {
+    let (_dir, vault) = open_vault();
+    let id = EntityId::from_bytes([0xD8; 16]).expect("id");
+    let mut publication = vault.store.env.write_txn().expect("publication writer");
+    crate::deletion::ROW_DELETION_FENCE
+        .put(&vault.store, &mut publication, &HexId(id), &Vec::new())
+        .expect("the publication's row deletion fence");
+    vault.store.brief_delete_fences.settle(&id);
+    publication.commit().expect("the publication commits");
+    let fence = reserve(&vault, &id);
+    assert!(conclude(&vault, fence, refused()).is_err());
+    assert!(
+        reserved(&vault, &id),
+        "a refusal never releases the fence of a row a delete deleted"
+    );
+    assert!(no_hold_left(&vault));
+}
