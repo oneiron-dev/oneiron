@@ -240,12 +240,15 @@ fn register_declared_in_txn(
             // observation yet (FIX 3861): the projection takes the input's
             // own hash, as an unreadable scope does at the commit boundary,
             // so the first commit after the promotion that reads it
-            // re-derives.
-            Err(error) if crate::store::conversation_residency::waits_on_residency(&error) => {
-                *blake3::hash(&encode(&current_input)?).as_bytes()
-            }
-            Err(Error::EntityNotFound | Error::InvalidClaimBody(_) | Error::Record(_))
-                if unobserved_when_refused =>
+            // re-derives. So does an observation a lost grant, an erased
+            // source or a gone scope refuses, with `unobserved_when_refused`.
+            Err(error)
+                if crate::store::conversation_residency::waits_on_residency(&error)
+                    || (unobserved_when_refused
+                        && matches!(
+                            error,
+                            Error::EntityNotFound | Error::InvalidClaimBody(_) | Error::Record(_)
+                        )) =>
             {
                 *blake3::hash(&encode(&current_input)?).as_bytes()
             }
