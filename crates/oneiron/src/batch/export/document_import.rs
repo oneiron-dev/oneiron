@@ -7,6 +7,7 @@ mod claim_pair_same_as;
 mod issue_archive_restore;
 mod owner_archive_restore;
 mod seed_replacement;
+mod topology_restore;
 mod unseated_rooms;
 
 use owner_archive_restore::OwnerRestore;
@@ -313,6 +314,20 @@ impl Vault {
         } else {
             None
         };
+        // RESTORE-KEEPS-MERGES-AND-SPLITS: an owner's restore into a fresh
+        // vault of an archive naming current merges or splits seals them
+        // again with this install's keys, which load outside every
+        // transaction; with none, each stays archive data. The keys load only
+        // into a vault this read finds fresh, and never by making it forget
+        // its machine: a writer can commit a row after this read (REVIEW-9756
+        // P1-2, rounds 1 and 2). The writer below reads freshness again.
+        let topology_signing = owner.is_some()
+            && !archive.manifest.current_identity_topology_events.is_empty()
+            && {
+                let rtxn = self.store.env.read_txn()?;
+                self.first_non_bootstrap_row_in_txn(&rtxn)?.is_none()
+            }
+            && self.prepare_install_signing_keeping_machine_logged();
         let mut wtxn = self.store.env.write_txn()?;
         let seeds = EngineSeedIdentities::load()?;
         let restore_fresh =
@@ -858,6 +873,22 @@ impl Vault {
                 }
             }
         }
+        // RESTORE-KEEPS-MERGES-AND-SPLITS: the owner's restore into a fresh
+        // vault decides each current merge and split again, once every row
+        // and link it reads is in; a row one shells again is not back
+        // separate.
+        let topology = match owner.filter(|_| restore_fresh) {
+            Some(owner) => topology_restore::restore_identity_topology_in_txn(
+                self,
+                &mut wtxn,
+                &archive,
+                secrets,
+                owner,
+                topology_signing,
+            )?,
+            None => topology_restore::TopologyRestore::default(),
+        };
+        unrestored_identity_topology_shells.retain(|row| !topology.shelled.contains(row));
         let mut archived_receipt_sources = 0;
         let mut envelopes = archive.spool.rows(ArchiveRecordKind::DerivationEnvelope);
         while let Some((_, envelope)) =
@@ -949,6 +980,8 @@ impl Vault {
             skipped_revoked_secrets,
             skipped_unproven_regenerates_edges,
             unrestored_identity_topology_shells: unrestored_identity_topology_shells.len(),
+            restored_identity_topology: topology.restored,
+            unrestored_identity_topology_events: topology.unrestored,
             unrestored_same_as_links,
             missing_secrets,
             owed_secrets,

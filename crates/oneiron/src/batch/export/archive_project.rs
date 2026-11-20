@@ -249,6 +249,8 @@ pub(crate) fn project_stored_archive<R: Read + Seek, W: Write + Seek>(
     // declares no table omissions: all three are whole-vault-only. `project_side_rows` drops
     // every retained-family row through its vault-wide travel; the manifest list is cleared here.
     manifest.side_table_omissions.clear();
+    // RESTORE-KEEPS-MERGES-AND-SPLITS: the current merges and splits are whole-vault-only too.
+    manifest.current_identity_topology_events.clear();
     let side_stays = project_side_rows(
         &sides,
         kept,
