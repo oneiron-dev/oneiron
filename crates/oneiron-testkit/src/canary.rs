@@ -42,6 +42,16 @@
 //! seeded vault on the scripted backend ([`crate::dreamer::DreamerPass`]),
 //! then [`CanaryVault::scan_prompts`] over every prompt the passes sent, as
 //! the owner the Dreamer's model speaks for, and every actor's scan again.
+//!
+//! Step 3 ([CANARY-SCAN-COVERAGE]): the point doors, every receipt ledger,
+//! the caller's own inbox items and the owner's decoded export
+//! (`canary/point_doors.rs`, `canary/export_archive.rs`), and every ref an
+//! answer names, followed through the doors of its form
+//! (`canary/named_refs.rs`).
+
+mod export_archive;
+mod named_refs;
+mod point_doors;
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -652,18 +662,35 @@ impl CanaryVault {
     }
 
     /// Reads every surface `actor` reaches through public doors and keeps
-    /// each answer as JSON text: `vault.claims.list`; `vault.recall` and
-    /// `vault.search.bm25` for [`NEUTRAL_QUERY`]; `vault.kv.search` and
-    /// `vault.kv.namespaces` by offset; `self.inbox.list` by cursor;
+    /// each answer as JSON text: `vault.claims.list` and
+    /// `vault.claims.list_filtered`; `vault.recall` and `vault.search.bm25`
+    /// for [`NEUTRAL_QUERY`]; `vault.kv.search` and `vault.kv.namespaces` by
+    /// offset, and `vault.kv.get` at the canary address; `self.inbox.list`
+    /// by cursor, and `self.inbox.lens` with `self.inbox.get` of each item;
     /// `vault.rooms.list` and each room's `vault.rooms.messages`, and the
-    /// canary conversation's; `self.memory.diary.query` of each actor;
-    /// `vault.get` and `vault.hydrate` of every seeded ref; and the change
-    /// and settlement feed from its beginning. A diary read and a feed
-    /// subscription each leave a row; nothing else writes. No other read
-    /// door is scanned yet (among them `vault.refs.links`, `self.inbox.get`,
-    /// the filtered and history claim reads, `vault.kv.get`, receipts,
-    /// summaries, outbound reports and exports), and a ref a list answer
-    /// names is not followed: a leak confined to one of those passes.
+    /// canary conversation's; `self.memory.diary.query` of each actor; every
+    /// seeded ref through `vault.get`, `vault.refs.resolve`,
+    /// `vault.claims.read_filtered`, `vault.claims.history`,
+    /// `vault.refs.links` and `vault.summaries.read`, whatever its kind, and
+    /// each class's refs in one `vault.hydrate`; the change and settlement
+    /// feed from its beginning; the gate receipt ledger and each receipt
+    /// kind's pages; `vault.proactivity.digest`; `vault.export`, its archive
+    /// decoded and its custody records read less their values; and last,
+    /// every ref those answers name, as a value or an object key, followed
+    /// by its form (an entity through `vault.get` and `vault.refs.resolve`,
+    /// whatever they answer, and the doors of the kind `vault.get` names; a
+    /// `call:` or `emit:` receipt; a report issue; a summary proposal), until
+    /// no answer names a new one.
+    ///
+    /// What writes: a diary read logs itself, a feed subscription is a row,
+    /// `self.inbox.get` marks its item opened (a digest item seen), and an
+    /// export records its receipt and logs its diary reads. Refused to every
+    /// in-process caller, and recorded as refused: `ai.steps.receipt`,
+    /// `vault.proactivity.digest.get` and `vault.export.transfer.read` (a
+    /// served host's doors) and `vault.export.scoped` (a verified
+    /// credential's). Not read: a row no seed refers to and no answer names,
+    /// and any door outside this list; a leak confined to one of those
+    /// passes.
     #[must_use]
     pub fn scan(&self, vault: &Vault, actor: CanaryActor) -> CanaryScan {
         let memory = self.memory(vault, actor);
@@ -680,6 +707,7 @@ impl CanaryVault {
                 refused: Vec::new(),
                 incomplete: Vec::new(),
             },
+            refs: named_refs::NamedRefs::default(),
         };
         if let Some(answer) = reader.read(
             "vault.claims.list",
@@ -741,28 +769,16 @@ impl CanaryVault {
                 json!({"agent": self.actor_id(whose).to_hex(), "reason": DIARY_REASON}),
             );
         }
-        for canary in &self.canaries {
-            for reference in &canary.refs {
-                reader.read(
-                    &format!("vault.get {reference}"),
-                    "vault.get",
-                    json!({"entity_ref": reference}),
-                );
-            }
-            if !canary.refs.is_empty() {
-                reader.read(
-                    &format!("vault.hydrate ({})", canary.class),
-                    "vault.hydrate",
-                    json!({"refs": canary.refs}),
-                );
-            }
-        }
+        reader.read_seeded_refs(&self.canaries);
         reader.read(
             "vault.get (canary conversation)",
             "vault.get",
             json!({"entity_ref": self.conversation}),
         );
         reader.read_feed(vault);
+        reader.read_point_doors();
+        reader.read_export(vault);
+        reader.follow_named_refs();
         reader.scan
     }
 
@@ -920,19 +936,21 @@ impl CanaryVault {
 }
 
 /// One scan in progress: the caller, the words never stripped as an echo,
-/// and what it read.
+/// what it read, and the refs its answers named.
 struct Reader<'m, 'v> {
     memory: &'m Memory<'v>,
     words: Vec<String>,
     scan: CanaryScan,
+    refs: named_refs::NamedRefs,
 }
 
 impl Reader<'_, '_> {
     /// Runs `verb` with `input` and keeps its answer, less any echo of the
-    /// input, or its refusal.
+    /// input, or its refusal; queues the refs the answer names.
     fn read(&mut self, surface: &str, verb: &str, input: Value) -> Option<Value> {
         match door::invoke(self.memory, verb, input.clone()) {
             Ok(answer) => {
+                self.discover(&answer);
                 let text = strip_echo(&answer.to_string(), &input, &self.words);
                 self.scan.seen.push(SurfaceRead {
                     surface: surface.to_owned(),
@@ -1037,9 +1055,11 @@ impl Reader<'_, '_> {
                     return;
                 }
             };
+            let answer_json = serde_json::to_value(&answer).unwrap_or_default();
+            self.discover(&answer_json);
             self.scan.seen.push(SurfaceRead {
                 surface: format!("feed page {page}"),
-                text: serde_json::to_string(&answer).unwrap_or_default(),
+                text: answer_json.to_string(),
             });
             // A subscription made in this walk has no cursor idle past the
             // retention window, so a gap here leaves the walk unfinished.
