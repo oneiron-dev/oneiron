@@ -565,6 +565,7 @@ mod text_diff_budget_tests {
     fn an_unrelated_merge_of_a_large_copy_is_refused_within_the_budget() {
         let base = format!("{} tail \u{2713}", "x".repeat(1 << 20));
         let ours = "\u{e9}dited tail \u{2713}";
+        // testkit-lint: allow(wall-clock) the elapsed time is the budget under test
         let started = Instant::now();
         let result = merged(&base, ours, &base);
         let elapsed = started.elapsed();

@@ -68,6 +68,7 @@ use serde_json::json;
 /// A fresh destination with this install's keystore and signing keys,
 /// opened at least one wall-clock second after its source.
 fn open_destination() -> (tempfile::TempDir, Vault) {
+    // testkit-lint: allow(sleep) built-in pack seeds use real wall seconds
     std::thread::sleep(std::time::Duration::from_millis(1100));
     let dir = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
