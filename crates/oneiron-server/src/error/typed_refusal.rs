@@ -93,9 +93,18 @@ impl ApiError {
         self.pending.as_deref()
     }
 
+    /// The direct-vocabulary arm's refused second task assignment: the task
+    /// and both assignees as data, as a `MemoryError` carries them
+    /// (REVIEW-10008).
+    pub(crate) fn with_task_assignment_conflict(
+        mut self,
+        task_assignment_conflict: Box<oneiron::memory::TaskAssignmentConflict>,
+    ) -> Self {
+        self.task_assignment_conflict = Some(task_assignment_conflict);
+        self
+    }
+
     /// A refused second task assignment, typed, when the error carries it.
-    /// There is no `with_` builder: the direct-vocabulary arm names only its
-    /// state, so the block only rides a `MemoryError` that already carries it.
     pub(crate) fn task_assignment_conflict(
         &self,
     ) -> Option<&oneiron::memory::TaskAssignmentConflict> {
