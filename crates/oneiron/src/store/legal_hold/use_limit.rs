@@ -82,6 +82,26 @@ pub(crate) fn cooperative_restriction_active_in_txn(
         .is_some())
 }
 
+/// Whether the vault holds any record use limit at all, a C6 keep or a
+/// cooperative review restriction, standing or not: two table probes, so a
+/// door that would ask [`use_limit_in_txn`] of every row it ranks asks it
+/// only where one can answer.
+pub(crate) fn any_record_use_limit_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+) -> Result<bool> {
+    Ok(USE_LIMITS
+        .iter_raw_from(dbs, txn, &[])?
+        .next()
+        .transpose()?
+        .is_some()
+        || COOPERATIVE_RESTRICTIONS
+            .iter_raw_from(dbs, txn, &[])?
+            .next()
+            .transpose()?
+            .is_some())
+}
+
 /// The same record-retention facts as `held_in_txn`, read from a
 /// checkpoint custody plan's captured rows.
 pub(crate) fn rows_keep_record(rows: &[(Vec<u8>, Vec<u8>)], id: &[u8; 16]) -> Result<bool> {
