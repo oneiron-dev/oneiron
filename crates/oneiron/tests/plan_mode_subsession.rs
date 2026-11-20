@@ -44,7 +44,9 @@ use oneiron::note::{
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::derive_verbs::define_agent;
-use oneiron::test_doors::room_turn_backfill::run_room_turn_backfill;
+use oneiron::test_doors::room_turn_backfill::{
+    room_turn_row, room_turn_rows, run_room_turn_backfill, strip_room_turn_rows,
+};
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::workspace_roster::RoomTrunkItem;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
@@ -679,6 +681,117 @@ fn an_owner_only_room_files_the_runs_result_under_the_approving_turn() {
         room_reads(&fixture, room),
         before,
         "the open's room-row backfill gives the filed record no row either"
+    );
+}
+
+/// The owner's thread reply on the trunk `turn`, written in the run's
+/// sub-session `session`, which `turn` spawned. It is a thread turn of the
+/// room like any other, so the room's thread reads list it from its row.
+fn reply_in_sub_session(
+    fixture: &Fixture,
+    room: EntityId,
+    turn: EntityId,
+    session: EntityId,
+) -> EntityId {
+    let writer = owner(fixture);
+    let now = fixture.vault.now_recorded_at();
+    fixture
+        .vault
+        .reply_in_thread(
+            &writer,
+            turn,
+            &AppendRecord {
+                conversation: room,
+                parent: None,
+                reply_to: None,
+                quote: None,
+                address: AddressMode::Broadcast,
+                recipients: vec![],
+                advance: false,
+                kind: ENTITY_TYPE_TURN,
+                containing_turn: None,
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                body: rmp_serde::to_vec_named(
+                    &json!({ "txt": "the owner asks the run a question" }),
+                )
+                .expect("the reply's body encodes"),
+                text: Vec::new(),
+                session: Some(session),
+                actor: WriteActor::new(fixture.owner, EdgeActorClass::Human),
+                thread_audience: None,
+            },
+        )
+        .expect("the owner's thread reply in the run's sub-session lands")
+        .id
+}
+
+/// The owner approves the agent's plan from a TURN of a room the owner
+/// alone reads: the room, the approving turn, and the run's sub-session.
+fn approved_in_owner_room(fixture: &Fixture) -> (EntityId, EntityId, EntityId) {
+    let plan = propose_run_by(fixture, fixture.agent).expect("the agent proposes its run");
+    let (room, turn) = room_turn(fixture, &[fixture.owner]);
+    let settled = approve_with(
+        fixture,
+        plan.plan_ref,
+        &plan.revision,
+        json!({"approving_turn_ref": turn.to_hex()}),
+    )
+    .expect("the approval naming the turn lands");
+    let session = sub_session_of(&settled).expect("the approval hangs the run off the turn");
+    (room, turn, session)
+}
+
+#[test]
+fn a_thread_reply_in_the_runs_sub_session_keeps_its_room_thread_row() {
+    let fixture = fixture();
+    let (room, turn, session) = approved_in_owner_room(&fixture);
+    let reply = reply_in_sub_session(&fixture, room, turn, session);
+    assert!(
+        room_turn_row(&fixture.vault, reply)
+            .expect("the reply's room row reads")
+            .is_some(),
+        "a thread reply in the run's sub-session keeps its room row"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .thread_roots(turn)
+            .expect("the approving turn's thread roots read"),
+        vec![reply],
+        "the approving turn's thread roots list the reply"
+    );
+}
+
+#[test]
+fn the_open_backfill_rows_a_thread_reply_in_the_runs_sub_session() {
+    let fixture = fixture();
+    let (room, turn, session) = approved_in_owner_room(&fixture);
+    let reply = reply_in_sub_session(&fixture, room, turn, session);
+    let keep: Vec<EntityId> = room_turn_rows(&fixture.vault, room)
+        .expect("the room's rows read")
+        .iter()
+        .map(|row| EntityId::from_hex(&row.turn_id).expect("a row names its TURN"))
+        .filter(|id| *id != reply)
+        .collect();
+    strip_room_turn_rows(&fixture.vault, room, &keep).expect("the reply's room row strips");
+    run_room_turn_backfill(&fixture.vault).expect("the open's room-row backfill runs");
+    assert!(
+        room_turn_row(&fixture.vault, reply)
+            .expect("the reply's room row reads")
+            .is_some(),
+        "the open's room-row backfill rows a thread reply in the run's sub-session"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .thread_roots(turn)
+            .expect("the approving turn's thread roots read"),
+        vec![reply],
+        "the approving turn's thread roots list the reply again"
     );
 }
 
