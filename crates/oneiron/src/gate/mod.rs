@@ -199,6 +199,7 @@ pub(crate) use self::constants::{
 pub(crate) use self::decision::gate_metric_emission_count_for_test;
 pub(crate) use self::decision::{GateDecision, GateMetrics, GateOutcome, GateReasonCode};
 pub(crate) use self::decode::normalize_policy_manifest_scope;
+pub(crate) use self::decode::version_gt;
 #[cfg(test)]
 pub(crate) use self::default_manifest::default_consult_fanout_approval_threshold;
 #[cfg(any(test, feature = "test-support"))]

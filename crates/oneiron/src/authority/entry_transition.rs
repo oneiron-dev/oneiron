@@ -255,6 +255,7 @@ fn transition_entry(
             conversation_training_vault:
                 super::conversation_training_vault::ConversationTrainingVaultState::default(),
             policy_settings: super::policy_setting_choice::PolicySettingChoiceState::default(),
+            setting_copy_names: PersistentMap::new(),
             refused_export_acts: PersistentSet::new(),
             agent_carried_acts: PersistentMap::new(),
             home_candidacy: super::home_candidacy::HomeCandidacyState::default(),
@@ -544,6 +545,23 @@ fn fold_merged_entry(
             &mut state,
             entry,
             copy,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // So is a pack's head, on its pack's frontier, signed by the machine
+    // whose pack door weighed it alone, with no owner act (stage 7c-3a).
+    if let AuthorityOp::SettingPackHead(head) = &entry.op {
+        if let Err(issue) = super::policy_setting_choice::apply_setting_pack_head(
+            &mut state,
+            entry,
+            head,
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
@@ -979,6 +997,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::SettingCopy(_)
+        | AuthorityOp::SettingPackHead(_)
         | AuthorityOp::ExportAct(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
