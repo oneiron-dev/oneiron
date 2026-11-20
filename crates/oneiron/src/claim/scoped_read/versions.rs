@@ -515,7 +515,7 @@ impl ScopedRead<'_> {
         authority: &HeldAuthority,
     ) -> Result<Option<Vec<u8>>> {
         // A read by id matches no meaning, so it takes the row predicate
-        // alone. The TURN rule of `is_entity_retrievable_with_policy_in`
+        // alone. The TURN rule of `is_entity_retrievable_held_in`
         // guards the doors that find a row (search, recall, packs, graph
         // edges), and each runs it before it reads the row here. The bytes
         // judged are kept: a revision read that returns them is admitted.
