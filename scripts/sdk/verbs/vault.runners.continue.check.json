@@ -1,0 +1,17 @@
+{
+  "name": "vault.runners.continue.check",
+  "description": "Whether this node would continue an outside session pushed to the named custody repo on the named runner, on its own runner seats; it writes nothing. The owner calls it, or an agent whose Grant names vault.runners.continue.",
+  "input": "crate::dispatch_byoa::ContinueOutsideWorkCheckRequest",
+  "output": "crate::dispatch_byoa::ContinueOutsideWorkCheckView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.runners.continue.check\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "runner_continuer"
+}

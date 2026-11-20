@@ -19,6 +19,7 @@ use oneiron_contracts::claim::ScopedReadReceipt;
 
 use super::claim_ids::claim_edge_scope;
 use super::coreutils_text::{HeadPosition, literal_grep_pattern, page_lines};
+use super::memory_fork::{MEMORY_FORK_WALK_REASON, claim_names_subject};
 use super::model::{
     GRAPH_FS_COREUTILS_MAX_RESULT_CAP, GRAPH_FS_MAX_SCAN_ROWS, GraphFsCommandOutput,
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntryKind, GraphFsResolver,
@@ -27,6 +28,8 @@ use super::model::{
 use super::readdir::{normalize_path, parse_entity_id, path_components, sealed_is_absent};
 
 use super::paging::{CommandOutputBuilder, TemporalCursor};
+
+mod path_visibility;
 
 impl GraphFsResolver<'_, '_> {
     pub fn grep(
@@ -41,7 +44,7 @@ impl GraphFsResolver<'_, '_> {
         let normalized = normalize_path(path)?;
         if let Some(literal) = literal_grep_pattern(pattern)
             && recursive
-            && self.snapshot.is_none()
+            && self.reads_live_head()
             && matches!(normalized.as_str(), "/claims" | "/claims/by-id")
         {
             let page = self.grep_claims_pushdown(literal, &normalized, cursor)?;
@@ -346,8 +349,11 @@ impl GraphFsResolver<'_, '_> {
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
+        // At a memory fork, each claim as it stood there.
         let (bytes, next, total) =
-            self.claims_by_time_walk(&rtxn, &policy, cursor, max_scan_rows, |_| Ok(true))?;
+            self.claims_by_time_walk(&rtxn, &policy, cursor, max_scan_rows, |claim| {
+                self.listed_at_fork_in(&rtxn, claim, |row| Ok(row.entity_type == ENTITY_TYPE_CLAIM))
+            })?;
         Ok((bytes, next.map(|cursor| scope.seal(&cursor)), total))
     }
 
@@ -375,13 +381,27 @@ impl GraphFsResolver<'_, '_> {
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
         let scope = self.cursor_scope(&format!("ls -t /entities/{}/claims", subject.to_hex()));
         let cursor = scope.open::<TemporalCursor>(cursor)?;
-        if !self.scoped_read.is_entity_readable(subject)? {
+        if !self.scoped_read.is_entity_readable(subject)? || !self.target_at_fork(subject)? {
             return Ok((Vec::new(), None, 0));
         }
         self.scoped_read.persist_grant_clock()?;
         let vault = self.scoped_read.vault();
         let rtxn = vault.store.env.read_txn()?;
         let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
+        // A memory fork judges each claim as it stood there, the subject it
+        // named included, so it walks the timeline: the live `ClaimOf` edges
+        // name each claim's subject now.
+        if self.memory_fork().is_some() {
+            let (bytes, next, total) =
+                self.claims_by_time_walk(&rtxn, &policy, cursor, max_scan_rows, |claim| {
+                    self.listed_at_fork_in(&rtxn, claim, |row| {
+                        Ok(row
+                            .claim()
+                            .is_some_and(|body| claim_names_subject(&body, subject)))
+                    })
+                })?;
+            return Ok((bytes, next.map(|cursor| scope.seal(&cursor)), total));
+        }
         // The subject's claims, while they fit one scan. Off this device
         // the walk's rows count against the edge-peer row (rule 5).
         let mut count = ScanCount::start(
@@ -551,8 +571,10 @@ impl GraphFsResolver<'_, '_> {
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
+        // At a memory fork the live learned times bound nothing: a row's
+        // learned time there may lie on either side of its live one.
         let query = crate::ports::TimelineQuery {
-            start: if cursor.is_some() {
+            start: if cursor.is_some() || self.memory_fork().is_some() {
                 Bound::Unbounded
             } else {
                 Bound::Included(newer_than.saturating_add(1))
@@ -577,7 +599,11 @@ impl GraphFsResolver<'_, '_> {
                 id: time.id,
             };
             last_scanned = Some(temporal);
-            if !sealed_is_absent(self.coreutils_entity_visible_in(&rtxn, &policy, &temporal.id))? {
+            // At a memory fork, the learned time the row had there.
+            if !sealed_is_absent(self.coreutils_entity_visible_in(&rtxn, &policy, &temporal.id))?
+                || !self
+                    .listed_at_fork_in(&rtxn, &temporal.id, |row| Ok(row.learned_at > newer_than))?
+            {
                 continue;
             }
             let Some(line) = self.find_path_for_temporal_hit_in(&rtxn, path, &temporal.id)? else {
@@ -622,35 +648,6 @@ impl GraphFsResolver<'_, '_> {
         Ok(Some(format!("{output}\n")))
     }
 
-    pub(super) fn coreutils_path_visible(&self, path: &str) -> Result<bool> {
-        let components = path_components(path)?;
-        if self.snapshot.is_some() {
-            return self.snapshot_visible(path);
-        }
-        match components.as_slice() {
-            ["claims", "by-id"] | ["claims", "by-time"] | ["claims", "by-time", _] => Ok(true),
-            ["claims", "by-time", _, claim] => self
-                .scoped_read
-                .is_entity_readable(&parse_entity_id(claim)?),
-            ["claims", claim] | ["claims", "by-id", claim] => self
-                .scoped_read
-                .is_entity_readable(&parse_entity_id(claim)?),
-            ["entities", entity, ..] | ["backlinks", entity, ..] => {
-                self.coreutils_entity_visible(&parse_entity_id(entity)?)
-            }
-            ["worlds", "base", ..] => Ok(true),
-            ["worlds", world, ..] => self.coreutils_entity_visible(&parse_entity_id(world)?),
-            _ => Ok(true),
-        }
-    }
-
-    fn coreutils_entity_visible(&self, id: &EntityId) -> Result<bool> {
-        self.scoped_read.persist_grant_clock()?;
-        let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
-        self.coreutils_entity_visible_in(&rtxn, &policy, id)
-    }
-
     fn coreutils_entity_visible_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -688,6 +685,13 @@ impl GraphFsResolver<'_, '_> {
         total_in_scope: usize,
         read_receipt: Option<ScopedReadReceipt>,
     ) -> Result<GraphFsCommandOutput> {
+        // Every answer at a memory fork walks rows read at the frontier: no
+        // live index answers for it.
+        let (decision, decision_reason) = if self.memory_fork().is_some() {
+            (GraphFsCoreutilsDecision::Walk, MEMORY_FORK_WALK_REASON)
+        } else {
+            (decision, decision_reason)
+        };
         let telemetry_run_id = if self
             .scoped_read
             .vault()

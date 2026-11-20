@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use crate::dreamer_consolidation::{
@@ -43,12 +44,9 @@ impl Chunk {
         }
     }
 
+    /// Stored span source digests keep their bytes (K, PLAN-UC-04 stage 7).
     fn new(source: EntityId, text: String) -> Self {
-        let digest = *blake3::Hasher::new()
-            .update(b"oneiron:dreamer-sieve:chunk:v1")
-            .update(text.as_bytes())
-            .finalize()
-            .as_bytes();
+        let digest = chunk_digest(&text);
         Self {
             source,
             text,
@@ -323,13 +321,25 @@ fn refused_as_none(readable: Result<Vec<bool>>, ids: &[EntityId]) -> Result<Vec<
 }
 
 /// The version of a whole reading: every chunk's source and digest, in order.
+/// Stored READ cursor digests keep their bytes (K, PLAN-UC-04 stage 7).
 pub(super) fn reading_digest(chunks: &[ChunkRef]) -> [u8; 32] {
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron:dreamer-sieve:reading:v1");
-    hash.update(&(chunks.len() as u64).to_be_bytes());
+    let mut hash = LegacyDigest::new(purposes::dreamer_wake::SIEVE_READING);
+    hash.len_u64_be(chunks.len());
     for chunk in chunks {
-        hash.update(chunk.source.as_bytes());
-        hash.update(&chunk.digest);
+        hash.raw(chunk.source.as_bytes());
+        hash.raw(&chunk.digest);
     }
-    *hash.finalize().as_bytes()
+    hash.finish()
+}
+
+/// The source-text version shared by span offsets and evidence comparisons.
+pub(super) fn chunk_digest(text: &str) -> [u8; 32] {
+    LegacyDigest::new(purposes::dreamer_wake::SIEVE_CHUNK)
+        .raw(text.as_bytes())
+        .finish()
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn reading_digest_for_test(chunks: &[ChunkRef]) -> [u8; 32] {
+    reading_digest(chunks)
 }

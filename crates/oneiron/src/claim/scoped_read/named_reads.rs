@@ -101,7 +101,20 @@ impl ScopedRead<'_> {
             suppressed += withheld;
             value.push(outcome.into_slot());
         }
-        let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
+        let receipt = self.receipt_in(
+            txn,
+            requested,
+            &policy,
+            &filter,
+            suppressed,
+            Some(&authority),
+        );
+        self.charge_served(
+            value
+                .iter()
+                .filter_map(|slot| slot.as_ref().ok().and_then(Option::as_ref))
+                .map(|row| row.id),
+        );
         Ok(ScopedReadResult {
             value: project(txn, value)?,
             receipt,

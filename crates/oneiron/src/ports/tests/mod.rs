@@ -2,8 +2,6 @@
 mod dependent_cap;
 mod step21_conformance;
 mod step22_conformance;
-// FIX [LIBTEST-QUARANTINE-PORTS-TESTS-STEP23-CONFORMANCE]: the lib test target's type check fails here (2 errors: E0639 x1, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod step23_conformance;
 mod support;
 
@@ -29,7 +27,10 @@ use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config())
+    let (dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    vault.prepare_install_signing().expect("install signing");
+    (dir, vault)
 }
 
 fn record(entity_type: u8, body: &[u8]) -> EntityRecord {

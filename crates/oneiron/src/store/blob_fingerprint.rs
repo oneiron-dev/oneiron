@@ -4,6 +4,7 @@ use crate::error::Error;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Result, Vault};
+use oneiron_contracts::fingerprint::ContentHash;
 #[doc(hidden)]
 pub use oneiron_records::store::blob_fingerprint::{
     BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung,
@@ -80,7 +81,7 @@ pub(crate) fn prepare_blob_artifact_birth(
     if let Ok(text) = std::str::from_utf8(bytes) {
         return prepare_blob_birth(store, txn, id, bytes, text);
     }
-    prepare_binary_blob_artifact_birth(store, txn, id, *blake3::hash(bytes).as_bytes())
+    prepare_binary_blob_artifact_birth(store, txn, id, *ContentHash::of(bytes).as_bytes())
 }
 /// [`prepare_blob_artifact_birth`] for bytes that are no UTF-8 text, known
 /// by their BLAKE3 `asset_hash` alone: a body the asset plane holds as a
@@ -112,7 +113,7 @@ pub(crate) fn prepare_new_blob_birth(bytes: &[u8], text: &str) -> FingerprintUpd
     calculate(None, bytes, text)
 }
 fn calculate(previous: Option<Tree>, bytes: &[u8], text: &str) -> FingerprintUpdate {
-    let asset_hash = *blake3::hash(bytes).as_bytes();
+    let asset_hash = *ContentHash::of(bytes).as_bytes();
     if let Some(tree) = previous
         .as_ref()
         .filter(|tree| tree.asset_hash == asset_hash)
@@ -127,7 +128,7 @@ fn calculate(previous: Option<Tree>, bytes: &[u8], text: &str) -> FingerprintUpd
         .strip_prefix('\u{feff}')
         .unwrap_or(text)
         .replace("\r\n", "\n");
-    let text_hash = *blake3::hash(normalized.as_bytes()).as_bytes();
+    let text_hash = *ContentHash::of(normalized.as_bytes()).as_bytes();
     if let Some(tree) = previous.as_ref().filter(|tree| tree.text_hash == text_hash) {
         return FingerprintUpdate {
             tree: Tree {
@@ -167,7 +168,7 @@ fn calculate(previous: Option<Tree>, bytes: &[u8], text: &str) -> FingerprintUpd
         let mut blocks = BTreeMap::new();
         for segment in segments {
             // A block is unchanged when its hash is, even within a changed section.
-            let block_hash = *blake3::hash(segment.text.as_bytes()).as_bytes();
+            let block_hash = *ContentHash::of(segment.text.as_bytes()).as_bytes();
             if old.and_then(|s| s.blocks.get(&segment.block)) != Some(&block_hash) {
                 changed_blocks.push(segment.block.clone());
             }

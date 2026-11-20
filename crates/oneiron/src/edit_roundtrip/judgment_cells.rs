@@ -93,32 +93,96 @@ fn sheet_cells(
     named_sheet_cells(bytes, &bundle.sheet, &|cell| targets.contains(cell))
 }
 
-// FIX [LIBTEST-QUARANTINE-EDIT-ROUNDTRIP-JUDGMENT-CELLS-TESTS]: the lib test target's type check fails here (10 errors: E0560 x8, E0277 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::edit_roundtrip::{RangeRef, SheetCellAnswer};
+    use crate::entity_id::EntityId;
+    use crate::llm::decision::{
+        AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionQuestion,
+        DecisionReceipt, DecisionRung, EvidenceVersion, ProviderPin, TypedDecision,
+    };
 
     fn bundle(sheet: &str, before: Option<CellValue>, value: CellValue) -> SheetAnswerBundle {
+        let question_id = EntityId::now();
+        let principal = EntityId::now();
+        let (contract, answer) = match &value {
+            CellValue::Number(n) => (
+                AnswerContract::Score {
+                    min: 0.0,
+                    max: 10.0,
+                },
+                DecisionAnswer::Score(*n),
+            ),
+            CellValue::Text(text) => (
+                AnswerContract::Choice {
+                    options: vec![text.clone()],
+                },
+                DecisionAnswer::Choice(text.clone()),
+            ),
+            CellValue::Bool(b) => (AnswerContract::Noul, DecisionAnswer::Noul(*b)),
+            CellValue::Blank | CellValue::Formula { .. } | CellValue::Error(_) => {
+                panic!("judgment-cells fixture only answers numbers, text and bools")
+            }
+        };
+        let band = DecisionBand::default();
+        let probability = 0.8;
+        let decision = TypedDecision {
+            answer,
+            probability: Some(probability),
+            evidence: vec![],
+            in_band: band.contains(probability),
+            receipt: DecisionReceipt {
+                question: question_id,
+                question_version: 1,
+                principal,
+                providers: vec![ProviderPin {
+                    rung: DecisionRung::Rule,
+                    model: "local".into(),
+                    version: "r1".into(),
+                }],
+                band,
+                band_version: 0,
+                evidence_versions: vec![EvidenceVersion {
+                    id: EntityId::now(),
+                    body_hash: [0; 32],
+                }],
+                cost_per_thousand: Some(0.0),
+                paired: vec![],
+                person: vec![],
+                time: None,
+                images: vec![],
+                think_row: None,
+                person_row: None,
+                rule: None,
+                asked: None,
+                state_cut: None,
+            },
+            human_ask: None,
+        };
         SheetAnswerBundle {
-            question: "fit".into(),
-            question_version: "q1".into(),
-            principal: "owner".into(),
+            question: DecisionQuestion {
+                id: question_id,
+                version: 1,
+                text: "fit".into(),
+                class: DecisionClass::Judgment,
+                contract,
+                accept_type: false,
+            },
+            principal,
             sheet: sheet.into(),
             range: RangeRef::parse("B2:B2").unwrap(),
             max_count_override: None,
+            reads: None,
+            base_live: None,
             answers: vec![SheetCellAnswer {
                 cell: CellRef::parse("B2").unwrap(),
                 before,
                 value: Some(value),
-                probability: 0.8,
-                confidence: 0.9,
-                rung: "rule".into(),
-                model: "local".into(),
-                revision: "r1".into(),
-                cost_per_thousand: 0.0,
-                evidence_versions: vec![],
+                decision,
+                source: None,
+                judged_version: None,
+                judged_live: None,
             }],
         }
     }
@@ -213,6 +277,33 @@ mod tests {
             br#"<sst><si><r><t>True</t></r><rPh><t>False</t></rPh></si></sst>"#.to_vec(),
         );
         assert!(verify_sheet_answer_bytes(&ask, Some(&blank), Some(&opc::write(&pkg))).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn inline_rich_text_runs_read_as_their_joined_text() -> Result<()> {
+        // Excel writes formatted inline text as runs (<is><r><t>), each with
+        // optional run properties; the cell's value is the runs' text joined.
+        // A phonetic reading (<rPh>) is not part of the value.
+        let ask = bundle("Data & Co", None, CellValue::Text("Ready & Yes".into()));
+        let blank = package("<worksheet><sheetData/></worksheet>", false);
+        for rich in [
+            r#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><r><t>Ready &amp; Yes</t></r></is></c></row></sheetData></worksheet>"#,
+            r#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><r><rPr><b/></rPr><t>Ready</t></r><r><t xml:space="preserve"> &amp; Yes</t></r></is></c></row></sheetData></worksheet>"#,
+            r#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><r><t>Ready &amp; </t></r><r><t>Yes</t></r><rPh sb="0" eb="5"><t>No</t></rPh></is></c></row></sheetData></worksheet>"#,
+        ] {
+            verify_sheet_answer_bytes(&ask, Some(&blank), Some(&package(rich, false)))?;
+        }
+        // Runs that spell another value do not ground the answer.
+        for other in [
+            r#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><r><t>Ready</t></r></is></c></row></sheetData></worksheet>"#,
+            r#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><r><t>Ready &amp; </t></r><rPh><t>Yes</t></rPh></is></c></row></sheetData></worksheet>"#,
+        ] {
+            assert!(
+                verify_sheet_answer_bytes(&ask, Some(&blank), Some(&package(other, false)))
+                    .is_err()
+            );
+        }
         Ok(())
     }
 

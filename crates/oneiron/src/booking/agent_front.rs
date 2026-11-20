@@ -34,8 +34,6 @@ fn default_max_offered_slots() -> u16 {
     DEFAULT_MAX_OFFERED_SLOTS
 }
 
-// serde's skip_serializing_if hands the field by reference.
-#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_default_max_offered_slots(count: &u16) -> bool {
     *count == DEFAULT_MAX_OFFERED_SLOTS
 }
@@ -277,6 +275,7 @@ pub async fn run_constraint_turn(
         window: request.window,
         constraint: Some(constraint.clone()),
         visitor_tz: visitor_tz.clone(),
+        duration_min: None,
     })?;
 
     if solve_result.slots.is_empty() {

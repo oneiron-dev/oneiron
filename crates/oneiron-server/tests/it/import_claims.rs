@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron::attempt_queue::{AttemptRecord, AttemptState};
+use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
+use oneiron::dreamer_runner::maintenance::{CONFLICT_SETTLE_FACET, MAINTENANCE_QUEUE_KIND};
 use oneiron::registry::ENTITY_TYPE_TURN;
 use oneiron::{ClaimApprovalStatus, ClaimBody, ClaimSource, EntityId, TimeRange, Vault};
 use serde_json::{Value, json};
@@ -189,6 +192,17 @@ fn imported_turn(vault: &Vault, id: &EntityId) -> bool {
     )
 }
 
+/// Whether `row` is the deduped conflict settlement the home timer queues
+/// after each timer pass for the next pass to run (oneiron-server
+/// `ai_host/dreamer.rs` `run_home_timer`). A graceful stop ends at an attempt
+/// boundary and keeps it queued for the next serve.
+fn queued_conflict_settle(row: &AttemptRecord) -> bool {
+    row.state == AttemptState::Queued
+        && row.kind == MAINTENANCE_QUEUE_KIND
+        && decode_dreamer_attempt_payload(&row.payload)
+            .is_ok_and(|payload| payload.attempt_type == CONFLICT_SETTLE_FACET)
+}
+
 #[tokio::test]
 async fn imported_claims_wait_in_one_review_per_import_which_the_owner_approves_or_declines_whole()
 {
@@ -274,17 +288,13 @@ async fn imported_claims_wait_in_one_review_per_import_which_the_owner_approves_
 
     {
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
+        // Every extraction ran; only the next pass's conflict settle may wait.
         let unfinished: Vec<_> = oneiron::attempt_queue::AttemptQueue::new(&vault)
             .list()
             .unwrap()
             .into_iter()
-            .filter(|row| {
-                matches!(
-                    row.state,
-                    oneiron::attempt_queue::AttemptState::Leased
-                        | oneiron::attempt_queue::AttemptState::Queued
-                )
-            })
+            .filter(|row| matches!(row.state, AttemptState::Leased | AttemptState::Queued))
+            .filter(|row| !queued_conflict_settle(row))
             .collect();
         assert!(unfinished.is_empty(), "{unfinished:?}");
         // Every claim is imported and Proposed, never Auto, on the imported TURN.

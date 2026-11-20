@@ -16,7 +16,7 @@ use crate::memory::extraction::{
 };
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::ports::ManualClock;
-use crate::registry::ENTITY_TYPE_PERSON;
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use crate::tagging::{TaggingMarkerConfig, TaggingMode, TaggingReconciler};
 use crate::temporal::TimeRange;
 use crate::{ModelId, VaultConfig};
@@ -91,6 +91,7 @@ fn witness_messages(
         conversation_ref: ROOM.into(),
         turn_ref: Some(turn_ref.to_owned()),
         thread_audience: None,
+        project: None,
         occurred_at,
         messages,
         assertions: Default::default(),
@@ -177,6 +178,7 @@ impl ExtractionEncoder for Names {
                 context_links: Vec::new(),
                 speaker_links: Vec::new(),
                 mood_parts: Vec::new(),
+                relations: None,
                 stack_sha16: self.stack.map(str::to_owned),
             }),
         }
@@ -365,7 +367,9 @@ fn a_head_swap_at_one_checkpoint_reads_the_new_tags_names() {
     // The served head swaps at the same checkpoint and the turn is tagged
     // again: the same input, tagger, save path and parameters.
     vault
-        .with_write_txn(|txn| crate::tagging::mark_turn_in_txn(&vault, txn, turn))
+        .with_write_txn(|txn| {
+            crate::tagging::mark_turn_in_txn(&vault, txn, turn, ExtractionWork::Bulk)
+        })
         .expect("mark");
     let after = tag("bbbbbbbbbbbbbbbb", vec!["Ada"]);
     assert_eq!(vault.sieve_pass(NOW + 1).expect("pass").turns_read, 1);
@@ -435,6 +439,17 @@ fn words_the_dreamer_may_not_read_give_no_span_until_a_grant_lets_it() {
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path(), false);
     let space = EntityId::from_bytes([0x5a; 16]).expect("space id");
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &space,
+            ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let text = "We met Alice Smith on October 12, 2026.";
     let private = witness_with(
         &vault,
@@ -469,12 +484,12 @@ fn words_the_dreamer_may_not_read_give_no_span_until_a_grant_lets_it() {
 /// twice.
 #[test]
 fn a_flood_is_read_pass_after_pass_within_the_bound() {
-    const BOUND: u32 = 32 * 1024;
+    const BOUND: u64 = 32 * 1024;
     let dir = tempfile::tempdir().expect("dir");
     let mut vault = open(dir.path(), false);
     let text = "アリス 2026-10-12 ".repeat(20_000);
     let turn = witness(&vault, "78787878787878787878787878787878", &text);
-    let spans_of = |vault: &Vault| -> Vec<(u32, u32)> {
+    let spans_of = |vault: &Vault| -> Vec<(u64, u64)> {
         let mut spans: Vec<_> = vault
             .sieve_queue(usize::MAX)
             .expect("queue")
@@ -524,6 +539,17 @@ fn a_message_withheld_beside_unchanged_words_is_read_once_a_grant_lets_it() {
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path(), false);
     let space = EntityId::from_bytes([0x5c; 16]).expect("space id");
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &space,
+            ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let turn_ref = "79797979797979797979797979797979";
     let (first, second) = (
         "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
@@ -701,6 +727,17 @@ fn a_grant_that_opens_a_long_turn_keeps_the_pass_going() {
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path(), false);
     let space = EntityId::from_bytes([0x5f; 16]).expect("space id");
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &space,
+            ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     let text = "アリス 2026-10-12 ".repeat(20_000);
     let turn = witness_with(
         &vault,
@@ -779,6 +816,17 @@ fn a_grant_revoked_behind_a_read_takes_back_what_the_read_passed() {
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path(), false);
     let space = EntityId::from_bytes([0x5d; 16]).expect("space id");
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &space,
+            ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     grant_messages_read(&vault, 0x61, space);
     let (first, second) = (
         "6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a",
@@ -833,6 +881,17 @@ fn a_revoked_grant_takes_its_spans_out_of_what_the_queue_serves() {
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path(), false);
     let space = EntityId::from_bytes([0x66; 16]).expect("space id");
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault
+        .put_entity(
+            &space,
+            ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )
+        .expect("put the relationship space");
     grant_messages_read(&vault, 0x62, space);
     let id = "6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e";
     let text = "Alice arrives tomorrow.";

@@ -315,6 +315,44 @@ pub(super) fn require_authorship_in_txn(
     ))
 }
 
+/// Whether `actor` closing or replacing `body` would lift a restriction
+/// below the owner: the row restricts someone's access or authority
+/// ([`crate::federation::claim_removal_widens_in`]: a paused, suppressed or
+/// exited `campaign.member`, a do-not-contact bar, an opt-out, an
+/// unreachable channel, a delivery window, ...), and `actor` is not a live
+/// owner. Lifting a restriction is a widening, a live owner's alone, whoever
+/// wrote the row (the lead's RULING WORLD-ACCESS-GRANT-DELETE = A, 15 Nov:
+/// "deleting a restriction IS a widening"; the Engine's RULING
+/// RESTRICTION-FIX-SCOPE = A, FIX [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT]).
+/// A System actor is no exception: at this door it acts under an owner's
+/// standing Grant ([`require_authorship_in_txn`]), and a standing Grant is no
+/// live owner's stamp on a widening (ARCH-0003: "widening writes are
+/// human-gated"; FIX [RESTRICTION-CLOSE-BY-SYSTEM-GRANT]). The engine's own
+/// writers (a projector, the Dreamer's runner) never reach this check.
+///
+/// # Errors
+///
+/// The contact and owner census reads' own errors.
+pub(crate) fn lifts_restriction_below_owner_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    body: &ClaimBody,
+) -> Result<bool> {
+    if !crate::federation::claim_removal_widens_in(vault, txn, body)? {
+        return Ok(false);
+    }
+    Ok(!(actor.actor_class() == EdgeActorClass::Human
+        && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor.entity_ref())?))
+}
+
+/// The edit check of a write at `target`'s id: an existing claim there is its
+/// author's to edit (or a delegated System writer's), and one that restricts
+/// someone only a live owner's ([`lifts_restriction_below_owner_in`]). The
+/// write puts over the row, or closes it behind a successor (a code run's
+/// `vault.claims.put`, `Vault::put_claim_candidate_with_landing_returning_actual`),
+/// so the restriction leaves every fold that reads it (Astra review on #8153
+/// F1). A System writer with no claim there needs its delegated create.
 pub(crate) fn guard_existing_claim_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -323,6 +361,11 @@ pub(crate) fn guard_existing_claim_in_txn(
 ) -> Result<()> {
     if let Some(body) = vault.get_claim_in_txn(txn, &target)? {
         require_claim_self_grant_in_txn(vault, txn, actor, target, &body, "memory.claim.edit")?;
+        if lifts_restriction_below_owner_in(vault, txn, actor, &body)? {
+            return Err(authority_denied(
+                "a write over a claim that restricts someone's access is a live vault owner's act",
+            ));
+        }
     } else if actor.actor_class() == EdgeActorClass::System {
         require_authorship_in_txn(vault, txn, actor, target, None, "memory.claim.create")?;
     }

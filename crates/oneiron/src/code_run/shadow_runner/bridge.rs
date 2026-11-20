@@ -51,6 +51,7 @@ use crate::code_run::{
 use crate::engine_executor::{
     JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStream, JsResultCall, RESULT_READ_ROOT,
     SelfDispatchResponse, StepCancellation, bridge_result_output_path, is_result_output_path,
+    record_only_output_path,
 };
 use crate::limit_ask::{EngineLimit, EngineLimits, LimitWatch};
 use crate::secret_rotation::ArtifactTaintState;
@@ -103,6 +104,8 @@ pub(crate) struct ShadowBridgeHost<'a> {
     reads: ArmReads,
     /// The vault's `[limits]` scan row, frozen for the arm's reads.
     watch: LimitWatch,
+    /// The owner's search context bound, frozen for the arm's reads.
+    search_max_context: usize,
     streams: ArmStreams,
     /// The run's full output count as the step started (FIX 1393
     /// follow-up): the base the arm's store ordinals count from, the same
@@ -169,6 +172,7 @@ impl<'a> ShadowBridgeHost<'a> {
             bridge_end: prepared.bridge_end,
             reads,
             watch: LimitWatch::new(limits),
+            search_max_context: prepared.search_max_context,
             streams: ArmStreams::default(),
             output_ordinal_base: crate::engine_executor::store_ordinal_base(&prepared.prefix),
             spilled: 0,
@@ -444,8 +448,14 @@ impl ShadowBridgeHost<'_> {
         // unavailable, trapped and mismatched answers never became bodies.
         // A StoredReply carrier uses `store_reply`, which can reuse a
         // prefix occurrence. Count only a newly captured occurrence, once.
+        // A row a verb hook's view answered froze no reply: its real result
+        // was spilled record-only, and only shifts the ordinals.
         let window = self.window;
-        if matches!(&outcome, SelfDispatchOutcome::StoredReply(_)) {
+        let viewed = window
+            .bridge_calls
+            .get(at)
+            .is_some_and(|row| row.hook_view_served);
+        if matches!(&outcome, SelfDispatchOutcome::StoredReply(_)) && !viewed {
             let Some(reply) = self.replies.iter().find(|reply| {
                 window
                     .bridge_calls
@@ -474,10 +484,10 @@ impl ShadowBridgeHost<'_> {
                 self.bind(name, output.handle, output.path);
             }
         } else if window.bridge_calls.get(at).is_some_and(|row| {
-            window
-                .outputs
-                .iter()
-                .any(|output| output.path == bridge_result_output_path(row.seq))
+            window.outputs.iter().any(|output| {
+                output.path == bridge_result_output_path(row.seq)
+                    || output.path == record_only_output_path(row.seq)
+            })
         }) {
             self.spilled += 1;
         }

@@ -4,7 +4,6 @@
 use crate::ports::EntityStoreRead;
 use serde::{Deserialize, Serialize};
 
-use super::BookingFacts;
 use super::confirmation_state::confirmation_receipt_in;
 use super::occurrence::{at, half_open_occurrence, inclusive_occurrence};
 use super::storage::{
@@ -12,11 +11,13 @@ use super::storage::{
     read_txn, refused,
 };
 use super::types::{
-    BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_EVENT_TYPE_REF_PREDICATE,
-    BOOKING_LIFECYCLE_PREDICATES, BOOKING_SOURCE_PAGE_PREDICATE, BOOKING_STATUS_PREDICATE,
-    BookingBookerContactValue, BookingEventTypeRefValue, BookingSourcePageValue, BookingStatus,
-    BookingStatusValue, SoftHoldRow,
+    BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_CAP_OVERRIDE_PREDICATE,
+    BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_LIFECYCLE_PREDICATES, BOOKING_SOURCE_PAGE_PREDICATE,
+    BOOKING_STATUS_PREDICATE, BookingBookerContactValue, BookingCapOverrideValue,
+    BookingEventTypeRefValue, BookingSourcePageValue, BookingStatus, BookingStatusValue,
+    SoftHoldRow,
 };
+use super::{BookingFacts, CalendarCancellation};
 use crate::booking::config::ClaimClassDescriptorRow;
 use crate::booking::{BookingError, ConstraintObject, EventTypeKey};
 use crate::calendar::claims::{
@@ -370,7 +371,7 @@ pub(super) fn write_booking_event(
         .apply(wtxn)
         .map_err(|error| engine_failure("booking event write", error))?;
 
-    let values = [
+    let mut values = vec![
         (
             BOOKING_EVENT_TYPE_REF_PREDICATE,
             encode_claim_value(&BookingEventTypeRefValue {
@@ -397,6 +398,16 @@ pub(super) fn write_booking_event(
             })?,
         ),
     ];
+    // The owner booked this past a full day: the reason stays on the booking.
+    if let Some(cap_override) = &hold.cap_override {
+        values.push((
+            BOOKING_CAP_OVERRIDE_PREDICATE,
+            encode_claim_value(&BookingCapOverrideValue {
+                reason: cap_override.reason.clone(),
+                recorded_at: now_utc,
+            })?,
+        ));
+    }
     for (predicate, value) in values {
         put_claim(vault, wtxn, event_ref, predicate, value, now_utc)?;
     }
@@ -543,7 +554,7 @@ fn booking_facts_in(
     let mut event_type = None;
     let mut status = None;
     let mut held_confirmed = false;
-    let mut calendar_cancelled = false;
+    let mut calendar_cancellation = CalendarCancellation::None;
     for claim_id in claims_for_subject(vault, rtxn, event_ref)? {
         let Ok(Some(body)) = vault.get_claim_in_txn(rtxn, &claim_id) else {
             continue;
@@ -595,7 +606,9 @@ fn booking_facts_in(
                     }
                 }
             }
-            PREDICATE_CALENDAR_STATUS => calendar_cancelled |= is_calendar_cancellation(&body)?,
+            PREDICATE_CALENDAR_STATUS => {
+                calendar_cancellation = calendar_cancellation.max(calendar_cancellation_of(&body)?);
+            }
             _ => {}
         }
     }
@@ -607,7 +620,7 @@ fn booking_facts_in(
         event_type: event_type.ok_or_else(|| refused("booking carries no event type claim"))?,
         slot: occurrence_in(vault, rtxn, event_ref)?,
         status: status.ok_or_else(|| refused("booking carries no status claim"))?,
-        calendar_cancelled,
+        calendar_cancellation,
         context: confirmation_context_in(vault, rtxn, event_ref)?,
     })
 }
@@ -618,11 +631,25 @@ fn booking_facts_in(
 /// a booking's effective state (cap, reminder, move) takes this beside the
 /// booking's own status head (FIX 22385).
 fn is_calendar_cancellation(body: &ClaimBody) -> Result<bool, BookingError> {
-    Ok(body.predicate == PREDICATE_CALENDAR_STATUS
-        && decode_status_value(&body.value)
-            .map_err(|error| engine_failure("calendar status decode", error))?
-            .status
-            == CalendarStatus::Cancelled)
+    Ok(calendar_cancellation_of(body)? != CalendarCancellation::None)
+}
+
+/// What `body` says about the EVENT's cancellation: none unless it is a
+/// `calendar.status` head that says cancelled, and an omission's
+/// (`imported_absence`) only until a feed reports the EVENT live again.
+fn calendar_cancellation_of(body: &ClaimBody) -> Result<CalendarCancellation, BookingError> {
+    if body.predicate != PREDICATE_CALENDAR_STATUS {
+        return Ok(CalendarCancellation::None);
+    }
+    let value = decode_status_value(&body.value)
+        .map_err(|error| engine_failure("calendar status decode", error))?;
+    Ok(match (value.status, value.basis) {
+        (CalendarStatus::Cancelled, CalendarStatusBasis::ImportedAbsence) => {
+            CalendarCancellation::Omission
+        }
+        (CalendarStatus::Cancelled, _) => CalendarCancellation::Standing,
+        (CalendarStatus::Confirmed, _) => CalendarCancellation::None,
+    })
 }
 
 /// The EVENT's stored occurrence, read through the CALLER's transaction.
@@ -714,6 +741,9 @@ pub(super) fn validate_lifecycle_claim(body: &ClaimBody) -> crate::Result<()> {
         BOOKING_STATUS_PREDICATE => claim_value::<BookingStatusValue>(&body.value)
             .map(|_| ())
             .ok_or("booking.status value does not match the pinned schema"),
+        BOOKING_CAP_OVERRIDE_PREDICATE => claim_value::<BookingCapOverrideValue>(&body.value)
+            .map(|_| ())
+            .ok_or("booking.cap_override value does not match the pinned schema"),
         _ => Err("unknown booking lifecycle claim predicate"),
     };
     defect.map_err(crate::Error::InvalidClaimBody)

@@ -1,11 +1,12 @@
 //! Lease and tally bookkeeping: reservations, charging, and metering math.
 
 use std::collections::BTreeSet;
+use std::sync::{Arc, OnceLock};
 
 use super::dispatch::DispatchBinding;
 use super::policy::BudgetPolicyRow;
 use super::state::BudgetState;
-use super::types::BudgetThreshold;
+use super::types::{BudgetLeaseState, BudgetThreshold};
 use crate::llm::LlmUsage;
 use crate::llm::backend::PhysicalAttempts;
 
@@ -49,11 +50,13 @@ pub(super) enum ReservePlan {
     DeniedByCapacity,
 }
 
+/// One open lease, as the meter's table holds it until the lease settles or
+/// aborts. The record then leaves the table, and what the lease's handles
+/// still read stays in their shared [`ClosedLeaseCell`].
 #[derive(Debug, Clone)]
 pub(super) struct LeaseRecord {
     pub(super) reserve_units: u64,
     pub(super) metered: bool,
-    pub(super) state: LeaseState,
     /// Resolved policy rows this lease's call matched; empty on the
     /// single-pool branch and on unmetered local leases.
     pub(super) matched_rows: Vec<usize>,
@@ -69,13 +72,117 @@ pub(super) struct LeaseRecord {
     /// every handle of the lease shares. Once it is above zero, bytes left,
     /// and the lease can never be marked unsent (FIX BUDGET-LEASE).
     pub(super) physical_attempts: PhysicalAttempts,
+    /// The cell every handle of this lease shares, filled as the lease closes.
+    pub(super) closed: ClosedLeaseCell,
 }
 
+impl LeaseRecord {
+    /// Closes this lease as `outcome`, which its caller took out of the
+    /// meter's table: what the lease's handles still read moves into their
+    /// cell. The caller releases and charges the record in the same critical
+    /// section.
+    pub(super) fn close(&self, outcome: LeaseOutcome) {
+        let closed = ClosedLease {
+            outcome,
+            reserve_units: self.reserve_units,
+            dispatched: self.dispatched,
+            request_digest: self
+                .binding
+                .as_ref()
+                .and_then(|binding| binding.request_digest.clone()),
+        };
+        // Each issuance has its own cell and one record, which leaves the
+        // table as it closes, so the cell is still empty here.
+        let filled = self.closed.0.set(closed).is_ok();
+        debug_assert!(filled, "a lease closes once");
+    }
+}
+
+/// How a lease closed. A lease the meter's table still holds is open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum LeaseState {
-    Open,
+pub(super) enum LeaseOutcome {
     Settled { charged_units: u64 },
     Aborted,
+}
+
+/// What a lease keeps once it settled or aborted: the facts its handles still
+/// read (FIX BUDGET-LINE-LEASE-TABLE-UNBOUNDED). Its matched rows and
+/// reservation split were released and charged at the close, and nothing keeps
+/// them.
+#[derive(Debug)]
+pub(super) struct ClosedLease {
+    pub(super) outcome: LeaseOutcome,
+    /// What the lease reserved at admission; the close released all of it.
+    pub(super) reserve_units: u64,
+    pub(super) dispatched: bool,
+    pub(super) request_digest: Option<String>,
+}
+
+/// The closed state of one lease, shared by every clone of its handle and by
+/// the open record its meter holds until the close. The meter's table keeps
+/// only open leases, so a closed lease answers through its handle, and the
+/// cell goes when the last handle drops.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ClosedLeaseCell(Arc<OnceLock<ClosedLease>>);
+
+impl ClosedLeaseCell {
+    pub(super) fn get(&self) -> Option<&ClosedLease> {
+        self.0.get()
+    }
+
+    pub(super) fn outcome(&self) -> Option<LeaseOutcome> {
+        self.get().map(|closed| closed.outcome)
+    }
+}
+
+/// One lease as its issuing meter answers for it: its open record, or what
+/// its handles keep once it closed.
+#[derive(Clone, Copy)]
+pub(super) enum LeaseEntry<'a> {
+    Open(&'a LeaseRecord),
+    Closed(&'a ClosedLease),
+}
+
+impl<'a> LeaseEntry<'a> {
+    pub(super) fn is_open(self) -> bool {
+        matches!(self, Self::Open(_))
+    }
+
+    pub(super) fn reserve_units(self) -> u64 {
+        match self {
+            Self::Open(record) => record.reserve_units,
+            Self::Closed(closed) => closed.reserve_units,
+        }
+    }
+
+    pub(super) fn dispatched(self) -> bool {
+        match self {
+            Self::Open(record) => record.dispatched,
+            Self::Closed(closed) => closed.dispatched,
+        }
+    }
+
+    pub(super) fn request_digest(self) -> Option<&'a str> {
+        match self {
+            Self::Open(record) => record.binding.as_ref()?.request_digest.as_deref(),
+            Self::Closed(closed) => closed.request_digest.as_deref(),
+        }
+    }
+
+    pub(super) fn observation(self) -> BudgetLeaseState {
+        match self {
+            Self::Open(record) => BudgetLeaseState::Open {
+                reserve_units: record.reserve_units,
+                dispatched: record.dispatched,
+            },
+            Self::Closed(closed) => match closed.outcome {
+                LeaseOutcome::Settled { charged_units } => BudgetLeaseState::Settled {
+                    used_units: charged_units,
+                },
+                LeaseOutcome::Aborted => BudgetLeaseState::Aborted,
+            },
+        }
+    }
 }
 
 /// Releases every reservation one lease holds, in the one critical section:

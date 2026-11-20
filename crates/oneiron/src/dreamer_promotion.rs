@@ -58,6 +58,8 @@ mod writer;
 pub use crate::gate::DreamerWeaveReach;
 pub use attempt_sink::AttemptPromotionSink;
 pub(crate) use imported_keep::KeptConflictLink;
+#[cfg(oneiron_test_support)]
+pub(crate) use scoped::attachment_digests_for_test;
 pub use scoped::promote_scoped_consolidation;
 pub(crate) use scoped::{AssertedEvidence, EvidenceAssertion, assert_evidence_in_txn};
 pub(crate) use settlement::{KeptLanding, land_kept_alternative_in_txn};
@@ -415,8 +417,6 @@ fn verify_landed(
         .map_err(|rejection| rejection.reason)
 }
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-PROMOTION-TESTS]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

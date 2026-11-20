@@ -736,9 +736,10 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
         vec![owner, peer]
     );
 
-    let identity = seeded_test_entity_id(0x2094_0104);
     let peer_contact = seeded_test_entity_id(0x2094_0106);
-    seed_counterparty_contact(&server, peer_contact, identity, "peer@example.com");
+    // OF-272: the roster reads the member's contact from its identity claim,
+    // so the contact names the peer itself.
+    seed_counterparty_contact(&server, peer_contact, peer, "peer@example.com");
     server
         .vault
         .put_edge(&peer_contact, oneiron::EdgeKind::About, &peer, 1.0)
@@ -831,16 +832,44 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
         "owner presence alone cannot override a narrower peer clearance: {supervised_narrowed}"
     );
 
+    // OF-272: the roster reads a member's contacts from their identity claims,
+    // and a contact's identity claim stays when the contact is revoked, so a
+    // member's contact list only grows and each denial below is final. The
+    // phases therefore run from the restored dial, which admits Tier B again,
+    // to one second contact naming the same person.
+    seed_disclosure_scope(&server, peer_contact, oneiron::federation::Scope::top());
+    let (status, restored) = room_owner_json(server.clone(), owner, &request(false)).await;
+    assert_eq!(status, StatusCode::OK, "{restored}");
+    assert!(
+        restored["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == tier_b.to_hex()),
+        "the restored dial admits tier B again: {restored}"
+    );
+
+    let other_contact = seeded_test_entity_id(0x2094_0107);
+    seed_counterparty_contact(&server, other_contact, peer, "ambiguous@example.com");
+    seed_disclosure_scope(&server, other_contact, oneiron::federation::Scope::top());
+    server
+        .vault
+        .put_edge(&other_contact, oneiron::EdgeKind::About, &peer, 1.0)
+        .expect("second contact linked to peer");
+    let (status, two_contacts) = room_owner_json(server.clone(), owner, &request(false)).await;
+    assert_eq!(status, StatusCode::OK, "{two_contacts}");
+    assert!(
+        !two_contacts["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == tier_b.to_hex()),
+        "two contacts for one person fail closed: {two_contacts}"
+    );
+
     // A client-supplied contact cannot replace a missing roster identity:
     // losing the unique person link makes that member unknown and denies the
     // absent-owner Tier-B read even when the caller names the contact.
-    seed_disclosure_scope(&server, peer_contact, oneiron::federation::Scope::top());
-    assert!(
-        server
-            .vault
-            .delete_edge(&peer_contact, oneiron::EdgeKind::About, &peer)
-            .expect("unlink peer")
-    );
     let (status, unlinked) = room_owner_json(
         server.clone(),
         owner,
@@ -863,57 +892,10 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
             .any(|row| row["id"] == tier_b.to_hex()),
         "missing roster identity cannot be replaced by a wire party: {unlinked}"
     );
-
-    server
-        .vault
-        .put_edge(&peer_contact, oneiron::EdgeKind::About, &peer, 1.0)
-        .expect("relink peer");
-    let other_contact = seeded_test_entity_id(0x2094_0107);
-    seed_counterparty_contact(&server, other_contact, identity, "ambiguous@example.com");
-    seed_disclosure_scope(&server, other_contact, oneiron::federation::Scope::top());
-    server
-        .vault
-        .put_edge(&other_contact, oneiron::EdgeKind::About, &peer, 1.0)
-        .expect("second contact linked to peer");
-    let (status, two_contacts) = room_owner_json(server.clone(), owner, &request(false)).await;
-    assert_eq!(status, StatusCode::OK, "{two_contacts}");
-    assert!(
-        !two_contacts["results"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|row| row["id"] == tier_b.to_hex()),
-        "two contacts for one person fail closed: {two_contacts}"
-    );
-    server
-        .vault
-        .delete_edge(&other_contact, oneiron::EdgeKind::About, &peer)
-        .expect("remove extra contact");
-    let stranger = seeded_test_entity_id(0x2094_0108);
-    server
-        .vault
-        .put_entity(
-            &stranger,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"stranger",
-        )
-        .expect("other person");
-    server
-        .vault
-        .put_edge(&peer_contact, oneiron::EdgeKind::About, &stranger, 1.0)
-        .expect("contact points to two people");
-    let (status, two_people) = room_owner_json(server.clone(), owner, &request(false)).await;
-    assert_eq!(status, StatusCode::OK, "{two_people}");
-    assert!(
-        !two_people["results"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|row| row["id"] == tier_b.to_hex()),
-        "one contact for two people fails closed: {two_people}"
-    );
+    // A contact names one person (one identity head, OF-272), so a room
+    // member cannot be reached through "one contact for two people"; the
+    // About-edge uniqueness rule for that case serves only an audience
+    // outside a room (api/context_pack/audience.rs).
 
     // Omission is not authenticated presence in a room, even on owner auth.
     let (status, implicit) = room_owner_json(
@@ -1035,6 +1017,16 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
     let space = seeded_test_entity_id(0x2094_0304);
     server
         .vault
+        .put_entity(
+            &space,
+            oneiron::registry::ENTITY_TYPE_RELATIONSHIP,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )
+        .expect("a relationship");
+    server
+        .vault
         .memory(owner, oneiron::EdgeActorClass::Human)
         .rooms_speak(&oneiron::memory::WitnessTurn {
             conversation_ref: room.to_hex(),
@@ -1053,6 +1045,7 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
             occurred_at: 2,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("speak");
 
@@ -1107,14 +1100,14 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
     }
 }
 
-/// A bare host secret proves no PERSON, so the vault's own agents stay
-/// unknown parties to it: a room of agents alone never reads as the owner
-/// alone, presence asserted or not, and reads only public rows. The agent
-/// reading on its own credential is the room's proven reader: it adds no
-/// clearance term, so the room reads what its own grant admits, and never
-/// Tier A.
+/// The fixture binds the vault's only actor binding to the room agent, so
+/// the host root the bare host secret acts as binds no live owner: its pack
+/// is refused 403 OWNER_BINDING_REQUIRED, presence asserted or not, with no
+/// owner-read fallback. The agent reading on its own credential is the room's
+/// proven reader: it adds no clearance term, so the room reads what its own
+/// grant admits, and never Tier A.
 #[tokio::test]
-async fn an_agent_only_room_never_reads_as_the_owner_alone_for_a_bare_host() {
+async fn a_host_root_whose_owner_binding_was_replaced_by_an_agent_binding_is_refused() {
     let (_dir, server) = interlocutor_test_server();
     let agent = seeded_test_entity_id(0x2094_0401);
     server
@@ -1167,12 +1160,8 @@ async fn an_agent_only_room_never_reads_as_the_owner_alone_for_a_bare_host() {
             Some(&request),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_ne!(body["disclosure"]["mode"], "owner_alone", "{body}");
-        assert!(
-            !ids(&body).contains(&private.to_hex()) && !ids(&body).contains(&sensitive.to_hex()),
-            "a bare host reads only public rows through an agent-only room: {body}"
-        );
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"]["code"], "OWNER_BINDING_REQUIRED", "{body}");
     }
 
     let agent_reads = |server: std::sync::Arc<SyncServer>| {
@@ -1458,8 +1447,9 @@ async fn a_narrowed_readers_empty_pack_reads_alike_beside_a_hidden_match() {
         assert_eq!(body["results"], json!([]), "{body}");
         (body["state"].clone(), body["empty"].clone())
     };
-    // FACET-READ: the pack and board doors refuse a credential limited to a
-    // facet before they retrieve, so a hidden match moves neither answer.
+    // FACET-READ: the pack serves a facet-narrowed empty answer; the board
+    // still refuses before retrieval. A hidden match changes neither semantic
+    // answer.
     let faceted = || async {
         let bearer = test_bearer(&format!(
             "scope=core:read;facets={}",
@@ -1478,14 +1468,42 @@ async fn a_narrowed_readers_empty_pack_reads_alike_beside_a_hidden_match() {
                 core_request_with_authz("POST", uri, bearer.clone(), Some(&request)),
             )
             .await;
-            assert_eq!(status, StatusCode::FORBIDDEN, "{uri}: {body}");
-            body["error"].as_object_mut().unwrap().remove("requestId");
-            answers.push(body);
+            if uri == "/v1/core/context-pack" {
+                assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+                assert_eq!(body["results"], json!([]), "{body}");
+                assert_eq!(body["neighbors"], json!([]), "{body}");
+                assert_eq!(body["state"]["reason"], "filter_matched_none", "{body}");
+                assert_eq!(body["state"]["total_in_scope"], 0, "{body}");
+                assert_eq!(body["narrowing"]["suppressed_count"], 0, "{body}");
+                assert_eq!(body["stats"]["claims_suppressed"], 0, "{body}");
+                assert_eq!(body["disclosure"]["mode"], "absence_clamp", "{body}");
+                answers.push(json!({
+                    "results": body["results"],
+                    "neighbors": body["neighbors"],
+                    "capabilities": body["capabilities"],
+                    "grantedData": body["grantedData"],
+                    "state": body["state"],
+                    "empty": body["empty"],
+                    "narrowing": body["narrowing"],
+                    "disclosure": body["disclosure"],
+                    "counts": [
+                        body["stats"]["candidates_considered"],
+                        body["stats"]["entities_hydrated"],
+                        body["stats"]["neighbors_hydrated"],
+                        body["stats"]["cosine_ghosts_dampened"],
+                        body["stats"]["claims_suppressed"]
+                    ]
+                }));
+            } else {
+                assert_eq!(status, StatusCode::FORBIDDEN, "{uri}: {body}");
+                body["error"].as_object_mut().unwrap().remove("requestId");
+                answers.push(body);
+            }
         }
         answers
     };
     let before = empty().await;
-    let refused = faceted().await;
+    let faceted_before = faceted().await;
     // A claim in the base world the clamp admits, which the reader's own
     // grant withholds.
     seed_disclosure_claim_in_world(
@@ -1496,7 +1514,7 @@ async fn a_narrowed_readers_empty_pack_reads_alike_beside_a_hidden_match() {
     );
     assert_eq!(empty().await, before, "a hidden match reads as no match");
     assert_eq!(before.0["reason"], "filter_matched_none", "{before:?}");
-    assert_eq!(faceted().await, refused);
+    assert_eq!(faceted().await, faceted_before);
 }
 
 /// F19 review round 3 (Sol F2 = Astra F3): no key reads every row. A claim
@@ -1541,6 +1559,10 @@ async fn an_owners_empty_pack_reads_alike_beside_another_principals_match() {
             oneiron::ClaimLifecycleStatus::Active,
         )
         .unwrap();
+        claim.scope_facet = server
+            .vault
+            .default_facet()
+            .expect("the vault default facet");
         claim.scope = Some(rmpv::Value::Map(vec![(
             rmpv::Value::from("principal"),
             rmpv::Value::Binary(principal.as_bytes().to_vec()),

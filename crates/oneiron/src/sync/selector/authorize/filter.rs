@@ -1,5 +1,8 @@
 use super::release::{RowRelease, released_for_other_vault};
 use super::*;
+use crate::claim::history_projection::MachineHistoryReadCache;
+use crate::disclosure::DisclosureBand;
+use crate::federation::SensitivityCeiling;
 use crate::workspace_roster::project::extra_room_redaction;
 
 /// `withhold` names the worlds kept off the machine the export serves. Every
@@ -42,6 +45,9 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // `Storage(Mdb(BadRslot))` under LMDB's single-slot rule, so the scope
     // doors take the txn instead of opening their own.
     let rtxn = vault.store.env.read_txn()?;
+    // Each machine CLAIM's history, resolved once for every control of it
+    // this export judges (FIX MACHINE-HISTORY-PAGE-PER-CONTROL-RESOLVE).
+    let history = MachineHistoryReadCache::new(vault);
     let flagged = withhold.worlds_in(vault, &rtxn)?;
     if key.world().is_some_and(|world| flagged.contains(&world)) {
         let out = create_window_doc("selector", key);
@@ -97,8 +103,9 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // row: the vault owner, and each co-Owner on an Owner-role grant
     // (federation:G, co-ownership is direct access to the whole vault).
     // Admin, Steward, Member, Viewer, Delegate and Guest grants are gated. An
-    // owner check that fails gates.
-    let member_access = member_label_access(vault, &rtxn, &grant)?;
+    // owner check that fails gates. The conversation home binds the member
+    // at the same gate ([`member_reads_row`]).
+    let member_access = member_access(vault, &rtxn, &grant)?;
     // Credentials never leave through a selector, whatever the carrier says, and neither does
     // this vault's embedding setup (OF-370): a peer or a guest keeps its own.
     let mut custody_withheld = BTreeSet::new();
@@ -130,6 +137,10 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // machines take every row as stored.
     let other_vault = matches!(reach, BirthReach::OtherVault(_));
     let mut rewritten = std::collections::BTreeMap::<EntityId, Vec<u8>>::new();
+    // Each candidate coreference claim's `same_as` link: written out, the
+    // claim carries it (SELECTOR-RELEASE-COREFERENCE-CONSENT = A).
+    let mut coreference_claims =
+        std::collections::BTreeMap::<EntityId, (EntityId, EntityId)>::new();
 
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else {
@@ -178,7 +189,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 return;
             }
         }
-        match crate::authority::row_causal_admitted(vault, &rtxn, &id, blob) {
+        match crate::authority::row_causal_admitted_cached(&history, &rtxn, &id, blob) {
             Ok(true) => {}
             Ok(false) => return,
             // An undecodable CLAIM is a withheld row, not a failed export:
@@ -198,7 +209,14 @@ pub(in crate::sync::selector) fn filter_window_doc(
         // both hold (FIX-LIST 9433).
         let selected = note_world::selector_world_axis(selector.world);
         let held = [&grant.authority_scope.worlds, &selected];
-        let scope = match note_world::blob_scope_held_at(&vault.store, &rtxn, id, blob, &held) {
+        let scope = match note_world::blob_scope_held_at_with_history(
+            &vault.store,
+            &history,
+            &rtxn,
+            id,
+            blob,
+            &held,
+        ) {
             Ok(Some(scope)) => scope,
             Ok(None) => return,
             Err(error) => {
@@ -212,7 +230,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
         {
             return;
         }
-        match member_reads_labels(vault, &rtxn, member_access.as_ref(), &id, blob) {
+        match member_reads_row(vault, &rtxn, &member_access, &id, blob) {
             Ok(true) => {}
             Ok(false) => return,
             Err(error) => {
@@ -224,7 +242,18 @@ pub(in crate::sync::selector) fn filter_window_doc(
         // other rows' words (a scope SUMMARY, the TURN that copies one, a
         // merge header) reaches the member only when it reads every one of
         // those sources at the same gate, as its scoped read admits it.
-        match member_reads_word_sources(vault, &rtxn, member_access.as_ref(), &id, blob) {
+        match member_reads_word_sources(vault, &rtxn, &member_access, &id, blob, |source, raw| {
+            source_selected(
+                vault,
+                &rtxn,
+                (source, raw),
+                &grant.authority_scope,
+                selector,
+                scope_position,
+                &facet_scope,
+                &history,
+            )
+        }) {
             Ok(true) => {}
             Ok(false) => return,
             Err(error) => {
@@ -266,20 +295,19 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 )? {
                     return Ok(false);
                 }
-                Ok(
-                    member_reads_labels(vault, &rtxn, member_access.as_ref(), source, raw)?
-                        && source_selected(
-                            vault,
-                            &rtxn,
-                            (source, raw),
-                            &grant.authority_scope,
-                            selector,
-                            scope_position,
-                            &facet_scope,
-                        )?
-                        && crate::store::legal_hold::use_limit_in_txn(&vault.store, &rtxn, source)?
-                            .is_none(),
-                )
+                Ok(member_reads_row(vault, &rtxn, &member_access, source, raw)?
+                    && source_selected(
+                        vault,
+                        &rtxn,
+                        (source, raw),
+                        &grant.authority_scope,
+                        selector,
+                        scope_position,
+                        &facet_scope,
+                        &history,
+                    )?
+                    && crate::store::legal_hold::use_limit_in_txn(&vault.store, &rtxn, source)?
+                        .is_none())
             }) {
                 Ok(true) => {}
                 Ok(false) => return,
@@ -307,6 +335,9 @@ pub(in crate::sync::selector) fn filter_window_doc(
             }
         }
         candidates.insert(id);
+        if let Some(link) = decision.coreference_link {
+            coreference_claims.insert(id, link);
+        }
         if facets.is_some() {
             if decision.facet_visible {
                 kept.insert(id);
@@ -458,6 +489,15 @@ pub(in crate::sync::selector) fn filter_window_doc(
     crate::sync::window::test_hooks::run_device_only_flag_race(vault)?;
     kept.retain(|id| !withheld.contains(id));
     shipped.retain(|id| !withheld.contains(id));
+    // A queued answer leaves only while each link it carries is still shared
+    // into its pact (SELECTOR-RELEASE-COREFERENCE-CONSENT = A): the link of
+    // each coreference claim it ships, and below each `same_as` edge it
+    // writes. A link closure pulled a row across is written as an edge too.
+    for (id, (source, target)) in &coreference_claims {
+        if shipped.contains(id) {
+            coreference.record_carried(*source, *target);
+        }
+    }
 
     let out_entities = out.get_map("entities");
     for (id, raw) in &revision_rows {
@@ -525,21 +565,28 @@ pub(in crate::sync::selector) fn filter_window_doc(
             || (kept.contains(&tgt) && authorized_base.contains(&src))
             || window_world
         {
+            if kind == EdgeKind::SameAs {
+                coreference.record_carried(src, tgt);
+            }
             let _ = map_insert_bytes(&out_edges, raw_key, value);
         }
     });
 
     let out_tombstones = out.get_map("tombstones");
     let open = facets.is_none() && band_filter(scope_position).is_none();
-    let all = matches!(selector.world, SyncSelectorWorld::All);
+    // A selector narrowed to some worlds takes the tombstone of a row it does
+    // not keep where its delete's captured position lies in them (blind
+    // review 2 of #9592): a hard delete took the row's carrier with it.
+    let worlds =
+        (!matches!(selector.world, SyncSelectorWorld::All)).then_some(&scope_position.worlds);
     let export =
-        super::super::tombstones::TombstoneExport::new(&grant.authority_scope, open && all);
+        super::super::tombstones::TombstoneExport::new(&grant.authority_scope, open, worlds);
     let ttxn = vault.store.env.read_txn()?;
     // The window's bodies of each tombstoned row, under every hex casing of
     // its key: a case-shifted alias still names the row (ONE-1158), so the
     // label fallback below judges each body the window holds of it.
     let mut tombstoned_bodies = HashMap::<EntityId, Vec<Vec<u8>>>::new();
-    if member_access.is_some() {
+    if member_access.labels.is_some() {
         map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
             if let Some(blob) = maybe_blob.filter(|blob| blob.len() > ENTITY_METADATA_HEADER_LEN)
                 && let Ok(id) = EntityId::from_hex(raw_key)
@@ -568,8 +615,10 @@ pub(in crate::sync::selector) fn filter_window_doc(
         // request, every body the window still holds of the row decides by its
         // bytes, under whichever casing of the id it is keyed: one the member
         // does not read withholds the tombstone. A read that fails withholds
-        // it too.
-        let member = member_access.as_ref();
+        // it too. A tombstone carries no content, so the conversation home
+        // ([`member_reads_row`]) does not hold it back: a member homed
+        // elsewhere still learns that a row it may hold was deleted.
+        let member = member_access.labels.as_ref();
         let reads =
             super::super::tombstones::member_reads_by_capture(vault, &ttxn, member, &id, value)
                 .unwrap_or_else(|| {
@@ -608,34 +657,127 @@ pub(in crate::sync::selector) fn filter_window_doc(
     Ok(out)
 }
 
-/// The access context `grant`'s member reads with at the relationship gate
-/// (FIX SELECTOR-RELATIONSHIP-LABELS): `None` for an Owner's member, the
-/// vault owner or a co-Owner on an Owner-role grant, which reads every row.
-/// An owner check that fails gates.
-pub(in crate::sync::selector) fn member_label_access<'v>(
+/// How `grant`'s member reads the rows of a selector export.
+pub(in crate::sync::selector) struct MemberAccess<'v> {
+    /// The access context the member reads with at the relationship gate
+    /// (FIX SELECTOR-RELATIONSHIP-LABELS): `None` for an Owner's member, the
+    /// vault owner or a co-Owner on an Owner-role grant, which reads every
+    /// row.
+    labels: Option<crate::access_grant::AccessContext<'v>>,
+    /// Whether the member is homed in this vault (DEC-0006 `#home-clearance`;
+    /// RULING SECREAD-HOME-SELECTOR-EXPORT = A): an Owner's member, or one of
+    /// the vault's own agents. Other members withhold stamped claims unless
+    /// their Connect grant admits the band through `connect_ceiling`:
+    /// stamped company content "was never saved in the member's vault"
+    /// (ARCH-0043 `#leaving-a-company`).
+    homed_here: bool,
+    /// ANSWER FED-CONNECT-STAMPED-HOME = A (Engine 19 Nov 05:05): a Connect
+    /// grant is the owner's own disclosure of one world to one peer vault,
+    /// bounded by the band ceiling the owner picked. Other grants give none.
+    connect_ceiling: Option<SensitivityCeiling>,
+}
+
+impl MemberAccess<'_> {
+    /// What a selector answer's release compares this access by (FIX
+    /// SELECTOR-RELEASE-RECHECK): the reach the member reads relationship
+    /// labels with, `None` for an Owner's member, and whether it is homed
+    /// here.
+    pub(in crate::sync::selector) fn release_reach(
+        &self,
+    ) -> (Option<crate::access_grant::AccessContextSnapshot>, bool) {
+        (
+            self.labels.as_ref().map(|labels| labels.snapshot().clone()),
+            self.homed_here,
+        )
+    }
+
+    /// Whether this member, not homed here, reads a row stamped `stamp` at
+    /// the home check: a row with no stamp above public, or a stamped CLAIM
+    /// under a Connect grant whose ceiling permits its band. A CLAIM a
+    /// MACHINE proof binds is withheld even then: the peer's guest admission
+    /// withholds it ([`crate::federation::guest_claim_withheld`]), so its
+    /// bytes would leave this vault for nothing.
+    fn reads_stamp_away_from_home(&self, stamp: &HomeStamp) -> bool {
+        match stamp {
+            HomeStamp::Unstamped => true,
+            HomeStamp::Stamped {
+                band,
+                machine_bound,
+            } => {
+                !machine_bound
+                    && self
+                        .connect_ceiling
+                        .is_some_and(|ceiling| ceiling.permits(band.sensitivity()))
+            }
+            HomeStamp::Undecodable => false,
+        }
+    }
+}
+
+/// [`MemberAccess`] for `grant`'s member. An owner check that fails gates,
+/// and an own-agent check that fails binds the member to the home.
+pub(in crate::sync::selector) fn member_access<'v>(
     vault: &'v Vault,
     rtxn: &heed::RoTxn<'_>,
     grant: &crate::federation::FederationGrant,
-) -> Result<Option<crate::access_grant::AccessContext<'v>>> {
+) -> Result<MemberAccess<'v>> {
     if grant.role == crate::federation::FederationGrantRole::Owner
         || crate::memory::owner_exemption_holds_in_txn(vault, rtxn, grant.member_ref)
             .unwrap_or(false)
     {
-        return Ok(None);
+        return Ok(MemberAccess {
+            labels: None,
+            homed_here: true,
+            connect_ceiling: None,
+        });
     }
-    Ok(Some(crate::access_grant::AccessContext::load(
-        vault,
-        rtxn,
-        Some(grant.member_ref),
-    )?))
+    let labels = crate::access_grant::AccessContext::load(vault, rtxn, Some(grant.member_ref))?;
+    let homed_here = vault
+        .authority_fold_readonly_in_txn(rtxn)
+        .and_then(|fold| {
+            crate::disclosure::is_vault_agent_in(vault, rtxn, &fold, &grant.member_ref)
+        })
+        .unwrap_or(false);
+    Ok(MemberAccess {
+        labels: Some(labels),
+        homed_here,
+        connect_ceiling: matches!(
+            grant.scope,
+            crate::federation::FederationGrantScope::Connect { .. }
+        )
+        .then_some(grant.authority_scope.sensitivity),
+    })
+}
+
+/// Whether the selector's member reads the row `raw` of `id`: a member homed
+/// elsewhere reads a stamped claim ([`home_stamp`]) only under a Connect
+/// grant, only up to that grant's ceiling and never one a MACHINE proof
+/// binds (`MemberAccess::reads_stamp_away_from_home`), and a gated member
+/// reads a row only at the relationship gate (FIX
+/// SELECTOR-RELATIONSHIP-LABELS). An
+/// Owner's member reads every row. A CLAIM body that does not decode is
+/// withheld, as the causal check withholds it.
+pub(in crate::sync::selector) fn member_reads_row(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    member: &MemberAccess<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    if !member.homed_here && !member.reads_stamp_away_from_home(&home_stamp(raw)) {
+        return Ok(false);
+    }
+    member_reads_labels(vault, rtxn, member.labels.as_ref(), id, raw)
 }
 
 /// Whether the selector's member reads the row `raw` of `id` at the
-/// relationship gate (FIX SELECTOR-RELATIONSHIP-LABELS): `None` is an
+/// relationship gate alone (FIX SELECTOR-RELATIONSHIP-LABELS): `None` is an
 /// Owner's member (the vault owner, or a co-Owner on an Owner-role grant),
 /// which reads every row. A CLAIM body that does not decode is withheld, as
-/// the causal check withholds it.
-pub(in crate::sync::selector) fn member_reads_labels(
+/// the causal check withholds it. [`member_reads_row`] adds the conversation
+/// home for a row the export carries; a tombstone, which carries no content,
+/// takes this gate alone.
+fn member_reads_labels(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     member: Option<&crate::access_grant::AccessContext<'_>>,
@@ -652,39 +794,127 @@ pub(in crate::sync::selector) fn member_reads_labels(
     }
 }
 
-/// Whether the selector's member reads, at the relationship gate, every
-/// source the words of the row `raw` of `id` came from (FIX
-/// SELECTOR-SCOPE-SUMMARY-WORDS): the sources
-/// `scope_summary::word_sources_in` names, as the scoped read admits a
-/// derived row (`claim/scoped_read/visibility.rs`). A row with words of its
-/// own passes; one whose sources no longer resolve, or name a row not held
-/// here, is withheld. `None` is an Owner's member, which reads every row.
-/// Only a member the label gate binds pays for the lookup.
-fn member_reads_word_sources(
+/// The stamp of a row as the home check reads it.
+enum HomeStamp {
+    /// A row that is not a CLAIM, or a CLAIM stamped public or not at all.
+    Unstamped,
+    /// A CLAIM stamped `band` ([`crate::disclosure::scope_home_band`]; an
+    /// ambiguous stamp reads `Restricted`). `machine_bound` holds when a
+    /// MACHINE proof binds its bytes
+    /// ([`crate::federation::guest_claim_withheld`]).
+    Stamped {
+        band: DisclosureBand,
+        machine_bound: bool,
+    },
+    /// A CLAIM body that does not decode: the home check withholds it, so it
+    /// fails closed.
+    Undecodable,
+}
+
+/// The stamp of `raw` as the scoped read judges it
+/// ([`crate::disclosure::scope_home_band`]).
+fn home_stamp(raw: &[u8]) -> HomeStamp {
+    if EntityMetadataHeader::parse(raw)
+        .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_CLAIM)
+    {
+        return HomeStamp::Unstamped;
+    }
+    let Some(body) = raw
+        .get(ENTITY_METADATA_HEADER_LEN..)
+        .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+    else {
+        return HomeStamp::Undecodable;
+    };
+    match crate::disclosure::scope_home_band(body.scope.as_ref()) {
+        None => HomeStamp::Unstamped,
+        Some(band) => HomeStamp::Stamped {
+            band,
+            machine_bound: crate::federation::guest_claim_withheld(&body).is_some(),
+        },
+    }
+}
+
+/// Whether the selector's member reads, at the member gate
+/// ([`member_reads_row`]), every source the words of the row `raw` of `id`
+/// came from (FIX SELECTOR-SCOPE-SUMMARY-WORDS): the sources
+/// `scope_summary::word_sources_in` names, and through each of them every
+/// source of its own words in turn (a nested epoch summary, a scope summary,
+/// a merge header), as the scoped read walks a derived row's sources
+/// (`claim/scoped_read/visibility.rs`: `epoch_sources_readable_in`,
+/// `derived_sources_readable_in`). A row with words of its own passes; one
+/// whose sources, at any depth, no longer resolve or name a row not held
+/// here is withheld. Each row is judged once, so a cycle of sources ends. An
+/// Owner's member reads every row: only a member the label gate binds pays
+/// for the walk.
+///
+/// A Connect ceiling admits a band, not a world: a stamped CLAIM source that
+/// a member homed elsewhere reads only through its Connect grant must also
+/// pass `in_scope`, the export's own fence for a source (the grant's and the
+/// selector's worlds and rules), or a row the grant may read would carry the
+/// words of a claim it may not (review of #9526). Such a source must also
+/// carry no use limit: the export withholds a use-limited row itself, so a
+/// row quoting it must not carry its words either (review round 2 of #9526).
+pub(in crate::sync::selector) fn member_reads_word_sources(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
-    member: Option<&crate::access_grant::AccessContext<'_>>,
+    member: &MemberAccess<'_>,
     id: &EntityId,
     raw: &[u8],
+    mut in_scope: impl FnMut(&EntityId, &[u8]) -> Result<bool>,
 ) -> Result<bool> {
-    if member.is_none() {
+    if member.labels.is_none() {
         return Ok(true);
     }
-    let sources = match crate::scope_summary::word_sources_in(vault, rtxn, id, raw) {
-        Ok(crate::scope_summary::WordSources::Own) => return Ok(true),
-        Ok(crate::scope_summary::WordSources::Unresolved) => return Ok(false),
-        Ok(crate::scope_summary::WordSources::From(sources)) => sources,
-        // A CLAIM body that does not decode is withheld, as at the label gate.
-        Err(Error::InvalidClaimBody(_)) => return Ok(false),
-        Err(error) => return Err(error),
+    let Some(mut pending) = word_sources_of(vault, rtxn, id, raw)? else {
+        return Ok(false);
     };
-    for source in &sources {
-        let Some(source_raw) = vault.get_raw_in(rtxn, source)? else {
+    let mut judged = BTreeSet::from([*id]);
+    while let Some(source) = pending.pop() {
+        if !judged.insert(source) {
+            continue;
+        }
+        let Some(source_raw) = vault.get_raw_in(rtxn, &source)? else {
             return Ok(false);
         };
-        if !member_reads_labels(vault, rtxn, member, source, &source_raw)? {
+        let stamp = (!member.homed_here).then(|| home_stamp(&source_raw));
+        if stamp
+            .as_ref()
+            .is_some_and(|stamp| !member.reads_stamp_away_from_home(stamp))
+            || !member_reads_labels(vault, rtxn, member.labels.as_ref(), &source, &source_raw)?
+        {
             return Ok(false);
         }
+        if matches!(stamp, Some(HomeStamp::Stamped { .. }))
+            && (!in_scope(&source, &source_raw)?
+                || crate::store::legal_hold::use_limit_in_txn(&vault.store, rtxn, &source)?
+                    .is_some())
+        {
+            return Ok(false);
+        }
+        let Some(nested) = word_sources_of(vault, rtxn, &source, &source_raw)? else {
+            return Ok(false);
+        };
+        pending.extend(nested);
     }
     Ok(true)
+}
+
+/// The rows the words of the row `raw` of `id` came from
+/// (`scope_summary::word_sources_in`): none for a row with words of its own,
+/// `None` for one whose sources no longer resolve or a CLAIM body that does
+/// not decode, which the export withholds, as at the label gate.
+fn word_sources_of(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<Option<Vec<EntityId>>> {
+    match crate::scope_summary::word_sources_in(vault, rtxn, id, raw) {
+        Ok(crate::scope_summary::WordSources::Own) => Ok(Some(Vec::new())),
+        Ok(crate::scope_summary::WordSources::From(sources)) => Ok(Some(sources)),
+        Ok(crate::scope_summary::WordSources::Unresolved) | Err(Error::InvalidClaimBody(_)) => {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }

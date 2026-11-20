@@ -175,7 +175,9 @@ impl Memory<'_> {
         entity_ref: &str,
         mode: crate::vault::ReadMode,
     ) -> MemoryResult<ScopedReadResult<Option<EntityView>>> {
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let target = self.read_target(entity_ref, mode)?;
         self.read_named_view(&lane, target)
     }
@@ -307,7 +309,9 @@ impl Memory<'_> {
             })?),
             None => None,
         };
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let ids = match &filter.subject_ref {
             Some(subject_ref) => {
                 let subject = self.resolve_ref_in_lane(&lane, subject_ref)?;
@@ -488,7 +492,9 @@ impl Memory<'_> {
                 "query_bm25 limit must be at least 1",
             ));
         }
-        let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let lane = self
+            .read_lane(ClaimReadStatus::Surfaceable)?
+            .with_live_grant_receipts();
         // The lane admits inside the posting scan, before the rank and the
         // cut, so a row it withholds takes no place a readable match could
         // fill (FIX 9955); each hit keeps the revision the index matched.
@@ -646,7 +652,9 @@ impl Memory<'_> {
         // never materializes its full edge set.
         lane.neighborhood_projected(
             &id,
+            crate::ports::EdgeDirection::Both,
             kind_filter,
+            None,
             opts.min_weight,
             opts.limit,
             |txn, neighbors| {
@@ -812,6 +820,13 @@ impl Memory<'_> {
         records: Vec<crate::receipt::ReceiptRecord>,
     ) -> Vec<MemoryReceipt> {
         records.into_iter().map(family_receipt).collect()
+    }
+
+    /// One Hook `record` of base's family in the `vault.receipts` shape
+    /// ([`family_receipt`]), as a verb hook chain's receipt tail shows it
+    /// once read again beside the rows it names (review round 2 of #9643).
+    pub(crate) fn tail_receipt(record: crate::receipt::ReceiptRecord) -> MemoryReceipt {
+        family_receipt(record)
     }
 }
 

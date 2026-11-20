@@ -30,6 +30,7 @@
 
 use std::time::Duration;
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use super::message_wake::PendingMessage;
@@ -62,8 +63,10 @@ const RESIDENT_MESSAGE_CLASSES: SideTable<[u8; 32], MessageClassRecord, Named> =
     SideTable::new(&side_table::AGENT_DISPATCH_RESIDENT_MESSAGE_CLASS);
 
 /// When a message to a busy resident reaches it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+// Each name is the class's choice in `MESSAGE_CLASS`, and its mark on a landed line.
+#[register("message.class")]
 pub(super) enum MessageClass {
     /// It lands on the running wake, its line marked `interrupt` (Engine
     /// RULING 05:39 Fri 13 Nov). The run's model turn reads it at once: a
@@ -83,19 +86,8 @@ pub(super) enum MessageClass {
 impl MessageClass {
     const ALL: [Self; 4] = [Self::Interrupt, Self::Steer, Self::FollowUp, Self::Digest];
 
-    /// The class's name: its choice in [`MESSAGE_CLASS`], and its mark on a
-    /// landed line.
-    pub(super) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Interrupt => "interrupt",
-            Self::Steer => "steer",
-            Self::FollowUp => "follow_up",
-            Self::Digest => "digest",
-        }
-    }
-
     fn from_choice(choice: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|class| class.as_str() == choice)
+        <Self as Register>::named(choice)
     }
 
     /// Whether it lands on a running wake.
@@ -106,8 +98,9 @@ impl MessageClass {
 
 /// Who sent a message, as its envelope stamps it: the key the class
 /// question's bands learn under.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("sender.kind")]
 enum SenderKind {
     /// A person of this vault: a live owner, or a live member of a shared
     /// vault whose role writes. The one sender an unsure interrupt asks.
@@ -121,15 +114,6 @@ enum SenderKind {
 }
 
 impl SenderKind {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::VaultPerson => "vault_person",
-            Self::Person => "person",
-            Self::Agent => "agent",
-            Self::Unknown => "unknown",
-        }
-    }
-
     /// The canon default, with no classifier: people first.
     const fn default_class(self) -> MessageClass {
         match self {
@@ -137,6 +121,15 @@ impl SenderKind {
             Self::Agent | Self::Unknown => MessageClass::FollowUp,
         }
     }
+}
+
+/// The PERSON a Known `stamp` names; `None` for an unknown sender or a
+/// counterparty ref that is no entity id.
+fn known_person(stamp: &SurfaceCounterpartyStamp) -> Option<EntityId> {
+    let SurfaceCounterpartyStamp::Known { counterparty_ref } = stamp else {
+        return None;
+    };
+    EntityId::from_hex(counterparty_ref).ok()
 }
 
 /// The classifier's read of one message, as its record keeps it.
@@ -274,31 +267,37 @@ impl AgentDispatcher<'_> {
     }
 
     /// Who `stamp` names, and the PERSON when it names one. Every agent is a
-    /// PERSON of model substrate (`context_board/people.rs`), so the
-    /// substrate, not the entity type, tells a human.
+    /// PERSON (`context_board/people.rs`), so the substrate, not the entity
+    /// type, tells a human ([`crate::subject_model::person_is_agent_in_txn`]).
+    /// A PERSON whose substrate does not read is no known human: it is
+    /// `Unknown`, and the error is logged (FIX
+    /// RESIDENT-SENDER-SUBSTRATE-ERR-READS-HUMAN).
     fn sender_kind(
         &self,
         stamp: &SurfaceCounterpartyStamp,
         now: u64,
     ) -> Result<(SenderKind, Option<EntityId>)> {
-        let SurfaceCounterpartyStamp::Known { counterparty_ref } = stamp else {
+        let Some(person) = known_person(stamp) else {
             return Ok((SenderKind::Unknown, None));
         };
-        let Ok(person) = EntityId::from_hex(counterparty_ref) else {
-            return Ok((SenderKind::Unknown, None));
-        };
-        if self.vault.get_entity_type(&person)? != Some(crate::registry::ENTITY_TYPE_PERSON) {
-            return Ok((SenderKind::Unknown, None));
-        }
-        if matches!(
-            self.vault.person_substrate(&person, now),
-            Ok(Some(
-                crate::write_envelope::subject_record::PersonSubstrate::Model
-            ))
-        ) {
-            return Ok((SenderKind::Agent, Some(person)));
-        }
         let txn = self.vault.store.env.read_txn()?;
+        if self.vault.get_entity_type_in_txn(&txn, &person)?
+            != Some(crate::registry::ENTITY_TYPE_PERSON)
+        {
+            return Ok((SenderKind::Unknown, None));
+        }
+        match crate::subject_model::person_is_agent_in_txn(self.vault, &txn, &person, now) {
+            Ok(true) => return Ok((SenderKind::Agent, Some(person))),
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    person = %person.to_hex(),
+                    "a message sender's substrate did not read; the sender is unknown, not human"
+                );
+                return Ok((SenderKind::Unknown, None));
+            }
+        }
         let of_vault = crate::policy_model::is_live_vault_owner_in_txn(self.vault, &txn, &person)?
             || crate::policy_model::is_live_writing_member_for_store_in_txn(
                 &self.vault.store,
@@ -314,6 +313,38 @@ impl AgentDispatcher<'_> {
             },
             Some(person),
         ))
+    }
+
+    /// Whether `stamp` names a human PERSON at `now`: a known PERSON that is
+    /// no agent ([`crate::subject_model::person_is_agent_in_txn`]). A
+    /// resident's human-messages mode wakes on these alone. A sender whose
+    /// substrate does not read is no known human; that is logged at debug,
+    /// since an unwoken message is read again on every pass.
+    pub(super) fn sender_is_human(
+        &self,
+        stamp: &SurfaceCounterpartyStamp,
+        now: u64,
+    ) -> Result<bool> {
+        let Some(person) = known_person(stamp) else {
+            return Ok(false);
+        };
+        let txn = self.vault.store.env.read_txn()?;
+        if self.vault.get_entity_type_in_txn(&txn, &person)?
+            != Some(crate::registry::ENTITY_TYPE_PERSON)
+        {
+            return Ok(false);
+        }
+        match crate::subject_model::person_is_agent_in_txn(self.vault, &txn, &person, now) {
+            Ok(agent) => Ok(!agent),
+            Err(error) => {
+                tracing::debug!(
+                    %error,
+                    person = %person.to_hex(),
+                    "a message sender's substrate did not read; it wakes no human-messages resident"
+                );
+                Ok(false)
+            }
+        }
     }
 
     /// `classifier`'s read of `message` from a `sender` sender. `None` when
@@ -475,5 +506,31 @@ impl AgentDispatcher<'_> {
             },
             Some(&read.state),
         )
+    }
+}
+
+/// The names door (`test_doors::enum_name_rows`): every message class and sender kind with
+/// the name its table writes. Not API.
+#[cfg(oneiron_test_support)]
+impl crate::test_doors::enum_name_rows::PrivateNames {
+    /// Every `MessageClass`, as `MessageClass::ALL` lists them, with its name.
+    pub fn message_class() -> Vec<crate::test_doors::enum_name_rows::NameRow> {
+        MessageClass::ALL
+            .into_iter()
+            .map(|class| crate::test_doors::enum_name_rows::NameRow::of(class, class.as_str()))
+            .collect()
+    }
+
+    /// Every `SenderKind` with its name.
+    pub fn sender_kind() -> Vec<crate::test_doors::enum_name_rows::NameRow> {
+        [
+            SenderKind::VaultPerson,
+            SenderKind::Person,
+            SenderKind::Agent,
+            SenderKind::Unknown,
+        ]
+        .into_iter()
+        .map(|kind| crate::test_doors::enum_name_rows::NameRow::of(kind, kind.as_str()))
+        .collect()
     }
 }

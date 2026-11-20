@@ -2,6 +2,8 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope, DreamerRunnerStore,
@@ -204,6 +206,7 @@ pub(crate) fn enqueue_rungs_in_txn(
 
 /// Queues `span`'s own rung attempt under `parent`, with the recipe policy
 /// it reads by: the per-span path, and every audit.
+/// Stored rung dedupe keys keep their bytes (K, PLAN-UC-04 stage 7).
 pub(crate) fn per_span_in_txn(
     store: &DreamerRunnerStore<'_>,
     txn: &mut heed::RwTxn<'_>,
@@ -226,7 +229,7 @@ pub(crate) fn per_span_in_txn(
             crate::entity_id::bytes_to_hex_lower(&span.id)
         )
     } else {
-        format!("sieve:rungs:{}", blake3::hash(input.as_bytes()).to_hex())
+        rung_dedupe_key(&input)
     };
     store.enqueue_kind_in_txn(
         txn,
@@ -243,6 +246,7 @@ pub(crate) fn per_span_in_txn(
     Ok(())
 }
 
+/// Deterministic audit draws keep their bytes (K, PLAN-UC-04 stage 7).
 pub(crate) fn audit_sample_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -255,11 +259,7 @@ pub(crate) fn audit_sample_in_txn(
     let mut sampled = Vec::new();
     for row in HISTORY.iter_from(&vault.store, txn, &[])? {
         let (_, span) = row?;
-        let mut hash = blake3::Hasher::new();
-        hash.update(b"oneiron:sieve:audit-sample:v1");
-        hash.update(seed.as_bytes());
-        hash.update(&span.id);
-        let rank = *hash.finalize().as_bytes();
+        let rank = audit_sample_rank(seed, &span.id);
         let draw = u64::from_be_bytes(rank[..8].try_into().expect("eight bytes"));
         if u128::from(draw) * 100 < (u128::from(u64::MAX) + 1) * u128::from(policy.audit_percent) {
             sampled.push((rank, span));
@@ -320,6 +320,7 @@ pub(crate) fn rung_evidence(vault: &Vault, input: &RungInput) -> Result<Option<R
     rung_evidence_in_txn(vault, &txn, input)
 }
 
+/// Stored source comparisons keep their bytes (K, PLAN-UC-04 stage 7).
 fn rung_evidence_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -332,11 +333,7 @@ fn rung_evidence_in_txn(
     let Some(text) = chunks::chunk_text_in_txn(vault, txn, &span.turn, &span.source)? else {
         return Ok(None);
     };
-    let digest = *blake3::Hasher::new()
-        .update(b"oneiron:dreamer-sieve:chunk:v1")
-        .update(text.as_bytes())
-        .finalize()
-        .as_bytes();
+    let digest = chunks::chunk_digest(&text);
     if digest != span.source_digest {
         return Ok(None);
     }
@@ -630,3 +627,31 @@ pub(super) fn retire_history_in_txn(
 ) -> Result<()> {
     HISTORY.delete_from(store, txn, turn.as_bytes()).map(|_| ())
 }
+
+/// The prefixed rung-input key stored with queued work.
+pub(crate) fn rung_dedupe_key(input: &str) -> String {
+    format!(
+        "sieve:rungs:{}",
+        oneiron_hex::encode(
+            &LegacyDigest::new(purposes::dreamer_wake::RUNG_DEDUPE_KEY)
+                .raw(input.as_bytes())
+                .finish()
+        )
+    )
+}
+
+/// The deterministic audit rank of one retained span.
+pub(crate) fn audit_sample_rank(seed: AttemptId, span_id: &[u8; 32]) -> [u8; 32] {
+    let mut hash = LegacyDigest::new(purposes::dreamer_wake::AUDIT_SAMPLE);
+    hash.raw(seed.as_bytes());
+    hash.raw(span_id);
+    hash.finish()
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::audit_sample_rank as audit_sample_rank_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::rung_dedupe_key as rung_dedupe_key_for_test;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::typing_batch::typing_member_key_for_test;
