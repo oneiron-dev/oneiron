@@ -25,13 +25,20 @@ pub(in crate::authority) struct FoldCapture {
 
 /// What a root appointment's proof fold settled: each surviving row's state,
 /// the raw merge of them before any restrictive fact, the handoffs whose
-/// fences closed, and the rows of each closed conflict. A counted
-/// appointment's recovered world is made of the first three (PLAN v3 section
-/// 6); the appointment door names its witnesses from the last (section 7).
+/// fences closed, the revocations whose fences closed in a conflict, and the
+/// rows of each closed conflict. A counted appointment's recovered world is
+/// made of the first four (PLAN v3 section 6); the appointment door names its
+/// witnesses from the last (section 7).
 pub(in crate::authority) struct ProofParts {
     pub(in crate::authority) states: BTreeMap<AuthorityEntryHash, FoldState>,
     pub(in crate::authority) merged: FoldState,
     pub(in crate::authority) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// Each revocation whose fence closed in a conflict
+    /// (`Retirements::crossed_revocations`), with the refusal the proof fold
+    /// gave it: `RetiredSigner` when a closed fence holds its own signer,
+    /// `InvalidAncestry` when it holds only a signer of a row below
+    /// (REVIEW-9799 P1).
+    pub(in crate::authority) crossed_revocations: BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
     pub(in crate::authority) closed_conflicts: Vec<BTreeSet<AuthorityEntryHash>>,
 }
 
@@ -98,10 +105,24 @@ impl FoldCapture {
 
     pub(in crate::authority) fn record(&self, parts: OnceParts<'_>) {
         if let Some(proof) = &self.proof {
+            let crossed_revocations = parts
+                .crossed_revocations
+                .iter()
+                .map(|hash| {
+                    let refused_for_its_signer = AuthorityFoldIssue::RetiredSigner(*hash);
+                    let issue = if parts.issues.contains(&refused_for_its_signer) {
+                        refused_for_its_signer
+                    } else {
+                        AuthorityFoldIssue::InvalidAncestry(*hash)
+                    };
+                    (*hash, issue)
+                })
+                .collect();
             *proof.borrow_mut() = Some(Box::new(ProofParts {
                 states: parts.states.clone(),
                 merged: parts.merged,
                 closed_handoffs: parts.closed_handoffs,
+                crossed_revocations,
                 closed_conflicts: parts.closed_conflicts,
             }));
         } else if let Some(image) = &self.image {
