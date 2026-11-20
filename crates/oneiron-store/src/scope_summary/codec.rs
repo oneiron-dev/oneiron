@@ -169,9 +169,6 @@ fn validate(body: &ScopeSummaryBody) -> Result<()> {
     if unique.len() != body.messages.len() {
         return Err(invalid("duplicate source message"));
     }
-    if body.text.trim().is_empty() {
-        return Err(invalid("summary text is blank"));
-    }
     EntityId::from_hex(&body.actor).map_err(|_| invalid("invalid summary actor"))?;
     let unique: HashSet<_> = body.covers.iter().collect();
     if unique.len() != body.covers.len() {
@@ -232,9 +229,16 @@ fn hash(value: &Value) -> Result<[u8; 32]> {
 }
 
 /// Encodes exactly the pinned keys of the body's version after validating
-/// the complete body.
+/// the complete body. Refuses a blank text: the Dreamer mints a summary of
+/// its words, never of none. The minted text is then the summary's editable
+/// document, which an owner's edit or a sync merge may leave empty; a decode
+/// reads that as an empty text (FIX
+/// SUMMARY-BLANK-DOCUMENT-TEXT-REFUSES-EVERY-READ).
 pub fn encode_scope_summary_body(body: &ScopeSummaryBody) -> Result<Vec<u8>> {
     validate(body)?;
+    if body.text.trim().is_empty() {
+        return Err(invalid("summary text is blank"));
+    }
     let mut entries = vec![
         (Value::from("v"), Value::from(body.v)),
         (
@@ -293,6 +297,10 @@ pub fn encode_scope_summary_body(body: &ScopeSummaryBody) -> Result<Vec<u8>> {
 }
 
 /// Refuses unknown versions, unknown/duplicate/missing keys and trailing bytes.
+/// A blank text decodes: a read resolves the body against the summary's
+/// document, whose text an owner's edit or a sync merge may have emptied
+/// (FIX SUMMARY-BLANK-DOCUMENT-TEXT-REFUSES-EVERY-READ). Only the mint,
+/// [`encode_scope_summary_body`], refuses one.
 pub fn decode_scope_summary_body(bytes: &[u8]) -> Result<ScopeSummaryBody> {
     let mut bytes = bytes;
     let value =
@@ -387,8 +395,8 @@ fn body_keys(value: &Value) -> &'static [&'static str] {
 
 /// The producer of the scope-summary body `bytes`, read without its text
 /// (review P1 of #9808). The producer is fixed when the summary is minted;
-/// the text is an editable document, and its merged edits may leave a blank
-/// text, which [`decode_scope_summary_body`] refuses. The body must be a
+/// the text is an editable document, whose merged edits do not change it.
+/// The body must be a
 /// scope summary's, by its closed key set at a version this codec writes:
 /// an epoch SUMMARY has the same entity type and an `actor` too (review
 /// round 2 of #9808). Refuses any other body, trailing bytes, and a body

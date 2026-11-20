@@ -77,6 +77,27 @@ pub(crate) fn summary_meta_through_in(
     })
 }
 
+/// The hash of the text `entity`'s summary was generated with, as its
+/// document's derivation records it (`generated_text_hash`), read through
+/// `dbs`; `None` when the summary has no document. An edit or a sync merge
+/// of the text leaves it as it was.
+pub(crate) fn summary_generated_text_hash_in(
+    dbs: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<Option<[u8; 32]>> {
+    let Some(head) = storage::ENTITY_DOC_HEAD.get(dbs, txn, &crate::side_table::HexId(*entity))?
+    else {
+        return Ok(None);
+    };
+    let doc = storage::load(dbs, txn, &head)?;
+    let derivation: crate::scope_summary::SummaryDerivation = storage::decode(
+        &map_get_bytes(&doc.doc.get_map("meta"), "derivation")
+            .ok_or(Error::CorruptedIndex("summary derivation metadata"))?,
+    )?;
+    Ok(Some(derivation.generated_text_hash))
+}
+
 pub(crate) fn summary_frontier_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
