@@ -66,15 +66,38 @@ impl ScopedRead<'_> {
         source: EntityId,
         edge: EdgeInfo,
     ) -> Result<ReadAdmission<AdmittedEdge>> {
+        self.admit_stored_edge_held_in(txn, policy, filter, source, edge, &HeldAuthority::default())
+    }
+
+    /// [`Self::admit_stored_edge_in`] with both endpoints under the
+    /// authority one serving txn holds for all its rows (FIX 7462): an
+    /// endpoint a live Grant of this key admits alone is admitted here too,
+    /// as a point read admits it (FIX-LIST
+    /// SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS).
+    pub(super) fn admit_stored_edge_held_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        source: EntityId,
+        edge: EdgeInfo,
+        authority: &HeldAuthority,
+    ) -> Result<ReadAdmission<AdmittedEdge>> {
         let target = edge.target;
+        let admit = |id: &EntityId| {
+            self.admit_in(txn, id, || {
+                self.is_entity_retrievable_held_in(txn, policy, filter, id, authority)
+                    .map(|allowed| allowed.then_some(()))
+            })
+        };
         admit_stored_edge_in(
             self.vault,
             txn,
             source,
             target,
             edge,
-            || self.admit_entity_in(txn, policy, filter, &source),
-            || self.admit_entity_in(txn, policy, filter, &target),
+            || admit(&source),
+            || admit(&target),
         )
     }
 

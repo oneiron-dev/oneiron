@@ -10,6 +10,7 @@
 //! Owner's vault-global shape. Nothing here is a new read authority.
 use std::collections::BTreeSet;
 
+use super::super::access_gate::HeldAuthority;
 use super::super::weave_digest::scheduled_owner::ScheduledOwner;
 use super::super::{ScopedRead, ScopedReadResult};
 use super::admissions::loop_decision_item;
@@ -63,6 +64,20 @@ impl ScopedRead<'_> {
         reader: WeaveReader<'_>,
         recipe: &[WeaveSectionSpec],
     ) -> Result<ScopedReadResult<WeaveReport>> {
+        self.weave_report_held_in_txn(txn, reader, recipe, &self.held_for(None))
+    }
+
+    /// [`Self::weave_report_in_txn`] under `held`, the authority the caller
+    /// holds for every row it reads in `txn` (FIX 7462): a row one of this
+    /// key's own live Grants admits alone reads in the report as it reads on
+    /// a point read (FIX-LIST SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS).
+    pub(in crate::claim::scoped_read) fn weave_report_held_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reader: WeaveReader<'_>,
+        recipe: &[WeaveSectionSpec],
+        held: &HeldAuthority,
+    ) -> Result<ScopedReadResult<WeaveReport>> {
         let subject = match reader {
             WeaveReader::Person(id) | WeaveReader::Agent(id) => {
                 if self.actor_key.actor_ref() != id.to_hex() {
@@ -98,7 +113,7 @@ impl ScopedRead<'_> {
             id,
             subject,
         };
-        self.project_weave_report_in(txn, bound, recipe)
+        self.project_weave_report_in(txn, bound, recipe, held)
     }
 
     /// A due Owner schedule's report in `txn` (FIX 1259): the projection an
@@ -118,16 +133,18 @@ impl ScopedRead<'_> {
             id,
             subject: None,
         };
-        self.project_weave_report_in(txn, bound, recipe)
+        self.project_weave_report_in(txn, bound, recipe, &self.held_for(None))
     }
 
     /// The projection core for one bound projector. The recipe cannot
-    /// elevate a role or expand the lane's floor.
+    /// elevate a role or expand the lane's floor. Every row takes the row
+    /// gate under `held`, and the receipt reports the Grants it held.
     fn project_weave_report_in(
         &self,
         txn: &heed::RoTxn<'_>,
         bound: Bound<'_>,
         recipe: &[WeaveSectionSpec],
+        held: &HeldAuthority,
     ) -> Result<ScopedReadResult<WeaveReport>> {
         let subject = bound.subject;
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
@@ -161,7 +178,7 @@ impl ScopedRead<'_> {
                 count.row();
                 // A project id must be readable before its body or membership
                 // becomes available to the projection.
-                if !self.is_entity_retrievable_with_policy_in(txn, &policy, &filter, &id)? {
+                if !self.is_entity_retrievable_held_in(txn, &policy, &filter, &id, held)? {
                     continue;
                 }
                 let raw = self
@@ -203,8 +220,8 @@ impl ScopedRead<'_> {
                     let goal = match &row.goal {
                         Some(value) => {
                             let goal_id = EntityId::from_hex(value)?;
-                            self.is_entity_retrievable_with_policy_in(
-                                txn, &policy, &filter, &goal_id,
+                            self.is_entity_retrievable_held_in(
+                                txn, &policy, &filter, &goal_id, held,
                             )?
                             .then(|| value.clone())
                         }
@@ -216,11 +233,12 @@ impl ScopedRead<'_> {
                 for (id, row) in &projects {
                     if let Some(budget) = &row.budget {
                         let budget_ref = EntityId::from_hex(budget)?;
-                        if self.is_entity_retrievable_with_policy_in(
+                        if self.is_entity_retrievable_held_in(
                             txn,
                             &policy,
                             &filter,
                             &budget_ref,
+                            held,
                         )? {
                             items.push(WeaveItem::Budget {
                                 project: *id,
@@ -236,7 +254,7 @@ impl ScopedRead<'_> {
                         if !seen.insert(id) {
                             continue;
                         }
-                        if !self.is_entity_retrievable_with_policy_in(txn, &policy, &filter, &id)? {
+                        if !self.is_entity_retrievable_held_in(txn, &policy, &filter, &id, held)? {
                             continue;
                         }
                         let raw = self
@@ -269,7 +287,7 @@ impl ScopedRead<'_> {
                         }
                         // An edge claim must not launder an unreadable endpoint
                         // (or a deleted edge) into a report about the reader.
-                        if !self.weave_claim_edge_admitted_in(txn, &policy, &filter, &body)? {
+                        if !self.weave_claim_edge_admitted_in(txn, &policy, &filter, held, &body)? {
                             continue;
                         }
                         // A reaction claim names its reactor only to a
@@ -286,7 +304,7 @@ impl ScopedRead<'_> {
             // A SieveScore section shows the sampled sieve audits after its
             // predicate rows (OF-499), each one this reader's floor admits.
             if spec.kind == WeaveSectionKind::SieveScore {
-                items.extend(self.weave_sieve_audits_in(txn, &policy, &filter));
+                items.extend(self.weave_sieve_audits_in(txn, &policy, &filter, held));
             }
             // An Admissions section shows the loop decisions this reader may
             // see after its predicate rows (OF-499 A2), in ledger order.
@@ -314,7 +332,9 @@ impl ScopedRead<'_> {
             }
             // The Coach's open agent-health cards follow, concern first, for
             // a reader the concern door would answer (OF-568).
-            if spec.kind == WeaveSectionKind::Digest && !filter.deny_all {
+            if spec.kind == WeaveSectionKind::Digest
+                && !self.reads_nothing_held_in(txn, &policy, &filter, held)
+            {
                 let id = bound.id;
                 for card in agent_health_cards_in_txn(self.vault, txn)? {
                     if card.outcome == AgentHealthOutcome::Open
@@ -332,6 +352,7 @@ impl ScopedRead<'_> {
                     txn,
                     &policy,
                     &filter,
+                    held,
                     (subject, &project_ids),
                     &spec.edge_kinds,
                     threshold,
@@ -344,7 +365,7 @@ impl ScopedRead<'_> {
         }
         Ok(ScopedReadResult {
             value: WeaveReport { sections },
-            receipt: self.receipt_for(None, &policy, &filter, 0),
+            receipt: self.receipt_in(txn, None, &policy, &filter, 0, Some(held)),
         })
     }
 
