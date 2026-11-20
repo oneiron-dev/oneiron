@@ -208,17 +208,50 @@ pub(crate) fn ics_calendar_timezone(input: &[u8], uid: &str) -> Option<String> {
     roots
         .iter()
         .filter(|root| is_named(root, "VCALENDAR"))
-        .find(|calendar| {
-            calendar.components.iter().any(|component| {
-                is_named(component, "VEVENT")
-                    && component
-                        .find_prop("UID")
-                        .is_some_and(|prop| prop.val.as_str() == uid)
-            })
-        })
+        .find(|calendar| carries_uid(calendar, uid))
         .filter(|calendar| !zone_from_collection(calendar))
         .and_then(calendar_timezone)
         .map(str::to_owned)
+}
+
+/// The value of every `name` property (under any spelling) of each VCALENDAR
+/// in `input` that carries the VEVENT `uid`, in document order: a
+/// calendar's own property, which no VEVENT hash reads. A resource may split
+/// one UID's VEVENTs across several VCALENDARs, so every one that carries
+/// `uid` gives its values. `None` when no calendar carries `uid` or `input`
+/// does not parse.
+pub(crate) fn ics_calendar_property_values(
+    input: &[u8],
+    uid: &str,
+    name: &str,
+) -> Option<Vec<String>> {
+    let text = std::str::from_utf8(input).ok()?;
+    let unfolded = icalendar::parser::unfold(text);
+    let roots = icalendar::parser::read_components(&unfolded).ok()?;
+    let mut values: Option<Vec<String>> = None;
+    for calendar in roots
+        .iter()
+        .filter(|root| is_named(root, "VCALENDAR") && carries_uid(root, uid))
+    {
+        values.get_or_insert_with(Vec::new).extend(
+            calendar
+                .properties
+                .iter()
+                .filter(|prop| prop.name.as_str().eq_ignore_ascii_case(name))
+                .map(|prop| prop.val.as_str().to_owned()),
+        );
+    }
+    values
+}
+
+/// Whether `calendar` carries a VEVENT whose UID is `uid`.
+fn carries_uid(calendar: &icalendar::parser::Component<'_>, uid: &str) -> bool {
+    calendar.components.iter().any(|component| {
+        is_named(component, "VEVENT")
+            && component
+                .find_prop("UID")
+                .is_some_and(|prop| prop.val.as_str() == uid)
+    })
 }
 
 /// Whether `component` is named `name` under any ASCII spelling (RFC 5545
