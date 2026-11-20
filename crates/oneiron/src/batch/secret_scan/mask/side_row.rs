@@ -976,7 +976,7 @@ fn stand_in_body(body: &[u8]) -> Result<Option<Vec<u8>>> {
 }
 
 fn stand_in_text(text: &str) -> String {
-    if bare_handle(text) {
+    if bracket_handle(text) {
         return STAND_IN.to_owned();
     }
     let mut out = String::with_capacity(text.len());

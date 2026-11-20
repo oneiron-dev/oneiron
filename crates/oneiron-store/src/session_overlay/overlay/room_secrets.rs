@@ -2,21 +2,25 @@
 //! ruling of 21 Nov, "fingerprint only on save").
 //!
 //! A secret the side-row wall lifts from a row an off-record room writes is
-//! kept here, in memory, and the row holds its room handle `[secret r1]`
+//! kept here, in memory, and the row holds its room handle
+//! (`[secret r0123456789abcdef.1]`)
 //! instead of the value. Nothing of it is written anywhere: no custody record,
 //! no key file, no known-value fingerprint, no overlay row, so no snapshot,
 //! capture or promotion carries it. The room's close wipes every value, and a
 //! dropped overlay wipes what is left. A save moves each secret a saved row
 //! holds into the vault's own custody, which only then fingerprints it.
 //!
-//! A room handle is the sigil [`ROOM_SECRET_SIGIL`] and the room's ordinal.
-//! One letter puts it outside the durable short-id grammar (two letters and
-//! digits, [`oneiron_contracts::entity_id::MIN_PRESENTATION_PREFIX_LEN`]), as
-//! a room's entity alias is (`s1`): a base door refuses it at its parse and
-//! never resolves it to a record of its own. Its own sigil keeps it apart
-//! from the room's entity aliases. The ordinal only grows, so a handle is
-//! never named twice in one room, and two rooms' handles name nothing in each
-//! other.
+//! A room handle is the sigil [`ROOM_SECRET_SIGIL`], the room's tag and the
+//! handle's ordinal in the room: `r0123456789abcdef.1`. The dot puts it
+//! outside the durable short-id grammar (letters and digits,
+//! [`oneiron_contracts::entity_id::MIN_PRESENTATION_PREFIX_LEN`]): a base door
+//! refuses it at its parse and never resolves it to a record of its own. Its
+//! own sigil keeps it apart from the room's entity aliases (`s1`). The tag is
+//! 64 random bits drawn once per room, so two rooms never spell a handle
+//! alike: a handle one room gave meets nothing another room keeps, in a row
+//! or a call (REVIEW-10003). The ordinal only grows, so a handle is never
+//! named twice in one room. The spelling holds no value and is no secret
+//! shape, so a whole field may hold it bare, as a base one holds `sc12`.
 
 use zeroize::Zeroizing;
 
@@ -25,21 +29,36 @@ use oneiron_contracts::error::{Error, OffRecordError, Result};
 
 use super::lifecycle::{OverlayLifecycleState, SessionOverlay};
 
-/// Leading sigil of a room's custody handle: `r` and the room's ordinal,
-/// `[secret r1]` in a row's text.
+/// Leading sigil of a room's custody handle: `r`, the room's tag, a dot and
+/// the handle's ordinal, `[secret r0123456789abcdef.1]` in a row's text.
 pub const ROOM_SECRET_SIGIL: &str = "r";
 
-/// Whether `text` is a room's custody handle: the sigil and digits, whole.
+/// How many lowercase hex digits spell a room's tag: its 64 bits.
+const ROOM_TAG_DIGITS: usize = 16;
+
+/// Whether `text` is a room's custody handle, whole: the sigil, a tag of
+/// [`ROOM_TAG_DIGITS`] lowercase hex digits, a dot and the ordinal's digits.
 #[must_use]
 pub fn is_room_secret_handle(text: &str) -> bool {
-    text.strip_prefix(ROOM_SECRET_SIGIL).is_some_and(|digits| {
-        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
-    })
+    let Some((tag, ordinal)) = text
+        .strip_prefix(ROOM_SECRET_SIGIL)
+        .and_then(|rest| rest.split_once('.'))
+    else {
+        return false;
+    };
+    tag.len() == ROOM_TAG_DIGITS
+        && tag
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        && !ordinal.is_empty()
+        && ordinal.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 /// The secrets one room keeps, each by its handle.
 #[derive(Default)]
 pub(super) struct RoomSecrets {
+    /// The room's tag in its handles, drawn at the first secret it keeps.
+    tag: Option<u64>,
     /// The last ordinal a handle took: it only grows.
     last: u64,
     held: Vec<RoomSecret>,
@@ -61,7 +80,7 @@ struct RoomSecret {
 pub struct KeptRoomSecret {
     /// The room's record of it, which no base row names.
     pub record: EntityId,
-    /// Its room handle, bare (`r1`).
+    /// Its room handle, bare (`r0123456789abcdef.1`).
     pub handle: String,
     /// The reason the wall gave when it lifted the value.
     pub reason: &'static str,
@@ -114,7 +133,8 @@ impl SessionOverlay {
             .last
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("room secret ordinal"))?;
-        let handle = format!("{ROOM_SECRET_SIGIL}{}", secrets.last);
+        let tag = *secrets.tag.get_or_insert_with(rand::random::<u64>);
+        let handle = format!("{ROOM_SECRET_SIGIL}{tag:016x}.{}", secrets.last);
         secrets.held.push(RoomSecret {
             record: EntityId::now(),
             handle: handle.clone(),
@@ -126,7 +146,7 @@ impl SessionOverlay {
         Ok(handle)
     }
 
-    /// The value this room keeps under `handle` (bare, `r1`), if it keeps
+    /// The value this room keeps under `handle` (bare), if it keeps
     /// one: never a value another room keeps, and nothing once the room is
     /// closed.
     ///
@@ -220,9 +240,32 @@ mod tests {
 
     #[test]
     fn a_room_handle_is_no_durable_short_id() {
-        assert!(is_room_secret_handle("r12"));
-        assert!(!is_room_secret_handle("r"));
-        assert!(!is_room_secret_handle("sc12"));
-        assert!(oneiron_contracts::entity_id::parse_presentation_id("r12").is_err());
+        assert!(is_room_secret_handle("r0123456789abcdef.12"));
+        for other in [
+            "r",
+            "r12",
+            "sc12",
+            "r0123456789abcdef.",
+            "r0123456789abcde.1",
+            "r0123456789ABCDEF.1",
+        ] {
+            assert!(!is_room_secret_handle(other), "{other}");
+        }
+        assert!(
+            oneiron_contracts::entity_id::parse_presentation_id("r0123456789abcdef.12").is_err()
+        );
+    }
+
+    /// REVIEW-10003: two rooms never spell a handle alike, so one room's
+    /// handle names nothing in another.
+    #[test]
+    fn two_rooms_give_their_first_secrets_different_handles() -> Result<()> {
+        let first = SessionOverlay::new(1 << 20).keep_room_secret(b"ghp_room_a", "test.reason")?;
+        let other = SessionOverlay::new(1 << 20);
+        let second = other.keep_room_secret(b"ghp_room_b", "test.reason")?;
+        assert!(is_room_secret_handle(&first) && is_room_secret_handle(&second));
+        assert_ne!(first, second);
+        assert!(other.room_secret(&first)?.is_none());
+        Ok(())
     }
 }
