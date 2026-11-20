@@ -6850,7 +6850,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_optimize/training_choice.rs` | src | s | 2 re-export | — | Training compute choices, authorization provenance and run states |
 | `src/skill_reliability/amended.rs` | src | m | 7 crate-vis | — | Amendment verdicts on an attempt's outcome row (ARCH-0056 §5): one record per attempt, and the later verdict… |
 | `src/skill_reliability/anchored_amendment.rs` | src | m | 5 crate-vis | — | The join between a judged amendment's defect share and the native anchored pack outcome it revises (FIX 10148) |
-| `src/skill_reliability/archive.rs` | src | s | 3 crate-vis | — | Imported reliability history is inert data, not a local posterior or synced base |
+| `src/skill_reliability/archive.rs` | src | s | 2 crate-vis | — | Imported reliability history is inert data, not a local posterior or synced base |
 | `src/skill_reliability/callable.rs` | src | s | 3 crate-vis | — | Callable invocation witnesses |
 | `src/skill_reliability/codec.rs` | src | s | 10 crate-vis | — | The msgpack map accessors and value encode/decode this module’s rows are read through |
 | `src/skill_reliability/equivalent.rs` | src | s | 1 crate-vis | — | The stored subjects one derived read folds together (FIX 7815): an entity and every shell merged into it… |
