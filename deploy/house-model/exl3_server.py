@@ -129,14 +129,22 @@ DEFAULT_IN_FLIGHT = 4
 # The request body's field that asks for solo admission: true runs the request
 # with nothing else in flight.
 SOLO_FIELD = "oneiron_solo"
+# The draft's KV ring, in pages per in-flight slot, when the launcher names
+# none (`install_draft_ring`). Every layer of the DFlash2 draft slides over
+# 2048 tokens, and a ring covers the window plus 3 pages, so 11 is the least
+# this draft takes. 0 turns the ring off.
+DEFAULT_DRAFT_RING_PAGES = 12
 # The shared KV pool, in tokens, when the launcher names none; never less than
-# one full request (`full_request_pool`). 64000 is 250 pages (Engine TASK
-# HOUSE-MODEL-CACHE-TOKENS-64000, QWEN-EVAL-1 on mel at 400 W, preliminary):
-# +25.2 % median packets per hour over INF 1's 40192 (FIX 6974), inside the
-# stock grader band, at a 23568 MiB peak against 22528. That leaves about
-# 1 GiB of the card's 24564 MiB, not the 2 GiB INF 1 kept. The referee picks
-# between 64000 and 68096 here, in this one value.
-DEFAULT_CACHE_TOKENS = 64000
+# one full request (`full_request_pool`). Beside the draft KV ring: 85504, 334
+# pages, the VRAM the draft's full-pool copy took given to the target's pool
+# (QWEN-EVAL-1 arm opus-plain A-0005; the referee on mel at 400 W read 233.9
+# against 158.0 packets per hour on the Dreamer's own nightly call, JSON valid
+# as often as stock on both packs, at a 23756 MiB peak against 22528).
+DEFAULT_CACHE_TOKENS = 85504
+# The pool when the draft cache is as large as the pool (the ring off) or
+# there is no draft: INF 1's 40192 (FIX 6974), the largest pool measured at
+# four in flight whose peak left 2 GiB of the card's 24564 MiB.
+DEFAULT_CACHE_TOKENS_WITHOUT_RING = 40192
 # Submitted requests that wait for admission. Past it a request waits in its
 # own handler for a place; it is never refused.
 INGRESS_CAPACITY = 4
@@ -284,11 +292,11 @@ def launch_draft_identity(manifest_path):
 
 
 def install_draft_ring(generator, draft, ring):
-    """Routes every DFlash draft-cache access through a ring of `ring` pages per in-flight slot (`--draft-ring-pages`;
-    off by default). The DFlash2 draft's layers all slide over 2048 tokens, so a slot's draft KV never needs more
-    than its window plus the pages in flight, and the VRAM a full-pool draft copy takes can go to the target pool
-    (QWEN-EVAL-1 A-0005, preliminary: a 12-page ring with an 85504-token pool read +32.0 % normalised packets per
-    hour over stock on mel). The slot of each batch row is set around the three Generator paths that touch the draft
+    """Routes every DFlash draft-cache access through a ring of `ring` pages per in-flight slot (`--draft-ring-pages`,
+    DEFAULT_DRAFT_RING_PAGES by default). The DFlash2 draft's layers all slide over 2048 tokens, so a slot's draft KV
+    never needs more than its window plus the pages in flight, and the VRAM a full-pool draft copy takes goes to the
+    target pool (DEFAULT_CACHE_TOKENS; QWEN-EVAL-1 A-0005: a 12-page ring with an 85504-token pool read +32.0 %
+    normalised packets per hour over stock on mel). The slot of each batch row is set around the three Generator paths that touch the draft
     cache (the draft forward, the post-verify KV update, a Job's prefill hand-off); any other access fails loudly
     rather than index the small cache with target page numbers. Defragmentation leaves the draft cache alone
     (exllamav3's EXL3_DEBUG_NO_DRAFT_DEFRAG): its pages are not the target's. No exllamav3 file is edited."""
@@ -393,11 +401,23 @@ def load(args):
         raise ValueError("--draft-tokens must be at least 1")
     if not 1 <= args.max_in_flight <= MAX_IN_FLIGHT:
         raise ValueError(f"--max-in-flight must be 1 to {MAX_IN_FLIGHT}")
-    # The shared pool every request in flight draws on: DEFAULT_CACHE_TOKENS
-    # unless the launcher names one, and never less than one full request (the
-    # context plus its draft and close room, page-rounded).
+    # The draft's KV ring, in pages per in-flight slot (`install_draft_ring`):
+    # DEFAULT_DRAFT_RING_PAGES unless the launcher names one. 0 turns it off,
+    # and the draft cache is then as large as the target's pool; a server
+    # without a draft has none.
+    ring = getattr(args, "draft_ring_pages", None)
+    ring = DEFAULT_DRAFT_RING_PAGES if ring is None else int(ring)
+    if ring < 0:
+        raise ValueError("--draft-ring-pages must be 0 (off) or a page count")
+    if not args.draft_dir:
+        ring = 0
+    # The shared pool every request in flight draws on: unless the launcher
+    # names one, DEFAULT_CACHE_TOKENS beside a ring and
+    # DEFAULT_CACHE_TOKENS_WITHOUT_RING without one; never less than one full
+    # request (the context plus its draft and close room, page-rounded).
     floor = full_request_pool(args.context, args.draft_tokens if args.draft_dir else 0)
-    cache_tokens = max(DEFAULT_CACHE_TOKENS, floor) if args.cache_tokens is None else args.cache_tokens
+    pool = DEFAULT_CACHE_TOKENS if ring else DEFAULT_CACHE_TOKENS_WITHOUT_RING
+    cache_tokens = max(pool, floor) if args.cache_tokens is None else args.cache_tokens
     if cache_tokens % PAGE:
         raise ValueError(f"--cache-tokens must be a multiple of the cache page, {PAGE}")
     if cache_tokens < floor:
@@ -431,11 +451,6 @@ def load(args):
     batch = args.max_in_flight
     target_cache = Cache(target, max_num_tokens=cache_tokens, layer_type=CacheLayer_quant,
                          k_bits=8, v_bits=8, max_batch_size=batch, max_history=depth)
-    # The draft's KV ring, in pages per in-flight slot; 0 (the default) keeps
-    # the stock draft cache, as large as the target's (`install_draft_ring`).
-    ring = int(getattr(args, "draft_ring_pages", 0) or 0)
-    if ring < 0:
-        raise ValueError("--draft-ring-pages must be 0 (off) or a page count")
     if ring and draft is not None:
         window = int(getattr(draft.config, "sliding_window", 0) or 0)
         types = set(getattr(draft.config, "layer_types", []) or [])
@@ -1979,15 +1994,18 @@ def main():
                    help="each request's context, in tokens; a multiple of 256")
     p.add_argument("--cache-tokens", type=int, default=None,
                    help="the KV pool every request in flight shares, in tokens; a multiple of 256, at least "
-                        f"one full request (default: {DEFAULT_CACHE_TOKENS}, or that floor when it is larger: "
+                        f"one full request (default: {DEFAULT_CACHE_TOKENS} beside the draft KV ring, "
+                        f"{DEFAULT_CACHE_TOKENS_WITHOUT_RING} without one, or that floor when it is larger: "
                         "--context + 1 + the draft depth + 16, rounded up to 256)")
     p.add_argument("--max-in-flight", type=int, default=DEFAULT_IN_FLIGHT,
                    help=f"requests the scheduler runs at once, 1 to {MAX_IN_FLIGHT} (default {DEFAULT_IN_FLIGHT}); "
                         f"a request that sets {SOLO_FIELD} runs alone")
     p.add_argument("--recurrent-cache-gib", type=int, default=4)
-    p.add_argument("--draft-ring-pages", type=int, default=0,
+    p.add_argument("--draft-ring-pages", type=int, default=None,
                    help="give the sliding-window DFlash draft a KV ring of this many pages per in-flight slot "
-                        "instead of a full-pool copy (0, the default: the draft cache is as large as the target's)")
+                        f"instead of a full-pool copy (default {DEFAULT_DRAFT_RING_PAGES}; 0 turns it off: the draft "
+                        f"cache is then as large as the target's, and the pool defaults to "
+                        f"{DEFAULT_CACHE_TOKENS_WITHOUT_RING})")
     p.add_argument("--default-max-tokens", type=int, default=4096,
                    help="the reply cap when a request names none; a request with a reasoning budget "
                         "gets that budget on top, so its answer keeps this room")

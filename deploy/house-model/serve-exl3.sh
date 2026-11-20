@@ -19,13 +19,14 @@ set -euo pipefail
 : "${ONEIRON_HOUSE_DRAFT_DEPTH:=7}"
 : "${ONEIRON_HOUSE_CONTEXT:=32768}"
 # Requests in flight at once (1 to 4): 4; a request that sets `oneiron_solo`
-# runs alone. The KV pool they share: unset, the server's own default,
-# DEFAULT_CACHE_TOKENS in exl3_server.py, never under one full request.
+# runs alone. The KV pool they share: unset, the server's own default
+# (DEFAULT_CACHE_TOKENS beside the draft KV ring, DEFAULT_CACHE_TOKENS_WITHOUT_RING
+# without one, in exl3_server.py), never under one full request.
 : "${ONEIRON_HOUSE_EXL3_IN_FLIGHT:=4}"
 : "${ONEIRON_HOUSE_EXL3_CACHE_TOKENS:=}"
 # The DFlash2 draft's KV as a ring of this many pages per in-flight slot, in
-# place of a full-pool copy (README, "The draft KV ring"); unset, off. On, the
-# VRAM it frees goes to the pool only through ONEIRON_HOUSE_EXL3_CACHE_TOKENS.
+# place of a full-pool copy (README, "The draft KV ring"): unset, the server's
+# DEFAULT_DRAFT_RING_PAGES; 0 turns it off (with the pool unset, stock).
 : "${ONEIRON_HOUSE_EXL3_DRAFT_RING_PAGES:=}"
 : "${ONEIRON_HOUSE_EXL3_GPU:=0}"
 : "${ONEIRON_HOUSE_EXL3_PORT:=18091}"
