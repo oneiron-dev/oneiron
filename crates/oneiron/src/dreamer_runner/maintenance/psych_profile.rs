@@ -142,55 +142,81 @@ impl DreamerRunnerStore<'_> {
 ///
 /// A vault with no Dreamer actor, and storage and queue errors.
 pub fn enqueue_due_psych_profiles(vault: &Vault, now: u64) -> Result<usize> {
+    let sweep = read_psych_profile_sweep(vault, now)?;
+    write_psych_profile_sweep(vault, &sweep, now)
+}
+
+/// What one sweep's read found at `now`: the keys due for an attempt, and
+/// the stored profiles no eligible claim stood under. The sweep's write acts
+/// on it.
+#[derive(Debug, Default)]
+pub(crate) struct PsychProfileSweep {
+    pub(crate) due: Vec<PsychProfileKey>,
+    pub(crate) withdrawn: Vec<EntityId>,
+}
+
+/// The read of [`enqueue_due_psych_profiles`], in one snapshot.
+///
+/// # Errors
+///
+/// A vault with no Dreamer actor, and storage errors.
+pub(crate) fn read_psych_profile_sweep(vault: &Vault, now: u64) -> Result<PsychProfileSweep> {
+    let mut sweep = PsychProfileSweep::default();
     let persons = vault.entities_by_type(ENTITY_TYPE_PERSON)?;
     if persons.is_empty() {
-        return Ok(0);
+        return Ok(sweep);
     }
-    let reader = WriteActor::new(
-        super::super::authority::dreamer_actor_id()?,
-        EdgeActorClass::System,
-    );
-    let read = vault.scoped_read(
-        ScopedReadActorKey::for_engine_actor(reader)
-            .ok_or_else(|| Error::InvalidConfig("invalid Dreamer profile reader".into()))?,
-    );
+    let read = profile_reader(vault)?;
     let profiles = vault.entities_by_type(ENTITY_TYPE_PSYCH_PROFILE)?;
-    let mut due: Vec<PsychProfileKey> = Vec::new();
-    let mut withdrawn: Vec<EntityId> = Vec::new();
-    {
-        vault.store.authorization_now()?;
-        let txn = vault.store.env.read_txn()?;
-        // The profiles some eligible claim still stands under.
-        let mut standing = std::collections::BTreeSet::new();
-        for person in &persons {
-            for (key, _) in
-                crate::psych_profile::sources::person_claims_in(vault, &read, &txn, *person)?
-            {
-                let id = psych_profile_entity_id(&key);
-                if standing.insert(id) && profile_due_in(vault, &txn, &id, now)? {
-                    due.push(key);
-                }
-            }
-        }
-        let persons: std::collections::BTreeSet<EntityId> = persons.into_iter().collect();
-        for id in profiles {
-            if standing.contains(&id) || crate::ports::stale_in_txn(&vault.store, &txn, &id)? {
-                continue;
-            }
-            // A row that does not decode is left as it stands.
-            let Ok(Some(profile)) = vault.get_psych_profile_in_txn(&txn, &id) else {
-                continue;
-            };
-            if persons.contains(&profile.subject_ref) {
-                withdrawn.push(id);
+    vault.store.authorization_now()?;
+    let txn = vault.store.env.read_txn()?;
+    // The profiles some eligible claim still stands under.
+    let mut standing = std::collections::BTreeSet::new();
+    for person in &persons {
+        for (key, _) in
+            crate::psych_profile::sources::person_claims_in(vault, &read, &txn, *person)?
+        {
+            let id = psych_profile_entity_id(&key);
+            if standing.insert(id) && profile_due_in(vault, &txn, &id, now)? {
+                sweep.due.push(key);
             }
         }
     }
-    if due.is_empty() && withdrawn.is_empty() {
+    let persons: std::collections::BTreeSet<EntityId> = persons.into_iter().collect();
+    for id in profiles {
+        if standing.contains(&id) || crate::ports::stale_in_txn(&vault.store, &txn, &id)? {
+            continue;
+        }
+        // A row that does not decode is left as it stands.
+        let Ok(Some(profile)) = vault.get_psych_profile_in_txn(&txn, &id) else {
+            continue;
+        };
+        if persons.contains(&profile.subject_ref) {
+            sweep.withdrawn.push(id);
+        }
+    }
+    Ok(sweep)
+}
+
+/// The write of [`enqueue_due_psych_profiles`] over what its read found at
+/// `now`: each profile found standing on nothing is withdrawn unless an
+/// eligible claim stands under its key in this write, and each due key is
+/// enqueued. Returns how many attempts were enqueued.
+///
+/// # Errors
+///
+/// A vault with no Dreamer actor, and storage and queue errors.
+pub(crate) fn write_psych_profile_sweep(
+    vault: &Vault,
+    sweep: &PsychProfileSweep,
+    now: u64,
+) -> Result<usize> {
+    if sweep.due.is_empty() && sweep.withdrawn.is_empty() {
         return Ok(0);
     }
+    let read = profile_reader(vault)?;
     let enqueued = vault.with_write_txn(|txn| {
-        for id in &withdrawn {
+        for id in &sweep.withdrawn {
             if profile_stands_in(vault, &read, txn, id)? {
                 continue;
             }
@@ -198,7 +224,7 @@ pub fn enqueue_due_psych_profiles(vault: &Vault, now: u64) -> Result<usize> {
         }
         let store = DreamerRunnerStore::new(vault);
         let mut enqueued = 0;
-        for key in &due {
+        for key in &sweep.due {
             if store.enqueue_psych_profile_in_txn(txn, key, None, now)? {
                 enqueued += 1;
             }
@@ -209,6 +235,19 @@ pub fn enqueue_due_psych_profiles(vault: &Vault, now: u64) -> Result<usize> {
         vault.store.notify_attempt_observers();
     }
     Ok(enqueued)
+}
+
+/// The Dreamer's own scoped read, through which a sweep reads the claims
+/// about each PERSON.
+fn profile_reader(vault: &Vault) -> Result<crate::claim::ScopedRead<'_>> {
+    let reader = WriteActor::new(
+        super::super::authority::dreamer_actor_id()?,
+        EdgeActorClass::System,
+    );
+    Ok(vault.scoped_read(
+        ScopedReadActorKey::for_engine_actor(reader)
+            .ok_or_else(|| Error::InvalidConfig("invalid Dreamer profile reader".into()))?,
+    ))
 }
 
 /// Whether an eligible claim stands under the key of the profile stored at
