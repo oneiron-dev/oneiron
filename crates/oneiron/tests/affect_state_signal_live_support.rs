@@ -19,15 +19,17 @@
 
 use std::sync::Arc;
 
+use oneiron::affect::state_index::{ENGAGEMENT, GOAL_VELOCITY, StateIndexEvidence};
 use oneiron::authority::{HostSlipIssuer, MachineOwnership, MachineRole};
 use oneiron::memory::state_index::StateWindow;
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
-use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
+use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::task_verb::TaskCreateSpec;
 use oneiron::test_doors::affect_state_signals::{RefreshedStateSignals, refresh_state_signals};
 use oneiron::test_doors::derive::claim_has_live_support;
 use oneiron::{
-    DeleteReason, EdgeActorClass, EntityId, Vad, VadAnnotation, VadAnnotationSource, Vault,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, DeleteReason,
+    EdgeActorClass, EntityId, TimeRange, Vad, VadAnnotation, VadAnnotationSource, Vault,
     VaultConfig, WriteActor,
 };
 use oneiron_keystore::MemoryKeystore;
@@ -362,5 +364,107 @@ fn a_composite_index_counts_its_annotated_turns_and_names_none() {
         claim_has_live_support(&vault, &composite).expect("read"),
         Some(true),
         "the composite index is served"
+    );
+}
+
+/// One `predicate` signal claim about `subject` stored in `facet` through the
+/// public claim door, which keeps the facet it is given.
+fn signal_in_facet(
+    vault: &Vault,
+    subject: EntityId,
+    predicate: &str,
+    value: f32,
+    facet: EntityId,
+) -> EntityId {
+    let at = vault.now_recorded_at();
+    let id = EntityId::now();
+    let mut body = ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(subject),
+        Value::F32(value),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("signal claim");
+    body.source = Some(ClaimSource::Observed);
+    body.scope_facet = facet;
+    vault
+        .put_claim(&id, &body, TimeRange { start: at, end: at }, at)
+        .expect("signal claim put");
+    id
+}
+
+/// The composite names both signal claims it reads, so a signal claim stored
+/// in a facet other than the composite's is refused: a reader of the
+/// composite's facet may not read that signal, and must not learn its id from
+/// the composite's evidence. The same derivation with the signal in the
+/// composite's own facet is accepted (REVIEW-9905 P1).
+/// Red at #9905's first fix f51cfaad91f7: the derivation accepts the signal
+/// in the other facet and names it in the composite's evidence.
+#[test]
+fn a_composite_refuses_a_signal_claim_outside_its_facet() {
+    let (_dir, vault, owner) = owned_vault();
+    declare_predicates_normal(&vault, &[("state.", false)]);
+    let room = EntityId::now();
+    let turn = spoken_turn(&vault, owner, room);
+    let _task = owned_task(&vault, owner);
+    let RefreshedStateSignals { composite, .. } =
+        refresh_state_signals(&vault, &owner, &WINDOW, vault.now_recorded_at())
+            .expect("the refresh")
+            .expect(
+                "an annotated turn the owner spoke and a TASK it owns make the refresh measure",
+            );
+    let own_facet = vault
+        .get_claim(&composite)
+        .expect("read")
+        .expect("stored")
+        .scope_facet;
+    let other_facet = EntityId::now();
+    let at = vault.now_recorded_at();
+    vault
+        .put_entity(
+            &other_facet,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: at, end: at },
+            at,
+            b"facet",
+        )
+        .expect("a second FACET");
+    assert_ne!(other_facet, own_facet);
+
+    let engagement = signal_in_facet(&vault, owner, ENGAGEMENT, 0.8, own_facet);
+    let foreign = signal_in_facet(&vault, owner, GOAL_VELOCITY, 0.7, other_facet);
+    let derived = vault.derive_state_index(
+        &owner,
+        &StateIndexEvidence {
+            vad_turns: vec![turn],
+            goal_velocity: foreign,
+            engagement,
+        },
+        vault.now_recorded_at(),
+    );
+    assert!(
+        derived.is_err(),
+        "FAILBEFORE REVIEW-9905-P1: the composite accepts a goal-velocity signal stored in \
+         another facet and names it to readers of its own: {derived:?}"
+    );
+
+    let own = signal_in_facet(&vault, owner, GOAL_VELOCITY, 0.7, own_facet);
+    let derived = vault
+        .derive_state_index(
+            &owner,
+            &StateIndexEvidence {
+                vad_turns: vec![turn],
+                goal_velocity: own,
+                engagement,
+            },
+            vault.now_recorded_at(),
+        )
+        .expect("the same derivation with the signal in the composite's facet");
+    assert_eq!(
+        evidence_field(&vault, &derived, "goal_velocity_signal"),
+        Some(Value::from(own.to_hex())),
+        "the composite names the signal in its own facet"
     );
 }
