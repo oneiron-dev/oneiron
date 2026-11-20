@@ -28,6 +28,7 @@ use super::claims::{
     decode_passport_value,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, claim_surfaceable};
+use crate::code_run::CompareKnown;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::side_table::{self, Raw, SideTable};
@@ -221,13 +222,17 @@ pub(crate) fn resolve_admitted_event_by_uid(
 /// The shared resolver. `vouches` and `detached` read the same authority: a
 /// passport that vouches for the UID and an exception claim that excludes a
 /// detached instance are judged by one reader, so the two never disagree on
-/// which claims count.
+/// which claims count. `vouches` reads a passport's UID as custody reads it
+/// ([`passport_uid_is`]), through one read of the values custody holds,
+/// taken once a compare as written misses.
 fn resolve_uid(
     vault: &Vault,
     uid: &str,
-    vouches: fn(&Vault, &EntityId, &str) -> Result<bool, CalendarError>,
+    vouches: fn(&Vault, &EntityId, &str, &CompareKnown<'_>) -> Result<bool, CalendarError>,
     detached: fn(&Vault, &EntityId) -> Result<bool, CalendarError>,
 ) -> Result<Option<EntityId>, CalendarError> {
+    let base_known = || vault.known_values_now();
+    let known = CompareKnown::new(Some(&base_known));
     let digest = passport_digest(uid);
     let indexed = {
         let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
@@ -237,7 +242,7 @@ fn resolve_uid(
         && vault.get_entity_type(&id)? == Some(ENTITY_TYPE_EVENT)
         && !detached(vault, &id)?
         && !source_bound(vault, &id)?
-        && vouches(vault, &id, uid)?
+        && vouches(vault, &id, uid, &known)?
     {
         return Ok(Some(id));
     }
@@ -258,7 +263,7 @@ fn resolve_uid(
     for event_ref in event_ids {
         if !detached(vault, &event_ref)?
             && !source_bound(vault, &event_ref)?
-            && vouches(vault, &event_ref, uid)?
+            && vouches(vault, &event_ref, uid, &known)?
             && found.is_none_or(|current| event_ref.as_bytes() < current.as_bytes())
         {
             // Lexicographically smallest id, so every node converges on the
@@ -267,7 +272,7 @@ fn resolve_uid(
         }
     }
     if let Some(event_ref) = found
-        && carries_admitted_uid(vault, &event_ref, uid)?
+        && carries_admitted_uid(vault, &event_ref, uid, &known)?
     {
         index_passport_uid(vault, uid, &event_ref)?;
     }
@@ -673,21 +678,70 @@ pub fn all_live_inbound_passports_absent(
 }
 
 /// Whether a live passport on `event_ref`, pending or not, carries `uid` from
-/// any system.
-fn carries_live_uid(vault: &Vault, event_ref: &EntityId, uid: &str) -> Result<bool, CalendarError> {
-    Ok(live_passports_for_event(vault, event_ref)?
-        .iter()
-        .any(|(_, value)| value.uid == uid))
-}
-
-/// Whether an admitted passport on `event_ref` carries `uid` from any system.
-pub(super) fn carries_admitted_uid(
+/// any system, as written or as custody reads it ([`passport_uid_is`]).
+fn carries_live_uid(
     vault: &Vault,
     event_ref: &EntityId,
     uid: &str,
+    known: &CompareKnown<'_>,
 ) -> Result<bool, CalendarError> {
-    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    carries_admitted_uid_in_txn(vault, &txn, event_ref, uid)
+    let passports = live_passports_for_event(vault, event_ref)?;
+    any_passport_carries(&passports, uid, known)
+}
+
+/// Whether an admitted passport on `event_ref` carries `uid` from any system,
+/// as written or as custody reads it ([`passport_uid_is`]).
+fn carries_admitted_uid(
+    vault: &Vault,
+    event_ref: &EntityId,
+    uid: &str,
+    known: &CompareKnown<'_>,
+) -> Result<bool, CalendarError> {
+    let passports = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        admitted_passports_for_event_in_txn(vault, &txn, event_ref)?
+    };
+    any_passport_carries(&passports, uid, known)
+}
+
+/// Whether one of `passports` carries `uid` ([`passport_uid_is`]).
+fn any_passport_carries(
+    passports: &[(EntityId, CalendarPassportValue)],
+    uid: &str,
+    known: &CompareKnown<'_>,
+) -> Result<bool, CalendarError> {
+    for (_, value) in passports {
+        if passport_uid_is(&value.uid, uid, known)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether `held`, a UID the vault stored, is `uid`: as written, or with a
+/// custody handle in place of a value custody holds. The claim door stores a
+/// `calendar.passport`, and the side-row wall an outbox row, with such a
+/// value's handle, so a passport the settled write of a UID custody holds
+/// filed vouches for that UID's index entry only when its UID is read as a
+/// template: each handle meets only a value of its own record, and every
+/// other byte only itself ([`CompareKnown::admits`]). `known` reads the
+/// values custody holds once the compare as written misses (blind review
+/// round 1 of #10090, CAL-OUTBOX-SCAN-MASKED-SYSTEM-MISSES-ROW).
+///
+/// # Errors
+///
+/// The custody read's, or a value the wall cannot read.
+pub(in crate::calendar) fn passport_uid_is(
+    held: &str,
+    uid: &str,
+    known: &CompareKnown<'_>,
+) -> Result<bool, CalendarError> {
+    if held == uid {
+        return Ok(true);
+    }
+    known
+        .admits(&rmpv::Value::from(held), &rmpv::Value::from(uid))
+        .map_err(CalendarError::from)
 }
 
 pub(in crate::calendar) fn carries_admitted_uid_in_txn(

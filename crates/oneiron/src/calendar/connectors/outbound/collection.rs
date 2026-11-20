@@ -26,6 +26,8 @@ use super::{
     OutboxKey, REMOTE_OBJECT, REMOTE_OBJECT_TAG, RemoteObjectKey, StoredWriteMarker,
     derive_outbox_id, local_uid, open_cursor, remote_object_digest, remote_projection,
 };
+use crate::calendar::passport::passport_uid_is;
+use crate::code_run::CompareKnown;
 use crate::entity_id::EntityId;
 use crate::vault::Vault;
 
@@ -357,11 +359,16 @@ fn upsert_row_of(
 ///
 /// A row stages under `uid` when its readable UID is `uid`, or its key is
 /// the one its writing seat derives for `uid` under its readable system and
-/// calendar, or under the pulling seat's: a side-table write may hold a
-/// string as a custody handle (CAL-OUTBOX-SCAN-MASKED-SYSTEM-MISSES-ROW).
+/// calendar, or under the pulling seat's, or its readable UID is `uid` as
+/// custody reads it ([`passport_uid_is`]): a side-table write may hold a
+/// string as a custody handle, the system name of a seat the pulling one
+/// does not share too (CAL-OUTBOX-SCAN-MASKED-SYSTEM-MISSES-ROW, blind
+/// review round 1 of #10090).
 ///
 /// Only a UID of the minted form that resolves to no EVENT reads the
-/// outbox, and the check opens no row's sealed values.
+/// outbox, and the check opens no row's sealed values. The values custody
+/// holds are read only for a row of the EVENT whose UID `uid` is that the
+/// other matches miss.
 ///
 /// The caller holds the vault's calendar admission turn, in which a write
 /// publishes its prepared row and settles, so neither lands between this
@@ -391,26 +398,36 @@ pub(crate) fn first_write_unsettled(
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         OUTBOX.scan_from(&vault.store, &txn, OUTBOX_ROW_TAG)?
     };
-    Ok(rows.into_iter().any(|(_, row)| {
+    let base_known = || vault.known_values_now();
+    let known = CompareKnown::new(Some(&base_known));
+    for (_, row) in rows {
         let unsettled = match row.state {
             CalendarWriteOutboxState::Prepared | CalendarWriteOutboxState::RemoteApplied => true,
             CalendarWriteOutboxState::ReconcileRequired => row.stored_copy_unproven,
             CalendarWriteOutboxState::Committed => false,
         };
-        unsettled
-            && row.action == CalendarWriteAction::Upsert
-            && EntityId::from_bytes(row.event_ref).is_ok_and(|event| local_uid(&event) == uid)
-            && (row.uid == uid
-                || row.outbox_id
-                    == derive_outbox_id(
-                        &row.carrier.seat,
-                        &row.system,
-                        &row.calendar_ref,
-                        uid,
-                        CalendarWriteAction::Upsert,
-                    )
-                || upsert_row_of(&row, system, calendar_ref, uid))
-    }))
+        if !unsettled
+            || row.action != CalendarWriteAction::Upsert
+            || !EntityId::from_bytes(row.event_ref).is_ok_and(|event| local_uid(&event) == uid)
+        {
+            continue;
+        }
+        if row.uid == uid
+            || row.outbox_id
+                == derive_outbox_id(
+                    &row.carrier.seat,
+                    &row.system,
+                    &row.calendar_ref,
+                    uid,
+                    CalendarWriteAction::Upsert,
+                )
+            || upsert_row_of(&row, system, calendar_ref, uid)
+            || passport_uid_is(&row.uid, uid, &known)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// This seat's outbox row of a replayed upsert of `uid` whose precondition
