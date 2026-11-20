@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use super::payload::FederationPayloadBytes;
 
+use oneiron_contracts::fingerprint::{ContentHash, ContentHasher};
 use oneiron_contracts::host_memory::{MachineMemory, MemoryRefusal};
 
 use super::schedule::{self, RetainedWorkQueue, Waiting};
@@ -76,7 +77,7 @@ fn prefix(peer: BurstPeer<'_>) -> Result<Vec<u8>> {
     // Delivery is additionally bound to the exact requested selector (a
     // device's to its proven key). The observation bucket intentionally is
     // not: narrowing cannot reset rate.
-    prefix.extend_from_slice(blake3::hash(&peer.lane_bytes()?).as_bytes());
+    prefix.extend_from_slice(ContentHash::of(&peer.lane_bytes()?).as_bytes());
     Ok(prefix)
 }
 
@@ -158,10 +159,10 @@ impl DeferredWork {
         payload: &[u8],
     ) -> Result<([u8; 32], Vec<u8>)> {
         let selector = peer.lane_bytes()?;
-        let mut hash = blake3::Hasher::new();
+        let mut hash = ContentHasher::new();
         hash.update(b"oneiron/federation-work/v1");
         hash.update(&peer.digest());
-        hash.update(blake3::hash(&selector).as_bytes());
+        hash.update(ContentHash::of(&selector).as_bytes());
         hash.update(key.as_str().as_bytes());
         hash.update(&[match kind {
             WorkKind::Selector => 0,
@@ -171,7 +172,7 @@ impl DeferredWork {
             WorkKind::DeviceResidenceUpdate => 4,
         }]);
         hash.update(payload);
-        Ok((*hash.finalize().as_bytes(), selector))
+        Ok((hash.finish().into_bytes(), selector))
     }
 
     /// Starts this batch's wait in the admitting writer: its arrival, and its
@@ -196,7 +197,7 @@ impl DeferredWork {
     pub(super) fn key(&self) -> Vec<u8> {
         let mut key = DEFERRED_PREFIX.to_vec();
         key.extend_from_slice(&self.peer);
-        key.extend_from_slice(blake3::hash(&self.selector).as_bytes());
+        key.extend_from_slice(ContentHash::of(&self.selector).as_bytes());
         key.extend_from_slice(&self.id);
         key
     }

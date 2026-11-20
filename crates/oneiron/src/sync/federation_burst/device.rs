@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 
 use loro::LoroDoc;
+use oneiron_contracts::fingerprint::ContentHasher;
 
 use super::{
     BurstPeer, DeferredWork, FederationBurstDecision, FederationBurstPeerRef,
@@ -66,7 +67,7 @@ impl DevicePeer {
     /// The baseline its writes count against. A machine keeps its baseline
     /// across a new key.
     pub(super) fn digest(&self) -> [u8; 32] {
-        let mut hash = blake3::Hasher::new();
+        let mut hash = ContentHasher::new();
         hash.update(b"oneiron/device-peer/v1");
         match self {
             Self::Machine { machine, .. } => {
@@ -81,7 +82,7 @@ impl DevicePeer {
                 hash.update(b"unproven");
             }
         }
-        *hash.finalize().as_bytes()
+        hash.finish().into_bytes()
     }
 
     /// The bytes that bind its retained work to it: the device as its
@@ -173,14 +174,14 @@ impl DevicePeer {
             Some(slip) => vault.folded_slip_stands_in_txn(txn, slip)?,
             None => true,
         };
-        let mut hash = blake3::Hasher::new();
+        let mut hash = ContentHasher::new();
         hash.update(b"oneiron/device-peer-authority/v2");
         hash.update(&self.encode());
         hash.update(&[u8::from(machine_stands), u8::from(slip_stands)]);
         if let Some(slip) = slip {
             self.hash_write_authority_in(&mut hash, vault, (txn, now_secs), slip)?;
         }
-        Ok(*hash.finalize().as_bytes())
+        Ok(hash.finish().into_bytes())
     }
 
     /// Hashes into `hash` the write authority the home's residence arm
@@ -197,7 +198,7 @@ impl DevicePeer {
     /// widening ends it too, and the device sends its update again.
     fn hash_write_authority_in(
         &self,
-        hash: &mut blake3::Hasher,
+        hash: &mut ContentHasher,
         vault: &Vault,
         (txn, now_secs): (&heed::RoTxn<'_>, u64),
         slip: &[u8; 32],
