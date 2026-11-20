@@ -198,7 +198,9 @@ impl Vault {
     /// typed inverse and a receipt naming the Coach and the Grant, and the
     /// owner reverts it. Every other changed
     /// field stays in the Proposed request, never dropped. Any error reading
-    /// the Grant means a proposal, never an apply.
+    /// the Grant means a proposal, never an apply. It hands no ground: its
+    /// change appends no act today, and an act it appended would carry no
+    /// owner proof.
     ///
     /// # Errors
     ///
@@ -460,7 +462,9 @@ impl ProactivityPolicyInverse {
 
 /// Puts back each row the request applied that still holds what it applied;
 /// a row a later write changed is left as it is and listed. The owner's revert
-/// writes as the owner; the caller signals the change after commit.
+/// writes as the owner; the caller signals the change after commit. It hands
+/// no ground: its change appends no act today, and an act it appended would
+/// carry no owner proof.
 pub(in crate::dreamer_runner::maintenance) fn revert_policy_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

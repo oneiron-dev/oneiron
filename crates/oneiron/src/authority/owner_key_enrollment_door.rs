@@ -1529,6 +1529,7 @@ impl Vault {
     pub(crate) fn revoke_owner_authority_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: &OwnerProofGround,
         issuer: &HostSlipIssuer,
         person: EntityId,
     ) -> Result<()> {
@@ -1550,7 +1551,7 @@ impl Vault {
                 if fold.offers_owner_proof(&issuer.public_key(), issuer.is_host_root(), hosted) {
                     None
                 } else {
-                    let proof = self.owner_proof_signer(&fold).ok_or(Error::Record(
+                    let proof = self.owner_proof_signer(&fold, ground).ok_or(Error::Record(
                         RecordError::OwnerKeyMoveRefused {
                             member: person,
                             step: OwnerKeyMoveStep::Unavailable,

@@ -556,7 +556,8 @@ fn presentation_row_in_txn(
 
 /// Changes one of the digest's settings in `txn` as `caller`: `Some` sets its value row, `None`
 /// clears it. An owner's or the engine's change applies; the caller signals the host after its
-/// commit.
+/// commit. It hands no ground: its change appends no act today, and an act it appended would
+/// carry no owner proof.
 fn set_digest_setting_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -570,7 +571,7 @@ fn set_digest_setting_in_txn(
         why: why.map(str::to_owned),
         ..SetSetting::vault_value(key, serde_json::Value::Null)
     };
-    match vault.set_setting_in_txn(txn, caller, &request)? {
+    match vault.set_setting_in_txn(txn, None, caller, &request)? {
         SetSettingOutcome::Applied { .. } => Ok(()),
         SetSettingOutcome::Pending { .. } => Err(crate::Error::InvariantViolation(
             "an owner's or the engine's digest setting change waits on a check-in",
@@ -582,7 +583,8 @@ fn setting_json(value: impl Serialize) -> Result<serde_json::Value> {
     serde_json::to_value(value).map_err(|_| invalid())
 }
 
-/// Sets the cadence in `txn` as `caller`, as its two settings: `None` clears both.
+/// Sets the cadence in `txn` as `caller`, as its two settings: `None` clears both. It hands
+/// no ground: its change appends no act today, and an act it appended would carry no owner proof.
 fn set_cadence_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -611,7 +613,8 @@ fn set_cadence_in_txn(
     )
 }
 
-/// Sets the period alone in `txn` as `caller` (`None` clears it).
+/// Sets the period alone in `txn` as `caller` (`None` clears it). It hands no ground: its
+/// change appends no act today, and an act it appended would carry no owner proof.
 fn set_period_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -630,7 +633,8 @@ fn set_period_in_txn(
     )
 }
 
-/// Sets the presentation in `txn` as `caller`: `None` clears it.
+/// Sets the presentation in `txn` as `caller`: `None` clears it. It hands no ground: its
+/// change appends no act today, and an act it appended would carry no owner proof.
 fn set_presentation_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

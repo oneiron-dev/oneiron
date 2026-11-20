@@ -84,7 +84,8 @@ use super::{
 };
 use crate::Vault;
 use crate::authority::{
-    ChoiceCount, ChoiceCounts, SettingSlotAct, SettingSlotFold, SettingSlotHead, SettingSlotRow,
+    ChoiceCount, ChoiceCounts, OwnerProofGround, SettingSlotAct, SettingSlotFold, SettingSlotHead,
+    SettingSlotRow,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -170,7 +171,8 @@ pub(super) fn rooted_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool
 /// signed act, in the change's write `txn`, from `surface`; names the entry on the change row;
 /// and projects the row from the fold in the same write. Returns `false` and writes nothing when
 /// the value's JSON is longer than an act carries: that change keeps the digest-only act of
-/// stage 7a-1 until values travel beside their acts (stage 7c).
+/// stage 7a-1 until values travel beside their acts (stage 7c). It signs on `ground`, or with
+/// no owner proof where that is `None`.
 ///
 /// # Errors
 ///
@@ -179,6 +181,7 @@ pub(super) fn rooted_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool
 pub(super) fn append_act_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    ground: Option<&OwnerProofGround>,
     spec: &'static SettingSpec,
     (owner, surface): (EntityId, ActSurface),
     recorded: &SettingChange,
@@ -207,6 +210,7 @@ pub(super) fn append_act_in_txn(
     });
     let signed = vault.append_setting_slot_act_in_txn(
         txn,
+        ground,
         SettingSlotAct {
             owner,
             surface,

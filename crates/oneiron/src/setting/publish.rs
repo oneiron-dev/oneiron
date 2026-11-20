@@ -34,7 +34,7 @@ use super::project::{json_bytes, rooted_in_txn, travels};
 use super::read::{StoredRow, table_of};
 use super::{Setter, SettingChange, SettingSpec, SettingSync, catalogue};
 use crate::Vault;
-use crate::authority::{SettingSlotAct, SettingSlotRow};
+use crate::authority::{OwnerProofGround, SettingSlotAct, SettingSlotRow};
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::side_table::{self, Named, SideTable};
@@ -188,7 +188,11 @@ fn publish_owner_rows_in_txn(
         surface: ActSurface::ThisInstall,
         rows,
     };
-    let signed = match vault.append_setting_slot_act_in_txn(&mut savepoint, act) {
+    let signed = match vault.append_setting_slot_act_in_txn(
+        &mut savepoint,
+        Some(&OwnerProofGround::stored_owner_rows()),
+        act,
+    ) {
         Ok(signed) => signed,
         Err(Error::Record(RecordError::AuthorityRefused(reason))) => {
             tracing::warn!(

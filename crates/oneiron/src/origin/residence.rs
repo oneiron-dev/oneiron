@@ -3,12 +3,14 @@ use super::publication::{
     OriginPublicationReceipt, OriginPublicationRequest, origin_publication_id,
 };
 use crate::Vault;
+use crate::authority::OwnerProofGround;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo, lock_repository};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -73,8 +75,13 @@ struct Cutover<'a> {
     /// The owner proof the installing transaction revalidates, when the
     /// owner's door carried one (FIX 8214), and the surface his act came
     /// from: the transaction signs his cut of each portable id the repo
-    /// stands under with it (FIX 15740).
-    owner: Option<(&'a AuthenticatedOwner, crate::authority::ActSurface)>,
+    /// stands under with it (FIX 15740). The ground his proof is signed on
+    /// travels beside the owner, so a cut with no owner has no ground.
+    owner: Option<(
+        &'a AuthenticatedOwner,
+        crate::authority::ActSurface,
+        OwnerProofGround,
+    )>,
     /// The repository's served name, for a cut through the served door: the
     /// name its manifests carry.
     served_name: Option<&'a str>,
@@ -291,12 +298,17 @@ impl Vault {
         mirror: bool,
         writer_door: Option<&str>,
     ) -> Result<OriginAuthority> {
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::ORIGIN_CUT,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let cutover = Cutover {
             expected_epoch,
             residence,
             writer,
             mirror,
-            owner: Some((owner, surface)),
+            owner: Some((owner, surface, ground)),
             served_name: Some(repo_name),
             writer_door,
         };
@@ -454,7 +466,7 @@ impl Vault {
         };
         let mut txn = self.store.env.write_txn()?;
         let actor = match owner {
-            Some((owner, _)) => Some(owner.revalidate_in_txn(self, &txn)?),
+            Some((owner, _, _)) => Some(owner.revalidate_in_txn(self, &txn)?),
             None => None,
         };
         let current = AUTHORITY.get(&self.store, &txn, &id)?;
@@ -493,10 +505,11 @@ impl Vault {
         };
         AUTHORITY.put(&self.store, &mut txn, &id, &row)?;
         let appended = match (actor, owner) {
-            (Some(actor), Some((owner, surface))) => {
+            (Some(actor), Some((owner, surface, ground))) => {
                 let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
                 self.sign_origin_cuts_in_txn(
                     &mut txn,
+                    &ground,
                     (actor, proves_joins),
                     surface,
                     &portables,

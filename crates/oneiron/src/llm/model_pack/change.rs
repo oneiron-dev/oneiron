@@ -316,7 +316,8 @@ impl Vault {
     /// with no pack before it, or whose pack before it is neither installed
     /// nor kept at its bytes, fails an install's checks (a frozen hub ref
     /// that pins other bytes named apart) or is not served, answers why it
-    /// cannot run now and changes nothing.
+    /// cannot run now and changes nothing. It hands no ground: its change
+    /// appends no act today, and an act it appended would carry no owner proof.
     ///
     /// # Errors
     /// The owner proof; [`crate::Error::InvalidConfig`] for a blank change id.
@@ -350,7 +351,12 @@ impl Vault {
                         // before the revert installed anything again.
                         let outcome = {
                             let _held = RevertBefore::hold(before.clone());
-                            self.set_setting_in_txn(txn, SettingCaller::Owner(owner), &change)?
+                            self.set_setting_in_txn(
+                                txn,
+                                None,
+                                SettingCaller::Owner(owner),
+                                &change,
+                            )?
                         };
                         // A row that already pinned the pack records none, though a version
                         // installed again may have moved the pack in effect.

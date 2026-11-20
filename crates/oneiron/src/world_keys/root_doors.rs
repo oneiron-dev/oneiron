@@ -21,15 +21,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::repin::{RepinDoor, RepinReport, Withheld};
 use super::{
-    MachineSecret, NarrowedWorld, PreparedRoot, RecoveryAuthoritySeed, RecoveryAuthoritySigner,
-    RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin, WorldKey, WorldKeyId, refused,
+    MachineSecret, NarrowedWorld, OwnerActImportance, PreparedRoot, RecoveryAuthoritySeed,
+    RecoveryAuthoritySigner, RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin, WorldKey,
+    WorldKeyId, owner_presence_reasons, refused,
 };
 use crate::authority::{
     ActAuthority, ActSurface, ActivationPredecessor, AuthorityEntryHash, AuthorityFold,
     FoldedMachine, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey,
-    MachineEnrolmentRequest, OwnerRootRecord, PinnedRoot, RequestCode, anchor_mark_stands,
-    authority_refused, invalid_authority, owner_root_records_in_txn, read_pin_row_in_txn,
-    write_awaited_root_in_txn, write_pinned_root_in_txn,
+    MachineEnrolmentRequest, OwnerProofGround, OwnerRootRecord, PinnedRoot, RequestCode,
+    anchor_mark_stands, authority_refused, invalid_authority, owner_root_records_in_txn,
+    read_pin_row_in_txn, write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, KitRecord, Result, SecretError};
@@ -361,15 +362,21 @@ impl Vault {
     /// the new anchor's chain and is the machine's trusted identity there,
     /// with the same keys; otherwise nothing is published. On a first issue
     /// `carry` is empty; on a re-issue each carried machine is mine under the
-    /// old pin, and this machine is marked whenever it is.
+    /// old pin, and this machine is marked whenever it is. The confirm comes before the
+    /// activation's own read: a refusal of that read can follow a confirm.
     pub fn activate_owner_root(
         &self,
         owner: &AuthenticatedOwner,
         prepared: PreparedRoot,
         carry: &BTreeSet<EntityId>,
     ) -> Result<ActivatedRoot> {
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::KIT_ACTIVATION,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let authority = ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall);
-        self.activate_owner_root_with(&authority, prepared, carry, |_| Ok(()))
+        self.activate_owner_root_with(&authority, prepared, carry, &ground, |_| Ok(()))
             .map(|(activated, ())| activated)
     }
 
@@ -377,12 +384,14 @@ impl Vault {
     /// the new root stands: a kit's inventory and its vault-key wrap commit
     /// with the root or not at all. `authority` carries the true act surface
     /// for R's enrolment row. The predecessor loads in
-    /// [`Self::activation_prep`], before the write txn opens.
+    /// [`Self::activation_prep`], before the write txn opens. `ground` is the
+    /// ground the activation's owner proofs are signed on.
     pub(crate) fn activate_owner_root_with<T>(
         &self,
         authority: &ActAuthority,
         prepared: PreparedRoot,
         carry: &BTreeSet<EntityId>,
+        ground: &OwnerProofGround,
         also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
     ) -> Result<(ActivatedRoot, T)> {
         let owner = match authority {
@@ -399,6 +408,7 @@ impl Vault {
                 &prepared,
                 carry,
                 &predecessor,
+                ground,
             )?;
             Ok((activated, also(txn)?))
         })
@@ -441,7 +451,8 @@ impl Vault {
     /// with the owner's earlier R keys revoked just before it
     /// (WAYBACK-SECOND-KIT-OLD-ROOT-KEY = A). `authority` carries the true
     /// act surface for R's row; `predecessor` was loaded before the write
-    /// txn opened and signs both.
+    /// txn opened and signs both. `ground` is the ground the activation's
+    /// owner proofs are signed on.
     #[expect(clippy::too_many_arguments)]
     pub(super) fn activate_owner_root_in_txn(
         &self,
@@ -452,6 +463,7 @@ impl Vault {
         prepared: &PreparedRoot,
         carry: &BTreeSet<EntityId>,
         predecessor: &ActivationPredecessor,
+        ground: &OwnerProofGround,
     ) -> Result<ActivatedRoot> {
         let owner = match authority {
             ActAuthority::Owner(owner, _) => owner,
@@ -508,6 +520,7 @@ impl Vault {
                 secret.machine,
                 seed,
                 predecessor,
+                ground,
             )?;
         } else {
             // A live R only a passkey vouched for is confirmed (REVIEW-9488 P1 3).
@@ -517,6 +530,7 @@ impl Vault {
                 secret.machine,
                 &authority_signer,
                 predecessor,
+                ground,
             )?;
         }
         // A new kit replaces the old one (WAYBACK-SECOND-KIT-OLD-ROOT-KEY =
@@ -526,10 +540,15 @@ impl Vault {
         // owner on a self-hosted vault when a revoked R held their binding,
         // as its enrolment would after the revocation, an R enrolled before
         // this act too (REVIEW-9488 round 2 P1 4).
-        let carry =
-            self.revoke_earlier_recovery_authority_keys_in_txn(txn, actor, &r_key, predecessor)?;
+        let carry = self.revoke_earlier_recovery_authority_keys_in_txn(
+            txn,
+            actor,
+            &r_key,
+            predecessor,
+            ground,
+        )?;
         self.carry_recovery_authority_approvals_in_txn(txn, carry, &authority_signer)?;
-        self.bind_owner_to_recovery_authority_key_in_txn(txn, actor, r_key, predecessor)?;
+        self.bind_owner_to_recovery_authority_key_in_txn(txn, actor, r_key, predecessor, ground)?;
         let report = self.repin_finish_in_txn(txn, &door, start)?.report;
         let authority_seed = RecoveryAuthoritySeed::from_guarded(
             RecoveryAuthoritySigner::authority_seed(seed, &vault_id, generation),

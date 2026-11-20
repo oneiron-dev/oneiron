@@ -290,10 +290,12 @@ impl Vault {
 
     /// Records `act` as a signed `PolicySettingSet` in the write `txn` that
     /// changed the setting, best effort ([`super::carried_act`]): the
-    /// setting and the door's own record stand whatever this meets.
+    /// setting and the door's own record stand whatever this meets. It signs
+    /// on `ground`, or with no owner proof where that is `None`.
     pub(crate) fn record_policy_setting_op_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
         act: PolicySettingAct,
     ) -> Option<AuthorityEntryHash> {
         let PolicySettingAct {
@@ -302,7 +304,7 @@ impl Vault {
             prior,
             value,
         } = act;
-        self.record_carried_act_in_txn(txn, "policy setting", |machine| {
+        self.record_carried_act_in_txn(txn, "policy setting", ground, |machine| {
             AuthorityOp::PolicySettingSet(PolicySettingSet {
                 act,
                 machine,
@@ -323,7 +325,8 @@ impl Vault {
     /// effort: the act is the write, so whatever stops it (no live machine
     /// profile to carry it, a fold that does not count it, a storage fault)
     /// fails the change, and the savepoint it ran in is rolled back with it.
-    /// The entry's hash.
+    /// The entry's hash. It signs on `ground`, or with no owner proof
+    /// where that is `None`.
     ///
     /// # Errors
     ///
@@ -332,6 +335,7 @@ impl Vault {
     pub(crate) fn append_setting_slot_act_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
         act: SettingSlotAct,
     ) -> Result<AuthorityEntryHash> {
         let SettingSlotAct {
@@ -351,7 +355,7 @@ impl Vault {
                 .collect::<Result<Vec<_>>>()?
         };
         let carried_by = setting_act_of((owner, surface), rows)?;
-        self.append_carried_act_in_savepoint(txn, |machine| {
+        self.append_carried_act_in_savepoint(txn, ground, |machine| {
             AuthorityOp::PolicySettingSet(carried_by(machine))
         })
     }
@@ -385,7 +389,8 @@ impl Vault {
     /// copies, and the `seen` of its own target, read in `txn`. Not best
     /// effort here: whatever stops it fails the call, and its savepoint is
     /// rolled back; the carry keeps its rows on this install whatever this
-    /// meets. The entry's hash.
+    /// meets. The entry's hash. A copy is signed by the mover's install
+    /// key alone: it takes no ground.
     ///
     /// # Errors
     ///
@@ -408,7 +413,7 @@ impl Vault {
                 })
                 .collect::<Result<Vec<_>>>()?
         };
-        self.append_carried_act_in_savepoint(txn, |machine| {
+        self.append_carried_act_in_savepoint(txn, None, |machine| {
             AuthorityOp::SettingCopy(SettingCopy { machine, rows })
         })
     }

@@ -28,6 +28,7 @@ use std::collections::BTreeSet;
 use super::*;
 use crate::error::{Error, RecordError, Result};
 use crate::temporal::TimeRange;
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{EntityId, Vault};
 
 /// A device's rows that are not the confirm its plan names.
@@ -307,9 +308,9 @@ impl Vault {
             return Err(not_valid(OWNER_KEY_MOVE_NOT_SYNCED));
         }
         let signer = self
-            .owner_proof_signer(&fold)
+            .proving_root_signer(&fold)
             .ok_or_else(|| not_valid(OWNER_KEY_MOVE_NO_HELD_KEY))?;
-        let AuthorityKey::Ed25519(held) = signer.key() else {
+        let AuthorityKey::Ed25519(held) = signer.root else {
             return Err(not_valid(OWNER_KEY_MOVE_NO_HELD_KEY));
         };
         let own = keys
@@ -319,10 +320,19 @@ impl Vault {
             return Err(not_valid(OWNER_KEY_MOVE_NO_HELD_KEY));
         }
         drop(txn);
-        sign_owner_key_move(plan, held, |transcript| signer.sign(&fold, transcript))?
-            .iter()
-            .map(encode_authority_log_entry_body)
-            .collect()
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::SIGN_OWNER_KEY_MOVE,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
+        sign_owner_key_move(plan, held, |transcript| {
+            signer
+                .signer
+                .sign_owner_proof(self, &fold, &ground, transcript)
+        })?
+        .iter()
+        .map(encode_authority_log_entry_body)
+        .collect()
     }
 
     /// Lands a device's confirm of a move that ends `member`'s owner keys,

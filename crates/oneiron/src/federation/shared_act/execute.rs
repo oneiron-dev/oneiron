@@ -2,7 +2,8 @@
 
 use super::membership::{MemberMove, UnsignedExecution};
 use super::*;
-use crate::authority::{MembershipExecutionCause, MembershipHandover};
+use crate::authority::{MembershipExecutionCause, MembershipHandover, OwnerProofGround};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 
 impl Vault {
     /// Execute a completed `delete_vault`, `add_owner`, `transfer_ownership` or
@@ -50,8 +51,22 @@ impl Vault {
         slips: Option<&HostSlipIssuer>,
         owner_key_revokes: &[Vec<u8>],
     ) -> Result<SharedActExecution> {
-        let mut export = self
-            .removal_export(executor, act_id)?
+        let (kind, export_source) = self.removal_export(executor, act_id)?;
+        // Only an ownership move can end a member's owner keys, so only it
+        // asks. The confirm stands before the archive is built and while the
+        // door holds nothing: a declined confirm builds nothing, and the
+        // prompt can block.
+        let ground = match kind {
+            Some(SharedActKind::TransferOwnership | SharedActKind::RemoveOwner) => {
+                let witness = self.owner_presence(
+                    OwnerActImportance::Important,
+                    owner_presence_reasons::EXECUTE_SHARED_ACT,
+                )?;
+                Some(OwnerProofGround::witnessed(&witness))
+            }
+            _ => None,
+        };
+        let mut export = export_source
             .map(|(member, records)| {
                 let ids = records.iter().map(|record| record.id).collect();
                 // Its diary reads are the removed owner's, who receives it.
@@ -221,8 +236,10 @@ impl Vault {
                 if plan.v != PLAN_VERSION || plan.from != act.starter {
                     return Err(invalid());
                 }
+                let ground = ground.as_ref().ok_or_else(invalid)?;
                 let moved = self.hand_over_in_txn(
                     &mut txn,
+                    ground,
                     act.vault_id,
                     &owners,
                     from,
@@ -262,8 +279,10 @@ impl Vault {
                 {
                     return Err(invalid());
                 }
+                let ground = ground.as_ref().ok_or_else(invalid)?;
                 let moved = self.hand_over_in_txn(
                     &mut txn,
+                    ground,
                     act.vault_id,
                     &owners,
                     target,
