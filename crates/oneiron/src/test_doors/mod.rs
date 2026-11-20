@@ -47,6 +47,7 @@ pub mod call_receipt_damage;
 pub mod callable_skill;
 pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
+pub mod candidate_scope;
 #[cfg(feature = "sync")]
 pub mod carrier_proof;
 pub mod check_in;
@@ -308,6 +309,7 @@ pub mod room_facet_set;
 pub mod room_fact_marks;
 pub mod room_speaker_entries;
 pub mod room_turn_backfill;
+pub mod room_turn_claims;
 pub mod root_appointment;
 pub mod root_recovery;
 pub mod roster_slot_reservation;

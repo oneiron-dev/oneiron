@@ -8,7 +8,8 @@
 //! and refuse unknown fields. [`verdict_operands`] builds the listed candidates'
 //! `CandidateOperand` JSON for one `ai.verdict` call, following the engine's
 //! `CandidateOperand`, `TurnEvidence`, `PinnedClaim`, `SourceVersion` and
-//! `EvidenceRange` serialization.
+//! `EvidenceRange` serialization. [`ExtractionOperands::name_step`] names each
+//! operand's recorded step candidate, the engine's `RecordedCandidate`.
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -230,6 +231,22 @@ pub struct ExtractionOperands {
     pub candidate_indexes: Vec<usize>,
 }
 
+impl ExtractionOperands {
+    /// Names, on each operand, the recorded candidate it was built from: candidate
+    /// `candidate_indexes[position]` of the step `step`, the `step_ref` of the receipt
+    /// whose decoded reply the operands were built from, as the operand's `from_steps`.
+    ///
+    /// The engine then reads each operand's candidate from the step's own record and
+    /// refuses an operand that differs from it. On a branch with no relationship set it
+    /// binds the operand to the relationships the words of the step's turns share; an
+    /// operand that names no step is bound over every turn the branch queued.
+    pub fn name_step(&mut self, step: &str) {
+        for (operand, index) in self.operands.iter_mut().zip(&self.candidate_indexes) {
+            operand["from_steps"] = json!([{ "step": step, "index": index }]);
+        }
+    }
+}
+
 /// Builds complete decision operands without binding declared subjects.
 ///
 /// Preserves the existing evidence serialization, validates relationships as
@@ -436,6 +453,25 @@ mod tests {
         let second = &operands[1]["evidence"][0]["version"];
         assert_eq!(second["entity"], json!(TURN_HEX));
         assert!(second.get("projection").is_none());
+    }
+
+    /// Naming a step puts each operand's recorded candidate on it: the step with the
+    /// candidate's own index in the reply, never the declared candidate's.
+    #[test]
+    fn naming_a_step_names_each_operands_recorded_candidate() {
+        let reply: BoundExtractionReply =
+            serde_json::from_value(bound_reply_value()).expect("the fixture decodes");
+        let mut built = decision_operands(&reply).expect("the operands build");
+        let step = "5e".repeat(32);
+        built.name_step(&step);
+        assert_eq!(built.candidate_indexes, [0, 1]);
+        for (operand, index) in built.operands.iter().zip(&built.candidate_indexes) {
+            assert_eq!(
+                operand["from_steps"],
+                json!([{ "step": step, "index": index }]),
+                "each operand names its own candidate of the step"
+            );
+        }
     }
 
     /// A candidate's cited claims reach its operand with their versions, and a

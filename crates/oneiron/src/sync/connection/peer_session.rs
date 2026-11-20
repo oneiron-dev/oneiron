@@ -321,7 +321,7 @@ impl ProbedHome {
             Err(error) => {
                 let refusal = crate::sync::carrier::upgrade_refusal(&error, carried)?;
                 let _ = self.events.send(refusal.event());
-                return (refusal == crate::sync::carrier::UpgradeRefusal::Forbidden)
+                return matches!(refusal, crate::sync::carrier::UpgradeRefusal::Forbidden(_))
                     .then_some(HomeAnswer::Forbidden);
             }
         };

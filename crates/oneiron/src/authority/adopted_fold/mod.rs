@@ -40,10 +40,14 @@
 //! [SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY]). That request names every covered
 //! row not held here, since only the whole history folds past such a row
 //! (CALLS "FIX 3007 history closure"); a parent neither covered nor held is
-//! named alone. The request says why ([`AuthorityHistoryReason`]): the first
-//! refusing row in hash order, and its first failing check in the order the
-//! fold makes them, so a retirement door can tell a fetch that closes it
-//! from one that closes it only while the covered rows are held somewhere.
+//! named alone where a row this install believes rests on it. A gap only rows
+//! it does not believe reach refuses nothing: the rows above it fold as
+//! invalid, as the stored log's fold holds them, and the whole request still
+//! names it (FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]). The request says
+//! why ([`AuthorityHistoryReason`]): the first refusing row in hash order, and
+//! its first failing check in the order the fold makes them, so a retirement
+//! door can tell a fetch that closes it from one that closes it only while the
+//! covered rows are held somewhere.
 //!
 //! A later image on the adopting vault folds the same tail the same way, with
 //! no clock and no install view, and keeps the fold at the new frontier
@@ -61,12 +65,14 @@ mod context;
 mod covered_floors;
 mod result_parents;
 mod settle;
+mod tail_gaps;
 
 pub(crate) use result_parents::proven_residence_result_parents_in_txn;
 
 use context::image_stands_here;
 use covered_floors::{CoveredFloors, NoVouchPast};
 use settle::{SettledTail, settle_tail};
+use tail_gaps::{keep_dropped_verdicts, parent_gaps, refusing_gaps};
 
 /// The fold past an adopted image.
 pub(super) enum AdoptedTailFold {
@@ -89,6 +95,11 @@ pub(super) struct AdoptedTail<'a> {
     pub(super) tail: &'a [(AuthorityEntryHash, AuthorityLogEntry)],
     /// The covered rows still stored here: held, never tail.
     pub(super) held_covered: &'a BTreeSet<AuthorityEntryHash>,
+    /// The tail rows this install believes (`AuthorityStructure::believes`):
+    /// the live fold refuses only for the gaps these rows rest on, and holds
+    /// the rows above any other gap invalid. None: every tail row counts, as
+    /// an image-grade capture reads them (it stays free of install facts).
+    pub(super) believed: Option<&'a BTreeSet<AuthorityEntryHash>>,
     /// Hashes a caller names as needed: the fold past the image needs them
     /// held or kept, and the image-grade capture keeps each one's state
     /// beside the new frontier's (a seal's causal point, FIX 4649).
@@ -131,19 +142,17 @@ pub(super) fn fold_adopted_checkpoint_tail(
         .collect();
     // What a fetch of the rows themselves closes: a parent neither covered
     // nor held, and a named hash neither held nor a kept frontier state.
-    let gaps: BTreeSet<_> = tail
-        .values()
-        .flat_map(|entry| entry.parent_hashes.iter())
-        .filter(|parent| !image.rows.contains_key(*parent))
-        .chain(
-            log.required
-                .iter()
-                .filter(|hash| !log.held_covered.contains(*hash))
-                .filter(|hash| !image.keeps_state(hash)),
-        )
+    let required_gaps: Vec<_> = log
+        .required
+        .iter()
+        .filter(|hash| !log.held_covered.contains(*hash))
+        .filter(|hash| !image.keeps_state(hash))
         .filter(|hash| !tail.contains_key(*hash))
         .copied()
         .collect();
+    // Only the gaps the believed rows rest on refuse the fold; the tail rows
+    // above any other gap drop out of what it settles ([`refusing_gaps`]).
+    let (gaps, tail, dropped) = refusing_gaps(image, tail, log.believed, required_gaps);
     // What only the whole history closes: every covered row not held here,
     // for the reason the fold past the image refuses.
     let whole = |reason| {
@@ -172,10 +181,12 @@ pub(super) fn fold_adopted_checkpoint_tail(
     };
     let SettledTail {
         projected,
-        fold,
+        mut fold,
         no_vouch,
+        issues,
         ..
     } = settled;
+    keep_dropped_verdicts(&mut fold, issues.len(), &dropped, &tail, image);
     // This install's own view, over the rows its stale-roster window reads:
     // the tail's first-seen times, and the receipts of its own first sight
     // of covered rows its adoption kept.
@@ -295,12 +306,11 @@ pub(super) fn capture_adopted_checkpoint_tail(
         .iter()
         .map(|(hash, entry)| (*hash, entry))
         .collect();
-    let gaps: BTreeSet<_> = tail
-        .values()
-        .flat_map(|entry| entry.parent_hashes.iter())
-        .filter(|parent| !image.rows.contains_key(*parent) && !tail.contains_key(*parent))
-        .copied()
-        .collect();
+    debug_assert!(
+        log.believed.is_none(),
+        "an image-grade capture counts every tail row it is handed"
+    );
+    let gaps = parent_gaps(image, &tail);
     let whole = |reason| {
         AdoptedImageFold::NeedHistory(whole_history(
             adopted,

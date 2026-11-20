@@ -149,6 +149,7 @@ pub use promoted_window_rows::{
     promoted_window_rows_may_leave_in_txn,
 };
 pub(crate) use prune::checkpoint_read_cache_keys;
+pub(crate) use prune::clear_thin_item_cache_in_txn;
 pub(crate) use prune::demote_resident_window;
 pub(crate) use prune::erase_item_caches_in_txn;
 pub(crate) use prune::prune_thin_items_in_txn;

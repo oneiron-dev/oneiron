@@ -245,6 +245,26 @@ impl CallLabelMap {
             .collect()
     }
 
+    /// The map of a recorded label table ([`Self::table`]), so a step's saved
+    /// reply reads back through the labels its own call showed. `None` for a
+    /// table no call assigns: a prefix that names no label kind, or one row
+    /// listed twice under one kind.
+    pub(super) fn from_table(table: &crate::llm::StepInputLabels) -> Option<Self> {
+        let mut map = Self::default();
+        for (prefix, ids) in table {
+            let [prefix] = prefix.as_bytes() else {
+                return None;
+            };
+            let kind = LabelKind::of(*prefix)?;
+            for (index, id) in ids.iter().enumerate() {
+                if map.assign(kind, *id).number != index + 1 {
+                    return None;
+                }
+            }
+        }
+        Some(map)
+    }
+
     /// Every row this call labelled, its questions aside: each id its
     /// rendered input names (FIX 6998).
     pub(super) fn rows(&self) -> impl Iterator<Item = EntityId> + '_ {

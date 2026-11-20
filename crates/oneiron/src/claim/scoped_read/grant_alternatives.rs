@@ -82,6 +82,53 @@ impl ScopedRead<'_> {
         self.one_of_admits_in(rtxn, id, raw, entity_type, &record, &live)
     }
 
+    /// [`Self::one_grant_alternative_admits_in`] for rows read as one thing,
+    /// such as a person's `about` line with the PERSON, the facts it was
+    /// written from and their sources: one of this key's kept agent Grant
+    /// alternatives alone admits every row of `rows`, and, when the key
+    /// names its holder, one of the holder's Grants that stand for `read` in
+    /// `rtxn` alone admits every row too, met with the key's own Scope. The
+    /// row gate lets each row find its own alternative; here no row does, so
+    /// two Grants never combine into one read (RULING GRANT-COMBINE Q1 = A).
+    /// A key no agent Grant binds admits every row here.
+    ///
+    /// # Errors
+    /// A store or decode failure reading a row's position or facets, or a
+    /// store, fold or clock failure reading the holder's Grants.
+    pub(super) fn one_grant_alternative_admits_each_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        rows: &[(EntityId, Vec<u8>)],
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        let mut positions = None;
+        self.one_grant_alternative_holds_in(rtxn, authority, |alternative| {
+            if positions.is_none() {
+                positions = Some(
+                    rows.iter()
+                        .map(|(id, raw)| self.row_position_in(rtxn, id, raw))
+                        .collect::<Result<Option<Vec<_>>>>()?,
+                );
+            }
+            let Some(Some(positions)) = &positions else {
+                return Ok(false);
+            };
+            for ((id, raw), (entity_type, record)) in rows.iter().zip(positions) {
+                if !self.alternative_admits_row_in(
+                    rtxn,
+                    id,
+                    raw,
+                    *entity_type,
+                    record,
+                    alternative,
+                )? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        })
+    }
+
     /// [`Self::one_grant_alternative_admits_in`] for a position judged with
     /// no live row behind it (FIX AGENT-GRANT-ENVELOPE-ONLY-PATHS; RULING
     /// GRANT-COMBINE Q1 = A): whether `holds` accepts one of this key's kept
@@ -330,37 +377,40 @@ impl ScopedRead<'_> {
         record: &Scope,
         alternatives: &[Scope],
     ) -> Result<bool> {
-        let ceiling = self.actor_key.world_ceiling();
         for alternative in alternatives {
-            let held = note_world::held_at(
-                &self.store_read(),
-                rtxn,
-                *id,
-                entity_type,
-                record,
-                &[&ceiling.worlds, &alternative.worlds],
-            );
-            if !alternative.admits("read", &held, &Scope::top()) {
-                continue;
-            }
-            let facets = match self.session_view {
-                Some(view) => {
-                    facets_admit_in(self.vault, view, rtxn, *id, raw, &alternative.facets)?
-                }
-                None => facets_admit_in(
-                    self.vault,
-                    &self.vault.store,
-                    rtxn,
-                    *id,
-                    raw,
-                    &alternative.facets,
-                )?,
-            };
-            if facets {
+            if self.alternative_admits_row_in(rtxn, id, raw, entity_type, record, alternative)? {
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    /// Whether `alternative` alone admits the row `raw` of `id`, whose type
+    /// is `entity_type` and record position `record`: held at one world the
+    /// key's ceiling and `alternative` both hold, admitted by it, and its
+    /// facets inside its.
+    fn alternative_admits_row_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+        entity_type: u8,
+        record: &Scope,
+        alternative: &Scope,
+    ) -> Result<bool> {
+        let ceiling = self.actor_key.world_ceiling();
+        let held = note_world::held_at(
+            &self.store_read(),
+            rtxn,
+            *id,
+            entity_type,
+            record,
+            &[&ceiling.worlds, &alternative.worlds],
+        );
+        if !alternative.admits("read", &held, &Scope::top()) {
+            return Ok(false);
+        }
+        self.alternative_facets_admit_in(rtxn, id, Some(raw), alternative)
     }
 
     /// The record position of the row `raw` of `id`, with its type: a

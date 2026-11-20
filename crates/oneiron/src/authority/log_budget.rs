@@ -57,12 +57,15 @@ use crate::store::Store;
 
 mod log_check;
 mod owner_reserve;
+mod owner_signed_work;
 mod policy_bounds;
 
 pub use log_check::AuthorityLogCheck;
 pub(crate) use log_check::authority_signer_label;
 pub(crate) use owner_reserve::OwnerReserveHold;
 use owner_reserve::*;
+pub(crate) use owner_signed_work::answers_the_owners_signed_work_in_txn;
+use owner_signed_work::{an_owner_key_signs, answered_row};
 use policy_bounds::signer_bound;
 pub(super) use policy_bounds::{fold_memory_floor, memory_floor_fold};
 #[cfg(test)]
@@ -591,14 +594,7 @@ fn signs_for_the_owner(
     fold: &AuthorityFold,
     entry: &AuthorityLogEntry,
 ) -> bool {
-    std::iter::once(&entry.signer)
-        .chain(&entry.cosigns)
-        .any(|signature| {
-            let key = &signature.public_key;
-            structure.issuers.contains(key)
-                && !fold.retired_keys.contains(key)
-                && roster_has_live_owner(&fold.roster, key)
-        })
+    an_owner_key_signs(structure, fold, entry)
         || (structure.is_own_anchor(entry.signer_key())
             && !fold.retired_keys.contains(entry.signer_key())
             && !fold
@@ -625,12 +621,8 @@ fn asks_the_owners_work(
     arriving: &[(AuthorityEntryHash, &AuthorityLogEntry)],
     hash: &AuthorityEntryHash,
 ) -> crate::error::Result<bool> {
-    let asked = match super::retired_signers::stored_authority_row(store, txn, hash)? {
-        Some(asked) => asked,
-        None => match super::adopted_evidence::CarriedRows::default().get(store, txn, hash)? {
-            Some(asked) => asked,
-            None => return Ok(false),
-        },
+    let Some(asked) = answered_row(store, txn, hash)? else {
+        return Ok(false);
     };
     if names_an_owner_key(structure, &asked)
         && fold.read(store, txn, arriving, |view| {

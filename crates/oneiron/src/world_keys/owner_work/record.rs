@@ -12,10 +12,9 @@ use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityOp, FrontierSigner,
     MAX_PARENTS, OwnerAct, OwnerActKind, OwnerWorkBody, OwnerWorkCancel, OwnerWorkRequest,
     WorldKeyMode, WorldPrivacyWorkBasis, WrapRecipient, authority_entry_hash, invalid_authority,
-    next_sequence, owner_act_signer_admits, sign_side_entry, sign_side_entry_with_owner_proof,
-    stored_authority_row,
+    next_sequence, owner_act_signer_admits, sign_side_entry_with_owner_proof, stored_authority_row,
 };
-use crate::consent::AuthenticatedOwner;
+use crate::consent::{AuthenticatedOwner, OwnerAuthoredWrite};
 use crate::error::{Error, Result};
 use crate::secret_custody::custody_work_executor;
 use crate::world_keys::bundle::bundle_publish_executor;
@@ -158,7 +157,9 @@ impl Vault {
     /// only; `seen` is the target's revision right after the act, which the
     /// work is for. With no install to name, nothing is written and the
     /// receipt says why; the act stands. The fold is the judge: a request it
-    /// did not admit refuses the transaction.
+    /// did not admit refuses the transaction. The owner's own undelegated
+    /// proof makes the request carry the owner key's proof this install
+    /// holds ([`Vault::owner_act_proof_signer`]).
     pub(crate) fn record_owner_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -169,23 +170,34 @@ impl Vault {
         work: OwnerWorkBody,
     ) -> Result<OwnerWorkReceipt> {
         let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-        self.record_owner_work_for_in_txn(txn, actor, surface, target, seen, work)
+        let owner_authored = owner.owner_answer_in_txn(self, txn)?;
+        self.record_owner_work_for_in_txn(
+            txn,
+            (actor, owner_authored.as_ref()),
+            surface,
+            target,
+            seen,
+            work,
+        )
     }
 
     /// [`Self::record_owner_work_in_txn`] for `actor`, the owner PERSON the
     /// act is by, whom the caller revalidated, or checked a live vault owner,
-    /// in this same transaction.
+    /// in this same transaction. `owner_authored` when the act is the owner's
+    /// own write, by an undelegated proof: the request, its permit pieces and
+    /// its joins then carry the owner key's proof this install holds. A
+    /// queued retry and automatic upkeep pass `None`.
     pub(crate) fn record_owner_work_for_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        actor: EntityId,
+        (actor, owner_authored): (EntityId, Option<&OwnerAuthoredWrite>),
         surface: ActSurface,
         target: EntityId,
         seen: [u8; 32],
         work: OwnerWorkBody,
     ) -> Result<OwnerWorkReceipt> {
         let act = OwnerAct::by_owner(actor, work.kind().act(), target, surface, seen);
-        self.sign_owner_work_in_txn(txn, act, work, None)
+        self.sign_owner_work_in_txn(txn, act, work, None, owner_authored)
     }
 
     /// Records the work `act` needs, carrying `act` exactly as the door that
@@ -200,7 +212,7 @@ impl Vault {
         act: OwnerAct,
         work: OwnerWorkBody,
     ) -> Result<OwnerWorkReceipt> {
-        self.sign_owner_work_in_txn(txn, act, work, None)
+        self.sign_owner_work_in_txn(txn, act, work, None, None)
     }
 
     /// Records the key work the world settings edit signed as entry `edit`
@@ -212,13 +224,16 @@ impl Vault {
     /// and no act made for someone who did not act. The edit is in its
     /// causal past: the main-log heads it names carry it (FIX 4987). The fold
     /// judges its basis (CALLS "FIX 4704 derived key work authority"); a
-    /// request it did not admit refuses the transaction.
+    /// request it did not admit refuses the transaction. `owner_authored`
+    /// when the edit is the vault owner's own, made in person: the request
+    /// then carries the owner key's proof the edit carries.
     pub(crate) fn record_world_privacy_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         edit: AuthorityEntryHash,
         key_owner: EntityId,
         after: [u8; 32],
+        owner_authored: Option<&OwnerAuthoredWrite>,
     ) -> Result<OwnerWorkReceipt> {
         let source = stored_authority_row(&self.store, txn, &edit)?;
         let Some(AuthorityOp::WorldPrivacy(source)) = source.map(|entry| entry.op) else {
@@ -237,18 +252,22 @@ impl Vault {
         let work = OwnerWorkBody::WorldKey {
             mode: WorldKeyMode::Ensure,
         };
-        self.sign_owner_work_in_txn(txn, source.act, work, Some(basis))
+        self.sign_owner_work_in_txn(txn, source.act, work, Some(basis), owner_authored)
     }
 
     /// Signs and lands one request for `act`'s work in `txn`, carried by
     /// this install, then reads it back from the fold. `act` is exactly the
-    /// act the request carries; its target is the work's.
+    /// act the request carries; its target is the work's. `owner_authored`
+    /// when it is the owner's own write: the request, its permit pieces and
+    /// its joins carry the owner key's proof this install holds
+    /// ([`Vault::owner_act_proof_signer`]), picked once, before the join.
     fn sign_owner_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         act: OwnerAct,
         mut work: OwnerWorkBody,
         privacy_basis: Option<WorldPrivacyWorkBasis>,
+        owner_authored: Option<&OwnerAuthoredWrite>,
     ) -> Result<OwnerWorkReceipt> {
         let target = act.target;
         let fold = self.authority_view_readonly_in_txn(txn)?;
@@ -263,8 +282,9 @@ impl Vault {
             Ok(executor) => executor,
             Err(why) => return Ok(OwnerWorkReceipt::unassigned(kind, target, why)),
         };
+        let proof = self.owner_act_proof_signer(&fold, owner_authored);
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joiner = FrontierSigner::Install(machine, &signing);
+        let joiner = FrontierSigner::install(machine, &signing, proof.as_ref());
         let fold = self
             .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
@@ -272,7 +292,13 @@ impl Vault {
         // signs ahead of the request, else today's path.
         let piece_signer = (Some(machine), &signing);
         let fold = self
-            .stage_custody_permit_pieces_in_txn(txn, &fold, piece_signer, &mut work)?
+            .stage_custody_permit_pieces_in_txn(
+                txn,
+                &fold,
+                piece_signer,
+                proof.as_ref(),
+                &mut work,
+            )?
             .unwrap_or(fold);
         // The main-log heads alone (FIX 4987): the settings edit key work
         // follows is a main-log row among them or their ancestors, and the
@@ -291,13 +317,14 @@ impl Vault {
         }
         let seq = next_sequence(&fold, &AuthorityKey::Ed25519(public_key))?;
         let now = self.instant_in_txn(txn)?.secs();
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &signing,
             seq,
             parents,
             AuthorityOp::OwnerWorkRequest(request),
             now,
+            proof.as_ref(),
         )?;
         let hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
@@ -323,7 +350,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         actor: EntityId,
-        owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
+        owner_authored: Option<&OwnerAuthoredWrite>,
         surface: ActSurface,
         target: EntityId,
         request: AuthorityEntryHash,

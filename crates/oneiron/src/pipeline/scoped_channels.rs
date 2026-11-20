@@ -383,14 +383,13 @@ impl PipelineBuilder<'_> {
             return Ok(scores);
         };
         // Only rows the call's predicate admits count toward the rounds and
-        // take places in the bound, and the walk below takes the bound's cut
-        // as it reaches each row. The memory lane's kinds join the same
-        // predicate, so no row past the cut is read for them.
-        let reader = if self.made_by == crate::provenance::made_by::MadeByPredicate::All {
-            ReadableRows::new(predicate, filters.deadline)
-        } else {
-            ReadableRows::new_asked_by_scans(predicate, filters.deadline)
-        };
+        // take places in the bound, and a row it refuses holds no place under
+        // a scan's cap that a row it admits is denied, for a scope alone as for
+        // a slice (TEMPORAL-READER-SCAN-CAP-REFUSED-ROWS). The walk below
+        // takes the bound's cut as it reaches each row.
+        // The memory lane's kinds are checked in that walk after the cut, so
+        // no row past the cut is read for them.
+        let reader = ReadableRows::new(predicate, filters.deadline);
         let (mut scores, cut) = execute_temporal_for_reader(
             &self.read,
             rtxn,

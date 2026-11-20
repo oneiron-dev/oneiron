@@ -28,6 +28,7 @@ use serde_json::json;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::EntityId;
 use crate::deletion::decode_tombstone_value;
+use crate::store::legal_hold::{HoldActor, is_hold_refusal};
 use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
 use crate::sync::selector::encode_sync_selector;
@@ -57,6 +58,13 @@ impl SyncClient {
     /// whose read setting keeps it off this machine is followed by no lane
     /// here, so its windows are never asked.
     pub(crate) fn followed_tombstone_windows(&self) -> Result<Vec<WindowKey>, TransportError> {
+        // A member lane holds no root: it takes the set of every window it
+        // holds a thin copy of, listed in its catalogue now or not, so a copy
+        // the home hard-deleted is purged here (review round 1 of #8364).
+        if self.config.member_lane {
+            return thin_cached_windows(&self.vault)
+                .map_err(|error| TransportError::Storage(error.to_string()));
+        }
         let worlds = self.effective_worlds()?;
         Ok(self
             .server_windows()
@@ -161,9 +169,11 @@ impl SyncClient {
     /// primitive: whether it was applied. A row this device places in
     /// another window is not applied: the residence veto a window replay
     /// keeps (blind review 2 of #9593). A hard one whose `dt:` marker this
-    /// device already holds is done, and so is a soft one with no full local
-    /// row to scrub (none here, or already its shell): neither is applied
-    /// again.
+    /// device already holds is done: it is not applied again. A soft one with
+    /// no full local row to scrub (none here, or already its shell) drops
+    /// the thin read copy this device fetched of the item in `window`, if it
+    /// holds one, and the item's row in `window`'s thin index, and writes no
+    /// delete marker (review rounds 2 of #8364 and #9924).
     fn apply_followed_tombstone(
         &self,
         window: &WindowKey,
@@ -197,16 +207,17 @@ impl SyncClient {
             }
             Err(error) => return Err(storage(error)),
         }
-        let done = if decode_tombstone_value(value).is_hard() {
-            marked
-        } else {
-            self.vault
-                .get_raw(&id)
-                .map_err(storage)?
-                .is_none_or(|raw| raw.len() <= crate::batch::ENTITY_METADATA_HEADER_LEN)
-        };
-        if done {
-            return Ok(false);
+        if decode_tombstone_value(value).is_hard() {
+            if marked {
+                return Ok(false);
+            }
+        } else if self
+            .vault
+            .get_raw(&id)
+            .map_err(storage)?
+            .is_none_or(|raw| raw.len() <= crate::batch::ENTITY_METADATA_HEADER_LEN)
+        {
+            return drop_soft_deleted_thin_copy(&self.vault, window, id).map_err(storage);
         }
         crate::sync::quarantine::apply_replayed_tombstone_for_sync(&self.vault, &id, value)
             .map_err(storage)?;
@@ -220,7 +231,11 @@ impl SyncClient {
 /// on the live socket: the count applied. A held window the home grants
 /// takes its deletes through its own exchange; a refused one has none
 /// (FOLLOWED-TOMBSTONE-HELD-WINDOW-REFUSED-LIVE). An opened-item device
-/// lane only.
+/// lane only. A member lane, which runs no owner-machine upkeep, calls it on
+/// a tick of its own (review round 2 of #8364), and asks every window it
+/// holds a thin copy of: a window it opened and unloaded keeps a snapshot
+/// here, yet no exchange of it runs unless it is promoted (review round 2
+/// of #9924).
 pub(crate) async fn refresh_followed_tombstones(
     manager: &std::sync::Arc<WindowManager>,
     config: &SyncClientConfig,
@@ -232,7 +247,8 @@ pub(crate) async fn refresh_followed_tombstones(
         .map_err(|error| TransportError::Storage(error.to_string()))?;
     let mut asked = Vec::new();
     for window in client.followed_tombstone_windows()? {
-        if manager.follow_refused(&window)
+        if config.member_lane
+            || manager.follow_refused(&window)
             || !window_rows_held(&client.vault, &window)
                 .map_err(|error| TransportError::Storage(error.to_string()))?
         {
@@ -240,6 +256,74 @@ pub(crate) async fn refresh_followed_tombstones(
         }
     }
     client.fetch_tombstones_of(asked).await
+}
+
+/// Drops the thin read copy of `item` that a soft tombstone of `window`
+/// names, and its row in `window`'s thin index (`ri:w:{window}:{item}`): its
+/// cached body, text document and the rest of the fetched copy go
+/// ([`crate::sync::residence::clear_thin_item_cache_in_txn`]), so its next
+/// open asks the home again, and the index lists it no more, as the home's
+/// own index no longer does (review round 2 of #9924). No delete marker is
+/// written: a soft delete may be restored, and the next index fetch lists a
+/// restored item again. A copy fetched from another window stays, and so
+/// does another window's index row; everything stays for an item a legal
+/// hold names, or a cached pad whose world a hold names, as a prune keeps
+/// them (OF-470, FIX 3061). Whether a copy or an index row was dropped.
+fn drop_soft_deleted_thin_copy(
+    vault: &crate::Vault,
+    window: &WindowKey,
+    item: EntityId,
+) -> crate::Result<bool> {
+    vault.with_write_txn_grouped(|txn| {
+        let hex = item.to_hex();
+        let listed = format!("ri:w:{window}:{hex}");
+        let indexed = vault.store.sync_state.get(txn, &listed)?.is_some();
+        let cached = vault
+            .store
+            .sync_state
+            .get(txn, &format!("ro:e:{hex}"))?
+            .is_some_and(|cached_in| cached_in == window.as_str().as_bytes());
+        if !indexed && !cached {
+            return Ok(false);
+        }
+        match vault
+            .store
+            .reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED)
+        {
+            Ok(()) => {}
+            Err(error) if is_hold_refusal(&error) => return Ok(false),
+            Err(error) => return Err(error),
+        }
+        if let Some(raw) = vault.store.sync_state.get(txn, &format!("ri:b:{hex}"))?
+            && crate::world_keys::held_pad_world_in_txn(&vault.store, txn, &raw)?
+        {
+            return Ok(false);
+        }
+        if cached {
+            crate::sync::residence::clear_thin_item_cache_in_txn(&vault.store, txn, item)?;
+        }
+        if indexed {
+            vault.store.sync_state.delete(txn, &listed)?;
+        }
+        Ok(true)
+    })
+}
+
+/// Every window this install holds a thin read copy of (`ro:e:`, whose value
+/// is the item's window key), each once, in key order.
+fn thin_cached_windows(vault: &crate::Vault) -> crate::Result<Vec<WindowKey>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut windows = std::collections::BTreeSet::new();
+    for row in vault.store.sync_state.prefix_iter(&txn, "ro:e:")? {
+        let (_, value) = row?;
+        if let Ok(window) = std::str::from_utf8(&value) {
+            windows.insert(window.to_owned());
+        }
+    }
+    Ok(windows
+        .iter()
+        .filter_map(|window| WindowKey::try_new(window))
+        .collect())
 }
 
 /// Whether `config` is an opened-item device lane, the one lane that takes
