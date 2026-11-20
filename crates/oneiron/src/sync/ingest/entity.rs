@@ -107,8 +107,8 @@ pub(in crate::sync) enum EntityStep {
     /// The remote value is refused. Whatever the door staged must be rolled back and the op
     /// recorded in `x:` (ONE-1124); [`ingest_entity_in_savepoint`] does both.
     Quarantine(EntityRefusal),
-    /// Nothing to write: a delete gate holds, the local bytes already match, or the kind never
-    /// replicates.
+    /// Nothing to write: a delete gate or a use limit holds, the local bytes already match, or
+    /// the kind never replicates.
     Skip,
     /// The replicated row was written.
     Materialized(EntityId),
@@ -575,6 +575,13 @@ fn admit(
             );
             return Ok(EntityStep::Skip);
         }
+    }
+    // A record a refused privacy erase kept (C6) or a cooperative review restricts takes no
+    // change from a peer, as it takes none from a named write here (OF-470 C6): a carrier a
+    // device sent before the limit reached it is dropped, and the kept copy stays as it is. The
+    // put door would refuse it as absent, which the window reads as a local failure.
+    if vault.store.use_restricted_in_txn(wtxn, &id)?.is_some() {
+        return Ok(EntityStep::Skip);
     }
     // KS-5: a pad reference whose pad is not here waits, pending, for its carrier.
     if let Some(err) = crate::world_keys::pad_reference_waits_in_txn(&vault.store, wtxn, &id, blob)?
