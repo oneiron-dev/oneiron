@@ -57,6 +57,7 @@ use oneiron_model::llm::{
 };
 
 mod conversation;
+mod judge_room;
 mod support;
 pub(crate) use conversation::{ConversationCheckDeclaration, declare_conversation_check_in_txn};
 pub use support::CompactionCheckDecisions;
@@ -303,6 +304,10 @@ pub async fn run_compaction_check(
     let keyless = model.inference.selected_keyless();
     let paid = model.inference.selected_paid();
     let request = judge_request(&model, &declaration, &read, locality, keyless, paid)?;
+    if let Some(settled) = judge_room::exceeded(&model, &request, &declaration.evidence_revision) {
+        record(ctx.vault, attempt_id, &declaration, &settled, now)?;
+        return Ok(judge_room::completed_without_judge());
+    }
     let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
         Ok(judging) => judging,
         Err(parked) => return Ok(parked),
