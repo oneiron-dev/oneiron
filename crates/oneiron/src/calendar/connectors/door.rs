@@ -12,7 +12,7 @@ use crate::calendar::ingest::feed_door;
 use crate::calendar::setting_keys::CONNECTOR_SEAT;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::setting::{Kind, SettingChange, SettingMode, SettingValue};
+use crate::setting::{ChangeStanding, Kind, SettingChange, SettingMode, SettingValue};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, Vault};
 
@@ -168,7 +168,12 @@ pub(crate) fn seat_setup_changed_in_txn(
             .and_then(Kind::<Option<CalendarSeatSetup>>::decode)
             .flatten()
     };
-    if decode(change.prior.as_ref()).is_some() {
+    // The setting projection's quarantine of an installed seat (a seat whose value beside its
+    // signed act was erased here, or no longer matches it) takes it out of service: its row then
+    // reads no seat. Nobody's change of an installed seat lands.
+    if decode(change.prior.as_ref()).is_some()
+        && change.standing != Some(ChangeStanding::Quarantined)
+    {
         return Err(crate::Error::InvalidConfig(
             "a configured seat is immutable; use a new seat_ref".into(),
         ));

@@ -4,12 +4,13 @@
 //! its signed act where the key's value type is closed and the value's JSON holds at most
 //! [`POLICY_SETTING_INLINE_MAX`] bytes. Any other value travels beside the act: the act keeps only
 //! BLAKE3 over the value's JSON bytes ([`setting_value_digest`]), and the same write stores those
-//! bytes as one immutable ASSET row, whose id is derived from the act's target and that digest
-//! ([`beside_row_id`]). The log is append-only and no door erases a row of it, so free text never
-//! goes on the log. An ASSET row is on the data plane: the sync window carries it to every machine
-//! of the vault, and an erase can reach it. Its id names the row as well as the value, so a digest
-//! never picks up another key's equal value, and an erase of one row's value reaches no other
-//! key's.
+//! bytes as one immutable ASSET row, whose id is derived from the act's target, that digest and
+//! the act itself ([`beside_row_id`]). The log is append-only and no door erases a row of it, so
+//! free text never goes on the log. An ASSET row is on the data plane: the sync window carries it
+//! to every machine of the vault, and an erase can reach it. Its id names the act as well as the
+//! value, so a digest never picks up another key's equal value, an erase of one act's value
+//! reaches no other act's, and an erased value never keeps the owner from setting the same value
+//! again: that is a new act, with a row of its own.
 //!
 //! The row's body is [`BESIDE_VALUE_TAG`] and then the value's JSON bytes. The tag lets a put of
 //! the row, local or a peer's, note the projection pass that reads it ([`is_beside_value_body`]).
@@ -24,11 +25,13 @@
 //!
 //! A projection records each row it read and what that row held ([`BesideHeld`]), and a later
 //! pass reads the target again once one holds otherwise: the value arrived, was erased here, or
-//! no longer matches its act. The put of a row notes that pass; an erase here is read at the next
-//! one (the next authority commit, or the open).
+//! no longer matches its act. It also names each such row in [`WATCH`]: a put of
+//! a row named there, or of any row whose body is a value beside an act, notes that pass, whatever
+//! the row's body ([`notes_projection_pass_in_txn`]); an erase here is read at the next one (the
+//! next authority commit, or the open).
 
 use oneiron_authority::authority::{
-    POLICY_SETTING_INLINE_MAX, setting_slot_target, setting_value_digest,
+    AuthorityEntryHash, POLICY_SETTING_INLINE_MAX, setting_slot_target, setting_value_digest,
 };
 use oneiron_setting_contract::RowKey;
 use serde::{Deserialize, Serialize};
@@ -41,7 +44,13 @@ use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::SETTING_BESIDE_VALUE;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_ASSET;
+use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::temporal::TimeRange;
+
+/// The rows beside acts that a target's last projection read, each with that target
+/// ([`watch_rows_in_txn`]).
+const WATCH: SideTable<EntityId, EntityId, Named> =
+    SideTable::new(&side_table::SETTING_BESIDE_WATCH);
 
 /// What a beside row's body starts with; the value's JSON bytes follow it.
 const BESIDE_VALUE_TAG: &[u8] = b"oneiron.setting.beside_value.v1\n";
@@ -76,50 +85,99 @@ impl SettingTravel {
     }
 }
 
-/// The id of the row that holds the value whose JSON bytes have BLAKE3 `digest`, beside an act on
-/// the row `slot`: derived from the act's target and the digest.
+/// The id of the row that holds the value whose JSON bytes have BLAKE3 `digest`, beside the act
+/// `act` on the row `slot`: derived from the act's target, the digest and the act, so each act's
+/// value has a row of its own (module doc).
 ///
 /// # Errors
 ///
 /// A derived id in the reserved range (never in practice).
-pub(super) fn beside_row_id(slot: &RowKey, digest: &[u8; 32]) -> Result<EntityId> {
+pub(super) fn beside_row_id(
+    slot: &RowKey,
+    digest: &[u8; 32],
+    act: &AuthorityEntryHash,
+) -> Result<EntityId> {
     let target = setting_slot_target(slot)?;
     Ok(EntityId::derive(
         SETTING_BESIDE_VALUE,
-        &[target.as_bytes().as_slice(), digest.as_slice()],
+        &[
+            target.as_bytes().as_slice(),
+            digest.as_slice(),
+            act.as_slice(),
+        ],
     )?)
 }
 
-/// The value one row of an owner's act on `slot` of `spec` leaves, from its JSON bytes `json`
-/// (`None` for a clear), in the act's write `txn`: inside the act where the key's value type is
-/// closed and the JSON holds at most [`POLICY_SETTING_INLINE_MAX`] bytes, else beside it, its row
-/// written here in the same write unless it is here already.
+/// The value one row of an owner's act on `spec` leaves, from its JSON bytes `json` (`None` for a
+/// clear): inside the act where the key's value type is closed and the JSON holds at most
+/// [`POLICY_SETTING_INLINE_MAX`] bytes, else beside it, with the JSON bytes its row holds once
+/// the act is appended ([`put_beside_value_in_txn`]).
+pub(super) fn slot_value(
+    spec: &SettingSpec,
+    json: Option<Vec<u8>>,
+) -> (SlotValue, Option<Vec<u8>>) {
+    let Some(json) = json else {
+        return (SlotValue::Clear, None);
+    };
+    if spec.kind.travels_inline() && json.len() <= POLICY_SETTING_INLINE_MAX {
+        return (SlotValue::Inline(json), None);
+    }
+    (SlotValue::Beside(setting_value_digest(&json)), Some(json))
+}
+
+/// Puts the row that holds the JSON bytes `json` beside the act `act` on the row `slot`, in the
+/// act's write `txn` ([`slot_value`]).
 ///
 /// # Errors
 ///
 /// Storage errors, and the put's refusal.
-pub(super) fn slot_value_in_txn(
+pub(super) fn put_beside_value_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    spec: &SettingSpec,
-    slot: &RowKey,
-    json: Option<Vec<u8>>,
-) -> Result<SlotValue> {
-    let Some(json) = json else {
-        return Ok(SlotValue::Clear);
-    };
-    if spec.kind.travels_inline() && json.len() <= POLICY_SETTING_INLINE_MAX {
-        return Ok(SlotValue::Inline(json));
+    (slot, act): (&RowKey, &AuthorityEntryHash),
+    json: &[u8],
+) -> Result<()> {
+    let row = beside_row_id(slot, &setting_value_digest(json), act)?;
+    put_beside_row_in_txn(vault, txn, row, json)
+}
+
+/// Names in [`WATCH`] the rows beside acts `rows` that the projection of `target` read, in
+/// `txn`, in place of the rows its last projection read (`last`): a put of one notes the
+/// projection pass whatever its body ([`notes_projection_pass_in_txn`]).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn watch_rows_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &mut heed::RwTxn<'_>,
+    target: EntityId,
+    (last, rows): (&[EntityId], &[EntityId]),
+) -> Result<()> {
+    for row in last {
+        if !rows.contains(row) {
+            WATCH.delete(dbs, txn, row)?;
+        }
     }
-    let digest = setting_value_digest(&json);
-    let row = beside_row_id(slot, &digest)?;
-    if !matches!(
-        beside_row_read_in_txn(vault, txn, row, digest)?,
-        BesideRead::Here(_)
-    ) {
-        put_beside_row_in_txn(vault, txn, row, &json)?;
+    for row in rows {
+        WATCH.put(dbs, txn, row, &target)?;
     }
-    Ok(SlotValue::Beside(digest))
+    Ok(())
+}
+
+/// Whether the put of the ASSET row `id` whose body is `body` notes the setting projection pass
+/// (`batch::put_apply`): a value beside an act, or any body at a row a target's last projection
+/// read, so a row that does not hold its act's value is read at once too.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn notes_projection_pass_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    (id, body): (&EntityId, &[u8]),
+) -> Result<bool> {
+    Ok(is_beside_value_body(body) || WATCH.contains(dbs, txn, id)?)
 }
 
 /// Puts the ASSET row `id` holding the JSON bytes `json` beside an act, in `txn`.
@@ -205,8 +263,8 @@ pub(super) fn beside_row_read_in_txn(
 }
 
 /// Whether `body`, an ASSET row's, holds a setting value beside its act: a put of it notes the
-/// setting projection pass (`batch::put_apply`).
-pub(crate) fn is_beside_value_body(body: &[u8]) -> bool {
+/// setting projection pass ([`notes_projection_pass_in_txn`]).
+fn is_beside_value_body(body: &[u8]) -> bool {
     body.starts_with(BESIDE_VALUE_TAG)
 }
 
@@ -228,21 +286,51 @@ fn erased_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<b
     crate::deletion::row_deletion_marked(&vault.store, txn, &id, None)
 }
 
-/// The row that holds the value whose JSON bytes are `json` beside an act on `slot` (stage 7c-1
-/// tests).
+/// The row that holds the value whose JSON bytes are `json` beside the act `act` on `slot`
+/// (stage 7c-1 tests).
 ///
 /// # Errors
 ///
 /// As [`beside_row_id`].
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
-pub(crate) fn beside_row_of(slot: &RowKey, json: &[u8]) -> Result<EntityId> {
-    beside_row_id(slot, &setting_value_digest(json))
+pub(crate) fn beside_row_for(
+    slot: &RowKey,
+    json: &[u8],
+    act: &AuthorityEntryHash,
+) -> Result<EntityId> {
+    beside_row_id(slot, &setting_value_digest(json), act)
 }
 
-/// Puts, in a write of its own, the row for the value whose JSON bytes are `json` beside an act
-/// on `slot`, holding `held` (`json` itself, or other bytes: a row that does not match its
-/// digest), as a peer's row lands: through the batch door, whose commit runs the setting
-/// projection (stage 7c-1 tests).
+/// The row that holds the value whose JSON bytes are `json` beside the live act on `slot` that
+/// keeps only its digest, in `vault` (stage 7c-1 tests).
+///
+/// # Errors
+///
+/// No live act on `slot` keeps that value beside it; storage errors.
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) fn beside_row_of(vault: &Vault, slot: &RowKey, json: &[u8]) -> Result<EntityId> {
+    let digest = setting_value_digest(json);
+    let target = setting_slot_target(slot)?;
+    let txn = vault.store.env.read_txn()?;
+    for act in vault.setting_slot_live_in_txn(&txn, target)? {
+        let head = vault.setting_slot_head_in_txn(&txn, target, act)?;
+        if head
+            .set
+            .is_some_and(|set| set.value == Some(digest) && set.inline.is_none())
+        {
+            return beside_row_id(slot, &digest, &act);
+        }
+    }
+    Err(crate::error::Error::InvariantViolation(
+        "no live act on the row keeps this value beside it",
+    ))
+}
+
+/// Puts, in a write of its own, the row `row` beside an act holding `held` after the value tag
+/// (the act's value's JSON bytes, or other bytes: a row that does not match its digest), or,
+/// where `tagged` is false, `held` alone (a row that holds no setting value), as a peer's row
+/// lands: through the batch door, whose commit runs the setting projection when the put notes
+/// it (stage 7c-1 tests).
 ///
 /// # Errors
 ///
@@ -250,28 +338,40 @@ pub(crate) fn beside_row_of(slot: &RowKey, json: &[u8]) -> Result<EntityId> {
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) fn land_beside_row(
     vault: &Vault,
-    slot: &RowKey,
-    json: &[u8],
-    held: &[u8],
+    row: EntityId,
+    (held, tagged): (&[u8], bool),
 ) -> Result<()> {
-    let id = beside_row_of(slot, json)?;
-    vault.with_write_txn_grouped(|txn| put_beside_row_in_txn(vault, txn, id, held))
+    vault.with_write_txn_grouped(|txn| {
+        if tagged {
+            return put_beside_row_in_txn(vault, txn, row, held);
+        }
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        vault
+            .batch_in()
+            .put(
+                &row,
+                ENTITY_TYPE_ASSET,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                held,
+            )
+            .apply(txn)
+    })
 }
 
-/// The JSON bytes the row for the value whose JSON bytes are `json` beside an act on `slot` holds
-/// here; `None` when none is readable here (stage 7c-1 tests).
+/// The JSON bytes the row `row` beside an act holds here after the value tag; `None` when no
+/// row is readable here (stage 7c-1 tests).
 ///
 /// # Errors
 ///
 /// Storage and filesystem errors.
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
-pub(crate) fn beside_row_json(
-    vault: &Vault,
-    slot: &RowKey,
-    json: &[u8],
-) -> Result<Option<Vec<u8>>> {
+pub(crate) fn beside_row_json(vault: &Vault, row: EntityId) -> Result<Option<Vec<u8>>> {
     let txn = vault.store.env.read_txn()?;
-    let body = beside_body_in_txn(vault, &txn, beside_row_of(slot, json)?)?;
+    let body = beside_body_in_txn(vault, &txn, row)?;
     Ok(body.map(|body| match body.strip_prefix(BESIDE_VALUE_TAG) {
         Some(json) => json.to_vec(),
         None => body,
