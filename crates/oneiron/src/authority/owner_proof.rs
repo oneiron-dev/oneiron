@@ -301,10 +301,10 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
         .collect()
 }
 
-/// Whether a bind or rebind in `state` has the owner's proof where the fold
-/// asks for it: on a hosted fold, one of the row's `participants` (its signer
-/// and cosigners) proves for the owner ([`proves_for_the_owner`]), an owner
-/// key no cloud key holds. A managed host's root acts as
+/// Whether a bind, rebind or revoke of an actor binding in `state` has the
+/// owner's proof where the fold asks for it: on a hosted fold, one of the
+/// row's `participants` (its signer and cosigners) proves for the owner
+/// ([`proves_for_the_owner`]), an owner key no cloud key holds. A managed host's root acts as
 /// nobody inside a customer's vault, and being the trust root never makes
 /// the operator a person there (owner ruling 2026-10-18, "A + support"; rows
 /// OLD-PARENTS-OWNER-BINDING-REVOKE and OLD-PARENTS-OWNER-BINDING-CONFLICT).
@@ -312,9 +312,9 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
 /// it end the owner's standing on every replica (`owner_live_at` takes an
 /// owner every binding of whom is revoked or conflicted as removed), by
 /// revoking that binding, on parents from before an owner key's enrolment
-/// too, or by a conflicting sibling bind. No writer binds a person on a
-/// hosted vault, so its owner is unbound and trusted on the carrier's word;
-/// the owner binds from a device of their own.
+/// too, or by a conflicting sibling bind. The owner binds from a device of
+/// their own, with the owner key it enrolled (lead ruling
+/// HOSTED-RELAY-OWNER-HUMAN-BIND-CEREMONY = B).
 ///
 /// The gate asks for a `human` bind or rebind, and for a bind or rebind, of
 /// whatever class, of a key that could hold a person's binding: a key whose
@@ -333,9 +333,19 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
 /// person's binding can name, such as a machine's `ROLE_AGENT` key, binds
 /// on the root's word. A self-host or relay fold and every other op pass: a
 /// self-host root is the owner's own key, and those folds take no cloud
-/// key's consent. A revoke never asks (ONE-REVOKE-DURABILITY), so the root
-/// alone can still end a binding an owner key made (row
-/// HOSTED-OWNER-BIND-ROOT-REVOKE).
+/// key's consent.
+///
+/// A revoke asks the same (row HOSTED-OWNER-BIND-ROOT-REVOKE). Else the root
+/// alone could end the binding an owner key made, and with it the owner's
+/// standing on every replica ([`super::owner_act::owner_live_at`]), and raise
+/// the key's epoch floor past any bind of it. It asks for a revoke of a key
+/// that could hold a person's binding, as above, and for a revoke of a key
+/// its parents do not hold: the floor of a verified revoke lands on every
+/// branch the merge joins, a sibling that enrols and binds the key among
+/// them. A revoke of a machine's or an agent's key binding ends it on the
+/// root's word. ONE-REVOKE-DURABILITY keeps a verified revoke's floor when
+/// its ancestry turns invalid; it names no signer, and a revoke whose own
+/// participants do not consent never verifies.
 ///
 /// A passkey-limited key ([`FoldState::passkey_limited`]) gives no proof
 /// here, as it gives none to a carried answer or to a revoke of an owner
@@ -350,23 +360,26 @@ pub(super) fn human_bind_proved(
     participants: &BTreeSet<AuthorityKey>,
     consent_arm: fn(&FoldedDevice) -> bool,
 ) -> bool {
-    let (AuthorityOp::BindActor {
-        authority_key,
-        actor_class,
-        ..
-    }
-    | AuthorityOp::RebindActor {
-        authority_key,
-        actor_class,
-        ..
-    }) = op
-    else {
-        return true;
+    let (authority_key, reaches_a_person) = match op {
+        AuthorityOp::BindActor {
+            authority_key,
+            actor_class,
+            ..
+        }
+        | AuthorityOp::RebindActor {
+            authority_key,
+            actor_class,
+            ..
+        } => (authority_key, actor_class == ACTOR_CLASS_HUMAN),
+        AuthorityOp::RevokeActor { authority_key, .. } => {
+            (authority_key, !state.roster.contains_key(authority_key))
+        }
+        _ => return true,
     };
     if !state.hosted {
         return true;
     }
-    let touches_a_person = actor_class == ACTOR_CLASS_HUMAN
+    let touches_a_person = reaches_a_person
         || state
             .actor_bindings
             .get(authority_key)
