@@ -9,15 +9,18 @@
 //!
 //! A fenced put now has the wall read all of the record but the erase's
 //! fixed words in each part it holds in its exact erased form, whoever
-//! wrote that part: the fence's erase, the fold fence before it, or an
-//! earlier put. Everything else is still read and still takes its handle:
-//! an outcome the erase keeps, a failure naming the erase's cause beside a
-//! code of its own, the identity an erased request keeps.
+//! wrote that part: the fence's erase, the fold fence or the spawn fence
+//! before it, a spawn's host, or an earlier put. Everything else is still
+//! read and still takes its handle: an outcome the erase keeps, a failure
+//! naming the erase's cause beside a code of its own, the identity an
+//! erased request keeps, and every output preview, one reading the erased
+//! preview's text too.
 //!
 //! Each case registers a custody value, makes a new agent, deletes it, and
 //! puts the record of a new run of that agent making one call, in the
 //! vault or on a room's route; the held cases put the record once while
-//! the agent is live, before custody takes the value, and again after.
+//! the agent is live, before custody takes the value, and again after; the
+//! live cases keep the agent.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test fenced_erase_form_past_wall`.
@@ -29,14 +32,20 @@ use oneiron::off_record::OffRecordBackendClass;
 use oneiron::test_doors::erased_request_identity::custody_handle;
 use oneiron::test_doors::fenced_erase_form::{
     FencedCall, HELD_CODE, HELD_NAME, put_call_after_delete, put_call_again_after_delete,
-    stored_call_reads, stored_failure_reads, stored_request_custody_names,
+    put_call_live, put_output_live, stored_call_reads, stored_failure_reads, stored_preview,
+    stored_request_custody_names, stored_spawn_reads,
 };
 use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron_verb_wire::code_run::storage::replay_bodies::CODE_RUN_OUTPUT_PREVIEW_ERASED;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 /// The error an erased outcome holds, and the cause an erased request names.
 const RESPONSE_ERASED: &str = "response_erased";
+
+/// The state of a spawn's answer, and the cause of its ask's marker, once an
+/// erase took the spawn's target.
+const TARGET_ERASED: &str = "target_erased";
 
 /// A vault whose custody can take values, holding none yet.
 fn custody_vault() -> TestResult<(tempfile::TempDir, Vault)> {
@@ -183,6 +192,60 @@ fn a_held_erased_requests_identity_stays_under_the_wall() -> TestResult {
     assert!(
         is_handle_of(&vault, record, name)?,
         "the held name takes custody's handle: {name}"
+    );
+    Ok(())
+}
+
+/// Custody holds `target_erased`; a spawn whose host answered it, so its
+/// row holds the erased ask marker too, is put after its run's agent is
+/// deleted: the put fence erases the request, which keeps the marker, and
+/// keeps the typed answer. The put lands and both read erased. Red on the
+/// round-2 head 59986842b22: the wall placed the value's handle over the
+/// answer's `state`, the masked copy no longer decoded as a spawn answer,
+/// and the wall refused the put (blind review round 2 of #9715).
+#[test]
+fn a_fenced_spawns_erased_answer_lands_when_custody_holds_its_state() -> TestResult {
+    let (_directory, vault, _) = vault_holding(TARGET_ERASED.as_bytes())?;
+    let [_, run] = put_call_after_delete(&vault, None, FencedCall::SpawnTargetErased)?;
+    assert!(
+        stored_call_reads(&vault, None, run)?.0,
+        "the erase takes the spawn's request"
+    );
+    assert_eq!(stored_spawn_reads(&vault, run)?, (true, true));
+    Ok(())
+}
+
+/// As above, with the run's agent live: the spawn's request keeps its
+/// fields beside the erased ask marker, and the put lands with the marker
+/// and the typed answer as written. Red on the round-2 head 59986842b22:
+/// no part read as erased, so the wall read all of the record and refused
+/// it, as above.
+#[test]
+fn a_live_spawns_erased_ask_and_answer_land_when_custody_holds_their_cause() -> TestResult {
+    let (_directory, vault, _) = vault_holding(TARGET_ERASED.as_bytes())?;
+    let run = put_call_live(&vault, FencedCall::SpawnTargetErased)?;
+    assert!(
+        !stored_call_reads(&vault, None, run)?.0,
+        "a live run's request keeps its fields"
+    );
+    assert_eq!(stored_spawn_reads(&vault, run)?, (true, true));
+    Ok(())
+}
+
+/// Custody holds the erased preview's text; a live run writes an output
+/// whose body is that text, so its preview reads it, and no fence erases
+/// it: the stored preview is the handle custody gives it. Red on the
+/// round-2 head 59986842b22: the projection took every preview reading the
+/// erased text out of the wall, and the row held the value as written
+/// (blind review round 2 of #9715).
+#[test]
+fn a_live_preview_reading_the_erased_text_takes_custodys_handle() -> TestResult {
+    let (_directory, vault, record) = vault_holding(CODE_RUN_OUTPUT_PREVIEW_ERASED.as_bytes())?;
+    let run = put_output_live(&vault, CODE_RUN_OUTPUT_PREVIEW_ERASED.as_bytes())?;
+    let preview = stored_preview(&vault, run)?.ok_or("the run holds its output")?;
+    assert!(
+        is_handle_of(&vault, record, &preview)?,
+        "the preview takes custody's handle: {preview}"
     );
     Ok(())
 }
