@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// One sweep the housekeeping pass knows. The engine runs the first
-/// twenty; the rest need a host's authority and are reported, never run.
+/// twenty-one; the rest need a host's authority and are reported, never run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HousekeepingSweep {
@@ -81,6 +81,12 @@ pub enum HousekeepingSweep {
     /// SGN-09: "a separate token-expiry job"). A lapsed link is refused at
     /// use whether or not this has run; it never touches a signing window.
     EsignTokenExpiry,
+    /// Raises the floor of every row a vault held before floors were
+    /// written (READ-LINEAGE L1, #9289 review 2 P1-2), a page per write from
+    /// a cursor, at each start until it has raised them all; until then a
+    /// row it has not raised that names a birth input or a dependency source
+    /// reads only to an owner who reads every source.
+    SourceFloorBackfill,
     /// Due signing reminders.
     EsignReminders,
     /// Consult deadlines and their expiry digests.
@@ -131,7 +137,7 @@ pub const DAY: u64 = 24 * HOUR;
 
 impl HousekeepingSweep {
     /// Every sweep, in report order.
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 27] = [
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
@@ -152,6 +158,7 @@ impl HousekeepingSweep {
         Self::ModelPackRetirement,
         Self::OAuthExpiry,
         Self::EsignTokenExpiry,
+        Self::SourceFloorBackfill,
         Self::EsignReminders,
         Self::ConsultSettlement,
         Self::PolicyHoldPrune,
@@ -183,6 +190,7 @@ impl HousekeepingSweep {
             Self::ModelPackRetirement => "model_pack_retirement",
             Self::OAuthExpiry => "oauth_expiry",
             Self::EsignTokenExpiry => "esign_token_expiry",
+            Self::SourceFloorBackfill => "source_floor_backfill",
             Self::EsignReminders => "esign_reminders",
             Self::ConsultSettlement => "consult_settlement",
             Self::PolicyHoldPrune => "policy_hold_prune",
@@ -217,7 +225,8 @@ impl HousekeepingSweep {
             | Self::DrafterCorpusSweep
             | Self::ModelPackRetirement
             | Self::OAuthExpiry
-            | Self::EsignTokenExpiry => Runner::Engine,
+            | Self::EsignTokenExpiry
+            | Self::SourceFloorBackfill => Runner::Engine,
             Self::EsignReminders => Runner::Host(HostOnlyReason::NeedsAuthenticatedDispatch),
             Self::ConsultSettlement => Runner::Host(HostOnlyReason::NeedsHostDigestRoute),
             Self::PolicyHoldPrune => Runner::Host(HostOnlyReason::NeedsAuthenticatedOwner),
