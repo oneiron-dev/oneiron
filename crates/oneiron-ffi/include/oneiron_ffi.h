@@ -906,7 +906,10 @@ enum OneironStatus oneiron_vault_open_with_host_root(const uint8_t *path_ptr,
  * as `oneiron_vault_open_with_embedding_model` does (census L9-28):
  * `embedding_model_ptr` and `embedding_model_len` are its UTF-8 id,
  * `org/name@revision`, or a null pointer with length 0 for none. A malformed
- * id is `InvalidArg` and opens nothing.
+ * id is `InvalidArg` and opens nothing. A vault that holds a model is checked
+ * against it before the install is profiled; a vault that holds none is
+ * pinned to the named model only once the profile stands, so a refused open
+ * pins nothing.
  *
  * # Safety
  *

@@ -87,7 +87,10 @@ pub unsafe extern "C" fn oneiron_vault_open_with_host_root(
 /// as `oneiron_vault_open_with_embedding_model` does (census L9-28):
 /// `embedding_model_ptr` and `embedding_model_len` are its UTF-8 id,
 /// `org/name@revision`, or a null pointer with length 0 for none. A malformed
-/// id is `InvalidArg` and opens nothing.
+/// id is `InvalidArg` and opens nothing. A vault that holds a model is checked
+/// against it before the install is profiled; a vault that holds none is
+/// pinned to the named model only once the profile stands, so a refused open
+/// pins nothing.
 ///
 /// # Safety
 ///
@@ -95,7 +98,7 @@ pub unsafe extern "C" fn oneiron_vault_open_with_host_root(
 /// `embedding_model_ptr` covers `embedding_model_len` readable bytes,
 /// borrowed for this call only.
 #[unsafe(no_mangle)]
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the model-naming open's arguments, then the secret, its flag and its fact"
 )]
@@ -135,18 +138,26 @@ pub unsafe extern "C" fn oneiron_vault_open_with_host_root_and_embedding_model(
                         dict_search_paths_len,
                         device_class,
                     )?;
-                    config.embedding_model = embedding_model;
+                    // A model the vault already holds is checked at open; a first
+                    // pin waits for the profile (#7638 review).
+                    let first_pin = embedding_model
+                        .clone()
+                        .filter(|_| !holds_embedding_model(&path));
+                    config.embedding_model = embedding_model.filter(|_| first_pin.is_none());
                     let may_root =
                         Vault::host_root_open_may_root(Path::new(&path), initialize_root);
                     let dimensions = config.dimensions;
                     // Crash output never carries world text: the engine's hook goes in
                     // before any vault opens (owner ruling 2026-10-14, fix 6).
                     oneiron::panic_report::install_panic_hook();
-                    let vault = engine(Vault::open(&path, config))?;
+                    let mut vault = engine(Vault::open(&path, config))?;
                     // Signing doors need this install's keys from the keystore.
                     vault.install_default_keystore(Path::new(&path));
                     let profile =
                         engine(vault.profile_local_open_logged(secret, may_root, HOST_ROOT_OPEN))?;
+                    if let Some(model) = &first_pin {
+                        engine(vault.pin_embedding_model(model))?;
+                    }
                     // Checked non-null above, so this write cannot fail after the handle exists.
                     write_out(out_wrong_host_root, u8::from(profile.wrong_root()))?;
                     let handle =
@@ -156,4 +167,11 @@ pub unsafe extern "C" fn oneiron_vault_open_with_host_root_and_embedding_model(
             });
         result.map_or_else(|status| status, |()| OneironStatus::Ok)
     })
+}
+
+/// Whether the vault at `path` holds an embedding model, read without opening
+/// it as a vault. A path that holds no vault, or none this read can see, holds
+/// none: its open then pins the named model only once the profile stands.
+fn holds_embedding_model(path: &str) -> bool {
+    matches!(Vault::stored_embedding_model(path), Ok(Some(_)))
 }

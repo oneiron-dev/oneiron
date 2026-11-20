@@ -291,8 +291,8 @@ pub unsafe extern "C" fn oneiron_vault_put_vector_with_provenance(
             let vector = with_required_slice(vector_ptr, vector_len, |values| {
                 convert_query_vector(values, handle.dimensions)
             })?;
-            let device = string_from_required(device_ptr, device_len)?;
-            let runtime = string_from_required(runtime_ptr, runtime_len)?;
+            let device = mark_text(device_ptr, device_len)?;
+            let runtime = mark_text(runtime_ptr, runtime_len)?;
             let provenance = oneiron::embed::EmbeddingProvenance::from_host(&device, &runtime)
                 .map_err(|_| OneironStatus::InvalidArg)?;
             match handle.bound_memory() {
@@ -307,6 +307,16 @@ pub unsafe extern "C" fn oneiron_vault_put_vector_with_provenance(
             }
         });
         result.map_or_else(|status| status, |()| OneironStatus::Ok)
+    })
+}
+
+/// One field of a vector's device mark: bytes that are not UTF-8 are an
+/// invalid mark, `InvalidArg` as the header promises, as is a mark
+/// `EmbeddingProvenance::from_host` refuses.
+fn mark_text(ptr: *const u8, len: usize) -> Result<String, OneironStatus> {
+    string_from_required(ptr, len).map_err(|status| match status {
+        OneironStatus::Utf8 => OneironStatus::InvalidArg,
+        other => other,
     })
 }
 

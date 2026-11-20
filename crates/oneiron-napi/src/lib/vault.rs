@@ -231,7 +231,9 @@ impl NapiVault {
     /// with the engine's reason; a secret that is not the vault's settled
     /// root, over a profile that already stands, opens and says so in
     /// `wrongHostRoot`. `deviceClass` is `new`'s (FIX 3833), and so is
-    /// `embeddingModel` (census L9-28).
+    /// `embeddingModel` (census L9-28), except that a vault holding no model
+    /// is pinned to it only once the profile stands: a refused open pins
+    /// nothing.
     #[napi(factory)]
     pub fn open_with_host_root(
         path: String,
@@ -244,14 +246,30 @@ impl NapiVault {
         let request = options
             .before_open(&path)
             .map_err(napi::Error::from_reason)?;
+        // A model the vault already holds is checked at open; a vault that
+        // holds none is pinned only once the profile stands, so a refused open
+        // pins nothing (#7638 review).
+        let first_pin = embedding_model
+            .clone()
+            .filter(|_| !matches!(Vault::stored_embedding_model(&path), Ok(Some(_))));
         let mut opened = Self::new(
             path,
             dimensions,
             dict_search_paths,
             device_class,
-            embedding_model,
+            embedding_model.filter(|_| first_pin.is_none()),
         )?;
         opened.wrong_host_root = request.profile(&opened.vault).map_err(to_napi_err)?;
+        if let Some(model) = &first_pin {
+            Arc::get_mut(&mut opened.vault)
+                .ok_or_else(|| {
+                    napi::Error::from_reason(
+                        "the opened vault is shared before its model is pinned",
+                    )
+                })?
+                .pin_embedding_model(model)
+                .map_err(to_napi_err)?;
+        }
         Ok(opened)
     }
 

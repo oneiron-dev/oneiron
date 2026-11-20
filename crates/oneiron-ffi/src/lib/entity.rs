@@ -136,7 +136,7 @@ pub unsafe extern "C" fn oneiron_vault_open(
 /// As `oneiron_vault_open`, and a non-null `embedding_model_ptr` covers
 /// `embedding_model_len` readable bytes, borrowed for this call only.
 #[unsafe(no_mangle)]
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "oneiron_vault_open's arguments, then the model id"
 )]
