@@ -183,6 +183,11 @@ pub(super) fn fold_adopted_checkpoint_tail(
     if view.rests_on_counting() && !super::install_fold::stale_chains(&view).is_empty() {
         return Ok(whole());
     }
+    // An image that dropped its residence bodies cannot show the keys a
+    // covered forked directive rests on (row SEQ-FLOOR-S-WITHHELD-COSIGN).
+    if context::dropped_body_fork_may_expire(image, &view) {
+        return Ok(whole());
+    }
     // The whole install fold's fold with no vouch folds as this one does
     // here, so its cap is the cap of this fold by itself (`NoVouchPast`).
     if no_vouch == NoVouchPast::Identical {
@@ -366,17 +371,26 @@ pub(super) fn capture_adopted_checkpoint_tail(
         frontier_ancestry,
         revoke_facts,
         retired_keys: image.safety.retired_keys.clone(),
+        handoff_or_appointment_retired_keys: image
+            .safety
+            .handoff_or_appointment_retired_keys
+            .clone(),
         closed_handoffs: image.safety.closed_handoffs.clone(),
+        crossed_revocations: image.safety.crossed_revocations.clone(),
         unsettled: image.safety.unsettled,
         issues,
         missing_parents,
         marks: image.safety.marks.clone(),
-        revocations: final_merged.actor_revocation_hashes,
+        revocations: crate::authority::fold_state::to_btree_set_map(
+            &final_merged.actor_revocation_hashes,
+        ),
         writers,
         bound_keys,
         confirm_ids: confirms.0,
         confirm_nonces: confirms.1,
-        nonce_provenance: merged.critical_write_confirm_nonce_provenance.clone(),
+        nonce_provenance: crate::authority::fold_state::to_btree_set_map(
+            &merged.critical_write_confirm_nonce_provenance,
+        ),
     };
     Ok(AdoptedImageFold::Captured {
         fold: Box::new(ImageFold {
@@ -533,6 +547,12 @@ fn tail_folds_past(
     {
         return None;
     }
+    // A tail an owner key's line could reach where the image's kept states
+    // do not show it is judged by the whole log (row
+    // CARRIER-PROOF-OLD-PARENTS).
+    if super::owner_key_line::tail_reaches_old_parents(image, tail) {
+        return None;
+    }
     // Only the rows the whole fold judges set or carry a floor
     // (`fold_engine::judged_entries`): a tail row whose signature fails is
     // neither a link nor a setter, as it is in no ancestry of the whole fold.
@@ -566,9 +586,10 @@ fn tail_folds_past(
             image.per_parent.contains_key(parent)
                 || (image.keeps_state(parent) && context::seeds_late_fork(image, parent))
         });
-        let retired = std::iter::once(&entry.signer)
-            .chain(&entry.cosigns)
-            .any(|signature| image.safety.retired_keys.contains(&signature.public_key));
+        // The fence's own signers: a reserve-only owner key proof is none
+        // (`retired_signers::entry_signer_keys`, REVIEW-9961 P1).
+        let retired = super::retired_signers::entry_signer_keys(entry)
+            .any(|key| image.safety.retired_keys.contains(key));
         parents_stand
             && !retired
             && !image.safety.missing_parents.contains(hash)

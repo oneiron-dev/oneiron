@@ -207,7 +207,13 @@ pub(super) fn bound_inputs(
     vault.store.authorization_now()?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let (branch, bound) = consolidation::extraction_pack::check_extraction_operands_in_txn(
-        &memory, &read, &txn, None, attempt_id, operands, None,
+        &memory,
+        &read,
+        &txn,
+        None,
+        (attempt_id, None),
+        operands,
+        None,
     )
     .map_err(|error| bad(format!("routing door refused: {error:?}")))?;
     let checked = consolidation::extraction_pack::check_pack_candidates(
@@ -222,7 +228,7 @@ pub(super) fn bound_inputs(
         let verified = bound
             .verify_observation_candidate_in_txn(
                 &memory,
-                &read,
+                (&read, &read),
                 &txn,
                 operand,
                 &row.proposal,

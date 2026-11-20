@@ -18,7 +18,7 @@ fn resident_fork_lifecycle_replays_after_owner_in_either_delivery_order() -> Res
             &[(false, false), (true, false)]
         };
         for &(skill_first, wrong_kind) in cases {
-            let vault = test_vault();
+            let (_dir_vault, vault) = test_vault();
             let window_key = WindowKey::new("2026-03");
             let materializer = Arc::new(Materializer::new());
             let parent = EntityId::now();

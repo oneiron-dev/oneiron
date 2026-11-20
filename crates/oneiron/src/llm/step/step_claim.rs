@@ -8,6 +8,7 @@ use super::codec::{
     decode_attempt_id_value, decode_entity_id_value, decode_hash_hex, expect_key, expect_map,
     expect_string, expect_u64, invalid_step, pinned_key_index,
 };
+use super::request_hash_step::{StepInputLabels, StepInputRange, step_input_records};
 use super::response_pins::{StepResponseRef, register_step_response_pin_in_txn};
 use super::source::StepSource;
 use super::step_state::{
@@ -18,9 +19,10 @@ use super::types::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_VALUE_KEYS,
     DREAMER_STEP_VALUE_SCHEMA_VERSION, DurableStepContext, DurableStepError, DurableStepResult,
     ENVELOPE_PROVENANCE_ATTEMPT_KEY, ENVELOPE_PROVENANCE_RUN_KEY, ENVELOPE_PROVENANCE_SURFACE_KEY,
-    KEY_AT, KEY_ATTEMPT_ID, KEY_INPUT_VERSIONS, KEY_MODEL_ID, KEY_PARAMS_HASH, KEY_PROGRESSION,
-    KEY_PURPOSE, KEY_RESPONSE, KEY_RESPONSE_HASH, KEY_RESPONSE_REF, KEY_RESPONSE_VERSION,
-    KEY_SCHEMA_VERSION, KEY_STEP_HASH, KEY_USAGE_IN, KEY_USAGE_OUT, StepProgression,
+    KEY_AT, KEY_ATTEMPT_ID, KEY_INPUT_LABELS, KEY_INPUT_RANGES, KEY_INPUT_SOURCES,
+    KEY_INPUT_VERSIONS, KEY_MODEL_ID, KEY_PARAMS_HASH, KEY_PROGRESSION, KEY_PURPOSE, KEY_RESPONSE,
+    KEY_RESPONSE_HASH, KEY_RESPONSE_REF, KEY_RESPONSE_VERSION, KEY_SCHEMA_VERSION, KEY_STEP_HASH,
+    KEY_USAGE_IN, KEY_USAGE_OUT, StepProgression,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -128,7 +130,9 @@ pub(super) fn verdict_only_reply(response: LlmResponse) -> LlmResponse {
 /// was filed, keeps the row's erased skeleton, and files nothing. An agent
 /// run's step commits only while its machine holds the run (FIX 4747): a
 /// stale executor's write files nothing and fails with
-/// `Error::AgentRunExecutorMoved`.
+/// `Error::AgentRunExecutorMoved`. Each input fact `request` names in its host
+/// provider options (the source versions, the call labels, the TURN ranges,
+/// the source rows) is kept under its own key.
 pub(super) fn log_terminal_step(
     ctx: &DurableStepContext<'_>,
     binding: crate::model_step_effect::StepEffectBinding,
@@ -141,7 +145,7 @@ pub(super) fn log_terminal_step(
 ) -> DurableStepResult<Option<EntityId>> {
     let step_hash = &binding.step_hash;
     let params_hash = request_params_hash(request)?;
-    let input_versions = super::request_hash_step::step_input_versions(request)?;
+    let input_records = step_input_records(request)?;
     let claim_id = ctx.vault.store.clock.entity_id()?;
     let occurred = TimeRange {
         start: source.at,
@@ -250,11 +254,10 @@ pub(super) fn log_terminal_step(
                 response_ref,
                 at: source.at,
             });
-            if let (Some(versions), Value::Map(entries)) = (&input_versions, &mut value) {
-                entries.push((
-                    Value::from(KEY_INPUT_VERSIONS),
-                    Value::from(versions.as_str()),
-                ));
+            if let Value::Map(entries) = &mut value {
+                for (key, record) in &input_records {
+                    entries.push((Value::from(*key), Value::from(record.as_str())));
+                }
             }
             let candidate = call_audience(
                 ClaimCandidate::new(
@@ -276,6 +279,11 @@ pub(super) fn log_terminal_step(
                 .batch_in()
                 .claim_candidate(&claim_id, candidate, &envelope, occurred, ctx.now_ms)
                 .apply(wtxn)?;
+            // The step claim is a new mention of its context subject: about
+            // a PERSON under a cleanup archive, which the owner-gone fence
+            // lets through, it restores her in this write (ARCH-0073 §6).
+            ctx.vault
+                .restore_mentioned_subject_in_txn(wtxn, ClaimSubject::Entity(source.subject))?;
             // The claim holds the exact version its response lives in, so
             // its erase reaches that version (FIX 6225).
             if let Some(pin) = &response_ref {
@@ -556,7 +564,9 @@ pub(super) struct DecodedStepClaim {
 
 /// Fail-closed `dreamer.step` claim value decode: pinned keys only, no
 /// duplicates, schema-version checked, and EXACTLY ONE of
-/// `response`/`response_ref` present (both or neither is a typed error).
+/// `response`/`response_ref` present (both or neither is a typed error). The
+/// call labels, TURN ranges and source rows a bound step names are checked as
+/// their facts and not kept here: no reader of this decode consumes them.
 pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim> {
     let entries = expect_map(value, "dreamer step value must be a MessagePack map")?;
     let mut schema_version = None;
@@ -667,6 +677,21 @@ pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
                     invalid_step("dreamer step value input_versions must list source versions")
                 })?);
             }
+            KEY_INPUT_LABELS => check_json_fact::<StepInputLabels>(
+                value,
+                "dreamer step value input_labels must be a string",
+                "dreamer step value input_labels must list each label prefix's rows",
+            )?,
+            KEY_INPUT_RANGES => check_json_fact::<Vec<StepInputRange>>(
+                value,
+                "dreamer step value input_ranges must be a string",
+                "dreamer step value input_ranges must list TURN ranges",
+            )?,
+            KEY_INPUT_SOURCES => check_json_fact::<Vec<EntityId>>(
+                value,
+                "dreamer step value input_sources must be a string",
+                "dreamer step value input_sources must list source rows",
+            )?,
             _ => unreachable!("index resolved from DREAMER_STEP_VALUE_KEYS"),
         }
     }
@@ -717,6 +742,17 @@ pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
         response_ref,
         input_versions,
     })
+}
+
+/// Checks that `value` is one JSON string that reads as a `T`.
+fn check_json_fact<T: serde::de::DeserializeOwned>(
+    value: &Value,
+    not_string: &'static str,
+    not_fact: &'static str,
+) -> Result<()> {
+    let encoded = expect_string(value, not_string)?;
+    let _fact: T = serde_json::from_str(&encoded).map_err(|_| invalid_step(not_fact))?;
+    Ok(())
 }
 
 fn parse_progression_str(value: &str) -> Result<StepProgression> {

@@ -169,6 +169,7 @@ pub(super) fn apply_conversation_training_vault(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let choice = VaultTrainingChoice {
         on: set.on,
@@ -179,6 +180,7 @@ pub(super) fn apply_conversation_training_vault(
         machine: set.machine,
         choice: Some(&choice),
         context: CONVERSATION_TRAINING_VAULT_REVISION_CONTEXT,
+        needs_proof_off_the_line,
         persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
@@ -351,7 +353,12 @@ impl Vault {
         let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?
             .ok_or_else(|| authority_refused(NO_CARRIER))?;
         let public_key = key.verifying_key().to_bytes();
-        if !owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+        if !owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(authority_refused(NO_CARRIER));
         }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
@@ -385,7 +392,7 @@ impl Vault {
                 allow_opt_out,
             }),
             now,
-            self.owner_proof_signer(&fold).as_deref(),
+            self.owner_proof_signer(&fold).as_ref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {

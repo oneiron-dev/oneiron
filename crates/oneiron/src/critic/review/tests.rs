@@ -67,7 +67,7 @@ fn document_and_claim_reviews_persist_and_learn_dismissals() -> Result<()> {
     let document = EntityId::now();
     vault.put_entity(&document, ENTITY_TYPE_TURN, time, 10, b"doc")?;
     let claim = EntityId::now();
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         "fixture.fact",
         ClaimSubject::Entity(document),
         Value::from("fact"),
@@ -75,6 +75,7 @@ fn document_and_claim_reviews_persist_and_learn_dismissals() -> Result<()> {
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
     )?;
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     vault.put_claim(&claim, &body, time, 10)?;
     let lens_a = put_lens_skill(&vault, "critic-review.lens-a")?;
     let lens_b = put_lens_skill(&vault, "critic-review.lens-b")?;

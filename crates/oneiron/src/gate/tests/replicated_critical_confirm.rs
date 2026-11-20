@@ -254,9 +254,10 @@ fn a_peers_next_revision_lands_unchanged_and_waits_for_its_own_clear() -> Result
 }
 
 /// B's own ceremony binds the body its writer saw. A peer's revision over it
-/// invalidates that ceremony and lands Proposed. The ceremony never settled,
-/// so its obligation stays open: every reader that asks the barrier still
-/// holds the claim, and B's owner is shown an item for the peer's revision.
+/// invalidates that ceremony and lands the peer's bytes unchanged (FIX 9603).
+/// The ceremony never settled, so its obligation stays open: every reader that
+/// asks the barrier still holds the claim, and B's owner is shown an item for
+/// the peer's revision.
 #[test]
 fn an_overwritten_local_confirm_is_never_read_as_settled() -> Result<()> {
     let (_tmp_a, vault_a) = temp_vault();
@@ -278,9 +279,15 @@ fn an_overwritten_local_confirm_is_never_read_as_settled() -> Result<()> {
             &crate::claim::encode_claim_body(&changed)?,
         )
         .commit()?;
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         stored_claim_body(&vault_b, &claim)?.approval,
-        ClaimApprovalStatus::Proposed
+        ClaimApprovalStatus::Auto
+    );
+    assert!(
+        vault_b
+            .with_write_txn(|wtxn| vault_b.store.owner_answer_obligation_in_txn(wtxn, &claim))?
+            .is_some()
     );
     let before = stored_claim_body(&vault_b, &claim)?;
     let item = pending_row(&vault_b, &claim)?;

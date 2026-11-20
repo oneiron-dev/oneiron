@@ -19,6 +19,14 @@
 //! thread of an ordinary group room; the other three sites share its judge.
 //! For the walk-in, [`Room::with_vault_admins`] also shares the vault with
 //! two Admins, one of whom the role door makes an owner of the room.
+//!
+//! An add or walk-in that goes at once, or that is not judged, spends no
+//! check-in, so a `check_in_ref` its call names is refused as a bad request
+//! and the check-in stays eligible (FIX row
+//! [CHECK-IN-DOOR-GO-AT-ONCE-IGNORES-NAMED-CHECK-IN]). On main f75de13fe4c7
+//! every such add lands and leaves the named check-in unspent. A self
+//! re-add, someone already in walking in again, is not judged either
+//! (REVIEW-9839 P1).
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test check_in_closed_room`.
 
@@ -29,8 +37,8 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::conversation::{ConversationBody, ConversationKind, RoomRole};
 use oneiron::federation::{FederationGrantRole, InitialSharedMember};
 use oneiron::memory::{
-    CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_CHECK_IN_PENDING, Memory, MemoryError,
-    MemoryResult, WitnessAuthor, WitnessMessage, WitnessTurn,
+    CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_CHECK_IN_PENDING, Memory,
+    MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessTurn,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
@@ -512,4 +520,119 @@ fn a_vault_admins_walk_in_to_a_closed_room_waits_on_its_owners() {
             (role, "room_owner", None)
         );
     }
+}
+
+/// An add that goes at once spends no check-in, so the `check_in_ref` its
+/// call names is refused as a bad request naming `check_in_ref`, and the
+/// check-in stays eligible: in a closed room an owner of the room's add
+/// (`room_owner`); in an open room the vault owner's add (their own
+/// judgment), a vault Admin's (their role's `sure`), the room admin's and a
+/// vault Admin's walk-in (neither judged). Closed again, the room admin's
+/// call naming the check-in, the add it waits on, spends it and lands.
+#[test]
+fn an_add_that_goes_at_once_refuses_a_named_check_in() {
+    let fx = Room::with_vault_admins();
+    let admins = fx.vault_admins.as_ref().expect("the vault's Admins");
+    let walker = admins.walker;
+    let [asked, first, second, third] = fx.newcomers;
+    fx.add(walker, walker, None)
+        .expect("in an open room the Admin walks in");
+    fx.set_closed(true);
+    let id = pending_id(
+        &fx.add(fx.admin, asked, None)
+            .expect_err("in a closed room the admin's add waits"),
+    );
+    let settled = fx
+        .approves(fx.co_owner, &id)
+        .expect("the second owner answers");
+    assert_eq!(settled["eligible"].as_str(), Some("approved"), "{settled}");
+
+    let mut went = Vec::new();
+    let mut tried = |who: &str, outcome: MemoryResult<ThreadAudienceReceipt>| match outcome {
+        Ok(receipt) => went.push(format!("{who}: {:?}", receipt.check_in)),
+        Err(refused) => {
+            assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{who}: {refused:?}");
+            assert!(
+                refused.message.contains("check_in_ref"),
+                "{who}: the refusal names check_in_ref: {refused:?}"
+            );
+        }
+    };
+    tried(
+        "an owner of the closed room",
+        fx.add(fx.co_owner, first, Some(&id)),
+    );
+    fx.set_closed(false);
+    tried("the vault's owner", fx.add(fx.owner, second, Some(&id)));
+    tried("a vault Admin", fx.add(walker, third, Some(&id)));
+    tried(
+        "the room's admin, not judged",
+        fx.add(fx.admin, admins.room_owner, Some(&id)),
+    );
+    fx.leave(walker);
+    tried(
+        "a vault Admin's walk-in, not judged",
+        fx.add(walker, walker, Some(&id)),
+    );
+    assert!(
+        went.is_empty(),
+        "these went at once past the named check-in: {went:?}"
+    );
+
+    fx.set_closed(true);
+    let landed = fx
+        .add(fx.admin, asked, Some(&id))
+        .expect("the check-in stayed eligible: the admin's waiting add lands");
+    assert_eq!(
+        landed
+            .check_in
+            .and_then(|decision| decision.check_in)
+            .as_deref(),
+        Some(id.as_str()),
+        "the add spent the check-in"
+    );
+}
+
+/// A self re-add is not judged and spends no check-in (REVIEW-9839 P1). A
+/// vault Admin's walk-in into the closed room waits and the owner approves
+/// it; the vault's owner then adds the Admin. The Admin's call naming the
+/// approved check-in is now a self re-add: it is refused as a bad request
+/// naming `check_in_ref`, and writes nothing. The check-in stays eligible:
+/// out again, the Admin's walk-in naming it spends it.
+#[test]
+fn a_self_re_add_refuses_a_named_check_in() {
+    let fx = Room::with_vault_admins();
+    let admins = fx.vault_admins.as_ref().expect("the vault's Admins");
+    let walker = admins.walker;
+    fx.set_closed(true);
+    let id = pending_id(
+        &fx.add(walker, walker, None)
+            .expect_err("in a closed room the Admin's walk-in waits"),
+    );
+    let settled = fx.approves(fx.owner, &id).expect("the owner answers");
+    assert_eq!(settled["eligible"].as_str(), Some("approved"), "{settled}");
+    fx.add(fx.owner, walker, None)
+        .expect("the vault's owner adds the Admin at once");
+
+    let refused = fx
+        .add(walker, walker, Some(&id))
+        .expect_err("a self re-add spends no check-in: the one it names is refused");
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
+    assert!(
+        refused.message.contains("check_in_ref"),
+        "the refusal names check_in_ref: {refused:?}"
+    );
+
+    fx.leave(walker);
+    let walked = fx
+        .add(walker, walker, Some(&id))
+        .expect("the check-in stayed eligible: the Admin's walk-in lands");
+    assert_eq!(
+        walked
+            .check_in
+            .and_then(|decision| decision.check_in)
+            .as_deref(),
+        Some(id.as_str()),
+        "the walk-in spent the check-in"
+    );
 }

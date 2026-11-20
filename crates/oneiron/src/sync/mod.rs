@@ -109,7 +109,9 @@ pub use connection::{
 pub(crate) use ingest::VerifiedOwnDeviceLane;
 pub(crate) use ingest::forget_stale_peer_origins;
 pub use ingest::with_own_device_push;
-pub(crate) use ingest::{forget_message_writer_in_txn, note_message_put_in_txn};
+pub(crate) use ingest::{
+    forget_dropped_carriers_in_txn, forget_message_writer_in_txn, note_message_put_in_txn,
+};
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
     LEASE_RECORD_VERSION, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP, client_id_hex,
@@ -142,11 +144,12 @@ pub use selector::GuestDocumentShareRequest;
 #[cfg(feature = "test-hooks")]
 pub use selector::put_selector_test_federation_grant;
 pub use selector::{
-    DEFAULT_FEDERATED_CONFIDENCE_SCALE, FederationAdmissionRole, PeerConfidence, RequestedAxis,
-    SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector, SyncSelectorWorld,
+    CoreferenceDisclosure, DEFAULT_FEDERATED_CONFIDENCE_SCALE, FederationAdmissionRole,
+    PeerConfidence, RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorReaderReach,
+    SelectorReleaseBasis, SelectorVvRequest, SyncSelector, SyncSelectorWorld,
     admit_federated_window_update, authorize_sync_selector, decode_selector_vv_request,
     decode_sync_selector, encode_selector_vv_request, encode_sync_selector, filtered_window_doc,
-    filtered_window_doc_for, filtered_window_doc_for_peer,
+    filtered_window_doc_for, filtered_window_doc_for_peer, recording_coreference_disclosure,
 };
 pub use transport::{
     EphemeralWireState, LEGACY_FULL_WINDOW_PROTOCOL_VERSION, MAX_DECODED_PAYLOAD_BYTES,

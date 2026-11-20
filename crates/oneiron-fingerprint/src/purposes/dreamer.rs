@@ -9,6 +9,11 @@
 //! it. So each keeps its bytes (K, PLAN-UC-04 6.2). Each of these three is BLAKE3 of a
 //! value's JSON and writes no tag: their names are registry names only. The entries after
 //! them say what each one hashes.
+//!
+//! The extraction reads (`crates/oneiron/src/snapshot_read`) send their pins and equality
+//! tokens to the Dreamer's extraction job, which compares them across its reads. Main has
+//! sent them since the reads landed, so they keep their bytes too (the `EXTRACTION_*`
+//! entries).
 
 purposes! {}
 
@@ -65,6 +70,46 @@ legacy_purposes! {
     /// record's `source_revision_ref`; a citation that names no slice pins the body's
     /// content hash instead.
     EVIDENCE_SOURCE_REVISION = (Blake3, HashedFirst, "oneiron:dreamer-evidence-source-revision:v1");
+
+    /// An extraction observation's identity equality token
+    /// (`snapshot_read::extraction_observations::tokens`). Plain BLAKE3, the tag first, one
+    /// zero byte, then the `serde_json` bytes of the native conflict identity as the array
+    /// (subject, predicate, world, facet, relationships, project, topic), each id as hex
+    /// text, with no length. Its lowercase hex is sent with each candidate, prior and
+    /// replay row of an observations page, and the extraction job compares two rows'
+    /// tokens for equality.
+    EXTRACTION_IDENTITY_TOKEN = (Blake3, HashedFirst, "oneiron:extraction:identity-token:v1");
+
+    /// An extraction observations read's facts pin
+    /// (`snapshot_read::extraction_observations::paging::observation_facts_pin`). Plain
+    /// BLAKE3, the tag first, one zero byte, then the `serde_json` bytes of the tuple
+    /// (attempt, clock, candidates, policy pin, complete fact set), with no length. Its
+    /// lowercase hex is sent on every page and inside every cursor: the read refuses a
+    /// cursor whose pin differs, and the extraction job compares the pin across its pages
+    /// and with the selection it routes from.
+    EXTRACTION_OBSERVATION_FACTS = (Blake3, HashedFirst, "oneiron:extraction:observations-facts:v1");
+
+    /// The effective extraction policy's pin
+    /// (`snapshot_read::extraction_inputs::extraction_policy_pin`). Plain BLAKE3, the tag
+    /// first, then the `serde_json` bytes of the policy, with no separator and no length.
+    /// Its lowercase hex is sent on every inputs page and every observations page, and the
+    /// extraction job compares it across its reads, its config and its selection.
+    EXTRACTION_POLICY = (Blake3, HashedFirst, "oneiron.dreamer.extraction.policy.v1");
+
+    /// An extraction observation's same-slice equality token: the recipe of
+    /// [`EXTRACTION_IDENTITY_TOKEN`] under its own tag, over the `serde_json` bytes of the
+    /// array (subject, world, facet, relationships, project). Only a candidate row carries
+    /// it.
+    EXTRACTION_SLICE_TOKEN = (Blake3, HashedFirst, "oneiron:extraction:slice-token:v1");
+
+    /// An extraction observation's question equality token: the recipe of
+    /// [`EXTRACTION_IDENTITY_TOKEN`] under its own tag, over the native topic key's bytes.
+    EXTRACTION_TOPIC_TOKEN = (Blake3, HashedFirst, "oneiron:extraction:topic-token:v1");
+
+    /// An extraction observation's value equality token: the recipe of
+    /// [`EXTRACTION_IDENTITY_TOKEN`] under its own tag, over the normalized native value
+    /// key's bytes.
+    EXTRACTION_VALUE_TOKEN = (Blake3, HashedFirst, "oneiron:extraction:value-token:v1");
 
     /// A Coach site-skill candidate's fingerprint, the key of its seen marker
     /// (`dreamer_runner::maintenance::site_skills::distill::digest`): plain BLAKE3, the tag's

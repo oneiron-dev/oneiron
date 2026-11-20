@@ -16,7 +16,9 @@ use std::sync::Arc;
 
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
-use oneiron::authority::{ActSurface, HostSlipIssuer, MachineOwnership, MachineRole, PeerMachine};
+use oneiron::authority::{
+    ActAuthority, ActSurface, HostSlipIssuer, MachineOwnership, MachineRole, PeerMachine,
+};
 use oneiron::embed::{EmbeddingSpace, InputKind};
 use oneiron::federation::{Scope, ScopeAxis, own_device_residence_scope};
 use oneiron::memory::ClaimInput;
@@ -115,19 +117,30 @@ impl Fixture {
         vault.provision_engine_machine_identities(&issuer)?;
         vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
         let (owner, owner_proof) = embedded_owner(&vault)?;
+        // A carried `Owned(Yours)` stands only with an owner key's proof
+        // (row CARRIER-OWNER-PROOF): enrol this install's owner signing
+        // key first, so the answer below carries that proof and stands.
+        vault.enrol_device_owner_signing_key(
+            &ActAuthority::Owner(owner_proof.clone(), ActSurface::ThisInstall),
+            &issuer,
+        )?;
         // The owner answers for this install, so its machine proves its key
         // (an Unanswered roster profile proves none).
         let machine = vault
             .local_machine()?
             .map(|local| local.id)
             .ok_or("this install enrolled no machine")?;
-        vault.set_machine_role(
+        let landing = vault.set_machine_role(
             &owner_proof,
             ActSurface::ThisInstall,
             machine,
             MachineRole::Owned(MachineOwnership::Yours),
             None,
         )?;
+        assert!(
+            landing.held().is_none(),
+            "the owner's answer stands, so the install's machine proof verifies"
+        );
         let server = Arc::new(SyncServer::new(
             vault.clone(),
             SyncServerConfig {

@@ -22,6 +22,7 @@ use super::support::{
 };
 use crate::error::GateError;
 
+mod after_own_scrub;
 mod code_wait_rebind;
 mod decision_slot;
 mod grants;
@@ -237,7 +238,10 @@ impl AuthenticatedOwner {
     /// belongs to `vault`, its person is live, and a credential it carried is
     /// still live and still an owner's, or a person credential it carried is
     /// still live, all in the acting transaction. Every other door takes
-    /// [`Self::revalidate_in_txn`].
+    /// [`Self::revalidate_in_txn`]. Its twin at the publication of the
+    /// owner's delete of their own PERSON is
+    /// [`Self::revalidate_after_own_scrub_in_txn`]: a check added here goes
+    /// there too.
     pub(crate) fn revalidate_person_in_txn(
         &self,
         vault: &Vault,
@@ -254,14 +258,7 @@ impl AuthenticatedOwner {
             // revoked or a binding withdrawn while the request waited for the
             // writer commits nothing. Off a self-hosted vault the typed
             // refusal stands as it is.
-            action.holds_in(vault, txn).map_err(|error| match error {
-                Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(_)) => {
-                    Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                        "the host action this owner was authenticated from no longer holds",
-                    ))
-                }
-                other => other,
-            })?;
+            action.holds_in(vault, txn).map_err(host_action_lapse)?;
         }
         if let Some(credential) = &self.credential {
             // Rechecked in the caller's transaction: a capability revoked, or
@@ -399,12 +396,29 @@ impl AuthenticatedOwner {
     }
 }
 
+/// A host action's recheck refusal as the owner door gives it: a lapse (a
+/// root revoked, a binding withdrawn, an owner no longer live) is the
+/// owner's refusal; off a self-hosted vault the typed refusal stands as it is.
+fn host_action_lapse(error: Error) -> Error {
+    match error {
+        Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(_)) => {
+            Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "the host action this owner was authenticated from no longer holds",
+            ))
+        }
+        other => other,
+    }
+}
+
 /// A claim write the vault's authenticated owner made in person, revalidated
 /// in the transaction that writes it.
 ///
 /// Only [`AuthenticatedOwner::owner_authored_write_in_txn`] builds one, and
 /// it is neither `Clone` nor stored: the writing door takes it by value into
-/// that transaction's gate mode, so no later write can inherit it.
+/// that transaction's gate mode, so no later write can inherit it. A door
+/// that carries an authority act lends it by reference to pick the owner
+/// key's proof the act carries
+/// ([`crate::Vault::owner_act_proof_signer`]).
 #[derive(Debug)]
 pub(crate) struct OwnerAuthoredWrite {
     actor: EntityId,

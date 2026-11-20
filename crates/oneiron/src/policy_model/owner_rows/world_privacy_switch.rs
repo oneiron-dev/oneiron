@@ -180,17 +180,21 @@ impl Vault {
     /// The key step after one edit and its honest settlement, in the edit's
     /// commit: `key_owner` is the live vault owner PERSON the world's key
     /// binds, whoever made the change (a holder, or an agent within its
-    /// Grant).
+    /// Grant). `owner_authored` when the edit is the vault owner's own, made
+    /// in person ([`WorldEditAuthor`]): the key records it writes carry the
+    /// owner key's proof the edit carries.
     pub(super) fn finish_world_key_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         key_owner: EntityId,
         receipt: WorldPrivacyReceipt,
         secret: Result<&crate::world_keys::MachineSecret>,
+        owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
     ) -> Result<WorldPrivacyReceipt> {
         let world = EntityId::from_hex(&receipt.world)
             .map_err(|_| Error::InvariantViolation("world privacy receipt world"))?;
-        let status = self.world_key_for_edit_in_txn(txn, key_owner, world, secret)?;
+        let status =
+            self.world_key_for_edit_in_txn(txn, key_owner, world, secret, owner_authored)?;
         self.settle_world_key_work_by_in_txn(txn, key_owner, receipt, status)
     }
 
@@ -210,7 +214,8 @@ impl Vault {
         seen: Option<PolicyRevision>,
     ) -> Result<WorldPrivacyReceipt> {
         let actor = super::world_privacy_will::revalidate_holder_in_txn(self, txn, owner, world)?;
-        let author = WorldEditAuthor::holder(actor, surface);
+        let owner_authored = owner.owner_answer_in_txn(self, txn)?;
+        let author = WorldEditAuthor::holder(actor, surface, owner_authored.as_ref());
         self.write_world_privacy_in_txn(txn, author, world, settings, seen, None)
     }
 
@@ -220,7 +225,7 @@ impl Vault {
     pub(super) fn write_world_privacy_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        author: WorldEditAuthor,
+        author: WorldEditAuthor<'_>,
         world: EntityId,
         settings: WorldPrivacy,
         seen: Option<PolicyRevision>,

@@ -192,11 +192,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_sandbox/egress/receipt.rs` | src | s | 1 struct | EgressReceipt | Moved from `crates/oneiron/src/code_sandbox/egress/receipt.rs` (lib split R1: record types below the lib) |
 | `src/code_sandbox/mod.rs` | src | s | 1 mod · 21 re-export | — | — |
 | `src/compaction/check_material.rs` | src | s | 1 struct · 1 fn | CompactionCheckMaterialRef | Moved from `crates/oneiron/src/compaction/check_material.rs` (lib split R2: record types below the lib) |
-| `src/compaction/conversation.rs` | src | s | 2 struct | ConversationEvidence, ConversationTurnSpan | Moved from `crates/oneiron/src/compaction/conversation.rs` (lib split R2: record types below the lib) |
+| `src/compaction/conversation.rs` | src | s | 2 struct · 1 fn | ConversationEvidence, ConversationTurnSpan | Moved from `crates/oneiron/src/compaction/conversation.rs` (lib split R2: record types below the lib) |
 | `src/compaction/folds.rs` | src | s | 5 struct · 1 enum · 4 fn · 1 const · 10 re-export | FoldCompactAsk, FoldCompactAsked, FoldMark, FoldMarked, FoldUnfolded, SelfFoldCall | Moved from `crates/oneiron/src/compaction/folds.rs` (lib split R2: record types below the lib) |
 | `src/compaction/mod.rs` | src | s | 5 mod · 41 re-export | — | — |
 | `src/compaction/output.rs` | src | s | 2 struct · 2 enum · 4 fn · 1 const | OutputAffordance, OutputContextView, OutputRef, OutputTier | Moved from `crates/oneiron/src/compaction/output.rs` (lib split R2: record types below the lib) |
-| `src/compaction/self_writer.rs` | src | s | 4 struct · 2 enum · 3 fn · 1 const | CompactionCall, CompactionEvidence, CompactionHomeRef, CompactionLanding, CompactionStepRef, CompactionUsage | Moved from `crates/oneiron/src/compaction/self_writer.rs` (lib split R1: record types below the lib) |
+| `src/compaction/self_writer.rs` | src | s | 4 struct · 2 enum · 2 fn · 1 const | CompactionCall, CompactionEvidence, CompactionHomeRef, CompactionLanding, CompactionStepRef, CompactionUsage | Moved from `crates/oneiron/src/compaction/self_writer.rs` (lib split R1: record types below the lib) |
 | `src/companion/mod.rs` | src | s | 1 mod · 8 re-export | — | — |
 | `src/companion/persona.rs` | src | s | 2 struct · 6 fn | PersonaInputBasis, PersonaMadeBy | Moved from `crates/oneiron/src/companion/persona.rs` (lib split R1: record types below the lib) |
 | `src/connector_key/credential_binding.rs` | src | s | 3 struct · 1 enum · 1 fn · 1 re-export | ConnectorBindingDependent, ConnectorCredentialBinding, ConnectorIssuerTransition, ConnectorIssuerTransitionState | Moved from `crates/oneiron/src/connector_key/credential_binding.rs` (lib split R1: record types below the lib) |
@@ -313,7 +313,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/code_fix/publisher.rs` | src | s | 4 enum · 2 fn | EngineAdmission, EngineArm, EngineCallUsage, PublisherCandidateKind | Moved from `crates/oneiron/src/dreamer_runner/maintenance/code_fix/publisher.rs` (lib split R2: record types… |
 | `src/dreamer_runner/maintenance/code_fix/publisher_refs.rs` | src | s | 1 struct · 1 enum · 1 fn | PublisherCandidateInput, PublisherCandidateRef | Moved from `crates/oneiron/src/dreamer_runner/maintenance/code_fix/publisher_refs.rs` (lib split R2: record… |
 | `src/dreamer_runner/maintenance/compaction_check.rs` | src | s | 2 const · 1 mod | — | Moved from `crates/oneiron/src/dreamer_runner/maintenance/compaction_check.rs` (lib split R2: record types… |
-| `src/dreamer_runner/maintenance/compaction_check/conversation.rs` | src | s | 1 fn · 1 const | — | Moved from `crates/oneiron/src/dreamer_runner/maintenance/compaction_check/conversation.rs` (lib split R2… |
+| `src/dreamer_runner/maintenance/compaction_check/conversation.rs` | src | s | 1 const | — | Moved from `crates/oneiron/src/dreamer_runner/maintenance/compaction_check/conversation.rs` (lib split R2… |
 | `src/dreamer_runner/maintenance/curator.rs` | src | s | 1 struct | CuratorQuestions | Moved from `crates/oneiron/src/dreamer_runner/maintenance/curator.rs` (lib split R2: record types below the… |
 | `src/dreamer_runner/maintenance/digest/mod.rs` | src | s | 2 mod · 12 re-export | — | — |
 | `src/dreamer_runner/maintenance/digest/policy.rs` | src | s | 2 const | — | Moved from `crates/oneiron/src/dreamer_runner/maintenance/digest/policy.rs` (lib split R2: record types… |
@@ -450,8 +450,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/genui/protocol.rs` | src | s | 1 struct · 1 enum | Of336ActionDescriptor, Of336ComponentKind | Moved from `crates/oneiron/src/genui/protocol.rs` (lib split R2: record types below the lib) |
 | `src/genui/receipt_view.rs` | src | s | 1 struct · 2 enum · 2 fn | ReceiptDeepLink, ReceiptDeepLinkKind, ViewTimeResolution | Moved from `crates/oneiron/src/genui/receipt_view.rs` (lib split R2: record types below the lib) |
 | `src/genui/voice_offer.rs` | src | s | 1 struct | VoiceGrantOffer | Moved from `crates/oneiron/src/genui/voice_offer.rs` (lib split R2: record types below the lib) |
-| `src/housekeeping/mod.rs` | src | s | 1 mod · 10 re-export | — | — |
-| `src/housekeeping/schedule.rs` | src | s | 1 fn · 2 const | — | Moved from `crates/oneiron/src/housekeeping/schedule.rs` (lib split R1: record types below the lib) |
+| `src/housekeeping/mod.rs` | src | s | 10 re-export | — | — |
 | `src/identity_topology/mod.rs` | src | s | 1 mod · 11 re-export | — | — |
 | `src/identity_topology/post_hoc_review.rs` | src | s | 3 struct · 4 enum · 2 fn · 1 const · 1 mod | TopologyAuditCorrection, TopologyAuditDecider, TopologyAuditEvidence, TopologyAuditIntent, TopologyAuditOutcome, TopologyAuditResult, TopologyAuditScope | Moved from `crates/oneiron/src/identity_topology/post_hoc_review.rs` (lib split R1: record types below the… |
 | `src/identity_topology/post_hoc_review/home/mod.rs` | src | s | 1 mod | — | — |
@@ -638,7 +637,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/reaction/signal.rs` | src | s | 1 const | — | Moved from `crates/oneiron/src/reaction/signal.rs` (lib split R1: record types below the lib) |
 | `src/receipt/archive_source/codec.rs` | src | s | 3 fn | — | Moved from `crates/oneiron/src/receipt/archive_source/codec.rs` (lib split R2: record types below the lib) |
 | `src/receipt/archive_source/mod.rs` | src | s | 1 mod | — | — |
-| `src/receipt/authority_audit.rs` | src | s | 4 struct · 1 enum · 2 re-export | AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditRow, ColdAuthorityAuditRow, PendingMembershipExecutionRow | Moved from `crates/oneiron/src/receipt/authority_audit.rs` (lib split R2: record types below the lib) |
+| `src/receipt/authority_audit.rs` | src | s | 5 struct · 1 enum · 2 re-export | AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditRow, CarriedAuthorityAuditBody, ColdAuthorityAuditRow, PendingMembershipExecutionRow | Moved from `crates/oneiron/src/receipt/authority_audit.rs` (lib split R2: record types below the lib) |
 | `src/receipt/call.rs` | src | s | 2 fn · 1 const · 5 re-export | — | Moved from `crates/oneiron/src/receipt/call.rs` (lib split R2: record types below the lib) |
 | `src/receipt/dispatch_identity.rs` | src | s | 1 const | — | Moved from `crates/oneiron/src/receipt/dispatch_identity.rs` (lib split R2: record types below the lib) |
 | `src/receipt/family.rs` | src | s | 1 struct · 2 fn | PendingTrayQuery | Moved from `crates/oneiron/src/receipt/family.rs` (lib split R2: record types below the lib) |
@@ -647,7 +646,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/intent_id.rs` | src | s | 1 type | — | Moved from `crates/oneiron/src/receipt/intent_id.rs` (lib split R2: record types below the lib) |
 | `src/receipt/ledgers.rs` | src | s | 1 enum | SendReceiptOutcome | Moved from `crates/oneiron/src/receipt/ledgers.rs` (lib split R2: record types below the lib) |
 | `src/receipt/lens.rs` | src | s | 2 struct · 2 enum | LensActivationReceipt, LensApproval, LensProposalReceipt, LensSlotDecision | Moved from `crates/oneiron/src/receipt/lens.rs` (lib split R2: record types below the lib) |
-| `src/receipt/mod.rs` | src | s | 12 mod · 68 re-export | — | — |
+| `src/receipt/mod.rs` | src | s | 12 mod · 69 re-export | — | — |
 | `src/receipt/questions.rs` | src | s | 1 struct · 20 re-export | QuestionPaused | Moved from `crates/oneiron/src/receipt/questions.rs` (lib split R2: record types below the lib) |
 | `src/receipt/share_doors.rs` | src | s | 1 struct · 1 re-export | ShareRevokeReceipt | Moved from `crates/oneiron/src/receipt/share_doors.rs` (lib split R2: record types below the lib) |
 | `src/registry/export.rs` | src | s | 2 struct | RegistrySnapshot, ZoneRow | Moved from `crates/oneiron/src/registry/export.rs` (lib split R1: record types below the lib) |

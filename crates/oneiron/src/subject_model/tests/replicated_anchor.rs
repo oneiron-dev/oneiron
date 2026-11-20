@@ -86,6 +86,10 @@ fn anchor_sync_rejects_hostile_actor_or_subject_without_overwriting_valid_anchor
             let wrong = seed(&vault, entity(0xB3), ENTITY_TYPE_PLACE);
             let id = anchor_actor_subject(&vault, actor, subject, writer(), 100)?;
             let before = vault.get(&id)?;
+            // The creation door already anchored the house to its model PERSON;
+            // the hostile replay must leave that history (auto anchor plus the
+            // explicit anchor) unchanged.
+            let baseline = vault.claims_for_subject(&actor)?;
             let new_id = entity(0xB4);
             let (claim_subject, value) = match hostile {
                 0 => (wrong, Value::from(subject.to_hex())),
@@ -112,7 +116,7 @@ fn anchor_sync_rejects_hostile_actor_or_subject_without_overwriting_valid_anchor
             forward_rematerialize(&vault, &doc, &materializer, &WindowKey::new(WINDOW))?;
             assert_eq!(vault.get(&id)?, before);
             assert!(vault.get(&new_id)?.is_none());
-            assert_eq!(vault.claims_for_subject(&actor)?, vec![id]);
+            assert_eq!(vault.claims_for_subject(&actor)?, baseline);
             assert!(vault.claims_for_subject(&wrong)?.is_empty());
             assert_eq!(actor_subject_anchor(&vault, &actor, 100)?, Some(subject));
             assert!(pending_remat_entities(&vault, WINDOW)?.is_empty());

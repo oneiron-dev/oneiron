@@ -81,6 +81,7 @@ fn mint(
                 assigned_ref: None,
                 actor_generation: None,
                 assigned_generation: None,
+                answered_heads: None,
                 occurred_at: 10,
             },
         )

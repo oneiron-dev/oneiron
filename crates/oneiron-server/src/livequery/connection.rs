@@ -661,7 +661,36 @@ impl Connection {
         {
             return Some(routed.frame.to_vec());
         }
-        if !last {
+        self.refusal(routed, envelope)
+    }
+
+    /// A read result's chunk whose selector answer did not stand as it left
+    /// (SELECTOR-RELEASE-POINT = B): the refusal that replaces the rest of
+    /// the result, as [`Self::release_reply`] gives one. `None` for a later
+    /// chunk of a result already refused, and for a frame that is not a
+    /// reply routed to this socket.
+    pub(crate) fn refuse_reply(&mut self, data: &[u8]) -> Option<Vec<u8>> {
+        let routed = super::routing::addressed(data, self.conn_id)?;
+        if routed.frame[0] != crate::protocol::TAG_RPC {
+            return None;
+        }
+        let envelope = super::wire::decode::<serde::de::IgnoredAny>(&routed.frame[1..]).ok();
+        if self.refused.contains(&routed.id) {
+            if envelope.as_ref().is_none_or(|envelope| envelope.last) {
+                self.refused.remove(&routed.id);
+            }
+            return None;
+        }
+        self.refusal(&routed, envelope.as_ref())
+    }
+
+    /// The RESULT_CHANGED that replaces a result from `routed`'s chunk on.
+    fn refusal(
+        &mut self,
+        routed: &super::routing::Routed<'_>,
+        envelope: Option<&super::wire::Envelope<serde::de::IgnoredAny>>,
+    ) -> Option<Vec<u8>> {
+        if !envelope.is_none_or(|envelope| envelope.last) {
             self.refused.insert(routed.id);
         }
         // The refusal that replaces the result is the call's final delivery:

@@ -26,7 +26,8 @@ pub(in crate::sync) use document_admission::{
 mod edge;
 mod guest_document;
 pub use guest_document::{
-    GuestDocumentShareRequest, export_guest_document_for_guest, share_guest_document_as_owner,
+    GuestDocumentShareRequest, export_guest_document_for_guest, guest_document_rows_still_readable,
+    share_guest_document_as_owner,
 };
 mod guest_proposal;
 pub use guest_proposal::{
@@ -38,6 +39,12 @@ mod machine_history;
 pub(in crate::sync) use machine_history::{HistoryControlGate, machine_history_controls};
 mod note_admission;
 mod peer_confidence;
+// SELECTOR-RELEASE-POINT = B: what a queued answer is judged again by.
+mod release_basis;
+pub use release_basis::{
+    CoreferenceDisclosure, SelectorReaderReach, SelectorReleaseBasis,
+    recording_coreference_disclosure,
+};
 mod scope;
 // FIX 7608 slice 4: the masked copy a sync peer gets of a marked repo item.
 pub(crate) mod secret_projection;

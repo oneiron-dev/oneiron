@@ -45,6 +45,7 @@ use crate::registry::{
 use crate::settings::ReadDestination;
 use crate::write_envelope::ClaimCandidate;
 use crate::{Result, Vault};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_model::llm::{Scope, ScopeResource};
 
 mod evidence;
@@ -120,6 +121,36 @@ impl BoundBranchRead {
     /// The admitted prior head `id`, when the branch holds it.
     pub(crate) fn prior(&self, id: EntityId) -> Option<&PriorHead> {
         self.priors.get(&id)
+    }
+
+    /// The listed head `claim` a candidate may cite as evidence, by a
+    /// branch-wide bound: the rebuilt listing shows it, the branch holds it
+    /// as a prior head, this scope grants its pinned version read, and it
+    /// may corroborate (GATE-11 refuses a generated-origin head). The bound
+    /// is wider than native's: a native call labels only the claims of its
+    /// own listing page and reads under its own child scope. The call a lent
+    /// candidate came from is not known here, so the whole branch listing is
+    /// the bound, and a head no one call showed beside the candidate's TURNs
+    /// is admitted.
+    pub(crate) fn cited_head(&self, claim: EntityId) -> Result<&PriorHead> {
+        if !self.neighbourhood.shows(claim) {
+            return Err(invalid_consolidation(
+                "extracted evidence names an unlisted claim",
+            ));
+        }
+        let head = self
+            .priors
+            .get(&claim)
+            .ok_or_else(|| invalid_consolidation("unadmitted branch claim evidence"))?;
+        if !self.scope.allows_read(&self.pins().source_version(&claim)?) {
+            return Err(invalid_consolidation(
+                "extracted evidence crossed its child slice",
+            ));
+        }
+        if !crate::claim::claim_evidence_admissible(&head.body) {
+            return Err(invalid_consolidation("generated claim cannot corroborate"));
+        }
+        Ok(head)
     }
 
     /// The listed claims about `subject` a candidate read under `scope` may
@@ -400,7 +431,7 @@ pub(crate) fn project_bound_branch(
                 entity_type,
                 learned_at,
                 project,
-                body_hash: *blake3::hash(&bodies[id]).as_bytes(),
+                body_hash: *ContentHash::of(&bodies[id]).as_bytes(),
                 #[cfg(test)]
                 trust_class,
             },
@@ -513,7 +544,7 @@ pub(crate) fn project_bound_branch(
                 entity_type: kind,
                 learned_at,
                 project: Some(prior.body.scope_project),
-                body_hash: *blake3::hash(&bytes).as_bytes(),
+                body_hash: *ContentHash::of(&bytes).as_bytes(),
                 #[cfg(test)]
                 trust_class: Some(crate::dreamer_consolidation::provenance::source_meet(
                     prior.body.source.unwrap_or(crate::ClaimSource::Imported),

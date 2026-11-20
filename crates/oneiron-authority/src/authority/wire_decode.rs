@@ -279,6 +279,7 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_FULL_COPY_MARK => super::full_copy_mark::decode_full_copy_mark(entries),
         OP_KIND_AGENT_GRANT_ACT => super::agent_grant_act::decode_agent_grant_act(entries),
         OP_KIND_POLICY_SETTING => super::policy_setting::decode_policy_setting(entries),
+        OP_KIND_SETTING_COPY => super::setting_copy::decode_setting_copy(entries),
         OP_KIND_EXPORT_ACT => super::export_act::decode_export_act(entries),
         OP_KIND_OWNER_KEY_ENROLL => super::owner_key_enrollment::decode_owner_key_enroll(entries),
         OP_KIND_FRONTIER_JOIN => super::frontier_join::decode_frontier_join(entries),
@@ -288,6 +289,9 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
             super::membership_execution::decode_membership_execution(entries)
         }
         OP_KIND_ROOT_APPOINTMENT => super::root_appointment::decode_root_appointment(entries),
+        OP_KIND_RESTORED_MACHINE_JOIN => {
+            super::restored_machine_join::decode_restored_machine_join(entries)
+        }
         _ => Err(invalid_authority()),
     }
 }

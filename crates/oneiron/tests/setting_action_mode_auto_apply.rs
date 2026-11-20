@@ -109,10 +109,13 @@ impl Fixture {
         id
     }
 
-    /// The owner's Grant to `agent` listing `vault.settings.set` and `key`'s own set line.
+    /// The owner's Grant to `agent` listing `read`, `vault.settings.set` and `key`'s own set
+    /// line. A Grant without `read` confers nothing, so its agent could set no key (FIX
+    /// SETTING-AUTO-APPLY-GRANT-NOT-CONFERRING).
     fn key_grant(&self, agent: EntityId, key: &str) {
         let mut authority_scope = Scope::top();
         authority_scope.verbs = ScopeAxis::Some(BTreeSet::from([
+            "read".to_owned(),
             "vault.settings.set".to_owned(),
             set_line(key),
         ]));

@@ -132,6 +132,7 @@ fn event_type_config(key: &str, host: EntityId, calendar: EntityId) -> EventType
         }],
         flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 

@@ -28,6 +28,8 @@ mod offer_settle;
 mod offers;
 mod participants;
 mod participation;
+#[cfg(feature = "sync")]
+mod peer_settings;
 mod pins;
 mod private_threads;
 mod replica;
@@ -138,6 +140,8 @@ pub(crate) use participation::{
 };
 use participation::{Claimant, agent_off_room_in_txn, require_thread_standing};
 pub(in crate::workspace_roster) use participation::{require_reader, require_thread_reader};
+#[cfg(feature = "sync")]
+pub(crate) use peer_settings::peer_room_settings_refusal_in_txn;
 pub(crate) use pins::stored_room_pins_in;
 pub use pins::{RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply};
 pub use private_threads::{PrivateThreadMetadata, RoomPrivateThreadsRequest};
@@ -394,10 +398,11 @@ pub(crate) fn room_join_audience_in(
 }
 
 /// The live vault owner who alone reads the ordinary room `room`, or `None`:
-/// no project room, one current member, that member a live vault owner, and
-/// no Ready join filed for anyone else in the room or its threads. An
-/// unplaced voice speaker's entry (OF-365) is keyed by its speaker, not by
-/// room, and is not seen here.
+/// no project room, one current member, that member a live vault owner, no
+/// Ready join filed for anyone else in the room or its threads, and no voice
+/// speaker entered it (OF-365). A speaker's entry reads the room's records
+/// from its entry on and takes no seat; while the index that finds them is
+/// incomplete, no room reads as its owner's alone.
 pub(crate) fn room_sole_owner_reader_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -411,6 +416,8 @@ pub(crate) fn room_sole_owner_reader_in(
     };
     if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &owner)?
         || super::join_receipt::room_ready_join_for_other_in(&vault.store, txn, room, owner)?
+        || crate::task_verb::speaker_entry_index::speaker_entered_in(vault, txn, room)?
+            != Some(false)
     {
         return Ok(None);
     }

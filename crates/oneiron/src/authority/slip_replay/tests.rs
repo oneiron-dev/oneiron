@@ -114,6 +114,7 @@ impl Holder {
         let mut config = crate::VaultConfig::device();
         config.store_clock = clock.bundle();
         let vault = Vault::open_owned(dir.path(), config).unwrap();
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let issuer = HostSlipIssuer::from_secret(b"clock-recovery-issuer").unwrap();
         vault.ensure_host_root_slip(&issuer).unwrap();
         let key = ed25519_dalek::SigningKey::from_bytes(&[95; 32]);
@@ -425,6 +426,10 @@ fn a_restore_made_before_a_clock_recovery_is_refused_at_its_swap() {
     holder.admit(start + 50, 1).unwrap();
     let root = crate::test_support::restore_tempdir();
     let image = root.path().join("image");
+    holder
+        .vault
+        .ensure_vault_key()
+        .expect("mint the vault data key");
     holder
         .vault
         .snapshot_checkpoint(&image, start + 50)

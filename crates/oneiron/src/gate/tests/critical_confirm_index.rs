@@ -120,29 +120,43 @@ fn replicated_delete_then_recreate_consults_claim_scoped_invalidation() -> Resul
     )?;
     doc.commit();
     forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         vault
             .get_claim(&claim)?
             .expect("forward replayed claim")
             .approval,
-        ClaimApprovalStatus::Proposed,
+        ClaimApprovalStatus::Auto,
+    );
+    assert!(
+        vault
+            .with_write_txn(|wtxn| vault.store.owner_answer_obligation_in_txn(wtxn, &claim))?
+            .is_some()
+    );
+    assert!(
+        !vault.claim_consolidation_eligible(
+            &claim,
+            crate::gate::ConsolidationReader::VadAnnotation
+        )?
     );
     drop(vault);
     let reopened = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         reopened
             .get_claim(&claim)?
             .expect("reopened claim")
             .approval,
-        ClaimApprovalStatus::Proposed,
+        ClaimApprovalStatus::Auto,
     );
     forward_rematerialize(&reopened, &doc, &Materializer::new(), &window_key)?;
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         reopened
             .get_claim(&claim)?
             .expect("replayed after reopen")
             .approval,
-        ClaimApprovalStatus::Proposed,
+        ClaimApprovalStatus::Auto,
     );
     Ok(())
 }
@@ -283,9 +297,16 @@ fn ordinary_review_of_a_held_claim_yields_to_a_fresh_item_on_a_changed_replay() 
         Some(reopened),
         "forward rematerialization of the same revision leaves the owner's item"
     );
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         vault.get_claim(&claim)?.expect("tombstoned claim").approval,
-        ClaimApprovalStatus::Proposed
+        ClaimApprovalStatus::Auto
+    );
+    assert!(
+        !vault.claim_consolidation_eligible(
+            &claim,
+            crate::gate::ConsolidationReader::VadAnnotation
+        )?
     );
     Ok(())
 }
@@ -388,12 +409,13 @@ fn fresh_critical_ceremony_transactionally_clears_marker_and_exact_replay_conver
             &replacement_data,
         )
         .commit()?;
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         vault
             .get_claim(&claim)?
             .expect("invalidated claim")
             .approval,
-        ClaimApprovalStatus::Proposed,
+        ClaimApprovalStatus::Auto,
     );
     // The overwrite outdates the confirm without its owner's answer: the
     // owner is shown a fresh item for the peer's revision.
@@ -403,6 +425,17 @@ fn fresh_critical_ceremony_transactionally_clears_marker_and_exact_replay_conver
     assert_eq!(
         reopened.reason_codes,
         vec![crate::gate::confirm::GATE_REASON_PENDING_CRITICAL_CONFIRM_REOPENED.to_owned()]
+    );
+    assert!(
+        vault
+            .with_write_txn(|wtxn| vault.store.owner_answer_obligation_in_txn(wtxn, &claim))?
+            .is_some()
+    );
+    assert!(
+        !vault.claim_consolidation_eligible(
+            &claim,
+            crate::gate::ConsolidationReader::VadAnnotation
+        )?
     );
 
     let fresh = put_critical_auto_claim(&vault, claim)?;
@@ -509,6 +542,9 @@ fn critical_confirm_sweep_preserves_ordinary_pending_rows() -> Result<()> {
     let ordinary = test_id(0x87);
     let mut pending = put_critical_auto_claim(&vault, critical)?;
     pending.created_at = 1;
+    // The attach froze the deadline beside the creation time; move it with
+    // the clock so the sweep reads this row as expired.
+    pending.expires_at = Some(1 + CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS);
     vault.with_write_txn(|wtxn| {
         vault
             .store
@@ -769,6 +805,8 @@ fn critical_confirm_timeout_sweep_ignores_a_later_fail_closed_manifest() -> Resu
     let claim = test_id(0x8e);
     let mut pending = put_critical_auto_claim(&vault, claim)?;
     pending.created_at = 1;
+    // Same frozen-deadline move as the sweep above.
+    pending.expires_at = Some(1 + CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS);
     vault.with_write_txn(|wtxn| vault.store.put_pending_gate_consent_in_txn(wtxn, &pending))?;
     let receipts_before = vault.store.gate_decisions(20)?;
     put_policy_manifest_bytes(&vault, test_id(0x8f), b"not-a-manifest")?;
