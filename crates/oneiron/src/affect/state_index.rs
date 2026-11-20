@@ -14,6 +14,7 @@ use crate::memory::state_index::{
     COMPOSITE_EVIDENCE_GOAL_VELOCITY_SIGNAL,
 };
 use crate::side_table::{self, Raw, SideTable};
+use crate::write_envelope::claim_body::scope_stamp::subject_facet;
 use crate::{EntityId, TimeRange, Vault};
 
 /// Derived-head producer binding: a digest over the claim body that produced
@@ -28,8 +29,9 @@ pub use crate::memory::state_index::{
 impl Vault {
     /// Blend the mean VAD trajectory, goal velocity and engagement with equal weight.
     /// VAD is normalized to the unit interval; high arousal alone is not judged adverse.
-    /// All three signal families are required. Repeating identical evidence (the same
-    /// numbers, annotated-turn count and signal claims) is a no-op.
+    /// All three signal families are required, and both signal claims must sit in the
+    /// composite's own facet. Repeating identical evidence (the same numbers,
+    /// annotated-turn count and signal claims) is a no-op.
     /// Every VAD turn is read; past `limits.state_vad_turns` the vault asks.
     pub fn derive_state_index(
         &self,
@@ -75,12 +77,24 @@ impl Vault {
             mean.arousal += (annotation.vad.arousal - mean.arousal) / count;
             mean.dominance += (annotation.vad.dominance - mean.dominance) / count;
         }
+        // The composite is born in its subject's substrate FACET; any other
+        // subject takes the vault default facet (a birth gate refusal
+        // otherwise, #4389). Its evidence names both signal claims, so a
+        // signal stored in another facet is refused: a reader of the
+        // composite's facet may not read it (REVIEW-9905 P1).
+        let id = EntityId::now();
+        let facet = self.claim_put_facet_keeping_in_txn(
+            txn,
+            &id,
+            subject_facet(ClaimSubject::Entity(*subject))?,
+        )?;
         let signal = |id: &EntityId, predicate: &str| -> Result<f32> {
             let body = self
                 .get_claim_in_txn(txn, id)?
                 .ok_or(Error::EntityNotFound)?;
             if body.subject != ClaimSubject::Entity(*subject)
                 || body.predicate != predicate
+                || body.scope_facet != facet
                 || body.lifecycle != ClaimLifecycleStatus::Active
                 || body.stale
                 || !matches!(
@@ -171,7 +185,6 @@ impl Vault {
         if let Some(id) = matching {
             return Ok(id);
         }
-        let id = EntityId::now();
         let mut body = ClaimBody::new(
             COMPOSITE_INDEX,
             ClaimSubject::Entity(*subject),
@@ -183,9 +196,7 @@ impl Vault {
         body.source = Some(ClaimSource::Observed);
         body.valid_from = Some(at);
         body.evidence = Some(cited);
-        // Only a PERSON subject has a substrate FACET; any other subject takes
-        // the vault default facet (a birth gate refusal otherwise, #4389).
-        body.scope_facet = self.claim_put_facet_keeping_in_txn(txn, &id, body.scope_facet)?;
+        body.scope_facet = facet;
         self.put_claim_in_txn(txn, &id, &body, TimeRange { start: at, end: at }, at)?;
         let stored = self
             .get_claim_in_txn(txn, &id)?
