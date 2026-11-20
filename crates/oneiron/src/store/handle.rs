@@ -784,6 +784,7 @@ macro_rules! manifest_dbs {
             fn gate_custody_archived(&self) -> bool { self.base.core.gate_custody_archived() }
             fn is_union(&self) -> bool { self.room.is_some() }
             fn room_base(&self) -> Option<&Store> { self.room.is_some().then_some(self.base) }
+            fn room_overlay(&self) -> Option<&crate::session_overlay::SessionOverlay> { self.room }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.base.core.manifest_memo
             }
@@ -837,6 +838,13 @@ macro_rules! manifest_dbs {
             fn room_base(&self) -> Option<&Store> {
                 None
             }
+            /// The overlay of the room whose view this is, `None` for a
+            /// target that is no room's view: the room keeps a fresh secret
+            /// a row of its own holds in that overlay's custody, in memory
+            /// only (ROOM-LOCAL-CUSTODY).
+            fn room_overlay(&self) -> Option<&crate::session_overlay::SessionOverlay> {
+                None
+            }
             /// The vault's memo of policy manifest decodes.
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo;
         }
@@ -869,6 +877,9 @@ macro_rules! manifest_dbs {
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
             fn is_union(&self) -> bool { true }
             fn room_base(&self) -> Option<&Store> { Some(self.base) }
+            fn room_overlay(&self) -> Option<&crate::session_overlay::SessionOverlay> {
+                Some(&self.overlay)
+            }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.core.manifest_memo
             }
