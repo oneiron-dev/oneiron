@@ -8,6 +8,11 @@
 //! one the same handle's `vault.policy.preflight` (act `read`) answers
 //! withheld.
 //!
+//! The family's `identity_lifecycle` kind is pinned the same way (FIX
+//! IDENTITY-RECEIPT-PAIR-RAW-DOOR): an `assert_distinct` op's receipt names
+//! its pair and its `entity.distinct_from` CLAIM, and its trigger is that
+//! CLAIM, so it reaches only a credential whose lane reads the CLAIM.
+//!
 //! Public paths only. A device vault with its host root and embedded owner;
 //! each credential is minted from the host root's claims and verified with
 //! the host's binding proof, as a transport verifies the slip a request
@@ -16,12 +21,17 @@
 //! `cargo test --locked -p oneiron --all-features --test receipts_credential_pin`
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use oneiron::authority::{HostSlipIssuer, VerifiedSlip};
+use oneiron::identity_topology::{
+    AssertDistinctOp, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp,
+    StoredIdentityOpAction,
+};
 use oneiron::memory::{ClaimInput, Memory, MemoryReceipt};
 use oneiron::snapshot_read::{PolicyPreflightAct, PolicyPreflightRef, PolicyPreflightRequest};
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{ClaimSource, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -274,5 +284,206 @@ fn a_credential_held_to_one_claim_pages_that_claim_and_no_other() -> TestResult 
              {named:?}"
         );
     }
+    Ok(())
+}
+
+/// One `assert_distinct` op's ledger event, as its receipt names it.
+struct Distinct {
+    /// The receipt's ref: `identity_topology:<event hex>`.
+    receipt_ref: String,
+    /// The `entity.distinct_from` CLAIM the event names.
+    claim: EntityId,
+    /// The pair, as two PERSON rows.
+    pair: [EntityId; 2],
+}
+
+/// A PERSON row named `name`.
+fn person(fixture: &Fixture, name: &str) -> Result<EntityId, Box<dyn std::error::Error>> {
+    let id = EntityId::now();
+    fixture.vault.put_entity(
+        &id,
+        oneiron::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &rmp_serde::to_vec_named(&serde_json::json!({ "name": name }))?,
+    )?;
+    Ok(id)
+}
+
+/// Two people named `names`, asserted distinct as an Auto `assert_distinct`
+/// op does: the op writes their `entity.distinct_from` CLAIM and a type-74
+/// ledger event naming the pair and that CLAIM.
+fn distinct_pair(
+    fixture: &Fixture,
+    names: [&str; 2],
+) -> Result<Distinct, Box<dyn std::error::Error>> {
+    let pair = [person(fixture, names[0])?, person(fixture, names[1])?];
+    let outcome = fixture.vault.apply_identity_topology_op(
+        &IdentityTopologyOp::AssertDistinct(AssertDistinctOp {
+            a: pair[0],
+            b: pair[1],
+            reason: "two people".to_owned(),
+        }),
+        &IdentityOpWrite::auto(ClaimSource::UserStated),
+        fixture.vault.now_recorded_at(),
+    )?;
+    let IdentityOpOutcome::Applied { event, .. } = outcome else {
+        return Err(format!("FIXTURE: an Auto assertion applies, got {outcome:?}").into());
+    };
+    let stored = fixture
+        .vault
+        .identity_topology_event(&event)?
+        .ok_or("FIXTURE: the assertion's event is stored")?;
+    let StoredIdentityOpAction::AssertDistinct { claim, .. } = stored.action else {
+        return Err("FIXTURE: the op's event asserts a distinct pair".into());
+    };
+    Ok(Distinct {
+        receipt_ref: format!("identity_topology:{}", event.to_hex()),
+        claim,
+        pair,
+    })
+}
+
+/// `reader`'s `vault.receipts` page of the family's `identity_lifecycle`
+/// kind, as the verb calls it.
+fn identity_page(reader: &Memory<'_>) -> Result<Vec<MemoryReceipt>, Box<dyn std::error::Error>> {
+    Ok(reader
+        .receipts_page(PAGE_LIMIT, &["identity_lifecycle".to_owned()], None)?
+        .receipts)
+}
+
+/// The receipt `distinct`'s event projects on `page`, when the page holds it.
+fn receipt_of<'page>(
+    page: &'page [MemoryReceipt],
+    distinct: &Distinct,
+) -> Option<&'page MemoryReceipt> {
+    page.iter()
+        .find(|receipt| receipt.receipt_ref == distinct.receipt_ref)
+}
+
+/// The pin for the identity kind: every distinct CLAIM `reader`'s identity
+/// page names in a receipt's `claim` field is one its own preflight reads.
+/// The field, not `claim_ref`: `claim_ref` is read off the trigger, and a
+/// receipt with no trigger row would name its CLAIM in the field alone.
+fn assert_identity_page_names_only_readable_claims(
+    reader: &Memory<'_>,
+    page: &[MemoryReceipt],
+    who: &str,
+) -> TestResult {
+    let named = page
+        .iter()
+        .filter_map(|receipt| receipt.fields.get("claim"))
+        .map(|hex| Ok(EntityId::from_hex(hex)?))
+        .collect::<Result<BTreeSet<EntityId>, Box<dyn std::error::Error>>>()?;
+    if named.is_empty() {
+        return Ok(());
+    }
+    let withheld = withheld_by_preflight(reader, named.iter().copied().collect())?;
+    let leaked: Vec<&EntityId> = named.intersection(&withheld).collect();
+    assert!(
+        leaked.is_empty(),
+        "LEAK: {who}'s identity page names distinct CLAIMs its own preflight withholds: \
+         {leaked:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_identity_receipt_reaches_only_a_credential_that_reads_its_distinct_claim() -> TestResult {
+    let fixture = fixture()?;
+    // This install's signer and the engine's MACHINE writers, as a host
+    // loads and provisions them after its root: a topology op seals with
+    // this install's machine key, and the seal it writes here stands as
+    // this vault's own, so each Auto assertion projects its receipt.
+    fixture
+        .vault
+        .install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    fixture.vault.prepare_install_signing()?;
+    fixture
+        .vault
+        .provision_engine_machine_identities(&fixture.issuer)?;
+    let first = distinct_pair(&fixture, ["Ada Byron", "Ada Lovelace"])?;
+    let second = distinct_pair(&fixture, ["Sam Lee", "Samuel Lee"])?;
+
+    // The owner's page holds both receipts, each naming its pair and its
+    // CLAIM: the fields a reader of the page learns.
+    let owner = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let page = identity_page(&owner)?;
+    for distinct in [&first, &second] {
+        let receipt = receipt_of(&page, distinct).ok_or_else(|| {
+            format!(
+                "FIXTURE: the owner's identity page holds {}: {page:?}",
+                distinct.receipt_ref
+            )
+        })?;
+        let pair: BTreeSet<&String> = ["pair_a", "pair_b"]
+            .iter()
+            .filter_map(|name| receipt.fields.get(*name))
+            .collect();
+        let expected: Vec<String> = distinct.pair.iter().map(EntityId::to_hex).collect();
+        assert_eq!(
+            pair,
+            expected.iter().collect::<BTreeSet<&String>>(),
+            "FIXTURE: the receipt names its pair: {receipt:?}"
+        );
+        assert_eq!(
+            receipt.fields.get("claim"),
+            Some(&distinct.claim.to_hex()),
+            "FIXTURE: the receipt names its CLAIM: {receipt:?}"
+        );
+    }
+
+    // A person with no grant, held by a records caveat to its own row: its
+    // lane reads neither CLAIM, so its page holds neither receipt.
+    let stranger = person(&fixture, "a person with no grant")?;
+    let proof = credential(&fixture, stranger, BTreeSet::from([stranger.to_hex()]))?;
+    let reader = fixture
+        .vault
+        .memory(stranger, EdgeActorClass::Human)
+        .with_read_proof(&proof);
+    let withheld = withheld_by_preflight(&reader, vec![first.claim, second.claim])?;
+    assert!(
+        withheld.contains(&first.claim) && withheld.contains(&second.claim),
+        "FIXTURE: the stranger's preflight withholds both distinct CLAIMs: {withheld:?}"
+    );
+    let page = identity_page(&reader)?;
+    assert_identity_page_names_only_readable_claims(&reader, &page, "the stranger")?;
+    for distinct in [&first, &second] {
+        assert!(
+            receipt_of(&page, distinct).is_none(),
+            "LEAK: the stranger's identity page holds {}, naming a pair and a CLAIM its \
+             lane does not read: {page:?}",
+            distinct.receipt_ref
+        );
+    }
+
+    // The owner's credential, held by a records caveat to the first CLAIM,
+    // its pair and the owner's own row: its page holds the first receipt
+    // and not the second.
+    let mut records = BTreeSet::from([first.claim.to_hex(), fixture.owner.to_hex()]);
+    records.extend(first.pair.iter().map(EntityId::to_hex));
+    let proof = credential(&fixture, fixture.owner, records)?;
+    let reader = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .with_read_proof(&proof);
+    let withheld = withheld_by_preflight(&reader, vec![first.claim, second.claim])?;
+    assert!(
+        !withheld.contains(&first.claim) && withheld.contains(&second.claim),
+        "FIXTURE: the held credential's preflight reads the first CLAIM and withholds the \
+         second: {withheld:?}"
+    );
+    let page = identity_page(&reader)?;
+    assert_identity_page_names_only_readable_claims(&reader, &page, "the held owner")?;
+    assert!(
+        receipt_of(&page, &first).is_some(),
+        "the held credential's identity page holds the receipt of the CLAIM it reads: {page:?}"
+    );
+    assert!(
+        receipt_of(&page, &second).is_none(),
+        "LEAK: the held credential's identity page holds {}, naming a CLAIM its lane does \
+         not read: {page:?}",
+        second.receipt_ref
+    );
     Ok(())
 }
