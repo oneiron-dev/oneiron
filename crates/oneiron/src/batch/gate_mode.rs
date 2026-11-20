@@ -215,7 +215,7 @@ impl ApplyOpsGateMode {
     }
 
     /// Binds each bound raw CLAIM put to its caller's envelope (FIX 8118).
-    pub(super) fn with_caller_envelopes(
+    pub(crate) fn with_caller_envelopes(
         mut self,
         envelopes: HashMap<EntityId, crate::WriteEnvelope>,
     ) -> Self {
