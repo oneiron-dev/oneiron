@@ -72,34 +72,6 @@ pub(super) fn rows_sequence_floors(
     floors
 }
 
-/// Whether `lower` is among the ancestors of a row with `parents`, along
-/// rows of `scope` alone: `row` gives a held row's parents and scope. A path
-/// through another scope's rows or a row not held is not followed, so a
-/// false answer only sends a fold past a base or an image to the whole log.
-pub(super) fn descends_within_scope<'a>(
-    lower: &AuthorityEntryHash,
-    parents: &'a [AuthorityEntryHash],
-    scope: Option<crate::EntityId>,
-    row: impl Fn(&AuthorityEntryHash) -> Option<(&'a [AuthorityEntryHash], Option<crate::EntityId>)>,
-) -> bool {
-    let mut stack: Vec<_> = parents.iter().collect();
-    let mut visited = BTreeSet::new();
-    while let Some(hash) = stack.pop() {
-        if hash == lower {
-            return true;
-        }
-        if !visited.insert(*hash) {
-            continue;
-        }
-        if let Some((row_parents, row_scope)) = row(hash)
-            && row_scope == scope
-        {
-            stack.extend(row_parents);
-        }
-    }
-    false
-}
-
 /// A row as [`highest_key_row_below`] reads it: its parents, its sequence
 /// scope and sequence, and the index of its (signer, scope) where the pass
 /// tracks that key.
@@ -115,10 +87,9 @@ pub(super) struct ScopeRow<'a> {
 type HighestByKey = im::OrdMap<usize, (u64, AuthorityEntryHash)>;
 
 /// For each tracked row of `rows`, the highest-sequence row of its own key
-/// among its ancestors along rows of its scope, as
-/// [`descends_within_scope`] walks them: a parent outside `rows` or of
-/// another scope is not followed. A tracked row absent from the result has
-/// no row of its key below it.
+/// among its ancestors along rows of its scope: a parent outside `rows` or
+/// of another scope is not followed. A tracked row absent from the result
+/// has no row of its key below it.
 ///
 /// One pass, each row after its parents (`parents_first_of` over the links
 /// within a scope), carrying the highest row of each tracked key below it in

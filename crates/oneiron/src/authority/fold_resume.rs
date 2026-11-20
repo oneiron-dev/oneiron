@@ -245,7 +245,7 @@ impl FoldBase {
                 pinned: im::OrdSet::new(),
                 unpinned: rows.iter().map(|(hash, _)| *hash).collect(),
             },
-            scope_tops: scope_tops::ScopeTops::of(rows),
+            scope_tops: scope_tops::ScopeTops::of(rows, |hash| once.frontier.contains_key(hash)),
             once,
             heads: heads::LogHeads::of(view, expired),
         }
