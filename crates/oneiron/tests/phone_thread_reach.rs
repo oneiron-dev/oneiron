@@ -330,6 +330,7 @@ fn phone_turn(
         conversation_ref: conversation.to_hex(),
         turn_ref: None,
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: None,
             author,
@@ -345,7 +346,7 @@ fn phone_turn(
         assertions: Default::default(),
     };
     let metadata = if caller_speaker {
-        json!({ "voice": { "call": call_id, "speaker": "caller", "speaker_label": "another speaker" } })
+        json!({ "voice": { "call": call_id, "speaker_key": "caller", "speaker_label": "another speaker" } })
     } else {
         json!({ "voice": { "call": call_id } })
     };
@@ -381,6 +382,7 @@ fn witness_control_message(fixture: &Fixture) -> EntityId {
         conversation_ref: EntityId::now().to_hex(),
         turn_ref: None,
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,
@@ -1421,6 +1423,7 @@ fn a_malformed_summary_carrier_withholds_its_row_not_the_window() {
         conversation_ref: control_conv.to_hex(),
         turn_ref: None,
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,
@@ -2181,6 +2184,7 @@ fn a_restricted_selector_does_not_carry_a_summary_of_a_kept_call() {
         conversation_ref: control_conv.to_hex(),
         turn_ref: None,
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,
@@ -2381,6 +2385,7 @@ fn witness_owner_message(vault: &Vault, owner: EntityId, words: &str) -> EntityI
         conversation_ref: EntityId::now().to_hex(),
         turn_ref: None,
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,
