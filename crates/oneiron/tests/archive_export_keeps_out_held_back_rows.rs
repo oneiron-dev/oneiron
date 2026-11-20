@@ -11,14 +11,22 @@
 //!   the other and not the held one.
 //! * `a_row_whose_words_came_from_a_held_row_stays_out`: a CLAIM derived from a held CLAIM stays
 //!   out with it; the PERSONs they are about, and a CLAIM with no held source, still travel.
+//! * `a_profile_built_from_a_held_claim_stays_out`: a PSYCH_PROFILE names the CLAIM it read as a
+//!   typed source in its body, never as an edge (REVIEW-9874 round 2); once that CLAIM is held,
+//!   the profile stays out with it, while the PERSON it describes still travels.
 //!
-//! Both run red at main 5a4ffa6a1ca, whose export door asks only the off-record overlay and the
-//! use limit, and green at the fix.
+//! The first two run red at main 5a4ffa6a1ca, whose export door asks only the off-record overlay
+//! and the use limit, and green at the fix; the third runs red at e95173f3140, whose hold walk
+//! reads no profile source, and green at the round-2 fix.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test archive_export_keeps_out_held_back_rows`.
 
 use std::collections::BTreeSet;
 
+use oneiron::psych_profile::{
+    PsychProfile, PsychProfileConfidence, PsychProfileSource, PsychProfileSourceWords,
+};
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::store::revision_ref::RevisionRef;
 use oneiron::test_doors::turn_programs::withhold_turn;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeKind, EntityId,
@@ -60,6 +68,35 @@ fn put_claim(vault: &Vault, predicate: &str, subject: EntityId, value: &str) -> 
     vault
         .put_claim(&id, &body, range(), AT)
         .expect("FIXTURE: put the claim");
+    id
+}
+
+/// Lands a PSYCH_PROFILE about `person` whose one typed source is `claim`, as profile landing
+/// records it: in the body, with no edge to the claim.
+fn put_profile_from(vault: &Vault, person: EntityId, claim: EntityId) -> EntityId {
+    let profile = PsychProfile::new(
+        person,
+        "compact",
+        "Copied prose from the source claim.",
+        "Narrative about the person.",
+        vec![claim],
+        PsychProfileConfidence::new(0.9, 0.8, 0.7).expect("FIXTURE: confidence"),
+    )
+    .expect("FIXTURE: profile")
+    .with_sources(vec![PsychProfileSource {
+        revision_ref: claim,
+        document_ref: claim,
+        world_ref: None,
+        document_revision: RevisionRef(*claim.as_bytes()),
+        words: PsychProfileSourceWords::Record {
+            content: [0x5C; 32],
+        },
+    }])
+    .expect("FIXTURE: profile sources");
+    let id = EntityId::now();
+    vault
+        .put_psych_profile(&id, &profile)
+        .expect("FIXTURE: put the profile");
     id
 }
 
@@ -159,4 +196,35 @@ fn a_row_whose_words_came_from_a_held_row_stays_out() {
             "the export still carries the {kind}, whose words came from no held row"
         );
     }
+}
+
+#[test]
+fn a_profile_built_from_a_held_claim_stays_out() {
+    let (_dir, vault) = open_vault();
+    let person = put_person(&vault, b"profiled-person");
+    let claim = put_claim(&vault, "test.role", person, "source-words");
+    let profile = put_profile_from(&vault, person, claim);
+    let before = carried_ids(&vault);
+    for (kind, id) in [("PERSON", person), ("claim", claim), ("profile", profile)] {
+        assert!(
+            before.contains(&id.to_hex()),
+            "FIXTURE: before the hold the export carries the {kind}"
+        );
+    }
+
+    hold_back(&vault, claim);
+
+    let after = carried_ids(&vault);
+    assert!(
+        !after.contains(&claim.to_hex()),
+        "the export keeps out the held claim"
+    );
+    assert!(
+        !after.contains(&profile.to_hex()),
+        "the export keeps out a profile built from a held claim"
+    );
+    assert!(
+        after.contains(&person.to_hex()),
+        "the export still carries the PERSON the profile describes"
+    );
 }
