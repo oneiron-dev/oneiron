@@ -170,23 +170,12 @@ fn message_audience_in_txn(
     }
 }
 
-/// What a settle wrote ([`apply_in_txn`]).
-pub(super) struct SettleWrite {
-    /// The entity the mention is settled as.
-    pub(super) entity: EntityId,
-    /// The role edge a someone-new answer's confirm asserted on the role
-    /// phrase's possessor, when it asserted one.
-    pub(super) role_edge: Option<EntityId>,
-}
-
 /// Settles the ask's mention as `answer` and saves the hint: a chosen
 /// candidate takes the span (and absorbs the mention's own provisional
 /// entity, everywhere it is named); someone new keeps that provisional
 /// entity, or mints one for the span, confirms it as a real person and
 /// asserts it distinct from the real candidates, said by `source` and
-/// decided by `seal`. A role phrase's person someone new confirms is
-/// asserted as its possessor's role edge: Approved when `seal` is the
-/// owner's own decision under the owner's proof, unsure otherwise.
+/// decided by `seal`.
 pub(super) fn apply_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -238,7 +227,7 @@ pub(super) fn apply_in_txn(
             // Dreamer's unsure one.
             let by = crate::tagging::ConfirmedBy {
                 owner: seal.deciding_owner(),
-                writer: None,
+                envelope: None,
                 source,
             };
             role_edge = crate::tagging::confirm_provisional_in_txn(vault, txn, &fresh, by)?
@@ -250,6 +239,18 @@ pub(super) fn apply_in_txn(
     put_hint_in_txn(vault, txn, ask, entity, now)?;
     evidence::record_in_txn(vault, txn, ask, entity, source, now, original)?;
     Ok(SettleWrite { entity, role_edge })
+}
+
+/// What a settle wrote ([`apply_in_txn`]). A role phrase's person someone
+/// new confirms is asserted as its possessor's role edge: Approved when the
+/// seal is the owner's own decision under the owner's proof, unsure
+/// otherwise.
+pub(super) struct SettleWrite {
+    /// The entity the mention is settled as.
+    pub(super) entity: EntityId,
+    /// The role edge a someone-new answer's confirm asserted on the role
+    /// phrase's possessor, when it asserted one.
+    pub(super) role_edge: Option<EntityId>,
 }
 
 /// Settles an open ask and closes it.

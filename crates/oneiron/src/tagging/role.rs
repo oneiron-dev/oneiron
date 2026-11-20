@@ -175,18 +175,31 @@ pub(super) fn role_edges_in_txn(
 
 /// Who confirms a provisional person. A possessed role person's confirm
 /// asserts its role edge with their word ([`assert_role_edge_in_txn`]).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct ConfirmedBy<'a> {
     /// The owner's proof, when the owner's own answer confirms: the edge is
     /// Approved while the proof holds owner tier in the writing transaction.
     /// Without it, or when it no longer holds, the edge is unsure.
     pub(crate) owner: Option<&'a AuthenticatedOwner>,
-    /// The writer an unsure edge is written as: the confirming actor. `None`
-    /// writes it as the Dreamer's own authority, for a confirm the engine's
+    /// The envelope an unsure edge is written under, at the approval the
+    /// write sets: the confirming session's own, its host origin's source,
+    /// lineage and provenance when one is bound, so the Gate judges the edge
+    /// as it judges that session's other claims. `None` writes it under the
+    /// Dreamer's own authority with `source`, for a confirm the engine's
     /// seal decides.
-    pub(crate) writer: Option<WriteActor>,
-    /// Where the confirming word came from: the edge's source.
+    pub(crate) envelope: Option<WriteEnvelope>,
+    /// Where the confirming word came from: the edge's source when no
+    /// envelope names one.
     pub(crate) source: ClaimSource,
+}
+
+/// The provenance a confirm's role edge is written with when no host origin
+/// supplies one.
+pub(crate) fn role_edge_provenance() -> Result<WriteProvenance> {
+    WriteProvenance::new(Value::Map(vec![(
+        Value::from("op"),
+        Value::from("tagging.confirm_role_person"),
+    )]))
 }
 
 /// Asserts that `person`, a role person just confirmed from `possessor`'s
@@ -228,14 +241,12 @@ pub(crate) fn assert_role_edge_in_txn(
     }
     let id = vault.store.clock.entity_id()?;
     let edge = (&id, predicate.as_str(), possessor, person);
-    let Some(candidate) = role_edge_candidate_in_txn(vault, txn, edge, message, by.source)? else {
+    let source = by
+        .envelope
+        .as_ref()
+        .map_or(by.source, WriteEnvelope::source);
+    let Some(candidate) = role_edge_candidate_in_txn(vault, txn, edge, message, source)? else {
         return Ok(None);
-    };
-    let provenance = || {
-        WriteProvenance::new(Value::Map(vec![(
-            Value::from("op"),
-            Value::from("tagging.confirm_role_person"),
-        )]))
     };
     let occurred = TimeRange {
         start: now,
@@ -251,7 +262,7 @@ pub(crate) fn assert_role_edge_in_txn(
         let envelope = WriteEnvelope::new(
             WriteActor::new(owner.revalidate_in_txn(vault, txn)?, EdgeActorClass::Human),
             by.source,
-            provenance()?,
+            role_edge_provenance()?,
             ClaimApprovalStatus::Approved,
         );
         vault
@@ -261,15 +272,20 @@ pub(crate) fn assert_role_edge_in_txn(
             .apply(txn)?;
         return Ok(Some(id));
     }
-    let writer = match by.writer {
-        Some(writer) => writer,
-        None => vault.dreamer_authority_in_txn(txn, now)?,
+    let unsure = match by.envelope {
+        Some(envelope) => envelope,
+        None => WriteEnvelope::new(
+            vault.dreamer_authority_in_txn(txn, now)?,
+            by.source,
+            role_edge_provenance()?,
+            ClaimApprovalStatus::Auto,
+        ),
     };
     // As a memory commit lands it: only a Gate verdict that pends the Auto
     // write is resubmitted as Proposed, in a savepoint the refusal leaves
     // empty; a deny is never resubmitted.
     for approval in [ClaimApprovalStatus::Auto, ClaimApprovalStatus::Proposed] {
-        let envelope = WriteEnvelope::new(writer, by.source, provenance()?, approval);
+        let envelope = unsure.clone().with_approval(approval);
         let mut staged = vault.store.env.nested_write_txn(txn)?;
         match vault
             .batch_in()

@@ -17,11 +17,12 @@ use std::ops::Bound;
 
 use super::role::{self, ConfirmedBy};
 use super::tags;
-use crate::claim::ClaimSource;
+use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
+use crate::write_envelope::WriteEnvelope;
 use crate::{EntityId, TimeRange, Vault};
 
 /// A provisional entity. Key: its id.
@@ -101,14 +102,26 @@ impl Memory<'_> {
     /// owner's own proof, unsure for any other confirm.
     pub fn confirm_provisional_entity(&self, id: &EntityId) -> MemoryResult<()> {
         let owner = self.owner_authorship();
+        let source = if owner.is_some() {
+            ClaimSource::UserStated
+        } else {
+            ClaimSource::Inferred
+        };
+        // An unsure edge is this session's own claim: its host origin's
+        // envelope when one is bound, as every claim door of a Memory writes.
+        let envelope = match self.host_envelope(ClaimApprovalStatus::Auto)? {
+            Some(host) => host,
+            None => WriteEnvelope::new(
+                self.write_actor(),
+                source,
+                role::role_edge_provenance()?,
+                ClaimApprovalStatus::Auto,
+            ),
+        };
         let by = ConfirmedBy {
             owner,
-            writer: Some(self.write_actor()),
-            source: if owner.is_some() {
-                ClaimSource::UserStated
-            } else {
-                ClaimSource::Inferred
-            },
+            envelope: Some(envelope),
+            source,
         };
         self.with_verified_actor_write_txn(|txn| {
             if confirm_in_txn(self.vault(), txn, id, by)?.is_none() {
