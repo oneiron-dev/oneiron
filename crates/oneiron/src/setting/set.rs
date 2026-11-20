@@ -233,6 +233,15 @@ impl Vault {
             mode: request.mode,
             scope: request.scope.clone(),
         };
+        // A row no reader decodes is never stored: a scope id of a reserved pattern encodes to
+        // key bytes `RowKey::decode` refuses (FIX SETTING-SCOPE-RESERVED-ID-NOT-ROUND-TRIPPED).
+        if RowKey::decode(&key.encode()).as_ref() != Some(&key) {
+            return Err(Error::InvalidConfig(format!(
+                "`{}` has no row at a {} scope whose id no reader decodes",
+                spec.name,
+                request.scope.kind().as_str()
+            )));
+        }
         let value = match request.value.clone() {
             Some(mut json) => {
                 // The side-row wall reads the value before it is encoded (SETTING-ROWS-SIDE-ROW-
