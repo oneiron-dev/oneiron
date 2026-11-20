@@ -52,6 +52,16 @@
 //!    check accepts, past the whole-answer parser's depth limit) is refused
 //!    with the precise depth cause, never reported as non-JSON. Red without
 //!    the fix: the refusal says non-JSON for valid JSON.
+//! 8. `real_sandbox::a_two_mib_skill_answer_reaches_its_blocking_post_hook_redacted`
+//!    ([SKILL-POST-HOOK-INPUT-BODY-CHANNEL]): a 2 MiB answer under a
+//!    blocking Redact post hook running in the real hook sandbox comes back
+//!    redacted: the hook input is held to the guest's memory, not to the
+//!    1 MiB body cap. Red on main: the input passes the 1 MiB cap, the
+//!    call is refused as in 6.
+//! 9. `real_sandbox::a_skill_answer_its_hook_guest_cannot_hold_is_refused_unjudged`:
+//!    a 3 MB answer of a million empty arrays passes the host's 8 MiB
+//!    bound but not the guest's interpreter heap: the guest reports it not
+//!    taken and the call is refused as in 6. Green on main too.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features
@@ -1303,4 +1313,147 @@ fn a_hook_view_too_deep_to_read_back_leaves_the_capture_incomplete() {
         (false, true),
         "the too-deep view is not kept and its context reads back",
     );
+}
+
+/// The real-sandbox tests ([SKILL-POST-HOOK-INPUT-BODY-CHANNEL]): the
+/// blocking post hook's staged body runs in the pinned QuickJS hook
+/// sandbox, which only the `code-sandbox-wasmtime` feature builds.
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod real_sandbox {
+    use super::*;
+
+    /// The channel test's answer `text` length: 2 MiB sits past the old 1 MiB
+    /// hook input cap and under the 8 MiB guest-memory bound.
+    const CHANNEL_TWO_MIB_BYTES: usize = 2_097_152;
+    /// The heavy answer's empty arrays: about 3 MB of JSON, under the 8 MiB
+    /// bound, far past the hook guest's 24 MiB interpreter heap once parsed.
+    const HEAVY_ROWS: usize = 1_000_000;
+
+    /// Stores the active callable whose answer is `title` and `rows`,
+    /// `skillArgs.rows` empty arrays written as text, so the skill itself
+    /// never holds them as objects. Answers its id.
+    fn heavy_skill(vault: &Vault) -> EntityId {
+        let source = r#"finish('{"title":"secret-title-7","rows":[' + "[],".repeat(skillArgs.rows - 1) + '[]]}');"#;
+        callable_skill::put_active_callable(
+            vault,
+            "fixture.heavy-answer",
+            source,
+            &serde_json::json!({"rows":"integer"}),
+            &serde_json::json!("object"),
+        )
+        .expect("the heavy callable is stored and active")
+    }
+
+    /// Binds the BLOCKING Redact post hook on `self.skills.call` as
+    /// [`bind_blocking_capped_hook`] binds its hook, but installs no test
+    /// runtime: with `--all-features` the vault builds the pinned QuickJS
+    /// sandbox, so the staged body's real JS runs in the real sandbox.
+    fn bind_blocking_real_hook(vault: &Arc<Vault>) {
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+        vault
+            .prepare_install_signing()
+            .expect("this install's signing keys");
+        let owner = vault
+            .ensure_embedded_owner_actor()
+            .expect("the embedded owner");
+        let proof = vault
+            .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+            .expect("owner proof");
+        handle_doors::bind_blocking_redact_post_hook(vault, owner, &proof, "self.skills.call")
+            .expect("the blocking Redact hook binds");
+    }
+
+    /// [`REDACT_PROGRAM`] for a call whose skill args carry `bytes` of `text`.
+    fn redact_program_for(skill: EntityId, refs: &[String], bytes: usize) -> String {
+        program_with(
+            &REDACT_PROGRAM
+                .replace("__GUESSES__", GUESSES)
+                .replace(&ANSWER_BYTES.to_string(), &bytes.to_string()),
+            skill,
+            refs,
+        )
+    }
+
+    /// [`DENIED_PROGRAM`] for a call to [`heavy_skill`] asking `rows` rows.
+    fn denied_heavy_program(skill: EntityId, refs: &[String], rows: usize) -> String {
+        program_with(
+            &DENIED_PROGRAM
+                .replace("__GUESSES__", GUESSES)
+                .replace(&format!("bytes: {ANSWER_BYTES}"), &format!("rows: {rows}")),
+            skill,
+            refs,
+        )
+    }
+
+    /// A 2 MiB skill answer reaches its blocking post hook and is redacted:
+    /// past the old 1 MiB hook input cap and under the 8 MiB guest-memory
+    /// bound, the real sandbox runs the staged Redact body on the whole
+    /// answer. Red on main: the host refuses the input past 1 MiB and the call
+    /// is Skipped with the too-large cause.
+    #[test]
+    fn a_two_mib_skill_answer_reaches_its_blocking_post_hook_redacted() {
+        let (_dir, vault) = open_vault();
+        let factory = quickjs_factory();
+        let skill = large_skill(&vault);
+        bind_blocking_real_hook(&vault);
+        let run_id = fresh_id();
+        let program =
+            redact_program_for(skill, &derived_bridge_refs(run_id), CHANNEL_TWO_MIB_BYTES);
+
+        let (outcome, calls) = execute_run(&vault, &factory, run_id, vec![program]);
+        let outcome = outcome.expect("the run completes");
+        assert_eq!(calls, 1, "one turn runs one program");
+        assert_eq!(outcome.status, EngineExecutorStatus::Complete);
+        assert_eq!(
+            doors::finish_text(&vault, &run_id).expect("the answer reads back"),
+            format!("card:has-title:false:text-len:{CHANNEL_TWO_MIB_BYTES}:secret-guessed:false"),
+        );
+        assert_record_only(&outcome);
+    }
+
+    /// A skill answer its hook's guest cannot hold is refused unjudged: about
+    /// 3 MB passes the host's 8 MiB bound, but its million empty arrays pass
+    /// the guest's interpreter heap, so the real sandbox reports the input not
+    /// taken, the blocking post hook's body never starts, and the post chain
+    /// refuses the call: the caller never reads the answer. Green on main too,
+    /// there by the host's 1 MiB input cap.
+    #[test]
+    fn a_skill_answer_its_hook_guest_cannot_hold_is_refused_unjudged() {
+        let (_dir, vault) = open_vault();
+        let factory = quickjs_factory();
+        let skill = heavy_skill(&vault);
+        bind_blocking_real_hook(&vault);
+        let run_id = fresh_id();
+        let program = denied_heavy_program(skill, &derived_bridge_refs(run_id), HEAVY_ROWS);
+
+        let (outcome, calls) = execute_run(&vault, &factory, run_id, vec![program]);
+        let outcome = outcome.expect("the run completes");
+        assert_eq!(calls, 1, "one turn runs one program");
+        assert_eq!(outcome.status, EngineExecutorStatus::Complete);
+        let text = doors::finish_text(&vault, &run_id).expect("the answer reads back");
+        assert!(
+            text.contains(":secret-guessed:false"),
+            "no guessed read returned the body:\n{text}",
+        );
+        assert!(
+            !text.contains(TAG),
+            "no read returned the secret title:\n{text}"
+        );
+        assert!(
+            text.contains("verb_hook_skipped") || text.contains(":call-threw:true"),
+            "the guest reads the refusal, never the answer:\n{text}",
+        );
+        assert!(
+            text.contains("too large for the live post hook to judge")
+                || text.contains(":call-threw:true"),
+            "the refusal names its cause:\n{text}",
+        );
+        // The real body records record-only, exactly as a served view leaves
+        // it: a nameless card, its body kept, no binding naming it.
+        assert_record_only(&outcome);
+        assert!(
+            outcome.replay_record.bridge_calls[0].hook_view_served,
+            "the row stands as a view-served row",
+        );
+    }
 }
