@@ -29,6 +29,17 @@
 //! link. The other three pass there and on the fix: they pin the doors and
 //! cases the ruling keeps out.
 //!
+//! FIX OWNER-RESTORE-OF-GRANTED-CLAIM-PAIR-LINK-ABORTS (after-merge proof of
+//! the fix above, 20 Nov): on the merged head the owner's restore in
+//! `owner_restore_brings_a_granted_claim_pair_link_back` aborted whole with
+//! `EntityNotFound`: the link's status claim was put with its link read in
+//! the Surfaceable mode, which admits no proposed claim, and both restored
+//! CLAIMs come back proposed. It runs red at the tests-only commit on main
+//! and green at the fix, which reads that link in the Recorded mode on the
+//! owner's restore of a proven CLAIM pair. The diary test's source is now a
+//! rooted vault whose owner holds the root owner binding `grant_diary_read`
+//! asks for; on a plain device vault it failed in its fixture at every head.
+//!
 //! Vaults in tempdirs. The CLAIM-pair source opens through
 //! `test_doors::consolidation::open_dreamer_vault` and lands the link through
 //! the Dreamer's derive door, as `derive_links.rs` does; every other step
@@ -47,6 +58,7 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
+use oneiron::authority::MachineRole;
 use oneiron::batch::export::WholeVaultImportReceipt;
 use oneiron::claim::{COREFERENCE_STATUS_PROPOSED, PREDICATE_COREFERENCE_STATUS};
 use oneiron::consent::AuthenticatedOwner;
@@ -379,7 +391,26 @@ fn put_diary(vault: &Vault, author: EntityId, markdown: &str) -> EntityId {
 #[test]
 fn the_owners_restore_keeps_a_diary_pair_link_out() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let source = Vault::open(dir.path(), VaultConfig::device()).expect("open the source");
+    // A rooted source whose embedded owner holds the active root owner
+    // binding `grant_diary_read` asks for, as `context_board_rows_shown.rs`
+    // roots its vault.
+    let source = Vault::open_owned(dir.path(), VaultConfig::device()).expect("open the source");
+    source.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    source
+        .prepare_install_signing()
+        .expect("load the source's signing keys");
+    let issuer = source
+        .bootstrap_host_slip_issuer()
+        .expect("the source's host issuer");
+    source
+        .ensure_host_root_slip(&issuer)
+        .expect("root the source under its host");
+    source
+        .provision_engine_machine_identities(&issuer)
+        .expect("the source's engine machine identities");
+    source
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("the source's serving install profile");
     let proof = owner_proof(&source);
     let owner = source
         .ensure_embedded_owner_actor()
