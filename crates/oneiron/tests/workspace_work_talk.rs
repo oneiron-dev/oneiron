@@ -381,32 +381,58 @@ fn assert_binding_turn_standing(
     Ok(())
 }
 
-/// Binding-scoped company read: the companion opens her room turn on the bound
-/// talk and recalls through it. No grant involved.
-fn companion_turn_recall_finds(
+/// The ids of `conversation`'s visible messages, as `reader` reads its
+/// transcript on a plain lane.
+fn transcript_message_ids(
+    fixture: &Fixture,
+    reader: EntityId,
+    conversation: &EntityId,
+) -> TestResult<Vec<EntityId>> {
+    let memory = fixture.vault.memory(reader, EdgeActorClass::Human);
+    let page = memory
+        .conversation_transcript(conversation, None, 50)?
+        .value;
+    let mut out = Vec::new();
+    for turn in &page.turns {
+        for message in &turn.messages {
+            out.push(EntityId::from_hex(&message.id)?);
+        }
+    }
+    Ok(out)
+}
+
+/// Binding-scoped company read by id: the companion opens her room turn on the
+/// bound talk and reads the talk's own row and its MESSAGE rows through it
+/// (ANSWER L7-05-BINDING-READ = A). No grant involved. Hydrate refuses the
+/// whole read when one row is withheld. Recall through the binding is FIX
+/// [WORK-TALK-BINDING-RECALL-FLOOR].
+fn companion_turn_message_texts(
     fixture: &Fixture,
     companion: EntityId,
     talk: &EntityId,
-    query: &str,
-    needles: &[&str],
-) -> TestResult<bool> {
+    messages: &[EntityId],
+) -> TestResult<Vec<String>> {
     let turn = fixture
         .vault
         .memory(companion, EdgeActorClass::Agent)
         .for_room_turn(*talk)?;
-    let pack = turn.recall(
-        query,
-        Effort::Light,
-        &RecallScope::default(),
-        10,
-        None,
-        None,
-    )?;
-    Ok(needles.iter().all(|needle| {
-        pack.items.iter().any(|item| {
-            matches!(item.kind.as_str(), "TURN" | "MESSAGE") && item.value_text.contains(needle)
+    let refs: Vec<String> = std::iter::once(talk)
+        .chain(messages)
+        .map(EntityId::to_hex)
+        .collect();
+    let views = turn.hydrate(&refs)?.value;
+    assert_eq!(views.len(), refs.len(), "every bound row reads");
+    Ok(views
+        .iter()
+        .filter(|view| view.kind == "MESSAGE")
+        .filter_map(|view| {
+            view.body
+                .as_ref()?
+                .get("content")?
+                .as_str()
+                .map(str::to_owned)
         })
-    }))
+        .collect())
 }
 
 /// Plain grant-gated transcript refuses the grantless companion: the withheld
@@ -644,14 +670,15 @@ fn one_vault_mode_saves_member_companion_work_talk_in_company_vault() -> TestRes
         owen,
         &talk,
     )?;
-    assert!(
-        companion_turn_recall_finds(
-            &fixture,
-            companion_actor,
-            &talk,
-            "March invoice",
-            &["quarterly numbers look off", "flagging the mismatch"]
-        )?,
+    let messages = transcript_message_ids(&fixture, yuki, &talk)?;
+    assert_eq!(messages.len(), 2, "the talk holds both witnessed messages");
+    let mut companion_read =
+        companion_turn_message_texts(&fixture, companion_actor, &talk, &messages)?;
+    companion_read.sort();
+    let mut expected_texts = vec![member_text.to_owned(), companion_text.to_owned()];
+    expected_texts.sort();
+    assert_eq!(
+        companion_read, expected_texts,
         "the companion reads the work talk through her binding"
     );
     assert_plain_transcript_closed_to_companion(&fixture, companion_actor, &talk)?;
