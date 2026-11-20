@@ -34,8 +34,8 @@ use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 
 use super::hosted_selection::HostedVault;
 use crate::commands::{credential_file, local_servers};
@@ -76,18 +76,16 @@ impl HostedBinding {
     }
 
     /// The file it is recorded in: `hosted-` and the first 16 hex digits of
-    /// the SHA-256 of its origin, a NUL and its vault id.
+    /// the content hash of its origin, a NUL and its vault id.
     fn file_name(&self) -> String {
-        let mut hash = Sha256::new();
-        hash.update(self.origin.as_bytes());
-        hash.update([0_u8]);
-        hash.update(self.vault_id.as_bytes());
-        let digest = hash.finalize();
-        let hex: String = digest[..8]
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        format!("{HOSTED_PREFIX}{hex}")
+        let named = [
+            self.origin.as_bytes(),
+            &[0_u8][..],
+            self.vault_id.as_bytes(),
+        ]
+        .concat();
+        let digest = ContentHash::of(&named).to_hex();
+        format!("{HOSTED_PREFIX}{}", &digest[..16])
     }
 }
 
