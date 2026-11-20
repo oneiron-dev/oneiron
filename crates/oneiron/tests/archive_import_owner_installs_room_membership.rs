@@ -27,6 +27,17 @@
 //!   import keeps the destination ledger live, reports two kept-live
 //!   `CONVERSATION_MEMBERSHIP_ROW` rows and one kept-live `CONVERSATION_MEMBERSHIP_SEQ`
 //!   row, and the destination ledger and members stay its own.
+//! * `a_whole_vault_export_withholds_the_ledger_and_roles_of_a_use_limited_room`
+//!   (REVIEW-9446 P1-1): on a hosted source, a customer hold refuses the room's privacy
+//!   erase and use-limits the room; the export then carries no `CONVERSATION_MEMBERSHIP_ROW`,
+//!   `CONVERSATION_MEMBERSHIP_SEQ` or `CONVERSATION_ROLE_GRANT` row of that room, where the
+//!   export before the hold carried two, one and one.
+//! * `a_room_whose_member_is_no_live_person_here_stays_out_of_the_owner_restore`
+//!   (REVIEW-9446 P1-2): the hosted source use-limits yuki, so its archive carries the room
+//!   and its ledger but no yuki record. An owner restore into a vault without yuki, and one
+//!   into a vault that holds yuki's soft-deleted shell, each goes on, keeps the room out under
+//!   `RoomNotSeatedHere`, lands no ledger row and counts the three ledger envelopes held back
+//!   as `missing_live_entity`; owen still lands.
 //!
 //! New report counts are read through `serde_json::to_value` of the SIDE-1 summary, so this
 //! file compiles where the landing is absent; an absent field fails its assertion as a
@@ -39,11 +50,16 @@ mod retained_side_rows;
 
 use std::io::Cursor;
 
+use oneiron::batch::export::WholeVaultImportReceipt;
 use oneiron::conversation::{
     ConversationBody, ConversationKind, HistoryChoice, MembershipAction, RoomRole,
 };
+use oneiron::deletion::LegalHoldTarget;
+use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::registry::ENTITY_TYPE_PERSON;
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, WriteActor};
+use oneiron::{
+    EdgeActorClass, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig, WriteActor,
+};
 use retained_side_rows::{
     export_whole, open_later_vault, open_source_vault, owner_proof, retained_rows, rows_for,
 };
@@ -607,5 +623,251 @@ fn a_destination_that_seats_the_room_itself_keeps_its_own_ledger() {
         rows_for(&dest_post_rows, "CONVERSATION_MEMBERSHIP_SEQ"),
         source_seq_tuples,
         "the seq tuple stays byte-identical after a kept-live import"
+    );
+}
+
+/// A source vault opened as the owner's own where Oneiron hosts the bytes, so a privacy erase
+/// that a standing customer hold refuses keeps its record use-limited.
+fn open_hosted_source_vault() -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().expect("temp dir for the hosted source vault");
+    let mut config = VaultConfig::default();
+    config.privacy.posture = HostingPrivacyPosture::Hosted;
+    let vault = Vault::open_owned(dir.path(), config).expect("open the hosted source vault");
+    (dir, vault)
+}
+
+/// Places a customer hold on `record` and runs its privacy erase, which the hold refuses: the
+/// record stays stored and use-limited, and a whole-vault export keeps it out.
+fn use_limit(vault: &Vault, record: EntityId) {
+    let hold = vault
+        .place_legal_hold(
+            &owner_proof(vault),
+            vec![LegalHoldTarget::Record(record)],
+            Some("matter-9446".to_owned()),
+        )
+        .expect("FIXTURE: place the customer hold");
+    assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
+    let actor = vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the vault names its embedded owner actor");
+    let memory = vault.memory(actor, EdgeActorClass::Human);
+    let preview = memory
+        .preview_entity_delete(&record)
+        .expect("FIXTURE: preview the privacy erase");
+    let outcome = memory
+        .confirm_entity_erase(
+            &preview,
+            EraseOptions {
+                reason: EraseReason::GdprDelete,
+                also_same_bytes: false,
+                veto_starter: None,
+            },
+        )
+        .expect("FIXTURE: the privacy erase runs");
+    assert_eq!(
+        outcome.first.reason.as_str(),
+        "privacy_erase_kept",
+        "FIXTURE: the held privacy erase is kept: {outcome:?}"
+    );
+    assert!(
+        vault
+            .legal_hold_use_limit(&record)
+            .expect("FIXTURE: read the use limit")
+            .is_some(),
+        "FIXTURE: the kept erase use-limits the record"
+    );
+}
+
+/// The retained tuples of `table` in `rows` whose source key starts with `room`.
+fn room_tuples(rows: &[(String, Vec<u8>, Vec<u8>)], table: &str, room: EntityId) -> usize {
+    rows_for(rows, table)
+        .iter()
+        .filter(|(_, key, _)| key.starts_with(room.as_bytes()))
+        .count()
+}
+
+/// The `held_back` entries for `table` in a `retained_side_rows` JSON summary, as (reason,
+/// rows); empty when the table entry or the list is absent.
+fn held_back(summary: &serde_json::Value, table: &str) -> Vec<(String, u64)> {
+    summary
+        .get("tables")
+        .and_then(|tables| tables.as_array())
+        .and_then(|tables| {
+            tables.iter().find(|entry| {
+                entry.get("source_table").and_then(|name| name.as_str()) == Some(table)
+            })
+        })
+        .and_then(|entry| entry.get("held_back"))
+        .and_then(|held| held.as_array())
+        .map(|held| {
+            held.iter()
+                .map(|count| {
+                    (
+                        count
+                            .get("reason")
+                            .and_then(|reason| reason.as_str())
+                            .unwrap_or_default()
+                            .to_owned(),
+                        count
+                            .get("rows")
+                            .and_then(|rows| rows.as_u64())
+                            .unwrap_or_default(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The reason the receipt's `destination_omissions` gives for `id`, by its debug name.
+fn omission_reason(receipt: &WholeVaultImportReceipt, id: EntityId) -> Option<String> {
+    receipt
+        .destination_omissions
+        .iter()
+        .find(|kept| kept.entity_id == id.to_hex())
+        .map(|kept| format!("{:?}", kept.reason))
+}
+
+fn stored(vault: &Vault, id: EntityId) -> bool {
+    vault
+        .get_entity_type(&id)
+        .expect("read the destination row")
+        .is_some()
+}
+
+/// `room` stayed archive data on `dest`: no row and no ledger row of it, named under
+/// `RoomNotSeatedHere` in `receipt`, and none of its ledger envelopes installed.
+fn assert_room_kept_out(
+    dest: &Vault,
+    receipt: &WholeVaultImportReceipt,
+    room: EntityId,
+    side: &str,
+) {
+    assert!(!stored(dest, room), "the room stays archive data on {side}");
+    assert_eq!(
+        omission_reason(receipt, room).as_deref(),
+        Some("RoomNotSeatedHere"),
+        "the receipt names the room kept out on {side}: {:?}",
+        receipt.destination_omissions
+    );
+    assert!(
+        dest.membership_ledger(room).unwrap_or_default().is_empty(),
+        "no ledger row of the room lands on {side}"
+    );
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    for table in ["CONVERSATION_MEMBERSHIP_ROW", "CONVERSATION_MEMBERSHIP_SEQ"] {
+        assert_eq!(
+            table_count(&summary, table, "installed_rows").unwrap_or_default(),
+            0,
+            "no {table} row installs on {side}: {summary}"
+        );
+    }
+}
+
+#[test]
+fn a_whole_vault_export_withholds_the_ledger_and_roles_of_a_use_limited_room() {
+    let (_source_dir, source) = open_hosted_source_vault();
+    let now = source.now_recorded_at();
+    let (room, _owen, _yuki) = build_admin_grant_room(
+        &source,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    );
+    let tables = [
+        ("CONVERSATION_MEMBERSHIP_ROW", 2),
+        ("CONVERSATION_MEMBERSHIP_SEQ", 1),
+        ("CONVERSATION_ROLE_GRANT", 1),
+    ];
+    let before = retained_rows(&export_whole(&source));
+    for (table, rows) in tables {
+        assert_eq!(
+            room_tuples(&before, table, room),
+            rows,
+            "FIXTURE: before the hold the archive carries the room's {table} rows"
+        );
+    }
+
+    use_limit(&source, room);
+    let after = retained_rows(&export_whole(&source));
+    for (table, _) in tables {
+        assert_eq!(
+            room_tuples(&after, table, room),
+            0,
+            "LEAK: the archive carries no {table} row of the use-limited room"
+        );
+    }
+}
+
+#[test]
+fn a_room_whose_member_is_no_live_person_here_stays_out_of_the_owner_restore() {
+    let (_source_dir, source) = open_hosted_source_vault();
+    let now = source.now_recorded_at();
+    let occurred = TimeRange {
+        start: now,
+        end: now,
+    };
+    let (room, owen, yuki) = seat_room(&source, occurred, now);
+    use_limit(&source, yuki);
+    let archive = export_whole(&source);
+    assert_eq!(
+        room_tuples(
+            &retained_rows(&archive),
+            "CONVERSATION_MEMBERSHIP_ROW",
+            room
+        ),
+        2,
+        "FIXTURE: the archive carries the room's two ledger rows"
+    );
+
+    let (_absent_dir, absent) = open_later_vault();
+    let receipt = absent
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner_proof(&absent))
+        .expect("the owner restore into a vault without yuki goes on past the room");
+    assert!(
+        !stored(&absent, yuki),
+        "FIXTURE: the archive carries no record of the use-limited yuki"
+    );
+    assert_room_kept_out(&absent, &receipt, room, "a destination without yuki");
+    assert!(
+        stored(&absent, owen),
+        "owen lands on a destination without yuki"
+    );
+
+    let (_shell_dir, shell) = open_later_vault();
+    put_person_at(&shell, yuki, b"yuki", occurred, now);
+    assert!(
+        shell
+            .delete_entity(&yuki)
+            .expect("FIXTURE: soft-delete yuki on the destination"),
+        "FIXTURE: the destination holds yuki's soft-deleted shell"
+    );
+    let receipt = shell
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner_proof(&shell))
+        .expect("the owner restore into a vault with yuki's shell goes on past the room");
+    assert_room_kept_out(
+        &shell,
+        &receipt,
+        room,
+        "a destination with yuki's deleted shell",
+    );
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    for (table, rows) in [
+        ("CONVERSATION_MEMBERSHIP_ROW", 2),
+        ("CONVERSATION_MEMBERSHIP_SEQ", 1),
+    ] {
+        assert_eq!(
+            held_back(&summary, table),
+            vec![("missing_live_entity".to_owned(), rows)],
+            "the {table} envelopes are held back with the room: {summary}"
+        );
+    }
+    assert!(
+        stored(&shell, owen),
+        "owen lands on a destination with yuki's shell"
     );
 }
