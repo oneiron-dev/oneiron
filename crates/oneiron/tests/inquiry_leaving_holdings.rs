@@ -22,7 +22,9 @@
 //! - review round 1 of #9902: a delete that erased a record a concurrent
 //!   pass read missing still saves it removed; the owner's own delete choice
 //!   over the setting's records takes the setting's operation over, and no
-//!   setting delete runs under it (the door case, cfg-gated).
+//!   setting delete runs under it (the door case, cfg-gated);
+//! - review round 2 of #9902: a record a delete found gone reads removed by
+//!   its hard-delete marker.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_leaving_holdings`.
 
@@ -1283,5 +1285,55 @@ fn the_owners_delete_choice_over_the_settings_records_stops_the_setting_delete()
         )
         .expect("the check reads"),
         "no setting delete runs under the owner's choice"
+    );
+}
+
+/// Review round 2 of #9902: a delete that found its record gone saves it
+/// removed when the record's hard-delete marker is here, so a copy a
+/// concurrent run erased reads in `deleted` even when that run stopped
+/// before it settled. A hard delete that finds nothing local writes the
+/// marker too, so the owner's delete choice naming a record never stored
+/// here reads it removed, as the run's first check reads a marked record.
+#[test]
+fn a_record_a_delete_found_gone_reads_removed_by_its_marker() {
+    let fx = leaving();
+    let copies = fx.land_copy();
+    let filed = fx.file_leave_ask();
+    let absent = EntityId::from_bytes([0x53; 16]).expect("a record id");
+    let answered = fx
+        .company
+        .vault
+        .answer_cooperative_deletion_as(
+            &fx.company.proof,
+            &fx.pact(),
+            &request_nonce(&filed.request_id),
+            &CooperativeDeletionAnswer {
+                kind: CooperativeDeletionDispositionKind::Delete,
+                reason_code: None,
+                review_at: None,
+                delete: vec![copies[1], absent],
+                hold: Vec::new(),
+                retention: None,
+                restrict: Vec::new(),
+                restriction_notice_given: Vec::new(),
+                redact: Vec::new(),
+            },
+            fx.company.vault.now_recorded_at(),
+        )
+        .expect("the company Owner deletes a copy and a record never stored here");
+    let answer = answered.disposition.as_ref().expect("an answer");
+    assert!(
+        answer
+            .delete_operation
+            .as_ref()
+            .expect("the operation")
+            .pending()
+            .is_empty(),
+        "nothing stays pending"
+    );
+    assert_eq!(
+        answer.deleted,
+        vec![copies[1].to_hex(), absent.to_hex()],
+        "both read removed: the copy erased, the absent record by its marker"
     );
 }
