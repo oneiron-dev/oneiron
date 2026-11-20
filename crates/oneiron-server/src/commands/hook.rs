@@ -19,13 +19,21 @@
 //! agent's `--credential-file` for a pinned or local vault, and the one the
 //! hosted selection names, in its own auth mode, for the hosted vault it
 //! selected (`oneiron hosted`, [`hosted_command`]).
+//!
+//! `oneiron continue --cloud` ([`continue_command`]) lives here too: it
+//! reads the same hosted selection and calls its verbs through the same
+//! bridge the recall speaks to.
 
 mod bind;
+mod continue_command;
 mod hosted_command;
 mod hosted_selection;
 mod hosted_sign_in;
 mod recall;
 
+pub use self::continue_command::continue_work;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::continue_command::test_support as continue_test_support;
 pub use self::hosted_command::hosted;
 
 use std::io::{Read as _, Write as _};

@@ -17,6 +17,8 @@ pub mod coach_wake;
 pub mod compaction_pass;
 pub mod connector_issuer_watch;
 pub mod connector_sends;
+#[cfg(unix)]
+pub mod continue_command;
 pub mod device_burst_drain;
 pub mod device_home_dial;
 #[cfg(feature = "mesh")]
