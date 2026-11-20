@@ -172,6 +172,25 @@ impl SeatChange {
             uid: uid.to_owned(),
         }
     }
+
+    /// A live resource at its slot and SEQUENCE 0 whose sync answer names
+    /// `wire_uid` while its ICS carries `ics_uid`, under `seat`'s resource
+    /// path for `ics_uid`. The transport's UID is no authority: admission
+    /// reads the one the ICS carries.
+    pub(crate) fn under_wire_uid(
+        seat: &Seat,
+        wire_uid: &str,
+        ics_uid: &str,
+        start: u64,
+        end: u64,
+    ) -> Self {
+        let href = seat.resource_href(ics_uid);
+        let ics = booking_ics(ics_uid, start, end, 0, false);
+        Self::Stored(RemoteCalendarObject {
+            uid: wire_uid.to_owned(),
+            ..remote_upsert(&href, Some(&format!("{href}-s0")), &ics)
+        })
+    }
 }
 
 /// The host's seat: its installed config plus the scripted wire its pulls
@@ -188,14 +207,36 @@ impl Seat {
     /// under another system name for a calendar the booking was never written
     /// to.
     pub(crate) fn install(vault: &Vault, system: &str) -> Self {
-        let config = CalendarConnectorSeatConfig {
-            seat_ref: format!("seat:{system}"),
-            secret_ref: format!("seat-secret:{system}"),
-            system: system.to_owned(),
-            calendar_ref: format!("{system}-calendar"),
-            cadence_jitter_min_seconds: 300,
-            cadence_jitter_max_seconds: 900,
-        };
+        Self::install_config(
+            vault,
+            CalendarConnectorSeatConfig {
+                seat_ref: format!("seat:{system}"),
+                secret_ref: format!("seat-secret:{system}"),
+                system: system.to_owned(),
+                calendar_ref: format!("{system}-calendar"),
+                cadence_jitter_min_seconds: 300,
+                cadence_jitter_max_seconds: 900,
+            },
+        )
+    }
+
+    /// Installs a second seat of this seat's calendar under `seat_ref`: the
+    /// same endpoint, credential, collection and system, polled at its own
+    /// cadence. A seat's cadence is part of its outbox scope, so the two
+    /// seats share the calendar's passports but not their outboxes.
+    pub(crate) fn install_second_seat(&self, vault: &Vault, seat_ref: &str) -> Self {
+        Self::install_config(
+            vault,
+            CalendarConnectorSeatConfig {
+                seat_ref: seat_ref.to_owned(),
+                cadence_jitter_min_seconds: self.config.cadence_jitter_min_seconds * 2,
+                cadence_jitter_max_seconds: self.config.cadence_jitter_max_seconds * 2,
+                ..self.config.clone()
+            },
+        )
+    }
+
+    fn install_config(vault: &Vault, config: CalendarConnectorSeatConfig) -> Self {
         let (_, owner) = seat_owner(vault);
         let outcome = vault
             .set_setting(
@@ -283,56 +324,62 @@ impl Seat {
     fn remote_changes(&self, vault: &Vault, changes: &[SeatChange]) -> Vec<RemoteCalendarChange> {
         changes
             .iter()
-            .map(|change| match change {
-                SeatChange::Upsert {
-                    href,
-                    uid,
-                    start,
-                    end,
-                    sequence,
-                    cancelled,
-                } => {
-                    let ics = booking_ics(uid, *start, *end, *sequence, *cancelled);
-                    RemoteCalendarChange::Upsert(remote_upsert(
+            .filter_map(|change| {
+                Some(match change {
+                    SeatChange::Upsert {
                         href,
-                        Some(&format!("{href}-s{sequence}")),
-                        &ics,
-                    ))
-                }
-                SeatChange::Undated {
-                    href,
-                    uid,
-                    sequence,
-                    cancelled,
-                } => {
-                    let ics = undated_ics(uid, *sequence, *cancelled);
-                    RemoteCalendarChange::Upsert(remote_upsert(
+                        uid,
+                        start,
+                        end,
+                        sequence,
+                        cancelled,
+                    } => {
+                        let ics = booking_ics(uid, *start, *end, *sequence, *cancelled);
+                        RemoteCalendarChange::Upsert(remote_upsert(
+                            href,
+                            Some(&format!("{href}-s{sequence}")),
+                            &ics,
+                        ))
+                    }
+                    SeatChange::Undated {
                         href,
-                        Some(&format!("{href}-s{sequence}")),
-                        &ics,
-                    ))
-                }
-                SeatChange::Stored(object) => RemoteCalendarChange::Upsert(object.clone()),
-                SeatChange::Tombstone { uid } => RemoteCalendarChange::Delete {
-                    href: self.resource_href(uid),
-                    uid: uid.to_string(),
-                },
-                // The omission carries the listing snapshot's observation of
-                // the UID's row (tests/calendar_google_owed_full_listing.rs).
-                SeatChange::Omitted { uid } => {
-                    let observation =
-                        calendar_collection_members_for_operation(vault, &self.operation(vault))
-                            .expect("the seat's collection members")
-                            .iter()
-                            .find(|member| member.uid == *uid)
-                            .expect("the booking is a member of the seat")
-                            .observation;
-                    RemoteCalendarChange::Omitted {
+                        uid,
+                        sequence,
+                        cancelled,
+                    } => {
+                        let ics = undated_ics(uid, *sequence, *cancelled);
+                        RemoteCalendarChange::Upsert(remote_upsert(
+                            href,
+                            Some(&format!("{href}-s{sequence}")),
+                            &ics,
+                        ))
+                    }
+                    SeatChange::Stored(object) => RemoteCalendarChange::Upsert(object.clone()),
+                    SeatChange::Tombstone { uid } => RemoteCalendarChange::Delete {
                         href: self.resource_href(uid),
                         uid: uid.to_string(),
-                        observation,
+                    },
+                    // The omission carries the listing snapshot's observation of
+                    // the UID's row (tests/calendar_google_owed_full_listing.rs).
+                    // A complete listing reports an omission only of a member of
+                    // the seat's collection, as CalDAV's does: a row the listing
+                    // does not count as a member is never omitted.
+                    SeatChange::Omitted { uid } => {
+                        let observation = calendar_collection_members_for_operation(
+                            vault,
+                            &self.operation(vault),
+                        )
+                        .expect("the seat's collection members")
+                        .iter()
+                        .find(|member| member.uid == *uid)?
+                        .observation;
+                        RemoteCalendarChange::Omitted {
+                            href: self.resource_href(uid),
+                            uid: uid.to_string(),
+                            observation,
+                        }
                     }
-                }
+                })
             })
             .collect()
     }
