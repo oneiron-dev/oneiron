@@ -278,3 +278,63 @@ fn editable(
     }
     loro_text(&paragraph, TEXT).ok_or_else(|| invalid("story cell paragraph text"))
 }
+
+#[cfg(test)]
+mod text_diff_budget_tests {
+    use super::super::stories;
+    use super::*;
+    use loro::LoroDoc;
+    use oneiron_docedit::docx_body::{
+        DocxBlock, DocxBlockKind, DocxCell, DocxCellParagraph, DocxStory, DocxStoryScope,
+    };
+    use std::time::{Duration, Instant};
+
+    /// Before the diff budget this ran for many minutes.
+    #[test]
+    fn an_unrelated_set_text_of_a_large_story_cell_paragraph_ends_within_the_budget() {
+        let old = format!("{} tail \u{2713}", "x".repeat((1 << 20) - 16));
+        let new = "\u{e9}dited tail \u{2713}";
+        let scope = DocxStoryScope::Footnote {
+            id: "1".to_string(),
+        };
+        let doc = LoroDoc::new();
+        stories::import(
+            &doc,
+            &[DocxStory {
+                scope: scope.clone(),
+                blocks: vec![DocxBlock {
+                    id: "t1".to_string(),
+                    kind: DocxBlockKind::Table,
+                    role: None,
+                    text: String::new(),
+                    runs: Vec::new(),
+                    cells: vec![DocxCell {
+                        row: 0,
+                        col: 0,
+                        text: String::new(),
+                        paragraphs: vec![DocxCellParagraph {
+                            id: "p1".to_string(),
+                            guard: String::new(),
+                            text: old,
+                            locked: None,
+                        }],
+                    }],
+                    locked: None,
+                }],
+            }],
+        )
+        .unwrap();
+        let started = Instant::now();
+        let result = set_text(&doc, &scope, "t1", 0, 0, "p1", new);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(60),
+            "the replacement took {elapsed:?}"
+        );
+        result.unwrap();
+        assert_eq!(
+            stories::read(&doc).unwrap()[0].tables[0].cells[0].paragraphs[0].text,
+            new
+        );
+    }
+}

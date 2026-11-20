@@ -197,3 +197,41 @@ fn child_text(map: &LoroMap, key: &str) -> Option<LoroText> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod text_diff_budget_tests {
+    use super::{BTreeMap, CELLS, NodeId, TableBody, child_map, child_text, sync_table};
+    use loro::LoroDoc;
+    use std::time::{Duration, Instant};
+
+    /// Before the diff budget this ran for many minutes.
+    #[test]
+    fn syncing_a_large_table_cell_to_unrelated_text_ends_within_the_budget() {
+        let doc = LoroDoc::new();
+        let entry = doc.get_map("tables").ensure_mergeable_map("1").unwrap();
+        let mut body = TableBody {
+            rows: vec![NodeId(2)],
+            columns: vec![NodeId(3)],
+            cells: BTreeMap::from([(
+                NodeId(2),
+                BTreeMap::from([(NodeId(3), format!("{} tail \u{2713}", "x".repeat(1 << 20)))]),
+            )]),
+            merges: vec![],
+        };
+        sync_table(&entry, &body).unwrap();
+        doc.commit();
+        let new = "\u{e9}dited tail \u{2713}";
+        body.cells = BTreeMap::from([(NodeId(2), BTreeMap::from([(NodeId(3), new.to_owned())]))]);
+        let started = Instant::now();
+        let result = sync_table(&entry, &body);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(60),
+            "syncing the table cell took {elapsed:?}"
+        );
+        result.unwrap();
+        let cells = child_map(&entry, CELLS).unwrap();
+        let row = child_map(&cells, "2").unwrap();
+        assert_eq!(child_text(&row, "3").unwrap().to_string(), new);
+    }
+}
