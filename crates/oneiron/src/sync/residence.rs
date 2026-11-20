@@ -372,10 +372,19 @@ pub(crate) fn require_promoted_for_cached_id(
     Ok(())
 }
 
+/// The item rows an opened-item update writes, each with the body it writes,
+/// as [`admit_promoted_window_update`] decoded them. A writer that commits
+/// the update judges them again in its own transaction
+/// ([`admit_promoted_window_rows_in_txn`]), so a grant, pact or selection
+/// that narrowed after the admission's read is met at commit.
+#[derive(Debug, Clone, Default)]
+pub struct PromotedWindowRows(Vec<(EntityId, Vec<u8>)>);
+
 /// Inspect every incoming operation before an opened-item update reaches
 /// the observed home document. Only writes to EXISTING selected items with
 /// a stable birth scope can run on the thin residence lane. Other operation
 /// families use their own admitted doors; they are not smuggled as item edits.
+/// Answers the rows it admitted, for a recheck at commit.
 pub fn admit_promoted_window_update(
     vault: &Vault,
     source: &LoroDoc,
@@ -383,9 +392,54 @@ pub fn admit_promoted_window_update(
     selector: &SyncSelector,
     proof: &crate::authority::VerifiedSlip,
     update: &[u8],
+) -> Result<PromotedWindowRows> {
+    let rows = promoted_window_rows(source, update)?;
+    let txn = vault.store.env.read_txn()?;
+    admit_promoted_window_rows_in_txn(vault, &txn, &rows, scope, selector, proof)?;
+    Ok(rows)
+}
+
+/// [`admit_promoted_window_update`]'s judgement of each row in `txn`: the
+/// per-item write door (`selector::admit_promoted_entity_write_in_txn`) for
+/// every row, under the grant, pact and selection `txn` sees.
+pub fn admit_promoted_window_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    rows: &PromotedWindowRows,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    proof: &crate::authority::VerifiedSlip,
 ) -> Result<()> {
-    admit_promoted_window_update_then(vault, source, (scope, selector, proof), update, |_, _| {
-        Ok(())
+    admit_promoted_window_rows_at(
+        vault,
+        txn,
+        rows,
+        scope,
+        (selector, proof),
+        crate::unix_seconds_now(),
+    )
+}
+
+/// [`admit_promoted_window_rows_in_txn`] with the grant's expiry judged at
+/// `now_secs`, one clock reading for every row.
+fn admit_promoted_window_rows_at(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    rows: &PromotedWindowRows,
+    scope: FederationGrantScope,
+    (selector, proof): (&SyncSelector, &crate::authority::VerifiedSlip),
+    now_secs: u64,
+) -> Result<()> {
+    rows.0.iter().try_for_each(|(id, blob)| {
+        super::selector::admit_promoted_entity_write_in_txn(
+            vault,
+            txn,
+            *id,
+            blob,
+            scope,
+            (selector, proof),
+            now_secs,
+        )
     })
 }
 
@@ -405,6 +459,42 @@ pub(in crate::sync) fn admit_promoted_window_update_then<T>(
     update: &[u8],
     then: impl FnOnce(&heed::RoTxn<'_>, u64) -> Result<T>,
 ) -> Result<T> {
+    let rows = promoted_window_rows(source, update)?;
+    let txn = vault.store.env.read_txn()?;
+    let now_secs = crate::unix_seconds_now();
+    admit_promoted_window_rows_at(vault, &txn, &rows, scope, (selector, proof), now_secs)?;
+    then(&txn, now_secs)
+}
+
+/// Whether every row of `rows` may still go to the machine `peer` proved,
+/// judged in `txn` (MEMBER-SYNC Astra T2): the promotion's pre-write check
+/// read each world's privacy for that machine before the writer opened, so a
+/// world whose read setting came to keep it off that machine since refuses
+/// the write at commit, as [`crate::claim::ResidenceReadContext::rows_may_leave`]
+/// refuses a read.
+///
+/// # Errors
+///
+/// A credential, grant or member the residence read refuses in `txn`;
+/// storage errors.
+pub fn promoted_window_rows_may_leave_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    rows: &PromotedWindowRows,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    proof: &crate::authority::VerifiedSlip,
+    peer: crate::machine_destination::PeerMachine,
+) -> Result<bool> {
+    let ids: Vec<EntityId> = rows.0.iter().map(|(id, _)| *id).collect();
+    crate::claim::ResidenceReadContext::load_in(vault, txn, proof, peer, scope, selector)?
+        .rows_may_leave(txn, &ids)
+}
+
+/// The item rows `update` writes on `source`: every operation an item-body
+/// insert into `entities`, or a birth write restating the carrier `source`
+/// already holds; anything else is refused.
+fn promoted_window_rows(source: &LoroDoc, update: &[u8]) -> Result<PromotedWindowRows> {
     let malformed = || Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied);
     let metadata = LoroDoc::decode_import_blob_meta(update, true).map_err(|_| malformed())?;
     if metadata.mode.is_snapshot() {
@@ -422,8 +512,7 @@ pub(in crate::sync) fn admit_promoted_window_update_then<T>(
     }
     let entities = ContainerID::new_root("entities", ContainerType::Map);
     let births = ContainerID::new_root(super::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
-    let txn = vault.store.env.read_txn()?;
-    let now_secs = crate::unix_seconds_now();
+    let mut rows = Vec::new();
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
             key,
@@ -451,17 +540,9 @@ pub(in crate::sync) fn admit_promoted_window_update_then<T>(
         if key != id.to_hex() {
             return Err(malformed());
         }
-        super::selector::admit_promoted_entity_write_in_txn(
-            vault,
-            &txn,
-            id,
-            &blob,
-            scope,
-            (selector, proof),
-            now_secs,
-        )?;
+        rows.push((id, blob.to_vec()));
     }
-    then(&txn, now_secs)
+    Ok(PromotedWindowRows(rows))
 }
 
 /// The entities a promoted window's update lands, read from the update's own

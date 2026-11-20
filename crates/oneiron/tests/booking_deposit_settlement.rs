@@ -2730,3 +2730,134 @@ fn a_tombstone_from_a_seat_the_booking_was_not_written_to_keeps_the_deposit() {
         "a tombstone from a seat the booking was not written to moves no money"
     );
 }
+
+#[test]
+fn a_host_cancel_after_an_owner_write_replayed_over_an_unmarked_seat_edit_keeps_the_deposit() {
+    // Review round 1 of #9903: the seat holds the booking under an Inbound
+    // passport, read before the booking was ever written to it. The owner's
+    // live write at the next SEQUENCE never reaches the provider, and the
+    // calendar itself edits the booking to that SEQUENCE in a client that
+    // writes no marker. The replay is refused on that copy, which carries no
+    // marker of the write: nothing shows the write landed, so the seat is
+    // still a calendar the booking was not written to, and the host's
+    // cancel there moves no money.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let mut provider = RecordingProvider::default();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let booked = paid_booking(
+        &fixture,
+        SessionKey::derive(b"unmarked-seat-edit"),
+        "pi_unmarked_seat_edit",
+        9,
+    );
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut provider,
+        NOW + 50,
+    )
+    .expect("capture");
+    let (start, end) = (MONDAY + 9 * 3_600, MONDAY + 9 * 3_600 + 30 * 60);
+    let uid = &booked.calendar.uid;
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::foreign(&seat, uid, start, end, 1, false)],
+        NOW + 60,
+    )
+    .expect("seat pull");
+
+    seat.write_unsent(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    let staged = seat.staged_sequence(&fixture.vault, uid);
+    seat.replay_refused_over(
+        &fixture.vault,
+        booked.calendar.event_ref,
+        &SeatChange::foreign(&seat, uid, start, end, staged, false),
+        NOW + 170,
+    );
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::foreign(
+            &seat,
+            uid,
+            start,
+            end,
+            staged + 1,
+            true,
+        )],
+        NOW + 200,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_unmarked_seat_edit"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a cancel from a seat the owner's write never landed on moves no money"
+    );
+}
+
+#[test]
+fn a_host_cancel_after_an_owner_write_replayed_over_its_own_marked_copy_refunds() {
+    // Review round 1 of #9903, the other side: the seat holds the booking
+    // under an Inbound passport. The provider stores the owner's live write
+    // at the next SEQUENCE and rewrites it, keeping its marker, but the
+    // answer is lost; the replay is refused on that copy, which carries the
+    // write's own marker: the write landed, so the seat is a calendar the
+    // booking was written to, and the host's cancel there refunds whole.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let mut provider = RecordingProvider::default();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let booked = paid_booking(
+        &fixture,
+        SessionKey::derive(b"marked-own-copy"),
+        "pi_marked_own_copy",
+        9,
+    );
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut provider,
+        NOW + 50,
+    )
+    .expect("capture");
+    let (start, end) = (MONDAY + 9 * 3_600, MONDAY + 9 * 3_600 + 30 * 60);
+    let uid = &booked.calendar.uid;
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::foreign(&seat, uid, start, end, 1, false)],
+        NOW + 60,
+    )
+    .expect("seat pull");
+
+    let locator = seat.resource_locator(uid);
+    let stored = seat.write_with_lost_answer(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    seat.replay_refused_over_rewritten_own_write(
+        &fixture.vault,
+        booked.calendar.event_ref,
+        &locator,
+        stored,
+        NOW + 170,
+    );
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::foreign(
+            &seat,
+            uid,
+            start,
+            end,
+            stored + 1,
+            true,
+        )],
+        NOW + 200,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_marked_own_copy"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the host's cancel on the seat the owner's write landed on refunds the whole deposit"
+    );
+}

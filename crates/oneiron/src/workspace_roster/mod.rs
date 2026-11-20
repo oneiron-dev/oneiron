@@ -89,6 +89,7 @@ pub(crate) use codec::roster_required_for_test;
 mod companion_bind;
 mod house_link;
 mod intent;
+mod one_vault;
 mod records;
 mod runner;
 mod scrub;
@@ -96,6 +97,7 @@ mod sharing;
 pub mod spend_scope;
 mod steps;
 mod work_companion;
+mod work_talk;
 
 use codec::*;
 use companion_bind::*;
@@ -125,6 +127,10 @@ pub use self::records::{
 // The bind-interval read: the room reads' statement byline (FIX row
 // SPEAKER-BYLINE-FOR-ORG) and its test door.
 pub(crate) use self::house_link::house_org_at_in_txn;
+pub(crate) use self::one_vault::{ONE_VAULT_ROW_KEY, OneVaultRead};
+pub use self::one_vault::{
+    ONE_VAULT_ROW_VERSION, OneVaultMode, OneVaultPolicy, OneVaultSetting, OneVaultSource,
+};
 pub(crate) use self::scrub::{
     erase_companion_principal_actor_in_txn, erase_member_actor_in_txn,
     erase_member_intent_actor_in_txn, member_actor_refs_in_txn,
@@ -134,6 +140,10 @@ pub use self::sharing::{
     RoomSharingView,
 };
 pub use self::work_companion::WorkCompanionPolicy;
+pub use self::work_talk::WorkTalkBinding;
+pub(crate) use self::work_talk::{
+    WORK_TALK_FIELD, admit_work_talk_witness, work_talk_binding_in_txn, work_talk_registered_in,
+};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::{
     codec::member_intent_key_pin_for_test, records::roster_member_key_pin_for_test,
@@ -272,6 +282,8 @@ pub(crate) use rooms::{
 
 pub use rooms::RoomClosedSet;
 pub(crate) use rooms::RoomThreadTask;
+#[cfg(feature = "sync")]
+pub(crate) use rooms::peer_room_settings_refusal_in_txn;
 pub(crate) use rooms::room_is_closed_in;
 pub(crate) use rooms::stored_room_pins_in;
 pub use rooms::{

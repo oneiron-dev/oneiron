@@ -290,7 +290,7 @@ pub fn observe_and_route(
     policy_pin: &str,
 ) -> Result<(ExtractionSelectionPlan, ExtractionRoutePlan), Error> {
     check_policy_pin(&config.policy_pin, policy_pin)?;
-    let (groups, observations) =
+    let (groups, observations, _) =
         crate::extraction_selection::observe_groups(client, attempt, now_ms, operands, policy_pin)?;
     let selection = crate::extraction_selection::select(&groups, &observations, now_ms, config)?;
     let plan = route(&selection, &observations, config)?;

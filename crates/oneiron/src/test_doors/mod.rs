@@ -242,6 +242,7 @@ pub mod msgpack_duplicate_key;
 pub mod msgpack_trailing;
 pub mod native_person_mint;
 pub mod nightly;
+pub mod nightly_arc_summary;
 pub mod note_bm25f_repair;
 #[cfg(feature = "sync")]
 pub mod note_fork_upload;
@@ -316,6 +317,7 @@ pub mod schedule;
 pub mod scope_summary;
 pub mod scoped_read_liveness;
 pub mod scratchpad_wake;
+pub mod sealed_pad_capsule;
 pub mod scrub_keeps_hint_and_name_rows;
 pub mod seat_park_model_step;
 #[cfg(feature = "sync")]
@@ -351,6 +353,7 @@ pub mod split_phrase_carrier;
 #[cfg(feature = "sync")]
 pub mod staged_vault_import;
 pub mod steward;
+pub mod stored_workspace_roster_rows;
 pub mod stretch_pack_finalize;
 pub mod substrate_reads;
 pub mod summarize_note_set;
@@ -377,7 +380,10 @@ pub mod wake_d1_park_release;
 pub mod wake_envelope_ack;
 pub mod weave_arc_rederive;
 pub mod witness_project;
+#[cfg(feature = "sync")]
+pub mod work_talk_replay;
 pub mod workaround_skills;
+pub mod workspace_onboarding_halt;
 pub mod workspace_token;
 pub mod world_access;
 #[cfg(feature = "sync")]

@@ -36,15 +36,9 @@
 //! bytes is online, an archive was fetched or the covered history was
 //! replayed independently.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::ops::Bound;
-
 use super::kernel::hex_lower;
 use crate::Vault;
-use crate::authority::{
-    AuthorityCheckpointRow, AuthorityFold, RestoredJoinEnrolment, VerifiedAuthorityCheckpoint,
-    adopted_evidence_in_txn,
-};
+use crate::authority::{AuthorityFold, RestoredJoinEnrolment, adopted_evidence_in_txn};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -54,14 +48,14 @@ use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::request_limits::page_limit_zero_as_one;
 use oneiron_authority::authority::{
     AuthorityKey, AuthorityLogEntry, AuthorityOp, FederationLifecycleKind, FullCopyMark,
-    OwnerWorkKind, authority_entry_hash, authority_log_entity_id_from_hash,
-    decode_authority_log_entry_body,
+    OwnerWorkKind, authority_entry_hash, decode_authority_log_entry_body,
 };
-use oneiron_contracts::authority::{AUTHORITY_HASH_LEN, AuthorityEntryHash};
 use oneiron_contracts::memory::MemoryResult;
 mod agent_grant_act;
 mod carried_act;
+mod cold_rows;
 mod issues;
+use cold_rows::{Covered, covered_after, lists_cold_rows, project_cold_row};
 use issues::FoldIssues;
 
 /// Rows a page holds when the query names no limit.
@@ -226,51 +220,6 @@ enum Examined<'a> {
     Stored(EntityId),
     /// A covered row the type index does not name.
     Cold(Covered<'a>),
-}
-
-/// A row the adopted image covers, with the entity id its hash derives and
-/// the signed body the image carries of it, decoded.
-#[derive(Clone, Copy)]
-struct Covered<'a> {
-    id: EntityId,
-    hash: &'a AuthorityEntryHash,
-    row: &'a AuthorityCheckpointRow,
-    body: Option<&'a AuthorityLogEntry>,
-    checkpoint: &'a VerifiedAuthorityCheckpoint,
-}
-
-/// The adopted image's covered rows past `after`, ascending by entity id,
-/// each with its carried body from `adopted`'s decoded bodies; none when
-/// nothing was adopted. An entry's id is its hash's first 16 bytes, so hash
-/// order is id order, and the first row past the cursor is the first hash
-/// above `after` padded with `0xff`.
-fn covered_after<'a>(
-    adopted: Option<(
-        &'a VerifiedAuthorityCheckpoint,
-        &'a BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    )>,
-    after: Option<EntityId>,
-) -> impl Iterator<Item = Result<Covered<'a>>> {
-    let start = after.map_or(Bound::Unbounded, |after| {
-        let mut floor = [0xffu8; AUTHORITY_HASH_LEN];
-        floor[..after.as_bytes().len()].copy_from_slice(after.as_bytes());
-        Bound::Excluded(floor)
-    });
-    adopted.into_iter().flat_map(move |(checkpoint, bodies)| {
-        checkpoint
-            .image()
-            .rows
-            .range((start, Bound::Unbounded))
-            .map(move |(hash, row)| -> Result<Covered<'a>> {
-                Ok(Covered {
-                    id: authority_log_entity_id_from_hash(hash)?,
-                    hash,
-                    row,
-                    body: bodies.get(hash),
-                    checkpoint,
-                })
-            })
-    })
 }
 
 fn key_hex(key: &AuthorityKey) -> String {
@@ -681,55 +630,6 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
         AuthorityOp::PolicySettingSet(set) => carried_act::classify_policy_setting(set),
         AuthorityOp::ExportAct(record) => carried_act::classify_export(record),
     }
-}
-
-/// Whether a page under `kinds` lists a cold row
-/// ([`AUTHORITY_AUDIT_COLD_ROWS_IGNORE_KIND_FILTER`]).
-fn lists_cold_rows(kinds: &BTreeSet<AuthorityAuditEventKind>) -> bool {
-    AUTHORITY_AUDIT_COLD_ROWS_IGNORE_KIND_FILTER || kinds.is_empty()
-}
-
-/// The cold row of `cold`. Where the image carries its body, the row names
-/// what the body says as a stored row of the entry would, the mark of a
-/// withdrawn mint and the op's own issue codes included.
-fn project_cold_row(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    cold: Covered<'_>,
-    fold: &AuthorityFold,
-    issues: &FoldIssues,
-) -> Result<ColdAuthorityAuditRow> {
-    let fold_valid = fold.valid_entries.contains(cold.hash);
-    let (carried_body, issue_codes) = match cold.body {
-        Some(entry) => {
-            let mut body = project_body(entry);
-            agent_grant_act::pair_marked_withdrawal(
-                vault,
-                txn,
-                &entry.op,
-                fold_valid,
-                &mut body.detail,
-            )?;
-            (Some(body), issues.codes(cold.hash, &entry.op))
-        }
-        None => (None, issues.cold_codes(cold.hash)),
-    };
-    Ok(ColdAuthorityAuditRow {
-        entry_ref: cold.id,
-        entry_hash: hex_lower(cold.hash),
-        checkpoint: hex_lower(&cold.checkpoint.id()),
-        signer_key: key_hex(&cold.row.signer),
-        seq: cold.row.seq,
-        parents: cold
-            .row
-            .parents
-            .iter()
-            .map(|parent| hex_lower(parent))
-            .collect(),
-        carried_body,
-        fold_valid,
-        issue_codes,
-    })
 }
 
 /// What `entry`'s signed body says, as a stored row and a cold row whose

@@ -7,6 +7,8 @@
 //! retained-copy check through [`retained_copy_admits`].
 //! `tests/archive_import_owner_installs_side_receipts.rs` stores a terms
 //! change's Share receipt through [`record_terms_change`].
+//! `tests/inquiry_leaving_holdings.rs` reads whether the standing honour
+//! setting's delete still runs through [`setting_delete_runs`].
 
 use crate::error::Result;
 use crate::inquiry::{
@@ -124,6 +126,23 @@ pub fn cancel_task_outside_write_door(
 #[must_use]
 pub fn held_inquiry_answer_count(vault: &Vault) -> usize {
     vault.inquiry_answers.held_count()
+}
+
+/// Whether the filed courtesy ask (`pact_id`, `nonce`) still runs the
+/// standing setting's delete operation `operation_id`: the check each of
+/// that operation's delete writes reads
+/// (`deletion/coop_delivery/setting_answer.rs`).
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn setting_delete_runs(
+    vault: &Vault,
+    pact_id: &[u8; 32],
+    nonce: &[u8; 16],
+    operation_id: EntityId,
+) -> Result<bool> {
+    vault.setting_delete_runs(pact_id, nonce, operation_id)
 }
 
 /// The tables whose actor scrub [`erase_actor_in_inquiry_tables`] runs.

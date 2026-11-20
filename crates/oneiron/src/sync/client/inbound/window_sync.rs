@@ -687,6 +687,19 @@ impl SyncClient {
                 payload,
                 || self.land_window_update(window, &key, payload),
             )?;
+            // ROOM-BODY-REPLICA-SETTINGS: the writer refused a room body this member
+            // update brought (its sender lost the power after admission). The refused
+            // carrier stays in the live document, and a cold replay would land it with
+            // no sender to judge. So the update is refused whole, before anything
+            // persists or sends it on: the document is dropped and the next open reads
+            // the durable state, which holds the room as it was. The retained work stays
+            // pending, and its replay meets admission again.
+            if crate::sync::ingest::member_body_refused(&self.vault) {
+                self.manager.discard_window(&key);
+                return Err(TransportError::InvalidPayload(
+                    "a federation peer cannot change a room setting it holds no power over",
+                ));
+            }
             if let Some(positions) = positions.as_ref()
                 && let Err(error) = positions.finish(&self.vault, &window.doc)
             {

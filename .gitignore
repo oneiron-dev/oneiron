@@ -47,3 +47,8 @@ __pycache__/
 /docs/agent-sdk/types.md
 /docs/agent-sdk/facade-types.md
 /docs/agent-sdk/verbs.md
+
+# The copies of the workspace lock that scripts/docedit/run_stemma_fork_unit_tests.sh makes for its run. It removes
+# them when it ends; a killed run can leave one, and it must not be committed (the fork has no lock of its own).
+/crates/oneiron-docedit/vendor/stemma-engine/Cargo.lock
+/crates/oneiron-docedit/vendor/stemma-diff/Cargo.lock

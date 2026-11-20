@@ -554,7 +554,9 @@ fn key_fold_proof(hasher: &mut blake3::Hasher, proof: Option<&VerifiedSlip>) {
 
 /// A bound room turn's ceiling: the room, the caller, the terms the turn
 /// holds now, its roster and peer keys (each fingerprinted, sorted, so
-/// order never moves the digest), its thread and whether it is personal.
+/// order never moves the digest), its thread and whether it is personal;
+/// and, only when set, that it reads under a work-talk binding, so every
+/// other ceiling keeps its digest.
 fn key_fold_room_turn(hasher: &mut blake3::Hasher, ceiling: Option<&RoomTurnCeiling>) {
     let Some(ceiling) = ceiling else {
         hasher.update(&[0u8]);
@@ -586,6 +588,9 @@ fn key_fold_room_turn(hasher: &mut blake3::Hasher, ceiling: Option<&RoomTurnCeil
     }
     key_fold_id(hasher, ceiling.branch);
     hasher.update(&[u8::from(ceiling.personal)]);
+    if ceiling.work_talk {
+        hasher.update(b"work_talk");
+    }
 }
 
 /// The asked-worlds ceiling: whether base reality reads, and each world in

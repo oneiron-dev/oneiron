@@ -21,283 +21,39 @@
 //! import of A's removal refuses with `AuthorityLogFull`, and A's setting act
 //! either is not counted at A or waits at B. The second test passes there too:
 //! it shows the act A carries unproven waits at B.
+//!
+//! Row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS: thirteen more carried ops
+//! refused any cosign, at shape or in their own fold, so no proof could
+//! land them past B's reserve. One rule now takes one cosign on each, judged
+//! once at the merge as a live owner key's proof. The last three tests: a
+//! proven world edit A carries lands and counts at B (red on main c8e2f038:
+//! the world edit's fold refused the cosign), a stranger's cosign counts at
+//! neither install (passes on main too), and the shape takes one cosign on
+//! a carried cancel or install join, never two (red on main: refused).
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test authority_log_owner_reserve_carry`.
 
-use std::sync::Arc;
-
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    AUTHORITY_LOG_SCHEMA_VERSION, ActSurface, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry,
-    AuthorityObservationPolicy, AuthorityOp, AuthoritySignature, AuthorityVaultId, HostSlipIssuer,
-    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
-    MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership, MachineRole, OwnerAct,
-    OwnerActKind, WorldPrivacy, WorldPrivacyEdit, authority_entry_hash, authority_transcript,
-    decode_authority_log_entry_body, machine_profile_proof_transcript,
+    AUTHORITY_LOG_SCHEMA_VERSION, ActSurface, AuthorityKey, AuthorityLogEntry, AuthorityOp,
+    AuthoritySignature, MachineOwnership, MachineRole, OwnerAct, OwnerActKind, WorldPrivacy,
+    WorldPrivacyEdit, authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
 };
-use oneiron::consent::AuthenticatedOwner;
 use oneiron::settings::undo_send::UndoSendSetting;
-use oneiron::store::GateDecisionId;
-use oneiron::{EntityId, ErrorKind, TimeRange, Vault, VaultConfig};
+use oneiron::test_doors::adopted_owner_work::this_install_machine_key;
+use oneiron::test_doors::host_root_row_signature::cosign_authority_row_as_host_root;
+use oneiron::{EntityId, ErrorKind};
+use oneiron_authority::authority::{
+    FrontierJoin, FrontierJoinFamily, FrontierJoinScope, OwnerWorkCancel,
+};
 
-/// The test's memory floor on B, 4 MiB: A's history folds well under it
-/// (asserted), and about ninety chained rows pass it, as in
-/// `authority_log_owner_reserve.rs`.
-const FLOOR_BYTES: u64 = 4 * 1024 * 1024;
+#[path = "owner_reserve/two_installs.rs"]
+mod two_installs;
 
-/// The most flood rows a test signs before it gives up.
-const FLOOD_CAP: u64 = 400;
-
-const AT: TimeRange = TimeRange { start: 1, end: 1 };
-
-/// Install A: a rooted vault as a host starts one, the owner bound under the
-/// host root and this install profiled, so it carries the owner's answers.
-struct Rooted {
-    _dir: tempfile::TempDir,
-    vault: Vault,
-    owner: EntityId,
-    proof: AuthenticatedOwner,
-    vault_id: AuthorityVaultId,
-}
-
-fn rooted() -> Rooted {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("install A");
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-    let issuer: HostSlipIssuer = oneiron::test_support::provision_engine_machines(&vault);
-    vault
-        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
-        .expect("install A's live machine profile");
-    let owner = vault.ensure_embedded_owner_actor().expect("the owner");
-    oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
-    let proof = vault
-        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
-        .expect("an owner proof");
-    let vault_id = vault
-        .authority_vault_id()
-        .expect("the fold")
-        .expect("a rooted vault");
-    Rooted {
-        _dir: dir,
-        vault,
-        owner,
-        proof,
-        vault_id,
-    }
-}
-
-/// A holds the test host's root as a self-host server holds its own, so
-/// `Vault::owner_proof_signer` offers it as the owner key's proof.
-fn hold_owner_key(rooted: &Rooted) {
-    rooted
-        .vault
-        .hold_checkpoint_root_signer(Arc::new(oneiron::test_support::test_host_issuer()));
-}
-
-/// A machine the owner admitted on A, whose install key the test holds: no
-/// owner key, no slip issuer, and neither A's key nor B's.
-struct Flooder {
-    machine: EntityId,
-    signing: SigningKey,
-    /// The entry that carried its admission: the flood chain's first parent.
-    admission: AuthorityEntryHash,
-}
-
-fn admit_flooder(rooted: &Rooted) -> Flooder {
-    let signing = SigningKey::from_bytes(&[0xF1; 32]);
-    let machine = EntityId::now();
-    let machine_key = signing.verifying_key().to_bytes();
-    let encryption_key = MachineEncryptionKey {
-        suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-        key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
-    };
-    let machine_proof = signing
-        .sign(&machine_profile_proof_transcript(
-            &rooted.vault_id,
-            machine,
-            &machine_key,
-            MachineDeviceClass::Computer,
-            &encryption_key,
-        ))
-        .to_bytes();
-    let request = MachineEnrolmentRequest {
-        vault_id: rooted.vault_id,
-        machine,
-        machine_key,
-        device_class: MachineDeviceClass::Computer,
-        encryption_key,
-        machine_proof,
-        restored_from: None,
-    };
-    let folded = rooted
-        .vault
-        .enroll_machine(
-            &rooted.proof,
-            ActSurface::ThisInstall,
-            &request,
-            MachineRole::Owned(MachineOwnership::Yours),
-            None,
-        )
-        .expect("the owner admits the machine")
-        .into_standing()
-        .expect("the owner's admission stands");
-    assert!(folded.is_mine(None), "the admitted machine is the owner's");
-    let admission = folded
-        .chains()
-        .map(|(_, head)| head)
-        .max_by_key(|head| head.profile.revision)
-        .expect("the admission's revision")
-        .entry;
-    Flooder {
-        machine,
-        signing,
-        admission,
-    }
-}
-
-/// The flooder's own edit of `world` at `seq` on `parent`, signed by its install
-/// key: an op that key vouches for, so a door lands it as it lands any
-/// vouched key's row. The world need not exist for the door.
-fn flood_row(
-    rooted: &Rooted,
-    flooder: &Flooder,
-    world: EntityId,
-    seq: u64,
-    parent: AuthorityEntryHash,
-) -> AuthorityLogEntry {
-    let op = AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
-        world,
-        act: OwnerAct::by_owner(
-            rooted.owner,
-            OwnerActKind::WorldPrivacy,
-            world,
-            ActSurface::ThisInstall,
-            [0; 32],
-        ),
-        machine: flooder.machine,
-        settings: WorldPrivacy::default(),
-    });
-    let key = AuthorityKey::Ed25519(flooder.signing.verifying_key().to_bytes());
-    let mut entry = AuthorityLogEntry {
-        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
-        vault_id: Some(rooted.vault_id),
-        seq,
-        parent_hashes: vec![parent],
-        op,
-        signer: AuthoritySignature {
-            suite: key.suite(),
-            public_key: key,
-            signature: vec![0; 64],
-        },
-        cosigns: Vec::new(),
-        ts: seq + 1,
-    };
-    let transcript = authority_transcript(&entry).expect("transcript");
-    entry.signer.signature = flooder.signing.sign(&transcript).to_bytes().to_vec();
-    entry
-}
-
-fn stored_history(vault: &Vault) -> Vec<Vec<u8>> {
-    vault
-        .export_signed_authority_history()
-        .expect("the install's history")
-}
-
-/// Install B: a second install of A's vault. It has its own directory and
-/// keystore, so its own install key, and it takes A's history as sync does.
-struct Second {
-    _dir: tempfile::TempDir,
-    vault: Vault,
-    /// The history B took from A.
-    taken: Vec<Vec<u8>>,
-}
-
-/// B takes A's history, sets its memory floor, and the flooder signs one
-/// chain on its admission at B until B's door holds a row at the owner
-/// reserve. A row past B's floor, or the cap with no row held, fails the
-/// fixture.
-fn second_install_at_its_reserve(rooted: &Rooted, flooder: &Flooder) -> Second {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("install B");
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-    let taken = stored_history(&rooted.vault);
-    vault
-        .import_signed_authority_history(&taken)
-        .expect("B takes A's history");
-    assert_eq!(
-        vault.authority_vault_id().expect("B's fold"),
-        Some(rooted.vault_id),
-        "B holds A's vault"
-    );
-    vault
-        .set_authority_observation_policy(AuthorityObservationPolicy {
-            log_fold_memory_floor_bytes: Some(FLOOR_BYTES),
-            ..AuthorityObservationPolicy::default()
-        })
-        .expect("B's floor");
-    let fold = vault.authority_fold().expect("B's fold");
-    assert!(
-        !fold.authority_log_past_bound() && !fold.vault_root_is_conflicted(),
-        "A's history folds at B under the test's floor"
-    );
-    let world = EntityId::now();
-    let mut parent = flooder.admission;
-    for landed in 0..FLOOD_CAP {
-        let row = flood_row(rooted, flooder, world, landed + 1, parent);
-        match vault.put_authority_log_entry(&row, AT, 1) {
-            Ok(_) => parent = authority_entry_hash(&row).expect("hash"),
-            Err(error) if error.kind() == ErrorKind::AuthorityLogFull => {
-                assert!(landed > 0, "rows under B's owner reserve land as before");
-                return Second {
-                    _dir: dir,
-                    vault,
-                    taken,
-                };
-            }
-            Err(error) => panic!("flood row {landed} was refused at B, not held: {error}"),
-        }
-        assert!(
-            !vault
-                .authority_fold()
-                .expect("B's fold")
-                .authority_log_past_bound(),
-            "after {landed} flood rows B's fold passed its floor with no row held at its reserve"
-        );
-    }
-    panic!("{FLOOD_CAP} flood rows landed at B and none waited at its owner reserve");
-}
-
-/// The rows A stored since B took its history, decoded with their hashes.
-fn written_since(rooted: &Rooted, second: &Second) -> Vec<(Vec<u8>, AuthorityLogEntry)> {
-    stored_history(&rooted.vault)
-        .into_iter()
-        .filter(|row| !second.taken.contains(row))
-        .map(|row| {
-            let entry = decode_authority_log_entry_body(&row).expect("A's row");
-            (row, entry)
-        })
-        .collect()
-}
-
-/// A's one row since B took its history that carries `wanted`.
-fn the_row_a_wrote(
-    rooted: &Rooted,
-    second: &Second,
-    wanted: impl Fn(&AuthorityOp) -> bool,
-) -> (Vec<Vec<u8>>, AuthorityLogEntry, AuthorityEntryHash) {
-    let written = written_since(rooted, second);
-    let rows: Vec<Vec<u8>> = written.iter().map(|(row, _)| row.clone()).collect();
-    let mut matching = written.into_iter().filter(|(_, entry)| wanted(&entry.op));
-    let (_, entry) = matching.next().expect("A signed the act");
-    assert!(matching.next().is_none(), "A signed the act once");
-    let hash = authority_entry_hash(&entry).expect("hash");
-    (rows, entry, hash)
-}
-
-fn removes(op: &AuthorityOp, machine: EntityId) -> bool {
-    matches!(op, AuthorityOp::MachineProfile(profile)
-        if profile.machine == machine && profile.role == MachineRole::Removed)
-}
+use two_installs::{
+    AT, Rooted, admit_flooder, heads_of_a, hold_owner_key, removes, rooted,
+    second_install_at_its_reserve, stored_history, the_row_a_wrote,
+};
 
 /// The owner removes the flooding machine on A, where A holds an owner key.
 /// A signs the removal under its install key with the owner key's proof
@@ -458,5 +214,239 @@ fn the_owners_setting_another_install_proves_lands_past_this_installs_reserve() 
         entry.cosigns.len(),
         1,
         "A signed the setting act with one owner key's proof beside its install key"
+    );
+}
+
+/// The cosign a test puts beside A's install key on a row A carries.
+enum Cosign {
+    /// The owner key A holds: the test host root.
+    OwnerKey,
+    /// A key no roster holds.
+    Stranger(SigningKey),
+}
+
+fn signature_slot(key: AuthorityKey) -> AuthoritySignature {
+    AuthoritySignature {
+        suite: key.suite(),
+        public_key: key,
+        signature: vec![0; 64],
+    }
+}
+
+/// A world edit install A carries for the owner under its install key, on
+/// the heads of A's history, at the next sequence of that key there, cosigned as
+/// `cosign` says: a row of the carried ops whose own fold reads no owner
+/// proof (row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS). The test signs it,
+/// as A's world edit door signs one, since that door attaches no proof yet.
+fn world_edit_a_carries(rooted: &Rooted, cosign: Cosign) -> AuthorityLogEntry {
+    let install = this_install_machine_key(&rooted.vault).expect("A's install key");
+    let machine = rooted
+        .vault
+        .local_machine()
+        .expect("install A")
+        .expect("install A's machine")
+        .id;
+    let key = AuthorityKey::Ed25519(install.verifying_key().to_bytes());
+    let seq = stored_history(&rooted.vault)
+        .iter()
+        .map(|body| decode_authority_log_entry_body(body).expect("a stored row"))
+        .filter(|row| *row.signer_key() == key)
+        .map(|row| row.seq)
+        .max()
+        .unwrap_or(0)
+        + 1;
+    let world = EntityId::now();
+    let op = AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+        world,
+        act: OwnerAct::by_owner(
+            rooted.owner,
+            OwnerActKind::WorldPrivacy,
+            world,
+            ActSurface::ThisInstall,
+            [0; 32],
+        ),
+        machine,
+        settings: WorldPrivacy::default(),
+    });
+    let cosigner = match &cosign {
+        Cosign::OwnerKey => oneiron::test_support::test_host_issuer().public_key(),
+        Cosign::Stranger(signing) => AuthorityKey::Ed25519(signing.verifying_key().to_bytes()),
+    };
+    let mut entry = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(rooted.vault_id),
+        seq,
+        parent_hashes: heads_of_a(rooted),
+        op,
+        signer: signature_slot(key),
+        cosigns: vec![signature_slot(cosigner)],
+        ts: seq + 1,
+    };
+    let transcript = authority_transcript(&entry).expect("transcript");
+    entry.signer.signature = install.sign(&transcript).to_bytes().to_vec();
+    match cosign {
+        Cosign::OwnerKey => cosign_authority_row_as_host_root(
+            &oneiron::test_support::test_host_issuer(),
+            &mut entry,
+        )
+        .expect("the owner key's proof"),
+        Cosign::Stranger(signing) => {
+            entry.cosigns[0].signature = signing.sign(&transcript).to_bytes().to_vec();
+        }
+    }
+    entry
+}
+
+/// Row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS: a world edit A carries
+/// with the proof of the owner key it holds lands past B's owner reserve and
+/// B's fold counts it. The merge judges the one cosign once, at the edit's
+/// parent state, as a live owner key's proof. Red on main c8e2f038: the
+/// world edit's own transition refuses any cosign, so B does not count it.
+#[test]
+fn a_world_edit_another_install_proves_lands_past_this_installs_reserve() {
+    let rooted = rooted();
+    hold_owner_key(&rooted);
+    let flooder = admit_flooder(&rooted);
+    let second = second_install_at_its_reserve(&rooted, &flooder);
+    let edit = world_edit_a_carries(&rooted, Cosign::OwnerKey);
+    let hash = authority_entry_hash(&edit).expect("hash");
+    second
+        .vault
+        .put_authority_log_entry(&edit, AT, 1)
+        .expect("B lands the world edit A carries with the owner key's proof past its reserve");
+    let fold = second.vault.authority_fold().expect("B's fold");
+    assert!(
+        fold.valid_entries.contains(&hash),
+        "B's fold counts the proven world edit"
+    );
+    assert!(
+        !fold.authority_log_past_bound() && !fold.vault_root_is_conflicted(),
+        "B's fold stays under its floor and its root stands"
+    );
+}
+
+/// The control: a cosign by a key no roster holds is no proof. Past B's
+/// reserve the edit is not the owner's work, so it waits at B's door; at A,
+/// with no reserve in play, the fold refuses it as a forged proof. Passes
+/// on main too.
+#[test]
+fn a_world_edit_cosigned_by_no_owner_key_counts_at_neither_install() {
+    let rooted = rooted();
+    hold_owner_key(&rooted);
+    let flooder = admit_flooder(&rooted);
+    let second = second_install_at_its_reserve(&rooted, &flooder);
+    let stranger = SigningKey::from_bytes(&[0x5C; 32]);
+    let edit = world_edit_a_carries(&rooted, Cosign::Stranger(stranger));
+    let hash = authority_entry_hash(&edit).expect("hash");
+    let at_b = second.vault.put_authority_log_entry(&edit, AT, 1);
+    assert!(
+        at_b.as_ref()
+            .is_err_and(|error| error.kind() == ErrorKind::AuthorityLogFull),
+        "B's door holds the edit a stranger cosigned at its reserve: {at_b:?}"
+    );
+    assert!(
+        !second
+            .vault
+            .authority_fold()
+            .expect("B's fold")
+            .valid_entries
+            .contains(&hash),
+        "B does not count it"
+    );
+    let at_a = rooted.vault.put_authority_log_entry(&edit, AT, 1);
+    assert!(
+        !rooted
+            .vault
+            .authority_fold()
+            .expect("A's fold")
+            .valid_entries
+            .contains(&hash),
+        "A's fold refuses the edit a stranger cosigned ({at_a:?})"
+    );
+}
+
+/// A carried entry of an op whose shape refused any cosign, an owner work
+/// cancel or an install's frontier join, now takes its carrier's install
+/// key beside one cosign, which the fold judges; never two. An anchor's
+/// join stays signed alone. Red on main c8e2f038 for the one-cosign shapes:
+/// owner work and frontier joins refused any cosign at shape.
+#[test]
+fn a_carried_cancel_or_install_join_takes_one_cosign_by_shape() {
+    let carrier = SigningKey::from_bytes(&[0xA1; 32]);
+    let first = SigningKey::from_bytes(&[0xA2; 32]);
+    let second = SigningKey::from_bytes(&[0xA3; 32]);
+    let machine = EntityId::now();
+    let request = [0x11; 32];
+    let cancel = AuthorityOp::OwnerWorkCancel(OwnerWorkCancel {
+        carrier: machine,
+        act: OwnerAct::by_owner(
+            EntityId::now(),
+            OwnerActKind::RootRequest,
+            machine,
+            ActSurface::ThisInstall,
+            OwnerWorkCancel::seen_for(request),
+        ),
+        request,
+    });
+    let join = |family| {
+        AuthorityOp::FrontierJoin(FrontierJoin {
+            family,
+            scope: FrontierJoinScope::Main,
+        })
+    };
+    let entry = |op: AuthorityOp, cosigners: &[&SigningKey]| {
+        let mut keys: Vec<AuthorityKey> = cosigners
+            .iter()
+            .map(|cosigner| AuthorityKey::Ed25519(cosigner.verifying_key().to_bytes()))
+            .collect();
+        keys.sort();
+        let mut row = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some([0x7A; 32]),
+            seq: 1,
+            parent_hashes: vec![[0x01; 32], [0x02; 32]],
+            op,
+            signer: signature_slot(AuthorityKey::Ed25519(carrier.verifying_key().to_bytes())),
+            cosigns: keys.into_iter().map(signature_slot).collect(),
+            ts: 1,
+        };
+        let transcript = authority_transcript(&row).expect("transcript");
+        row.signer.signature = carrier.sign(&transcript).to_bytes().to_vec();
+        for cosign in &mut row.cosigns {
+            let signing = [&first, &second]
+                .into_iter()
+                .find(|key| {
+                    AuthorityKey::Ed25519(key.verifying_key().to_bytes()) == cosign.public_key
+                })
+                .expect("a cosigner");
+            cosign.signature = signing.sign(&transcript).to_bytes().to_vec();
+        }
+        row
+    };
+    for (name, op) in [
+        ("an owner work cancel", cancel),
+        (
+            "an install's frontier join",
+            join(FrontierJoinFamily::Install(machine)),
+        ),
+    ] {
+        assert!(
+            entry(op.clone(), &[]).validate_shape().is_ok(),
+            "{name} signed alone keeps its shape"
+        );
+        assert!(
+            entry(op.clone(), &[&first]).validate_shape().is_ok(),
+            "{name} takes one cosign beside its carrier"
+        );
+        assert!(
+            entry(op, &[&first, &second]).validate_shape().is_err(),
+            "{name} never takes two"
+        );
+    }
+    assert!(
+        entry(join(FrontierJoinFamily::Anchor), &[&first])
+            .validate_shape()
+            .is_err(),
+        "an anchor's join stays signed alone"
     );
 }

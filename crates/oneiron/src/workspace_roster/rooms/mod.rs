@@ -28,6 +28,8 @@ mod offer_settle;
 mod offers;
 mod participants;
 mod participation;
+#[cfg(feature = "sync")]
+mod peer_settings;
 mod pins;
 mod private_threads;
 mod replica;
@@ -138,6 +140,8 @@ pub(crate) use participation::{
 };
 use participation::{Claimant, agent_off_room_in_txn, require_thread_standing};
 pub(in crate::workspace_roster) use participation::{require_reader, require_thread_reader};
+#[cfg(feature = "sync")]
+pub(crate) use peer_settings::peer_room_settings_refusal_in_txn;
 pub(crate) use pins::stored_room_pins_in;
 pub use pins::{RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply};
 pub use private_threads::{PrivateThreadMetadata, RoomPrivateThreadsRequest};

@@ -38,6 +38,7 @@ use serde::Deserialize;
 
 use super::hosted_selection::{self, HostedDiscovery, HostedVault};
 use super::session_binding::{self, SessionBinding};
+use crate::cli::HookHost;
 use crate::commands::ConfigFiles;
 use crate::commands::local_servers::{self, LocalServer};
 use crate::commands::user_service::{self, InstalledService};
@@ -240,16 +241,16 @@ pub(super) enum HandOverTarget {
     Withheld,
 }
 
-/// Where a hand-over lands the log of the session `session`, by what its
-/// starts bound ([`session_binding`]): the selected hosted vault when every
+/// Where a hand-over lands the log of `host`'s session `session`, by what
+/// its starts bound ([`session_binding`]): the selected hosted vault when every
 /// start bound that one and it is still selected; no vault when they bound
 /// a hosted vault no longer selected, or more than one vault; else, for a
 /// pin, a local vault, no vault, or a session whose start recorded nothing,
 /// the local queue ([`running_config`]). A log never goes to a vault, hosted
 /// or local, that the session did not bind. No server is asked: a local
 /// hand-over only writes a file, and a hosted one's call is its own probe.
-pub(super) fn hand_over_target(session: Option<&str>) -> HandOverTarget {
-    match session.and_then(session_binding::bound) {
+pub(super) fn hand_over_target(host: HookHost, session: Option<&str>) -> HandOverTarget {
+    match session.and_then(|session| session_binding::bound(host, session)) {
         None | Some(SessionBinding::Local) => HandOverTarget::Local(running_config()),
         Some(SessionBinding::Hosted(bound)) => match hosted_selection::discover() {
             HostedDiscovery::Selected(vault) if bound.names(&vault) => {

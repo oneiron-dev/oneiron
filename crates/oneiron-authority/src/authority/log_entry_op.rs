@@ -335,6 +335,23 @@ impl AuthorityLogEntry {
     pub fn signer_key(&self) -> &AuthorityKey {
         &self.signer.public_key
     }
+
+    /// The signers of an act's entry its carrier signs: one Ed25519 install
+    /// key, the carrier's, alone or beside one cosign, which `oneiron`'s fold
+    /// takes only as a live owner key's proof (row
+    /// OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS; Engine ANSWER
+    /// OWNER-RESERVE-CROSS-INSTALL-GAPS = A). The one shape rule of every
+    /// carried op that once refused any cosign: owner work's request,
+    /// result, cancel, import mark and permit piece, a residence result,
+    /// world key wraps and an install's frontier join. Their owner-anchored
+    /// forms, a kit push, its permit pieces and an anchor's join, stay
+    /// signed alone.
+    pub(super) fn validate_carried_signers(&self) -> Result<()> {
+        if self.signer.suite != AuthoritySignatureSuite::Ed25519 || self.cosigns.len() > 1 {
+            return Err(invalid_authority());
+        }
+        Ok(())
+    }
 }
 
 /// Encodes an authority entry to canonical MessagePack bytes.

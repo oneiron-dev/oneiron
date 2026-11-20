@@ -10,6 +10,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 
+use super::ceiling::OwnerRowAction;
 use super::constants::{
     POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_ROW_ACTION_KEY,
     POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY, POLICY_ROW_TEXT_KEY, POLICY_ROW_WORLD_REF_KEY,
@@ -124,6 +125,11 @@ impl PolicyRowChange {
     }
 }
 
+/// The reason a holder who is not the vault's Owner is refused a change that
+/// ends or weakens a stored withholding row's withholding
+/// ([`ends_withholding`]).
+const POLICY_ROW_WITHHOLDING_OWNER_ONLY_REASON: &str = "check_in.policy_row:withholding_owner_only";
+
 fn invalid(message: &'static str) -> Error {
     Error::InvalidConfig(message.to_owned())
 }
@@ -183,6 +189,49 @@ fn row_key(row: &Value) -> Result<(&str, PolicyRowScope)> {
         _ => return Err(invalid("ambiguous owner policy row scope")),
     };
     Ok((row_ref, scope))
+}
+
+/// Whether `change` ends or weakens the withholding of `row`, the stored row it
+/// targets: `row` is an active Block or Reword row, read as the manifest
+/// decoder reads it, and `change` removes it, or edits it to an action other
+/// than Block or its own, or edits its text. Rewriting the rubric can disable
+/// the row as surely as a removal (Engine ruling 21 Nov 01:29 = B). An add, a
+/// why draft, an edit that keeps the text and makes the row Block or keeps its
+/// action, and any change of a Warn, RouteToHelp or inactive row withdraw no
+/// withholding.
+fn ends_withholding(row: &Value, change: &PolicyRowChange) -> Result<bool> {
+    let Value::Map(entries) = row else {
+        return Err(invalid("malformed owner policy row"));
+    };
+    let active = match field(entries, POLICY_ROW_ACTIVE_KEY)? {
+        None => true,
+        Some(Value::Boolean(active)) => *active,
+        Some(_) => return Err(invalid("invalid owner policy row active flag")),
+    };
+    let stored = match field(entries, POLICY_ROW_ACTION_KEY)? {
+        None => OwnerRowAction::Warn,
+        Some(action) => action
+            .as_str()
+            .and_then(super::decode::parse_owner_row_action)
+            .ok_or_else(|| invalid("invalid owner policy row action"))?,
+    };
+    if !active || !matches!(stored, OwnerRowAction::Block | OwnerRowAction::Reword) {
+        return Ok(false);
+    }
+    Ok(match change {
+        PolicyRowChange::Remove { .. } => true,
+        PolicyRowChange::Edit { text, action, .. }
+        | PolicyRowChange::EditWithWhy { text, action, .. } => {
+            let keeps_text =
+                field(entries, POLICY_ROW_TEXT_KEY)?.and_then(Value::as_str) == Some(text.as_str());
+            let keeps_withholding = *action == PolicyRowAction::Block
+                || super::decode::parse_owner_row_action(action.as_str()) == Some(stored);
+            !(keeps_text && keeps_withholding)
+        }
+        PolicyRowChange::Add { .. }
+        | PolicyRowChange::AddWithWhy { .. }
+        | PolicyRowChange::DraftWhy { .. } => false,
+    })
 }
 
 fn target(change: &PolicyRowChange) -> (&str, &PolicyRowScope) {
@@ -306,9 +355,10 @@ pub(crate) fn apply_owner_policy_row_change_in_txn(
     now: u64,
 ) -> Result<()> {
     let actor = owner.revalidate_person_in_txn(vault, txn)?;
-    // Only an owner switches the owner-policy plane on: a holder's grant names
-    // one row in one scope, never the vault-wide enable flag.
-    let may_enable = crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?;
+    // Only an owner switches the owner-policy plane on, and only an owner ends
+    // a stored row's withholding: a holder's grant names one row in one scope,
+    // never the vault-wide enable flag.
+    let is_owner = crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?;
     let (row_ref, scope) = target(change);
     validate_target(row_ref, scope)?;
     let id = default_policy_manifest_id()?;
@@ -377,6 +427,19 @@ pub(crate) fn apply_owner_policy_row_change_in_txn(
             found = Some(index);
         }
     }
+    // CHECK-IN-POLICY-ROW-HOLDER-NO-JUDGE (Engine ruling 21 Nov 00:30 = B): a
+    // holder's change inside its named powers is its own proof and lands at
+    // once, in either direction (ARCH-0082:113, DEC-0005:58), except a C act,
+    // which moves only by the Owner's own row (ARCH-0082:243). On this table
+    // the C act is turning a withholding control off.
+    if !is_owner
+        && let Some(index) = found
+        && ends_withholding(&rows[index], change)?
+    {
+        return Err(Error::InvalidConfig(
+            POLICY_ROW_WITHHOLDING_OWNER_ONLY_REASON.to_owned(),
+        ));
+    }
     match change {
         PolicyRowChange::Add { text, action, .. }
         | PolicyRowChange::AddWithWhy { text, action, .. } => {
@@ -443,7 +506,7 @@ pub(crate) fn apply_owner_policy_row_change_in_txn(
         if !matches!(entries[enabled_index].1, Value::Boolean(_)) {
             return Err(invalid("malformed owner policy enabled flag"));
         }
-        if may_enable {
+        if is_owner {
             entries[enabled_index].1 = Value::Boolean(true);
         }
     }

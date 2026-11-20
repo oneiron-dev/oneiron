@@ -124,13 +124,16 @@ impl MemoriesSection {
     }
 
     /// Re-runs the projection's ordering and budget over the current rows.
+    /// The rows an earlier pass cut stay counted.
     pub(super) fn refinish(&mut self) {
+        let earlier = self.cut;
         *self = finish_projection(
             std::mem::take(&mut self.rows),
             self.budget,
             self.companion.clone(),
             self.disclosure.clone(),
         );
+        self.cut.accumulate(earlier);
     }
 }
 

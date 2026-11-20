@@ -141,14 +141,74 @@ pub(crate) fn room_host_in_txn(
         Err(Error::Record(crate::error::RecordError::ConversationDenied)) => return Ok(None),
         Err(error) => return Err(error),
     };
+    host_of_role_in(vault, txn, room, role)
+}
+
+/// [`room_host_in_txn`] for PERSON `id`, acting as a human when `human`,
+/// without the write-actor check [`role_in`] makes first: a federation
+/// peer's room body is judged by it, the grant having authenticated its
+/// sender (ROOM-BODY-REPLICA-SETTINGS). A non-member is no host.
+#[cfg(feature = "sync")]
+pub(crate) fn person_room_host_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    id: EntityId,
+    human: bool,
+) -> Result<Option<RoomHost>> {
+    match person_role_in(vault, txn, room, id, human) {
+        Ok(role) => host_of_role_in(vault, txn, room, role),
+        Err(Error::Record(crate::error::RecordError::ConversationDenied)) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether PERSON `id` may delegate room roles in `room`, as the role door
+/// asks of its caller ([`Vault::set_room_role`]), without the write-actor
+/// check: for a federation peer's room body (ROOM-BODY-REPLICA-SETTINGS).
+#[cfg(feature = "sync")]
+pub(crate) fn person_delegates_roles_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    id: EntityId,
+    human: bool,
+) -> Result<bool> {
+    match person_role_in(vault, txn, room, id, human) {
+        Ok(role) => role_delegates_in(vault, txn, room, role),
+        Err(Error::Record(crate::error::RecordError::ConversationDenied)) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// The host standing `role` gives in `room`: an owner hosts, and any other
+/// role the room policy lets delegate.
+fn host_of_role_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    role: RoomRole,
+) -> Result<Option<RoomHost>> {
     if role == RoomRole::Owner {
         return Ok(Some(RoomHost::Owner));
     }
+    Ok(role_delegates_in(vault, txn, room, role)?.then_some(RoomHost::Delegate))
+}
+
+/// Whether the room policy lets `role` delegate room roles in `room`.
+fn role_delegates_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    role: RoomRole,
+) -> Result<bool> {
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
-    Ok(
-        crate::gate::room_policy_allows(&policy, room, crate::gate::RoomAction::Delegate, role)
-            .then_some(RoomHost::Delegate),
-    )
+    Ok(crate::gate::room_policy_allows(
+        &policy,
+        room,
+        crate::gate::RoomAction::Delegate,
+        role,
+    ))
 }
 
 impl Vault {
@@ -177,13 +237,7 @@ impl Vault {
     ) -> Result<u64> {
         self.with_write_txn_grouped(|txn| {
             let actor_role = role_in(self, txn, room, actor)?;
-            let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
-            if !crate::gate::room_policy_allows(
-                &policy,
-                room,
-                crate::gate::RoomAction::Delegate,
-                actor_role,
-            ) {
+            if !role_delegates_in(self, txn, room, actor_role)? {
                 return Err(denied());
             }
             require_kind(self, txn, person, ENTITY_TYPE_PERSON)?;

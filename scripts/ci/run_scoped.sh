@@ -2,9 +2,11 @@
 # run_scoped.sh clippy|test|featureless: the cargo work of one CI job, sized by scripts/ci/ci_scope.py.
 # Scoped (PRs, main pushes): clippy for touched packages and their reverse dependents; tests for touched
 # packages only, and for `oneiron` only the touched top-level modules. Full runs the complete gate.
+# The vendored stemma fork is outside the workspace: `test` runs its own unit tests through
+# scripts/docedit/run_stemma_fork_unit_tests.sh when the fork changed, and on every full run.
 # Cargo compilation/test steps use --locked: a PR must commit its dependency resolution.
 # Inputs (from the `changes` job): SCOPE_FULL, SCOPE_PACKAGES, SCOPE_DEPENDENTS, SCOPE_ONEIRON,
-# SCOPE_MODULES, SCOPE_IT.
+# SCOPE_MODULES, SCOPE_IT, SCOPE_STEMMA_FORK.
 set -euo pipefail
 mode=${1:?clippy|test|featureless}
 full=${SCOPE_FULL:-true}
@@ -13,6 +15,7 @@ dependents=${SCOPE_DEPENDENTS:-}
 oneiron=${SCOPE_ONEIRON:-false}
 modules=${SCOPE_MODULES:-ALL}
 it=${SCOPE_IT:-false}
+stemma_fork=${SCOPE_STEMMA_FORK:-false}
 
 # Packages other than the core crate; the napi crate has hostless Rust tests.
 others=()
@@ -67,6 +70,7 @@ test)
     # The full gate is the reference Linux host's run: the broker's paid-leg fixture runs with the
     # broker as a second OS user, and a host that cannot run one fails here instead of skipping.
     run scripts/ci/broker-fixture.sh
+    run scripts/docedit/run_stemma_fork_unit_tests.sh
     exit 0
   fi
   [ ${#others[@]} -gt 0 ] && run cargo nextest run --locked "${others[@]}" --all-features --no-fail-fast --no-tests=pass
@@ -78,7 +82,8 @@ test)
     fi
     [ "$it" = true ] && run cargo nextest run --locked -p oneiron --all-features --no-fail-fast --no-tests=pass -E 'kind(test)'
   fi
-  [ ${#others[@]} -gt 0 ] || [ "$oneiron" = true ] || echo "no Rust package changed: nothing to test"
+  [ "$stemma_fork" = true ] && run scripts/docedit/run_stemma_fork_unit_tests.sh
+  [ ${#others[@]} -gt 0 ] || [ "$oneiron" = true ] || [ "$stemma_fork" = true ] || echo "no Rust package changed: nothing to test"
   ;;
 featureless)
   if [ "$full" = true ]; then

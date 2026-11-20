@@ -468,13 +468,21 @@ impl Vault {
     ) -> Result<OwnerWorkReceipt> {
         self.with_write_txn(|txn| {
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let owner_authored = owner.owner_answer_in_txn(self, txn)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
             let target = match fold.owner_work_request(&request) {
                 Some(asked) if asked.kind() == OwnerWorkKind::Root => asked.act.target,
                 _ => return Err(super::refused(NO_ROOT_REQUEST)),
             };
             if fold.owner_work_cancels(&request).next().is_none() {
-                self.record_owner_work_cancel_in_txn(txn, actor, surface, target, request)?;
+                self.record_owner_work_cancel_in_txn(
+                    txn,
+                    actor,
+                    owner_authored.as_ref(),
+                    surface,
+                    target,
+                    request,
+                )?;
             }
             let after = self.authority_view_readonly_in_txn(txn)?;
             OwnerWorkReceipt::of(&after, request).ok_or_else(invalid_authority)

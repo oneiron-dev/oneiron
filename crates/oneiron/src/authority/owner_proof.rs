@@ -65,6 +65,37 @@ pub(super) fn owner_proof_key(
     }
 }
 
+/// Whether `op` is a carried act whose own transition reads no owner proof,
+/// so the merge judges its one cosign by [`owner_proof_key`] before that
+/// transition runs (row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS; Engine
+/// ANSWER OWNER-RESERVE-CROSS-INSTALL-GAPS = A): owner work's request,
+/// result, cancel, import mark and permit piece, a residence result, world
+/// key wraps, an install's frontier join, a whole-vault export, a world's
+/// privacy, a grant's travel, an agent grant act and a membership execution.
+/// A kit push, its pieces and an anchor's or the host's join are signed
+/// alone by shape. The owner choices and machine answers read the proof in
+/// their own judges.
+pub(super) fn proof_judged_at_merge(op: &AuthorityOp) -> bool {
+    match op {
+        AuthorityOp::OwnerWorkRequest(request) => request.kit_root().is_none(),
+        AuthorityOp::CustodyPermitPiece(piece) => piece.carrier.is_some(),
+        AuthorityOp::FrontierJoin(join) => {
+            matches!(join.family, FrontierJoinFamily::Install(_))
+        }
+        AuthorityOp::OwnerWorkResult(_)
+        | AuthorityOp::OwnerWorkCancel(_)
+        | AuthorityOp::ExportSupplementImported(_)
+        | AuthorityOp::ResidenceResult(_)
+        | AuthorityOp::WorldKeyWraps(_)
+        | AuthorityOp::ExportAct(_)
+        | AuthorityOp::WorldPrivacy(_)
+        | AuthorityOp::GrantTravelSet(_)
+        | AuthorityOp::AgentGrantAct(_)
+        | AuthorityOp::MembershipExecution(_) => true,
+        _ => false,
+    }
+}
+
 /// Whether `key` is a key `state` trusts as the owner's: live on the roster
 /// with `ROLE_OWNER`, and not in the host's custody on a hosted fold. A
 /// revoked or retired key, an admin-only key and a managed host's custodial
@@ -528,5 +559,24 @@ impl crate::Vault {
                     && held.signer.proves_now(self, fold)
             })
             .map(|held| OwnerProofSigner { vault: self, held })
+    }
+
+    /// The owner key this install proves a carried act with on `fold`, one
+    /// rule for every carried act whose fold reads no proof of its own (row
+    /// OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS): the act is the owner's
+    /// own write, made in person and revalidated in the writing transaction
+    /// (`owner_authored`, [`crate::consent::OwnerAuthoredWrite`]), and this
+    /// install holds a key that proves now ([`Self::owner_proof_signer`]).
+    /// The proof buys the act room past another install's owner reserve
+    /// ([`super::log_budget`]) and nothing in any fold. An agent's Grant, a
+    /// delegated holder, a narrowed or delegated owner credential, a queued
+    /// retry and automatic upkeep author no such write, so their acts are
+    /// carried unproven and never spend another install's reserve.
+    pub(crate) fn owner_act_proof_signer(
+        &self,
+        fold: &AuthorityFold,
+        owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
+    ) -> Option<OwnerProofSigner<'_>> {
+        owner_authored.and_then(|_| self.owner_proof_signer(fold))
     }
 }

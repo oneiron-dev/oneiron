@@ -507,6 +507,9 @@ impl PipelineBuilder<'_> {
                 )?;
             }
 
+            // The exact phonetic hits a clamped pack's audience may not read,
+            // kept out of the blend below; the preselection counts them.
+            let mut phonetic_clamped = Vec::new();
             // Entity-type authority can narrow each channel before fusion.
             // CLAIM scalar constraints use the decoded post-fusion stage below.
             for (index, scores) in acc.ranked_lists.iter_mut().enumerate() {
@@ -523,11 +526,20 @@ impl PipelineBuilder<'_> {
                 )?;
                 // Exact phonetic codes have no cut and a PPR walk's results
                 // no admission, so their rows reach these lists unasked: the
-                // call's made_by slice keeps them out of the blend here, once
-                // the lane and the authority above have narrowed the lists,
-                // so the run's gate judges only rows the D19 gate judges
-                // anyway (REVIEW-9842 round 2).
-                if [phonetic_channel_index, ppr_channel_index].contains(&Some(index)) {
+                // call's scope keeps an exact hit out of the blend here, and
+                // its made_by slice a walk's result (narrowed walk
+                // visibility asks the rest), once the lane and the authority
+                // above have narrowed the lists, so the run's gate judges
+                // only rows the D19 gate judges anyway (REVIEW-9842 round 2).
+                if phonetic_channel_index == Some(index) {
+                    phonetic_clamped = self.retain_phonetic_hits_in_scope(
+                        rtxn,
+                        scores,
+                        filter_config,
+                        &mut metadata_cache,
+                        &mut claim_gate,
+                    )?;
+                } else if ppr_channel_index == Some(index) {
                     self.retain_made_by_slice(rtxn, scores, &mut metadata_cache, &mut claim_gate)?;
                 }
             }
@@ -876,15 +888,23 @@ impl PipelineBuilder<'_> {
             let mut emptied_by_policy = false;
             let disclosure_clamped = match self.disclosure_preselect.as_ref() {
                 Some(clamp) => {
-                    let withheld = withhold_undisclosed(
+                    let mut withheld = withhold_undisclosed(
                         &mut scores,
                         clamp,
+                        self.vault,
                         &self.read,
                         rtxn,
                         &mut metadata_cache,
                         &claim_gate,
                     )?;
                     emptied_by_policy |= !withheld.is_empty() && scores.is_empty();
+                    // An exact phonetic hit the clamp refused before the
+                    // blend counts once, though another list held it too.
+                    for id in phonetic_clamped {
+                        if !withheld.contains(&id) {
+                            withheld.push(id);
+                        }
+                    }
                     withheld
                 }
                 None => Vec::new(),

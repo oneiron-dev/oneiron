@@ -1,0 +1,17 @@
+{
+  "name": "vault.workspace.one_vault.get",
+  "description": "A workspace's one-vault setting, readable by every member it governs.",
+  "input": "WorkspaceRefRequest",
+  "output": "crate::workspace_roster::OneVaultSetting",
+  "call": "memory.workspace_one_vault_get(&input.workspace_ref)?",
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

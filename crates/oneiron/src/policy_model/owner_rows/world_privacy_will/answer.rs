@@ -155,9 +155,10 @@ impl Vault {
                     return Ok((WorldPrivacyAnswer::Collected(stored), None));
                 }
             }
+            let owner_authored = owner.owner_answer_in_txn(self, txn)?;
             let author = WorldEditAuthor {
                 answer: Some(request),
-                ..WorldEditAuthor::holder(actor, surface)
+                ..WorldEditAuthor::holder(actor, surface, owner_authored.as_ref())
             };
             let agent = stored.agent_id()?;
             let receipt = self.write_world_privacy_in_txn(

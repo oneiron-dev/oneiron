@@ -25,22 +25,20 @@ impl<'v> ScopedRead<'v> {
     }
 
     /// Whether every one of `ids` resolves for this lane, judged in one
-    /// snapshot as [`Self::is_ref_readable`] judges each.
+    /// snapshot as [`Self::is_ref_readable`] judges each, by one held
+    /// authority for the whole call ([`Self::refs_readable_held_in`]).
     pub fn all_refs_readable(&self, ids: &[EntityId]) -> Result<bool> {
         let rtxn = self.grant_read_txn()?;
         let policy = self.live_policy_manifest_in(&rtxn)?;
-        for id in ids {
-            if !self.is_ref_readable_with_policy_in(&rtxn, &policy, id)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        let authority = HeldAuthority::for_request(None);
+        self.refs_readable_held_in(&rtxn, &policy, ids, &authority)
     }
 
     /// Which of `sets` resolve whole for this lane, one answer for each set:
     /// each judged as [`Self::all_refs_readable`] judges its ids, every set
-    /// in one snapshot under one policy, so a listing that admits its rows
-    /// one by one admits them all at one instant (FIX 7645).
+    /// in one snapshot under one policy and one held authority, so a listing
+    /// that admits its rows one by one admits them all at one instant (FIX
+    /// 7645).
     pub fn refs_readable_each(&self, sets: &[Vec<EntityId>]) -> Result<Vec<bool>> {
         let rtxn = self.grant_read_txn()?;
         self.refs_readable_each_in(&rtxn, sets)
@@ -55,18 +53,42 @@ impl<'v> ScopedRead<'v> {
         sets: &[Vec<EntityId>],
     ) -> Result<Vec<bool>> {
         let policy = self.live_policy_manifest_in(rtxn)?;
-        let mut each = Vec::with_capacity(sets.len());
-        for ids in sets {
-            let mut readable = true;
-            for id in ids {
-                if !self.is_ref_readable_with_policy_in(rtxn, &policy, id)? {
-                    readable = false;
-                    break;
-                }
-            }
-            each.push(readable);
+        let authority = HeldAuthority::for_request(None);
+        sets.iter()
+            .map(|ids| self.refs_readable_held_in(rtxn, &policy, ids, &authority))
+            .collect()
+    }
+
+    /// Whether every one of `ids` resolves for this lane in `rtxn` under
+    /// `policy`, each judged as [`Self::is_ref_readable_with_policy_in`]
+    /// judges it, by the row checks `authority` holds for the call's serving
+    /// txn: the reader's relationship context and the owner's exemption are
+    /// judged at the first ref that needs them and shared by every later
+    /// one, as a search's hits share them (FIX 7462), not judged again per
+    /// ref (FIX REFS-READABLE-EACH-FRESH-AUTHORITY-PER-ROW); the context only
+    /// while the authorization time stands where it was loaded. Each ref's
+    /// Grants and CLAIM class verdicts are its own, as a lone ref check
+    /// judges them ([`HeldAuthority::judge_ref`]).
+    fn refs_readable_held_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        ids: &[EntityId],
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        if ids.is_empty() {
+            return Ok(true);
         }
-        Ok(each)
+        let filter = self.actor_retrieval_floor(policy)?;
+        for id in ids {
+            let readable = authority.judge_ref(self.vault, rtxn, |one| {
+                self.is_ref_readable_held_in(rtxn, policy, id, &filter, one)
+            })?;
+            if !readable {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// [`Self::is_ref_readable`] in the caller's snapshot, under `policy`
@@ -77,7 +99,22 @@ impl<'v> ScopedRead<'v> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
     ) -> Result<bool> {
-        match self.is_entity_readable_with_policy_in(rtxn, policy, id) {
+        let filter = self.actor_retrieval_floor(policy)?;
+        let authority = HeldAuthority::for_request(None);
+        self.is_ref_readable_held_in(rtxn, policy, id, &filter, &authority)
+    }
+
+    /// [`Self::is_entity_readable_held_in`] for a ref a caller names: sealed
+    /// secret custody reads as absent, as [`Self::is_ref_readable`] says.
+    fn is_ref_readable_held_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        filter: &ResolvedRetrievalFilter,
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        match self.is_entity_readable_held_in(rtxn, policy, id, filter, authority) {
             Err(error) if error.kind() == crate::ErrorKind::InvalidSecretCustodyBody => Ok(false),
             readable => readable,
         }
@@ -100,10 +137,7 @@ impl<'v> ScopedRead<'v> {
     ) -> Result<bool> {
         let filter = self.actor_retrieval_floor(policy)?;
         let authority = HeldAuthority::for_request(None).reading_archive_of(*id);
-        match self.is_entity_readable_held_in(rtxn, policy, id, &filter, &authority) {
-            Err(error) if error.kind() == crate::ErrorKind::InvalidSecretCustodyBody => Ok(false),
-            readable => readable,
-        }
+        self.is_ref_readable_held_in(rtxn, policy, id, &filter, &authority)
     }
 
     pub(crate) fn is_entity_readable_in(
@@ -134,11 +168,7 @@ impl<'v> ScopedRead<'v> {
         &self,
         policy: &PolicyManifestResolution,
     ) -> Result<ResolvedRetrievalFilter> {
-        Ok(crate::gate::narrow_retrieval_filter(
-            &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
-            None,
-        )?
-        .under_credential_of(&self.actor_key))
+        self.filter_under(policy, None)
     }
 
     pub(super) fn is_entity_readable_with_filter_in(
@@ -654,13 +684,42 @@ impl<'v> ScopedRead<'v> {
         }
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if filter.deny_all
-            || self
-                .vault
-                .store
-                .validate_entity_type(header.entity_type)
-                .is_err()
-            || !filter.read_scope().bands.contains(&header.entity_type)
+        // A work-talk binding is row authority for a reader who holds no
+        // read scope of its own (L7-05, ANSWER L7-05-BINDING-READ = A): a
+        // bound reader with no Grant is floored to deny-all, so the binding
+        // is judged here, before the scope gates refuse the row. It lifts
+        // only those two gates, and only for a reader with no explicit
+        // credential or Grant Scope under a policy that has not failed
+        // closed; every later gate still binds, and the record stage below
+        // judges the binding again with the row's scope. A filter from the
+        // binding-only floor (WORK-TALK-BINDING-RECALL-FLOOR) reads no row
+        // but its own talk's: each row its kinds let through must sit in
+        // that talk under a binding that admits the reader, and the deny-all
+        // exception never applies to it, so a request that leaves it no
+        // kind reads nothing.
+        let scope_refuses =
+            filter.deny_all || !filter.read_scope().bands.contains(&header.entity_type);
+        let binding_may_lift = !policy.is_fail_closed()
+            && !policy.diagnostics().loaded_manifest_forces_fail_closed()
+            && grant.or(self.actor_key.authority_scope()).is_none();
+        let work_talk_bound = match filter.work_talk_room {
+            Some(room) => {
+                !scope_refuses
+                    && binding_may_lift
+                    && self.work_talk_row_room_in(rtxn, id, header.entity_type) == Some(room)
+            }
+            None => {
+                scope_refuses
+                    && binding_may_lift
+                    && self.work_talk_row_readable_in(rtxn, id, header.entity_type)
+            }
+        };
+        if self
+            .vault
+            .store
+            .validate_entity_type(header.entity_type)
+            .is_err()
+            || ((scope_refuses || filter.work_talk_room.is_some()) && !work_talk_bound)
         {
             return Ok(false);
         }
@@ -718,7 +777,7 @@ impl<'v> ScopedRead<'v> {
         if !self.credential_allows_row_in(rtxn, id)
             || !self.proof_live_in(rtxn)?
             || !self.guest_bound_admits_in(rtxn, id, raw)
-            || !self.facets_allow_in(rtxn, id, raw)?
+            || !self.facets_allow_held_in(rtxn, id, raw, authority)?
         {
             return Ok(false);
         }
@@ -755,15 +814,34 @@ impl<'v> ScopedRead<'v> {
                     allowed && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?
                 );
             }
-            match grant {
-                None => crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope),
-                Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(
-                    policy,
-                    &self.actor_key,
-                    &scope,
-                    Some(grant),
-                ),
+            // The binding-only floor's row sat in its talk under the binding
+            // above, in this snapshot: the binding is its one record
+            // authority, and no policy row or Grant judges it.
+            if filter.work_talk_room.is_some() {
+                return Ok(work_talk_bound
+                    && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?);
             }
+            // A work-talk binding supplies row authority, never an escape
+            // from a failed policy or an explicit credential/Grant ceiling.
+            let explicit_scope = grant.or(self.actor_key.authority_scope());
+            let bound = !policy.is_fail_closed()
+                && !policy.diagnostics().loaded_manifest_forces_fail_closed()
+                && explicit_scope.is_none_or(|ceiling| {
+                    ceiling.admits("read", &scope, &crate::federation::Scope::top())
+                })
+                && self.work_talk_row_readable_in(rtxn, id, header.entity_type);
+            bound
+                || match grant {
+                    None => {
+                        crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope)
+                    }
+                    Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(
+                        policy,
+                        &self.actor_key,
+                        &scope,
+                        Some(grant),
+                    ),
+                }
         };
         Ok(admitted && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?)
     }

@@ -171,6 +171,14 @@ pub(crate) struct RoomTurnCeiling {
     /// turn under CONTENT. A held ceiling, whose words reach the roster,
     /// holds every one of them to CONTENT (FIX 5636).
     pub(crate) personal: bool,
+    /// Whether the room is a work talk whose registered binding names the
+    /// caller, as a bound PERSON or a bound actor, on the room itself and
+    /// never one of its threads (WORK-TALK-BINDING-RECALL-FLOOR). A caller
+    /// with no read scope of its own then retrieves the talk's rows under
+    /// the binding ([`crate::gate::ResolvedRetrievalFilter::work_talk_room`]);
+    /// each row is still judged under the binding as its own snapshot reads
+    /// it. A refresh can only clear it.
+    pub(crate) work_talk: bool,
 }
 
 /// What `room_scope` gives for a roster, as two terms.
@@ -368,6 +376,7 @@ impl RoomTurnCeiling {
             peers,
             branch: self.branch,
             personal: self.personal,
+            work_talk: self.work_talk && now.work_talk,
         }
     }
 
@@ -666,13 +675,34 @@ impl ScopedReadActorKey {
         vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
     ) -> crate::error::Result<bool> {
+        self.facets_owner_exempt_by(|owner| {
+            crate::memory::owner_exemption_holds_in_txn(vault, txn, owner)
+        })
+    }
+
+    /// [`Self::facets_owner_exempt_in`] for a row check of the serving txn
+    /// `authority` holds: the owner's exemption is judged once in that txn,
+    /// not once per row (FIX FACET-GATE-OWNER-EXEMPTION-PER-ROW).
+    pub(super) fn facets_owner_exempt_held_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        authority: &super::access_gate::HeldAuthority,
+    ) -> crate::error::Result<bool> {
+        self.facets_owner_exempt_by(|owner| authority.owner_exemption_holds_in(vault, txn, owner))
+    }
+
+    fn facets_owner_exempt_by(
+        &self,
+        exemption_holds: impl FnOnce(EntityId) -> crate::memory::MemoryResult<bool>,
+    ) -> crate::error::Result<bool> {
         if self.owner.is_some() {
             return Ok(true);
         }
         let Some(owner) = self.owner_exemption else {
             return Ok(false);
         };
-        crate::memory::owner_exemption_holds_in_txn(vault, txn, owner).map_err(|refusal| {
+        exemption_holds(owner).map_err(|refusal| {
             crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
                 refusal,
             )))

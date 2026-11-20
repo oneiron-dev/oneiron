@@ -306,13 +306,14 @@ impl OwnerWorkResult {
         Ok(())
     }
 
-    /// Signed alone by an Ed25519 install key. Its shape names no parent:
-    /// the request must be in the result's causal past, which only the fold
-    /// of its parents knows, so the fold judges it there and refuses a result
-    /// whose request is not (CALLS "FIX 4987 causal request presence"). A
-    /// result never precedes what it answers.
+    /// Signed by an Ed25519 install key, the executor's, alone or beside one
+    /// owner key's proof ([`AuthorityLogEntry::validate_carried_signers`]).
+    /// Its shape names no parent: the request must be in the result's causal
+    /// past, which only the fold of its parents knows, so the fold judges it
+    /// there and refuses a result whose request is not (CALLS "FIX 4987
+    /// causal request presence"). A result never precedes what it answers.
     pub(in crate::authority) fn validate_entry(&self, entry: &AuthorityLogEntry) -> Result<()> {
-        signed_alone_by_install_key(entry)
+        entry.validate_carried_signers()
     }
 }
 

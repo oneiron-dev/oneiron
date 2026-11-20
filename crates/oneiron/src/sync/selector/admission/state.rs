@@ -39,6 +39,9 @@ pub(crate) struct AdmittedUpdate {
     /// these bytes bring (FIX 3656).
     pub(super) placements: crate::sync::ingest::AdmittedPlacements,
     pub(super) lane: Option<String>,
+    /// The member peer whose first-party update this is, whose room bodies
+    /// the import judges again (ROOM-BODY-REPLICA-SETTINGS).
+    pub(super) first_party_sender: Option<EntityId>,
     pub(super) routed: Vec<AdmittedUpdate>,
 }
 
@@ -55,6 +58,13 @@ impl AdmittedUpdate {
     /// WORLD window (FIX 3497), in the order they import.
     pub(crate) fn parts(&self) -> impl Iterator<Item = &Self> {
         std::iter::once(self).chain(&self.routed)
+    }
+
+    /// The member peer whose first-party update this is, if one: its room
+    /// bodies are judged again in the import's writer transaction
+    /// (ROOM-BODY-REPLICA-SETTINGS).
+    pub(crate) const fn first_party_sender(&self) -> Option<EntityId> {
+        self.first_party_sender
     }
 
     /// The admitted bytes to import.

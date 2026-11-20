@@ -31,6 +31,7 @@ pub(super) fn tombstones(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     params: Value,
     budgets: ResidenceOperationBudgets,
 ) -> Result<Answer, AppError> {
@@ -52,13 +53,14 @@ pub(super) fn tombstones(
     // A positive limit past the page slice is served one slice and a cursor,
     // never refused for its count (FIX 8881).
     let page_limit = input.limit.min(budgets.index_page_limit);
-    let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
-    let admission = admitted(server, auth, peer, &selector)?;
+    let (window, selector, doc) =
+        selected_window(server, auth, lane, &input.window, &input.selector)?;
+    let admission = admitted(server, auth, peer, lane, &selector)?;
     let mut entries = window_tombstone_projection_with(
         &server.vault,
         &doc,
         &window,
-        crate::handler::selector_scope::selector_grant_scope(),
+        lane.grant_scope(),
         &selector,
         admission.withhold(),
     )
