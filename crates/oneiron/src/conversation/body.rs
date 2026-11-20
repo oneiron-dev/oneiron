@@ -33,14 +33,7 @@ pub(crate) fn validate_put_in_txn(
         }
         if !replicated
             && !crate::ports::EntityStoreRead::port_entity_present(store, txn, &id)?
-            && store
-                .vault_meta
-                .get(
-                    txn,
-                    &[b"project.leader_chat.v1/".as_slice(), id.as_bytes()].concat(),
-                )?
-                .as_deref()
-                != Some(encoded.as_slice())
+            && !leader_chat_bound_in(store, txn, id, &encoded)?
         {
             return Err(denied());
         }
@@ -126,6 +119,54 @@ pub(crate) fn validate_put_in_txn(
     roster.defer(store);
     Ok(())
 }
+/// Whether this vault's project door bound room `id` as the leader chat
+/// whose binding encodes to `encoded`: only that door makes a new leader chat.
+fn leader_chat_bound_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    encoded: &[u8],
+) -> Result<bool> {
+    Ok(store
+        .vault_meta
+        .get(
+            txn,
+            &[b"project.leader_chat.v1/".as_slice(), id.as_bytes()].concat(),
+        )?
+        .as_deref()
+        == Some(encoded))
+}
+
+/// Whether [`validate_put_in_txn`] would refuse `bytes` as the first local
+/// put of room `id`, which this vault does not hold, when no room door marks
+/// the write (ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM = B): the body seats
+/// members this vault's membership ledger does not hold (only the membership
+/// door seats one), carries a leader chat binding this vault's project door
+/// did not make, holds shared pins, unpin records or a pin policy other than
+/// the default (only the room pin doors write them), or is closed (only the
+/// room's closed-setting door closes a room). A whole-vault import outside
+/// the owner's restore keeps such a room as archive data.
+pub(crate) fn new_room_needs_a_door_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    bytes: &[u8],
+) -> Result<bool> {
+    let body = ConversationBody::from_bytes(bytes)?;
+    if let Some(value) = body.extra.get(crate::workspace_roster::LEADER_CHAT_FIELD) {
+        let encoded = rmp_serde::to_vec_named(value).map_err(|_| invalid("leader chat binding"))?;
+        if !leader_chat_bound_in(store, txn, id, &encoded)? {
+            return Ok(true);
+        }
+    }
+    let members = membership::current_members_in(store, txn, id)?;
+    Ok(members != body.member_ids.iter().copied().collect()
+        || !body.pins.is_empty()
+        || !body.unpinned.is_empty()
+        || !body.pin_policy.is_members()
+        || body.closed)
+}
+
 /// A fresh room id has neither a row nor durable/stale deletion history.
 /// Keep this test in the caller's write transaction so it also sees a deletion
 /// staged earlier in that transaction.
