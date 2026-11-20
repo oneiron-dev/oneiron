@@ -45,7 +45,7 @@ use super::super::{
 };
 use super::admit::Lifted;
 use super::held_template::{MapOrder, held_row_meets};
-pub(crate) use super::text::TextReplacements;
+pub(crate) use super::text::{TextReplacements, tracked_replacements};
 use super::wipe::{PlanParts, PlanTree, replace_wiped, wipe_value};
 use super::{HANDLE_OPEN, Masker, STAND_IN, credential_member};
 use crate::Vault;

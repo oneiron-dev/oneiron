@@ -56,7 +56,7 @@ pub(crate) use self::mask::side_row::admit_typed_with_rule;
 pub(crate) use self::mask::side_row::{
     SidePart, TextReplacements, admit_side_parts, admit_side_row, admit_tracked_side_parts,
     admit_typed, admitted_from_known, admitted_from_plan, from_named_tree, named_tree,
-    origin as side_row_origin,
+    origin as side_row_origin, tracked_replacements,
 };
 pub(crate) use self::mask::spool::{
     AdmissionCustody, BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,

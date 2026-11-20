@@ -8,7 +8,7 @@ use super::pin_index::NOTE_PIN_SOURCE;
 use super::{NoteCore, NoteKind, encode_note_core};
 use crate::batch::secret_scan::{
     Lifted, Part, SecretScanMode, admit_parts_in_txn, admit_tracked_parts_in_txn,
-    scan_content_in_txn, scan_write_payload, secret_scan_mode_in_txn,
+    scan_content_in_txn, scan_write_payload, secret_scan_mode_in_txn, tracked_replacements,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_doc::{DocActor, PurgeReceipt};
@@ -263,11 +263,9 @@ fn admit_body(
         // Where the mask put each handle in the body as read (FIX 6144):
         // the body takes them at their spans, with no diff over it (FIX
         // LORO-TEXT-UPDATE-UNBOUNDED-DIFF-CALLERS).
-        let spans = replaced
-            .get(blake3::hash(markdown.as_bytes()).as_bytes())
-            .ok_or(crate::error::Error::InvariantViolation(
-                "a masked NOTE body has no spans",
-            ))?;
+        let spans = tracked_replacements(&replaced, &markdown).ok_or(
+            crate::error::Error::InvariantViolation("a masked NOTE body has no spans"),
+        )?;
         doc.mask_body(spans, &text)?;
     }
     if let Some(admitted) = admitted.as_deref().filter(|_| title_masked) {
