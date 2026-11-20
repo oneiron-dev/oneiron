@@ -202,19 +202,31 @@ fn apply_remote_change(
             // and each cancelled member's passport keeps this first sighting,
             // which dates the cancellation if the write proves not to be the
             // stored copy (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+            // A VEVENT is the staged member its UID and staged RECURRENCE-ID
+            // name, so a first write's copy, whose UID no passport resolves
+            // yet, is held back too and mints no second EVENT.
             let in_flight = cancelled_members_in_flight(vault, operation, &primary.uid)?;
             if !in_flight.is_empty() {
                 let mut cancelled = Vec::new();
                 for parsed in feed.events.iter().filter(|parsed| parsed.cancelled) {
-                    if let Some(member) =
-                        crate::calendar::ingest::connector_event_ref(vault, parsed)?
-                    {
+                    let staged = in_flight
+                        .iter()
+                        .find(|(_, identity)| {
+                            parsed.uid == primary.uid
+                                && *identity == parsed.properties.recurrence_id_utc
+                        })
+                        .map(|(member, _)| *member);
+                    let member = match staged {
+                        Some(member) => Some(member),
+                        None => crate::calendar::ingest::connector_event_ref(vault, parsed)?,
+                    };
+                    if let Some(member) = member {
                         cancelled.push((member, parsed));
                     }
                 }
                 if cancelled
                     .iter()
-                    .any(|(member, _)| in_flight.contains(member))
+                    .any(|(member, _)| in_flight.iter().any(|(staged, _)| staged == member))
                 {
                     for (member, parsed) in cancelled {
                         if let Some((_, passport)) =

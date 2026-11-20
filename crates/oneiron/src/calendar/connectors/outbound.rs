@@ -152,6 +152,13 @@ pub struct CalendarWriteOutboxRow {
     /// writer's (BK-ECHO-MARK-TAKES-HOST-CANCEL-AT-STAGED-SEQUENCE). `None` on
     /// a row staged before writes carried one.
     pub write_marker: Option<[u8; 16]>,
+    /// The RECURRENCE-ID (UTC) each detached member's VEVENT carries in the
+    /// staged resource, parsed from the staged bytes; a member not listed
+    /// carries none. A stored copy's VEVENTs are matched to the staged
+    /// members by these, so a claim another source retracts after the
+    /// staging never unmatches the write's own copy. `None` on a row staged
+    /// before writes recorded them, which reads each member's claim instead.
+    pub recurrence_ids: Option<Vec<(EntityId, u64)>>,
     /// A replay refused on its precondition whose read proved the stored copy
     /// neither this write's nor another writer's: the seat's next pull of the
     /// resource proves it before admitting it
@@ -383,6 +390,7 @@ pub fn write_calendar_event(
         resource_zone: rendered.resource_zone,
         cancelled_members: rendered.cancelled_members,
         write_marker: Some(write_marker),
+        recurrence_ids: Some(rendered.recurrence_ids),
         stored_copy_unproven: false,
         expected_etag: expected_etag.clone(),
         href: href.clone(),
@@ -794,8 +802,9 @@ enum StoredWriteMarker {
     Conflicting,
 }
 
-/// The [`WRITE_MARKER_PROPERTY`] values of the VCALENDAR in `ics` that
-/// carries `uid`.
+/// The [`WRITE_MARKER_PROPERTY`] values of every VCALENDAR in `ics` that
+/// carries `uid`: a copy that splits the UID's VEVENTs across calendars
+/// carries the marker of each.
 fn stored_write_marker(ics: &[u8], uid: &str) -> StoredWriteMarker {
     let values =
         crate::calendar::ics::ics_calendar_property_values(ics, uid, WRITE_MARKER_PROPERTY)
@@ -841,8 +850,8 @@ struct StoredMember {
 /// earlier call whose answer was lost: the precondition then fails on the
 /// ETag the stored copy took. That copy holds exactly the staged members,
 /// each once under the staged UID and its staged RECURRENCE-ID
-/// ([`super::resource::recurrence_identity`]: no passport need resolve the
-/// UID, which a first write mints), each at the staged SEQUENCE or above (a
+/// ([`staged_recurrence_id`]: no passport need resolve the UID, which a
+/// first write mints), each at the staged SEQUENCE or above (a
 /// provider that rewrites a stored copy keeps or raises it) and cancelled
 /// exactly where the write cancelled it; else it is another writer's
 /// (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
@@ -874,8 +883,7 @@ fn stored_copy_of(
     }
     let mut staged = Vec::with_capacity(row.component_hashes.len());
     for &(member, _) in &row.component_hashes {
-        let identity = super::resource::recurrence_identity(vault, row.event_ref, member)?;
-        staged.push((member, identity));
+        staged.push((member, staged_recurrence_id(vault, row, member)?));
     }
     let mut members: Vec<StoredMember> = Vec::with_capacity(feed.events.len());
     for parsed in &feed.events {
@@ -907,6 +915,28 @@ fn stored_copy_of(
     } else {
         StoredCopy::Own(members)
     })
+}
+
+/// The RECURRENCE-ID the staged resource of `row` gives `member`, as the
+/// row recorded it from the staged bytes
+/// ([`CalendarWriteOutboxRow::recurrence_ids`]): a pulled VEVENT is the
+/// staged member when it carries this identity under the staged UID,
+/// whatever claims the member holds now and whether or not a passport
+/// resolves the UID. A row staged before rows recorded them reads the
+/// member's exception claim as it is now
+/// ([`super::resource::recurrence_identity`]).
+fn staged_recurrence_id(
+    vault: &Vault,
+    row: &CalendarWriteOutboxRow,
+    member: EntityId,
+) -> Result<Option<u64>, CalendarConnectorError> {
+    match &row.recurrence_ids {
+        Some(staged) => Ok(staged
+            .iter()
+            .find(|(detached, _)| *detached == member)
+            .map(|(_, original)| *original)),
+        None => super::resource::recurrence_identity(vault, row.event_ref, member),
+    }
 }
 
 /// Writes `row`, a replayed write of members cancelled, after its stored
@@ -1206,6 +1236,8 @@ pub(super) struct StoredOutboxRow {
     cancelled_members: Vec<[u8; 16]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     write_marker: Option<[u8; 16]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recurrence_ids: Option<Vec<([u8; 16], u64)>>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     stored_copy_unproven: bool,
     expected_etag: Option<String>,
@@ -1241,6 +1273,12 @@ impl StoredOutboxRow {
                 .map(|member| *member.as_bytes())
                 .collect(),
             write_marker: row.write_marker,
+            recurrence_ids: row.recurrence_ids.as_ref().map(|staged| {
+                staged
+                    .iter()
+                    .map(|(member, original)| (*member.as_bytes(), *original))
+                    .collect()
+            }),
             stored_copy_unproven: row.stored_copy_unproven,
             expected_etag: literal::projection(&row.expected_etag)?,
             href: literal::projection(&row.href)?,
@@ -1285,6 +1323,22 @@ impl StoredOutboxRow {
                 })
                 .collect::<Result<_, CalendarConnectorError>>()?,
             write_marker: self.write_marker,
+            recurrence_ids: self
+                .recurrence_ids
+                .map(|staged| {
+                    staged
+                        .into_iter()
+                        .map(|(member, original)| {
+                            Ok((
+                                EntityId::from_bytes(member).map_err(|_| {
+                                    ingest_error("outbox detached member carries no entity id")
+                                })?,
+                                original,
+                            ))
+                        })
+                        .collect::<Result<_, CalendarConnectorError>>()
+                })
+                .transpose()?,
             stored_copy_unproven: self.stored_copy_unproven,
             expected_etag: self.expected_etag,
             href: self.href,

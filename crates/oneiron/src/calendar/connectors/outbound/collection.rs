@@ -127,12 +127,16 @@ pub(crate) fn omission_observed(
 }
 
 /// The members an upsert of `uid` still in flight (prepared or remotely
-/// applied, not yet settled) writes cancelled; empty when none is in flight.
-/// A pulled cancelled version of such a member may be that write coming
-/// back before its settlement marks the member's passport
-/// `written_cancelled`, and would read as a host cancel that moves deposit
-/// money, so the pull leaves the resource owed and reads it again once the
-/// write settles (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+/// applied, not yet settled) writes cancelled, each with the RECURRENCE-ID
+/// its staged VEVENT carries under `uid` ([`super::staged_recurrence_id`]);
+/// empty when none is in flight. A pulled cancelled version of such a member
+/// may be that write coming back before its settlement marks the member's
+/// passport `written_cancelled`, and would read as a host cancel that moves
+/// deposit money, so the pull leaves the resource owed and reads it again
+/// once the write settles (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+/// The pull matches its VEVENTs to them by that identity, so a first write
+/// under a UID no passport resolves yet holds its copy back too, never
+/// minting a second EVENT for it.
 ///
 /// The caller holds the vault's calendar admission turn, in which a write
 /// publishes its prepared row and settles, so neither lands between this
@@ -145,18 +149,21 @@ pub(crate) fn cancelled_members_in_flight(
     vault: &Vault,
     operation: &CalendarConnectorOperation,
     uid: &str,
-) -> Result<Vec<EntityId>, CalendarConnectorError> {
+) -> Result<Vec<(EntityId, Option<u64>)>, CalendarConnectorError> {
     let scope = operation.literal_scope()?;
-    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    let Some(row) = upsert_in_flight(vault, &txn, &scope, operation, uid)? else {
+    // Drop the table reader before a row staged without its RECURRENCE-IDs
+    // reads its members' claims.
+    let stored = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        upsert_in_flight(vault, &txn, &scope, operation, uid)?
+    };
+    let Some(row) = stored else {
         return Ok(Vec::new());
     };
+    let row = row.into_row()?;
     row.cancelled_members
-        .into_iter()
-        .map(|member| {
-            EntityId::from_bytes(member)
-                .map_err(|_| super::ingest_error("outbox cancelled member carries no entity id"))
-        })
+        .iter()
+        .map(|&member| Ok((member, super::staged_recurrence_id(vault, &row, member)?)))
         .collect()
 }
 
