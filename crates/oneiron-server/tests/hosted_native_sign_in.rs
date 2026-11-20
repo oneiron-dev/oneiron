@@ -646,11 +646,18 @@ fn a_second_oauth_login_replaces_the_recorded_sign_in_only_once_admitted() {
             held,
             "the recorded sign-in keeps its tokens"
         );
-        let mut staged = file.as_os_str().to_owned();
-        staged.push(".staged");
+        let staged_prefix = format!(
+            "{}.staged",
+            file.file_name().expect("a file name").to_string_lossy()
+        );
+        let staged: Vec<_> = std::fs::read_dir(file.parent().expect("its folder"))
+            .expect("the per-user folder")
+            .map(|entry| entry.expect("an entry").file_name())
+            .filter(|name| name.to_string_lossy().starts_with(&staged_prefix))
+            .collect();
         assert!(
-            !Path::new(&staged).exists(),
-            "the sign-in that was not recorded is removed"
+            staged.is_empty(),
+            "the sign-in that was not recorded is removed: {staged:?}"
         );
         let answer = initialize_over_oauth(&scratch, &served, &file);
         assert_eq!(

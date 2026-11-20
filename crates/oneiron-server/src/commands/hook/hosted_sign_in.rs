@@ -249,10 +249,15 @@ pub(super) fn sign_in(
 }
 
 /// Where a new sign-in for `token_file` waits until its origin admits it
-/// for the vault named, beside `token_file`.
+/// for the vault named: a file of its own beside `token_file`, named for
+/// this process and the time, so two sign-ins at once never share one and
+/// each revokes only its own on a failure.
 pub(super) fn staged_file(token_file: &Path) -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
     let mut name = token_file.as_os_str().to_owned();
-    name.push(".staged");
+    name.push(format!(".staged-{}-{nanos}", std::process::id()));
     PathBuf::from(name)
 }
 
