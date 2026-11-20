@@ -408,11 +408,8 @@ impl BoundReplySources<'_> {
             match (project, landing) {
                 (Some(project), None) => landing = Some(project),
                 (Some(project), Some(landing)) if project == landing => {}
-                _ => {
-                    return Err(
-                        "extracted candidate's sources share no one branch project".to_owned()
-                    );
-                }
+                // RED (scratch, never merged): sources of two projects no longer skip.
+                _ => {}
             }
         }
         Ok(ReadCandidate {
