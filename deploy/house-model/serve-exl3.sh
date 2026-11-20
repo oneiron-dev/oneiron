@@ -23,6 +23,10 @@ set -euo pipefail
 # DEFAULT_CACHE_TOKENS in exl3_server.py, never under one full request.
 : "${ONEIRON_HOUSE_EXL3_IN_FLIGHT:=4}"
 : "${ONEIRON_HOUSE_EXL3_CACHE_TOKENS:=}"
+# The DFlash2 draft's KV as a ring of this many pages per in-flight slot, in
+# place of a full-pool copy (README, "The draft KV ring"); unset, off. On, the
+# VRAM it frees goes to the pool only through ONEIRON_HOUSE_EXL3_CACHE_TOKENS.
+: "${ONEIRON_HOUSE_EXL3_DRAFT_RING_PAGES:=}"
 : "${ONEIRON_HOUSE_EXL3_GPU:=0}"
 : "${ONEIRON_HOUSE_EXL3_PORT:=18091}"
 : "${ONEIRON_HOUSE_PYTHON:=/opt/oneiron-house/.venv/bin/python}"
@@ -40,6 +44,7 @@ exec "$ONEIRON_HOUSE_PYTHON" "$(dirname "$0")/exl3_server.py" \
   --context "$ONEIRON_HOUSE_CONTEXT" \
   --max-in-flight "$ONEIRON_HOUSE_EXL3_IN_FLIGHT" \
   ${ONEIRON_HOUSE_EXL3_CACHE_TOKENS:+--cache-tokens "$ONEIRON_HOUSE_EXL3_CACHE_TOKENS"} \
+  ${ONEIRON_HOUSE_EXL3_DRAFT_RING_PAGES:+--draft-ring-pages "$ONEIRON_HOUSE_EXL3_DRAFT_RING_PAGES"} \
   ${ONEIRON_HOUSE_EXL3_NATIVE_SOCKET:+--native-socket "$ONEIRON_HOUSE_EXL3_NATIVE_SOCKET"} \
   --model-id qwen3.8-27b \
   --host 127.0.0.1 --port "$ONEIRON_HOUSE_EXL3_PORT"

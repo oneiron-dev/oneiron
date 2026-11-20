@@ -351,12 +351,13 @@ belongs to. The same code runs one request at a time and up to four.
   Prefill and decode times are per-job intervals, which contain other jobs'
   work when several are in flight. They are not exclusive GPU time.
 
-Two knobs, set in `/etc/oneiron-house.env`:
+Three knobs, set in `/etc/oneiron-house.env`:
 
 | Variable | Flag | Default | What it sets |
 |---|---|---|---|
 | `ONEIRON_HOUSE_EXL3_IN_FLIGHT` | `--max-in-flight` | 4 | requests in flight at once, 1 to 4 (`MAX_IN_FLIGHT`); the cache's recurrent slots and the generator's batch follow it |
 | `ONEIRON_HOUSE_EXL3_CACHE_TOKENS` | `--cache-tokens` | `DEFAULT_CACHE_TOKENS` (64000), or one full request when that is larger: the context + 1 + the draft depth + 16, rounded up to 256 (33024 at the defaults) | the KV pool all requests in flight share, target and draft alike; a multiple of 256 and at least that floor |
+| `ONEIRON_HOUSE_EXL3_DRAFT_RING_PAGES` | `--draft-ring-pages` | unset: off | the DFlash2 draft's KV as a ring of this many pages per in-flight slot, in place of a draft cache as large as the pool ("The draft KV ring") |
 
 The defaults are four in flight (Engine ruling 10-21, INF 1) over the pool
 `DEFAULT_CACHE_TOKENS` names, the one place `exl3_server.py` sets it: 64000,
@@ -398,6 +399,28 @@ room (Engine ruling 10-20, FIX 6723; the context alone left a full request
 one page short): 33024 at the default context and depth, so the default pool
 holds one full request and about 31000 tokens beside it. Four in flight over
 that pool admits beside a long call only what fits in the pages it leaves.
+
+### The draft KV ring
+
+Off by default (Engine NOTE 21 Nov 01:27: staged for the referee to turn
+on). The draft cache is otherwise as large as the target's pool, but every
+layer of the DFlash2 draft slides over 2048 tokens, so a request's draft KV
+never needs more than its window and the pages in flight. `--draft-ring-pages
+N` gives each in-flight slot a ring of N pages (`install_draft_ring`), which
+needs N * 256 to cover the window plus 3 pages: N at least 11 for this draft.
+The server refuses a draft with any other layer type or a larger window. The
+ring frees the VRAM of the draft's full-pool copy, and that VRAM goes to the
+pool only when `--cache-tokens` names a larger one.
+
+QWEN-EVAL-1 measured (arm opus-plain, attempt A-0005, preliminary): a 12-page
+ring with the pool at 85504 read 536.02 normalised packets per hour against
+stock's 406.01 (+32.0 %), JSON valid on 29 of 30, the grader passing, at a
+23756 MiB peak. Recipe: `mel:/data/qwen-eval-20261120/arms/opus-plain/BEST.md`.
+To run it: `ONEIRON_HOUSE_EXL3_DRAFT_RING_PAGES=12` and
+`ONEIRON_HOUSE_EXL3_CACHE_TOKENS=85504`, or the same two flags in the managed
+launch's `args`. The server logs one `DRAFT_RING` line with the ring and the
+draft cache's tokens. A ring changes the cache identity (`draft_ring_pages` in
+its cache settings); without one, the identity is as before.
 
 ### Solo admission
 
