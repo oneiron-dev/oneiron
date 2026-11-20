@@ -50,7 +50,6 @@ use crate::Vault;
 use crate::authority::{AuthorityFold, EffectiveRead};
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
-use crate::skill_attribution::delete_gate_receipt_unclear_in_txn;
 use crate::store::legal_hold::{HoldActor, is_hold_refusal};
 use crate::store::local_replica::{
     KeepControls, KeepReason, discard_bundle_payload_in_txn, remove_local_members_in_txn,
@@ -237,19 +236,6 @@ pub fn discard_world_copy_as(
     evict(vault, &BTreeSet::from([world]), Confirmation::Owner)
 }
 
-/// The owner's discard's write over the bundles whose members its writes
-/// took, `taken` ([`discard_bundle_payload_in_txn`]), with the unclear rows
-/// filed under the receipts of the Gate decisions it made skeletons (FIX
-/// [GATE-RECEIPT-UNCLEAR-ROW-OUTLIVES-RECORD-REMOVAL]).
-pub(crate) fn discard_bundle_payload_and_unclear_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    taken: &BTreeSet<EntityId>,
-) -> Result<()> {
-    let skeletons = discard_bundle_payload_in_txn(&vault.store, wtxn, taken)?;
-    delete_gate_receipt_unclear_in_txn(vault, wtxn, &skeletons)
-}
-
 /// What lets a window go.
 #[derive(Clone, Copy)]
 enum Confirmation {
@@ -321,7 +307,7 @@ fn evict(
         // (call 4 = A).
         if !taken.is_empty() {
             vault.with_write_txn_grouped(|wtxn| {
-                discard_bundle_payload_and_unclear_in_txn(vault, wtxn, &taken)
+                discard_bundle_payload_in_txn(&vault.store, wtxn, &taken)
             })?;
         }
     }
@@ -604,15 +590,7 @@ fn discard_leftover_claims(vault: &Vault, world: EntityId) -> Result<Leftover> {
             vault.unload_idle_window(&window)?;
             let step = vault.while_window_closed(&window, || {
                 vault.with_write_txn_grouped(|txn| {
-                    let step = remove_local_members_in_txn(
-                        &vault.store,
-                        txn,
-                        &window,
-                        &ids,
-                        keep.clone(),
-                    )?;
-                    delete_gate_receipt_unclear_in_txn(vault, txn, &step.discarded_gate_decisions)?;
-                    Ok(step)
+                    remove_local_members_in_txn(&vault.store, txn, &window, &ids, keep.clone())
                 })
             });
             match step {
@@ -674,7 +652,6 @@ fn evict_window(
                 }
             }
             let step = remove_local_replica_window_in_txn(&vault.store, txn, window, keep.clone())?;
-            delete_gate_receipt_unclear_in_txn(vault, txn, &step.discarded_gate_decisions)?;
             if step.complete {
                 if discard {
                     crate::sync::queue::scrub_window_updates_in_txn(vault, txn, window.as_str())?;

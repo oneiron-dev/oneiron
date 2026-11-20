@@ -184,15 +184,17 @@ impl Store {
     /// a bundle that names a claim that stays, and a batch preflight's future
     /// receipt keep their bytes, and so does a claim-bound decision whose
     /// reasons a saved weave period copies: shared content, which a later
-    /// erase still finds and scrubs with it. The decisions made skeletons,
-    /// for the caller's vault to withdraw the unclear rows filed under their
-    /// receipts.
+    /// erase still finds and scrubs with it. The unclear row filed under a
+    /// skeleton's receipt leaves the Coach's clustering, and a label proposal
+    /// that copied its notes stays where it is: the discard is local (FIX
+    /// [GATE-RECEIPT-UNCLEAR-ROW-OUTLIVES-RECORD-REMOVAL]). The number made
+    /// skeletons.
     pub(crate) fn discard_claim_gate_payload_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         claims: &BTreeSet<EntityId>,
         at: u64,
-    ) -> Result<Vec<GateDecisionId>> {
+    ) -> Result<usize> {
         let members: BTreeSet<[u8; 16]> = claims.iter().map(|claim| *claim.as_bytes()).collect();
         let mut redact = BTreeMap::new();
         for claim in &members {
@@ -218,12 +220,17 @@ impl Store {
             redact
                 .retain(|decision, record| record.claim_id.is_none() || !quoted.contains(decision));
         }
-        let mut skeletons = Vec::with_capacity(redact.len());
+        let count = redact.len();
         for record in redact.into_values() {
-            skeletons.push(record.decision_id);
+            let decision = record.decision_id;
             self.skeleton_gate_decision_in_txn(wtxn, record, at)?;
+            crate::skill_attribution::release_gate_receipt_unclear_in_txn(
+                self,
+                wtxn,
+                std::slice::from_ref(&decision),
+            )?;
         }
-        Ok(skeletons)
+        Ok(count)
     }
 
     /// The unredacted decisions bound to `claim_id` or citing it, each with

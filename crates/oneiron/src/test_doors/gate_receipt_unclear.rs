@@ -13,10 +13,10 @@ use crate::vault::Vault;
 /// Runs the bundle write `discard_world_copy_as` runs once its windows'
 /// writes took `claims`: each Gate decision bound to one of them, or citing
 /// only them, becomes its retention skeleton, and the unclear row filed
-/// under its receipt goes.
+/// under its receipt goes, local only.
 pub fn discard_claims_gate_payload(vault: &Vault, claims: &BTreeSet<EntityId>) -> Result<()> {
     vault.with_write_txn_grouped(|wtxn| {
-        crate::sync::residence::discard_bundle_payload_and_unclear_in_txn(vault, wtxn, claims)
+        crate::store::local_replica::discard_bundle_payload_in_txn(&vault.store, wtxn, claims)
     })
 }
 

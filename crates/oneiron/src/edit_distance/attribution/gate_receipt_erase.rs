@@ -23,9 +23,11 @@
 //! write, and these writers hold only the store. An erase of the claim drops
 //! it, notes and the proposals that copied them included, through its
 //! derived-row eraser, because its context names the measured claim as a
-//! source (FIX 7824). The writers that erase no claim (the retention sweep,
-//! the owner's discard of a world copy) withdraw it with their vault
-//! (`skill_attribution::delete_gate_receipt_unclear_in_txn`).
+//! source (FIX 7824). The writers that erase no claim withdraw it themselves:
+//! the retention sweep and a restore's drop through their custody write
+//! (`skill_attribution::delete_gate_receipt_unclear_in_txn`; a proposal a hold
+//! keeps stays), and the owner's discard of a world copy, which is local,
+//! without touching the proposals (`release_gate_receipt_unclear_in_txn`).
 
 use heed::RwTxn;
 
