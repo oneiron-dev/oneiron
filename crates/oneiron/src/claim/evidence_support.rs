@@ -148,13 +148,28 @@ fn stamped_candidate_evidence(evidence: &Value) -> Option<&Value> {
     field(WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY)
 }
 
+/// Whether `evidence` is keyed as a consolidation envelope: it holds both
+/// `refs` and `chain`, as the envelope encoder always writes them.
+fn keyed_as_envelope(evidence: &Value) -> bool {
+    evidence.as_map().is_some_and(|fields| {
+        ["refs", "chain"]
+            .iter()
+            .all(|name| fields.iter().any(|(key, _)| key.as_str() == Some(*name)))
+    })
+}
+
 /// What a stamped claim's writer evidence asks. A consolidation envelope that
 /// cites rows asks for one of them, as the write gate's reference read and
-/// the source recheck read this slot. A bare `refs` list (a supersession
-/// provenance claim, an open conflict, a nightly merge) is no envelope and
-/// asks nothing, nor does an envelope that cites no row; a malformed
-/// envelope cannot show support.
+/// the source recheck read this slot. A map without both `refs` and `chain`
+/// is no envelope and asks nothing, whatever its `refs` hold: the engine's
+/// bare `refs` lists (a supersession provenance claim, its conflict-open
+/// claim, a nightly merge) and a caller's own evidence that names `refs`.
+/// An envelope that cites no row asks nothing; a malformed envelope cannot
+/// show support.
 fn candidate_support(evidence: &Value) -> SlotSupport {
+    if !keyed_as_envelope(evidence) {
+        return SlotSupport::Unasked;
+    }
     match decode_consolidation_evidence(evidence) {
         Ok(Some(envelope)) if !envelope.refs.is_empty() => SlotSupport::Cited {
             refs: envelope.refs,
