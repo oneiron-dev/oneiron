@@ -40,6 +40,7 @@ fn owners(setting: &str, target: EntityId, kind: OwnerActKind) -> PolicySettingS
         value: Some([4; 32]),
         slot: None,
         inline: None,
+        more: Vec::new(),
     }
 }
 

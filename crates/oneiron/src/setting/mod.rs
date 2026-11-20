@@ -44,6 +44,7 @@ mod learned;
 mod pack;
 mod page_max;
 mod project;
+mod publish;
 mod read;
 mod set;
 mod signed_act;
@@ -79,6 +80,11 @@ pub use self::pack::{ENGINE_PACK, PackApplied, ProposedDefaultView};
 pub(crate) use self::pack::{delete_layer_row, layer_row_revision};
 pub use self::page_max::PageMax;
 pub use self::project::SettingsProjected;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::project::forget_projected_rows_in_txn;
+pub use self::publish::SettingsPublished;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::publish::settings_published_in_txn;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::read::put_stored_bytes;
 pub use self::read::{Requested, SettingCatalogueEntry, SettingRowView, SettingView};
