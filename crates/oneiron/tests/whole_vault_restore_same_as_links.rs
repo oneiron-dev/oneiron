@@ -24,7 +24,14 @@
 //!   claim stays archive data (`ClaimSubjectEdgeNotRestored`).
 //! * `an_annotated_link_comes_back_with_its_provenance`: the owner annotated
 //!   the link through the structural provenance door; the link and its
-//!   provenance claim come back.
+//!   provenance claim come back through the owner's restore, which carries
+//!   its one-restore permit into the provenance writer (Engine ANSWER
+//!   PROVENANCE-RESTORE-UNDER-TRUSTED-MANIFEST = A, 20 Nov 09:26).
+//! * `an_annotated_link_imported_without_the_owner_keeps_its_annotation_out`:
+//!   the actorless door has no such permit, and the gate of a vault with a
+//!   trusted manifest pends an Imported Auto claim; the link comes back, its
+//!   provenance claim stays archive data (`ProvenanceAutoNotPermitted`), and
+//!   the import completes.
 //! * `an_annotated_link_between_persons_already_here_stays_out`: blind review
 //!   round 1 of #9581 (REVIEW-9581 P1): the provenance cohort staged a link
 //!   the import leaves out, and its claim write then aborted the whole import
@@ -61,7 +68,14 @@
 //! this file and the door: `a_held_link_keeps_its_own_provenance` fails at
 //! the second import (`ProvenancePrecedenceViolation`),
 //! `a_link_whose_status_claim_is_gone_stays_out` finds the link restored, and
-//! `a_link_from_a_consent_kept_out_is_counted` reads a count of 0.
+//! `a_link_from_a_consent_kept_out_is_counted` reads a count of 0. Red on
+//! the merged head 0b9219ba0314 (main 384cf8319e6b), fix list row
+//! WHOLE-VAULT-SAME-AS-ANNOTATED-LINK-IMPORT-PENDS: both annotated-link
+//! tests fail at the import with `Gate(GateWriteRejected { outcome:
+//! "pending", reason_codes: ["gate.pending.source_trust"] })`; and
+//! `a_claim_about_the_share_consent_stays_archive_data` failed in its source
+//! fixture (`InvalidFacet`: a claim about a claim is born in the vault's
+//! default facet now) and runs for the first time here.
 //!
 //! Vaults in tempdirs, every step through public doors but the one door
 //! `test_doors::archive_import::put_claim_pair_same_as`. Each destination
@@ -210,18 +224,23 @@ fn linked_archive(status: CoreferenceStatus, beside: Beside) -> Linked {
         .filter(|_| beside.claim_about_consent)
         .map(|consent| {
             let id = EntityId::now();
+            let mut body = ClaimBody::new(
+                "relationship.context",
+                ClaimSubject::Entity(consent),
+                Value::from("shared after the climbing trip"),
+                0.9,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            )
+            .expect("claim body");
+            // A claim is no FACET, so the facet the body derives from its
+            // subject has no FACET row and the claim birth check refuses it
+            // (InvalidFacet). The claim is born in the vault's default facet.
+            body.scope_facet = vault.default_facet().expect("the default facet");
             vault
                 .put_claim(
                     &id,
-                    &ClaimBody::new(
-                        "relationship.context",
-                        ClaimSubject::Entity(consent),
-                        Value::from("shared after the climbing trip"),
-                        0.9,
-                        ClaimApprovalStatus::Auto,
-                        ClaimLifecycleStatus::Active,
-                    )
-                    .expect("claim body"),
+                    &body,
                     TimeRange {
                         start: 100,
                         end: 100,
@@ -536,14 +555,57 @@ fn an_annotated_link_comes_back_with_its_provenance() {
         .provenance_claim
         .expect("the source annotated the link");
     let (_dir, dest) = open_later_vault();
+    let owner = owner_proof(&dest);
     let receipt = dest
-        .import_whole_vault_archive_from(Cursor::new(&linked.archive))
-        .expect("the archive with the annotated link imports");
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&linked.archive), &owner)
+        .expect("the owner's restore of the annotated link completes");
     assert_link_back(&dest, &linked);
     assert!(
         dest.entity_exists(&provenance)
             .expect("read the provenance claim"),
         "the link's provenance claim is restored"
+    );
+    assert_eq!(
+        omission_reason(&receipt, provenance),
+        None,
+        "the receipt names no omission for the provenance claim: {:?}",
+        receipt.destination_omissions
+    );
+    assert_eq!(
+        unrestored_same_as_links(&receipt),
+        Some(0),
+        "no link stays out"
+    );
+}
+
+#[test]
+fn an_annotated_link_imported_without_the_owner_keeps_its_annotation_out() {
+    let linked = linked_archive(
+        CoreferenceStatus::Proposed,
+        Beside {
+            provenance: true,
+            ..Beside::default()
+        },
+    );
+    let provenance = linked
+        .provenance_claim
+        .expect("the source annotated the link");
+    let (_dir, dest) = open_later_vault();
+    let receipt = dest
+        .import_whole_vault_archive_from(Cursor::new(&linked.archive))
+        .expect("the actorless import of the annotated link completes");
+    assert_link_back(&dest, &linked);
+    assert!(
+        !dest
+            .entity_exists(&provenance)
+            .expect("read the provenance claim"),
+        "the link's provenance claim stays archive data"
+    );
+    assert_eq!(
+        omission_reason(&receipt, provenance).as_deref(),
+        Some("ProvenanceAutoNotPermitted"),
+        "the receipt names the provenance claim: {:?}",
+        receipt.destination_omissions
     );
     assert_eq!(
         unrestored_same_as_links(&receipt),
