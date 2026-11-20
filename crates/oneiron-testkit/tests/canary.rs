@@ -184,6 +184,80 @@ fn the_detector_names_each_canary_that_reaches_a_reader_outside_its_audience() {
     );
 }
 
+/// Whether `surface` is `door` reading an entity by its 32-hex id: a ref an
+/// answer named, since the seed holds short refs only.
+fn reads_a_named_entity(surface: &str, door: &str) -> bool {
+    surface
+        .strip_prefix(door)
+        .and_then(|rest| rest.strip_prefix(' '))
+        .is_some_and(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
+#[test]
+fn the_scan_reads_the_point_doors_and_follows_the_refs_its_answers_name() {
+    let (test_vault, canaries) = seeded();
+    let vault = test_vault.open_owned().expect("open the seeded vault");
+    let scan = canaries.scan(&vault, CanaryActor::Owner);
+    let restricted = CanaryClass::Claim(ClaimBand::Restricted);
+    // Each point door reads the owner's own canary, so a leak through it
+    // would show as one.
+    for (class, door) in [
+        (CanaryClass::OwnerKeyValue, "vault.kv.get"),
+        (restricted, "vault.claims.list_filtered"),
+        (restricted, "vault.claims.read_filtered "),
+        (restricted, "vault.claims.history "),
+        (restricted, "vault.refs.resolve "),
+        (CanaryClass::RelationshipMessage, "vault.refs.links "),
+    ] {
+        let surfaces = canaries.surfaces_seeing(&scan, class);
+        assert!(
+            surfaces.iter().any(|surface| surface.starts_with(door)),
+            "the owner's scan read its {class} canary on no `{door}` surface, only on {surfaces:#?}; refused: {:#?}",
+            scan.refused
+        );
+    }
+    // A ref an answer names is followed: the claim lists name the claim by
+    // its 32-hex id, which the seed never held.
+    let followed = canaries.surfaces_seeing(&scan, restricted);
+    assert!(
+        followed
+            .iter()
+            .any(|surface| reads_a_named_entity(surface, "vault.get")),
+        "the owner's scan followed no named ref to its {restricted} canary: {followed:#?}"
+    );
+    assert!(scan.incomplete.is_empty(), "{:?}", scan.incomplete);
+}
+
+#[test]
+fn the_owners_export_is_scanned_as_its_decoded_archive() {
+    let (test_vault, canaries) = seeded();
+    let vault = test_vault.open_owned().expect("open the seeded vault");
+    let owner = canaries.scan(&vault, CanaryActor::Owner);
+    let decoded = "vault.export (archive decoded)";
+    for class in [
+        CanaryClass::Claim(ClaimBand::Restricted),
+        CanaryClass::RelationshipMessage,
+    ] {
+        let surfaces = canaries.surfaces_seeing(&owner, class);
+        assert!(
+            surfaces.iter().any(|surface| surface == decoded),
+            "the owner's decoded export holds no {class} canary; it was read on {surfaces:#?}; incomplete: {:?}",
+            owner.incomplete
+        );
+    }
+    assert!(owner.incomplete.is_empty(), "{:?}", owner.incomplete);
+    // An agent's whole-vault export is refused before it reads: owner only.
+    let inside = canaries.scan(&vault, CanaryActor::Inside);
+    assert!(
+        inside
+            .refused
+            .iter()
+            .any(|read| read.surface == "vault.export"),
+        "the inside agent's vault.export was not refused; refused: {:#?}",
+        inside.refused
+    );
+}
+
 /// The turn wake's model calls over the canary vault, as `(prompt digest,
 /// reply)` (see tests/dreamer.rs for how a table is filled). The turn wake
 /// reads the newest owner turn, the relationship message, with the owner's
