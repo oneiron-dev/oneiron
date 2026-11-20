@@ -93,8 +93,11 @@ impl Vault {
     /// # Errors
     /// A refused platform prompt answers [`RecordError::OwnerPresenceRequired`].
     /// A set device PIN needs an installed PIN gate and an open PIN window;
-    /// PIN refusals answer [`crate::error::SecretError::DevicePin`]. A failed
-    /// PIN-home read answers the keystore's error.
+    /// PIN refusals answer [`crate::error::SecretError::DevicePin`]: a closed
+    /// window answers [`DevicePinRefusal::Required`], and a handle whose host
+    /// installed no device PIN answers [`DevicePinRefusal::Unavailable`],
+    /// because no call on that handle could take the PIN. A failed PIN-home
+    /// read answers the keystore's error.
     pub fn owner_presence(
         &self,
         importance: OwnerActImportance,
@@ -126,6 +129,8 @@ impl Vault {
         let basis = match gate.confirm(reason) {
             Ok(PresenceConfirmation::Prompted) => OwnerPresenceBasis::Prompted,
             Ok(PresenceConfirmation::WithinWindow) => OwnerPresenceBasis::WithinWindow,
+            // A backend answers `NoPrompt` only where it can never show its
+            // prompt. A session that is off the screen answers `ScreenLocked`.
             Err(PresenceError::NoPrompt(_)) => return Ok(device_cannot_ask(importance)),
             Err(PresenceError::Declined) => {
                 return Err(owner_presence_refused(OwnerPresenceRefusal::Declined));

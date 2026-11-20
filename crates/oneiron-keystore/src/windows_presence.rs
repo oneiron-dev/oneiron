@@ -15,7 +15,11 @@
 //!   headless host has not, so the presence gate asks: at each act, and on a
 //!   timer.
 //! - A process in the services session, or in a session that is not
-//!   connected to a screen, cannot show the prompt and says so.
+//!   connected to a screen, cannot show the prompt and says so. A process
+//!   in the services session can never ask, and a confirm there answers
+//!   `NoPrompt`. A session that is not connected to a screen, or whose
+//!   record cannot be read, reads as a locked screen, and a confirm asked
+//!   then answers `ScreenLocked`.
 
 use std::ptr;
 use std::sync::mpsc::{RecvTimeoutError, sync_channel};
@@ -125,13 +129,13 @@ impl UserPresence for WindowsUserPresence {
             WindowsScreenSession::Services => {
                 return Err(PresenceError::NoPrompt(SERVICES_SESSION));
             }
-            WindowsScreenSession::OffScreen => {
-                return Err(PresenceError::NoPrompt(SESSION_OFF_SCREEN));
-            }
-            WindowsScreenSession::Unreadable => {
-                return Err(PresenceError::NoPrompt(SESSION_UNREADABLE));
-            }
-            WindowsScreenSession::Locked => return Err(PresenceError::ScreenLocked),
+            // Every reading the lock check takes as locked answers as locked
+            // here too. A session that left the screen after the gate read
+            // it is not a device that cannot ask: a caller lets an act stand
+            // on `NoPrompt`, and no act stands on a screen nobody is at.
+            WindowsScreenSession::Locked
+            | WindowsScreenSession::OffScreen
+            | WindowsScreenSession::Unreadable => return Err(PresenceError::ScreenLocked),
             WindowsScreenSession::Unlocked => {}
         }
         // The prompt must say what is confirmed, as on every platform.
