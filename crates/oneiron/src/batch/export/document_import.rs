@@ -3,6 +3,7 @@
 //! each pass reads one row at a time from it; the dependency queues, id sets
 //! and maps grow in the index as well, so no archive-wide row state stays in
 //! memory. The rows still go in through one write transaction.
+mod claim_pair_same_as;
 mod issue_archive_restore;
 mod owner_archive_restore;
 mod seed_replacement;
@@ -648,6 +649,28 @@ impl Vault {
             inserted_entities += inserted;
             unchanged_entities += unchanged;
         }
+        // CLAIM-NOTE-SAME-AS-RESTORE-PROOF = A: the owner's archived standing
+        // grants go in before any row or link, so a `same_as` between two
+        // CLAIMs is proven on the nightly-link grant as the Dreamer's own
+        // writer reads it; the grant is read once, here
+        // (`claim_pair_same_as`). Every other door installs no grant.
+        let mut side_refresh = super::archive_side_install::ArchivedSideRowRefresh::default();
+        let grants_landed_first =
+            super::archive_retained_side_rows::land_standing_grants_first_in_txn(
+                self,
+                &mut wtxn,
+                &archive,
+                permit.as_ref(),
+                &mut side_refresh,
+            )?;
+        if let Some(receipt_ref) = receipt_ref.as_deref() {
+            claim_pair_same_as::index_nightly_link_grant(
+                self,
+                &wtxn,
+                &mut archive.index,
+                receipt_ref,
+            )?;
+        }
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
         // Each round queues what waits on no pending id, then restores it.
@@ -750,9 +773,10 @@ impl Vault {
         // readiness or fulfillment link is proven on its restored rows and
         // their restored `supersedes` chain, so it lands after the plain
         // links too (WHOLE-VAULT-IMPORT-REFUSES-RESERVED-OWNER-EDGES). An
-        // archived `same_as` link is proven on its two restored PERSONs and
-        // its restored status claim, so it lands in the plain pass, or before
-        // a claim about it.
+        // archived `same_as` link is proven on its two restored PERSONs, or
+        // on its two restored CLAIMs and the owner's nightly-link grant, and
+        // on its restored status claim, so it lands in the plain pass, or
+        // before a claim about it.
         let mut skipped_unproven_regenerates_edges = 0;
         let mut unrestored_identity_topology_shells = BTreeSet::new();
         let mut unrestored_same_as_links = 0;
@@ -824,8 +848,8 @@ impl Vault {
             restore_secrets_in_txn(self, &mut wtxn, &mut archive)?;
         let owed_secrets = owed_secrets_in_txn(self, &wtxn, &archive.manifest.fold_only_secrets)?;
         // Actor and actorless doors retain only; the owner door installs tables with a
-        // landing group and retains the rest, after imported persons, results and secrets.
-        let mut side_refresh = super::archive_side_install::ArchivedSideRowRefresh::default();
+        // landing group and retains the rest, after imported persons, results and secrets;
+        // the standing grants it landed before the rows count as installed.
         let retained_side_rows =
             super::archive_retained_side_rows::install_or_retain_side_rows_in_txn(
                 self,
@@ -833,6 +857,7 @@ impl Vault {
                 &archive,
                 permit.as_ref(),
                 restore_receipt_hex,
+                &grants_landed_first,
                 &mut side_refresh,
             )?;
         // OF-013: each lineage's floor rises to the archive's and never falls.
@@ -2592,16 +2617,24 @@ fn import_readiness_or_fulfillment_edge(
 /// every imported claim does, and its share consents stay archive data
 /// (`CoreferenceConsentNotRestored`), so the link is local here.
 ///
+/// A link between two CLAIMs is applied only under the owner's standing
+/// nightly-link grant (`federation::put_consolidated_same_as_in_txn`), so it
+/// comes back on that proof, read on this vault: on the owner's restore,
+/// once its archived standing grants are in, with an active status claim
+/// that comes back, and the grant's use recorded with a Gate receipt naming
+/// the restore (`claim_pair_same_as`, CLAIM-NOTE-SAME-AS-RESTORE-PROOF = A).
+/// Every other door installs no grant and keeps it out.
+///
 /// A record already here keeps its own links: a link this vault holds is
-/// left as it is, and one naming a PERSON already here stays out, since a
-/// foreign archive would otherwise tell this vault who its own person is.
-/// Every other `same_as` stays out too: a link between two CLAIMs is applied
-/// only under the owner's standing nightly-link grant
-/// (`federation::put_consolidated_same_as_in_txn`), and one between two diary
-/// NOTEs only on its residents' own submission
-/// (`Memory::link_diary_coreference`). The edge passes count each link left
-/// out, and a claim about it, its edge provenance among them, stays archive
-/// data (`ClaimSubjectEdgeNotRestored`).
+/// left as it is, and one naming a PERSON or a CLAIM already here stays out,
+/// since a foreign archive would otherwise tell this vault who its own
+/// person is, or join its own memories. Every other `same_as` stays out
+/// too: one between two diary NOTEs is proven only on its residents' own
+/// submission (`Memory::link_diary_coreference`), and an imported diary has
+/// no local author here (`NoteActor::Imported`), so no resident proof
+/// exists on this vault. The edge passes count each link left out, and a
+/// claim about it, its edge provenance among them, stays archive data
+/// (`ClaimSubjectEdgeNotRestored`).
 fn import_same_as_edge(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -2621,16 +2654,25 @@ fn import_same_as_edge(
     {
         return Ok(EdgeImport::Landed);
     }
-    let restorable = edge.weight == crate::federation::COREFERENCE_LINK_WEIGHT
+    let ends_restored = edge.weight == crate::federation::COREFERENCE_LINK_WEIGHT
         && edge.vad.is_none()
         && edge.provenance.is_none()
         && inserted.contains(Tag::Inserted, source.as_bytes())?
-        && inserted.contains(Tag::Inserted, target.as_bytes())?
-        && crate::federation::person_pair_in_txn(vault, wtxn, source, target)?
-        && same_as_status_restored(inserted, &source, &target)?;
-    if !restorable {
+        && inserted.contains(Tag::Inserted, target.as_bytes())?;
+    if !ends_restored {
         return Ok(EdgeImport::SameAsLeftOut);
     }
+    let claim_pair = if crate::federation::person_pair_in_txn(vault, wtxn, source, target)? {
+        if !same_as_status_restored(inserted, &source, &target)? {
+            return Ok(EdgeImport::SameAsLeftOut);
+        }
+        None
+    } else {
+        match claim_pair_same_as::claim_pair_proof(vault, wtxn, inserted, source, target)? {
+            Some(proof) => Some(proof),
+            None => return Ok(EdgeImport::SameAsLeftOut),
+        }
+    };
     vault
         .batch_in()
         .edge_with_value_fields(
@@ -2645,6 +2687,9 @@ fn import_same_as_edge(
             },
         )
         .apply(wtxn)?;
+    if let Some(proof) = claim_pair {
+        proof.record_use_in_txn(vault, wtxn, source, target)?;
+    }
     Ok(EdgeImport::Landed)
 }
 
