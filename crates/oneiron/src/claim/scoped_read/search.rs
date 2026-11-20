@@ -745,6 +745,7 @@ impl<'v> ScopedRead<'v> {
             judged_at: self.judged_at,
             read_filter: RetrievalFilter::meet_requests(self.read_filter.as_ref(), request),
             receipts_include_live_grants: self.receipts_include_live_grants,
+            cited_support: self.cited_support,
         })
     }
 }

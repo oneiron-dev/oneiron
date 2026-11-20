@@ -28,9 +28,25 @@ enum SlotSupport {
     Malformed,
 }
 
+/// Which rule a read applies to a cited CLAIM the owner retracted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum CitedSupport {
+    /// Every serving read: a retracted cited claim supports nothing, so a
+    /// claim derived only from it is not served (Engine ANSWER
+    /// DERIVED-CLAIM-RETRACTED-SOURCE-SUPPORT = A).
+    #[default]
+    Served,
+    /// The claim history door (`Memory::claim_history`): a retraction ends
+    /// serving, not the record, so a retracted cited claim still counts
+    /// while its row lives. Every other support rule applies as served.
+    History,
+}
+
 /// A derived claim with typed TURN citations is readable while at least one
-/// cited turn remains live. A cited CLAIM the owner retracted is not live
-/// (`retracted_claim`); a superseded one is. This is a read-time test: sync
+/// cited turn remains live. On a serving read a cited CLAIM the owner
+/// retracted is not live (`retracted_claim`); a superseded one is, and the
+/// claim history door keeps the retracted one ([`CitedSupport::History`],
+/// [`has_live_support_under_in_txn`]). This is a read-time test: sync
 /// can deliver a claim after the deletion that erased its source, or before
 /// the retraction of the claim it cites. Ordinary claims have no such
 /// evidence obligation, and claim history remains available through get_claim.
@@ -45,6 +61,17 @@ pub(crate) fn has_live_support_in_txn(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     body: &ClaimBody,
+) -> Result<bool> {
+    has_live_support_under_in_txn(store, txn, body, CitedSupport::Served)
+}
+
+/// [`has_live_support_in_txn`] under `rule`: [`CitedSupport::History`] counts
+/// a retracted cited claim as live, as it did before the serving rule.
+pub(crate) fn has_live_support_under_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    body: &ClaimBody,
+    rule: CitedSupport,
 ) -> Result<bool> {
     let mut slots = vec![written_support(body)];
     if let Some(candidate) = body.evidence.as_ref().and_then(stamped_candidate_evidence) {
@@ -68,7 +95,7 @@ pub(crate) fn has_live_support_in_txn(
                 body: row,
             } = crate::vault::live_entity_row_in_txn(store, txn, &id)?
                 && (!turns_only || entity_type == crate::registry::ENTITY_TYPE_TURN)
-                && !retracted_claim(entity_type, &row)
+                && (rule == CitedSupport::History || !retracted_claim(entity_type, &row))
             {
                 return Ok(true);
             }

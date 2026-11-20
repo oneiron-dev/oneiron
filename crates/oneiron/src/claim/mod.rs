@@ -121,7 +121,9 @@ pub use decay::*;
 pub(crate) use deferred::{
     OwnClaimRetract, claim_has_deferred_action_in_txn, owner_ruling_receipt_fields,
 };
-pub(crate) use evidence_support::has_live_support_in_txn;
+pub(crate) use evidence_support::{
+    CitedSupport, has_live_support_in_txn, has_live_support_under_in_txn,
+};
 pub(crate) use expression_archive::{ArchivedExpressionPreference, ExpressionPreferenceArchive};
 pub use history_handoff::*;
 pub use lexical_query_hint::*;
