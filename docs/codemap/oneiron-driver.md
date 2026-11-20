@@ -71,6 +71,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/extraction_decisions.rs` | test | m | — | — | Bound extraction decision orchestration over lent scripted verdicts |
 | `tests/extraction_decisions/support.rs` | test | m | 25 crate-vis | — | Lent scripted verdict fixtures for bound extraction decision tests |
 | `tests/extraction_decisions_parity.rs` | test | m | — | — | Native versus crate extraction decision parity over real vaults |
+| `tests/extraction_decisions_step_record.rs` | test | m | — | — | A decisions run over a real lent extraction step names its recorded candidates |
 | `tests/extraction_observed_routing.rs` | test | s | — | — | Checks the observed-beside-stated route before any lender call or write |
 | `tests/extraction_observed_routing/support.rs` | test | s | 1 crate-vis | — | Adapts crate routing to the same small JSON shape as the native red adapter |
 | `tests/extraction_routing_parity.rs` | test | m | — | — | Native versus crate extraction routing parity over real vaults |
