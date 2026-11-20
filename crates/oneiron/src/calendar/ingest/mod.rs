@@ -45,7 +45,7 @@ pub(crate) use admission::ensure_ics_import_actor;
 mod consent;
 pub(in crate::calendar) use admission::{
     ConnectorAdmissionSource, ConnectorScreen, admit_connector_event, connector_event_ref,
-    delete_connector_resource, preflight_connector_feed, repeat_connector_host_cancel_refund,
+    delete_connector_resource, preflight_connector_feed, repeat_connector_echo,
     sweep_connector_resource, sweep_connector_uids,
 };
 pub(crate) use calendar_source::{

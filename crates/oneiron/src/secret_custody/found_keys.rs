@@ -518,6 +518,30 @@ impl KeptValues {
     }
 }
 
+/// The text form and value of each key `records` hold that the owner ruled
+/// no secret or kept as text, read in `txn` from its revoked custody record,
+/// as [`KeptValues`] reads them: what a text that still holds such a handle
+/// takes in its place (REVIEW-9471 F3). Each value is wiped when dropped.
+pub(crate) fn kept_handles_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    records: impl IntoIterator<Item = EntityId>,
+) -> Result<Vec<(String, Zeroizing<Vec<u8>>)>> {
+    let mut kept = Vec::new();
+    for record in records {
+        let Some(found) = FOUND.get(store, txn, &record)? else {
+            continue;
+        };
+        for key in found.keys.iter().filter(|key| key.kept_by_owner()) {
+            if let Some(mut rec) = super::read_secret_custody_in_txn(store, txn, &key.custody)? {
+                let value = Zeroizing::new(std::mem::take(&mut rec.value_bytes));
+                kept.push((format!("{HANDLE_TEXT_OPEN}{}]", key.handle), value));
+            }
+        }
+    }
+    Ok(kept)
+}
+
 impl Vault {
     /// The found-key notices for the owner, newest first: each record the
     /// mask lifted keys out of, with each key's handle, kind, place, what

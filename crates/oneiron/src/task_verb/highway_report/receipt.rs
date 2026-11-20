@@ -93,9 +93,16 @@ impl Memory<'_> {
         lifecycle
             .fields
             .insert("acked".to_owned(), acked.acked.to_string());
-        let phase = task_verb_body(self.vault(), task_ref)?
-            .as_ref()
-            .map_or(TaskPhase::Queued, phase_of);
+        // The dismissal above already read through its jobs-fold recovery
+        // arm; the receipt phase degrades the same way an absent body does,
+        // never a refusal. Any other read fault still refuses.
+        let phase = match task_verb_body(self.vault(), task_ref) {
+            Ok(body) => body.as_ref().map_or(TaskPhase::Queued, phase_of),
+            Err(crate::error::Error::Record(crate::error::RecordError::InvalidTaskBody(_))) => {
+                TaskPhase::Queued
+            }
+            Err(error) => return Err(error.into()),
+        };
         Ok(TaskCallReceipt {
             handle: TaskHandle::Task { task_ref },
             related: Vec::new(),

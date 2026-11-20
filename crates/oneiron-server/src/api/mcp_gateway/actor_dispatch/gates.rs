@@ -274,11 +274,13 @@ pub(crate) fn mcp_verb_gate(
     } else {
         McpRecordBounds::Unrestricted
     };
-    // `self.actor` answers a bounded credential, but no row it answers
-    // carries a channel, so a channel caveat has nothing to filter: refused
-    // here, as its HTTP admission `lane_record_scope` refuses it (review of
-    // #9533).
-    if tool.name == SELF_ACTOR_VERB {
+    // A host door runs outside the engine's scoped read, which applies a
+    // channel caveat row by row, so the filtered bounds cannot carry one to
+    // it: refused here, before the call's hooks, as the door's HTTP
+    // admission `lane_record_scope` refuses it before its hooks
+    // (`self.actor`, review of #9533; every other such door, FIX
+    // MCP-FILTERED-HOST-DOOR-CHANNEL-CAVEAT-PARITY).
+    if tool.lane_record_scope_host_door() {
         let auth = actor.auth.as_ref().ok_or_else(mcp_proof_error)?;
         auth.require_lane_record_scope().map_err(|_| {
             McpGatewayError::new(
@@ -290,9 +292,6 @@ pub(crate) fn mcp_verb_gate(
     }
     mcp_credential_gate(server, actor, bounds, McpCallEffect::of(tool, arguments))
 }
-
-/// The verb that answers the caller's own actor refs.
-const SELF_ACTOR_VERB: &str = "self.actor";
 
 /// The connector credential is live, inside the record bounds the call can
 /// carry, and holds the verb for what the call does.

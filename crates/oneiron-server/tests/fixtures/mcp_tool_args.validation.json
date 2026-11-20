@@ -514,9 +514,9 @@
       }
     },
     {
-      "name": "board_expand_valid_key_and_epoch",
+      "name": "describe_key_valid_key_and_epoch",
       "mode": "tool_first",
-      "tool": "board.expand",
+      "tool": "describe",
       "valid": true,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -540,9 +540,9 @@
       }
     },
     {
-      "name": "board_expand_valid_frame_epoch_integral_spelling",
+      "name": "describe_key_valid_frame_epoch_integral_spelling",
       "mode": "tool_first",
-      "tool": "board.expand",
+      "tool": "describe",
       "valid": true,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -566,9 +566,9 @@
       }
     },
     {
-      "name": "board_expand_invalid_fractional_frame_epoch",
+      "name": "describe_key_invalid_fractional_frame_epoch",
       "mode": "tool_first",
-      "tool": "board.expand",
+      "tool": "describe",
       "valid": false,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -592,9 +592,9 @@
       }
     },
     {
-      "name": "board_expand_invalid_missing_arguments",
+      "name": "self_focus_unsubscribe_invalid_missing_arguments",
       "mode": "tool_first",
-      "tool": "board.expand",
+      "tool": "self.focus.unsubscribe",
       "valid": false,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -614,9 +614,9 @@
       }
     },
     {
-      "name": "board_expand_invalid_missing_key",
+      "name": "self_focus_subscribe_invalid_missing_scopes",
       "mode": "tool_first",
-      "tool": "board.expand",
+      "tool": "self.focus.subscribe",
       "valid": false,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -633,15 +633,13 @@
           "policy_ref": "policy:foreign-mcp",
           "purpose": "read_board"
         },
-        "arguments": {
-          "frame_epoch": 7
-        }
+        "arguments": {}
       }
     },
     {
-      "name": "board_expand_invalid_blank_key",
+      "name": "describe_key_invalid_blank_key",
       "mode": "tool_first",
-      "tool": "board.expand",
+      "tool": "describe",
       "valid": false,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -664,9 +662,9 @@
       }
     },
     {
-      "name": "board_refresh_valid_no_arguments",
+      "name": "self_focus_refresh_valid_no_arguments",
       "mode": "tool_first",
-      "tool": "board.refresh",
+      "tool": "self.focus.refresh",
       "valid": true,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -686,9 +684,9 @@
       }
     },
     {
-      "name": "board_refresh_invalid_foreign_field",
+      "name": "self_focus_refresh_invalid_foreign_field",
       "mode": "tool_first",
-      "tool": "board.refresh",
+      "tool": "self.focus.refresh",
       "valid": false,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -711,9 +709,9 @@
       }
     },
     {
-      "name": "board_subscribe_valid_scopes",
+      "name": "self_focus_subscribe_valid_scopes",
       "mode": "tool_first",
-      "tool": "board.subscribe",
+      "tool": "self.focus.subscribe",
       "valid": true,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -739,9 +737,9 @@
       }
     },
     {
-      "name": "board_subscribe_invalid_empty_scopes",
+      "name": "self_focus_subscribe_invalid_empty_scopes",
       "mode": "tool_first",
-      "tool": "board.subscribe",
+      "tool": "self.focus.subscribe",
       "valid": false,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -764,9 +762,9 @@
       }
     },
     {
-      "name": "board_subscribe_invalid_unknown_scope",
+      "name": "self_focus_subscribe_invalid_unknown_scope",
       "mode": "tool_first",
-      "tool": "board.subscribe",
+      "tool": "self.focus.subscribe",
       "valid": false,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -791,9 +789,9 @@
       }
     },
     {
-      "name": "board_subscribe_invalid_missing_arguments",
+      "name": "self_focus_subscribe_invalid_missing_arguments",
       "mode": "tool_first",
-      "tool": "board.subscribe",
+      "tool": "self.focus.subscribe",
       "valid": false,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -813,9 +811,9 @@
       }
     },
     {
-      "name": "board_unsubscribe_valid_scopes",
+      "name": "self_focus_unsubscribe_valid_scopes",
       "mode": "tool_first",
-      "tool": "board.unsubscribe",
+      "tool": "self.focus.unsubscribe",
       "valid": true,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -840,9 +838,9 @@
       }
     },
     {
-      "name": "board_unsubscribe_invalid_missing_scopes",
+      "name": "self_focus_unsubscribe_invalid_missing_scopes",
       "mode": "tool_first",
-      "tool": "board.unsubscribe",
+      "tool": "self.focus.unsubscribe",
       "valid": false,
       "args": {
         "schema_version": "mcp_tool_args.v1",
@@ -985,7 +983,9 @@
           "purpose": "read_tasks"
         },
         "arguments": {
-          "key": "TASKS"
+          "scopes": [
+            "my_tasks"
+          ]
         }
       }
     },
@@ -1117,7 +1117,10 @@
           "purpose": "ack_task"
         },
         "arguments": {
-          "task_ref": "44444444444444444444444444444444"
+          "task_ref": "44444444444444444444444444444444",
+          "spec": {
+            "task_ref": "44444444444444444444444444444444"
+          }
         }
       }
     },
@@ -1297,7 +1300,7 @@
           "spec": {
             "kind": "review"
           },
-          "assignee": "11111111111111111111111111111111"
+          "priority": "high"
         }
       }
     },

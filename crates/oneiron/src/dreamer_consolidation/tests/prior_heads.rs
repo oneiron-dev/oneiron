@@ -1142,7 +1142,14 @@ fn each_dreamer_role_calls_its_own_backend() -> Result<()> {
     let judge = std::sync::Arc::new(ScriptedBackend::new(vec![
         Ok(pack_none()),
         Ok(text_response(
-            "{\"resolution\":\"merge\",\"value\":\"Alex\"}".into(),
+            serde_json::json!({
+                "Q1": {"merge": 1.0, "supersede": 0.0, "accumulate": 0.0, "escalate": 0.0},
+                "Q2": {"none": 1.0, "C1": 0.0},
+            })
+            .to_string(),
+        )),
+        Ok(text_response(
+            serde_json::json!({"value": "Alex"}).to_string(),
         )),
     ]));
     let unrouted = ScriptedBackend::new(Vec::new());
@@ -1207,11 +1214,12 @@ fn each_dreamer_role_calls_its_own_backend() -> Result<()> {
         "{execution:?}"
     );
     assert_eq!(extractor.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(judge.calls.load(Ordering::SeqCst), 1);
+    // Extraction uses extractor; correction, conflict and value use judge in order.
+    assert_eq!(judge.calls.load(Ordering::SeqCst), 3);
     assert_eq!(unrouted.calls.load(Ordering::SeqCst), 0);
     let models = |backend: &ScriptedBackend| backend.models();
     assert_eq!(models(&extractor), vec!["test/extractor@r1".to_owned()]);
-    assert_eq!(models(&judge), vec!["test/judge@r1".to_owned()]);
+    assert_eq!(models(&judge), vec!["test/judge@r1".to_owned(); 3]);
     Ok(())
 }
 
@@ -1236,11 +1244,19 @@ fn a_protected_correction_stays_proposed(declared_critical: bool) -> Result<()> 
     } else {
         fixture_with_head_source(&vault, ClaimSource::UserStated)?
     };
+    // Extraction, correction, then conflict and value only for the user-stated head.
     let backend = ScriptedBackend::new(vec![
         Ok(extract(&fx, "Alex")),
         Ok(pack_correct()),
         Ok(text_response(
-            "{\"resolution\":\"merge\",\"value\":\"Alex\"}".into(),
+            serde_json::json!({
+                "Q1": {"merge": 1.0, "supersede": 0.0, "accumulate": 0.0, "escalate": 0.0},
+                "Q2": {"none": 1.0, "C1": 0.0},
+            })
+            .to_string(),
+        )),
+        Ok(text_response(
+            serde_json::json!({"value": "Alex"}).to_string(),
         )),
     ]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
@@ -1528,7 +1544,13 @@ fn a_correction_that_shares_its_head_still_takes_the_verdict_call() -> Result<()
         let backend = ScriptedBackend::new(vec![
             Ok(extraction),
             Ok(pack),
-            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+            Ok(text_response(
+                serde_json::json!({
+                    "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 1.0, "escalate": 0.0},
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
+            )),
         ]);
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
         execute_at_pin(
@@ -1539,9 +1561,10 @@ fn a_correction_that_shares_its_head_still_takes_the_verdict_call() -> Result<()
             fx.scope.clone(),
             Some(&pin),
         )?;
+        // Extraction, correction, then the conflict pack; no value call.
         assert_eq!(
             backend.calls.load(Ordering::SeqCst),
-            2,
+            3,
             "the verdict was asked (second head: {second_head})"
         );
         assert_eq!(
@@ -1622,7 +1645,14 @@ fn a_bound_correction_of_a_user_stated_claim_is_judged_by_the_source_doors() -> 
         Ok(correct(&fx, "Alex")),
         Ok(pack_correct()),
         Ok(text_response(
-            "{\"resolution\":\"supersede\",\"value\":\"Alex\"}".into(),
+            serde_json::json!({
+                "Q1": {"merge": 0.0, "supersede": 1.0, "accumulate": 0.0, "escalate": 0.0},
+                "Q2": {"none": 1.0, "C1": 0.0},
+            })
+            .to_string(),
+        )),
+        Ok(text_response(
+            serde_json::json!({"value": "Alex"}).to_string(),
         )),
     ]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
@@ -1634,9 +1664,10 @@ fn a_bound_correction_of_a_user_stated_claim_is_judged_by_the_source_doors() -> 
         fx.scope.clone(),
         Some(&pin),
     )?;
+    // Extraction, correction, conflict, then the superseding value.
     assert_eq!(
         backend.calls.load(Ordering::SeqCst),
-        2,
+        4,
         "the verdict was asked"
     );
     assert!(sink.outcome.landed.is_empty(), "{:?}", sink.outcome);
@@ -1701,7 +1732,13 @@ fn a_held_restatement_keeps_its_head_on_the_verdict_path() -> Result<()> {
             .to_string(),
         )),
         Ok(pack_correct_then_none()),
-        Ok(text_response("{\"resolution\":\"escalate\"}".into())),
+        Ok(text_response(
+            serde_json::json!({
+                "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 0.0, "escalate": 1.0},
+                "Q2": {"none": 1.0, "C1": 0.0},
+            })
+            .to_string(),
+        )),
     ]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     execute_at_pin(
@@ -1712,9 +1749,10 @@ fn a_held_restatement_keeps_its_head_on_the_verdict_path() -> Result<()> {
         fx.scope.clone(),
         Some(&pin),
     )?;
+    // Extraction, correction, then the conflict pack; no value call.
     assert_eq!(
         backend.calls.load(Ordering::SeqCst),
-        2,
+        3,
         "the verdict was asked"
     );
     assert_eq!(
@@ -3111,7 +3149,13 @@ fn a_prior_the_handoff_closed_still_fences_its_later_writes() -> Result<()> {
         let backend = ScriptedBackend::new(vec![
             Ok(extract(&fx, "Alex")),
             Ok(pack_none()),
-            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+            Ok(text_response(
+                serde_json::json!({
+                    "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 1.0, "escalate": 0.0},
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
+            )),
         ]);
         let mut sink = ClosedHeadSink {
             inner: PromotionWriterSink::new(&vault, fx.run.clone()),
@@ -3119,7 +3163,8 @@ fn a_prior_the_handoff_closed_still_fences_its_later_writes() -> Result<()> {
             after,
         };
         let result = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone());
-        assert_eq!(backend.calls.load(Ordering::SeqCst), 2, "{after:?}");
+        // Extraction, correction, then the accumulating conflict pack.
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 3, "{after:?}");
         if after == AfterClose::Kept {
             result.unwrap_or_else(|error| {
                 panic!(
@@ -3186,10 +3231,17 @@ fn a_row_a_close_relies_on_is_fenced_for_the_handoffs_later_writes() -> Result<(
             1,
             b"another person",
         )?;
+        // Extraction, correction, then the accumulating conflict pack.
         let backend = ScriptedBackend::new(vec![
             Ok(extract(&fx, "Alex")),
             Ok(pack_none()),
-            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+            Ok(text_response(
+                serde_json::json!({
+                    "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 1.0, "escalate": 0.0},
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
+            )),
         ]);
         let mut sink = StandingSink {
             inner: PromotionWriterSink::new(&vault, fx.run.clone()),
@@ -3228,13 +3280,28 @@ fn multiple_pinned_priors_remain_context_without_arbitrary_supersession() -> Res
         fx.scope.readable.insert(pin.clone());
         fx.scope.writable.insert(pin);
         let originals = [vault.get_raw(&fx.head)?, vault.get_raw(&second)?];
-        let backend = ScriptedBackend::new(vec![
+        // Extraction, correction, conflict, then a value only for the merge arm.
+        let mut script = vec![
             Ok(extract(&fx, "Alex")),
             Ok(pack_none_two_heads()),
             Ok(text_response(
-                serde_json::json!({"resolution": resolution, "value": "Alex"}).to_string(),
+                serde_json::json!({
+                    "Q1": {
+                        "merge": if resolution == "merge" { 1.0 } else { 0.0 },
+                        "supersede": 0.0, "accumulate": 0.0,
+                        "escalate": if resolution == "escalate" { 1.0 } else { 0.0 },
+                    },
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
             )),
-        ]);
+        ];
+        if resolution == "merge" {
+            script.push(Ok(text_response(
+                serde_json::json!({"value": "Alex"}).to_string(),
+            )));
+        }
+        let backend = ScriptedBackend::new(script);
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
         assert!(matches!(
             execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?,
@@ -3445,7 +3512,13 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
             inner: ScriptedBackend::new(vec![
                 Ok(extract(&fx, "Alex")),
                 Ok(pack_none()),
-                Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+                Ok(text_response(
+                    serde_json::json!({
+                        "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 1.0, "escalate": 0.0},
+                        "Q2": {"none": 1.0, "C1": 0.0},
+                    })
+                    .to_string(),
+                )),
             ]),
             requests: Mutex::new(Vec::new()),
         };
@@ -3716,7 +3789,13 @@ fn a_stored_reply_decode_cannot_wholly_take_never_wedges_a_resume() -> Result<()
                 })
                 .to_string(),
             )),
-            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+            Ok(text_response(
+                serde_json::json!({
+                    "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 1.0, "escalate": 0.0},
+                    "Q2": {"none": 1.0, "C1": 0.0},
+                })
+                .to_string(),
+            )),
         ]),
         requests: Mutex::new(Vec::new()),
     };
@@ -3730,8 +3809,9 @@ fn a_stored_reply_decode_cannot_wholly_take_never_wedges_a_resume() -> Result<()
         assert_eq!(names(&vault, fx.subject)?.len(), 2, "{run}");
     }
     let requests = backend.requests.lock().unwrap();
-    assert_eq!(requests.len(), 2, "the replay asked no model");
-    let verdict: String = requests[1].messages.iter().map(message_text).collect();
+    // Extraction, correction, conflict; replay memo-hits all three calls.
+    assert_eq!(requests.len(), 3, "the replay asked no model");
+    let verdict: String = requests[2].messages.iter().map(message_text).collect();
     assert!(verdict.contains("\"Alex\""), "{verdict}");
     assert!(
         !verdict.contains("\"Sam\"") && !verdict.contains("\"Kit\""),

@@ -441,6 +441,7 @@ fn a_record_naming_another_key_or_suite_is_refused_before_any_write() {
     let with = |key: WorldKeyId, bytes: Vec<u8>| WorldKeyWrapsRecord {
         key,
         wraps: vec![(to_b, bytes)],
+        permitted: vec![to_b],
         ..genuine.clone()
     };
     let blank = |suite, kem| {
@@ -525,6 +526,7 @@ fn a_second_key_under_one_id_conflicts_and_the_next_door_mints_afresh() {
             )
             .unwrap(),
         )],
+        permitted: vec![to_b],
         ..genuine
     };
     host.vault
@@ -554,6 +556,7 @@ fn a_second_key_under_one_id_conflicts_and_the_next_door_mints_afresh() {
         broken[last] ^= flip;
         let record = WorldKeyWrapsRecord {
             wraps: vec![(to_a, broken)],
+            permitted: vec![to_a],
             ..latest.clone()
         };
         host.vault

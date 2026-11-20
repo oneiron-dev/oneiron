@@ -48,12 +48,12 @@ fn selector_replay_is_durable_and_bound_to_current_principal_grant_and_payload()
     let payload = request(&peer);
     let (decision, _) = admit_work_at(
         &vault,
-        &peer,
+        BurstPeer::Federated(&peer),
         &key,
         WorkKind::Selector,
         &payload,
         (100, vault.now_recorded_at(), &[]),
-        None,
+        (None, None),
     )
     .unwrap();
     let FederationBurstDecision::Defer { request_id, .. } = decision else {
@@ -149,7 +149,13 @@ fn selector_replay_is_durable_and_bound_to_current_principal_grant_and_payload()
         FederationBurstDecision::Allow(_)
     ));
     let fresh_key = WindowKey::new("2026-03");
-    let fabricated = DeferredWork::new(&peer, &fresh_key, WorkKind::Selector, &payload).unwrap();
+    let fabricated = DeferredWork::new(
+        BurstPeer::Federated(&peer),
+        &fresh_key,
+        WorkKind::Selector,
+        &payload,
+    )
+    .unwrap();
     assert!(
         replay_selector_fetch(
             &vault,

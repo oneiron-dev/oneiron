@@ -262,13 +262,19 @@ pub(crate) fn dials_home_managed(config: &ServeConfig, vault: &oneiron::Vault) -
 }
 
 /// Whether `config` names a home, or an enrolment where `source` says
-/// records one.
+/// records one. A record that is there but does not read or validate counts
+/// as one: this machine enrolled with a home, so its host claims no home and
+/// marks no full copy of its own, while its link refuses to configure on the
+/// record, as [`Dial`] reads it (FIX-LIST HOME-SELF-MARK-STALE-AS-DEVICE).
 fn dials(config: &ServeConfig, vault: &oneiron::Vault, source: EnrolmentSource) -> bool {
     config.device_sync.is_some()
         || EnrolmentFiles::for_serve(&config.keystore, vault, source)
             .ok()
             .flatten()
-            .is_some_and(|files| files.read().is_ok_and(|record| record.is_some()))
+            .is_some_and(|files| match files.read() {
+                Ok(record) => record.is_some(),
+                Err(_) => true,
+            })
 }
 
 #[cfg(not(feature = "mesh"))]

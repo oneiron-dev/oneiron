@@ -1664,4 +1664,5 @@ fn displacement_scan_cannot_miss_a_judgment_committed_before_its_writer() -> cra
     Ok(())
 }
 
+mod judge_displacement;
 mod resident;

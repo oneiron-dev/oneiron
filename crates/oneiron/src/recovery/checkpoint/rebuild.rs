@@ -271,6 +271,8 @@ pub(super) fn rebuild(
 pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<()> {
     // Restored PERSON rows bypassed the body staging that keeps their party keys.
     crate::store::person_party_keys::backfill_person_party_key_index(vault, true)?;
+    // Restored TASK rows bypassed the row staging that files speakers' entries.
+    crate::task_verb::speaker_entry_index::backfill_speaker_entry_index(vault, true)?;
     crate::skill_hub::backfill_content_hash_index_if_needed(vault)?;
     // Restored authority-log rows bypassed the Grant member index's writer.
     crate::federation::backfill_agent_grant_member_index(vault, true)?;

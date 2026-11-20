@@ -2250,7 +2250,13 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
             if fatal_merge {
                 Err(crate::FatalLlmError::Auth.into())
             } else {
-                Ok(text_response(r#"{"resolution":"escalate"}"#.to_owned()))
+                Ok(text_response(
+                    serde_json::json!({
+                        "Q1": {"merge": 0.0, "supersede": 0.0, "accumulate": 0.0, "escalate": 1.0},
+                        "Q2": {"none": 1.0, "C1": 0.0, "C2": 0.0},
+                    })
+                    .to_string(),
+                ))
             },
         ]);
         let guard = crate::BudgetGuard::with_reserve_units(
@@ -2293,6 +2299,7 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
         ));
         assert_eq!(guard.read().used_units, expected_spend);
         assert_eq!(guard.read().reserved_units, 0);
+        // Extraction, then the conflict pack; escalation needs no value call.
         assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
 
         // The fenced marker writer persists the open question directly. The

@@ -196,6 +196,30 @@ impl Vault {
             && self.slip_refs_stand_in_txn(txn, claims, now)?
             && self.member_slip_scope_is_current_in_txn(txn, claims)?)
     }
+    /// Whether the slip this vault folded as `id` still stands as
+    /// [`Self::capability_slip_is_live_in_txn`] reads a presented one, from
+    /// its folded mint: inside its lifetime on this vault's clock, for this
+    /// vault, live in the fold, its grant, invitation or delegation standing,
+    /// and its member scope current. No slip is presented, so no pact witness
+    /// is rechecked (L7-41: a burst its home holds for an own device).
+    pub(crate) fn folded_slip_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &[u8; 32],
+    ) -> Result<bool> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let now = self.instant_in_txn(txn)?.secs();
+        let Some(mint) = fold.slips.mints.get(id) else {
+            return Ok(false);
+        };
+        let claims = &mint.action.claims;
+        Ok(now >= claims.issued_at
+            && now < claims.expires_at
+            && fold.vault_id == Some(claims.vault_id)
+            && fold.slip_is_live(id)
+            && self.slip_refs_stand_in_txn(txn, claims, now)?
+            && self.member_slip_scope_is_current_in_txn(txn, claims)?)
+    }
     /// Sample the authority plane's local monotonic clock before constructing
     /// a slip mint. Using the wall/store recording clock for `issued_at` can
     /// race one second ahead of the authority fold's observation and cause a
@@ -231,13 +255,39 @@ impl Vault {
         }
     }
 
+    /// Whether the credential `id` minted still bounds a narrowed saved read
+    /// lane (OF-506) in this snapshot: live as
+    /// [`Self::capability_slip_id_is_live_in_txn`] judges it, except that
+    /// only its read Scope must still lie inside its current membership
+    /// grant (`member_slip_read_scope_is_current_in_txn`, round 2 review P1
+    /// of #9583): a saved lane only reads.
+    ///
+    /// # Errors
+    /// A store, fold or clock failure judging it.
+    pub(crate) fn saved_read_credential_is_live_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &[u8; 32],
+    ) -> Result<bool> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let now = self.instant_in_txn(txn)?;
+        if !fold.slip_is_live_at(id, now) {
+            return Ok(false);
+        }
+        match fold.slips.mints.get(id) {
+            Some(mint) => self.mint_bounds_saved_read_in_txn(txn, &mint.action.claims, now.secs()),
+            None => Ok(false),
+        }
+    }
+
     /// Whether the credential `id` minted still stands, whatever its own
     /// lifetime: its mint unrevoked in this snapshot's fold, and its grant,
-    /// invitation and delegation still standing as they bound it (FIX 5952).
-    /// A saved lane that reads as its principal's own judges this at each
-    /// rebuild and each read (FIX OWN-DEVICE-GRANT-NOT-RECHECKED): a paired
-    /// device's renewal lets the old credential run out (FIX 3377), so its
-    /// expiry ends no saved work, while the grant's withdrawal does.
+    /// invitation and delegation still standing as they bound it (FIX 5952),
+    /// its read Scope inside its current membership grant. A saved lane
+    /// that reads as its principal's own judges this at each rebuild and
+    /// each read (FIX OWN-DEVICE-GRANT-NOT-RECHECKED): a paired device's
+    /// renewal lets the old credential run out (FIX 3377), so its expiry
+    /// ends no saved work, while the grant's withdrawal does.
     ///
     /// # Errors
     /// A store, fold or clock failure judging it.
@@ -253,11 +303,24 @@ impl Vault {
         match fold.slips.mints.get(id) {
             Some(mint) => {
                 let now = self.instant_in_txn(txn)?.secs();
-                Ok(self.slip_refs_stand_in_txn(txn, &mint.action.claims, now)?
-                    && self.member_slip_scope_is_current_in_txn(txn, &mint.action.claims)?)
+                self.mint_bounds_saved_read_in_txn(txn, &mint.action.claims, now)
             }
             None => Ok(false),
         }
+    }
+
+    /// Whether a saved read lane's credential minted with `claims` is still
+    /// bound as it was at `now`: its grant, invitation and delegation stand
+    /// (FIX 5952), and its read Scope lies inside its current membership
+    /// grant (round 2 review P1 of #9583).
+    fn mint_bounds_saved_read_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+        now: u64,
+    ) -> Result<bool> {
+        Ok(self.slip_refs_stand_in_txn(txn, claims, now)?
+            && self.member_slip_read_scope_is_current_in_txn(txn, claims)?)
     }
 
     /// Read-only holder verification for repeatable credential checks. One-shot
@@ -793,14 +856,25 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(txn)?.secs();
-        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        // An end or a re-pact of a pact the expiry holds suspended names the
+        // pact's expired rows the heads leave out beside them (row
+        // SEQ-FLOOR-S-WITHHELD-COSIGN); a narrowing or a Promote of it is
+        // refused here.
+        let beside = super::stale_roster::suspended_pact_rows_in_txn(&self.store, txn, &fold, &op)?;
+        // FIX 7908: join a frontier wider than one entry names, else today's
+        // path. The rows named beside the heads join with them, so no count
+        // of expired rows takes the act past MAX_PARENTS (REVIEW-9609 round 2).
         let joiner = FrontierSigner::Host(issuer);
-        let fold = self
-            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
-            .unwrap_or(fold);
+        let frontier = fold.append_heads.union(&beside).copied().collect();
+        let (fold, beside) =
+            match self.join_authority_heads_in_txn(txn, &fold, &frontier, joiner, MAX_PARENTS)? {
+                Some(joined) => (joined, std::collections::BTreeSet::new()),
+                None => (fold, beside),
+            };
+        let entry = next_entry_naming(issuer, &fold, &beside, op, now)?;
         let entry = match proof {
-            Some(proof) => next_entry_with_owner_proof(issuer, &fold, op, now, proof)?,
-            None => next_entry(issuer, &fold, op, now)?,
+            Some(proof) => with_owner_proof(issuer, &fold, entry, proof)?,
+            None => entry,
         };
         let hash = authority_entry_hash(&entry)?;
         Ok(PreparedHashedSlipOp {
@@ -829,7 +903,16 @@ pub(super) fn next_entry_with_owner_proof(
     now: u64,
     proof: &OwnerProofSigner<'_>,
 ) -> Result<AuthorityLogEntry> {
-    let mut entry = next_entry(issuer, fold, op, now)?;
+    with_owner_proof(issuer, fold, next_entry(issuer, fold, op, now)?, proof)
+}
+/// `entry`, built on `fold`, with `proof` beside the host root's signature,
+/// as [`next_entry_with_owner_proof`] makes it.
+fn with_owner_proof(
+    issuer: &HostSlipIssuer,
+    fold: &AuthorityFold,
+    mut entry: AuthorityLogEntry,
+    proof: &OwnerProofSigner<'_>,
+) -> Result<AuthorityLogEntry> {
     let proof_key = proof.key();
     entry.cosigns.push(AuthoritySignature {
         suite: proof_key.suite(),
@@ -849,6 +932,17 @@ pub(super) fn next_entry(
     op: AuthorityOp,
     now: u64,
 ) -> Result<AuthorityLogEntry> {
+    next_entry_naming(issuer, fold, &std::collections::BTreeSet::new(), op, now)
+}
+/// [`next_entry`] naming `beside` too: rows the act must hold in its
+/// ancestry that the heads leave out.
+fn next_entry_naming(
+    issuer: &HostSlipIssuer,
+    fold: &AuthorityFold,
+    beside: &std::collections::BTreeSet<AuthorityEntryHash>,
+    op: AuthorityOp,
+    now: u64,
+) -> Result<AuthorityLogEntry> {
     let seq = fold
         .append_sequences
         .get(&issuer.public_key())
@@ -861,7 +955,7 @@ pub(super) fn next_entry(
     issuer.sign_entry(
         fold.vault_id,
         seq,
-        fold.append_heads.iter().copied().collect(),
+        fold.append_heads.union(beside).copied().collect(),
         op,
         now,
     )

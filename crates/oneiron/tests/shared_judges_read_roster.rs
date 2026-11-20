@@ -112,7 +112,8 @@ fn stranger_owner() -> EntityId {
 }
 
 /// A self-host vault as its own server starts one: this install serving and
-/// profiled under the host root, and the owner bound and authenticated.
+/// profiled under the host root, the handle holding that root, and the owner
+/// bound and authenticated.
 struct ServedVault {
     vault: Vault,
     owner: AuthenticatedOwner,
@@ -140,6 +141,11 @@ impl ServedVault {
         let person = vault.ensure_embedded_owner_actor().expect("the owner");
         oneiron::test_support::bind_host_owner(&vault, &issuer, person)
             .expect("the owner's binding");
+        // The handle holds the host's root as a serving host does, so the
+        // owner's machine answers this install carries are proven (row
+        // CARRIER-OWNER-PROOF) and stand instead of being held for an owner
+        // device. `test_host_issuer` is the same root `issuer` is.
+        vault.hold_checkpoint_root_signer(Arc::new(oneiron::test_support::test_host_issuer()));
         let owner = vault
             .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
             .expect("the owner's proof");
@@ -208,7 +214,9 @@ impl ServedVault {
         }
     }
 
-    /// The owner enrols `request` as his own, carried by this install.
+    /// The owner enrols `request` as his own, carried by this install. An
+    /// answer held for an owner device is a fixture fault, not a refusal,
+    /// so it fails here rather than at a later guard.
     fn enrol(&self, request: &MachineEnrolmentRequest) -> oneiron::Result<()> {
         self.vault
             .enroll_machine(
@@ -218,7 +226,12 @@ impl ServedVault {
                 MachineRole::Owned(MachineOwnership::Yours),
                 None,
             )
-            .map(drop)
+            .map(|landing| {
+                assert!(
+                    landing.held().is_none(),
+                    "guard: the owner's answer stands, not held: {landing:?}"
+                );
+            })
     }
 }
 
@@ -940,6 +953,16 @@ fn a_world_edit_under_the_roster_named_key_stands_with_effect() {
 #[test]
 fn the_residence_directive_door_refuses_a_machine_only_the_pin_calls_yours() {
     let served = ServedVault::self_host();
+    // A first kit's activation enrols its root authority key under an owner
+    // key's word, here this install's own; the key is no machine answer, so
+    // the install's roster head stays `Unanswered`.
+    served
+        .vault
+        .enrol_device_owner_signing_key(
+            &ActAuthority::Owner(served.owner.clone(), ActSurface::ThisInstall),
+            &served.issuer,
+        )
+        .expect("guard: this install holds the owner's enrolled key");
     let prepared = served
         .vault
         .prepare_owner_root(&served.owner)

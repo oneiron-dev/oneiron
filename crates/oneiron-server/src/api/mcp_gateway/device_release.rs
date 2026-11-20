@@ -528,20 +528,46 @@ fn mcp_result_withheld(hold: ReleaseHold) -> McpGatewayError {
 /// or on a carrier's rider.
 #[cfg(test)]
 pub(crate) mod release_hook {
-    use std::cell::Cell;
+    use std::cell::RefCell;
+    use std::sync::{Arc, Mutex, PoisonError};
+
+    /// A test thread's armed world, shared with the workers of its
+    /// engine-stack runtime.
+    pub(crate) type Armed = Arc<Mutex<Option<oneiron::EntityId>>>;
 
     thread_local! {
-        // Per thread: the call resumes on the test's own current-thread
-        // runtime.
-        static FLAG: Cell<Option<oneiron::EntityId>> = const { Cell::new(None) };
+        // Per thread, so sibling lib tests share no flag. A lib test's
+        // request runs on its engine-stack runtime's workers
+        // (`crate::test_engine_stack`), not on the test's own thread: each
+        // worker takes its test thread's flag when it starts ([`share`]).
+        static FLAG: RefCell<Armed> = RefCell::default();
+    }
+
+    /// This thread's flag, for the engine-stack workers it starts.
+    pub(crate) fn current() -> Armed {
+        FLAG.with(|flag| Arc::clone(&flag.borrow()))
+    }
+
+    /// Makes `armed` this thread's: an engine-stack worker commits the
+    /// world its test thread armed.
+    pub(crate) fn share(armed: Armed) {
+        FLAG.with(|current| *current.borrow_mut() = armed);
     }
 
     pub(crate) fn arm(world: oneiron::EntityId) {
-        FLAG.set(Some(world));
+        FLAG.with(|flag| {
+            *flag.borrow().lock().unwrap_or_else(PoisonError::into_inner) = Some(world);
+        });
     }
 
     pub(in crate::api::mcp_gateway) fn run(server: &crate::server::SyncServer) {
-        if let Some(world) = FLAG.take() {
+        let armed = FLAG.with(|flag| {
+            flag.borrow()
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take()
+        });
+        if let Some(world) = armed {
             server
                 .vault
                 .keep_world_on_this_machine_under_for_test(

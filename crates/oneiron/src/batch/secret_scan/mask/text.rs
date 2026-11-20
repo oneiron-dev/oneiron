@@ -108,13 +108,24 @@ impl Masker {
         if let Some(spans) = self.text_log.take(text.as_bytes()) {
             return spans;
         }
+        // A read for given records knows their handles alone (blind review
+        // round 1 of #9528): a handle custody took after those records were
+        // named stays text, as it was when they were named.
+        let names = |handle: &str| match &self.records {
+            Some(records) => records.contains(handle),
+            None => self
+                .known
+                .as_ref()
+                .is_some_and(|known| known.holds_handle(handle)),
+        };
         let known = match &self.known {
             Some(known) => known_outside_handles(
                 known,
                 self.records.as_ref(),
+                self.records_longest,
                 text,
                 |value| self.is_kept(value),
-                |handle| known.holds_handle(handle) || self.placed_handle(handle),
+                |handle| names(handle) || self.placed_handle(handle),
             ),
             None => Vec::new(),
         };
@@ -150,10 +161,12 @@ impl Masker {
 /// handle that names no record is read like any other text (blind review
 /// round 2 of #9503): a known value spelled `[secret sc99]` takes its own
 /// record's handle and is never kept as written. With `records`, only those
-/// records' values are read ([`known_spans`]).
+/// records' values are read, as far as `longest` ([`known_spans`]), and
+/// `names` takes only their handles.
 fn known_outside_handles(
     known: &KnownValues,
     records: Option<&BTreeSet<String>>,
+    longest: Option<usize>,
     text: &str,
     keep: impl Fn(&[u8]) -> bool,
     names: impl Fn(&str) -> bool,
@@ -169,7 +182,7 @@ fn known_outside_handles(
     for handle in handles.chain(std::iter::once(end)) {
         let stretch = &bytes[from..handle.start];
         found.extend(
-            known_spans(known, records, stretch, &keep)
+            known_spans(known, records, longest, stretch, &keep)
                 .into_iter()
                 .map(|hit| {
                     (
@@ -186,15 +199,19 @@ fn known_outside_handles(
 /// Each known value in `data` past those `keep` exempts: every value
 /// `known` holds, or with `records`, only the values those records hold,
 /// every other value out before the longest at a place is chosen (FIX
-/// RECEIPT-RECORDS-CALL-HELD-INPUT).
+/// RECEIPT-RECORDS-CALL-HELD-INPUT), and with `longest` too, only those at
+/// most that many bytes long.
 pub(super) fn known_spans<'k>(
     known: &'k KnownValues,
     records: Option<&BTreeSet<String>>,
+    longest: Option<usize>,
     data: &[u8],
     keep: impl Fn(&[u8]) -> bool,
 ) -> Vec<KnownSpan<'k>> {
     match records {
-        Some(records) => known.spans_held_by(data, keep, |handle| records.contains(handle)),
+        Some(records) => {
+            known.spans_held_by(data, keep, |handle| records.contains(handle), longest)
+        }
         None => known.spans_except(data, keep),
     }
 }

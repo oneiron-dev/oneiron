@@ -550,15 +550,46 @@ pub(super) fn receipt_id(key: &RunKey) -> String {
 /// that the call's args and result named as its hook saw them (review round
 /// 2 of #9535): its body can copy any of them into the receipt's `note` or
 /// `reason`. `None` when the key names no kept run, a fact run heard a
-/// verdict without its evidence rows, or a verb run's input showed a host
-/// verb's free text, whose rows no host names. The receipt family screens a
-/// Hook receipt on them for a caller off this device (FIX 1119) and for a
-/// credential-bound reader (HOOKS-04).
+/// verdict without its evidence rows, or a verb run's input showed content
+/// that names no row this vault holds: a host verb's free text, a pack item
+/// whose refs did not resolve, or a read result with a value outside a row
+/// object that names its held rows (VERB-HOOK-RECEIPT-UNNAMED-SOURCE-PROVENANCE;
+/// a run saved before that field, only the host's free text). The receipt
+/// family screens a Hook receipt on them for a caller off this device (FIX
+/// 1119) and for a credential-bound reader (HOOKS-04); a verb hook's input
+/// tail on them too (review round 1 of #9643).
 pub(crate) fn hook_run_read_rows(vault: &Vault, run_key: &str) -> Result<Option<Vec<EntityId>>> {
     let rtxn = vault.store.env.read_txn()?;
     let holds =
         |row: &EntityId| -> Result<bool> { Ok(vault.entity_header_in_txn(&rtxn, row)?.is_some()) };
     hook_run_read_rows_in(&vault.store, &rtxn, run_key, holds)
+}
+
+/// The Hook receipt the run `run_key` keeps and every row it names
+/// ([`crate::receipt::referenced_rows`]: its record's binding and CODE, and
+/// the rows its run stood on), read in one snapshot, as a verb hook's
+/// receipt tail shows it (review round 2 of #9643): a payload read before an
+/// erase scrubbed it still names the erased row. `None` when the run keeps
+/// no receipt; its rows `None` when they cannot be known.
+pub(super) fn hook_receipt_with_rows(
+    vault: &Vault,
+    run_key: &str,
+) -> Result<Option<(ReceiptRecord, Option<Vec<EntityId>>)>> {
+    let Some(key) = crate::deletion::parse_hex::<32>(run_key) else {
+        return Ok(None);
+    };
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(receipt) = RECEIPTS.get(&vault.store, &rtxn, &key)? else {
+        return Ok(None);
+    };
+    let holds =
+        |row: &EntityId| -> Result<bool> { Ok(vault.entity_header_in_txn(&rtxn, row)?.is_some()) };
+    let rows = hook_run_read_rows_in(&vault.store, &rtxn, run_key, holds)?.map(|read| {
+        let mut rows = crate::receipt::record_rows(&receipt);
+        rows.extend(read);
+        rows
+    });
+    Ok(Some((receipt, rows)))
 }
 
 /// [`hook_run_read_rows`] read in `dbs` within `rtxn`, an explicit read
@@ -584,7 +615,11 @@ fn hook_run_read_rows_in(
             // An erased run's payload is gone from its record and its
             // receipt alike (FIX 10080).
             Some(run) if run.history_erased => (run.reads, Vec::new()),
-            Some(run) if run.unattributed && run.verb.starts_with("host.") => return Ok(None),
+            Some(run)
+                if run.unattributed && (run.unnamed_content || run.verb.starts_with("host.")) =>
+            {
+                return Ok(None);
+            }
             Some(run) => {
                 let mut input = run.dependencies;
                 for row in run.named_rows {

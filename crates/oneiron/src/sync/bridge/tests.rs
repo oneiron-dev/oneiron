@@ -2846,6 +2846,7 @@ fn observer_b_quarantines_a_replicated_fact_link_removal() {
         assigned_ref: None,
         actor_generation: None,
         assigned_generation: None,
+        answered_heads: None,
         occurred_at: learned_at,
     };
     let cancelled = vault
@@ -2956,6 +2957,7 @@ fn owned_tasks_for_fact_replay(
                         assigned_ref: None,
                         actor_generation: None,
                         assigned_generation: None,
+                        answered_heads: None,
                         occurred_at: learned_at,
                     },
                 )
@@ -3009,6 +3011,7 @@ fn observer_b_refuses_a_replayed_tombstone_for_a_fact() {
                     assigned_ref: None,
                     actor_generation: None,
                     assigned_generation: None,
+                    answered_heads: None,
                     occurred_at: learned_at,
                 },
             )
@@ -3112,6 +3115,7 @@ fn a_fact_tombstoned_before_it_arrives_reads_as_a_refusal() {
                 assigned_ref: None,
                 actor_generation: None,
                 assigned_generation: None,
+                answered_heads: None,
                 occurred_at: learned_at,
             });
             map_insert_bytes(
