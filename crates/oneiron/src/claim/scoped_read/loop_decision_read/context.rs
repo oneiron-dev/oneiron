@@ -153,7 +153,7 @@ impl ScopedRead<'_> {
             // decision may be seen.
             let raw = row.encode();
             if !self.audience_readable_raw_in(txn, &record, &raw, &read.held)?
-                || !self.facets_allow_in(txn, &record, &raw)?
+                || !self.facets_allow_held_in(txn, &record, &raw, &read.held)?
                 || !self.guest_bound_admits_in(txn, &record, &raw)
             {
                 return Ok(false);

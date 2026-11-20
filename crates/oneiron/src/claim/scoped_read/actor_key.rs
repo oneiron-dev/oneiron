@@ -666,13 +666,34 @@ impl ScopedReadActorKey {
         vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
     ) -> crate::error::Result<bool> {
+        self.facets_owner_exempt_by(|owner| {
+            crate::memory::owner_exemption_holds_in_txn(vault, txn, owner)
+        })
+    }
+
+    /// [`Self::facets_owner_exempt_in`] for a row check of the serving txn
+    /// `authority` holds: the owner's exemption is judged once in that txn,
+    /// not once per row (FIX FACET-GATE-OWNER-EXEMPTION-PER-ROW).
+    pub(super) fn facets_owner_exempt_held_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        authority: &super::access_gate::HeldAuthority,
+    ) -> crate::error::Result<bool> {
+        self.facets_owner_exempt_by(|owner| authority.owner_exemption_holds_in(vault, txn, owner))
+    }
+
+    fn facets_owner_exempt_by(
+        &self,
+        exemption_holds: impl FnOnce(EntityId) -> crate::memory::MemoryResult<bool>,
+    ) -> crate::error::Result<bool> {
         if self.owner.is_some() {
             return Ok(true);
         }
         let Some(owner) = self.owner_exemption else {
             return Ok(false);
         };
-        crate::memory::owner_exemption_holds_in_txn(vault, txn, owner).map_err(|refusal| {
+        exemption_holds(owner).map_err(|refusal| {
             crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
                 refusal,
             )))
