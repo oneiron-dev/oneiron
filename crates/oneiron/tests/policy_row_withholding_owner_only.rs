@@ -4,8 +4,8 @@
 //! its named powers is its own proof and lands at once, in either direction
 //! (ARCH-0082:113, DEC-0005:58). A C act moves only by the Owner's own row
 //! (ARCH-0082:243): on the owner-policy table that is the Remove, or the Edit
-//! to another action, of a stored Block or Reword row. An add, and an edit
-//! that makes a row Block, still land at once.
+//! to an action other than Block, of a stored Block or Reword row. An add, and
+//! an edit that makes a row Block, still land at once.
 //!
 //! The shipped grant rows give the `policy.change` verb to no role, so the
 //! owner first lets the Admin role carry it through the hidden door

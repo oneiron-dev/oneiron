@@ -157,8 +157,8 @@ fn holder_check_in_in_txn(
         // (ARCH-0082:113, DEC-0005:58). A C act moves only by the Owner's own
         // row (ARCH-0082:243): on this table that is turning a withholding
         // control off, so the row change itself refuses this holder's Remove,
-        // or Edit to another action, of a stored Block or Reword row, where
-        // the row walk reads that row (`ends_withholding` in
+        // or Edit to an action other than Block, of a stored Block or Reword
+        // row, where the row walk reads that row (`ends_withholding` in
         // gate/owner_policy_mutation.rs).
         return match check_in_ref {
             Some(_) => Err(denied()),
