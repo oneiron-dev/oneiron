@@ -219,6 +219,7 @@ pub(crate) fn core_memory_timeline_response(
     // TIMELINE-SHELL-TWO-SNAPSHOT-CAP).
     let mut parts = std::collections::BTreeMap::new();
     let mut shells = std::collections::BTreeSet::new();
+    let mut anchor_counted = false;
     for (id, part) in timeline
         .records
         .iter()
@@ -236,7 +237,9 @@ pub(crate) fn core_memory_timeline_response(
             oneiron::claim::TimelineRecordProjection::Shell => {
                 shells.insert(id);
             }
-            oneiron::claim::TimelineRecordProjection::Withheld => {}
+            oneiron::claim::TimelineRecordProjection::Withheld { counted } => {
+                anchor_counted |= counted && id == timeline.anchor;
+            }
         }
     }
     let mut records = Vec::with_capacity(timeline.records.len());
@@ -254,7 +257,17 @@ pub(crate) fn core_memory_timeline_response(
             })
     });
     if !parts.contains_key(&timeline.anchor) && !deleted_anchor_visible {
-        narrowing.add_suppressed(parts.len());
+        // An anchor the projection refuses ends the read as an anchor the
+        // timeline's own snapshot refuses does: only the anchor counts (one
+        // withheld row where the projection counted it, or where the applied
+        // scope drops its shell), so the receipt cannot size its chain from
+        // either snapshot's linked rows (review round 1 of #10031).
+        narrowing.suppressed_count =
+            usize::from(anchor_counted || shells.contains(&timeline.anchor));
+        narrowing
+            .narrowed_axes
+            .retain(|axis| axis != "row_authority");
+        narrowing.record_axes();
         return Ok(CoreMemoryTimelineResponse {
             narrowing,
             anchor_id: timeline.anchor.to_hex(),
@@ -263,8 +276,13 @@ pub(crate) fn core_memory_timeline_response(
     }
     for record in timeline.records {
         let item = if record.state == oneiron::MemoryTimelineRecordState::Deleted {
-            if !shells.contains(&record.id)
-                || narrowing.applied.deny_all
+            // A shell the projection refused is counted there where it is
+            // one withheld row; one gone from the store counts nothing
+            // (review round 1 of #10031).
+            if !shells.contains(&record.id) {
+                continue;
+            }
+            if narrowing.applied.deny_all
                 || record.entity_type.is_none_or(|kind| {
                     narrowing
                         .applied

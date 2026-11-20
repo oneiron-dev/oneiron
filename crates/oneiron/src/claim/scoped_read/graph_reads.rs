@@ -34,8 +34,15 @@ pub enum TimelineRecordProjection {
     /// A deleted record whose shell the snapshot still admits: its deletion
     /// metadata may show, never a body.
     Shell,
-    /// A record the snapshot refuses, or one whose row is gone.
-    Withheld,
+    /// A record the snapshot refuses, or one whose row is gone. `counted`
+    /// when the projection's receipt counts it as one withheld row: the read
+    /// asked a narrower scope than its floor, which still admits it. A row
+    /// gone from the store, or one only another authority admitted, is never
+    /// counted (review round 1 of #10031).
+    Withheld {
+        /// Whether the projection's receipt counts this row.
+        counted: bool,
+    },
 }
 
 impl ScopedRead<'_> {
@@ -333,7 +340,9 @@ impl ScopedRead<'_> {
                         learned_at,
                         body,
                     } => Some((entity_type, learned_at, body)),
-                    TimelineRecordProjection::Shell | TimelineRecordProjection::Withheld => None,
+                    TimelineRecordProjection::Shell | TimelineRecordProjection::Withheld { .. } => {
+                        None
+                    }
                 })
                 .collect(),
             receipt: projected.receipt,
@@ -349,7 +358,9 @@ impl ScopedRead<'_> {
     /// A deleted record's shell takes the timeline's own shell gate in this
     /// snapshot too, so a shell whose authority went after the timeline
     /// listed it is [`TimelineRecordProjection::Withheld`] (FIX
-    /// TIMELINE-SHELL-TWO-SNAPSHOT-CAP); its refusal adds no count here.
+    /// TIMELINE-SHELL-TWO-SNAPSHOT-CAP), counted as a living row is: a shell
+    /// gone from the store, or one the floor no longer admits, adds no count
+    /// (review round 1 of #10031).
     pub fn memory_timeline_projection_with_receipt(
         &self,
         records: &[MemoryTimelineRecord],
@@ -362,40 +373,32 @@ impl ScopedRead<'_> {
         let mut suppressed = 0;
         let mut value = Vec::with_capacity(records.len());
         for record in records {
-            if record.state == MemoryTimelineRecordState::Deleted {
-                let admitted =
-                    self.timeline_record_allowed_in(&txn, &policy, &filter, record, &held)?;
-                value.push(if admitted {
-                    TimelineRecordProjection::Shell
-                } else {
-                    TimelineRecordProjection::Withheld
-                });
-                continue;
-            }
             let admitted = self.admit_held_in(&txn, &record.id, &held, || {
                 self.timeline_record_allowed_in(&txn, &policy, &filter, record, &held)
                     .map(|visible| visible.then_some(()))
             })?;
-            if admitted.suppression() > 0
+            let counted = admitted.suppression() > 0
                 && requested.is_some()
                 && self
                     .actor_retrieval_floor(&policy)
                     .and_then(|floor| {
                         self.timeline_record_allowed_in(&txn, &policy, &floor, record, &floor_held)
                     })
-                    .unwrap_or(false)
-            {
-                suppressed += 1;
-            }
+                    .unwrap_or(false);
+            suppressed += usize::from(counted);
             if !admitted.visible() {
-                value.push(TimelineRecordProjection::Withheld);
+                value.push(TimelineRecordProjection::Withheld { counted });
+                continue;
+            }
+            if record.state == MemoryTimelineRecordState::Deleted {
+                value.push(TimelineRecordProjection::Shell);
                 continue;
             }
             let Some(raw) = self
                 .entity_record_in(&txn, &record.id)?
                 .map(|row| row.encode())
             else {
-                value.push(TimelineRecordProjection::Withheld);
+                value.push(TimelineRecordProjection::Withheld { counted: false });
                 continue;
             };
             // A file-plane ASSET reads as its body, never its manifest.

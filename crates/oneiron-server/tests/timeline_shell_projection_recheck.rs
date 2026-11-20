@@ -371,3 +371,46 @@ fn the_owners_projection_keeps_the_shell_after_the_agents_grant_goes() {
          the owner revoked a Grant of the agent's: {answer:#}"
     );
 }
+
+/// Review round 1 of #10031, P1 1: an anchor the projection refuses ends the
+/// read with its own count alone, so the 404 receipt cannot size its chain.
+/// Two live Orchard ASSETs supersede the deleted Harbor one; once the Harbor
+/// Grant goes, the agent can read neither the shell nor its count, and the
+/// two linked bodies it still reads count nothing either.
+#[test]
+fn a_refused_deleted_anchor_counts_none_of_its_linked_records() {
+    let fixture = Fixture::open();
+    let agent = fixture.agent();
+    let older = fixture.asset_in(fixture.harbor, WRITTEN_AT, &[]);
+    let first = fixture.asset_in(fixture.orchard, REWRITTEN_AT, &[older]);
+    let second = fixture.asset_in(fixture.orchard, REWRITTEN_AT + 60, &[older]);
+    fixture.delete(older);
+    let mut chain = vec![
+        (older, MemoryTimelineRecordState::Deleted),
+        (first, MemoryTimelineRecordState::Live),
+        (second, MemoryTimelineRecordState::Live),
+    ];
+    chain.sort_by_key(|(id, _)| *id);
+    let timeline = fixture.read(&agent, older);
+    assert_eq!(
+        states(&timeline),
+        chain,
+        "FIXTURE: the Harbor Grant alone holds the deleted anchor and the Orchard Grant reads \
+         both live ASSETs that supersede it, so the agent's timeline lists all three"
+    );
+
+    fixture.revoke_the_harbor_grant();
+    let answer = fixture.project(&agent, timeline);
+    assert_eq!(
+        listed(&answer),
+        NOTHING_SHOWN,
+        "the owner revoked the only Grant that held the deleted anchor between the timeline's \
+         read and its projection, yet the route still shows its timeline: {answer:#}"
+    );
+    assert_eq!(
+        answer["narrowing"]["suppressed_count"],
+        json!(0),
+        "the projection refused the anchor, which the agent can no longer read at all, yet the \
+         receipt counts withheld rows of its chain: {answer:#}"
+    );
+}
