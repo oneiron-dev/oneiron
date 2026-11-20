@@ -22,6 +22,7 @@ use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::dreamer_runner::maintenance::psych_profile::{
     PSYCH_PROFILE_REGENERATE_SECS, enqueue_due_psych_profiles,
 };
+use oneiron::memory::MEMORY_CODE_FORBIDDEN;
 use oneiron::psych_profile::{
     PsychProfile, PsychProfileKey, PsychProfileSourceWords, PsychProfileState,
     psych_profile_entity_id,
@@ -511,5 +512,31 @@ fn with_no_step_lent_the_attempt_parks_and_calls_no_model() -> TestResult<()> {
     );
     assert_eq!(narrative.calls(), 0);
     assert!(stored_profile(&fixture)?.is_none());
+    Ok(())
+}
+
+/// A psych profile's one step answers with its receipt at submit, so its binding admits no
+/// receipt read: `ai.steps.receipt`, whose read serves only an extraction's queued branch,
+/// answers forbidden naming the psych profile facet (review round 1 of #9753).
+#[test]
+fn a_psych_profile_binding_refuses_the_step_receipt_read() -> TestResult<()> {
+    let fixture = fixture()?;
+    let now = queue_profile(&fixture)?;
+    let admitted = admit_psych_profile_attempt(&fixture.vault, now)?;
+    let binding = fixture.vault.bind_dreamer_attempt(&admitted)?;
+    let Err(refused) = binding.invoke(
+        "ai.steps.receipt",
+        json!({ "step_key": "0".repeat(64) }),
+        None,
+    ) else {
+        panic!("a psych profile binding admits no step receipt read");
+    };
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    assert!(
+        refused
+            .message
+            .contains("psych profile facet does not admit"),
+        "unexpected refusal: {refused:?}"
+    );
     Ok(())
 }

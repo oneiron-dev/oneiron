@@ -41,7 +41,8 @@ const DERIVE_COMMIT_VERB: &str = "vault.derive.commit";
 /// The durable generation step admitted by extraction and psych profiles,
 /// each with its own reference-only request.
 const BOUND_STEP_SUBMIT_VERB: &str = "ai.steps.submit";
-/// The read-only durable receipt admitted by extraction and psych profiles.
+/// The read-only durable receipt, admitted by extraction alone: a psych
+/// profile's one step answers with its receipt at submit.
 const BOUND_STEP_RECEIPT_VERB: &str = "ai.steps.receipt";
 
 impl DreamerAttemptBinding {
@@ -53,8 +54,8 @@ impl DreamerAttemptBinding {
     /// lent ladder and Settle commits. Extraction admits its inputs and observations pages,
     /// evidence spans, checked verdict packs and bound generation steps with their
     /// receipts, and no commit. A psych profile admits its key's sources page,
-    /// bound generation steps over those claims with their receipts, and
-    /// PsychProfile commits of its key. A commit takes the batch itself,
+    /// bound generation steps over those claims, each answering with its
+    /// receipt at submit, and PsychProfile commits of its key. A commit takes the batch itself,
     /// `{"items": [...], "sources": [...]}`: the binding is the live run,
     /// so no `live_run` attachment wraps it.
     ///
@@ -91,10 +92,7 @@ impl DreamerAttemptBinding {
             BoundFacet::PsychProfile => {
                 matches!(
                     verb,
-                    PSYCH_PROFILE_SOURCES_PAGE_VERB
-                        | BOUND_STEP_SUBMIT_VERB
-                        | BOUND_STEP_RECEIPT_VERB
-                        | DERIVE_COMMIT_VERB
+                    PSYCH_PROFILE_SOURCES_PAGE_VERB | BOUND_STEP_SUBMIT_VERB | DERIVE_COMMIT_VERB
                 )
             }
         };
