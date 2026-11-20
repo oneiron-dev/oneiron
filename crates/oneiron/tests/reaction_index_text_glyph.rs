@@ -138,7 +138,9 @@ fn fixture() -> Fixture {
             message,
             by: bob,
             glyph: "👍".to_owned(),
-            occurred_at: 20,
+            // A first-party reaction happens now: one more than five minutes
+            // off the vault clock is refused.
+            occurred_at: vault.now_recorded_at(),
             actor: human(bob),
         })
         .expect("Bob's 👍")
@@ -256,8 +258,8 @@ fn the_stored_reactions_still_name_their_reactors() {
     }
 }
 
-/// The idle publication pass, which publishes a reaction whose text its put
-/// did not stage (one received by sync), indexes Bob's 👍 by its glyph alone.
+/// The idle publication pass, which publishes a reaction's later revision that
+/// staged no text, indexes Bob's 👍 by its glyph alone.
 #[test]
 fn a_first_party_reaction_publishes_its_glyph_alone() {
     let fixture = fixture();
