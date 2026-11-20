@@ -46,6 +46,8 @@ mod managed_holder;
 mod owner_signing_recovery;
 /// Private, lease-bound live process ports.
 pub mod preview;
+/// The kit-only hold a vault asks of its recovery box (Fable pass 27 R7).
+mod recovery_box_hold;
 /// The relay locker delete the engine executes, its locker binding and its
 /// rechecks (FIX 6826).
 pub mod relay_delete;
@@ -100,10 +102,10 @@ pub use self::ctl::{
     BrowserReadiness, BrowserTier, BrowserUnavailableReason, CtlBound, CtlBoundKind, CtlBoundPhase,
     CtlBoundResource, CtlRefusal, CtlRefusalKind, CtlRequest, CtlResponse, CtlResumeOn,
     FacilityNotice, FacilityReason, GUEST_RUNTIME_FACT_ARG, GuestRuntimeFact, LegalHoldsNotProven,
-    LegalHoldsWire, ManagedFacility, ManagedReadiness, PingDeletion, REAP_PAUSE_REFUSAL,
-    ShedBlockerWire, ShedCause, ShedStatus, TRAINING_PURGE_RECEIPT_PENDING,
-    TRAINING_PURGE_REJECTED, TRAINING_PURGE_UNSENT, TrainingPurgeState, TrainingPurgeStateWire,
-    VmOutboxCompanionState,
+    LegalHoldsWire, ManagedFacility, ManagedReadiness, PingDeletion, ProcessReadinessReport,
+    ProcessState, REAP_PAUSE_REFUSAL, ShedBlockerWire, ShedCause, ShedStatus,
+    TRAINING_PURGE_RECEIPT_PENDING, TRAINING_PURGE_REJECTED, TRAINING_PURGE_UNSENT,
+    TrainingPurgeState, TrainingPurgeStateWire, VmOutboxCompanionState,
 };
 pub use self::http_headers::{BINDING_HEADER, MCP_CREDENTIAL_HEADER};
 pub use self::ledger::{LedgerAck, LedgerUpdate, ManagedTrainingSetting};
@@ -135,6 +137,10 @@ pub use self::owner_signing_recovery::{
 };
 pub use self::preview::{
     PREVIEW_ROUTE_OPEN_OP, PreviewRouteAck, PreviewRouteBinding, PreviewRouteRequest,
+};
+pub use self::recovery_box_hold::{
+    RECOVERY_BOX_KIT_ONLY_OP, RECOVERY_BOX_REFUSAL_MAX, RecoveryBoxKitOnly, RecoveryBoxKitOnlyAck,
+    valid_recovery_box_refusal_code,
 };
 pub use self::secrets::{
     Credentials, TokenHex, from_hex, hex, read_credentials, write_credentials,

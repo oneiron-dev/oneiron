@@ -221,6 +221,7 @@ fn event_type(buffer: u16) -> EventTypeConfig {
         booking_window_secs: 7 * 86_400,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: entity(0x86),
@@ -235,6 +236,7 @@ fn event_type(buffer: u16) -> EventTypeConfig {
         }],
         flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 
@@ -282,8 +284,10 @@ pub(super) fn booking_publications() -> Result<Case> {
         event_types: vec![EventTypeCard {
             key: key.clone(),
             title: "Intro".to_owned(),
+            deposit: None,
             duration_min: 30,
             description: String::new(),
+            allowed_durations_min: Vec::new(),
         }],
         event_config_hashes: [(key.0.clone(), booking_config_hash(&event_type(0))?)].into(),
         constraint_field: ConstraintFieldConfig {
@@ -499,6 +503,7 @@ impl SlotOracle for Offered {
                 rank: 1.0,
             }],
             flex_used: false,
+            full_days: Vec::new(),
             host_bindings: vec![SlotHostBinding {
                 start_utc: self.0.start,
                 end_utc: self.0.end,
@@ -540,6 +545,7 @@ fn book(vault: &Vault, page: EntityId, booker: EntityId, start: u64) -> Result<C
         constraint: None,
         lease: HoldLeaseSpec::Ordinary,
         idempotency_key: None,
+        cap_override: None,
     };
     let held = match turn(vault, BookingVerbRequest::Hold(hold), slot)? {
         BookingVerbReceipt::Held(held) => held,

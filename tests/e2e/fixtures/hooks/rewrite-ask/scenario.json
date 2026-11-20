@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "packName": "rewrite-ask",
+  "packName": "hooks.rewrite",
   "hookVersion": "1.0.0",
   "rewriteHook": "scoped-rewrite",
   "askHook": "saved-question",

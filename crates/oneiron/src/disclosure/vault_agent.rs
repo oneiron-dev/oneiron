@@ -25,7 +25,9 @@ pub(crate) fn is_vault_agent_in(
     if !contacts.is_empty() {
         return Ok(false);
     }
-    if fold.vault_id.is_some() && crate::authority::actor_binding_is_active(fold, member, "agent") {
+    if fold.vault_id.is_some()
+        && crate::authority::actor_binding_is_live_in(&vault.store, txn, fold, member, "agent")?
+    {
         return Ok(true);
     }
     Ok(matches!(
@@ -38,6 +40,26 @@ pub(crate) fn is_vault_agent_in(
 }
 
 impl Vault {
+    /// Whether a credential held by `holder` as `actor_class` reads as one of
+    /// the vault's own agents reading on its own, as `txn` reads it (RULING
+    /// L5-02-UNNAMED-HOME = A): an `agent` holder that is one of the vault's
+    /// own agents ([`is_vault_agent_in`]), on a credential not `transferred`
+    /// to it. A transferred slip is another holder's, acting on the agent's
+    /// word, so it is not the agent reading on its own.
+    pub(crate) fn own_agent_credential_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: &EntityId,
+        actor_class: Option<&str>,
+        transferred: bool,
+    ) -> Result<bool> {
+        if actor_class != Some("agent") || transferred {
+            return Ok(false);
+        }
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        is_vault_agent_in(self, txn, &fold, holder)
+    }
+
     /// Whether `member` is one of this vault's own agents, read in one
     /// snapshot ([`is_vault_agent_in`]). A route that has only a principal id
     /// asks this, as the conversation-home default does (RULING

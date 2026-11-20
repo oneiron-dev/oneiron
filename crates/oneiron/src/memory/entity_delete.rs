@@ -2,7 +2,10 @@
 //! the delete a non-owner's role or Grant admits (ARCH-0043 DEL-2), judged
 //! by check-in first (ROLES-CHECKIN 2k5).
 
-use super::support::{verify_actor_binding_in_txn, verify_deletion_authority_in_txn};
+use super::support::{
+    verify_actor_binding_in_txn, verify_deletion_authority_in_txn,
+    verify_own_person_deletion_authority_in_txn,
+};
 use super::{
     DeleteReceipt, DeleteRequestState, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     Memory, MemoryError, MemoryResult, SafeDeleteReason,
@@ -368,11 +371,25 @@ impl Memory<'_> {
         let owner_act = self
             .owner_authorship()
             .map(|owner| EraseOwnerAct::new(owner, self.owner_surface()));
+        // An owner deleting their own PERSON: once this delete's own scrub
+        // commits, its writes re-prove the Active binding and the owner
+        // census with this owner's PERSON taken live (L9-52 (b)).
         let deleted = self.safe_delete_gated(
             &id,
             reason,
             gate,
-            &|txn| verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class),
+            &|txn| {
+                if id == self.actor {
+                    verify_own_person_deletion_authority_in_txn(
+                        self.vault,
+                        txn,
+                        self.actor,
+                        self.actor_class,
+                    )
+                } else {
+                    verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class)
+                }
+            },
             check,
             stop_check_after_soft_scrub,
             claim,
@@ -670,6 +687,7 @@ fn role_delete_refusal(refusal: DeleteRefusal, owner_refusal: &MemoryError) -> M
         DeleteRefusal::NotOwnerOfItem
         | DeleteRefusal::OutOfAdminScope
         | DeleteRefusal::NoDeleteGrant
+        | DeleteRefusal::AuthorityRow
         | DeleteRefusal::CredentialBounds
         | DeleteRefusal::Unreadable(_) => MemoryError::new(
             MEMORY_CODE_FORBIDDEN,

@@ -91,7 +91,8 @@ pub(super) async fn handle_connection(
     };
 
     // Subscribe to broadcast channel for outbound messages
-    let mut subscriber = BroadcastSubscriber::new(conn_id, &server.broadcast_tx);
+    let mut subscriber =
+        BroadcastSubscriber::new(conn_id, &server.broadcast_tx, &server.broadcast_sessions);
 
     // Phase 1: Send root doc snapshot to client.
     // Root doc is server-authoritative — client only reads it.
@@ -443,6 +444,59 @@ pub(super) async fn handle_connection(
                 let Some(data) = direct_msg else {
                     break;
                 };
+                // A queued selector answer leaves only while the grant and
+                // the authority it was made under stand, judged at the
+                // answer's first frame before any part of it leaves
+                // (SELECTOR-RELEASE-POINT = B), and again by the send of each
+                // frame before its bytes leave and after each wait on the peer.
+                let answer = crate::selector_release::queued_answer_frame(&data).map(|answer| {
+                    (
+                        conn_state.selector_answers.release(server.vault(), &answer),
+                        answer.frame.to_vec(),
+                    )
+                });
+                let mut released_answer = None;
+                let data = match answer {
+                    None => data,
+                    Some((Some(released), frame)) => {
+                        released_answer = Some(released);
+                        frame
+                    }
+                    Some((None, frame)) if frame.first() == Some(&protocol::TAG_WINDOW_SYNC) => {
+                        // A federation UPDATE: not sent. A selector socket is
+                        // sent no ready notice, so its next fetch asks again,
+                        // judged under the grant as it is then.
+                        if let Some(key) = frame
+                            .get(1..)
+                            .and_then(|payload| protocol::decode_window_sync(payload).ok())
+                            .and_then(|(key, _, _)| oneiron::sync::WindowKey::try_new(key))
+                        {
+                            ready_windows.retry(&key);
+                        }
+                        continue;
+                    }
+                    // A served body's bytes: not sent. Its End, which carries
+                    // none, still goes below, so the peer's attempt lands
+                    // nothing and is asked for again, served under the grant
+                    // as it is then.
+                    Some((None, frame))
+                        if frame.first()
+                            == Some(&oneiron::sync::transport::TAG_ASSET_BODY_DATA) =>
+                    {
+                        continue;
+                    }
+                    Some((None, frame)) => {
+                        if !crate::livequery::connection::Connection::is_scoped_broadcast(&frame) {
+                            // A refusal or a served body's End, which carry
+                            // no rows.
+                            frame
+                        } else if let Some(refusal) = app_connection.refuse_reply(&frame) {
+                            refusal
+                        } else {
+                            continue;
+                        }
+                    }
+                };
                 let machine_only_reply = app_connection.is_own_machine_reply(&data);
                 let mut data = data;
                 // A queued app body is judged again at its last door before
@@ -555,9 +609,11 @@ pub(super) async fn handle_connection(
                     transport.app_jti = None;
                     continue;
                 }
+                transport.answer = released_answer;
                 let released =
                     send_released_outcome(&server, &conn_state, &mut transport, data).await;
                 transport.app_jti = None;
+                transport.answer = None;
                 match released {
                     Released::Failed => break,
                     // A window answer whose copy or envelope could not be made
@@ -654,11 +710,15 @@ pub(super) async fn handle_connection(
                     break;
                 }
                 if !matches!(&msg, SyncMessage::Rpc(_) | SyncMessage::Sub(_)) {
-                    let _ = server.wire_telemetry.record(
-                        &format!("sync:{:02x}", data[0]),
-                        &telemetry_actor,
-                        oneiron_vault_contract::now_ts(),
-                    );
+                    // The count waits on the blocking pool, never on this
+                    // loop's worker (FIX [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]).
+                    let verb = format!("sync:{:02x}", data[0]);
+                    let actor = telemetry_actor.clone();
+                    crate::wire_telemetry::record_on_blocking_pool(
+                        &server,
+                        move |telemetry, now| telemetry.record(&verb, &actor, now),
+                    )
+                    .await;
                 }
                 // Rule 5: a new session or subscription waits its turn here,
                 // before the synchronous app tier runs it; only a live bound
@@ -683,6 +743,7 @@ pub(super) async fn handle_connection(
                         &direct_tx,
                         Some(&mut app_connection),
                     )
+                    .await
                     .map(|call| {
                         if let Some(call) = call {
                             match call {
@@ -708,6 +769,7 @@ pub(super) async fn handle_connection(
                         &direct_tx,
                         Some(&mut app_connection),
                     )
+                    .await
                     .map(drop),
                     msg => match handle_sync_message(
                         &server,

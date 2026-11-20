@@ -294,13 +294,21 @@ fn federation_lifecycle_dag_merges_pacts_fail_closed() {
     assert_eq!(p2.terminal_epoch, None);
 
     // P3: concurrent Disconnect + higher-epoch repact merges to Disconnected
-    // (terminal beats epoch), keeping the terminal side's fields verbatim.
+    // (terminal beats epoch), keeping the terminal side's digest but erasing
+    // its plaintext scope.
     let p3 = &fold.federation_pacts[&dag.pact_three];
     assert_eq!(p3.status, FederationPactStatus::Disconnected);
     assert_eq!(p3.pact_epoch, 1);
     assert_eq!(p3.terminal_epoch, Some(1));
     assert_eq!(p3.scope_digest, dag.digest_three);
-    assert_eq!(p3.pact_scope, dag.scope_three);
+    let mut erased_scope = symmetric_scope(ScopeAxis::Bottom, ScopeAxis::Bottom);
+    erased_scope.lo_to_hi.worlds = ScopeAxis::Bottom;
+    erased_scope.hi_to_lo.worlds = ScopeAxis::Bottom;
+    assert_eq!(p3.pact_scope, erased_scope);
+    assert_ne!(
+        p3.pact_scope, dag.scope_three,
+        "the ended pact keeps none of the scope it shared"
+    );
 
     // P4: concurrent Connects binding one pact id to two grants suspend the
     // pact and deny BOTH grants — the discarded binding must never fall back

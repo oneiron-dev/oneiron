@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "packName": "host",
+  "packName": "hooks.host",
   "hookNames": {
     "compact": "compact-pins",
     "wake": "quiet-wake",

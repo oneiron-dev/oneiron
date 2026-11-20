@@ -371,6 +371,16 @@ fn put_claim_writes_claim_of_edge_atomically() -> Result<()> {
 #[test]
 fn type0_validation_guards_every_write_path() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    let facet = crate::claim::substrate_facet_id(seeded_entity_id(0xC1A1)).expect("subject facet");
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            test_time_range(1, 1),
+            1,
+            b"facet",
+        )
+        .expect("seed subject facet");
     let garbage: &[u8] = b"definitely not msgpack";
 
     // Path 1: Vault::put_entity.
@@ -844,6 +854,7 @@ fn replicated_door_admits_reserved_claim_on_both_builders() -> Result<()> {
                 crate::registry::ENTITY_TYPE_CLAIM,
                 test_time_range(1, 1),
                 2,
+                None,
                 &bytes,
             )
             .apply(wtxn)
@@ -860,6 +871,7 @@ fn replicated_door_admits_reserved_claim_on_both_builders() -> Result<()> {
             crate::registry::ENTITY_TYPE_CLAIM,
             test_time_range(1, 1),
             2,
+            None,
             &bytes,
         )
         .commit()?;
@@ -930,6 +942,7 @@ fn replicated_door_still_fails_typed_on_structural_violations() -> Result<()> {
                     crate::registry::ENTITY_TYPE_CLAIM,
                     test_time_range(1, 1),
                     2,
+                    None,
                     &ungrammatical,
                 )
                 .apply(wtxn)
@@ -946,6 +959,7 @@ fn replicated_door_still_fails_typed_on_structural_violations() -> Result<()> {
             crate::registry::ENTITY_TYPE_CLAIM,
             test_time_range(1, 1),
             2,
+            None,
             &ungrammatical,
         )
         .commit()
@@ -962,6 +976,7 @@ fn replicated_door_still_fails_typed_on_structural_violations() -> Result<()> {
             crate::registry::ENTITY_TYPE_CLAIM,
             test_time_range(1, 1),
             2,
+            None,
             b"not a msgpack map",
         )
         .commit()
@@ -974,7 +989,7 @@ fn replicated_door_still_fails_typed_on_structural_violations() -> Result<()> {
     let bad_type = EntityId::now();
     let err = vault
         .batch()
-        .put_replicated(&bad_type, 255, test_time_range(1, 1), 2, b"")
+        .put_replicated(&bad_type, 255, test_time_range(1, 1), 2, None, b"")
         .commit()
         .expect_err("replay door must still reject unregistered type bytes");
     assert_eq!(err.kind(), ErrorKind::InvalidEntityType);
@@ -998,6 +1013,7 @@ fn replicated_door_fails_closed_on_malformed_federation_grant_body() -> Result<(
                     ENTITY_TYPE_FEDERATION_GRANT,
                     test_time_range(1, 1),
                     2,
+                    None,
                     malformed,
                 )
                 .apply(wtxn)
@@ -1014,6 +1030,7 @@ fn replicated_door_fails_closed_on_malformed_federation_grant_body() -> Result<(
             ENTITY_TYPE_FEDERATION_GRANT,
             test_time_range(1, 1),
             2,
+            None,
             malformed,
         )
         .commit()
@@ -1041,6 +1058,7 @@ fn replicated_door_fails_closed_on_invalid_federation_grant_policy() -> Result<(
                     ENTITY_TYPE_FEDERATION_GRANT,
                     test_time_range(1, 1),
                     2,
+                    None,
                     &invalid_policy,
                 )
                 .apply(wtxn)
@@ -1057,6 +1075,7 @@ fn replicated_door_fails_closed_on_invalid_federation_grant_policy() -> Result<(
             ENTITY_TYPE_FEDERATION_GRANT,
             test_time_range(1, 1),
             2,
+            None,
             &invalid_policy,
         )
         .commit()
@@ -1085,6 +1104,7 @@ fn replicated_door_fails_closed_on_malformed_comm_record_body() -> Result<()> {
                     crate::registry::ENTITY_TYPE_COMM_RECORD,
                     test_time_range(1, 1),
                     2,
+                    None,
                     malformed,
                 )
                 .apply(wtxn)
@@ -1101,6 +1121,7 @@ fn replicated_door_fails_closed_on_malformed_comm_record_body() -> Result<()> {
             crate::registry::ENTITY_TYPE_COMM_RECORD,
             test_time_range(1, 1),
             2,
+            None,
             malformed,
         )
         .commit()

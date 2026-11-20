@@ -18,6 +18,14 @@ pub struct ConversationTurnSpan {
     pub fingerprint: String,
 }
 
+impl ConversationTurnSpan {
+    /// The fingerprint its landing pinned, as bytes: 64 lowercase hex
+    /// digits, as the landing wrote it.
+    pub fn pinned_fingerprint(&self) -> Option<[u8; 32]> {
+        oneiron_hex::decode(&self.fingerprint)
+    }
+}
+
 /// The retained evidence a conversation's self-written summary was cut
 /// from: the SESSION its turns were witnessed into, the conversation and the
 /// branch it read (a DAG conversation's HEAD), and the window's turns in

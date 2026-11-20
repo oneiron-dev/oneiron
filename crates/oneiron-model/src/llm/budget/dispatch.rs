@@ -4,8 +4,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::guard::BudgetGuard;
-use super::ledger::LeaseState;
-use super::types::{BudgetAdmission, BudgetRead};
+use super::ledger::LeaseEntry;
+use super::types::{BudgetAdmission, BudgetExhaustionPolicy, BudgetRead};
 use crate::llm::{BudgetDenied, BudgetLease, CallPurpose, LlmUsage, ModelLocality};
 
 /// What one bound admission grants its lease for. The guard records it and
@@ -149,13 +149,14 @@ impl BudgetGuard {
         state
             .check_lease_provenance(lease)
             .map_err(|_| DispatchRefused::ForeignLease)?;
-        let record = state
-            .leases
-            .get_mut(lease.id())
-            .ok_or(DispatchRefused::ForeignLease)?;
-        if record.state != LeaseState::Open {
-            return Err(DispatchRefused::Closed);
-        }
+        let Some(record) = state.leases.get_mut(lease.id()) else {
+            // The meter's table holds only open leases.
+            return Err(if lease.closed.outcome().is_some() {
+                DispatchRefused::Closed
+            } else {
+                DispatchRefused::ForeignLease
+            });
+        };
         let binding = record.binding.as_ref().ok_or(DispatchRefused::Unbound)?;
         if record.dispatched {
             return Err(DispatchRefused::AlreadyDispatched);
@@ -184,12 +185,9 @@ impl BudgetGuard {
         let state = self.lock_state();
         state.check_lease_provenance(lease).ok()?;
         state
-            .leases
-            .get(lease.id())?
-            .binding
-            .as_ref()?
-            .request_digest
-            .clone()
+            .lease_entry(lease)?
+            .request_digest()
+            .map(str::to_owned)
     }
 
     /// Whether [`Self::begin_dispatch`] started this lease; `None` for a
@@ -198,7 +196,7 @@ impl BudgetGuard {
     pub fn dispatched(&self, lease: &BudgetLease) -> Option<bool> {
         let state = self.lock_state();
         state.check_lease_provenance(lease).ok()?;
-        state.leases.get(lease.id()).map(|record| record.dispatched)
+        state.lease_entry(lease).map(LeaseEntry::dispatched)
     }
 
     /// Clears a premature dispatch mark for a call that sent nothing. Later
@@ -216,11 +214,12 @@ impl BudgetGuard {
     pub fn mark_unsent(&self, lease: &BudgetLease) -> Result<(), BudgetDenied> {
         let mut state = self.lock_state();
         state.check_lease_provenance(lease)?;
+        // The meter's table holds only open leases.
         let record = state
             .leases
             .get_mut(lease.id())
             .ok_or(BudgetDenied::LeaseInvalid)?;
-        if record.state != LeaseState::Open || record.physical_attempts.count() > 0 {
+        if record.physical_attempts.count() > 0 {
             return Err(BudgetDenied::LeaseInvalid);
         }
         record.dispatched = false;
@@ -233,10 +232,7 @@ impl BudgetGuard {
     pub fn lease_open(&self, lease: &BudgetLease) -> Option<bool> {
         let state = self.lock_state();
         state.check_lease_provenance(lease).ok()?;
-        state
-            .leases
-            .get(lease.id())
-            .map(|record| record.state == LeaseState::Open)
+        state.lease_entry(lease).map(LeaseEntry::is_open)
     }
 
     /// Moves this meter's limit and per-call reservation: an owner's or a
@@ -248,16 +244,48 @@ impl BudgetGuard {
         state.read()
     }
 
+    /// Moves the hard line no admission passes, whatever the exhaustion
+    /// policy adds to the limit: a live spend scope's room, so an overdraft
+    /// widens the meter's own line and never the scope's (`None` bounds
+    /// nothing). Spend and open reservations stay; a lower ceiling only
+    /// refuses later admissions.
+    pub fn revise_ceiling(&self, ceiling_units: Option<u64>) -> BudgetRead {
+        let mut state = self.lock_state();
+        state.ceiling_units = ceiling_units;
+        state.read()
+    }
+
+    /// Widens this meter by an overdraft grant (`grant`, the caller's id for
+    /// it, such as the owner's answer to a run-budget ask): its paid cap
+    /// rises by `cap_units` past what it admitted before, or past its spend
+    /// when that is more, so a meter that spent an earlier overdraft, or its
+    /// own `Overdraft` policy, takes the new allowance whole. A grant the
+    /// meter already took changes nothing, so a meter restored from its
+    /// checkpoint under the same grant again is not widened twice. Spend,
+    /// reservations, row tallies, fired thresholds and the ceiling stay.
+    pub fn grant_overdraft(&self, grant: u64, cap_units: u64) -> BudgetRead {
+        let mut state = self.lock_state();
+        if state.overdraft_grant != Some(grant) {
+            let paid_cap = state
+                .on_budget_exhausted
+                .admission_cap(state.limit_units)
+                .max(state.used_units);
+            let cap = paid_cap
+                .saturating_add(cap_units)
+                .saturating_sub(state.limit_units);
+            state.on_budget_exhausted = BudgetExhaustionPolicy::Overdraft { cap };
+            state.overdraft_grant = Some(grant);
+        }
+        state.read()
+    }
+
     /// Units this lease reserved at admission; `None` for a lease another
     /// meter issued or this one never did.
     #[must_use]
     pub fn reserved_for(&self, lease: &BudgetLease) -> Option<u64> {
         let state = self.lock_state();
         state.check_lease_provenance(lease).ok()?;
-        state
-            .leases
-            .get(lease.id())
-            .map(|record| record.reserve_units)
+        state.lease_entry(lease).map(LeaseEntry::reserve_units)
     }
 }
 

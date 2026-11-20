@@ -4,6 +4,8 @@
     "handoff"
   ],
   "key": "harbour-note",
-  "value": "The harbour lantern is amber.",
+  "value": {
+    "text": "The harbour lantern is amber."
+  },
   "requestId": "e2e-authority-08-preserve-note"
 }

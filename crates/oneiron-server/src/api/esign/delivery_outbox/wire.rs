@@ -167,23 +167,11 @@ pub(super) fn parse_name(name: &str) -> Option<(String, FileRole)> {
         Some(key) => (key, FileRole::Ack),
         None => (rest.strip_suffix(ENVELOPE_SUFFIX)?, FileRole::Envelope),
     };
-    (key.len() == 64 && is_lower_hex(key)).then(|| (format!("{FILE_PREFIX}{key}"), role))
+    oneiron_hex::is_lower_hex(key, Some(64)).then(|| (format!("{FILE_PREFIX}{key}"), role))
 }
 
 fn parse_attempt_id(text: &str) -> Option<AttemptId> {
-    if text.len() != 32 || !is_lower_hex(text) {
-        return None;
-    }
-    let bytes = (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok())
-        .collect::<Option<Vec<u8>>>()?;
-    AttemptId::from_bytes(&bytes).ok()
-}
-
-fn is_lower_hex(text: &str) -> bool {
-    text.bytes()
-        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    AttemptId::from_bytes(&oneiron_hex::decode::<16>(text)?).ok()
 }
 
 pub(super) fn hex(bytes: &[u8]) -> String {

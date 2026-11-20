@@ -33,14 +33,7 @@ pub(crate) fn validate_put_in_txn(
         }
         if !replicated
             && !crate::ports::EntityStoreRead::port_entity_present(store, txn, &id)?
-            && store
-                .vault_meta
-                .get(
-                    txn,
-                    &[b"project.leader_chat.v1/".as_slice(), id.as_bytes()].concat(),
-                )?
-                .as_deref()
-                != Some(encoded.as_slice())
+            && !leader_chat_bound_in(store, txn, id, &encoded)?
         {
             return Err(denied());
         }
@@ -86,17 +79,37 @@ pub(crate) fn validate_put_in_txn(
                 return Err(state("role changes require the room role door"));
             }
         }
-        // ROOM-SCOPED-PINS: a room's shared pins and their policy change only
-        // through the room pin doors, which mark their write transaction; a
-        // new room starts with no pins and the default policy.
-        let (previous_pins, previous_policy) = previous
+        // ROOM-SCOPED-PINS: a room's shared pins, the records its unpins
+        // removed and the pin policy change only through the room pin doors,
+        // which mark their write transaction; a new room starts with no pins
+        // and the default policy.
+        let previous_pin_state = previous
             .as_ref()
-            .map(|previous| (previous.pins.as_slice(), previous.pin_policy))
+            .map(|previous| {
+                (
+                    previous.pins.as_slice(),
+                    previous.unpinned.as_slice(),
+                    previous.pin_policy,
+                )
+            })
             .unwrap_or_default();
-        if (body.pins.as_slice(), body.pin_policy) != (previous_pins, previous_policy)
+        if (
+            body.pins.as_slice(),
+            body.unpinned.as_slice(),
+            body.pin_policy,
+        ) != previous_pin_state
             && !pins::PIN_UPDATES.contains(store, txn, &id)?
         {
             return Err(state("pin changes require the room pin doors"));
+        }
+        // ARCH-0082 #closed-room: only the room's closed-setting door, which
+        // marks its write transaction, changes whether the room is closed; a
+        // new room starts open.
+        let previous_closed = previous.as_ref().is_some_and(|previous| previous.closed);
+        if body.closed != previous_closed && !closed::CLOSED_UPDATES.contains(store, txn, &id)? {
+            return Err(state(
+                "closing or opening a room requires the room's closed-setting door",
+            ));
         }
     }
     // Rule 5: a roster of any size is kept whole. Past its threshold row the
@@ -106,6 +119,66 @@ pub(crate) fn validate_put_in_txn(
     roster.defer(store);
     Ok(())
 }
+/// Whether this vault's project door bound room `id` as the leader chat
+/// whose binding encodes to `encoded`: only that door makes a new leader chat.
+fn leader_chat_bound_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    encoded: &[u8],
+) -> Result<bool> {
+    Ok(store
+        .vault_meta
+        .get(
+            txn,
+            &[b"project.leader_chat.v1/".as_slice(), id.as_bytes()].concat(),
+        )?
+        .as_deref()
+        == Some(encoded))
+}
+
+/// Whether room `id`'s `body` carries a leader chat binding this vault's project door did not
+/// make: [`validate_put_in_txn`] refuses it on a room this vault does not hold.
+pub(crate) fn leader_chat_binding_unbound_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    body: &ConversationBody,
+) -> Result<bool> {
+    let Some(value) = body.extra.get(crate::workspace_roster::LEADER_CHAT_FIELD) else {
+        return Ok(false);
+    };
+    let encoded = rmp_serde::to_vec_named(value).map_err(|_| invalid("leader chat binding"))?;
+    Ok(!leader_chat_bound_in(store, txn, id, &encoded)?)
+}
+
+/// Whether [`validate_put_in_txn`] would refuse `bytes` as the first local
+/// put of room `id`, which this vault does not hold, when no room door marks
+/// the write (ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM = B): the body seats
+/// members this vault's membership ledger does not hold (only the membership
+/// door seats one), carries a leader chat binding this vault's project door
+/// did not make, holds shared pins, unpin records or a pin policy other than
+/// the default (only the room pin doors write them), or is closed (only the
+/// room's closed-setting door closes a room). A whole-vault import outside
+/// the owner's restore keeps such a room as archive data.
+pub(crate) fn new_room_needs_a_door_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    bytes: &[u8],
+) -> Result<bool> {
+    let body = ConversationBody::from_bytes(bytes)?;
+    if leader_chat_binding_unbound_in_txn(store, txn, id, &body)? {
+        return Ok(true);
+    }
+    let members = membership::current_members_in(store, txn, id)?;
+    Ok(members != body.member_ids.iter().copied().collect()
+        || !body.pins.is_empty()
+        || !body.unpinned.is_empty()
+        || !body.pin_policy.is_members()
+        || body.closed)
+}
+
 /// A fresh room id has neither a row nor durable/stale deletion history.
 /// Keep this test in the caller's write transaction so it also sees a deletion
 /// staged earlier in that transaction.

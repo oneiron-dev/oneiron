@@ -76,18 +76,28 @@ const UNATTESTED: &[(&str, &str, Unattested)] = &[
         "/public/booking/{page_token}/verbs/{verb}",
         PublicProof,
     ),
-    // The signing ceremony's signer doors.
+    // The signing ceremony's signer doors, and the owner's editor POSTs,
+    // each under the token its shell minted (`api/esign/editor_auth.rs`).
     ("GET", "/sign", PublicProof),
+    ("POST", "/sign/fields", PublicProof),
     ("POST", "/sign/geometry", PublicProof),
     ("POST", "/sign/image", PublicProof),
     ("POST", "/sign/layout", PublicProof),
     ("POST", "/sign/pdf", PublicProof),
     ("POST", "/sign/preview", PublicProof),
     ("POST", "/sign/signature", PublicProof),
-    // A sealed certificate's QR page and its report, keyless as the signer
-    // doors are: the vault checks the QR capability on each report.
+    // A sealed certificate's QR page, its report and its PDF download,
+    // keyless as the signer doors are: the vault checks the QR capability on
+    // each report and each download.
     ("GET", "/esign/verify", PublicProof),
+    ("POST", "/esign/verify/pdf", PublicProof),
     ("POST", "/esign/verify/report", PublicProof),
+    // A signing link's exchange doors: the exchange reads the link's
+    // capability (the link stays reusable) and answers a single-use
+    // exchange, which the session door consumes to open the link's signing
+    // session.
+    ("POST", "/sign/exchange", PublicProof),
+    ("POST", "/sign/session", PublicProof),
     // A bulk campaign email's one-click unsubscribe link (RFC 8058):
     // keyless, its mac checked in the vault on each call.
     (
@@ -117,6 +127,7 @@ const UNATTESTED: &[(&str, &str, Unattested)] = &[
     ("POST", "/v1/hooks/linear", PublicProof),
     ("POST", "/v1/hooks/slack/events", PublicProof),
     ("GET", "/v1/hooks/slack/oauth", PublicProof),
+    ("POST", "/v1/hooks/stripe/booking-deposit", PublicProof),
     // Recovery pages, seat children and a left member's doors.
     ("POST", "/v1/recovery/custody/page", PublicProof),
     ("POST", "/v1/recovery/sealed-bundle/index", PublicProof),

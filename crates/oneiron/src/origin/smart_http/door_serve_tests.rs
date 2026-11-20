@@ -1,7 +1,8 @@
 //! Serve command and door tests: closed env/argv, vetted hook, unlandable names,
 //! framed blobs, coordinator, door request parse, repo names, noop seam, dial.
 
-use super::tests::{git, landing_outcome, landing_time, seeded_repo, temp_vault};
+use super::protected_ref_confirm::ProtectedRefPasses;
+use super::tests::{git, landing_outcome, landing_time, owner_principal, seeded_repo, temp_vault};
 use super::*;
 use crate::credential_door::PushedBlob;
 use crate::error::CodeError;
@@ -50,7 +51,7 @@ fn receive_pack_rejects_secret_under_hostile_inherited_git_config() {
     }
     let (_vault_dir, vault) = temp_vault();
     let (source, repo, _, head) = served_repo(&vault);
-    let pusher = EntityId::now().to_hex();
+    let pusher = owner_principal(&vault).to_hex();
     let push = |path: &str, contents: &str, name: &str| {
         let tip = commit_file(source.path(), path, contents);
         // Transfer objects only; the receive-pack below proposes their first new served ref.
@@ -104,24 +105,22 @@ fn receive_pack_rejects_secret_under_hostile_inherited_git_config() {
         git(&repo, &["rev-parse", "refs/heads/hostile-clean"]),
         clean.as_str()
     );
-    let published = vault.origin_publication_ids(None).unwrap();
-    let (_, report) = push(
+    let (tip, report) = push(
         "secret.txt",
         "token=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n",
         "refs/heads/hostile-secret",
     );
-    // Refused by detection: the one reason names the secret's path. Unreadable
-    // input, a scan that cannot run and a lost intent write name no path.
-    let DoorWindowVerdict::Rejected { reasons } = &report.door.verdict else {
-        panic!("secret push admitted: {:?}", report.door.verdict);
-    };
-    assert_eq!(reasons.len(), 1, "{reasons:?}");
-    assert!(reasons[0].starts_with("secret.txt: "), "{reasons:?}");
-    assert!(!reasons[0].contains("ghp_"));
-    assert!(report.landing.is_none());
-    assert!(git(&repo, &["for-each-ref", "refs/heads/hostile-secret"]).is_empty());
+    // FIX7608: detection admits+marks instead of rejecting; masked readers serve the masked copy.
+    assert!(matches!(
+        report.door.verdict,
+        DoorWindowVerdict::AdmitMarked { .. }
+    ));
+    assert!(report.landing.is_some());
+    assert_eq!(
+        git(&repo, &["rev-parse", "refs/heads/hostile-secret"]),
+        tip.as_str()
+    );
     assert_eq!(git(&repo, &["rev-parse", "refs/heads/main"]), head.as_str());
-    assert_eq!(vault.origin_publication_ids(None).unwrap(), published);
 }
 
 /// Frames one record the way the vetted hook does.
@@ -333,7 +332,13 @@ fn smart_http_noop_evidence_never_claims_landed_policy_or_scanning() {
     );
     assert!(
         vault
-            .record_receive_pack_intent(&unpinned_repo_ref(&root), &stamp, &door)
+            .record_receive_pack_intent(
+                &unpinned_repo_ref(&root),
+                &stamp,
+                &door,
+                None,
+                &ProtectedRefPasses::default()
+            )
             .is_err()
     );
     assert!(

@@ -32,6 +32,7 @@ use std::io::{Cursor, Read};
 use std::sync::Arc;
 
 use heed::RoTxn;
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use super::artifact::{ArtifactBody, SealedBodies};
@@ -280,7 +281,7 @@ impl BodyCensus {
                 key: key.to_vec(),
                 keep: u32::try_from(keep).map_err(|_| codec_error())?,
                 instance,
-                digest: *blake3::hash(body).as_bytes(),
+                digest: *ContentHash::of(body).as_bytes(),
                 len: body.len() as u64,
                 stored_len: 0,
                 retired: None,

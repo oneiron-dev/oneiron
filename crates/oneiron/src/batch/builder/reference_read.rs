@@ -52,7 +52,7 @@ fn put_targets_admitted(
     txn: &RoTxn<'_>,
     ops: &[BatchOp],
 ) -> Result<bool> {
-    head_targets_admitted(
+    targets_admitted(
         vault,
         reader,
         txn,
@@ -60,22 +60,43 @@ fn put_targets_admitted(
             BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => Some(*id),
             _ => None,
         }),
+        crate::batch::put_target_admitted_in,
     )
 }
 
-/// The same target judgment for the actual heads a projector will mutate.
+/// The same target judgment for the actual heads the comm projector will
+/// mutate, but for the restriction rule: the projector is its classes' typed
+/// door (`batch::projected_head_target_admitted_in`).
 pub(in crate::batch) fn head_targets_admitted(
     vault: &Vault,
     reader: &ScopedRead<'_>,
     txn: &RoTxn<'_>,
     ids: impl IntoIterator<Item = EntityId>,
 ) -> Result<bool> {
+    targets_admitted(
+        vault,
+        reader,
+        txn,
+        ids,
+        crate::batch::projected_head_target_admitted_in,
+    )
+}
+
+/// Whether `admitted` takes each of `ids` for `reader`, each judged once;
+/// the TURN doors' owner takes every one.
+fn targets_admitted(
+    vault: &Vault,
+    reader: &ScopedRead<'_>,
+    txn: &RoTxn<'_>,
+    ids: impl IntoIterator<Item = EntityId>,
+    admitted: fn(&ScopedRead<'_>, &RoTxn<'_>, &EntityId) -> Result<bool>,
+) -> Result<bool> {
     if vault.turn_doors_owner_in(reader, txn)? {
         return Ok(true);
     }
     let mut judged = BTreeSet::new();
     for id in ids {
-        if judged.insert(id) && !crate::batch::put_target_admitted_in(reader, txn, &id)? {
+        if judged.insert(id) && !admitted(reader, txn, &id)? {
             return Ok(false);
         }
     }
@@ -150,6 +171,7 @@ pub(in crate::batch) fn check_staged_references(
 fn gated_claims(store: &Store, txn: &RoTxn<'_>, ops: &[BatchOp]) -> Result<Vec<GatedClaim>> {
     let mut claims = Vec::new();
     let mut default_facet = None;
+    let mut birth_facets = crate::batch::claim_candidate_apply::BatchBirthFacets::new(ops);
     for op in ops {
         match op {
             BatchOp::Put {
@@ -176,7 +198,10 @@ fn gated_claims(store: &Store, txn: &RoTxn<'_>, ops: &[BatchOp]) -> Result<Vec<G
                 internal_lexical_query_hint,
                 ..
             } if !*internal_lexical_query_hint => {
-                let facet = facet_in(store, txn, &mut default_facet)?;
+                // At the facet the apply stores it at, as the preflight
+                // derives it (PREFLIGHT-FACET-REPUT-REPLAY-MISMATCH,
+                // PREFLIGHT-SAME-BATCH-BIRTH-FACET).
+                let facet = birth_facets.birth_facet(store, txn, id)?;
                 claims.push(GatedClaim {
                     id: *id,
                     body: (**candidate).clone().into_claim_body(envelope, facet)?,
@@ -195,6 +220,7 @@ fn gated_claims(store: &Store, txn: &RoTxn<'_>, ops: &[BatchOp]) -> Result<Vec<G
             }
             _ => {}
         }
+        birth_facets.note(store, txn, op)?;
     }
     Ok(claims)
 }

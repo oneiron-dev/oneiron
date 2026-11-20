@@ -76,12 +76,19 @@ mod claim_merge;
 mod doors;
 mod native_capture;
 mod notes;
+#[cfg(oneiron_test_support)]
+mod question_head_door;
 mod refresh;
+#[cfg(oneiron_test_support)]
+mod system_one_door;
 
 pub(crate) use adapters::description_notes;
 pub use big_binding::BigRung;
 pub(crate) use notes::ReviewStateNotes;
 pub(crate) use refresh::{spawn_person_threshold, spawn_person_threshold_admitted};
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+pub use system_one_door::{SystemOneRungForTest, system_one_rung_for_test};
 
 /// The rule table's identity on this host: the vault's host rule rows, which the owner's
 /// reasons write ([`oneiron::llm::decision::HostRule`]).
@@ -255,7 +262,7 @@ impl DecisionHost {
                 presence: None,
             },
             asks,
-            bands: DecisionBandPolicy::default(),
+            bands: learned_bands(vault),
             person_start: None,
             think_start: None,
             person_refresh: Arc::default(),
@@ -295,7 +302,9 @@ impl DecisionHost {
         self.ladder.paired = None;
         self.ladder.person = None;
         self.ladder.presence = None;
-        self.bands = DecisionBandPolicy::default();
+        // The rebuilt bands start from the vault's learned rows (promise-dura-10), with no
+        // threshold row until the recipe names one.
+        self.bands = learned_bands(vault);
         self.person_start = None;
         self.think_start = None;
         let Some((door, meter)) = read else {
@@ -320,7 +329,8 @@ impl DecisionHost {
                 None
             }
         };
-        let mut bands = DecisionBandPolicy::default();
+        // The learned rows loaded above, which the threshold rows join.
+        let mut bands = std::mem::take(&mut self.bands);
         // Q2's threshold home: a paired reading at the row climbs a rung. An
         // accepted Coach row replaces this start value with a higher version
         // ([`Self::refresh_think_threshold`], FIX 2437).
@@ -685,6 +695,21 @@ fn pin(rung: DecisionRung, model: &str, version: &str) -> ProviderPin {
     }
 }
 
+/// A band policy holding every learned band `vault` keeps (ARCH-0076 promise-dura-10: a
+/// learned band's mode and version stay in effect after a restart), and no threshold row.
+/// Rows that do not read leave it empty, as a vault with none, and the log says so.
+fn learned_bands(vault: &Vault) -> DecisionBandPolicy {
+    let bands = DecisionBandPolicy::default();
+    match vault.learned_decision_bands() {
+        Ok(rows) => bands.replace_learned_bands(rows),
+        Err(error) => tracing::error!(
+            %error,
+            "the learned decision bands did not load; every band reads its seed in shadow"
+        ),
+    }
+    bands
+}
+
 /// What admits each house read on the ladder as the `/v1/llm/decision_read`
 /// probe admits its own: the server's `limits.decision_reads` pool, its host
 /// account and its run receipts.
@@ -805,7 +830,8 @@ impl SystemOneRung {
             }
             (None, None) => anyhow::bail!("it names no key_env or key_secret"),
         }
-        .map_err(|error| anyhow::anyhow!("invalid System One seat: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("invalid System One seat: {error}"))?
+        .with_native_budget(settings.native_budget);
         // A bearer held from bind sits in this process's memory; a broker key stays
         // behind the vault's custody door.
         let custody = if settings.key_env.is_some() {

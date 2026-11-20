@@ -160,7 +160,15 @@ impl DreamerWakeDriver<'_> {
             self.vault
                 .batch_in()
                 .claim_candidate(&claim_id, candidate, &envelope, occurred, now)
-                .apply(wtxn)
+                .apply(wtxn)?;
+            // The milestone is a new mention of `subject`: about a PERSON
+            // under a cleanup archive, it restores her in the milestone's own
+            // write (ARCH-0073 §6).
+            self.vault.restore_mentioned_subject_in_txn(
+                wtxn,
+                crate::claim::ClaimSubject::Entity(subject),
+            )?;
+            Ok(())
         })
     }
 
