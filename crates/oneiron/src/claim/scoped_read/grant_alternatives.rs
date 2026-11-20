@@ -279,6 +279,39 @@ impl ScopedRead<'_> {
             && self.grant_holds_shell_in(rtxn, id, raw, position, grant)?)
     }
 
+    /// Whether `grant`, one live Grant of the reader's own (A), holds the
+    /// facets of a loop decision's kept read `position` (Engine ANSWER
+    /// LOOP-KEPT-POSITION-FLOOR-AND-GRANT = A): the stored row's, as the row
+    /// gate holds them, where `row` names one stored now; else the facets
+    /// the position stamps, one of them inside the Grant's, as a record that
+    /// never landed sits in its stamped facet. A position that stamps no
+    /// facet, or every facet, reads as if it sat anywhere, so only a Grant
+    /// over every facet holds it.
+    ///
+    /// # Errors
+    /// A store failure reading the stored row's facets.
+    pub(super) fn own_grant_holds_position_facets_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        position: &Scope,
+        row: Option<(&EntityId, Option<&[u8]>)>,
+        grant: &Scope,
+    ) -> Result<bool> {
+        use oneiron_authority::federation::{ScopeAxis, ScopeId};
+        if let Some((id, Some(raw))) = row {
+            return self.alternative_facets_admit_in(rtxn, id, Some(raw), grant);
+        }
+        Ok(match &position.facets {
+            ScopeAxis::Some(stamped) if !stamped.is_empty() => {
+                let stamped: Vec<EntityId> = stamped.iter().map(|ScopeId(id)| *id).collect();
+                crate::federation::facet_read::placed_facets_admit(&grant.facets, &stamped)
+            }
+            ScopeAxis::Some(_) | ScopeAxis::All | ScopeAxis::Bottom => {
+                matches!(grant.facets, ScopeAxis::All)
+            }
+        })
+    }
+
     /// Whether `alternative`'s facets admit the row `id` whose stored row is
     /// `raw`, as the key's own facet check judges it ([`facets_admit_in`]);
     /// with no stored row, only an alternative that holds every facet does.

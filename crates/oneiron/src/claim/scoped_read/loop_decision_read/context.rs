@@ -14,11 +14,11 @@ use super::{LoopDecisionFamily, LoopRead};
 use crate::EntityId;
 use crate::claim::scoped_read::ScopedRead;
 use crate::error::{Error, Result};
-use crate::gate::ClaimReadView;
+use crate::gate::{ClaimReadView, ResolvedRetrievalFilter};
 use crate::store::{
     GateDecisionReadContext, GateDecisionRecord, GateLoopFamily, GateReadAnchors, GateReadPosition,
 };
-use oneiron_authority::federation::{ScopeAxis, ScopeId};
+use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 
 /// What a kept read context admitted: the rows the decision is about, for
 /// relevance, and every live row its admission stood on, so a recheck reads
@@ -249,11 +249,16 @@ impl ScopedRead<'_> {
     }
 
     /// A kept record position under the reader's live authority, as a stored
-    /// row's own admission judges it apart from the row: its type in the
-    /// reader's bands, the proof live, the credential's records, a guest's
-    /// current view, the relationship gate, then the claim selectors (or the
-    /// record door) over the kept Scope. No status, evidence or landing is
-    /// asked: those govern the claim, not whether its decision may be seen.
+    /// row's own admission judges it apart from the row: the proof live, the
+    /// credential's records and a guest's current view; then B, the key's
+    /// own floor (its type in the reader's bands, the relationship gate, then
+    /// the claim selectors or the record door over the kept Scope), else A,
+    /// one of the reader's own live Grants alone, under the floor a proof of
+    /// it gives the key, holding the position's world, facet and type, as
+    /// the row gate's A judges a row (Engine ANSWER
+    /// LOOP-KEPT-POSITION-FLOOR-AND-GRANT = A). Two Grants never combine. No
+    /// status, evidence or landing is asked: those govern the claim, not
+    /// whether its decision may be seen.
     fn loop_position_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -262,11 +267,6 @@ impl ScopedRead<'_> {
         position: &GateReadPosition,
     ) -> Result<bool> {
         if self.loop_position_narrowed()
-            || !read
-                .filter
-                .read_scope()
-                .bands
-                .contains(&position.entity_type)
             || !self.proof_live_in(txn)?
             || record.is_some_and(|record| !self.credential_allows_row_in(txn, record))
         {
@@ -279,10 +279,6 @@ impl ScopedRead<'_> {
         {
             return Ok(false);
         }
-        // A kept position names two axes at once: one agent Grant alone must
-        // admit it too, at the door its base check uses, with the stored
-        // row's facets where the caller judged them (FIX
-        // AGENT-GRANT-TWO-AXIS-SEAMS).
         let stored = match record {
             Some(id) => self.entity_record_in(txn, id)?.map(|row| row.encode()),
             None => None,
@@ -290,11 +286,53 @@ impl ScopedRead<'_> {
         let row = record
             .zip(stored.as_deref())
             .map(|(id, raw)| (id, Some(raw)));
+        if self.loop_position_held_in(txn, read, &read.filter, None, position, row)? {
+            return Ok(true);
+        }
+        Ok(self.own_position_readable_by_grant_in(
+            txn,
+            &read.policy,
+            &read.filter,
+            position.entity_type,
+            &read.held,
+            |grant, filter| {
+                self.loop_position_held_in(txn, read, filter, Some(grant), position, row)
+            },
+        ))
+    }
+
+    /// The kept `position` under `filter` and, with `grant`, that one live
+    /// Grant of the reader's own (A) as the explicit Scope; `None` is B, the
+    /// key's own floor, judged as before. Under A the Grant stands in for
+    /// the relationship gate and must hold the position's facets (the stored
+    /// `row`'s, else its stamp), as the row gate's A judges a row under it.
+    /// Either way one agent Grant alternative of the key alone must admit it
+    /// too, at the door its check uses, with the stored row's facets where
+    /// the caller judged them (FIX AGENT-GRANT-TWO-AXIS-SEAMS).
+    fn loop_position_held_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        read: &LoopRead,
+        filter: &ResolvedRetrievalFilter,
+        grant: Option<&Scope>,
+        position: &GateReadPosition,
+        row: Option<(&EntityId, Option<&[u8]>)>,
+    ) -> Result<bool> {
+        if !filter.read_scope().bands.contains(&position.entity_type) {
+            return Ok(false);
+        }
+        if let Some(grant) = grant
+            && !self.own_grant_holds_position_facets_in(txn, &position.scope, row, grant)?
+        {
+            return Ok(false);
+        }
+        let explicit = grant.or(self.actor_key.authority_scope());
         let Some(claim) = &position.claim else {
-            return Ok(crate::gate::scoped_read_record_allowed(
+            return Ok(crate::gate::scoped_read_record_allowed_with_scope(
                 &read.policy,
                 &self.actor_key,
                 &position.scope,
+                explicit,
             ) && self.one_grant_alternative_admits_record_in(
                 txn,
                 &read.held,
@@ -310,7 +348,7 @@ impl ScopedRead<'_> {
         // whether its decision may be seen.
         if !self.principal_admits(claim.principal)
             || !crate::pipeline::claim_scalars_ceiling_allowed(
-                &read.filter,
+                filter,
                 claim.sensitivity_band,
                 confidence,
                 salience,
@@ -318,13 +356,15 @@ impl ScopedRead<'_> {
         {
             return Ok(false);
         }
-        if !self.relationship_axes_allowed_in(
-            txn,
-            claim.relationship.clone(),
-            claim.private,
-            &position.scope,
-            &read.held,
-        )? {
+        if grant.is_none()
+            && !self.relationship_axes_allowed_in(
+                txn,
+                claim.relationship.clone(),
+                claim.private,
+                &position.scope,
+                &read.held,
+            )?
+        {
             return Ok(false);
         }
         let scope = match claim.scope.as_deref() {
@@ -346,7 +386,7 @@ impl ScopedRead<'_> {
             &read.policy,
             &self.actor_key,
             &view,
-            self.actor_key.authority_scope(),
+            explicit,
         ) && self.one_grant_alternative_admits_claim_view_in(
             txn,
             &read.held,
