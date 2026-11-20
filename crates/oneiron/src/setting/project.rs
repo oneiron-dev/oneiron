@@ -34,11 +34,13 @@
 //! ([`Vault::project_settings_after_authority_ingest`]), after every commit that stored a value
 //! beside an act, and at open. A key this build does not know, a signed record that keeps only a
 //! digest (an older door's, or a change of a key that does not travel), and a head the log here
-//! does not hold leave the row as it is. A head whose value is beside its act and has not
-//! reached this install leaves it too: the row reads as it did before that act, `Pending`, until
-//! the value arrives (stage 7c-1; DESIGN 1.6, "Fold states"). A value beside an act that does not
-//! match its digest, or was erased, reads the key's strictest value, `Quarantined`, whenever that
-//! happens: a pass reads a row again once a value beside an act it read holds otherwise.
+//! does not hold leave the row as it is; a pass reads the acts on a key this build does not
+//! know again only once their revision moves or a build knows the key. A head whose value is
+//! beside its act and has not reached this install leaves it too: the row reads as it did before
+//! that act, `Pending`, until the value arrives (stage 7c-1; DESIGN 1.6, "Fold states"). A value
+//! beside an act that does not match its digest, or was erased, reads the key's strictest value,
+//! `Quarantined`, whenever that happens: a pass reads a row again once a value beside an act it
+//! read holds otherwise.
 //!
 //! The read on proofs (stage 7b-3; DESIGN 1.6, "The read of one slot", "Fold states" and
 //! "Receipts"):
@@ -132,6 +134,11 @@ struct Projection {
     /// projection, whose bytes it leaves as they were.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     beside: Vec<BesideSeen>,
+    /// The key the acts are on, where this build does not know it (stage 7c-1): a pass reads the
+    /// target again once a build knows it ([`moved_since`]). Absent on every other projection,
+    /// whose bytes it leaves as they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unknown_key: Option<String>,
 }
 
 /// A row beside an act that a projection read, and what it held then (stage 7c-1).
@@ -408,10 +415,15 @@ enum Inert {
     /// Its acts name no row this build writes, now or under a later build: recorded, so a later
     /// pass reads them again only once the revision moves.
     ForGood,
-    /// Its acts name a row this build cannot write yet (a key it does not know, one that does
-    /// not travel here, a head the log here does not hold): not recorded, so the open pass of a
-    /// later build reads them again.
+    /// Its acts name a row this build cannot write yet (a key that does not travel here, a head
+    /// the log here does not hold): not recorded, so the open pass of a later build reads them
+    /// again.
     ForNow,
+    /// Its acts are on the key named, which this build does not know (stage 7c-1): recorded as
+    /// `Pending` with the key's name ([`Projection::unknown_key`]), so a pass reads them again
+    /// only once the revision moves or a build knows the key. A value that comes beside one of
+    /// them changes nothing such a build reads.
+    UnknownKey(String),
     /// An act on the way keeps its value beside it, and that value has not reached this install
     /// (stage 7c-1; DESIGN 1.6, "Fold states": Pending): the row reads as it did before that
     /// act. Recorded as `Pending` with the rows it read ([`Projection::beside`]), so a pass reads
@@ -1023,6 +1035,7 @@ pub(super) fn project_target_in_txn(
                     standing: SettingStanding::Pending,
                     pin_read_as_value: false,
                     beside: Vec::new(),
+                    unknown_key: None,
                 },
             )?;
         }
@@ -1032,7 +1045,7 @@ pub(super) fn project_target_in_txn(
         return leave_in_txn(vault, txn, inert(Inert::ForGood), reads);
     }
     let Ok(spec) = spec_named(&slot.name) else {
-        let why = unknown_key_inert_in_txn(vault, txn, &reads, &heads)?;
+        let why = Inert::UnknownKey(slot.name.clone());
         return leave_in_txn(vault, txn, inert(why), reads);
     };
     if !travels(spec)
@@ -1087,6 +1100,7 @@ pub(super) fn project_target_in_txn(
             standing: projected.standing.read_as(),
             pin_read_as_value,
             beside: reads.into_seen(),
+            unknown_key: None,
         },
     )?;
     Ok(TargetProjected {
@@ -1138,46 +1152,11 @@ fn met_with_local(
     projected
 }
 
-/// Why the acts `heads` on a key this build does not know leave its row as it is (stage 7c-1):
-/// an act that carries its value inside it, or a copy, waits for a build that knows the key
-/// ([`Inert::ForNow`]). Acts that keep only digests wait first for the values beside them
-/// ([`Inert::Awaiting`]); a signed record of a key that stays on another build's install never
-/// brings one, so no pass reads it again until a value comes. Once every value is here, they
-/// wait for such a build too. The rows read are noted in `reads`.
-///
-/// # Errors
-///
-/// Storage and filesystem errors.
-fn unknown_key_inert_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    reads: &BesideReads,
-    heads: &[Head],
-) -> Result<Inert> {
-    if heads
-        .iter()
-        .any(|head| head.carries_value() && !head.keeps_only_digest())
-    {
-        return Ok(Inert::ForNow);
-    }
-    let mut why = Inert::ForNow;
-    for head in heads {
-        if let HeadBody::Beside(digest) = head.body
-            && matches!(
-                reads.read_in_txn(vault, txn, &head.slot, digest)?,
-                BesideRead::Absent
-            )
-        {
-            why = Inert::Awaiting;
-        }
-    }
-    Ok(why)
-}
-
 /// Leaves the row of `target` as it is (`Inert`), recording its `basis` when no build writes a
-/// row from those acts, and, while a value beside an act has not arrived, that the row reads
+/// row from those acts; while a value beside an act has not arrived, that the row reads
 /// `Pending`, the rows beside acts it read (`reads`), and what the last projection left (its row
-/// and how a pin reads) until it does. Returns no changed key.
+/// and how a pin reads) until it does; and while this build does not know their key, that the
+/// row reads `Pending` and the key's name. Returns no changed key.
 fn leave_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -1192,6 +1171,15 @@ fn leave_in_txn(
             standing: SettingStanding::Settled,
             pin_read_as_value: false,
             beside: Vec::new(),
+            unknown_key: None,
+        },
+        Inert::UnknownKey(key) => Projection {
+            slot: Vec::new(),
+            basis,
+            standing: SettingStanding::Pending,
+            pin_read_as_value: false,
+            beside: Vec::new(),
+            unknown_key: Some(key),
         },
         Inert::Awaiting => {
             let last = PROJECTIONS.get(&vault.store, txn, &target_key(target))?;
@@ -1204,6 +1192,7 @@ fn leave_in_txn(
                 standing: SettingStanding::Pending,
                 pin_read_as_value: last.is_some_and(|last| last.pin_read_as_value),
                 beside: reads.into_seen(),
+                unknown_key: None,
             }
         }
     };
@@ -1211,16 +1200,21 @@ fn leave_in_txn(
     Ok(TargetProjected::UNMOVED)
 }
 
-/// Whether `target`'s acts moved since `projection` was recorded: its basis is not `basis`, or
-/// a row beside an act it read holds otherwise now (stage 7c-1): the value arrived, was erased
-/// here, or no longer matches its act.
+/// Whether `target`'s acts moved since `projection` was recorded: its basis is not `basis`, this
+/// build knows the key it did not know then, or a row beside an act it read holds otherwise now
+/// (stage 7c-1): the value arrived, was erased here, or no longer matches its act.
 fn moved_since(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     projection: &Projection,
     basis: [u8; 32],
 ) -> Result<bool> {
-    if projection.basis != basis {
+    if projection.basis != basis
+        || projection
+            .unknown_key
+            .as_deref()
+            .is_some_and(|key| spec_named(key).is_ok())
+    {
         return Ok(true);
     }
     for seen in &projection.beside {
