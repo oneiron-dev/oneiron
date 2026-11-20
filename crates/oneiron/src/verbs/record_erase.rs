@@ -230,8 +230,9 @@ pub fn confirm_record_erase(
     let world_erase = view.old_backups_notice.is_some();
     // An asker's approved check-in the Owner applies (2j; P24-SHAPE Q7 = A)
     // is checked before the erase writes and spent, on the Owner's live
-    // proof, in the write that erases the record or starts its `erase` act:
-    // an erase refused before then leaves the approval unspent (FIX
+    // proof, in the writer that starts its `erase` act or, just before the
+    // record's delete, in one of its own that finds the delete rail admits
+    // the record: an erase refused before then leaves the approval unspent (FIX
     // CHECK-IN-SPEND-BEFORE-RECORD-ERASE). The shared confirm, the veto
     // window, the legal holds and the Owner proof the erase asks for all
     // still hold; an answer is no proof of its own. The decision goes on

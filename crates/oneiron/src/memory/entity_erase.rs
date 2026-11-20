@@ -5,7 +5,7 @@
 //! the confirmed record's included (ARCH-0043). A GDPR request erases what no legal hold names
 //! and keeps the held part, its reason logged (OF-470 C5).
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use super::support::verify_deletion_authority_in_txn;
@@ -147,10 +147,11 @@ impl Memory<'_> {
     /// [`Self::confirm_entity_erase`] on the Owner's own proof,
     /// [`EraseOptions::veto_starter`], which it requires, applying `applied`,
     /// another asker's approved check-in, when given (2j; P24-SHAPE Q7 and
-    /// Q9 = A). `applied` is checked before any write and spent in the first
-    /// write that erases the confirmed record (its delete's linearizing
-    /// write) or starts an `erase` act, so an erase refused before then
-    /// leaves the approval unspent (FIX CHECK-IN-SPEND-BEFORE-RECORD-ERASE).
+    /// Q9 = A). `applied` is checked before any write and spent in the
+    /// writer that starts the first `erase` act, or in a writer of its own
+    /// just before the confirmed record's delete once that writer finds the
+    /// delete rail admits it, so an erase refused before then leaves the
+    /// approval unspent (FIX CHECK-IN-SPEND-BEFORE-RECORD-ERASE).
     /// Each `erase` act a veto window starts records the decision, so the
     /// act and its completion receipt name it; the decision comes back with
     /// the outcome.
@@ -295,28 +296,14 @@ impl Memory<'_> {
                 )?;
             }
             let reason = options.reason.delete_reason();
-            // The delete's linearizing write spends the applied check-in.
-            let spend =
-                |txn: &mut heed::RwTxn<'_>, request: &[u8; 16], _receipt: Option<&EntityId>| {
-                    decision
-                        .zip(options.veto_starter)
-                        .map_or(Ok(()), |(decision, owner)| {
-                            decision.spend_in_txn(self.vault, txn, owner, self.actor, *request)
-                        })
-                };
-            let claim = decision
-                .and_then(|decision| decision.applied)
-                .map(|_| crate::deletion::DeletionClaim::unnamed(&spend));
-            self.safe_delete_preview_checked(
-                &preview.entity().to_hex(),
-                reason,
-                |txn| {
-                    preview
-                        .check_after_unshare(self.vault, txn)
-                        .map_err(Into::into)
-                },
-                claim,
-            )?
+            if let Some((decision, owner)) = decision.zip(options.veto_starter) {
+                decision.spend_before_delete(self, owner, preview)?;
+            }
+            self.safe_delete_preview_checked(&preview.entity().to_hex(), reason, |txn| {
+                preview
+                    .check_after_unshare(self.vault, txn)
+                    .map_err(Into::into)
+            })?
         };
         let same_bytes = plan
             .into_iter()
@@ -868,17 +855,16 @@ struct PlannedMatch {
 /// The check-in decision an Owner's erase runs on and records on each
 /// `erase` act it starts (2j; P24-SHAPE Q7 and Q9 = A): the Owner on their
 /// own proof, applying `applied`, another asker's approved check-in, when
-/// given. The erase spends `applied` once, in its first write that erases
-/// the confirmed record or starts an act, so an erase refused before then
-/// leaves it unspent (FIX CHECK-IN-SPEND-BEFORE-RECORD-ERASE); every later
-/// act records the decision reached there.
+/// given. The erase spends `applied` once: in the writer that starts its
+/// first `erase` act, or in a writer of its own just before the confirmed
+/// record's delete, so an erase refused before then leaves it unspent (FIX
+/// CHECK-IN-SPEND-BEFORE-RECORD-ERASE); every later act records the
+/// decision reached there.
 struct EraseDecision<'a> {
     applied: Option<&'a AppliedCheckIn<'a>>,
     /// The decision once reached: at once with nothing to apply, else in the
     /// write that spent `applied`.
     reached: RefCell<Option<CheckInDecision>>,
-    /// The request of the delete whose write spent `applied`.
-    spent_by: Cell<Option<[u8; 16]>>,
 }
 
 impl<'a> EraseDecision<'a> {
@@ -890,7 +876,6 @@ impl<'a> EraseDecision<'a> {
                     .is_none()
                     .then(|| crate::check_in::owner_own_proof_decision(ActClass::Erase)),
             ),
-            spent_by: Cell::new(None),
         }
     }
 
@@ -911,35 +896,40 @@ impl<'a> EraseDecision<'a> {
             .unwrap_or_else(|| crate::check_in::owner_own_proof_decision(ActClass::Erase))
     }
 
-    /// Spends `applied` in `txn`, a write of the confirmed record's delete of
-    /// request `request`, on `owner`'s live proof of `actor`, the caller: the
-    /// claim that delete makes in its linearizing write. A later write of
-    /// the same delete finds it spent by this request and spends nothing.
-    fn spend_in_txn(
+    /// Spends `applied`, unless an act already did, before the confirmed
+    /// record's delete: in a writer of its own, on `owner`'s live proof of
+    /// `memory`'s caller, once that writer finds that the delete rail admits
+    /// the record ([`crate::Vault::delete_admission_in_txn`]) and `preview`
+    /// still holds. The rail's writes are several, its purge can scrub the
+    /// asker's own rows, and recovery can finish it after a crash, so none of
+    /// them spends it: a refusal these checks foresee leaves it unspent, and
+    /// one a concurrent change brings between this writer and the rail
+    /// leaves it spent.
+    fn spend_before_delete(
         &self,
-        vault: &crate::Vault,
-        txn: &mut heed::RwTxn<'_>,
+        memory: &Memory<'_>,
         owner: &AuthenticatedOwner,
-        actor: EntityId,
-        request: [u8; 16],
-    ) -> crate::Result<()> {
-        let Some(applied) = self.applied else {
+        preview: &DeleteEntityPreview,
+    ) -> MemoryResult<()> {
+        let Some(applied) = self.applied.filter(|_| self.reached.borrow().is_none()) else {
             return Ok(());
         };
-        if self.spent_by.get() == Some(request)
-            && crate::check_in::pending_check_in_in_txn(&vault.store, txn, &applied.id)?
-                .is_some_and(|row| row.consumed_at.is_some())
-        {
-            return Ok(());
-        }
-        if owner.revalidate_in_txn(vault, txn)? != actor {
-            return Err(Error::InvalidConfig(
-                "an erase applies a check-in on its caller's own owner proof".into(),
-            ));
-        }
-        let decision =
-            crate::check_in::owner_act_decision_in_txn(vault, txn, ActClass::Erase, Some(applied))?;
-        self.spent_by.set(Some(request));
+        let vault = memory.vault;
+        let decision = vault.with_write_txn_grouped(|txn| {
+            if owner.revalidate_in_txn(vault, txn)? != memory.actor {
+                return Err(Error::InvalidConfig(
+                    "an erase applies a check-in on its caller's own owner proof".into(),
+                ));
+            }
+            vault.delete_admission_in_txn(
+                txn,
+                &preview.entity(),
+                DeleteReason::OwnerErase,
+                true,
+            )?;
+            preview.check_after_unshare(vault, txn)?;
+            crate::check_in::owner_act_decision_in_txn(vault, txn, ActClass::Erase, Some(applied))
+        })?;
         self.reach(decision);
         Ok(())
     }
