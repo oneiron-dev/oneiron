@@ -1187,6 +1187,129 @@ fn an_omission_of_a_booking_written_only_to_the_seat_cancels_nothing() {
 }
 
 #[test]
+fn a_resource_the_host_moves_to_a_new_href_is_no_host_cancel() {
+    // A CalDAV sync answer reports a resource the host moved to a new href
+    // as the old href's 404 beside the new href's live copy of the same UID.
+    // The booking was written only to the host's seat, where a tombstone
+    // alone cancels it, but the live copy in the same answer says the host
+    // moved the resource and kept the booking: nothing is cancelled and no
+    // money moves.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let booked = written_only_booking(&fixture, &seat, b"moved-resource", "pi_moved_resource");
+    let uid = &booked.calendar.uid;
+    let start = MONDAY + 9 * 3_600;
+    let moved = SeatChange::Upsert {
+        href: format!("{}-moved", seat.resource_locator(uid).href),
+        uid: uid.clone(),
+        start,
+        end: start + 30 * 60,
+        sequence: seat.staged_sequence(&fixture.vault, uid),
+        cancelled: false,
+    };
+
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::tombstone(uid), moved],
+        NOW + 120,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_moved_resource"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a resource moved to a new href moves no money"
+    );
+    assert_eq!(
+        cancel_statuses(
+            &fixture,
+            &booked.calendar.event_ref,
+            CalendarStatusBasis::ImportedCancel
+        ),
+        0,
+        "a resource moved to a new href is no host cancel"
+    );
+}
+
+#[test]
+fn a_host_delete_held_behind_a_refused_cancelled_write_refunds_at_the_full_listing() {
+    // A calendar the booking was never written to cancels it and then leaves
+    // it out, which moves no money, and the engine writes the cancelled EVENT
+    // to the host's seat. The host deletes the booking in their calendar
+    // before its start, and a pull while that write is out holds the
+    // tombstone back. The provider refuses the write's first call on its
+    // precondition, storing nothing, so the tombstone was the host's.
+    // CalDAV's full listing can only leave the gone resource out; that
+    // omission settles the held tombstone, dated by its first sighting, and
+    // the deposit is refunded whole.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let shared = Seat::install(&fixture.vault, SHARED_SEAT_SYSTEM);
+    let booked = written_only_booking(
+        &fixture,
+        &seat,
+        b"held-delete-refused-write",
+        "pi_held_delete_refused",
+    );
+    let uid = &booked.calendar.uid;
+    let start = MONDAY + 9 * 3_600;
+    for (sequence, cancelled, now) in [(0, false, NOW + 60), (1, true, NOW + 62)] {
+        shared
+            .pull(
+                &fixture.vault,
+                &[SeatChange::foreign(
+                    &shared,
+                    uid,
+                    start,
+                    start + 30 * 60,
+                    sequence,
+                    cancelled,
+                )],
+                now,
+            )
+            .expect("seat pull");
+    }
+    shared
+        .pull(&fixture.vault, &[SeatChange::omitted(uid)], NOW + 64)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_held_delete_refused"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a calendar the booking was never written to moves no money"
+    );
+
+    seat.write_refused_after_pull(
+        &fixture.vault,
+        booked.calendar.event_ref,
+        &SeatChange::tombstone(uid),
+        NOW + 80,
+        NOW + 70,
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_held_delete_refused"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the tombstone read while the cancelled write was out is held"
+    );
+
+    seat.pull(&fixture.vault, &[SeatChange::omitted(uid)], NOW + 100)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_held_delete_refused"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the full listing settles the held tombstone as the host's cancel, refunded whole"
+    );
+}
+
+#[test]
 fn a_cancel_that_overtakes_a_running_capture_owes_the_difference_back() {
     let terms = DepositTerms {
         amount_minor: 4_000,
