@@ -35,12 +35,10 @@ use serde::{Deserialize, Serialize};
 
 use super::storage::{booking_writer, engine_failure, read_txn, refused};
 use super::token::{
-    OpaqueCheckoutLeaseToken, SessionKey, digest_with, hex_lower, lease_digest, mint_raw_token,
-    session_digest,
+    OpaqueCheckoutLeaseToken, SessionKey, digest_with, lease_digest, mint_raw_token, session_digest,
 };
 use super::types::{MAX_CHECKOUT_HOLD_TTL_SECS, SoftHoldRow};
 use super::{CHECKOUT_LEASE, CheckoutLeaseRow, digest_serde, entity_ref_serde};
-use crate::attempt_queue::EnqueueAttempt;
 use crate::booking::{BookingError, DepositTerms, EventTypeKey};
 use crate::side_table::{self, SideTable, VersionedNamed};
 use crate::{EntityId, Vault};
@@ -64,6 +62,7 @@ pub(super) use self::refund::{
     refund_on_visitor_cancel_in_writer,
 };
 pub(crate) use self::refund::{refund_booking_deposit_as_owner, refund_deposit_on_host_cancel};
+use self::settle::enqueue_settle;
 pub use self::settle::{
     BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, DepositProviderFailure,
     DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
@@ -380,45 +379,6 @@ pub fn begin_deposit_checkout(
         enqueue_settle(vault, wtxn, &key, "expiry", now_utc)?;
         Ok(DepositCheckoutLease { lease, expires_at })
     })
-}
-
-/// The payload of one [`BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND`] row: the
-/// deposit whose next move is owed. The move itself is read from committed
-/// state when the row runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DepositSettlePayload {
-    /// The deposit's key, lowercase hex.
-    deposit_key: String,
-}
-
-fn enqueue_settle(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    key: &[u8; 32],
-    cause: &str,
-    now_utc: u64,
-) -> Result<(), BookingError> {
-    let hex = hex_lower(key);
-    let payload = serde_json::to_vec(&DepositSettlePayload {
-        deposit_key: hex.clone(),
-    })
-    .map_err(|_| refused("booking deposit settle payload did not encode"))?;
-    crate::ports::JobQueue::port_job_enqueue(
-        vault,
-        wtxn,
-        EnqueueAttempt {
-            kind: BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND.to_owned(),
-            payload,
-            dedupe_key: Some(format!(
-                "{BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND}:{hex}:{cause}"
-            )),
-            run_id: None,
-            now: now_utc,
-        },
-    )
-    .map_err(|error| engine_failure("booking deposit settle enqueue", error))?;
-    Ok(())
 }
 
 // -------------------------------------------------------------------------

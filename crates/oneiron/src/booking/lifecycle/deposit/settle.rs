@@ -6,23 +6,64 @@
 //! writer held, and recorded in a second writer only while the deposit still
 //! owes exactly that move.
 
+use serde::{Deserialize, Serialize};
+
 use super::super::door::attempt_failure_reason;
 use super::super::storage::{booking_writer, engine_failure, read_txn, refused};
 use super::super::token::hex_lower;
 use super::home_fence::{SettleStanding, settle_standing_in_txn};
 use super::{
-    DEPOSIT, DEPOSIT_BOOKING, DepositSettlePayload, DepositState, MAX_FAILURE_BYTES, booking_key,
-    bounded, enqueue_settle, put_deposit,
+    DEPOSIT, DEPOSIT_BOOKING, DepositState, MAX_FAILURE_BYTES, booking_key, bounded, put_deposit,
 };
 use crate::attempt_queue::{
-    AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, FailAttempt,
-    RequeueAttempt,
+    AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
+    FailAttempt, RequeueAttempt,
 };
 use crate::booking::BookingError;
 use crate::{EntityId, Vault};
 
 /// The attempt kind whose rows owe one deposit's next provider move.
 pub const BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND: &str = "booking.deposit.settle";
+
+/// The payload of one [`BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND`] row: the
+/// deposit whose next move is owed. The move itself is read from committed
+/// state when the row runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DepositSettlePayload {
+    /// The deposit's key, lowercase hex.
+    deposit_key: String,
+}
+
+/// Queues `key`'s next owed move as one settle row, deduplicated by the deposit and `cause`.
+pub(super) fn enqueue_settle(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &[u8; 32],
+    cause: &str,
+    now_utc: u64,
+) -> Result<(), BookingError> {
+    let hex = hex_lower(key);
+    let payload = serde_json::to_vec(&DepositSettlePayload {
+        deposit_key: hex.clone(),
+    })
+    .map_err(|_| refused("booking deposit settle payload did not encode"))?;
+    crate::ports::JobQueue::port_job_enqueue(
+        vault,
+        wtxn,
+        EnqueueAttempt {
+            kind: BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND.to_owned(),
+            payload,
+            dedupe_key: Some(format!(
+                "{BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND}:{hex}:{cause}"
+            )),
+            run_id: None,
+            now: now_utc,
+        },
+    )
+    .map_err(|error| engine_failure("booking deposit settle enqueue", error))?;
+    Ok(())
+}
 
 /// The claim of one settle row at which a failed provider call stops running
 /// again promptly: every claim before it retries
