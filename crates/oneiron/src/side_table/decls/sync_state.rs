@@ -325,7 +325,7 @@ side_tables! {
     TEST_MCP_PAIRED_CACHE: SyncState b"test:mcp:paired:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
     /// ARCH-0023b document family: one durable pending CRDT update for a window, applied on top of
-    /// d:w:. Key: yyyy-mm ":" hex8 (sequence).
+    /// d:w:. Key: yyyy-mm ":" hex16 (sequence).
     SYNC_U_W: SyncState b"u:w:" Raw
         [restore: content] [family: mixed WindowUpdate] [tier: canonical];
     /// One owner/vault/metric/day operational meter rollup, moved in each meter row's own write
