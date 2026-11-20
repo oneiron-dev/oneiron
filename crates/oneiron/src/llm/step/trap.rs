@@ -105,6 +105,10 @@ pub(super) fn open_trap_in_txn(
         .batch_in()
         .claim_candidate(&claim_id, candidate, &envelope, occurred, ctx.now_ms)
         .apply(wtxn)?;
+    // The trap's anchor is a new mention of its context subject: about a
+    // PERSON under a cleanup archive, it restores her in this write
+    // (ARCH-0073 §6).
+    vault.restore_mentioned_subject_in_txn(wtxn, ClaimSubject::Entity(ctx.subject))?;
     trap_binding_put_in_txn(
         vault,
         wtxn,
@@ -699,6 +703,9 @@ pub(super) fn append_trap_transition_in_txn(
         .batch_in()
         .claim_candidate(&claim_id, candidate, &envelope, occurred, now)
         .apply(wtxn)?;
+    // Each transition is a new mention of the trap's subject: about a PERSON
+    // under a cleanup archive, it restores her in this write (ARCH-0073 §6).
+    vault.restore_mentioned_subject_in_txn(wtxn, ClaimSubject::Entity(subject))?;
     vault.supersede_claim_in_txn(wtxn, &claim_id, head_id, now)?;
     Ok(claim_id)
 }

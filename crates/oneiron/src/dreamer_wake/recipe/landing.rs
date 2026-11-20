@@ -94,6 +94,10 @@ fn write(vault: &Vault, drafted: &Drafted<'_>, approval: ClaimApprovalStatus) ->
             .claim_candidate(id, candidate, &envelope, *at, at.start)
             .apply_recording_gate_decisions(txn)?;
         let body = vault.get_claim_in_txn(txn, id)?.ok_or_else(invalid)?;
+        // An output about a PERSON under a cleanup archive is a new mention
+        // of her: she is restored in the output's own transaction
+        // (ARCH-0073 §6).
+        vault.restore_mentioned_subject_in_txn(txn, body.subject)?;
         if evidence
             .project
             .is_some_and(|project| body.scope_project != project)

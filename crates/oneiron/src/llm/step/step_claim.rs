@@ -276,6 +276,11 @@ pub(super) fn log_terminal_step(
                 .batch_in()
                 .claim_candidate(&claim_id, candidate, &envelope, occurred, ctx.now_ms)
                 .apply(wtxn)?;
+            // The step claim is a new mention of its context subject: about
+            // a PERSON under a cleanup archive, which the owner-gone fence
+            // lets through, it restores her in this write (ARCH-0073 §6).
+            ctx.vault
+                .restore_mentioned_subject_in_txn(wtxn, ClaimSubject::Entity(source.subject))?;
             // The claim holds the exact version its response lives in, so
             // its erase reaches that version (FIX 6225).
             if let Some(pin) = &response_ref {

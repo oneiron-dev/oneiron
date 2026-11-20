@@ -456,9 +456,7 @@ pub(super) fn promote_one_answering(
         // the claim's own transaction, where it is restorable (ARCH-0073 §6;
         // FIX NATIVE-CLAIM-LANDS-ON-ARCHIVED-PERSON). A replay that finds its
         // claim already reviewed returns before this writer.
-        if let crate::claim::ClaimSubject::Entity(subject) = landed.subject {
-            vault.restore_mentioned_person_in_txn(wtxn, &subject)?;
-        }
+        vault.restore_mentioned_subject_in_txn(wtxn, landed.subject)?;
         // Never Auto, and never Proposed where no review holds it.
         if imported
             && (landed.approval == ClaimApprovalStatus::Auto
