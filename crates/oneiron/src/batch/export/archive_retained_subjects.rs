@@ -165,6 +165,14 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("SKILL_RESIDENT_RECEIPT", NoRecord),
     ("SNAPSHOT_READ_SETTINGS", NoRecord),
     ("SOURCE_AUDIENCE_POLICY", NoRecord),
+    // A key of the machine's hex id, then the touched item's.
+    (
+        "SYNC_RESIDENCE_MACHINE_TOUCH",
+        HexIds {
+            len: 64,
+            ids: &[0, 32],
+        },
+    ),
     ("SYNC_SHARED_LEAVE_RECEIPT", NoRecord),
     (
         "TASK_LIFECYCLE_RECEIPT",

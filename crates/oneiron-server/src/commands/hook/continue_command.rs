@@ -9,9 +9,13 @@
 //! 1. **Check.** `vault.runners.continue.check` answers whether the node runs
 //!    the runner: a seat the provider's terms allow there, the custody repo,
 //!    the seat's quota.
-//! 2. **A slip to push with.** The custody repo takes a push from a paired
-//!    slip alone (L10-17-PR3-PUSH = A), so an OAuth or owner selection stops
-//!    here and the message names what is missing.
+//! 2. **A credential to push with.** A paired slip pushes as it is. An
+//!    OAuth selection runs every step on its continue sign-in, `full` at the
+//!    vault's `/mcp` and `/git`, which the step-up asks the owner for before
+//!    the first call when none stands ([`super::hosted_continue_sign_in`];
+//!    CONTINUE-PUSH-GIT-TIER = C, CONTINUE-STEP-UP-MCP-WRITE = A); the
+//!    recall sign-in stays `read`. An owner selection stops here, and the
+//!    message names what is missing.
 //! 3. **Memory.** `vault.imports.hook_transcript` lands the session's log and
 //!    its subagents' logs ([`transcript`]); its answer names the
 //!    conversation. A log that did not land whole (a turn refused, or one
@@ -30,8 +34,8 @@
 //!
 //! Each verb is one MCP tool call through `oneiron mcp`, as the hooks'
 //! recall makes it, so the bridge alone reads the credential the selection
-//! names. The push reads the paired slip itself, since git's custody door
-//! is not an MCP tool.
+//! names. The push reads the paired slip or the continue sign-in itself,
+//! since git's custody door is not an MCP tool.
 
 mod hand_off;
 mod hosted_hand_over;
@@ -53,13 +57,15 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
-use self::hand_off::{CustodyRepo, HandOff};
+use self::hand_off::{CustodyRepo, HandOff, PushCredential};
 pub(super) use self::hosted_hand_over::hand_over_hosted;
+use super::hosted_continue_sign_in;
 use super::hosted_selection::{self, HostedAuthMode, HostedDiscovery, HostedVault};
 use super::recall::{Bridge, RpcRefusal};
 use crate::cli::ContinueArgs;
 use crate::commands::credential_file::PairedCredentialFile;
 use crate::commands::mcp_bridge::{INVOCATION_META, UNANSWERED_ERROR_KINDS, mint_invocation};
+use crate::commands::oauth_sign_in::OAuthSession;
 
 /// How long the whole hand-off may take, the import of a long session and
 /// the push of a large tree included.
@@ -73,9 +79,11 @@ const POLICY_REF: &str = "policy:continue-cloud";
 const CONTINUE_REF_PREFIX: &str = "refs/heads/oneiron/continue/";
 /// The line every failure ends with.
 const NOT_MOVED: &str = "The work did NOT move: this session goes on here as before.";
-/// What an OAuth or owner selection lacks (L10-17-PR3-PUSH = A).
+/// What an owner selection lacks (L10-17-PR3-PUSH = A; an OAuth selection
+/// steps up instead, CONTINUE-PUSH-GIT-TIER = C).
 const PUSH_NEEDS_SLIP: &str = "pushing the work needs a paired slip with a git_push Grant on \
-     the repo, and the selected vault is signed in another way";
+     the repo, or an OAuth sign-in, and the selected vault is signed in with the owner's upgrade \
+     headers";
 
 /// `oneiron continue --cloud`.
 pub fn continue_work(args: ContinueArgs) -> anyhow::Result<()> {
@@ -92,6 +100,14 @@ pub fn continue_work(args: ContinueArgs) -> anyhow::Result<()> {
         }
     };
     let deadline = Instant::now() + DEADLINE;
+    let mut out = std::io::stdout().lock();
+    let vault = match hosted_continue_sign_in::continuing(&vault, deadline) {
+        Ok(vault) => vault,
+        Err(error) => {
+            writeln!(out, "{NOT_MOVED}")?;
+            return Err(error);
+        }
+    };
     let plan = Plan {
         dir: std::env::current_dir()?,
         repo: args.repo,
@@ -101,7 +117,6 @@ pub fn continue_work(args: ContinueArgs) -> anyhow::Result<()> {
         deadline,
     };
     let oneiron = super::oneiron(None);
-    let mut out = std::io::stdout().lock();
     let mut remote = match Hosted::open(
         &oneiron,
         &vault,
@@ -143,8 +158,9 @@ pub(crate) trait ContinueRemote {
         &mut self,
         request: &ContinueOutsideWorkCheckRequest,
     ) -> anyhow::Result<ContinueOutsideWorkCheckView>;
-    /// Whether the selection can push: a paired slip.
-    fn can_push(&self) -> bool;
+    /// Makes the selection ready to push, or says why it cannot: a paired
+    /// slip is, and an OAuth selection on its continue sign-in is.
+    fn ready_push(&mut self) -> anyhow::Result<()>;
     /// The longest spec one call carries ([`transcript::carried_bytes`]).
     fn carried_bytes(&self) -> usize;
     fn import(
@@ -197,7 +213,7 @@ fn steps(remote: &mut dyn ContinueRemote, plan: &Plan, out: &mut dyn Write) -> a
             anyhow::bail!("{}", exhausted(back_at, &skipped))
         }
     }
-    anyhow::ensure!(remote.can_push(), "{PUSH_NEEDS_SLIP}");
+    remote.ready_push()?;
 
     let session = transcript::read(plan.transcript.as_deref(), &plan.dir, plan.deadline)?;
     writeln!(
@@ -207,7 +223,7 @@ fn steps(remote: &mut dyn ContinueRemote, plan: &Plan, out: &mut dyn Write) -> a
         session.request.subagents.len(),
         session.path.display()
     )?;
-    let calls = transcript::calls_within(&session, remote.carried_bytes())?;
+    let calls = transcript::calls_within(&session, remote.carried_bytes(), None)?;
     let imported = import_calls(remote, &calls)?;
     writeln!(
         out,
@@ -459,6 +475,9 @@ struct Hosted<'a> {
     policy_ref: String,
     /// When the push must have ended, as the bridge's calls must.
     deadline: Instant,
+    /// An OAuth selection's session on its continue sign-in for the git
+    /// door, once [`ContinueRemote::ready_push`] opened it.
+    push_session: Option<OAuthSession>,
 }
 
 impl<'a> Hosted<'a> {
@@ -492,6 +511,7 @@ impl<'a> Hosted<'a> {
             calls: 1,
             policy_ref,
             deadline,
+            push_session: None,
         })
     }
 
@@ -571,8 +591,15 @@ impl ContinueRemote for Hosted<'_> {
         )
     }
 
-    fn can_push(&self) -> bool {
-        self.vault.auth_mode == HostedAuthMode::Slip
+    fn ready_push(&mut self) -> anyhow::Result<()> {
+        match self.vault.auth_mode {
+            HostedAuthMode::Slip => Ok(()),
+            HostedAuthMode::Owner => anyhow::bail!("{PUSH_NEEDS_SLIP}"),
+            HostedAuthMode::OAuth => {
+                self.push_session = Some(hosted_continue_sign_in::push_session(self.vault)?);
+                Ok(())
+            }
+        }
     }
 
     fn carried_bytes(&self) -> usize {
@@ -591,19 +618,38 @@ impl ContinueRemote for Hosted<'_> {
     }
 
     fn push(&mut self, hand_off: &HandOff, repo: &str, git_ref: &str) -> anyhow::Result<()> {
-        let slip = PairedCredentialFile::read(&self.vault.credential_file)?;
-        hand_off::push(
+        let slip;
+        let credential = match &self.push_session {
+            Some(session) => PushCredential::OAuth(session),
+            None => {
+                slip = PairedCredentialFile::read(&self.vault.credential_file)?;
+                PushCredential::Slip {
+                    token: &slip.token,
+                    seed: &slip.seed,
+                }
+            }
+        };
+        let custody = CustodyRepo {
+            origin: &self.vault.origin,
+            repo,
+            credential,
+        };
+        let pushed = hand_off::push(
             &hand_off.top,
-            &CustodyRepo {
-                origin: &self.vault.origin,
-                repo,
-                token: &slip.token,
-                seed: &slip.seed,
-            },
+            &custody,
             &hand_off.commit,
             git_ref,
             self.deadline,
-        )
+        );
+        match &self.push_session {
+            Some(_) => pushed.map_err(|error| {
+                error.context(hosted_continue_sign_in::refused_push_steps(
+                    &self.vault.origin,
+                    repo,
+                ))
+            }),
+            None => pushed,
+        }
     }
 
     fn start(
@@ -618,163 +664,5 @@ impl ContinueRemote for Hosted<'_> {
     }
 }
 
-/// Seams for `tests/continue_command.rs`, reached through
-/// `crate::test_doors::continue_command`: the hand-off commit, the session
-/// log discovery, and the command's steps against a scripted vault, since
-/// its own vault is a hosted one reached through `oneiron mcp`.
 #[cfg(oneiron_test_support)]
-pub(crate) mod test_support {
-    use super::*;
-
-    pub use super::hand_off::test_support::push_hand_off;
-
-    /// How the scripted vault and the push answer.
-    #[derive(Debug, Clone, Copy, Default)]
-    pub struct Script {
-        /// The selection is a paired slip.
-        pub can_push: bool,
-        /// The push fails.
-        pub push_fails: bool,
-        /// The start's answer never comes back, as when the connection is
-        /// lost after the vault bound the work.
-        pub start_unanswered: bool,
-    }
-
-    /// What one scripted run of the command did.
-    pub struct Scripted {
-        /// What it printed.
-        pub output: String,
-        /// Its error, if it failed.
-        pub error: Option<String>,
-        /// The steps that left the process, in order: each verb's name, and
-        /// `git-receive-pack` for the push.
-        pub calls: Vec<&'static str>,
-        /// The session id and the subagent log stems the import carried.
-        pub sent: Option<(String, Vec<String>)>,
-    }
-
-    /// The hand-off commit of the repo that holds `dir`, and its parent,
-    /// built with `within` left before the deadline.
-    pub fn hand_off_commit(
-        dir: &Path,
-        within: Duration,
-    ) -> Result<(String, Option<String>), String> {
-        hand_off::hand_off_commit(dir, "a test hand-off", Instant::now() + within)
-            .map(|hand_off| (hand_off.commit, hand_off.parent))
-            .map_err(|error| format!("{error:#}"))
-    }
-
-    /// The session log the command finds for `dir` with no `--transcript`,
-    /// when Claude Code's project folders are under `projects`.
-    pub fn discovered_session(projects: &Path, dir: &Path) -> Result<PathBuf, String> {
-        transcript::newest_session(projects, dir, Instant::now() + DEADLINE)
-            .map_err(|error| format!("{error:#}"))
-    }
-
-    /// Runs the command in `dir`, sending the session log `transcript`,
-    /// against a vault whose check answers ready, whose import lands it, and
-    /// whose start binds it, save where `script` says otherwise.
-    pub fn run_scripted(dir: &Path, transcript: &Path, script: Script) -> Scripted {
-        let mut remote = ScriptedRemote {
-            script,
-            calls: Vec::new(),
-            sent: None,
-        };
-        let plan = Plan {
-            dir: dir.to_path_buf(),
-            repo: "demo".to_owned(),
-            runner: "claude-code".to_owned(),
-            note: None,
-            transcript: Some(transcript.to_path_buf()),
-            deadline: Instant::now() + DEADLINE,
-        };
-        let mut out = Vec::new();
-        let ran = run(&mut remote, &plan, &mut out);
-        Scripted {
-            output: String::from_utf8_lossy(&out).into_owned(),
-            error: ran.err().map(|error| format!("{error:#}")),
-            calls: remote.calls,
-            sent: remote.sent,
-        }
-    }
-
-    struct ScriptedRemote {
-        script: Script,
-        calls: Vec<&'static str>,
-        sent: Option<(String, Vec<String>)>,
-    }
-
-    impl ContinueRemote for ScriptedRemote {
-        fn check(
-            &mut self,
-            request: &ContinueOutsideWorkCheckRequest,
-        ) -> anyhow::Result<ContinueOutsideWorkCheckView> {
-            self.calls.push("vault.runners.continue.check");
-            Ok(ContinueOutsideWorkCheckView::Ready {
-                seat: 0,
-                runner: request.runner.clone(),
-            })
-        }
-
-        fn can_push(&self) -> bool {
-            self.script.can_push
-        }
-
-        fn carried_bytes(&self) -> usize {
-            usize::MAX
-        }
-
-        fn import(
-            &mut self,
-            request: &HookTranscriptImportRequest,
-        ) -> anyhow::Result<HookTranscriptImportView> {
-            self.calls.push("vault.imports.hook_transcript");
-            self.sent = Some((
-                request.session.clone(),
-                request
-                    .subagents
-                    .iter()
-                    .map(|subagent| subagent.stem.clone())
-                    .collect(),
-            ));
-            Ok(HookTranscriptImportView {
-                conversation: "0".repeat(32),
-                conversations: Vec::new(),
-                review: None,
-            })
-        }
-
-        fn push(&mut self, _: &HandOff, _: &str, _: &str) -> anyhow::Result<()> {
-            self.calls.push("git-receive-pack");
-            anyhow::ensure!(
-                !self.script.push_fails,
-                "the custody repo refused the push (503 Service Unavailable): down"
-            );
-            Ok(())
-        }
-
-        fn start(
-            &mut self,
-            _: &ContinueOutsideWorkRequest,
-        ) -> anyhow::Result<ContinueOutsideWorkView> {
-            self.calls.push("vault.runners.continue");
-            if self.script.start_unanswered {
-                return Err(CallUnconfirmed {
-                    verb: "vault.runners.continue".to_owned(),
-                    origin: "https://vault.example".to_owned(),
-                    invocation: "1".repeat(32),
-                    why: "tools/call failed: the connection closed before an answer".to_owned(),
-                }
-                .into());
-            }
-            Ok(ContinueOutsideWorkView::Bound {
-                binding: "binding".to_owned(),
-                seat: 0,
-                attempt: "attempt".to_owned(),
-                task: "task".to_owned(),
-                checkout: "checkout".to_owned(),
-                existing: false,
-            })
-        }
-    }
-}
+pub(crate) mod test_support;

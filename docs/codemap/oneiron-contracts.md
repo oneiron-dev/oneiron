@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/affect.rs` | src | s | 1 re-export | — | Core VAD value types |
 | `src/affect/vad.rs` | src | s | 3 struct · 2 enum · 5 fn · 1 const | DerivationFreshness, Vad, VadAnnotation, VadAnnotationSource, VadComponent | Core VAD value types: ranges, validation, and annotation records shared by every affect child |
-| `src/authority.rs` | src | s | 1 type · 1 const | — | Authority-log hash vocabulary the write path shares |
+| `src/authority.rs` | src | s | 1 enum · 1 type · 1 const | AuthorityHistoryReason | Authority-log vocabulary the write path and the error share: the entry hash, and why a fold needs history |
 | `src/claim.rs` | src | s | 1 fn · 3 re-export | — | Claim status axes and the scoped-read receipt |
 | `src/claim/confidence.rs` | src | s | 1 struct · 2 enum · 6 fn | ConfidenceBand, ConfidenceDetails, VerdictBasis | What a claim's confidence means beyond its number (ARCH-0003, FIX 7761): the hedge band it is read in and… |
 | `src/claim/receipt.rs` | src | s | 2 struct · 6 fn | ReadScope, ScopedReadReceipt | Mandatory read receipts: the requested / actor-ceiling / applied scope triple and the axes a read narrowed |

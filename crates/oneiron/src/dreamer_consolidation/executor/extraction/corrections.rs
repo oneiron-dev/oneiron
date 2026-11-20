@@ -558,9 +558,9 @@ fn correction_sources(
 
 /// The rows one correction read sends under (FIX 11526) over plain rows:
 /// the `owners`' extraction rows from `row_sources`, the pack's evidence,
-/// and the stored `label_rows`, sorted and deduped. The bound rebuild sends
-/// no sources, so only native calls this; it stays a shared plain helper so
-/// wording-free preparation never needs the parsed type.
+/// and the stored `label_rows`, sorted and deduped. Native and the lent
+/// execution both call this; it stays a shared plain helper so wording-free
+/// preparation never needs the parsed type.
 pub(in crate::dreamer_consolidation) fn correction_source_rows(
     row_sources: &[&[EntityId]],
     owners: &[usize],

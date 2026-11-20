@@ -13,6 +13,7 @@ use super::covered_floors::{CoveredFloors, NoVouchPast};
 use super::*;
 use crate::EntityId;
 use crate::error::Result;
+use oneiron_contracts::authority::AuthorityHistoryReason;
 
 /// The tail's seeded fold past the image, settled and projected: what this
 /// install's fold past the image and a later image built past it share.
@@ -22,6 +23,8 @@ pub(super) struct SettledTail {
     /// The image's merged state with every tail state merged in.
     pub(super) merged: FoldState,
     pub(super) writers: BTreeMap<AuthorityKey, BTreeSet<(EntityId, String)>>,
+    /// The slip issuers once the tail joined the image's ([`tail_issuers`]).
+    pub(super) issuers: BTreeSet<AuthorityKey>,
     pub(super) uncounted: BTreeSet<AuthorityEntryHash>,
     pub(super) pairs: u64,
     pub(super) counted_pairs: u64,
@@ -40,8 +43,21 @@ pub(super) struct SettledTail {
     /// The projection's final merge.
     pub(super) final_merged: Option<FoldState>,
     /// The restrictive facts the projection applied: the image's, with each
-    /// serial tail actor revocation's (FIX 11760).
+    /// serial tail actor or device revocation's and machine removal's (FIX 11760).
     pub(super) revoke_facts: crate::authority::revoke_proof::RevokeFacts,
+    /// The roster marks before custody is judged: the image's, with each
+    /// serial tail machine profile's (FIX 11760).
+    pub(super) marks: Vec<(AuthorityEntryHash, MarkProof)>,
+    /// The keys closed fences hold: the image's, with each key a serial tail
+    /// device revocation ([`serial_revocation_fences`]) or re-root
+    /// ([`serial_handoff_fence`]) retired (FIX 11760).
+    pub(super) retired_keys: BTreeSet<AuthorityKey>,
+    /// The keys of `retired_keys` a closed handoff or appointment fence
+    /// holds: the image's, with each key a serial tail re-root retired.
+    pub(super) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
+    /// The handoffs whose fences are closed: the image's, with each serial
+    /// tail re-root (FIX 11760).
+    pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     /// What the whole install fold's fold with no vouch makes of the tail.
     pub(super) no_vouch: NoVouchPast,
 }
@@ -58,20 +74,175 @@ pub(super) fn serial_withdrawal_op(op: &AuthorityOp) -> bool {
     )
 }
 
+/// Whether `op` is another row the tail folds past the image only serially,
+/// every covered row in its causal past (FIX 11760,
+/// [`super::serial_fold_past`]): a federation lifecycle act or a membership
+/// execution. Each reads only state the image's frontier keeps, and its
+/// tail then folds whole.
+pub(super) fn serial_fold_past_op(op: &AuthorityOp) -> bool {
+    matches!(
+        op,
+        AuthorityOp::FederationLifecycle(_) | AuthorityOp::MembershipExecution(_)
+    )
+}
+
+/// Whether `op` is a device revocation, which the tail folds past the image
+/// only serially, every covered row in its causal past (FIX 11760,
+/// [`super::serial_fold_past`]). It moves its key's roster bit, which every
+/// merge ORs in, and its restrictive fact (FIX
+/// [CONFIRM-COLLISION-SUBTREE-ROLLBACK]), which it takes on its own branch
+/// ([`crate::authority::revoke_proof::RevokeFacts::add_serial_device_revokes`]),
+/// and its fence retires its key ([`serial_revocation_fences`]), so its tail
+/// need not fold whole: a row above it that its key signs folds rejected
+/// there, a row beside it folds on its own parents' states, as in the whole
+/// fold, one its key signs that folds to a state is left to the whole
+/// history, whose fence refuses it, and so is one with no state on a parent
+/// with none ([`settle_tail`]).
+/// A covered approval on its key expires on this install's own first sight
+/// of it, its first-seen receipt: the one the adoption kept for a row this
+/// install never stored before
+/// (FOLDPAST-COVERED-APPROVAL-CLOCK; [`super::fold_adopted_checkpoint_tail`]).
+pub(super) fn serial_roster_revoke_op(op: &AuthorityOp) -> bool {
+    matches!(op, AuthorityOp::RevokeDevice { .. })
+}
+
+/// Whether `op` is an actor binding or rebinding, which the tail folds past
+/// the image serially, every covered row in its causal past (FIX 11760,
+/// [`super::serial_fold_past`]), whether the fold accepts it or not. Its
+/// transition reads only its key's roster row and binding state, which its
+/// parents' states, the whole fold's own, keep: the tail accepts or rejects
+/// it exactly where the whole fold does, and a row beside it folds on its
+/// own parents' states, so its tail need not fold whole. A covered row is a
+/// write frontier of the key only for a binding some covered state holds
+/// (`Resumed::actor_write_frontiers`): the tail projects the key's
+/// frontiers as the whole fold does, or asks for the whole history.
+pub(super) fn serial_binding_op(op: &AuthorityOp) -> bool {
+    matches!(
+        op,
+        AuthorityOp::BindActor { .. } | AuthorityOp::RebindActor { .. }
+    )
+}
+
+/// Whether `op` is a machine profile with no owner act: a roster revision or
+/// removal. The op names no signer, so this alone never means the row is
+/// admitted: [`super::serial_fold_past`] admits it past the image only
+/// serially, every covered row in its causal past, and only when no owner
+/// anchor signed it, since an anchor's mark folds through the anchor's own
+/// chain (FIX 11760). Its transition reads its parents' states,
+/// the whole fold's own, under the image's pin and peers. No covered row
+/// sets its floor: every covered row of its signer is in its past, so it
+/// folds only above them all (`NonMonotonicSeq`). Its tail then folds
+/// whole, and the machines project from the whole fold's states with each
+/// tail removal's fact and each tail mark. An owner answer still needs the
+/// whole history: its standing reads its carrier chain's covered revisions
+/// under this install's own floors, which no image keeps.
+pub(super) fn serial_machine_op(op: &AuthorityOp) -> bool {
+    matches!(op, AuthorityOp::MachineProfile(profile) if profile.act.is_none())
+}
+
+/// Whether `op` is a re-root, which the tail folds past the image only
+/// serially, every covered row in its causal past, and as the tail's one
+/// handoff (FIX 11760, [`super::serial_fold_past`]). Its tail then folds
+/// whole, and the handoff settles as the whole fold settles it
+/// ([`serial_handoff_fence`]). A covered approval on a key it retires
+/// expires on this install's own first sight of it, as after a device
+/// revocation ([`serial_roster_revoke_op`]).
+pub(super) fn serial_handoff_op(op: &AuthorityOp) -> bool {
+    matches!(op, AuthorityOp::ReRoot { .. })
+}
+
+/// The keys the serial re-root `handoff` fences, as the whole fold's
+/// settlement reads them (`retired_signers`, `Fence::of`): every key in its
+/// parents' rosters, live or revoked, other than its successor's. Every
+/// covered row is in its causal past, so its line holds them all: its fence
+/// refuses no covered row and no covered handoff. No covered fence refuses
+/// it or a row in its line: the serial fold reads only a clean image
+/// ([`super::clean_image`]), whose covered rows all folded valid, so none is
+/// signed outside a covered fence, and no tail row is signed by a key the
+/// image retired ([`super::tail_folds_past`]). It is the tail's one handoff,
+/// so its fence closes and it settles. None where its fence could refuse a
+/// tail row outside its line (one beside it or above it signed by a key it
+/// fences): the whole fold drops such a row with its descendants, which only
+/// the whole history folds here. This test is stricter than the whole fold's
+/// (`Fence::signed_outside`): it exempts no genesis, no anchored row and no
+/// row of another vault, so such a row outside the line asks for the whole
+/// history even where the whole fold settles the handoff. None too where a
+/// parent has no state here.
+fn serial_handoff_fence(
+    handoff: &AuthorityEntryHash,
+    judged: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    seed: &BTreeMap<AuthorityEntryHash, FoldState>,
+) -> Option<BTreeSet<AuthorityKey>> {
+    let entry = judged.get(handoff)?;
+    let AuthorityOp::ReRoot { new_device } = &entry.op else {
+        return None;
+    };
+    let mut keys = BTreeSet::new();
+    for parent in &entry.parent_hashes {
+        let state = states.get(parent).or_else(|| seed.get(parent))?;
+        keys.extend(
+            state
+                .roster
+                .keys()
+                .filter(|key| **key != new_device.key)
+                .cloned(),
+        );
+    }
+    (!signed_outside_tail_line(handoff, &keys, judged, states)).then_some(keys)
+}
+
+/// Whether the tail row `entry` is of a kind the tail folds past the image
+/// only as rejected, with no state (FIX 11760, [`super::serial_fold_past`]):
+/// a key rotation or a non-agent enrollment (a retired device-key op, which
+/// stands only in a re-root's pre-handoff line), an agent enrollment
+/// [`crate::authority::fold_resume::admits_past`] leaves to the history, or
+/// a federation confirm whose id or nonce a covered confirm spent. The kind
+/// alone does not make the whole fold reject the row: it may accept such an
+/// enrollment. A serial row's parents' states are the whole fold's own, so
+/// the tail rejects it exactly where the whole fold does, and one the tail
+/// folds to a state still needs the whole history ([`settle_tail`]). A
+/// binding folds serially whether the fold accepts it or not
+/// ([`serial_binding_op`]).
+pub(super) fn folds_rejected_op(image: &AuthorityCheckpointV2, entry: &AuthorityLogEntry) -> bool {
+    match &entry.op {
+        AuthorityOp::RotateKey { .. } => true,
+        AuthorityOp::EnrollDevice { .. } => {
+            let mut unused: ConfirmKeys = Default::default();
+            !crate::authority::fold_resume::admits_past(&image.aggregate.merged, entry, &mut unused)
+        }
+        AuthorityOp::FederationConfirm(action) => {
+            image.safety.confirm_ids.contains(&action.confirm_id)
+                || image.safety.confirm_nonces.contains(&action.nonce)
+        }
+        _ => false,
+    }
+}
+
 /// The tail's fold on the image's frontier states, merged into the image's
 /// fold and projected, with `confirms` the confirms once the tail joined
-/// them and `floors` the covered rows it floors ([`tail_folds_past`]); None
-/// wherever only the whole history folds the tail. A carried body that does
-/// not decode is corruption.
+/// them and `floors` the covered rows it floors ([`tail_folds_past`]).
+/// Wherever only the whole history folds the tail, why: the first guard
+/// below that refuses it. A carried body that does not decode is corruption.
 pub(super) fn settle_tail(
     image: &AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
     log: AdoptedTail<'_>,
     confirms: ConfirmKeys,
     mut floors: CoveredFloors,
-) -> Result<Option<SettledTail>> {
+) -> Result<std::result::Result<SettledTail, AuthorityHistoryReason>> {
     let mut issues = image.safety.issues.clone();
     let judged = judged_tail(image, tail, &mut issues);
+    // Every body the image carries, decoded once.
+    let carried = image
+        .rows
+        .iter()
+        .filter_map(|(hash, row)| Some((*hash, row.body.as_ref()?)))
+        .map(|(hash, body)| -> Result<_> { Ok((hash, decode_authority_log_entry_body(body)?)) })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    let Some(issuers) = tail_issuers(image, &carried, &judged) else {
+        return Ok(Err(AuthorityHistoryReason::IssuersRecounted));
+    };
     let uncounted: BTreeSet<_> = image
         .safety
         .uncounted
@@ -80,9 +251,7 @@ pub(super) fn settle_tail(
         .chain(
             judged
                 .iter()
-                .filter(|(_, entry)| {
-                    crate::authority::log_budget::is_uncounted(entry, &image.safety.issuers)
-                })
+                .filter(|(_, entry)| crate::authority::log_budget::is_uncounted(entry, &issuers))
                 .map(|(hash, _)| *hash),
         )
         .collect();
@@ -92,7 +261,7 @@ pub(super) fn settle_tail(
     if crate::authority::log_budget::fold_projected_bytes(image.covered.len() + judged.len(), pairs)
         > memory_floor_bytes
     {
-        return Ok(None);
+        return Ok(Err(AuthorityHistoryReason::FoldOverMemoryFloor));
     }
     // Each tail row folds on its parents' states as the scheduler folds it,
     // the frontier's kept states seeding it.
@@ -137,7 +306,7 @@ pub(super) fn settle_tail(
             continue;
         }
         let Some(Some(state)) = image.state_at(parent) else {
-            return Ok(None);
+            return Ok(Err(AuthorityHistoryReason::LateForkWithoutState));
         };
         seed.insert(*parent, state);
     }
@@ -150,7 +319,7 @@ pub(super) fn settle_tail(
     // A key record's request walk that met a row the image shows nothing of
     // judged nothing here (FIX 5464): only the whole history does.
     if causal.incomplete() {
-        return Ok(None);
+        return Ok(Err(AuthorityHistoryReason::CausalWalkIncomplete));
     }
     // A world key record, or a restrictive main-log choice (a world edit,
     // grant travel, checkpoint policy, home pick or training choice), on a
@@ -171,25 +340,60 @@ pub(super) fn settle_tail(
                 .iter()
                 .any(|parent| !states.contains_key(parent))
     }) {
-        return Ok(None);
+        return Ok(Err(AuthorityHistoryReason::RejectedRowCrossed));
+    }
+    // A restrictive withdrawal (a slip burn, a slip, Grant or actor
+    // revocation, a machine removal) waiting here on a row with no state (a
+    // rejected tail row) still withdraws in the whole fold, whose proof
+    // crosses rejected permissive rows to it (`revoke_proof`); the image's
+    // facts do not hold it, so only the whole history folds it (FIX 11760).
+    if judged.iter().any(|(hash, entry)| {
+        crate::authority::revoke_proof::restrictive_withdrawal(&entry.op)
+            && !states.contains_key(hash)
+            && entry
+                .parent_hashes
+                .iter()
+                .any(|parent| !states.contains_key(parent))
+    }) {
+        return Ok(Err(AuthorityHistoryReason::RejectedRowCrossed));
     }
     // No tail row vouches for a covered row past its floor
     // (`tail_signers_covered_rows_unfloored`), so every covered verdict
     // stands past the image.
     states.retain(|hash, _| judged.contains_key(hash));
-    if states
-        .values()
-        .any(|state| state.federation_pacts != image.aggregate.merged.federation_pacts)
+    // A row of a kind that folds past the image only as rejected (FIX
+    // 11760): one the tail folds to a state is judged by the whole history.
+    if judged
+        .iter()
+        .any(|(hash, entry)| states.contains_key(hash) && folds_rejected_op(image, entry))
     {
-        return Ok(None);
+        return Ok(Err(AuthorityHistoryReason::OpNotFoldedPast));
     }
-    // A serial withdrawal's tail folds whole, every row of it on its own
-    // parents' states (FIX 11760): a row the fold rejects could still carry
-    // a withdrawal its branch proves past it, which only the whole history
-    // proves. The image's facts then gain each actor revocation's own.
-    let serial = tail.values().any(|entry| serial_withdrawal_op(&entry.op));
+    // A pact the tail moves is read only on a row that folds serially
+    // (FIX 11760), whose parents' states are the whole fold's own; on any
+    // other row only the whole history tells it.
+    if states.iter().any(|(hash, state)| {
+        state.federation_pacts != image.aggregate.merged.federation_pacts
+            && !judged
+                .get(hash)
+                .is_some_and(|entry| super::folds_serially(image, tail, log, entry))
+    }) {
+        return Ok(Err(AuthorityHistoryReason::UnsettledMove));
+    }
+    // A serial row's tail folds whole, every row of it on its own parents'
+    // states (FIX 11760): a row the fold rejects could still carry a
+    // withdrawal its branch proves past it, which only the whole history
+    // proves. The image's facts then gain each actor revocation's own, and
+    // each machine removal's.
+    let withdrawal = tail.values().any(|entry| serial_withdrawal_op(&entry.op));
+    let machine = tail.values().any(|entry| serial_machine_op(&entry.op));
+    let serial = withdrawal
+        || machine
+        || tail
+            .values()
+            .any(|entry| serial_fold_past_op(&entry.op) || serial_handoff_op(&entry.op));
     if serial && tail.keys().any(|hash| !states.contains_key(hash)) {
-        return Ok(None);
+        return Ok(Err(AuthorityHistoryReason::RejectedRowCrossed));
     }
     // A tail that floors covered rows folds past them only counted whole and
     // with no issue of its own: the image's issues then stand in the whole
@@ -198,11 +402,11 @@ pub(super) fn settle_tail(
         if issues.len() != image.safety.issues.len()
             || tail.keys().any(|hash| !states.contains_key(hash))
         {
-            return Ok(None);
+            return Ok(Err(AuthorityHistoryReason::SequenceFloorMoved));
         }
         issues = floors.issues_past(image);
     }
-    let revoke_facts = if serial {
+    let mut revoke_facts = if withdrawal {
         image
             .safety
             .revoke_facts
@@ -210,6 +414,43 @@ pub(super) fn settle_tail(
     } else {
         image.safety.revoke_facts.clone()
     };
+    // A device revocation is a restrictive fact in the whole fold (FIX
+    // [CONFIRM-COLLISION-SUBTREE-ROLLBACK]): each one the tail folds takes
+    // its own, which the image this install builds next keeps.
+    revoke_facts.add_serial_device_revokes(&judged, &states);
+    // Each device revocation's fence retires its key, as the whole fold's
+    // settlement does; one that could refuse a tail row leaves the tail to
+    // the whole history.
+    let Some(revoked) = serial_revocation_fences(&judged, &states) else {
+        return Ok(Err(AuthorityHistoryReason::RetirementFence));
+    };
+    let mut retired_keys = image.safety.retired_keys.clone();
+    retired_keys.extend(revoked);
+    // A serial re-root's fence closes as in the whole fold (FIX 11760): it
+    // retires every key it fences, a handoff's retirement, and its handoff
+    // joins the closed ones. No tail row with a state stands on a key a tail
+    // fence holds outside its line, and every covered row is in each line,
+    // so no restrictive fact stands on a retired key: the facts forget none.
+    let mut handoff_or_appointment_retired_keys =
+        image.safety.handoff_or_appointment_retired_keys.clone();
+    let mut closed_handoffs = image.safety.closed_handoffs.clone();
+    for (hash, entry) in &judged {
+        if !serial_handoff_op(&entry.op) {
+            continue;
+        }
+        let Some(fenced) = serial_handoff_fence(hash, &judged, &states, &seed) else {
+            return Ok(Err(AuthorityHistoryReason::RetirementFence));
+        };
+        retired_keys.extend(fenced.iter().cloned());
+        handoff_or_appointment_retired_keys.extend(fenced);
+        closed_handoffs.insert(*hash);
+    }
+    let mut marks = image.safety.marks.clone();
+    if machine {
+        revoke_facts.add_serial_machine_removals(&judged, &states);
+        marks.extend(tail_marks(&judged, &states));
+        marks.sort_unstable_by_key(|(hash, _)| *hash);
+    }
     let mut merged = image.aggregate.merged.clone();
     let mut writers = image.safety.writers.clone();
     for state in states.values() {
@@ -222,13 +463,10 @@ pub(super) fn settle_tail(
     // projected kinds alone, whatever else an image carries, and the judged
     // tail's rows of those kinds (a world key record's envelopes, FIX 4881).
     let mut projected = BTreeMap::new();
-    for (hash, row) in &image.rows {
-        if let Some(body) = &row.body {
-            let entry = decode_authority_log_entry_body(body)?;
-            floors.note(hash, &entry.op);
-            if crate::authority::fold_resume::is_projected(&entry.op) {
-                projected.insert(*hash, entry);
-            }
+    for (hash, entry) in carried {
+        floors.note(&hash, &entry.op);
+        if crate::authority::fold_resume::is_projected(&entry.op) {
+            projected.insert(hash, entry);
         }
     }
     // Under another pin than the image's, the guards below read the image's
@@ -242,7 +480,7 @@ pub(super) fn settle_tail(
         }
     }
     let rows = Resumed {
-        marks: &image.safety.marks,
+        marks: &marks,
         fold: image.fold(),
         revocations: &image.safety.revocations,
         bound_keys: &image.safety.bound_keys,
@@ -252,6 +490,7 @@ pub(super) fn settle_tail(
             .map(|(hash, state)| (*hash, state))
             .collect(),
         writers: &writers,
+        base_writers: &image.safety.writers,
         missed: Cell::new(false),
     };
     // The projection reads rows only for world-key envelopes, the image's
@@ -262,12 +501,9 @@ pub(super) fn settle_tail(
             valid_entries,
             by_hash: &projected,
             revoke_facts: &revoke_facts,
-            retired_keys: image.safety.retired_keys.clone(),
-            handoff_or_appointment_retired_keys: image
-                .safety
-                .handoff_or_appointment_retired_keys
-                .clone(),
-            closed_handoffs: image.safety.closed_handoffs.clone(),
+            retired_keys: retired_keys.clone(),
+            handoff_or_appointment_retired_keys: handoff_or_appointment_retired_keys.clone(),
+            closed_handoffs: closed_handoffs.clone(),
             crossed_revocations: image.safety.crossed_revocations.clone(),
             unsettled: image.safety.unsettled,
             counted_ancestor_pairs: counted_pairs,
@@ -276,17 +512,22 @@ pub(super) fn settle_tail(
         &rows,
         context,
     );
+    // Machines move only past a serial machine profile, whose whole tail
+    // folded on the whole fold's states and projects with its facts and
+    // marks (FIX 11760); any other move only the whole history tells.
     if rows.missed.get()
-        || fold.machines != image_fold.machines
+        || (!machine && fold.machines != image_fold.machines)
         || fold.restored_enrolments != image_fold.restored_enrolments
         || !crate::authority::world_privacy::worlds_unmoved_past(
             &fold,
             image_fold,
             judged.iter().map(|(hash, entry)| (*hash, entry)),
         )
-        || approves_on_revoked_key(&fold, &judged, &states)
     {
-        return Ok(None);
+        return Ok(Err(AuthorityHistoryReason::UnsettledMove));
+    }
+    if approves_on_revoked_key(&fold, &judged, &states) {
+        return Ok(Err(AuthorityHistoryReason::StaleRosterWindow));
     }
     let no_vouch = if floors.is_empty() {
         NoVouchPast::Idle
@@ -303,15 +544,16 @@ pub(super) fn settle_tail(
         let no_vouch =
             floors.no_vouch_past(image, tail, log.observations, &states, &fold, &read_whole);
         let Some(no_vouch) = no_vouch else {
-            return Ok(None);
+            return Ok(Err(AuthorityHistoryReason::SequenceFloorMoved));
         };
         no_vouch
     };
-    Ok(Some(SettledTail {
+    Ok(Ok(SettledTail {
         judged,
         states,
         merged,
         writers,
+        issuers,
         uncounted,
         pairs,
         counted_pairs,
@@ -322,8 +564,138 @@ pub(super) fn settle_tail(
         fold,
         final_merged,
         revoke_facts,
+        marks,
+        retired_keys,
+        handoff_or_appointment_retired_keys,
+        closed_handoffs,
         no_vouch,
     }))
+}
+
+/// The roster marks of the tail's machine profiles, as an image built over
+/// the whole history keeps them (`fold_resume::ImageFold`): each one that
+/// heads its machine's roster chain in its own state, under an owner-held
+/// key or as an admitted owner answer ([`MarkProof::of`]).
+fn tail_marks(
+    judged: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+) -> Vec<(AuthorityEntryHash, MarkProof)> {
+    states
+        .iter()
+        .filter_map(|(hash, state)| {
+            let profile =
+                crate::authority::stale_roster::filed_machine_profile(&judged.get(hash)?.op)?;
+            let chain = state
+                .machines
+                .get(&profile.machine)?
+                .get(&MachineAdmitter::Roster)?;
+            MarkProof::of(&chain.head)
+                .filter(|_| chain.head.entry == *hash)
+                .map(|proof| (*hash, proof))
+        })
+        .collect()
+}
+
+/// The keys the tail's device revocations retire, as the whole fold's
+/// settlement retires them (`retired_signers`, a revocation's fence): the
+/// revoked key of each one the tail folds to a state (a rejected one closes
+/// no fence). Every covered row is in such a revocation's causal past
+/// ([`super::serial_fold_past`]), so its line holds them all and its fence
+/// refuses none, and no covered fence refuses it (no tail row is signed by a
+/// key the image retired, [`super::tail_folds_past`]). None where its fence
+/// could refuse a tail row outside its line, one beside it or above it that
+/// the revoked key signs and that folds to a state: the whole fold drops
+/// such a row with its descendants (`RetiredSigner`), which only the whole
+/// history folds here. This test is stricter than the whole fold's
+/// (`Fence::signed_outside`): it exempts no genesis, no anchored row and no
+/// row of another vault.
+fn serial_revocation_fences(
+    judged: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+) -> Option<BTreeSet<AuthorityKey>> {
+    let mut retired = BTreeSet::new();
+    for (hash, entry) in judged {
+        let AuthorityOp::RevokeDevice { revoked_key } = &entry.op else {
+            continue;
+        };
+        if !states.contains_key(hash) {
+            continue;
+        }
+        let keys = BTreeSet::from([revoked_key.clone()]);
+        if signed_outside_tail_line(hash, &keys, judged, states) {
+            return None;
+        }
+        retired.insert(revoked_key.clone());
+    }
+    Some(retired)
+}
+
+/// Whether `keys` sign, as primary or co-signer
+/// (`retired_signers::entry_signer_keys`), a judged tail row with a state
+/// outside the line of the tail row `row`: it and its tail ancestors. Only a
+/// row with a state stands for a fence to refuse. Each covered row is in that
+/// line where every covered row is in `row`'s causal past.
+fn signed_outside_tail_line(
+    row: &AuthorityEntryHash,
+    keys: &BTreeSet<AuthorityKey>,
+    judged: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+) -> bool {
+    let mut line = BTreeSet::from([*row]);
+    let mut stack: Vec<AuthorityEntryHash> = judged
+        .get(row)
+        .map(|entry| entry.parent_hashes.clone())
+        .unwrap_or_default();
+    while let Some(at) = stack.pop() {
+        if let Some(entry) = judged.get(&at)
+            && line.insert(at)
+        {
+            stack.extend(entry.parent_hashes.iter().copied());
+        }
+    }
+    judged.iter().any(|(hash, entry)| {
+        !line.contains(hash)
+            && states.contains_key(hash)
+            && crate::authority::retired_signers::entry_signer_keys(entry)
+                .any(|key| keys.contains(key))
+    })
+}
+
+/// The slip issuers once the tail joins the image's history: the consent
+/// structure's own (`log_structure::authority_structure`), read as the whole
+/// fold reads it for its image (`fold_resume::ImageFold`), from the rows it
+/// judges (`fold_engine::judged_entries`) in hash order: the image's carried
+/// bodies (it carries each genesis, enrollment, rotation, re-root, owner key
+/// enrollment, root record and machine profile whole) and the judged tail
+/// ([`judged_tail`]). A row that hangs off another world's side row admits no
+/// key here, as in the whole fold, though the store door, which reads raw
+/// rows, counts it: a tail row (Astra foldpast4 P2), or a carried row of an
+/// image with issues, which a tail of rows
+/// [`crate::authority::fold_resume::admits_past`] takes, such as agent
+/// enrollments, still folds past (Spark r5 P2). A rotation, an enrollment or
+/// a re-root an admitter signed admits its owner key there whether or not the
+/// fold applies the row, as in the whole history. None where a key only the
+/// tail admits signed a covered slip row: that row would leave the counted
+/// ancestry, which only the whole history counts again.
+fn tail_issuers(
+    image: &AuthorityCheckpointV2,
+    carried: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    judged: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+) -> Option<BTreeSet<AuthorityKey>> {
+    let covered_world = |hash: &AuthorityEntryHash| image.rows.get(hash).and_then(|row| row.world);
+    let rows: BTreeMap<_, _> = carried
+        .iter()
+        .filter(|(_, entry)| !hangs_off_another_world(entry, &covered_world))
+        .chain(judged)
+        .collect();
+    let mut issuers =
+        crate::authority::log_structure::authority_structure(rows.values().copied()).issuers;
+    // Nothing leaves the set.
+    issuers.extend(image.safety.issuers.iter().cloned());
+    let recounted = image.rows.values().any(|row| {
+        row.slip_op && issuers.contains(&row.signer) && !image.safety.issuers.contains(&row.signer)
+    });
+    (!recounted).then_some(issuers)
 }
 
 /// The tail rows a fold judges, as `fold_engine::judged_entries` judges them:
@@ -350,13 +722,7 @@ fn judged_tail(
     };
     let violations: Vec<_> = judged
         .iter()
-        .filter(|(_, entry)| {
-            let world = crate::authority::world_privacy::side_world(&entry.op);
-            entry
-                .parent_hashes
-                .iter()
-                .any(|parent| world_of(parent).is_some_and(|parent| world != Some(parent)))
-        })
+        .filter(|(_, entry)| hangs_off_another_world(entry, &world_of))
         .map(|(hash, _)| *hash)
         .collect();
     for hash in violations {
@@ -364,6 +730,20 @@ fn judged_tail(
         issues.push(AuthorityFoldIssue::InvalidEntry(hash));
     }
     judged
+}
+
+/// Whether `entry` names a side row of a world other than its own as a
+/// parent, `world_of` giving each parent's world: a row
+/// `world_privacy::side_branch_violations` drops before any fold path.
+fn hangs_off_another_world(
+    entry: &AuthorityLogEntry,
+    world_of: impl Fn(&AuthorityEntryHash) -> Option<EntityId>,
+) -> bool {
+    let world = crate::authority::world_privacy::side_world(&entry.op);
+    entry
+        .parent_hashes
+        .iter()
+        .any(|parent| world_of(parent).is_some_and(|parent| world != Some(parent)))
 }
 
 /// The whole log's ancestor pairs and counted pairs, as
@@ -452,9 +832,11 @@ fn parents_first(
 }
 
 /// Whether a valid tail approval rests on a key the fold holds revoked. Its
-/// stale-roster window would start at this install's first sight of the
-/// covered revocation, a time this install never recorded: no clock is
-/// imported, so the whole history must decide it.
+/// stale-roster window could start at this install's first sight of a
+/// covered revocation, which a vault adopted with no receipt for it never
+/// recorded: no clock is imported, so the whole history must decide it. A
+/// covered approval on a tail-revoked key is timed past the image instead
+/// ([`super::fold_adopted_checkpoint_tail`]).
 fn approves_on_revoked_key(
     fold: &AuthorityFold,
     judged: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -499,6 +881,7 @@ fn image_fold_under(
         bound_keys: &image.safety.bound_keys,
         chain: Vec::new(),
         writers: &image.safety.writers,
+        base_writers: &image.safety.writers,
         missed: Cell::new(false),
     };
     crate::authority::fold_project::project_once(

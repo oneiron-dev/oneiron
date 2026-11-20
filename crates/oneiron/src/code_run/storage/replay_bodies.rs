@@ -37,6 +37,7 @@ use crate::code_run::{
 use crate::engine_executor::holds_reply_content;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::session_overlay::SessionOverlay;
 use crate::side_table::{ErasedForm, SideTableDbs};
 use crate::store::known_value_index::KnownValues;
 use crate::store::{ResponseCarriage, ResponseScan, Store};
@@ -231,11 +232,27 @@ pub(crate) fn erase_replies(
 /// The values base custody holds in one writer, read once for every record
 /// an erase there rewrites (FIX ERASED-IDENTITY-ONE-STAND-IN): the first
 /// request that needs them reads them. An erase changes no custody record,
-/// so each later record reads the same values.
+/// so each later record reads the same values. An erase inside an
+/// off-record room reads the values the room keeps beside them
+/// ([`Self::in_room`]).
 #[derive(Default)]
-pub(crate) struct WriterCustody(OnceCell<Option<Arc<KnownValues>>>);
+pub(crate) struct WriterCustody<'r> {
+    known: OnceCell<Option<Arc<KnownValues>>>,
+    room: Option<&'r SessionOverlay>,
+}
 
-impl WriterCustody {
+impl<'r> WriterCustody<'r> {
+    /// The custody of an erase inside the room whose overlay is `room`, or
+    /// of base for `None` (REVIEW-10003): a request that names a room handle
+    /// keeps the identity of the value the room keeps under it, as one that
+    /// names a base handle keeps its value's.
+    pub(crate) fn in_room(room: Option<&'r SessionOverlay>) -> Self {
+        Self {
+            known: OnceCell::new(),
+            room,
+        }
+    }
+
     /// [`erase_replies`] in the writer `wtxn`, read with the values base
     /// custody `store` holds there: each request it erases keeps the custody
     /// records it names and its custody identity.
@@ -254,11 +271,14 @@ impl WriterCustody {
     }
 
     fn known(&self, store: &Store, wtxn: &heed::RwTxn<'_>) -> Result<Option<Arc<KnownValues>>> {
-        if let Some(known) = self.0.get() {
+        if let Some(known) = self.known.get() {
             return Ok(known.clone());
         }
-        let known = KnownValues::shared_in_writer(store, wtxn)?;
-        Ok(self.0.get_or_init(|| known).clone())
+        let known = match self.room {
+            Some(room) => KnownValues::with_room_in_writer(store, wtxn, room)?,
+            None => KnownValues::shared_in_writer(store, wtxn)?,
+        };
+        Ok(self.known.get_or_init(|| known).clone())
     }
 }
 

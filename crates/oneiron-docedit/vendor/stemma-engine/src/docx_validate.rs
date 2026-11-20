@@ -1115,7 +1115,8 @@ pub fn collect_relationship_references(element: &Element, out: &mut Vec<String>)
 }
 
 /// Collect every non-empty attribute value in the relationships namespace.
-/// Used only to refuse references when the main part has no relationships part.
+/// Used to refuse references when the main part has no relationships part, and
+/// by the writer to reserve the ids a main part references without a binding.
 pub fn collect_relationship_namespace_attributes(element: &Element, out: &mut Vec<String>) {
     collect_relationship_attributes(element, out, is_relationships_namespace);
 }

@@ -1,0 +1,138 @@
+//! The read-shape arm family's vault doors (ARCH-0051 #decision-r9-bench):
+//! the host picks and stamps the shape a run reads through when the run
+//! wakes, and records the model units it settled when it ends; the owner
+//! reads and pins the picks through the retrieval policy verbs.
+
+use rand::Rng;
+
+use crate::Vault;
+use crate::attempt_queue::AttemptId;
+use crate::error::Result;
+use crate::llm::ModelId;
+use crate::store::{ReadShape, ReadShapePick, ReadShapePins, ReadShapePosterior, ReadShapeStamp};
+
+impl Vault {
+    /// Picks the shape `model`'s next run reads through: the owner's pin,
+    /// else the exploration share while the model has too little mount
+    /// evidence, else a Thompson draw over the model's evidence, then every
+    /// model's, else the seeded verbs. Writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; [`crate::Error::CorruptedIndex`] on an undecodable
+    /// posterior or pin row.
+    pub fn pick_read_shape<R: Rng + ?Sized>(
+        &self,
+        model: &ModelId,
+        rng: &mut R,
+    ) -> Result<ReadShapePick> {
+        self.store.pick_read_shape(model, rng)
+    }
+
+    /// Stamps `attempt` with `pick` for `model` unless it already holds a
+    /// stamp, and returns the stamp in force: a re-leased attempt keeps the
+    /// shape its first wake picked. The stamp keeps what the attempt's spend
+    /// scope has settled so far, and its reader children's part of that, in
+    /// the one transaction that writes it: a retry spends under the scope of
+    /// the try it retries, and those units are not its run's.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::Error::InvalidConfig`] for an unknown attempt, or a model
+    /// other than the attempt's executor stamp or its earlier read-shape stamp;
+    /// [`crate::Error::ConcurrentWrite`] inside an active write transaction.
+    pub fn stamp_read_shape(
+        &self,
+        attempt: AttemptId,
+        model: &ModelId,
+        pick: ReadShapePick,
+    ) -> Result<ReadShapeStamp> {
+        if crate::store::active_write_txn_depth() > 0 {
+            return Err(crate::Error::ConcurrentWrite(
+                "read shape stamp skipped inside active write transaction",
+            ));
+        }
+        let mut txn = self.store.env.write_txn()?;
+        let at_wake = crate::agent_dispatch::AgentDispatcher::new(self)
+            .read_shape_scope_units_in_txn(&txn, attempt)?;
+        let stamp = crate::store::read_shape_policy::stamp_read_shape_in_txn(
+            &self.store,
+            &mut txn,
+            attempt,
+            model,
+            pick,
+            at_wake,
+        )?;
+        txn.commit()?;
+        Ok(stamp)
+    }
+
+    /// Picks the shape `attempt`'s run reads through as it wakes on `model`,
+    /// drawing on this thread's generator, and stamps the attempt with it:
+    /// [`Self::pick_read_shape`] then [`Self::stamp_read_shape`]. A re-leased
+    /// attempt keeps its first wake's stamp. Returns the stamp in force.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::pick_read_shape`] and [`Self::stamp_read_shape`].
+    pub fn stamp_wake_read_shape(
+        &self,
+        attempt: AttemptId,
+        model: &ModelId,
+    ) -> Result<ReadShapeStamp> {
+        let pick = self.pick_read_shape(model, &mut rand::thread_rng())?;
+        self.stamp_read_shape(attempt, model, pick)
+    }
+
+    /// The read-shape stamp `attempt` holds, if its run woke under one.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; [`crate::Error::CorruptedIndex`] on an undecodable row.
+    pub fn read_shape_stamp(&self, attempt: AttemptId) -> Result<Option<ReadShapeStamp>> {
+        self.store.read_shape_stamp(attempt)
+    }
+
+    /// Records the model units `attempt`'s run settled, for the token cost
+    /// term of its read-shape reward. A later, larger total replaces it. A
+    /// run's spend scope records them itself as it settles.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::Error::InvalidConfig`] when the attempt holds no stamp.
+    pub fn record_read_shape_units(&self, attempt: AttemptId, units: u64) -> Result<()> {
+        self.store.record_read_shape_units(attempt, units)
+    }
+
+    /// The read-shape posterior as the last sleep rebuilt it.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; [`crate::Error::CorruptedIndex`] on an undecodable row.
+    pub fn read_shape_posterior(&self) -> Result<ReadShapePosterior> {
+        self.store.read_shape_posterior()
+    }
+
+    /// The owner's read-shape pins, one per model.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; [`crate::Error::CorruptedIndex`] on an undecodable row.
+    pub fn read_shape_pins(&self) -> Result<ReadShapePins> {
+        self.store.read_shape_pins()
+    }
+
+    /// Pins `model` to `shape`, or clears its pin when `shape` is absent.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; [`crate::Error::ConcurrentWrite`] inside an active
+    /// write transaction.
+    pub fn put_read_shape_pin(
+        &self,
+        model: &ModelId,
+        shape: Option<ReadShape>,
+    ) -> Result<ReadShapePins> {
+        self.store.put_read_shape_pin(model, shape)
+    }
+}

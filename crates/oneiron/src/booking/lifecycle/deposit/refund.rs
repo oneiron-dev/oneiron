@@ -6,6 +6,7 @@
 use super::super::claim::read_booking_facts_to_cancel;
 use super::super::storage::{booking_writer, engine_failure, read_txn};
 use super::super::types::BookingStatus;
+use super::held::{HeldDepositKind, held_of};
 use super::{
     DEPOSIT, DEPOSIT_BOOKING, DepositRow, DepositState, booking_key, enqueue_settle, put_deposit,
 };
@@ -207,38 +208,31 @@ enum OwnerReturn {
 /// of a capture a cancel overtook) gains the balance (review round 2 of
 /// #9977): owed at once after that refund settled, or once it settles while
 /// it is owed, so the provider refunds the earlier part once. A row
-/// refunded before its capture was recorded gains nothing.
+/// refunded before its capture was recorded gains nothing. What it moves is
+/// what the owner's line shows held ([`held_of`]).
 fn owner_return(row: &mut DepositRow) -> OwnerReturn {
-    match row.state {
-        DepositState::CaptureDue { .. } => {
+    let Some((kind, amount_minor)) = held_of(row) else {
+        return OwnerReturn::Nothing;
+    };
+    match kind {
+        HeldDepositKind::CaptureDue => {
             row.state = DepositState::VoidDue;
             OwnerReturn::Queued
         }
-        DepositState::Captured { amount_minor } => {
+        HeldDepositKind::Captured => {
             row.captured_minor = Some(amount_minor);
             row.state = DepositState::RefundDue { amount_minor };
             OwnerReturn::Queued
         }
-        DepositState::RefundDue { amount_minor }
-            if !row.balance_owed_after_refund
-                && row.captured_minor.is_some_and(|captured| {
-                    captured > row.refunded_minor.saturating_add(amount_minor)
-                }) =>
-        {
+        HeldDepositKind::BalanceAfterOwedRefund => {
             row.balance_owed_after_refund = true;
             OwnerReturn::AfterOwedRefund
         }
-        DepositState::Refunded { amount_minor } => match row.captured_minor {
-            Some(captured) if captured > amount_minor => {
-                row.refunded_minor = amount_minor;
-                row.state = DepositState::RefundDue {
-                    amount_minor: captured - amount_minor,
-                };
-                OwnerReturn::Queued
-            }
-            _ => OwnerReturn::Nothing,
-        },
-        _ => OwnerReturn::Nothing,
+        HeldDepositKind::BalanceAfterRefund { refunded_minor } => {
+            row.refunded_minor = refunded_minor;
+            row.state = DepositState::RefundDue { amount_minor };
+            OwnerReturn::Queued
+        }
     }
 }
 

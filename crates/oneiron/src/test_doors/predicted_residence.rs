@@ -125,3 +125,42 @@ pub fn age_predicted_pushes(vault: &Vault, secs: u64) {
 pub fn noted_predicted_pushes(vault: &Vault) -> usize {
     vault.store.predicted_pushes.noted()
 }
+
+/// The items the home's touch log holds for `machine`, in key order: the touches and board reports
+/// that seed its prediction (PREDICTED-BOARD-SEED-SIGNAL).
+///
+/// # Errors
+///
+/// Storage.
+pub fn machine_touches(vault: &Vault, machine: EntityId) -> crate::error::Result<Vec<EntityId>> {
+    vault.machine_touched_items(machine)
+}
+
+/// The touch-log rows this vault's whole-vault export carries as retained copies, as (machine,
+/// item) pairs in physical key order, read from the export's own collection of retained rows.
+///
+/// # Errors
+///
+/// The collection's; a carried key that is not two lower-case hex ids.
+pub fn exported_machine_touches(vault: &Vault) -> crate::error::Result<Vec<(EntityId, EntityId)>> {
+    let tuples = crate::batch::export::archive_retained_side_rows::exported_retained_tuples(
+        vault,
+        "SYNC_RESIDENCE_MACHINE_TOUCH",
+    )?;
+    let mut touches = Vec::new();
+    for (key, _) in tuples {
+        let pair = std::str::from_utf8(&key)
+            .ok()
+            .filter(|text| text.len() == 64)
+            .and_then(|text| {
+                let machine = EntityId::from_lower_hex(&text[..32]).ok()?;
+                let item = EntityId::from_lower_hex(&text[32..]).ok()?;
+                Some((machine, item))
+            })
+            .ok_or_else(|| {
+                crate::error::Error::InvalidConfig("a carried touch key is not two ids".to_owned())
+            })?;
+        touches.push(pair);
+    }
+    Ok(touches)
+}

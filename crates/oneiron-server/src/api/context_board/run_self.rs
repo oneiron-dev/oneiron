@@ -20,9 +20,11 @@
 //! out of the brief and named on one unavailable line
 //! ([`oneiron::context_board::SelfBrief::render`]), never stated as a value.
 
+use std::collections::BTreeSet;
+
 use oneiron::authority::CommReach;
 use oneiron::context_board::{
-    BriefCredentialCeiling, BriefRunCeiling, BriefWorkingHandle, BriefWorkingSet,
+    BriefCredentialCeiling, BriefReadShape, BriefRunCeiling, BriefWorkingHandle, BriefWorkingSet,
     CommunicationLimits, SelfBriefState, SessionReadSet, StreamConnectionId,
 };
 use oneiron::llm::run_admission::RunAdmission;
@@ -59,6 +61,10 @@ pub(crate) struct BriefHostFacts {
     /// The working set's pins family as the host's board projection read it
     /// at describe time ([`brief_pins_family`]).
     pub(crate) pins: Option<Vec<BriefWorkingHandle>>,
+    /// The read shape the run's attempt woke under, as its pump stamped it
+    /// (census L9-37). Only a pumped run's wake picks one, so a credential's
+    /// call and a turn program hold none.
+    pub(crate) read_shape: Option<oneiron::store::ReadShape>,
 }
 
 /// The working set's pins family (FIX 17594, WORKING SET A) from the
@@ -349,6 +355,7 @@ pub(super) fn resolved_state(
         class_verdicts,
         budget_lease_id: line.map(|line| line.run().to_owned()),
         budget: line.map(RunAdmission::read),
+        read_shape: host.read_shape.map(BriefReadShape::new),
         clock_ms,
         skill_index,
         working_set: BriefWorkingSet {
@@ -392,26 +399,90 @@ pub(crate) fn run_brief_people(
     run_people(server, actor)
 }
 
-/// The vault's people as the agent's own lane on this device reads them
-/// ([`read_people`]).
+/// The vault's people as the agent's own lane reads them for a caller off
+/// this device ([`read_people`]). A run's brief goes into the model requests
+/// of every seat its ladder may take and is sent again until its next
+/// boundary, so it is judged off this device always: a derived text follows
+/// its strictest input (DEC-0005:476; RULING RUN-BRIEF-ROSTER-SHAPE = A).
+/// Giving an all-on-device run its full view back (DEC-0005:564) is FIX-LIST
+/// RUN-BRIEF-ROUTE-AWARE-ROSTER.
 fn run_people(
     server: &SyncServer,
     actor: oneiron::WriteActor,
 ) -> MemoryResult<oneiron::context_board::People> {
+    read_people(server, &run_people_read(server, actor)?)
+}
+
+/// The rows of a pumped run's brief prefix that no longer stand for the
+/// reader its PEOPLE were read under, the agent's own lane for a caller off
+/// this device ([`fallen_brief_rows`]).
+///
+/// # Errors
+///
+/// The run's actor key is invalid, or a read failed.
+pub(crate) fn run_brief_fallen_rows(
+    server: &SyncServer,
+    actor: oneiron::WriteActor,
+    sources: &[oneiron::EntityId],
+    resident: &BTreeSet<oneiron::EntityId>,
+) -> MemoryResult<BTreeSet<oneiron::EntityId>> {
+    fallen_brief_rows(server, &run_people_read(server, actor)?, sources, resident)
+}
+
+/// The agent's own lane for a caller off this device: the reader a run's
+/// PEOPLE are read under and its brief's fallen rows are judged under, so
+/// both follow one reader ([`run_people`]).
+fn run_people_read(
+    server: &SyncServer,
+    actor: oneiron::WriteActor,
+) -> MemoryResult<oneiron::claim::ScopedRead<'_>> {
     let key = oneiron::claim::ScopedReadActorKey::with_actor_class(
         actor.entity_ref().to_hex(),
         actor.actor_class().gate_actor_class(),
     )
     .ok_or_else(|| internal("run actor key invalid"))?;
-    let read = server
+    Ok(server
         .vault
-        .scoped_read(key.at(oneiron::claim::CallerLocality::OnDevice));
-    read_people(server, &read)
+        .scoped_read(key.at(oneiron::claim::CallerLocality::OffDevice)))
 }
 
-/// The vault's people as `read` reads them, each `about` the stored line of
-/// the highest band that read reads, and the names it may be told
-/// disclosed.
+/// The rows of a staged brief prefix, kept past the boundary it was
+/// prepared at, that no longer stand for `read`, the reader its PEOPLE were
+/// read under ([BRIEF-PREFIX-STALE-PAST-REVOKE]): each of `sources` that is
+/// deleted, erased or withdrawn now
+/// ([`oneiron::code_run::withdrawn_source_rows`]), each person its roster
+/// holds, `resident`, that `read` no longer reads, judged as
+/// [`read_people`] admits a person, and each fact of an `about` line the
+/// prefix may show that the key's own floor no longer reads with its PERSON
+/// under `read`, judged as [`read_people`] shows a line
+/// ([`oneiron::claim::ScopedRead::fallen_own_floor_about_facts`]; review
+/// round 2 of #10015: a world switched to read on this install only).
+///
+/// # Errors
+///
+/// A read failed.
+pub(crate) fn fallen_brief_rows(
+    server: &SyncServer,
+    read: &oneiron::claim::ScopedRead<'_>,
+    sources: &[oneiron::EntityId],
+    resident: &BTreeSet<oneiron::EntityId>,
+) -> MemoryResult<BTreeSet<oneiron::EntityId>> {
+    let mut fallen = oneiron::code_run::withdrawn_source_rows(&server.vault, sources);
+    for person in resident {
+        if !read.is_entity_readable(person)? {
+            fallen.insert(*person);
+        }
+    }
+    let shown: BTreeSet<oneiron::EntityId> = sources.iter().copied().collect();
+    fallen.extend(read.fallen_own_floor_about_facts(resident, &shown)?);
+    Ok(fallen)
+}
+
+/// The vault's people as `read` reads them for a staged brief, each `about`
+/// the stored line of the highest band the key's own floor reads, shown
+/// only where that floor reads the PERSON and every fact of the line under
+/// `read` ([`oneiron::context_board::People::set_own_floor_about_for_reader`]),
+/// and the names it may be told disclosed.
 pub(super) fn read_people(
     server: &SyncServer,
     read: &oneiron::claim::ScopedRead<'_>,
@@ -420,9 +491,7 @@ pub(super) fn read_people(
     let mut people = oneiron::context_board::People::load(&server.vault, now, &mut |person| {
         read.is_entity_readable(&person)
     })?;
-    let applied = read.read_receipt(None, 0)?.applied;
-    let ceiling = (!applied.deny_all).then_some(applied.max_sensitivity_band);
-    people.set_about(&mut |person| server.vault.person_about_sourced(person, ceiling))?;
+    people.set_own_floor_about_for_reader(read)?;
     people.disclose_names(&server.vault, read.actor_key())?;
     Ok(people)
 }

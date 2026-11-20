@@ -284,10 +284,36 @@ pub fn source_rows_withdrawn(vault: &Vault, sources: &[EntityId]) -> bool {
     let Ok(txn) = vault.store.env.read_txn() else {
         return true;
     };
-    sources.iter().any(|source| {
-        vault.is_deleted_shell_in_txn(&txn, source).unwrap_or(true)
-            || crate::ports::stale_in_txn(&vault.store, &txn, source).unwrap_or(true)
-    })
+    sources
+        .iter()
+        .any(|source| source_row_withdrawn_in(vault, &txn, source))
+}
+
+/// The rows of `sources` that [`source_rows_withdrawn`] reads as withdrawn
+/// now, each judged as it judges them, in one read transaction: all of
+/// them when the transaction does not open. A host that keeps a staged
+/// prefix past a boundary names the rows that no longer stand with it
+/// ([BRIEF-PREFIX-STALE-PAST-REVOKE]).
+#[must_use]
+pub fn withdrawn_source_rows(
+    vault: &Vault,
+    sources: &[EntityId],
+) -> std::collections::BTreeSet<EntityId> {
+    let Ok(txn) = vault.store.env.read_txn() else {
+        return sources.iter().copied().collect();
+    };
+    sources
+        .iter()
+        .copied()
+        .filter(|source| source_row_withdrawn_in(vault, &txn, source))
+        .collect()
+}
+
+/// Whether `source` is deleted, erased or withdrawn in `txn`; a row that
+/// cannot be read counts as withdrawn.
+fn source_row_withdrawn_in(vault: &Vault, txn: &heed::RoTxn<'_>, source: &EntityId) -> bool {
+    vault.is_deleted_shell_in_txn(txn, source).unwrap_or(true)
+        || crate::ports::stale_in_txn(&vault.store, txn, source).unwrap_or(true)
 }
 
 /// A live fork its run's driver admitted (FIX 4465 C): the one Frontier-tier
