@@ -529,7 +529,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/can.rs` | src | s | 1 struct · 1 enum | CanVerbAnswer, CanVerbGate | Moved from `crates/oneiron/src/memory/can.rs` (lib split R2: record types below the lib) |
 | `src/memory/chat.rs` | src | s | 1 enum · 1 type | ChatAbstentionReason | Moved from `crates/oneiron/src/memory/chat.rs` (lib split R2: record types below the lib) |
 | `src/memory/claim_conflict.rs` | src | s | 3 struct · 1 enum | ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt | Moved from `crates/oneiron/src/memory/claim_conflict.rs` (lib split R2: record types below the lib) |
-| `src/memory/claims/mod.rs` | src | s | 2 struct · 1 enum · 1 fn · 12 re-export | DeleteReceipt, DeleteRequestState, PendingWrite | Moved from `crates/oneiron/src/memory/claims/mod.rs` (lib split R2: record types below the lib) |
+| `src/memory/claims/mod.rs` | src | s | 2 struct · 1 enum · 1 fn · 1 const · 12 re-export | DeleteReceipt, DeleteRequestState, PendingWrite | Moved from `crates/oneiron/src/memory/claims/mod.rs` (lib split R2: record types below the lib) |
 | `src/memory/code_doors/mod.rs` | src | s | 1 mod · 1 re-export | — | — |
 | `src/memory/code_doors/types.rs` | src | s | 5 struct · 1 enum · 6 re-export | CodeMutationEntry, CodeMutationLog, CodeMutationState, CodeSymbolLeaseView, CodeSymbolsDeclared, CodeSymbolsReleased | Moved from `crates/oneiron/src/memory/code_doors/types.rs` (lib split R2: record types below the lib) |
 | `src/memory/conversation_membership.rs` | src | s | 1 struct · 1 fn | MembershipWindow | Moved from `crates/oneiron/src/memory/conversation_membership.rs` (lib split R2: record types below the lib) |

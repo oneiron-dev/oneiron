@@ -91,6 +91,20 @@ impl Memory<'_> {
         self
     }
 
+    /// Binds this surface's reads to the account API key the host verified
+    /// (OF-448): the key's verdict names this handle's actor, a person, and
+    /// grants `core:read`. Only the host that verified the key calls this.
+    /// With no read proof bound, a person who is not the vault's owner then
+    /// reads as that person ([`crate::Vault::account_key_read_key`]; the
+    /// lead's ruling DEL2-ROOTLESS-MEMBER-KEY-READ = B, 21 Nov): every bound
+    /// the key's read lane already holds still binds. A bound read proof
+    /// keeps its own key.
+    #[must_use]
+    pub fn with_account_key_read(mut self) -> Self {
+        self.account_key_read = true;
+        self
+    }
+
     /// Conjoins the frozen call ceilings of a genuine phone reader holding
     /// this exact actor and verified credential. It grants no read, replaces
     /// no proof, and never drops an earlier phone ceiling.

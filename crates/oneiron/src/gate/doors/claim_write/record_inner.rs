@@ -81,6 +81,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
     recorded_decision: &mut Option<RecordedClaimGateDecision>,
+    owner_amendment: &mut Option<super::OwnerRevisionAmendment>,
     preflight_receipt: Option<PreflightReceipt>,
     operation_effect_body: bool,
     skip_precommit: bool,
@@ -763,7 +764,9 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             let landing = mode.record_decision.then_some(&decision_record);
             let landing = (landing, preflight_receipt.map(|receipt| receipt.decision));
             let writer = (envelope, owner_write);
-            redeem_held_row_by_owner_revision(store, wtxn, id, body, &binding, writer, landing)?;
+            *owner_amendment = redeem_held_row_by_owner_revision(
+                store, wtxn, id, body, &binding, writer, landing,
+            )?;
         }
         enforce_claim_gate_decision_with_consent(
             store,

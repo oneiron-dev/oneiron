@@ -34,6 +34,7 @@
 pub(crate) mod archive_restore;
 mod codec_core;
 mod codec_records;
+mod consent_void;
 // The law an enrollment is made under, as the trusted host resolved it (FIX 10218).
 mod enrollment_law;
 // Recognition material leaves with its subject (FIX 10219).

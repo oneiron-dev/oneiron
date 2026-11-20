@@ -155,7 +155,7 @@ impl<'a> GatedDeletion<'a> {
             .admitted
             .map_or(kind, |(admitted, _)| match admitted.role() {
                 Role::Owner => Kind::Owner,
-                Role::Admin | Role::Steward | Role::Member => Kind::Member,
+                Role::Admin | Role::Steward | Role::Member | Role::Delegate => Kind::Member,
                 Role::Agent => Kind::Agent,
             });
         crate::store::legal_hold::HoldActor::new(kind, Some(self.context.actor.to_hex()))

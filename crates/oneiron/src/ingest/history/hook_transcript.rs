@@ -15,11 +15,14 @@
 //! a Grant revoked during an import refuses the turns that had not landed
 //! yet; what had landed still reaches the owner's inbox and the Dreamer.
 //!
-//! Each log travels gzip-compressed in standard base64: the `oneiron mcp`
-//! bridge reads at most 2 MiB per message, and a long session's log is
-//! larger. All the logs of one call inflate to at most
-//! [`HOOK_TRANSCRIPT_MAX_BYTES`], read through a bounded reader; past that
-//! the call is refused before anything lands.
+//! Each log travels gzip-compressed in standard base64, so a long session's
+//! log fits the call's carrier: one line `oneiron mcp` reads (at most 64
+//! MiB) for a slip or OAuth sign-in, one frame of the vault's socket (about
+//! 8 MiB) for the owner, whose calls ride the socket alone. A call too long
+//! for its carrier never arrives; the person imports that session on the
+//! machine it ran on (`oneiron import <source> <log>`). All the logs of one
+//! call inflate to at most [`HOOK_TRANSCRIPT_MAX_BYTES`], read through a
+//! bounded reader; past that the call is refused before anything lands.
 
 use std::collections::BTreeSet;
 use std::io::Read;

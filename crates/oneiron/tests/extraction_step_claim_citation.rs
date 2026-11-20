@@ -14,7 +14,7 @@ use oneiron::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use oneiron::dreamer_runner::DreamerAttemptBinding;
-use oneiron::memory::MemoryResult;
+use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MemoryResult};
 use oneiron::test_doors::derive::grant_derive_rows;
 use oneiron::test_doors::extraction_inputs::{
     enqueue_admitted_extraction_attempt, witness_extraction_turns,
@@ -218,15 +218,15 @@ impl CitationFixture {
     /// Reads one observations page for the operand the decoded `candidate` builds, as the
     /// job builds it: the listed subject, the proposal, the turn evidence and the claim pins.
     fn observe(&self, candidate: &Value) -> MemoryResult<Value> {
-        let mut operand = json!({
-            "subject": candidate["subject"]["listed"],
-            "predicate": candidate["predicate"],
-            "value": candidate["value"],
-            "evidence": candidate["evidence"],
-        });
+        let mut operand = operand_without_pins(candidate);
         if let Some(cited) = candidate.get("claim_evidence") {
             operand["claim_evidence"] = cited.clone();
         }
+        self.observe_operand(operand)
+    }
+
+    /// Reads one observations page for `operand` alone.
+    fn observe_operand(&self, operand: Value) -> MemoryResult<Value> {
         self.binding
             .invoke(
                 OBSERVATIONS_PAGE_VERB,
@@ -239,6 +239,17 @@ impl CitationFixture {
             )
             .map(|answer| answer["value"].clone())
     }
+}
+
+/// Builds the operand of the decoded `candidate` without its claim pins: the listed subject,
+/// the proposal and the turn evidence.
+fn operand_without_pins(candidate: &Value) -> Value {
+    json!({
+        "subject": candidate["subject"]["listed"],
+        "predicate": candidate["predicate"],
+        "value": candidate["value"],
+        "evidence": candidate["evidence"],
+    })
 }
 
 /// Builds one extraction reply with one candidate about owen (`P2`) proposing `value`
@@ -303,6 +314,89 @@ fn a_candidate_that_cites_a_listed_claim_keeps_it_as_a_pin() -> ExtractionStepTe
         page["listed"],
         json!([]),
         "the restated head is the only head and is not asked about"
+    );
+    Ok(())
+}
+
+/// A recorded candidate that cites the listed head it restates is asked about no head, and
+/// an operand that names it is held to that. Such an operand may leave the claim pin out,
+/// but it is then offered no correction of the head, and one that names the head in
+/// `corrects` is refused. The same fields in an operand that names no recorded candidate
+/// are read as before the record could be named: the head is offered.
+#[test]
+fn an_operand_that_names_a_restating_candidate_is_not_offered_the_restated_head()
+-> ExtractionStepTestResult<()> {
+    let fixture = citation_fixture(
+        ClaimSource::UserStated,
+        citing_reply(
+            HEAD_VALUE,
+            json!([{"source": "T1", "quote": WORDS}, {"claim": "C1"}]),
+        ),
+    )?;
+    let submit = fixture.submit()?;
+    assert_eq!(submit["result"]["status"], json!("finished"));
+    let step = submit["step_ref"]
+        .as_str()
+        .expect("the submit answers its step ref")
+        .to_owned();
+    let candidate = &submit["result"]["json"]["candidates"][0];
+    assert_eq!(
+        candidate["claim_evidence"],
+        json!([fixture.claim_pin()?]),
+        "the recorded candidate cites the head it restates"
+    );
+    let head = fixture.claim.to_hex();
+
+    let inline = operand_without_pins(candidate);
+    let page = fixture
+        .observe_operand(inline.clone())
+        .expect("the page takes the operand that names no recorded candidate");
+    let listed = page["listed"]
+        .as_array()
+        .expect("the page has a listed rows array");
+    assert_eq!(listed.len(), 1, "the one head is listed: {page}");
+    assert_eq!(
+        listed[0]["claim"],
+        json!(head),
+        "the listed row is the head"
+    );
+    assert_eq!(
+        page["candidates"][0]["correctable"],
+        json!([0]),
+        "an operand that names no recorded candidate is offered the head: {page}"
+    );
+
+    let mut named = inline;
+    named["from_steps"] = json!([{"step": step, "index": 0}]);
+    let page = fixture
+        .observe_operand(named.clone())
+        .expect("the page takes the operand that names its recorded candidate");
+    assert_eq!(
+        page["candidates"][0]["correctable"],
+        json!([]),
+        "the operand is offered no head its recorded candidate restates: {page}"
+    );
+    assert_eq!(
+        page["listed"],
+        json!([]),
+        "the restated head is the only head and is not listed: {page}"
+    );
+
+    let mut correcting = named;
+    correcting["corrects"] = json!(head);
+    let error = fixture
+        .observe_operand(correcting)
+        .expect_err("a correction of the restated head is refused");
+    assert_eq!(
+        error.code, MEMORY_CODE_BAD_REQUEST,
+        "the correction is a bad request: {error:?}"
+    );
+    assert!(
+        error
+            .message
+            .contains("extracted correction names an unlisted claim"),
+        "the refusal names the unlisted claim: {:?}",
+        error.message
     );
     Ok(())
 }

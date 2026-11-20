@@ -367,6 +367,14 @@ impl Memory<'_> {
         if owner {
             return Ok(ScopedReadActorKey::vault_owner(self.actor));
         }
+        if self.account_key_read && self.actor_class == crate::EdgeActorClass::Human {
+            // A person's account API key the host verified (DEL2-ROOTLESS-
+            // MEMBER-KEY-READ = B): the one key every door builds for it.
+            return self
+                .vault
+                .account_key_read_key_in_txn(txn, self.actor)
+                .map_err(MemoryError::from);
+        }
         let key = ScopedReadActorKey::with_actor_class(
             self.actor.to_hex(),
             self.actor_class.gate_actor_class(),

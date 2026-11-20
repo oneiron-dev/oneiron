@@ -10,7 +10,8 @@
 //! - a wider row someone set decides only when it makes the value stricter, and one row someone
 //!   set among the deciders makes the read explicit and names it, even when a seeded row or the
 //!   accepted default holds the value;
-//! - a move carries a seeded row as seeded, and a row someone set as theirs.
+//! - a move carries a seeded row as seeded, and a row someone set as theirs;
+//! - a change of a born thing's row is judged on its whole project line (review round 2).
 //!
 //! Test keys: `test.born_depth` (lower is stricter, default 10, strictest 0, vault and project;
 //! born from `test.born_depth_default`), `test.born_depth_default` (vault, default 7).
@@ -25,7 +26,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::Memory;
 use oneiron::setting::{
     ChangeDirection, SetSetting, SetSettingOutcome, Setter, SettingCaller, SettingChange,
-    SettingScope,
+    SettingMode, SettingScope,
 };
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
@@ -369,5 +370,35 @@ fn a_move_carries_seeded_rows_as_seeded_and_a_row_someone_set_as_theirs() {
         read["source"],
         source("carried", project(moved)),
         "the owner's row, carried, decides: {read}"
+    );
+}
+
+#[test]
+fn a_born_things_change_is_judged_on_its_whole_project_line() {
+    let fx = Fixture::open();
+    let root = fx.vault.root_project().expect("the vault's root project");
+    let parent = fx.new_project(None);
+    let child = fx.new_project(Some(parent));
+    fx.owner_sets_at(BORN, SettingScope::Project(parent), json!(50));
+    fx.owner_sets(SetSetting {
+        scope: SettingScope::Project(parent),
+        mode: SettingMode::Pin,
+        ..SetSetting::vault_value(BORN, json!(100))
+    });
+    fx.owner_sets_at(BORN, SettingScope::Project(child), json!(20));
+    let read = fx.get(BORN, &[child, parent, root]);
+    assert_eq!(
+        read["value"],
+        json!(20),
+        "the parent's pin releases what lies above it: {read}"
+    );
+
+    // The child's readers walk its whole line: 20 to 30 widens what they read.
+    let wider = fx.owner_sets_at(BORN, SettingScope::Project(child), json!(30));
+    let change = change_of(&fx, &wider);
+    assert_eq!(
+        change.direction,
+        Some(ChangeDirection::Looser),
+        "judged on the child, its parent and the root, not the child and the vault: {change:?}"
     );
 }
