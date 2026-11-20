@@ -396,8 +396,10 @@ def line_rules(code, text):
             rest = text[at + len(host) + 1:]
             while digits < len(rest) and rest[digits] in "0123456789":
                 digits += 1
-            # Rust's `parse::<u32>()`: an empty run or one above u32::MAX is no port.
-            if digits and 0 < int(rest[:digits]) <= 0xFFFFFFFF:
+            # Rust's `parse::<u32>()`: an empty run, zero, or a run above u32::MAX is no port. Leading
+            # zeros are dropped first, so a run of any length is read without int()'s digit limit.
+            significant = rest[:digits].lstrip("0")
+            if significant and len(significant) <= 10 and int(significant) <= 0xFFFFFFFF:
                 fixed_port = True
     if network:
         rules.append("network")
