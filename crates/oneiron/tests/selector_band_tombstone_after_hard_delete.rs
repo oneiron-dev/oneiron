@@ -1,27 +1,25 @@
-//! A selector narrowed to some facets or bands carries the hard delete of a
-//! row in them (SELECTOR-FACET-BAND-EXPORT-DROPS-BODYLESS-TOMBSTONES).
+//! A selector narrowed to some bands carries the hard delete of a row in
+//! them (SELECTOR-FACET-BAND-EXPORT-DROPS-BODYLESS-TOMBSTONES).
 //!
 //! A hard delete takes the row's body out of the vault's own window in the
 //! same commit, so a selector export keeps no row of it, and the delete
 //! travels only through the tombstone rule for rows it does not keep
 //! (`sync/selector/tombstones.rs`). Before this fix that rule carried nothing
-//! once the selector named a facet or a band, so a peer whose selector names
-//! facets or bands never learned of the delete and kept the deleted row.
-//! #9592 fixed only the world axis of the same rule
-//! (`tests/residence_tombstone_answer.rs`, whose world-selector fixture this
-//! file follows).
+//! once the selector named a band, so a peer whose selector names bands never
+//! learned of the delete and kept the deleted row. #9592 fixed only the world
+//! axis of the same rule (`tests/residence_tombstone_answer.rs`, whose
+//! world-selector fixture this file follows). The facet axis is a row of its
+//! own (SELECTOR-FACET-EXPORT-DROPS-BODYLESS-TOMBSTONES).
 //!
 //! A member P holds a live Member federation grant whose Scope admits every
-//! record. The owner keeps a CLAIM about P in the vault's default facet,
-//! packs and keeps the window, and hard-deletes the CLAIM. P's band-narrowed
-//! selector (the CLAIM's band) and facet-narrowed selector (the CLAIM's
-//! facet) then carry its tombstone; a selector narrowed to another band or
-//! another facet does not.
+//! record. The owner keeps a CLAIM about P, packs and keeps the window, and
+//! hard-deletes the CLAIM. P's selector narrowed to the CLAIM's band then
+//! carries its tombstone; a selector narrowed to another band does not.
 //!
 //! Each `FIXTURE:` assertion checks the setup, never the export rule.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
-//! --all-features --test selector_facet_band_tombstone_after_hard_delete`.
+//! --all-features --test selector_band_tombstone_after_hard_delete`.
 // `put_selector_test_federation_grant` exists only under `test-hooks`.
 #![cfg(all(oneiron_test_support, feature = "test-hooks"))]
 
@@ -83,15 +81,10 @@ struct Carried {
     own_band: bool,
     /// Narrowed to a band that does not hold the CLAIM.
     other_band: bool,
-    /// Narrowed to the CLAIM's facet.
-    own_facet: bool,
-    /// Narrowed to a facet that does not hold the CLAIM.
-    other_facet: bool,
 }
 
 /// Gives the member a live Member grant whose Scope admits every record,
-/// keeps a CLAIM about the member in the default facet in the vault's
-/// window, hard-deletes it, and exports the window that is left through each
+/// keeps a CLAIM about the member in the vault's window, hard-deletes it, and exports the window that is left through each
 /// of the member's selectors.
 fn exports_after_hard_delete() -> Carried {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -125,9 +118,6 @@ fn exports_after_hard_delete() -> Carried {
     put_selector_test_federation_grant(&vault, &grant_id, &grant, now)
         .expect("the member's federation grant");
 
-    let facet = vault
-        .default_facet()
-        .expect("FIXTURE: the vault's default facet");
     let claim = EntityId::now();
     let mut body = ClaimBody::new(
         "profile.name",
@@ -139,19 +129,9 @@ fn exports_after_hard_delete() -> Carried {
     )
     .expect("claim body");
     body.source = Some(ClaimSource::UserStated);
-    body.scope_facet = facet;
     vault
         .put_claim(&claim, &body, at(now), now)
         .expect("a record");
-    assert_eq!(
-        vault
-            .get_claim(&claim)
-            .expect("claim read")
-            .expect("FIXTURE: the CLAIM is stored")
-            .scope_facet,
-        facet,
-        "FIXTURE: the CLAIM sits in the default facet"
-    );
 
     let claim_band = selector_range_of(ENTITY_TYPE_CLAIM).expect("FIXTURE: a CLAIM has a band");
     let other_band = SelectorRange::Family(TypeByteFamily::Conversation);
@@ -159,17 +139,15 @@ fn exports_after_hard_delete() -> Carried {
         !other_band.includes(claim_band),
         "FIXTURE: the other band does not hold a CLAIM"
     );
-    let selector = |facets: Vec<EntityId>, bands: Vec<SelectorRange>| {
-        let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, facets, bands);
+    let selector = |bands: Vec<SelectorRange>| {
+        let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], bands);
         authorize_sync_selector(&vault, scope, &selector)
             .expect("FIXTURE: the member's selector is authorized");
         selector
     };
-    let open = selector(vec![], vec![]);
-    let own_band = selector(vec![], vec![claim_band]);
-    let other_band = selector(vec![], vec![other_band]);
-    let own_facet = selector(vec![facet], vec![]);
-    let other_facet = selector(vec![EntityId::now()], vec![]);
+    let open = selector(vec![]);
+    let own_band = selector(vec![claim_band]);
+    let other_band = selector(vec![other_band]);
 
     let key = WindowKey::from_timestamp(now);
     let packed = create_window_doc("selector", &key);
@@ -202,8 +180,6 @@ fn exports_after_hard_delete() -> Carried {
         open: carries(&open),
         own_band: carries(&own_band),
         other_band: carries(&other_band),
-        own_facet: carries(&own_facet),
-        other_facet: carries(&other_facet),
     }
 }
 
@@ -222,23 +198,5 @@ fn a_band_narrowed_members_window_carries_its_bands_hard_delete() {
     assert!(
         !carried.other_band,
         "LEAK: the member's window narrowed to another band carries the CLAIM's tombstone"
-    );
-}
-
-#[test]
-fn a_facet_narrowed_members_window_carries_its_facets_hard_delete() {
-    let carried = exports_after_hard_delete();
-    assert!(
-        carried.open,
-        "FIXTURE: the member's open window carries the CLAIM's tombstone"
-    );
-    assert!(
-        carried.own_facet,
-        "MISSED-DELETE: the member's window narrowed to the CLAIM's facet drops its tombstone, so \
-         the member keeps a row the owner deleted"
-    );
-    assert!(
-        !carried.other_facet,
-        "LEAK: the member's window narrowed to another facet carries the CLAIM's tombstone"
     );
 }
