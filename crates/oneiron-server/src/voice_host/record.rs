@@ -451,7 +451,7 @@ impl KeptTurn {
             &mut caller,
             json!({ "voice": {
                 "call": call.call_ref,
-                "speaker": PHONE_CALLER_SPEAKER,
+                "speaker_key": PHONE_CALLER_SPEAKER,
                 "speaker_label": ANOTHER_SPEAKER,
             } }),
         );
