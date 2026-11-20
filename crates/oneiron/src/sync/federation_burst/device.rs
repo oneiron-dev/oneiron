@@ -465,6 +465,30 @@ pub fn admit_device_residence_update(
     admit_device_update(vault, peer, key, update, carried, Some(admission))
 }
 
+/// The address of the batch `peer`'s window `update` to `key` is held as at
+/// its home ([`DeviceBurstWork::batch_ref`]), read before the update is
+/// admitted: `promoted` for one a residence socket sent to a window it
+/// promoted ([`admit_device_residence_update`]). The home claims the batch's
+/// landing by it before it admits the update, so its drain and a socket
+/// never land one batch at once (FIX DEVICE-BURST-ALLOW-DRAIN-OVERLAP).
+///
+/// # Errors
+/// A device whose lane does not encode.
+pub fn device_update_batch_ref(
+    peer: &DevicePeer,
+    key: &WindowKey,
+    update: &[u8],
+    promoted: bool,
+) -> Result<String> {
+    let kind = if promoted {
+        WorkKind::DeviceResidenceUpdate
+    } else {
+        WorkKind::DeviceUpdate
+    };
+    let (id, _) = DeferredWork::identity(BurstPeer::Device(peer), key, kind, update)?;
+    Ok(blake3::Hash::from(id).to_hex().to_string())
+}
+
 fn admit_device_update(
     vault: &Vault,
     peer: &DevicePeer,
@@ -495,8 +519,7 @@ fn admit_device_update(
         ),
     )?;
     let Some(work) = work else {
-        let (id, _) = DeferredWork::identity(BurstPeer::Device(peer), key, kind, update)?;
-        let batch_ref = blake3::Hash::from(id).to_hex().to_string();
+        let batch_ref = device_update_batch_ref(peer, key, update, admission.is_some())?;
         let state = vault
             .federation_burst_disposition(BurstPeer::Device(peer), &batch_ref)?
             .state;
