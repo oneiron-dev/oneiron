@@ -1732,6 +1732,88 @@ fn a_second_seat_s_cancelled_version_of_a_masked_write_in_flight_is_no_host_canc
 }
 
 #[test]
+fn a_second_seat_s_host_cancel_below_the_first_seat_s_write_in_flight_refunds_at_once() {
+    // Review round 2 of #10020: the owner's cancelled write never reaches
+    // the provider, so the first seat's row stays prepared, and its owner
+    // may stop that seat before it sends the write again. The host cancels
+    // the provider's live copy at its live SEQUENCE, below the staged one,
+    // which a provider storing the write keeps or raises: that copy is never
+    // the write's own. The second seat never settles the first seat's row,
+    // so its pull reads the host's cancel at once, before the start, and the
+    // deposit refunds whole.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let second = seat.install_second_seat(&fixture.vault, "seat:host-second");
+    let (booked, live, start) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"second-seat-host-cancel-below-write",
+        "pi_second_seat_host_cancel_below_write",
+    );
+    let host_cancel = SeatChange::upsert(&live, start, start + 30 * 60, live.sequence, true);
+
+    seat.write_unsent(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    second
+        .pull(
+            &fixture.vault,
+            std::slice::from_ref(&host_cancel),
+            NOW + 160,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_second_seat_host_cancel_below_write"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the host's cancel below the first seat's staged SEQUENCE refunds whole at once"
+    );
+}
+
+#[test]
+fn a_second_seat_s_host_cancel_under_another_write_marker_waits_for_no_proof() {
+    // Review round 2 of #10020: the owner's cancelled write never reaches
+    // the provider. The host cancels in a client over the live copy at the
+    // SEQUENCE the write staged, and the client keeps the marker of an
+    // earlier write. The replay is refused on that copy and its
+    // reconciliation read fails, so the first seat's row owes the proof of
+    // the stored copy, and its owner may stop that seat before its pull
+    // proves it. The copy carries a marker other than the one the write
+    // keeps on every call, so it is never the write's own: the second
+    // seat's pull reads it as the host's cancel, before the start, and the
+    // deposit refunds whole.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let second = seat.install_second_seat(&fixture.vault, "seat:host-second");
+    let (booked, live, _) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"second-seat-host-cancel-other-marker",
+        "pi_second_seat_host_cancel_other_marker",
+    );
+
+    seat.write_unsent(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    let staged = seat.staged_sequence(&fixture.vault, &booked.calendar.uid);
+    let host_cancel = seat.host_cancel_of_own_write(&live, staged);
+    seat.replay_refused_unread(&fixture.vault, booked.calendar.event_ref, NOW + 170);
+    second
+        .pull(
+            &fixture.vault,
+            std::slice::from_ref(&host_cancel),
+            NOW + 180,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_second_seat_host_cancel_other_marker"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the host's cancel under another write's marker refunds whole before any proof"
+    );
+}
+
+#[test]
 fn a_copy_whose_sync_answer_names_a_deleted_booking_s_uid_keeps_the_delete() {
     // Review round 2 of #9936: a sync answer carries the host's delete of a
     // booking written only to their seat beside a copy whose answer names
