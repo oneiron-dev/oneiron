@@ -191,7 +191,7 @@ impl EnrolledOwnerKeyKind {
     }
 
     /// The kind an enrollment row names.
-    fn of(enroll: &OwnerKeyEnroll) -> Self {
+    pub(super) fn of(enroll: &OwnerKeyEnroll) -> Self {
         if enroll.is_recovery_authority() {
             Self::RecoveryAuthority
         } else {

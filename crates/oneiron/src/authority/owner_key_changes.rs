@@ -70,11 +70,14 @@ pub struct OwnerKeyChange {
     /// The key: a device's or the recovery root's Ed25519 key, or a
     /// passkey's P-256 key (compressed SEC1).
     pub public_key: AuthorityKey,
-    /// The machine the key's enrolment names; for a passkey, the carrier
-    /// that served its ceremony.
+    /// The machine the change's own row names for the key: an enrolment's
+    /// or a confirmation's machine (a confirmation may name another machine
+    /// than the enrolment it confirms); for a removal, the machine of the
+    /// key's listed enrolment. For a passkey, the carrier that served its
+    /// ceremony.
     pub machine: EntityId,
-    /// What the key is, as its enrolment says; `None` for a passkey, which
-    /// is neither kind.
+    /// What the key is, as the same row says (a removal: as the key's listed
+    /// enrolment says); `None` for a passkey, which is neither kind.
     pub kind: Option<EnrolledOwnerKeyKind>,
     /// The key that signed the entry: an enrolment's predecessor, a
     /// confirmation's confirming key, a removal's proof.
@@ -169,9 +172,9 @@ struct ListedOwnerKey {
     /// Its listed enrolment: the smallest counted entry that enrols it and
     /// confirms no passkey's vouch for it.
     entry: AuthorityEntryHash,
-    /// The machine its enrolment names.
+    /// The machine its listed enrolment names.
     machine: EntityId,
-    /// What it is; `None` for a passkey.
+    /// What its listed enrolment names it as; `None` for a passkey.
     kind: Option<EnrolledOwnerKeyKind>,
     /// On the roster and not revoked.
     live: bool,
@@ -185,7 +188,8 @@ impl ListedOwnerKeys {
     /// confirms no such vouch ([`Self::confirms`]; `hosted` as it takes
     /// it): the enrolled-key rows take a confirmation's entry as an
     /// enrolment of its key too, and the list names that entry as the
-    /// confirmation it is.
+    /// confirmation it is. The listed machine and kind are that enrolment's
+    /// too, never a smaller confirmation's (REVIEW-9790 P1).
     fn of(
         enrolled: Vec<EnrolledOwnerKey>,
         passkeys: Vec<EnrolledOwnerPasskey>,
@@ -231,7 +235,8 @@ impl ListedOwnerKeys {
             })
             .collect();
         listed.passkey_vouched = passkey_vouched;
-        let mut enrolments: BTreeMap<AuthorityKey, AuthorityEntryHash> = BTreeMap::new();
+        let mut enrolments: BTreeMap<AuthorityKey, (AuthorityEntryHash, &OwnerKeyEnroll)> =
+            BTreeMap::new();
         for (hash, entry) in rows {
             let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op else {
                 continue;
@@ -239,13 +244,19 @@ impl ListedOwnerKeys {
             if fold.valid_entries.contains(hash)
                 && !listed.confirms(fold, hosted, &enroll.device.key, entry)
             {
-                let first = enrolments.entry(enroll.device.key.clone()).or_insert(*hash);
-                *first = (*first).min(*hash);
+                let first = enrolments
+                    .entry(enroll.device.key.clone())
+                    .or_insert((*hash, enroll));
+                if *hash < first.0 {
+                    *first = (*hash, enroll);
+                }
             }
         }
-        for (public_key, entry) in enrolments {
+        for (public_key, (entry, enroll)) in enrolments {
             if let Some(key) = listed.keys.get_mut(&public_key) {
                 key.entry = entry;
+                key.machine = enroll.machine;
+                key.kind = enrolment_kind(enroll);
             }
         }
         listed
@@ -458,15 +469,29 @@ fn owner_key_change(
         }
         _ => return None,
     };
+    // An enrolment or a confirmation names its own row's machine and kind; a
+    // removal names those of the key's listed enrolment.
+    let (machine, kind) = match &entry.op {
+        AuthorityOp::OwnerKeyEnroll(enroll) => (enroll.machine, enrolment_kind(enroll)),
+        _ => (key.machine, key.kind),
+    };
     Some(OwnerKeyChange {
         entry: hash,
         change,
         public_key: public_key.clone(),
-        machine: key.machine,
-        kind: key.kind,
+        machine,
+        kind,
         signed_by: entry.signer.public_key.clone(),
         at: entry.ts,
     })
+}
+
+/// What the enrolment `enroll` names its key as: its attestation kind for a
+/// device's Ed25519 key, `None` for a passkey.
+fn enrolment_kind(enroll: &OwnerKeyEnroll) -> Option<EnrolledOwnerKeyKind> {
+    enroll
+        .public_key()
+        .map(|_| EnrolledOwnerKeyKind::of(enroll))
 }
 
 /// Whether the uncounted `RevokeDevice` of `public_key` (listed as `key`) at
