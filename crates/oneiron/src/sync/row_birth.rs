@@ -304,8 +304,7 @@ fn carried_row_lands_in_txn(
         && entity_type != ENTITY_TYPE_DIAGNOSTIC
         && !crate::origin::lfs::is_lfs_chunk_blob(id, &carrier)
         && !crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, txn, id)?
-        && vault.store.use_restricted_in_txn(txn, id)?.is_none()
-        && !crate::sync::ingest::carrier_dropped_in_txn(&vault.store, txn, id, &carrier)?)
+        && vault.store.use_restricted_in_txn(txn, id)?.is_none())
 }
 
 /// Stamps the birth `doc` carries for `id` in `wtxn`, beside the row the same
