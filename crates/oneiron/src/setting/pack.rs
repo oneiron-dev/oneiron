@@ -339,43 +339,101 @@ pub(super) fn pack_head_act_in_txn(
     }
 }
 
-/// `spec`'s row in `pack`'s layer here, where this install's head of `pack` names the table
-/// `digest` (stage 7c-3b): a birth's copy that names a head of that table reads as this
-/// install's own row of the key, the record of what it accepted from that table, a held key's
-/// earlier value included. `None` where the door never ran for the pack here or its head names
-/// another table: the table is not proved here. `Some(None)` where the row is gone or does not
-/// decode.
+/// `spec`'s row in `pack`'s layer as a birth that names a head of the table `digest` reads it,
+/// where this install's head of `pack` names that table (stage 7c-3b): this install's own row of
+/// the key, the record of what it accepted from that table, a held key's earlier value included,
+/// before each owner's yes the birth did not see (stage 7c-3d; DESIGN 1.6: a later change of the
+/// default does not move a birth). The key's landings are walked newest first while the row is
+/// the one a landing wrote, as a pass puts them back ([`revert_landings_in_txn`]): a landing whose
+/// table (hex) `named` holds, the birth naming a yes to it, stops the walk; any other gives back
+/// the row it replaced. `None` where the door never ran for the pack here or its head names
+/// another table: the table is not proved here. `Some(None)` where the row reached is gone (a
+/// landing replaced no row) or does not decode.
+///
+/// # Errors
+///
+/// `named`'s errors; storage errors.
+pub(super) fn birth_pack_row_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    (pack, digest): (&str, &[u8; 32]),
+    spec: &SettingSpec,
+    mut named: impl FnMut(&str) -> Result<bool>,
+) -> Result<Option<Option<EncodedValue>>> {
+    let Some(head) = head_in_txn(dbs, txn, pack)?
+        .filter(|head| oneiron_hex::decode::<32>(&head.digest).is_some_and(|ours| ours == *digest))
+    else {
+        return Ok(None);
+    };
+    let table = table_of(spec);
+    let mut row = table.get_bytes(dbs, txn, &pack_row_key(spec.name, pack))?;
+    for landing in head
+        .landed
+        .iter()
+        .rev()
+        .filter(|landing| landing.key == spec.name)
+    {
+        if row.as_deref().map(row_digest).as_deref() != Some(landing.wrote.as_str())
+            || named(&landing.table)?
+        {
+            break;
+        }
+        row = landing
+            .prior
+            .as_ref()
+            .map(|prior| table.encode_value(prior))
+            .transpose()?;
+    }
+    Ok(Some(
+        row.and_then(|bytes| rmp_serde::from_slice::<StoredRow>(&bytes).ok())
+            .map(|row| row.value)
+            .filter(|value| spec.kind.decodes(value)),
+    ))
+}
+
+/// The tables (their digests) of the owner's yeses whose landings `spec`'s row in `pack`'s layer
+/// stands on here (stage 7c-3d), newest first: the key's landings walked as a reader walks them
+/// ([`birth_pack_row_in_txn`]), while the row is the one each wrote. What a birth names yeses to,
+/// beside the pack's head: each table it names a yes to stops a reader's walk there, so a birth
+/// that names an older table's yes still reads it where the newest table's yes no longer counts.
+/// Empty where no yes wrote the row here.
 ///
 /// # Errors
 ///
 /// Storage errors.
-pub(super) fn proved_pack_row_in_txn(
+pub(super) fn yes_landing_tables_in_txn(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
     pack: &str,
-    digest: &[u8; 32],
     spec: &SettingSpec,
-) -> Result<Option<Option<EncodedValue>>> {
-    let proved = head_in_txn(dbs, txn, pack)?
-        .and_then(|head| oneiron_hex::decode::<32>(&head.digest))
-        .is_some_and(|ours| ours == *digest);
-    if !proved {
-        return Ok(None);
+) -> Result<Vec<[u8; 32]>> {
+    let Some(head) = head_in_txn(dbs, txn, pack)? else {
+        return Ok(Vec::new());
+    };
+    let table = table_of(spec);
+    let mut row = table.get_bytes(dbs, txn, &pack_row_key(spec.name, pack))?;
+    let mut tables = Vec::new();
+    for landing in head
+        .landed
+        .iter()
+        .rev()
+        .filter(|landing| landing.key == spec.name)
+    {
+        if row.as_deref().map(row_digest).as_deref() != Some(landing.wrote.as_str()) {
+            break;
+        }
+        if let Some(digest) = oneiron_hex::decode::<32>(&landing.table)
+            && !tables.contains(&digest)
+        {
+            tables.push(digest);
+        }
+        row = landing
+            .prior
+            .as_ref()
+            .map(|prior| table.encode_value(prior))
+            .transpose()?;
     }
-    let key = RowKey {
-        name: spec.name.to_owned(),
-        item: None,
-        mode: SettingMode::Value,
-        scope: SettingScope::Pack(pack.to_owned()),
-    }
-    .encode();
-    Ok(Some(
-        table_of(spec)
-            .get_bytes(dbs, txn, &key)?
-            .and_then(|bytes| rmp_serde::from_slice::<StoredRow>(&bytes).ok())
-            .map(|row| row.value)
-            .filter(|value| spec.kind.decodes(value)),
-    ))
+    Ok(tables)
 }
 
 /// The read's default for `spec`: what the vault accepted from its packs. A key a head names

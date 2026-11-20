@@ -23,7 +23,7 @@
 use oneiron_authority::authority::{SettingCopyName, setting_slot_target};
 use oneiron_setting_contract::RowKey;
 
-use super::pack::{pack_head_act_in_txn, packs_holding_in_txn};
+use super::pack::{pack_head_act_in_txn, packs_holding_in_txn, yes_landing_tables_in_txn};
 use super::project::{project_target_in_txn, rooted_in_txn};
 use super::read::{Loaded, StoredRow, chain_of, in_force_in_txn, table_of};
 use super::{
@@ -211,8 +211,10 @@ fn append_birth_in_txn(
 }
 
 /// The head act of each pack whose layer holds `source`, as a birth names them
-/// ([`pack_head_act_in_txn`]). `None` where none holds it, or where one that holds it has no head
-/// act to name: a birth naming part of the layer would read its meet, looser than the layer's.
+/// ([`pack_head_act_in_txn`]), and beside each the owner's yeses whose landing gave that pack's
+/// row of `source` here ([`yes_names_in_txn`]; stage 7c-3d). `None` where none holds it, or where
+/// one that holds it has no head act to name: a birth naming part of the layer would read its
+/// meet, looser than the layer's.
 ///
 /// # Errors
 ///
@@ -227,12 +229,57 @@ fn pack_names_in_txn(
         let Some(act) = pack_head_act_in_txn(vault, txn, &pack)? else {
             return Ok(None);
         };
+        names.extend(yes_names_in_txn(vault, txn, source, &pack)?);
         names.push(SettingCopyName {
             slot: source_row(source, SettingScope::Pack(pack)),
             act,
         });
     }
     Ok((!names.is_empty()).then_some(names))
+}
+
+/// The owner's yeses a birth names beside `pack`'s head (stage 7c-3d; DESIGN 1.6: a copy names
+/// the acts that gave the thing its bound): for each table whose yes's landing `pack`'s row of
+/// `source` stands on here ([`yes_landing_tables_in_txn`]), each live yes to it that accepts
+/// `source`, by `pack`'s row of `source` under that table. Every such table, not the newest
+/// alone: a reader stops at the newest table the birth names a yes to that counts in full there,
+/// so where the newest one's yes no longer counts, it reads the older yes the birth saw. None
+/// where no yes wrote the row: a reader then puts back every yes's landing of the key, as one the
+/// birth did not see.
+///
+/// # Errors
+///
+/// A target that does not encode; storage errors.
+fn yes_names_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: &SettingSpec,
+    pack: &str,
+) -> Result<Vec<SettingCopyName>> {
+    let mut names = Vec::new();
+    for table in yes_landing_tables_in_txn(&vault.store, txn, pack, source)? {
+        let slot = RowKey {
+            name: source.name.to_owned(),
+            item: Some(oneiron_hex::encode(&table)),
+            mode: SettingMode::Value,
+            scope: SettingScope::Pack(pack.to_owned()),
+        };
+        names.extend(
+            vault
+                .setting_pack_accepts_in_txn(txn, pack, &table)?
+                .into_iter()
+                .filter(|(_, yes)| {
+                    yes.accept
+                        .as_ref()
+                        .is_some_and(|accept| accept.accepted.iter().any(|key| key == source.name))
+                })
+                .map(|(act, _)| SettingCopyName {
+                    slot: slot.clone(),
+                    act,
+                }),
+        );
+    }
+    Ok(names)
 }
 
 /// The item-less value row of `source` at `scope`: a row a birth names.
