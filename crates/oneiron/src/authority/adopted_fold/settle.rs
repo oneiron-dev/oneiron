@@ -268,6 +268,7 @@ pub(super) fn settle_tail(
                 .handoff_or_appointment_retired_keys
                 .clone(),
             closed_handoffs: image.safety.closed_handoffs.clone(),
+            crossed_revocations: image.safety.crossed_revocations.clone(),
             unsettled: image.safety.unsettled,
             counted_ancestor_pairs: counted_pairs,
             issues: issues.clone(),
@@ -512,6 +513,7 @@ fn image_fold_under(
                 .handoff_or_appointment_retired_keys
                 .clone(),
             closed_handoffs: image.safety.closed_handoffs.clone(),
+            crossed_revocations: image.safety.crossed_revocations.clone(),
             unsettled: image.safety.unsettled,
             counted_ancestor_pairs: image.safety.counted_pairs,
             issues: image.safety.issues.clone(),

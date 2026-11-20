@@ -220,6 +220,17 @@ impl Retirements {
             .collect()
     }
 
+    /// The revocations whose fences closed in a conflict: a closed fence of
+    /// another member holds a signer of each, or of a row below it, so the
+    /// fold refused it, and its own fence ended its key all the same.
+    pub(super) fn crossed_revocations(&self) -> BTreeSet<AuthorityEntryHash> {
+        self.fences
+            .iter()
+            .filter(|fence| fence.kind == FenceKind::Revocation && fence.conflict)
+            .map(|fence| fence.row)
+            .collect()
+    }
+
     /// The issue a row refused as `issue` carries: a handoff a counted
     /// appointment's fence excludes is sealed, not unsettled (PLAN v3 E4).
     fn sealed_issue(
