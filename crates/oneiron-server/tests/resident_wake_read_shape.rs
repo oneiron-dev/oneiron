@@ -26,7 +26,7 @@ mod fake_llm;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use fake_llm::{FakeLlm, Reply};
 use oneiron::agent_dispatch::{
@@ -54,13 +54,6 @@ const STAMP_CAP: Duration = Duration::from_secs(60);
 const REQUEST_CAP: Duration = Duration::from_secs(60);
 /// How often the run's rows and the fake's requests are read.
 const POLL: Duration = Duration::from_millis(20);
-
-fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("unix time")
-        .as_secs()
-}
 
 /// Code mode on, the Dreamer and the workflow pump off, and the type check
 /// off, as `resident_pump_claim_latency` runs it.
@@ -129,6 +122,7 @@ fn pin_explore_share(vault: &Vault, value: f64) {
 
 /// Polls until the run's attempt holds a read-shape stamp.
 async fn stamp_of(vault: &Vault, id: AttemptId) -> ReadShapeStamp {
+    // testkit-lint: allow(wall-clock) hang guard while the pump's own task claims, wakes and stamps the run
     let start = Instant::now();
     loop {
         if let Some(stamp) = vault.read_shape_stamp(id).expect("read the stamp") {
@@ -144,6 +138,7 @@ async fn stamp_of(vault: &Vault, id: AttemptId) -> ReadShapeStamp {
                 row.state
             );
         }
+        // testkit-lint: allow(sleep) poll interval: the pump and the run work on their own tasks
         tokio::time::sleep(POLL).await;
     }
 }
@@ -161,6 +156,7 @@ fn strings(value: &Value, out: &mut Vec<String>) {
 /// Polls until the fake has a request carrying the run's self brief, and
 /// answers that brief's text.
 async fn first_brief(model: &FakeLlm) -> String {
+    // testkit-lint: allow(wall-clock) hang guard while the woken run sends its first request
     let start = Instant::now();
     loop {
         for seen in model.seen() {
@@ -175,6 +171,7 @@ async fn first_brief(model: &FakeLlm) -> String {
             "the run sent no request carrying its self brief within {REQUEST_CAP:?}; the fake saw {} requests",
             model.seen().len()
         );
+        // testkit-lint: allow(sleep) poll interval: the pump and the run work on their own tasks
         tokio::time::sleep(POLL).await;
     }
 }
@@ -223,7 +220,7 @@ async fn wake_one_run(explore_share: f64) -> (ReadShapeStamp, Option<String>, St
                 parent_attempt: None,
                 dedupe_key: None,
                 run_id: Some("resident-wake-read-shape".to_owned()),
-                now: unix_now(),
+                now: vault.now_recorded_at(),
             },
             AgentSpawnContext::default().with_depth_remaining(1),
         )

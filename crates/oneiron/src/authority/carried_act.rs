@@ -261,13 +261,22 @@ impl Vault {
         }
         let now = self.instant_in_txn(txn)?.secs();
         let op = op(machine);
-        // A setting act lands through the gate that reads an owner key's
-        // proof whoever carried it (row CARRIER-OWNER-PROOF), so it keeps
-        // that pick; its door lends no write, and its join stays unproven.
-        // Every other carried act is proved as the owner's own write alone.
-        let proof = match &op {
-            AuthorityOp::PolicySettingSet(_) => self.owner_proof_signer(&fold),
-            _ => proof,
+        // The owner's setting act lands through the gate that reads an owner
+        // key's proof whoever carried it (row CARRIER-OWNER-PROOF), so it
+        // keeps that pick; its door lends no write, and its join stays
+        // unproven. It is a setting set, or his yes to a pack's defaults
+        // (stage 7c-3c). An engine statement (a copy, a pack door's head) is
+        // never his act: like every other carried act it is proved as the
+        // owner's own write alone.
+        let owners_setting_act = match &op {
+            AuthorityOp::PolicySettingSet(_) => true,
+            AuthorityOp::SettingPackHead(head) => head.accept.is_some(),
+            _ => false,
+        };
+        let proof = if owners_setting_act {
+            self.owner_proof_signer(&fold)
+        } else {
+            proof
         };
         let entry =
             sign_side_entry_with_owner_proof(&fold, &key, seq, parents, op, now, proof.as_ref())?;

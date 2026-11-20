@@ -1702,6 +1702,7 @@ fn a_held_staged_import_lands_at_most_once() {
                 settled = Some((status, body));
                 break;
             }
+            // testkit-lint: allow(sleep) polls the vault's own drain of the answered ask
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
         let (status, body) = settled.expect("the held import settles once answered");

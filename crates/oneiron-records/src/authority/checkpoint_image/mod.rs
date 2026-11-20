@@ -120,7 +120,10 @@ use serde::Serialize;
 /// live owner or admin key, or a key its parents do not hold) counts only with an owner key's
 /// proof, as a `human` bind does: the custodial root alone ends no person's binding (row
 /// HOSTED-OWNER-BIND-ROOT-REVOKE).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 56;
+/// 57: a passkey that a key in the host's custody enrolled signs its own first `human` binding to
+/// the owner that enrolment names, and the binding counts with no other key's proof; the image's
+/// fold names each such passkey's owners (row PASSKEY-SELF-BIND).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 57;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

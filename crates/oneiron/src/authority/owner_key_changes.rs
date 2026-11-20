@@ -1,8 +1,9 @@
 //! The owner's list of owner key changes (the owner's ruling AUTH-5, pass 27
 //! section 4.4): every enrolment, every confirmation and every removal of an
 //! enrolled owner key, in either shape (a device's or the recovery root's
-//! Ed25519 key, or a passkey), that this vault's log holds and its fold
-//! counts, newest first (row KEY-CHANGE-RECEIPT-EMPTY-NO-NOTICE).
+//! Ed25519 key, or a passkey), and every binding of an owner by their own
+//! passkey, that this vault's log holds and its fold counts, newest first
+//! (row KEY-CHANGE-RECEIPT-EMPTY-NO-NOTICE; row PASSKEY-SELF-BIND).
 //!
 //! This list is the notice of a key change. It writes no row of its own:
 //! each change is its authority entry, every owner device holds the log, and
@@ -66,6 +67,13 @@ pub enum OwnerKeyChangeKind {
     /// ([`AuthorityFold::crossed_revocations`]; Engine ANSWER 20 Nov 20:44,
     /// row OWNER-KEY-CHANGES-CROSSED-REMOVAL-BELOW-REFUSED-ROW = A).
     RemovedInConflict,
+    /// A passkey the host vouched for as an owner's bound that owner: it
+    /// signed their first `human` binding itself, so their owner verbs pass
+    /// ("your passkey confirmed you as this vault's owner"; the Oneiron lead
+    /// 21 Nov 05:4x, row PASSKEY-SELF-BIND). The host served the ceremony,
+    /// so every owner device lists it: a bind the owner did not make is a
+    /// "Not you?" as a key they did not enrol is.
+    BoundByPasskey,
 }
 
 /// One change of an enrolled owner key, as its authority entry says it.
@@ -97,7 +105,9 @@ pub struct OwnerKeyChange {
 impl Vault {
     /// Every change of an enrolled owner key, newest first: each counted
     /// enrolment, confirmation and removal of a key an enrolment names, a
-    /// passkey's included, from the rows this vault keeps (stored, or
+    /// passkey's included, and each counted binding an enrolled passkey
+    /// signed for its owner ([`OwnerKeyChangeKind::BoundByPasskey`]), from the
+    /// rows this vault keeps (stored, or
     /// carried by an adopted checkpoint image). A key enrolled on two
     /// branches lists its smallest enrolment entry, as
     /// [`Self::enrolled_owner_keys`] and [`Self::enrolled_owner_passkeys`]
@@ -302,10 +312,13 @@ impl ListedOwnerKeys {
 /// enrolment that stands for its key among `keys`, a counted enrolment of
 /// such a key that confirms a passkey's vouch for it
 /// ([`ListedOwnerKeys::confirms`]), a counted `RevokeDevice` of a key an
-/// enrolment names, or a `RevokeDevice` of such a key that ended it
-/// uncounted ([`ended_by_an_uncounted_removal`], signed by a key of the
-/// owner's; `hosted` is as [`AuthorityFold::proves_owner_acts`] takes it).
-/// Keys of either shape alike. None for any other entry.
+/// enrolment names, a `RevokeDevice` of such a key that ended it uncounted
+/// ([`ended_by_an_uncounted_removal`], signed by a key of the owner's;
+/// `hosted` is as [`AuthorityFold::proves_owner_acts`] takes it), or a
+/// counted `BindActor` of an enrolled passkey that the passkey signed itself,
+/// the one binding the fold counts with a passkey as its signer
+/// (`owner_key_enrollment::passkey_self_bind`). Keys of either shape alike.
+/// None for any other entry.
 fn owner_key_change(
     fold: &AuthorityFold,
     hosted: bool,
@@ -338,10 +351,18 @@ fn owner_key_change(
                 (change, revoked_key, key)
             }
         }
+        AuthorityOp::BindActor { authority_key, .. }
+            if counted
+                && matches!(authority_key, AuthorityKey::P256(_))
+                && entry.signer.public_key == *authority_key =>
+        {
+            let key = keys.keys.get(authority_key)?;
+            (OwnerKeyChangeKind::BoundByPasskey, authority_key, key)
+        }
         _ => return None,
     };
     // An enrolment or a confirmation names its own row's machine and kind; a
-    // removal names those of the key's listed enrolment.
+    // removal and a binding name those of the key's listed enrolment.
     let (machine, kind) = match &entry.op {
         AuthorityOp::OwnerKeyEnroll(enroll) => (enroll.machine, enrolment_kind(enroll)),
         _ => (key.machine, key.kind),

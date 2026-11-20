@@ -5,7 +5,10 @@
 //! facets selects a row by those stamps and the delete sweeps them out of the
 //! window (SELECTOR-FACET-EXPORT-DROPS-BODYLESS-TOMBSTONES). So do the
 //! worlds whose words it carried, because the delete takes the edges and
-//! sources the device-only check reads them by (REVIEW-10024).
+//! sources the device-only check reads them by (REVIEW-10024). So does every
+//! world a row that takes its worlds from live edges sat in, because the
+//! captured scope holds base reality alone of base and another world, and a
+//! grant that reads only that world held the live row there (REVIEW-10042).
 //!
 //! A capture never fails, delays or rolls back the delete it runs in: an error
 //! is logged, and the tombstone is then not exported to a narrower grant.
@@ -21,6 +24,7 @@ use crate::claim::RelationshipRead;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::federation::record_scope::note_world;
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::settings::CarriedWorlds;
 use crate::side_table::{self, HexId, Named, SideTable};
@@ -76,6 +80,18 @@ pub(crate) struct DeletedRecordScope {
     /// judged as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) carried_worlds: Option<CarriedWorlds>,
+    /// Every world a record whose kind takes its worlds from live edges (a
+    /// NOTE, an ASSET, a caption; [`note_world::takes_live_worlds`]) sat in,
+    /// base reality by its own id ([`note_world::live_worlds_in`]). The scope's
+    /// world axis is its one position ([`note_world::NoteWorlds::axis`]),
+    /// which keeps base reality alone of base and another world, so it cannot
+    /// say where a grant that reads only that other world held the live row
+    /// (REVIEW-10042). `None` for any other kind, for edges that did not read
+    /// (the scope's axis then says every world), and for a capture written
+    /// before the field existed, whose tombstone is judged by the scope as
+    /// before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) live_worlds: Option<BTreeSet<ScopeId>>,
 }
 
 /// One deleted record's captured scope. Key: hex32 (entity id).
@@ -195,28 +211,33 @@ fn capture_in_txn(
     let captured = match live {
         Some(raw) => {
             crate::federation::record_scope::scope_for_blob(store, txn, *id, &raw)?.map(|scope| {
+                let entity_type =
+                    EntityMetadataHeader::parse(&raw).map(|header| header.entity_type);
                 (
                     scope,
                     live_relationship_read(store, txn, id, &raw),
-                    EntityMetadataHeader::parse(&raw).map(|header| header.entity_type),
+                    entity_type,
                     live_facet_stamps(store, txn, id, &raw),
                     live_carried_worlds(store, txn, id),
+                    entity_type.and_then(|kind| live_worlds(store, txn, id, kind)),
                 )
             })
         }
         None => None,
     };
     let row = match (captured, held) {
-        (Some((scope, relationship_read, entity_type, facet_of, carried_worlds)), held) => {
-            DeletedRecordScope {
-                scope,
-                request: request.copied().or(held.and_then(|row| row.request)),
-                relationship_read: Some(relationship_read),
-                entity_type,
-                facet_of,
-                carried_worlds: Some(carried_worlds),
-            }
-        }
+        (
+            Some((scope, relationship_read, entity_type, facet_of, carried_worlds, live_worlds)),
+            held,
+        ) => DeletedRecordScope {
+            scope,
+            request: request.copied().or(held.and_then(|row| row.request)),
+            relationship_read: Some(relationship_read),
+            entity_type,
+            facet_of,
+            carried_worlds: Some(carried_worlds),
+            live_worlds,
+        },
         (None, Some(held)) => {
             if request.is_none() || request == held.request.as_ref() {
                 return Ok(());
@@ -228,6 +249,7 @@ fn capture_in_txn(
                 entity_type: held.entity_type,
                 facet_of: held.facet_of,
                 carried_worlds: held.carried_worlds,
+                live_worlds: held.live_worlds,
             }
         }
         (None, None) => return Ok(()),
@@ -317,6 +339,23 @@ fn live_carried_worlds(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Carried
             unknown: true,
         }
     })
+}
+
+/// Every world the live row `id` of `kind` sits in when its kind takes its
+/// worlds from live edges ([`note_world::note_worlds_of`]), base reality by
+/// its own id. `None` for any other kind, and where its edges did not read:
+/// the captured scope's world axis then says every world, which holds it as
+/// before.
+fn live_worlds(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    kind: u8,
+) -> Option<BTreeSet<ScopeId>> {
+    match note_world::note_worlds_of(store, txn, *id, kind)? {
+        note_world::NoteWorlds::In(worlds) => Some(worlds),
+        note_world::NoteWorlds::NoSingleWorld => None,
+    }
 }
 
 fn warn_uncaptured(id: &EntityId, error: &Error) {

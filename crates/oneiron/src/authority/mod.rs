@@ -467,8 +467,9 @@ pub use owner_key_changes::{OwnerKeyChange, OwnerKeyChangeKind};
 pub(crate) use owner_key_enrollment_door::ActivationPredecessor;
 pub use owner_key_enrollment_door::{
     EnrolledOwnerKey, EnrolledOwnerKeyKind, EnrolledOwnerPasskey, OwnerKeyBindingReceipt,
-    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, OwnerPasskeyEnrollment,
-    OwnerPasskeyEnrollmentReceipt, PreparedOwnerKeyBinding, PreparedOwnerKeyEnrollment, WaysBack,
+    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, OwnerPasskeyBindingReceipt,
+    OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt, PreparedOwnerKeyBinding,
+    PreparedOwnerKeyEnrollment, PreparedOwnerPasskeyBinding, WaysBack,
 };
 pub use owner_key_move_confirm::{
     OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED,
@@ -605,8 +606,8 @@ pub(crate) use pinned_root::{
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use policy_setting_choice::SettingFrontier;
 pub(crate) use policy_setting_choice::{
-    ChoiceCount, ChoiceCounts, PolicySettingAct, SettingSlotAct, SettingSlotFold, SettingSlotHead,
-    SettingSlotRow,
+    ChoiceCount, ChoiceCounts, NameCounts, PolicySettingAct, SettingSlotAct, SettingSlotFold,
+    SettingSlotHead, SettingSlotRow, SlotValue,
 };
 pub(crate) use principal_standing::{
     GIT_PUSH_PACT_STANDING_LAPSED, git_push_pact_standing_lapsed_in_txn,

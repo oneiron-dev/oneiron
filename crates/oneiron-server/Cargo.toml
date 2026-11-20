@@ -309,6 +309,9 @@ tokio = { version = "1", features = ["full"] }
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync"] }
 # The rolling tier enables test-support for the paid-leg TLS fake provider.
 oneiron-broker = { version = "0.1.0", path = "../oneiron-broker" }
+# The passkey binding routes test signs WebAuthn assertions with a software
+# P-256 key, as a browser's authenticator would.
+p256 = { workspace = true }
 
 # The runner seat doors (`vault.runners.seats.*`) root their owner on a `MemoryKeystore` too.
 [[test]]

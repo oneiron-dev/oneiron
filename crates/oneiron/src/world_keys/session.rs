@@ -49,6 +49,8 @@ pub(crate) struct CountersignStage {
 
 /// The vault handle's world-key state. Never persisted and never shared
 /// across vaults; the opened keys are wiped when the handle drops.
+/// The handle's reference to the shared process presence gate is the exception
+/// to per-vault ownership.
 #[derive(Default)]
 pub(crate) struct WorldKeySession {
     /// This install's this-device-only keystore. The host installs it after
@@ -70,6 +72,11 @@ pub(crate) struct WorldKeySession {
     /// handle's keystore (row OCS-OWNER-PIN). Cleared when another keystore
     /// is installed.
     pub(crate) device_pin: Mutex<Option<Arc<super::DevicePin>>>,
+    /// The process's gate for this device's own unlock prompt, when installed
+    /// by the host. Every vault handle shares the same gate, so one confirm
+    /// serves them all. Never persisted. A keystore swap does not clear it:
+    /// it belongs to the device, not to a keystore.
+    pub(crate) presence_gate: Mutex<Option<Arc<oneiron_keystore::PresenceGate>>>,
     /// The public half of this install's owner signing key as this handle
     /// opened it from under the device PIN, with the count of device PIN
     /// keys it opened under (row OCS-OWNER-PIN). Cleared with the device
