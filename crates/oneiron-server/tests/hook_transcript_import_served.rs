@@ -1209,6 +1209,31 @@ fn staged_uploads_keep_their_bounds() {
         StagedPart::Whole("ab".to_owned())
     );
 
+    // Another owner opening an id that is open opens an upload of its own
+    // (REVIEW-9963 round 2): no answer tells it the first is there.
+    let uploads = Uploads::starting_now();
+    uploads
+        .stage(start, owner, &part(30, 0, "a", false))
+        .expect("open");
+    assert_eq!(
+        uploads
+            .stage(start, other, &part(30, 0, "z", false))
+            .expect("another owner opens its own upload of that id"),
+        StagedPart::Open(1)
+    );
+    assert_eq!(
+        uploads
+            .stage(start, owner, &part(30, 1, "b", true))
+            .expect("the first owner lands its own"),
+        StagedPart::Whole("ab".to_owned())
+    );
+    assert_eq!(
+        uploads
+            .stage(start, other, &part(30, 1, "y", true))
+            .expect("and the other owner its own"),
+        StagedPart::Whole("zy".to_owned())
+    );
+
     // Text past the staged cap drops the upload.
     let uploads = Uploads::starting_now();
     let full = "x".repeat(HOOK_TRANSCRIPT_STAGED_MAX_BYTES);
