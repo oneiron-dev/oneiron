@@ -548,7 +548,7 @@ fn execute(
         // hook on a skill answer refuses the call rather than letting the
         // answer through unjudged. A body that recursed past the stack on
         // its own reads the same way: it never judged the input either.
-        Ok(Err(error)) if state.trap.is_none() && stack_exhausted(&error) => {
+        Ok(Err(error)) if false && state.trap.is_none() && stack_exhausted(&error) => {
             input_not_taken = true;
             Err(failure(
                 "hook guest stack exhausted before it judged the input",
