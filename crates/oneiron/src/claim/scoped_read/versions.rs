@@ -123,20 +123,23 @@ impl ScopedRead<'_> {
         // The key's own filter (B) and the candidates its own live Grants
         // add (A, FIX 7528): the search ranks both, and each candidate takes
         // the row gate, B first.
+        let txn = self.grant_read_txn()?;
         let super::search::SearchPlan {
             filter,
             candidates,
             policy,
-        } = self.search_plan(requested)?;
+        } = self.search_plan_in(&txn, requested)?;
         if candidates.deny_all {
             return Ok(RevisionedHits {
                 vector_refinement: None,
                 embedding_matches: Default::default(),
                 hits: Vec::new(),
                 revisions: Default::default(),
-                receipt: self.receipt_for(requested, &policy, &candidates, 0),
+                receipt: self.receipt_in(&txn, requested, &policy, &candidates, 0, None),
             });
         }
+        // The search opens its own snapshots: LMDB allows one per thread.
+        drop(txn);
         let excluded = self.request_exclusions(&policy, requested)?;
         let plan_admits = self.plan_admits(&filter, &policy, &excluded, requested);
         let admitted =
@@ -221,20 +224,23 @@ impl ScopedRead<'_> {
         // The key's own filter (B) and the candidates its own live Grants
         // add (A, FIX 7528): the search ranks both, and each candidate takes
         // the row gate, B first.
+        let txn = self.grant_read_txn()?;
         let super::search::SearchPlan {
             filter,
             candidates,
             policy,
-        } = self.search_plan(requested)?;
+        } = self.search_plan_in(&txn, requested)?;
         if candidates.deny_all {
             return Ok(RevisionedHits {
                 vector_refinement: None,
                 embedding_matches: Default::default(),
                 hits: Vec::new(),
                 revisions: Default::default(),
-                receipt: self.receipt_for(requested, &policy, &candidates, 0),
+                receipt: self.receipt_in(&txn, requested, &policy, &candidates, 0, None),
             });
         }
+        // The search opens its own snapshots: LMDB allows one per thread.
+        drop(txn);
         let excluded = self.request_exclusions(&policy, requested)?;
         let plan_admits = self.plan_admits(&filter, &policy, &excluded, requested);
         let admitted =

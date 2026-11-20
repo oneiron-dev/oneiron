@@ -95,6 +95,7 @@ impl<'v> ScopedRead<'v> {
         lane.records_cover = self.records_cover.clone();
         lane.judged_at = self.judged_at;
         lane.read_filter.clone_from(&self.read_filter);
+        lane.receipts_include_live_grants = self.receipts_include_live_grants;
         Ok(lane)
     }
 }

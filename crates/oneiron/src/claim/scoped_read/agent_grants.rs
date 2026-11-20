@@ -119,6 +119,19 @@ impl HeldGrants {
     }
 }
 
+/// What a receipt reports over a key's own floor and its live Grants
+/// ([`ScopedRead::live_grant_receipt_scope_in`]).
+pub(super) struct LiveGrantReceiptScope {
+    /// The key's own floor and each live Grant's floor, as one envelope.
+    pub(super) ceiling: crate::gate::RetrievalPolicyFloor,
+    /// The read's applied filter joined with each live Grant's filter under
+    /// the read's request.
+    pub(super) applied: ResolvedRetrievalFilter,
+    /// Whether the key's own floor and every live Grant have a static
+    /// boundary (the `grant_scope` hint).
+    pub(super) statically_bounded: bool,
+}
+
 impl ScopedRead<'_> {
     /// A for the row `raw` of `id`, tried only once B refused it: whether one
     /// of the reader's own live Grants admits it alone. `filter` is the one B
@@ -148,10 +161,7 @@ impl ScopedRead<'_> {
             AskedFilter::Unknown => Some(as_request(filter)),
         };
         let grants = authority.grants().of(reader, || {
-            reader_grants_in(self.vault, rtxn, reader).unwrap_or_else(|error| {
-                warn_grant_errors(1, &[], Some(error.kind()));
-                Vec::new()
-            })
+            reader_grants_or_empty_in(self.vault, rtxn, reader)
         });
         for (grant, scope) in &*grants {
             match self.own_row_under_grant_in(
@@ -186,19 +196,36 @@ impl ScopedRead<'_> {
         filter: &ResolvedRetrievalFilter,
         requested: Option<&RetrievalFilter>,
     ) -> ResolvedRetrievalFilter {
-        let Some(reader) = self.grant_reader() else {
-            return filter.clone();
-        };
+        match self.live_read_grants_in(rtxn) {
+            Some(grants) => self.candidates_under_grants(policy, filter, requested, &grants),
+            None => filter.clone(),
+        }
+    }
+
+    /// The live Grants A may stand on for this key, each with its read
+    /// Scope, when A may stand for it ([`Self::grant_reader`]); `None` when
+    /// A never stands for it. A lookup that fails adds no Grant and is
+    /// counted, as A counts it.
+    fn live_read_grants_in(&self, rtxn: &heed::RoTxn<'_>) -> Option<Vec<(EntityId, Scope)>> {
+        let reader = self.grant_reader()?;
+        Some(reader_grants_or_empty_in(self.vault, rtxn, reader))
+    }
+
+    /// `filter` joined with the rows each of `grants` reads alone under
+    /// `requested`, as one envelope ([`Self::candidate_filter_in`]).
+    fn candidates_under_grants(
+        &self,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        requested: Option<&RetrievalFilter>,
+        grants: &[(EntityId, Scope)],
+    ) -> ResolvedRetrievalFilter {
         // Each Grant reads under what the read asked, its bound caller
         // filter among it (FIX 3977).
         let requested = self.asked_request(requested);
         let requested = requested.as_deref();
-        let grants = reader_grants_in(self.vault, rtxn, reader).unwrap_or_else(|error| {
-            warn_grant_errors(1, &[], Some(error.kind()));
-            Vec::new()
-        });
         let mut candidates = filter.clone();
-        for (grant, scope) in &grants {
+        for (grant, scope) in grants {
             let floor =
                 policy.retrieval_floor_for_actor_with_scope(Some(&self.actor_key), Some(scope));
             match crate::gate::narrow_retrieval_filter(&floor, requested) {
@@ -210,6 +237,58 @@ impl ScopedRead<'_> {
             }
         }
         candidates
+    }
+
+    /// The scope a receipt of a lane that reports its live Grants
+    /// ([`ScopedRead::with_live_grant_receipts`]) states, in the serving
+    /// snapshot `rtxn` (FIX GRANT-READ-NARROWING-SAYS-DENY-ALL): the key's
+    /// own floor and each of its own live Grants' floors as its ceiling, and
+    /// `applied` joined with what each live Grant reads alone under
+    /// `requested`, as the search candidates join them (FIX 7528). `None` on
+    /// any other lane and for a key A never stands for. It only reports:
+    /// every row took the row gate, B first, then each Grant alone.
+    ///
+    /// With `held`, the Grants are the ones the row gate held in this
+    /// snapshot (loaded here, and held, when no row asked yet), so the
+    /// receipt names the Grants that judged its rows even when one lapsed
+    /// on the running clock since (review round 1 of #9775).
+    pub(super) fn live_grant_receipt_scope_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        applied: &ResolvedRetrievalFilter,
+        requested: Option<&RetrievalFilter>,
+        held: Option<&HeldAuthority>,
+    ) -> Option<LiveGrantReceiptScope> {
+        if !self.receipts_include_live_grants {
+            return None;
+        }
+        let reader = self.grant_reader()?;
+        let load = || reader_grants_or_empty_in(self.vault, rtxn, reader);
+        let grants: ReaderGrants = match held {
+            Some(held) => held.grants().of(reader, load),
+            None => load().into(),
+        };
+        let mut ceiling = policy.retrieval_floor_for_actor(Some(&self.actor_key));
+        // A static boundary holds when the key's own floor has one and so
+        // does each live Grant, each judged whole: by its own Scope, or by
+        // the policy rows that still cap a read carrying it (gate/grants.rs
+        // applies a matching non-house row to an explicit Scope too).
+        let mut statically_bounded = ceiling
+            .has_grant_scope_bound(self.actor_key.authority_scope())
+            || policy.scoped_read_grants_all_bounded(&self.actor_key);
+        for (_, scope) in grants.iter() {
+            let floor =
+                policy.retrieval_floor_for_actor_with_scope(Some(&self.actor_key), Some(scope));
+            statically_bounded &= floor.has_grant_scope_bound(Some(scope))
+                || policy.scoped_read_grants_all_bounded_with_scope(&self.actor_key, Some(scope));
+            ceiling = ceiling.alternative_envelope(&floor);
+        }
+        Some(LiveGrantReceiptScope {
+            ceiling,
+            applied: self.candidates_under_grants(policy, applied, requested, &grants),
+            statically_bounded,
+        })
     }
 
     /// The reader A may stand for ([`ScopedReadActorKey::grant_reader`]).
@@ -400,6 +479,19 @@ fn reader_grants_in(
             )
         })
         .collect())
+}
+
+/// [`reader_grants_in`], with a lookup that fails read as no Grant (an empty
+/// list) and counted, as A counts it.
+fn reader_grants_or_empty_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    reader: EntityId,
+) -> Vec<(EntityId, Scope)> {
+    reader_grants_in(vault, txn, reader).unwrap_or_else(|error| {
+        warn_grant_errors(1, &[], Some(error.kind()));
+        Vec::new()
+    })
 }
 
 /// `filter` as a request: met with a floor, it narrows that floor to what

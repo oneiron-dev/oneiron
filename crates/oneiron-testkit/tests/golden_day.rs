@@ -274,6 +274,63 @@ fn the_golden_day_lands_its_claims_ends_the_agents_reads_at_the_revoke_and_match
     );
 }
 
+/// Whether the receipt list `list` names `entry`.
+fn lists(list: &Value, entry: &str) -> bool {
+    list.as_array()
+        .is_some_and(|entries| entries.iter().any(|named| named == entry))
+}
+
+/// A read the agent's live Grant admitted reports that Grant's reach in its
+/// receipt, not the agent key's own floor, which reads nothing: the Grant is
+/// every world, facet, band, audience and sensitivity, so each scope is the
+/// full floor and nothing is denied. After the revoke the key's own floor is
+/// all the agent reads under, and the receipt says so (FIX-LIST
+/// GRANT-READ-NARROWING-SAYS-DENY-ALL).
+#[test]
+fn the_granted_agents_read_receipts_report_its_grant_and_deny_all_after_the_revoke() {
+    let (run, _) = run_day("receipts");
+    for door in ["recall", "search", "claims", "get"] {
+        let live = format!("agent-{door}");
+        let answer = run
+            .answer(&live)
+            .unwrap_or_else(|| panic!("{live}: {:?}", run.refusal(&live)));
+        let narrowing = &answer["narrowing"];
+        for scope in ["requested", "actor_ceiling", "applied"] {
+            assert_eq!(
+                narrowing[scope]["deny_all"], false,
+                "{live}: the {scope} scope denies all under the live Grant: {narrowing:#}"
+            );
+            assert_eq!(
+                narrowing[scope]["max_sensitivity_band"], 3,
+                "{live}: the {scope} scope is not the Grant's band: {narrowing:#}"
+            );
+        }
+        for list in ["narrowed_axes", "replan_hint"] {
+            for entry in ["deny_all", "grant_scope"] {
+                assert!(
+                    !lists(&narrowing[list], entry),
+                    "{live}: {list} names {entry} under the live Grant: {narrowing:#}"
+                );
+            }
+        }
+        let after = format!("agent-after-revoke-{door}");
+        let answer = run
+            .answer(&after)
+            .unwrap_or_else(|| panic!("{after}: {:?}", run.refusal(&after)));
+        let narrowing = &answer["narrowing"];
+        for scope in ["actor_ceiling", "applied"] {
+            assert_eq!(
+                narrowing[scope]["deny_all"], true,
+                "{after}: the {scope} scope reads after the revoke: {narrowing:#}"
+            );
+        }
+        assert!(
+            lists(&narrowing["replan_hint"], "grant_scope"),
+            "{after}: the revoked read names no grant boundary: {narrowing:#}"
+        );
+    }
+}
+
 #[test]
 fn a_trace_key_the_manifest_does_not_classify_fails_the_normalisation_with_its_path() {
     let trace = json!({"steps": [{"step": "witness", "golden_day_unclassified": 1}]});
