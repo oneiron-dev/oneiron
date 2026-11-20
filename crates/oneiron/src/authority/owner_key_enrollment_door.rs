@@ -1524,6 +1524,15 @@ impl Vault {
     /// enrolment refuses on a Hosted vault), so there the move refuses until
     /// a device can confirm it (FIX HOSTED-OWNER-MOVE-TWO-PHASE).
     ///
+    /// A hosted fold counts a revoke of a person's binding only with an
+    /// owner key's proof too (row HOSTED-OWNER-BIND-ROOT-REVOKE), so each
+    /// `RevokeActor` carries the same cosign where this install holds such
+    /// a key, before the proof key's own `RevokeDevice`. Where it holds
+    /// none, the root's revoke counts only where the fold takes the root as
+    /// the owner's (a self-host root folded as hosted), and the move
+    /// otherwise refuses with the uncounted entry: the device-confirmed move
+    /// signs no `RevokeActor` (row HOSTED-MOVE-RESIDUAL-ACTOR-REVOKE).
+    ///
     /// # Errors
     /// An `issuer` that is not this vault's live host root, as the log
     /// refuses it; [`RecordError::OwnerKeyMoveRefused`], before this writes
@@ -1539,42 +1548,47 @@ impl Vault {
     ) -> Result<()> {
         let root = issuer.public_key();
         let closure = self.owner_authority_closure_in_txn(txn, person)?;
-        let mut keys: Vec<AuthorityKey> = closure
+        let keys: Vec<AuthorityKey> = closure
             .keys
             .into_iter()
             .filter(|key| *key != root)
             .collect();
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let hosted = self.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
+        // Under the Hosted posture no host root this install holds is
+        // offered as the owner's proof, a self-host root a move carried
+        // here included (HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A).
+        let offers = fold.offers_owner_proof(&root, issuer.is_host_root(), hosted);
+        let proof = if offers {
+            None
+        } else {
+            self.owner_proof_signer(&fold)
+        };
         if !keys.is_empty() {
-            let fold = self.authority_view_readonly_in_txn(txn)?;
             super::slip_vault::require_host(&fold, issuer)?;
-            let hosted = self.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
-            // Under the Hosted posture no host root this install holds is
-            // offered as the owner's proof, a self-host root a move carried
-            // here included (HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A).
-            let proof =
-                if fold.offers_owner_proof(&issuer.public_key(), issuer.is_host_root(), hosted) {
-                    None
-                } else {
-                    let proof = self.owner_proof_signer(&fold).ok_or(Error::Record(
-                        RecordError::OwnerKeyMoveRefused {
-                            member: person,
-                            step: OwnerKeyMoveStep::Unavailable,
-                            act: None,
-                        },
-                    ))?;
-                    let proof_key = proof.key();
-                    keys.sort_by_key(|key| *key == proof_key);
-                    Some(proof)
-                };
-            for revoked_key in keys {
-                let signer = match &proof {
-                    Some(proof) => EntrySigner::HostWithOwnerProof(issuer, proof),
-                    None => EntrySigner::Host(issuer),
-                };
-                self.append_revoke_device_in_txn(txn, signer, revoked_key)?;
+            if !offers && proof.is_none() {
+                return Err(Error::Record(RecordError::OwnerKeyMoveRefused {
+                    member: person,
+                    step: OwnerKeyMoveStep::Unavailable,
+                    act: None,
+                }));
             }
         }
+        // A proof key the move ends ends last, after it proved the other
+        // revokes and every binding's.
+        let proof_key = proof.as_ref().map(OwnerProofSigner::key);
+        let (last, first): (Vec<AuthorityKey>, Vec<AuthorityKey>) = keys
+            .into_iter()
+            .partition(|key| proof_key.as_ref() == Some(key));
+        let signer = || match &proof {
+            Some(proof) => EntrySigner::HostWithOwnerProof(issuer, proof),
+            None => EntrySigner::Host(issuer),
+        };
+        for revoked_key in first {
+            self.append_revoke_device_in_txn(txn, signer(), revoked_key)?;
+        }
         let fold = self.authority_view_readonly_in_txn(txn)?;
+        // A binding on the proof key the move ends ends with its revoke.
         let bindings: Vec<(AuthorityKey, u64)> = fold
             .actor_bindings
             .iter()
@@ -1582,18 +1596,24 @@ impl Vault {
                 binding.status == ActorBindingStatus::Active
                     && (binding.actor_ref == person || closure.signed_bindings.contains(*key))
                     && binding.actor_class == ACTOR_CLASS_HUMAN
+                    && !last.contains(*key)
             })
             .map(|(key, binding)| (key.clone(), binding.epoch))
             .collect();
         for (authority_key, epoch) in bindings {
-            self.append_slip_op_in_txn(
-                txn,
-                issuer,
-                AuthorityOp::RevokeActor {
-                    authority_key,
-                    epoch,
-                },
-            )?;
+            let op = AuthorityOp::RevokeActor {
+                authority_key,
+                epoch,
+            };
+            match &proof {
+                Some(proof) => {
+                    self.append_hashed_slip_op_with_owner_proof_in_txn(txn, issuer, op, proof)?;
+                }
+                None => self.append_slip_op_in_txn(txn, issuer, op)?,
+            }
+        }
+        for revoked_key in last {
+            self.append_revoke_device_in_txn(txn, signer(), revoked_key)?;
         }
         Ok(())
     }
