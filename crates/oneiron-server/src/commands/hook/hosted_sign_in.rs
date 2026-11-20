@@ -22,6 +22,13 @@
 //! (lead rulings CONTINUE-PUSH-GIT-TIER = C, Sat 21 Nov 05:4x, and
 //! CONTINUE-STEP-UP-MCP-WRITE = A, 06:1x). The recall sign-in stays `read`
 //! at `/mcp` ([`super::hosted_continue_sign_in`]).
+//!
+//! The hand-over sign-in ([`SignInAsk::HandOver`]) runs it for the vault's
+//! `/mcp` alone at `full`, as the same client, naming the purpose
+//! `session_hand_over`, so the owner's ask says it asks to land this
+//! machine's coding sessions in his hosted vault as each ends; only the
+//! hooks' hand-over reads it (HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER = B, lead
+//! 07:0x; [`super::hand_over_queue`]).
 
 use std::io::{Read as _, Write as _};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
@@ -32,11 +39,14 @@ use base64::Engine as _;
 use rand_core::{OsRng, RngCore as _};
 use serde::Deserialize;
 
+use super::hosted_selection::{self, HostedAuthMode, HostedVault};
 use crate::api::{
     AUTHORIZE_PATH, PROTECTED_RESOURCE_GIT_METADATA_PATH, PROTECTED_RESOURCE_MCP_METADATA_PATH,
-    REGISTER_PATH, REVOKE_PATH, TOKEN_PATH,
+    PURPOSE_PARAMETER, REGISTER_PATH, REVOKE_PATH, SignInPurpose, TOKEN_PATH,
 };
-use crate::commands::oauth_sign_in::{self, MAX_ANSWER_BYTES, OAuthSignIn, SignInParty};
+use crate::commands::oauth_sign_in::{
+    self, MAX_ANSWER_BYTES, OAuthSession, OAuthSignIn, SignInParty,
+};
 
 /// Where the browser comes back to on the loopback.
 const CALLBACK_PATH: &str = "/oauth/callback";
@@ -44,7 +54,9 @@ const CALLBACK_PATH: &str = "/oauth/callback";
 const RECALL_SCOPE: &str = "read";
 /// The tier the continue step-up asks for: the import and the start are
 /// Write rows, and every receive-pack needs `core:write`.
-pub(super) const CONTINUE_SCOPE: &str = "full";
+const CONTINUE_SCOPE: &str = "full";
+/// The tier the hand-over sign-in asks for: the import is a Write row.
+const HAND_OVER_SCOPE: &str = "full";
 /// The name the owner's ask and consent registry show for the client.
 const CLIENT_NAME: &str = "oneiron hosted login";
 /// The most of a callback request read: its request line and headers.
@@ -77,15 +89,19 @@ pub(super) enum SignInAsk<'a> {
     /// The continue step-up: the client `client_id` (the recall sign-in's),
     /// the `/mcp` and `/git` resources, the `full` tier.
     Continue { client_id: &'a str },
+    /// The hand-over sign-in: the client `client_id` (the recall sign-in's),
+    /// the `/mcp` resource alone, the `full` tier, the purpose
+    /// [`SignInPurpose::SessionHandOver`].
+    HandOver { client_id: &'a str },
 }
 
-impl SignInAsk<'_> {
+impl<'a> SignInAsk<'a> {
     /// The paths of the protected-resource documents of the resources
     /// asked, in the order the request names them: `/mcp` first, whose
     /// document names the issuer.
     const fn metadata_paths(self) -> &'static [&'static str] {
         match self {
-            Self::Recall => &[PROTECTED_RESOURCE_MCP_METADATA_PATH],
+            Self::Recall | Self::HandOver { .. } => &[PROTECTED_RESOURCE_MCP_METADATA_PATH],
             Self::Continue { .. } => &[
                 PROTECTED_RESOURCE_MCP_METADATA_PATH,
                 PROTECTED_RESOURCE_GIT_METADATA_PATH,
@@ -98,6 +114,25 @@ impl SignInAsk<'_> {
         match self {
             Self::Recall => RECALL_SCOPE,
             Self::Continue { .. } => CONTINUE_SCOPE,
+            Self::HandOver { .. } => HAND_OVER_SCOPE,
+        }
+    }
+
+    /// The purpose the request names, when it names one: the vault then
+    /// says what the sign-in asks to do in its own words.
+    const fn purpose(self) -> Option<SignInPurpose> {
+        match self {
+            Self::Recall | Self::Continue { .. } => None,
+            Self::HandOver { .. } => Some(SignInPurpose::SessionHandOver),
+        }
+    }
+
+    /// The client a step-up signs in as: the recall sign-in's. `None` for
+    /// the recall sign-in, which registers its own.
+    const fn client_id(self) -> Option<&'a str> {
+        match self {
+            Self::Recall => None,
+            Self::Continue { client_id } | Self::HandOver { client_id } => Some(client_id),
         }
     }
 
@@ -106,6 +141,7 @@ impl SignInAsk<'_> {
         match self {
             Self::Recall => "sign in to",
             Self::Continue { .. } => "let `oneiron continue --cloud` move this session to",
+            Self::HandOver { .. } => "let this machine's session ends land their logs in",
         }
     }
 }
@@ -152,9 +188,9 @@ pub(super) fn sign_in(
     );
     // A loopback redirect matches the client's on any port (RFC 8252 §7.3),
     // so the step-up's client is the recall sign-in's own.
-    let client_id = match ask {
-        SignInAsk::Recall => runtime.block_on(register(&client, origin, &redirect_uri))?,
-        SignInAsk::Continue { client_id } => client_id.to_owned(),
+    let client_id = match ask.client_id() {
+        Some(client_id) => client_id.to_owned(),
+        None => runtime.block_on(register(&client, origin, &redirect_uri))?,
     };
     let verifier = random_text(32);
     let state = random_text(16);
@@ -170,6 +206,11 @@ pub(super) fn sign_in(
         .append_pair("code_challenge_method", "S256")
         .append_pair("state", &state)
         .append_pair("scope", ask.scope());
+    if let Some(purpose) = ask.purpose() {
+        authorize
+            .query_pairs_mut()
+            .append_pair(PURPOSE_PARAMETER, purpose.name());
+    }
     for document in &documents {
         authorize
             .query_pairs_mut()
@@ -222,6 +263,129 @@ pub(super) fn take_place(staged: &Path, token_file: &Path) -> anyhow::Result<()>
         revoke(&replaced);
     }
     Ok(())
+}
+
+/// A step-up of an OAuth selection's recall sign-in: a second sign-in as
+/// the same client ([`SignInAsk::client_id`]) for more than recall, kept in
+/// a file of its own beside the recall one ([`StepUp::file`]), which one
+/// command alone reads.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum StepUp {
+    /// `oneiron continue --cloud`'s ([`SignInAsk::Continue`]).
+    Continue,
+    /// The hooks' hand-over's ([`SignInAsk::HandOver`]).
+    HandOver,
+}
+
+impl StepUp {
+    /// The ask it makes as the client `client_id`.
+    const fn ask(self, client_id: &str) -> SignInAsk<'_> {
+        match self {
+            Self::Continue => SignInAsk::Continue { client_id },
+            Self::HandOver => SignInAsk::HandOver { client_id },
+        }
+    }
+
+    /// The file its sign-in for `origin` is kept in, beside the recall one.
+    pub(super) fn file(self, origin: &str) -> Option<PathBuf> {
+        match self {
+            Self::Continue => hosted_selection::oauth_continue_sign_in_file(origin),
+            Self::HandOver => hosted_selection::oauth_hand_over_sign_in_file(origin),
+        }
+    }
+
+    /// The tier it asks for.
+    const fn scope(self) -> &'static str {
+        match self {
+            Self::Continue => CONTINUE_SCOPE,
+            Self::HandOver => HAND_OVER_SCOPE,
+        }
+    }
+
+    /// What it lets happen, as a refusal names it.
+    const fn what(self) -> &'static str {
+        match self {
+            Self::Continue => "moving a session",
+            Self::HandOver => "landing a session's log at its end",
+        }
+    }
+
+    /// Its sign-in kept for `vault`, read and never refreshed: the file,
+    /// when it reads, holds the tier the step-up asks and was made at the
+    /// vault. The bridge that sends with it refreshes it when due, within
+    /// its own deadline. `None` when there is none.
+    pub(super) fn held(self, vault: &HostedVault) -> Option<PathBuf> {
+        let file = self.file(&vault.origin)?;
+        let held = OAuthSignIn::read(&file).ok()?;
+        let mcp = reqwest::Url::parse(&format!("{}/mcp", vault.origin)).ok()?;
+        (held.scope == self.scope() && held.made_at(&file, &mcp).is_ok()).then_some(file)
+    }
+
+    /// Its sign-in that stands for `vault`: one [`StepUp::held`] that
+    /// yields a bearer at `/mcp` (refreshed when due). `None` when there is
+    /// none, or it no longer refreshes. Runs on the blocking pool of the
+    /// command's runtime.
+    pub(super) fn standing(self, vault: &HostedVault) -> Option<PathBuf> {
+        let file = self.held(vault)?;
+        session(&file, &vault.origin, "/mcp")
+            .is_ok_and(|open| open.bearer().is_ok())
+            .then_some(file)
+    }
+
+    /// Runs the step-up for the OAuth selection `vault`, waiting up to
+    /// `timeout` for the owner's answer, and keeps the sign-in it makes in
+    /// its file in place of any earlier one, which is revoked. Refused for a
+    /// selection signed in another way, and when the owner allowed a tier
+    /// other than the one asked: that sign-in is signed out again and
+    /// nothing is kept.
+    pub(super) fn run(self, vault: &HostedVault, timeout: Duration) -> anyhow::Result<PathBuf> {
+        anyhow::ensure!(
+            vault.auth_mode == HostedAuthMode::OAuth,
+            "this step-up is an OAuth sign-in's, and {} is signed in another way",
+            vault.origin
+        );
+        let recall = OAuthSignIn::read(&vault.credential_file)?;
+        let file = self.file(&vault.origin).ok_or_else(|| {
+            anyhow::anyhow!("there is no per-user oneiron folder (HOME is not set)")
+        })?;
+        hosted_selection::create_user_dir_for(&file)?;
+        let staged = staged_file(&file);
+        sign_in(&vault.origin, &staged, timeout, self.ask(&recall.client_id))?;
+        let made = OAuthSignIn::read(&staged)?;
+        if made.scope != self.scope() {
+            let _ = sign_out(&staged);
+            anyhow::bail!(
+                "the owner allowed this sign-in at the `{}` tier, and {} needs `{}`; it was \
+                 signed out again",
+                made.scope,
+                self.what(),
+                self.scope()
+            );
+        }
+        take_place(&staged, &file)?;
+        Ok(file)
+    }
+
+    /// Signs out its sign-in kept for `origin`, if there is one: revoked at
+    /// the vault, best effort, and its file removed.
+    pub(super) fn sign_out(self, origin: &str) -> anyhow::Result<()> {
+        match self.file(origin) {
+            Some(file) if std::fs::symlink_metadata(&file).is_ok() => sign_out(&file),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// A session on the sign-in in `file`, for requests to `door` under
+/// `origin`, refreshed on the command's runtime when due.
+pub(super) fn session(file: &Path, origin: &str, door: &str) -> anyhow::Result<OAuthSession> {
+    let runtime = tokio::runtime::Handle::try_current()
+        .map_err(|_| anyhow::anyhow!("a hosted sign-in runs on the command's runtime"))?;
+    OAuthSession::open(
+        file,
+        &reqwest::Url::parse(&format!("{origin}{door}"))?,
+        runtime,
+    )
 }
 
 /// Revokes the sign-in in `token_file` at its vault, best effort, and

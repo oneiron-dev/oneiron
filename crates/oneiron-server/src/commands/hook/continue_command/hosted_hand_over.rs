@@ -21,8 +21,18 @@
 //! must sit below its host's folder, every folder on the way and the log
 //! opened through no link ([`transcript::read_one_below`]), so nothing
 //! outside the host's own logs is sent.
+//!
+//! An OAuth selection lands logs on its hand-over sign-in alone, `full` at
+//! the vault's `/mcp` ([`StepUp::HandOver`]): its recall sign-in is `read`,
+//! and the import writes. With none standing, the log waits in the vault's
+//! hand-over queue ([`hand_over_queue`]), and the first to wait says on
+//! stderr which command lets it land. Every hand-over that lands a log
+//! lands the logs waiting for that vault after it, each read through the
+//! same checks (row HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER; lead ruling B,
+//! Sat 21 Nov 07:0x).
 
 use std::ffi::OsStr;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Instant;
@@ -35,7 +45,9 @@ use oneiron::ingest::history::{
 use super::transcript::SessionLogs;
 use super::{Hosted, transcript};
 use crate::cli::HookHost;
-use crate::commands::hook::hosted_selection::HostedVault;
+use crate::commands::hook::hand_over_queue;
+use crate::commands::hook::hosted_selection::{HostedAuthMode, HostedVault};
+use crate::commands::hook::hosted_sign_in::StepUp;
 
 /// The hooks' hand-over to the selected hosted vault: `host`'s session log
 /// at `log` (Claude Code's with its subagents' logs), landed through
@@ -50,6 +62,11 @@ use crate::commands::hook::hosted_selection::HostedVault;
 /// than one call goes in parts ([`land`]). A log too long even for that is
 /// refused before any bridge starts, so no hand-over sends a call that could
 /// never land.
+///
+/// An OAuth selection goes on its hand-over sign-in; with none standing,
+/// the log is queued for the vault and nothing is sent. Once the log
+/// lands, the logs waiting for the vault go over the same bridge, oldest
+/// first ([`land_waiting`]).
 pub(in crate::commands::hook) fn hand_over_hosted(
     oneiron: &Path,
     vault: &HostedVault,
@@ -59,20 +76,106 @@ pub(in crate::commands::hook) fn hand_over_hosted(
     policy_ref: String,
     deadline: Instant,
 ) -> anyhow::Result<()> {
-    let logs = host_log(host, log, session)?;
-    let carried = transcript::carried_bytes(vault.auth_mode);
-    let calls =
-        transcript::calls_within(&logs, carried, transcript::staged_bytes(vault.auth_mode))?;
-    let mut remote = Hosted::open(oneiron, vault, policy_ref, Stdio::null(), deadline)?;
-    let mut landed = Ok(());
-    for call in &calls {
-        landed = land(&mut remote, call, carried);
-        if landed.is_err() {
-            break;
-        }
+    let carried = Carried::of(vault.auth_mode);
+    let calls = carried.calls(&host_log(host, log, session)?)?;
+    let on = match vault.auth_mode {
+        HostedAuthMode::OAuth => match StepUp::HandOver.held(vault) {
+            Some(file) => HostedVault {
+                credential_file: file,
+                ..vault.clone()
+            },
+            None => {
+                if hand_over_queue::enqueue(&vault.origin, host, session, log)? {
+                    let _ = writeln!(
+                        std::io::stderr().lock(),
+                        "{}",
+                        hand_over_queue::waiting_note(&vault.origin)
+                    );
+                }
+                return Ok(());
+            }
+        },
+        HostedAuthMode::Slip | HostedAuthMode::Owner => vault.clone(),
+    };
+    let waiting = hand_over_queue::queued(&on.origin);
+    let mut remote = Hosted::open(oneiron, &on, policy_ref, Stdio::null(), deadline)?;
+    let landed = land_log(&mut remote, &calls, carried);
+    if landed.is_ok() {
+        hand_over_queue::leave(&on.origin, host, session);
+        let others = waiting
+            .iter()
+            .filter(|queued| queued.host != host || queued.session != session);
+        land_waiting(&mut remote, others, carried);
     }
     remote.bridge.close();
     landed
+}
+
+/// What one call of a selection carries ([`transcript::carried_bytes`]), and
+/// how long a request may grow in parts ([`transcript::staged_bytes`]).
+#[derive(Clone, Copy)]
+struct Carried {
+    call: usize,
+    staged: Option<usize>,
+}
+
+impl Carried {
+    fn of(mode: HostedAuthMode) -> Self {
+        Self {
+            call: transcript::carried_bytes(mode),
+            staged: transcript::staged_bytes(mode),
+        }
+    }
+
+    /// The calls `logs` go in ([`transcript::calls_within`]).
+    fn calls(self, logs: &SessionLogs) -> anyhow::Result<Vec<HookTranscriptImportRequest>> {
+        transcript::calls_within(logs, self.call, self.staged)
+    }
+}
+
+/// Lands one session's log through `remote` in `calls`, in order
+/// ([`land`]); the first refused call stops the rest.
+fn land_log(
+    remote: &mut Hosted<'_>,
+    calls: &[HookTranscriptImportRequest],
+    carried: Carried,
+) -> anyhow::Result<()> {
+    for call in calls {
+        land(remote, call, carried.call)?;
+    }
+    Ok(())
+}
+
+/// Lands each log of `waiting` through `remote`, each read again through
+/// [`host_log`]: one that lands, or that is gone or refused, leaves the
+/// queue; the first whose send fails stops the rest, which wait on.
+fn land_waiting<'q>(
+    remote: &mut Hosted<'_>,
+    waiting: impl Iterator<Item = &'q hand_over_queue::Queued>,
+    carried: Carried,
+) {
+    for queued in waiting {
+        let calls = match host_log(queued.host, &queued.log, &queued.session)
+            .and_then(|logs| carried.calls(&logs))
+        {
+            Ok(calls) => calls,
+            Err(error) => {
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "{} session {}'s log waited for {} and leaves the queue unsent: {error:#}",
+                    queued.host.product_name(),
+                    queued.session,
+                    remote.vault.origin
+                );
+                queued.leave();
+                continue;
+            }
+        };
+        if land_log(remote, &calls, carried).is_err() {
+            break;
+        }
+        queued.leave();
+    }
 }
 
 /// Why a hand-over's calls are made, as their consent names it.

@@ -78,6 +78,20 @@ pub struct HostedLoginArgs {
     /// The recorded sign-in stays `read`.
     #[arg(long, conflicts_with_all = ["auth_mode", "credential_file", "owner_upgrade_headers_file"])]
     pub push: bool,
+
+    /// Let this machine's session hooks land each session's log in the vault
+    /// recorded at `--origin` in OAuth mode as the session ends: a second
+    /// sign-in, `full` at the vault's MCP alone (never its git door), which
+    /// the owner allows in his inbox ("land this machine's coding sessions in
+    /// your hosted vault as each ends") and which only the hooks' hand-over
+    /// reads. Until it stands, session logs wait on this machine, and they
+    /// land at the next session end once it does. The import still needs his
+    /// Grant naming the verb. The recorded sign-in stays `read`.
+    #[arg(
+        long,
+        conflicts_with_all = ["auth_mode", "credential_file", "owner_upgrade_headers_file", "push"]
+    )]
+    pub hand_over: bool,
 }
 
 #[derive(Args, Clone, Debug)]

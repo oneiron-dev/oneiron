@@ -130,7 +130,7 @@ impl OAuthSignIn {
     /// Refuses unless this sign-in, read from `path`, was made at `url`'s
     /// origin, which its token endpoint names: its tokens go to that vault
     /// alone.
-    fn made_at(&self, path: &Path, url: &reqwest::Url) -> anyhow::Result<()> {
+    pub(crate) fn made_at(&self, path: &Path, url: &reqwest::Url) -> anyhow::Result<()> {
         let made = reqwest::Url::parse(&self.token_endpoint).map_err(|_| {
             anyhow::anyhow!(
                 "{} names no token endpoint URL; sign in again with `oneiron hosted login \

@@ -27,7 +27,10 @@ use sha2::{Digest, Sha256};
 
 use super::client_document::resolve_client;
 use super::html::escape_html;
-use super::{OAuthFloodCaps, OAuthIdentity, not_found, now};
+use super::{
+    OAuthFloodCaps, OAuthIdentity, PURPOSE_PARAMETER, ProtectedResource, SignInPurpose, not_found,
+    now,
+};
 use crate::auth::ClientAddress;
 use crate::server::SyncServer;
 
@@ -55,6 +58,8 @@ pub(super) struct AuthorizeQuery {
     state: Option<String>,
     resources: Vec<String>,
     scope: Option<String>,
+    /// What the sign-in asks to do, by name ([`SignInPurpose`]).
+    purpose: Option<String>,
 }
 
 impl AuthorizeQuery {
@@ -72,6 +77,7 @@ impl AuthorizeQuery {
                 "code_challenge_method" => &mut query.code_challenge_method,
                 "state" => &mut query.state,
                 "scope" => &mut query.scope,
+                PURPOSE_PARAMETER => &mut query.purpose,
                 "resource" => {
                     query.resources.push(value);
                     continue;
@@ -87,14 +93,13 @@ impl AuthorizeQuery {
 }
 
 /// The resources an authorize request names (RFC 8707 §2): at least one, each one of this
-/// vault's own ([`super::ProtectedResource`]) and none twice. Answers the first and the rest,
-/// in the request's order, and what the sign-in asks to do when a resource it names says
-/// ([`super::ProtectedResource::purpose`]); `None` for a request that names none, another, or
-/// one twice.
+/// vault's own ([`ProtectedResource`]) and none twice. Answers the first and the rest, in the
+/// request's order, and which of the vault's each is; `None` for a request that names none,
+/// another, or one twice.
 fn named_resources(
     identity: &OAuthIdentity,
     named: &[String],
-) -> Option<(String, Vec<String>, Option<&'static str>)> {
+) -> Option<(String, Vec<String>, Vec<ProtectedResource>)> {
     let (first, further) = named.split_first()?;
     let mut seen = Vec::with_capacity(named.len());
     for identifier in named {
@@ -104,8 +109,25 @@ fn named_resources(
         }
         seen.push(resource);
     }
-    let purpose = seen.iter().find_map(|resource| resource.purpose());
-    Some((first.clone(), further.to_vec(), purpose))
+    Some((first.clone(), further.to_vec(), seen))
+}
+
+/// What a sign-in for `resources` asks to do, as the owner's ask and the consent page say it:
+/// the purpose the request names (`named`, [`SignInPurpose`]), else what a resource it names
+/// says ([`ProtectedResource::purpose`]), else nothing, its tier saying it. Refused with
+/// `invalid_request` for a purpose this vault does not know, or one beside a resource it does
+/// not admit (the hand-over never names `/git`).
+fn sign_in_purpose(
+    named: Option<&str>,
+    resources: &[ProtectedResource],
+) -> Result<Option<&'static str>, &'static str> {
+    let Some(name) = named else {
+        return Ok(resources.iter().find_map(|resource| resource.purpose()));
+    };
+    SignInPurpose::named(name)
+        .filter(|purpose| resources.iter().all(|resource| purpose.admits(*resource)))
+        .map(|purpose| Some(purpose.says()))
+        .ok_or("invalid_request")
 }
 
 /// Where a request's errors go once its client and redirect URI are known.
@@ -207,9 +229,13 @@ pub(super) async fn page(
     }) else {
         return redirect.error("invalid_request");
     };
-    let Some((resource, further_resources, purpose)) = named_resources(&identity, &query.resources)
+    let Some((resource, further_resources, named)) = named_resources(&identity, &query.resources)
     else {
         return redirect.error("invalid_target");
+    };
+    let purpose = match sign_in_purpose(query.purpose.as_deref(), &named) {
+        Ok(purpose) => purpose,
+        Err(code) => return redirect.error(code),
     };
     let Some(tier) = oauth_requested_tier(query.scope.as_deref()) else {
         return redirect.error("invalid_scope");

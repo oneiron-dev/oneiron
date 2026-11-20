@@ -22,11 +22,15 @@
 //!   origin in OAuth mode ([`super::hosted_continue_sign_in`]): a second
 //!   sign-in, `full` at its `/mcp` and `/git`, kept beside the first, which
 //!   `oneiron continue --cloud` alone reads.
+//! - `login --hand-over` makes the hand-over sign-in of that vault: a
+//!   second sign-in, `full` at its `/mcp` alone, kept beside the first,
+//!   which the hooks' hand-over alone reads ([`super::hand_over_queue`]).
 //! - `select` selects one recorded vault, or none.
 //! - `logout` forgets one recorded vault, or every one. It never deletes a
 //!   credential file another surface wrote: that surface keeps it. An OAuth
 //!   sign-in `login` made is revoked at the vault and its file removed, and
-//!   so is its continue sign-in.
+//!   so are its continue and hand-over sign-ins; the session logs waiting
+//!   for its hand-over leave the queue.
 //! - `status` reads where the selection stands.
 //!
 //! Each prints the selection's state as one JSON line. It names credential
@@ -39,7 +43,8 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use super::hosted_selection::{self, HostedAuthMode, HostedVault, Selection};
-use super::{hosted_continue_sign_in, hosted_sign_in, recall};
+use super::hosted_sign_in::StepUp;
+use super::{hand_over_queue, hosted_sign_in, recall};
 use crate::cli::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs, McpAuthMode};
 use crate::commands::credential_file::PairedCredentialFile;
 use crate::commands::oauth_sign_in;
@@ -67,7 +72,10 @@ pub fn hosted(command: HostedCommand) -> anyhow::Result<()> {
 /// one stays as it was.
 fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
     if args.push {
-        return push_login(args);
+        return step_up_login(args, StepUp::Continue, "--push");
+    }
+    if args.hand_over {
+        return step_up_login(args, StepUp::HandOver, "--hand-over");
     }
     let mut selection = held()?;
     let origin = origin(&args.origin)?;
@@ -178,10 +186,11 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
     recorded
 }
 
-/// `login --push`: the continue step-up of the vault recorded at `--origin` in
-/// OAuth mode (the one `--vault-id` names, when given). The recorded
-/// sign-in and the selection stay as they are.
-fn push_login(args: &HostedLoginArgs) -> anyhow::Result<()> {
+/// `login --push` or `login --hand-over` (`flag`): the step-up `step_up` of
+/// the vault recorded at `--origin` in OAuth mode (the one `--vault-id`
+/// names, when given). The recorded sign-in and the selection stay as they
+/// are.
+fn step_up_login(args: &HostedLoginArgs, step_up: StepUp, flag: &str) -> anyhow::Result<()> {
     let selection = held()?;
     let origin = origin(&args.origin)?;
     let named = args.vault_id.as_deref().map(vault_id).transpose()?;
@@ -196,10 +205,10 @@ fn push_login(args: &HostedLoginArgs) -> anyhow::Result<()> {
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "no OAuth sign-in to {origin} is recorded here; sign in with `oneiron hosted \
-                 login --origin {origin}` first, then add --push"
+                 login --origin {origin}` first, then add {flag}"
             )
         })?;
-    hosted_continue_sign_in::step_up(vault, Duration::from_secs(args.sign_in_timeout_secs))?;
+    step_up.run(vault, Duration::from_secs(args.sign_in_timeout_secs))?;
     Ok(())
 }
 
@@ -354,8 +363,8 @@ fn logout(args: &HostedLogoutArgs) -> anyhow::Result<()> {
 }
 
 /// Revokes and removes each OAuth sign-in `login` made among `vaults`, and
-/// its continue sign-in. A credential file another surface wrote stays: that
-/// surface keeps it.
+/// its continue and hand-over sign-ins, and empties its hand-over queue. A
+/// credential file another surface wrote stays: that surface keeps it.
 fn sign_out(vaults: &[HostedVault]) {
     for vault in vaults
         .iter()
@@ -363,7 +372,9 @@ fn sign_out(vaults: &[HostedVault]) {
     {
         for signed_out in [
             hosted_sign_in::sign_out(&vault.credential_file),
-            hosted_continue_sign_in::sign_out(&vault.origin),
+            StepUp::Continue.sign_out(&vault.origin),
+            StepUp::HandOver.sign_out(&vault.origin),
+            hand_over_queue::clear(&vault.origin),
         ] {
             if let Err(error) = signed_out {
                 let _ = writeln!(std::io::stderr().lock(), "{error}");

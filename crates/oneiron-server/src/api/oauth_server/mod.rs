@@ -12,9 +12,10 @@
 //! the continue step-up of `oneiron continue --cloud` (and `hosted login --push`) for both at
 //! `full`, so only its tokens push through the git door (lead rulings
 //! CONTINUE-PUSH-NON-SLIP-SELECTION = B, Sat 21 Nov 04:3x, CONTINUE-PUSH-GIT-TIER = C, 05:4x,
-//! and CONTINUE-STEP-UP-MCP-WRITE = A, 06:1x). With none configured, or one that is no https
-//! origin,
-//! every route here answers 404, as the client metadata documents do. Codes, tokens and the
+//! and CONTINUE-STEP-UP-MCP-WRITE = A, 06:1x). The hand-over sign-in of `hosted login
+//! --hand-over` asks `full` at `/mcp` alone and names its purpose ([`SignInPurpose`];
+//! HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER = B, 07:0x). With none configured, or one that is no
+//! https origin, every route here answers 404, as the client metadata documents do. Codes, tokens and the
 //! page's poll secret ride only in a body, a header or the client's own redirect, never in this
 //! vault's paths, logs or stored rows. The binding door's swap that accepts the tokens at
 //! `/mcp` and at `/git/{repo}/...`, and their 401 with `WWW-Authenticate`, are
@@ -62,6 +63,9 @@ const AUTHORIZE_STATUS_PATH: &str = "/oauth/authorize/status";
 pub(crate) const TOKEN_PATH: &str = "/oauth/token";
 pub(crate) const REGISTER_PATH: &str = "/oauth/register";
 pub(crate) const REVOKE_PATH: &str = "/oauth/revoke";
+/// The authorize request's parameter that names what a sign-in asks to do
+/// ([`SignInPurpose`]).
+pub(crate) const PURPOSE_PARAMETER: &str = "purpose";
 
 /// The OAuth routes, mounted beside `/oauth/client/*`. The metadata documents are public and
 /// cacheable; every other reply is private (`no-store`, `no-referrer`, `nosniff`). The router
@@ -191,6 +195,51 @@ impl ProtectedResource {
 /// its wording as ruled).
 const GIT_SIGN_IN_PURPOSE: &str =
     "continue this session in your hosted vault: land its log, push its code and start it there";
+
+/// What a sign-in asks to do, named by the authorize request's [`PURPOSE_PARAMETER`]. The vault
+/// says it in its own words, so the owner's ask never shows a client's text; a request that
+/// names no purpose, or one its resources do not say, shows its tier alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SignInPurpose {
+    /// The hand-over sign-in of `oneiron hosted login --hand-over`, which the hooks' hand-over
+    /// alone reads: `full` at `/mcp` alone (HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER = B, lead
+    /// 07:0x Sat 21 Nov).
+    SessionHandOver,
+}
+
+impl SignInPurpose {
+    /// Its name, as the request's [`PURPOSE_PARAMETER`] gives it.
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::SessionHandOver => "session_hand_over",
+        }
+    }
+
+    /// The purpose `name` names; `None` for any other.
+    fn named(name: &str) -> Option<Self> {
+        [Self::SessionHandOver]
+            .into_iter()
+            .find(|purpose| purpose.name() == name)
+    }
+
+    /// What it asks to do, as the owner's ask and the consent page say it (its wording as
+    /// ruled).
+    const fn says(self) -> &'static str {
+        match self {
+            Self::SessionHandOver => {
+                "land this machine's coding sessions in your hosted vault as each ends"
+            }
+        }
+    }
+
+    /// Whether a sign-in for it may name `resource`: the hand-over writes at `/mcp` and never
+    /// pushes.
+    fn admits(self, resource: ProtectedResource) -> bool {
+        match self {
+            Self::SessionHandOver => resource == ProtectedResource::Mcp,
+        }
+    }
+}
 
 /// This vault's public OAuth identity, from `oauth_resource_indicator`.
 pub(super) struct OAuthIdentity {
