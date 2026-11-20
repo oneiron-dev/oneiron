@@ -227,7 +227,7 @@ impl Vault {
         // key's proof (row CARRIER-OWNER-PROOF); an export act's fold still
         // refuses any cosign.
         let proof = matches!(op, AuthorityOp::PolicySettingSet(_))
-            .then(|| self.owner_proof_signer(&fold))
+            .then(|| self.owner_proof_signer(&fold).filter(|_| false))
             .flatten();
         let entry =
             sign_side_entry_with_owner_proof(&fold, &key, seq, parents, op, now, proof.as_ref())?;

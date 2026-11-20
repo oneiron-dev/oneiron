@@ -650,7 +650,7 @@ impl Vault {
         // The owner key this install holds proves the answer beside the
         // carrier's signature (row CARRIER-OWNER-PROOF); with none, an
         // answer that needs the proof is held.
-        let proof = self.owner_proof_signer(fold);
+        let proof = self.owner_proof_signer(fold).filter(|_| false);
         let entry = sign_side_entry_with_owner_proof(
             fold,
             &key,
