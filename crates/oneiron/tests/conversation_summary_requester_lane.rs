@@ -73,6 +73,21 @@
 //!   the predecessor re-derived from the reverted summary's records. A
 //!   rollback now restores the predecessor's own declaration.
 //!
+//! Round 2 of #9808 found two more, each red at #9808's head be1ca62585e:
+//! - P1 derivation.rs:338: the owner's summary of the whole conversation
+//!   reused the summary a source set of its one TURN had composed, then
+//!   re-derived it when a TURN came. The revert of that re-derivation
+//!   restored the reused summary under the source set's declaration, in the
+//!   source set's projection, and left the whole conversation's projection
+//!   on the archived summary: the next summary of the whole conversation
+//!   continued none. The projection now keeps the summary its current one
+//!   replaced, with the declaration that summary stood under there, and a
+//!   rollback restores that.
+//! - P1 codec.rs:400: the owner's list of the Dreamer's changes named an
+//!   epoch SUMMARY a session's compaction landed under the Dreamer's byline,
+//!   and its revert failed on the scope summary's metadata it lacks. Only a
+//!   scope summary's body names a producer the revert reads.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test conversation_summary_requester_lane`.
 #![cfg(oneiron_test_support)]
@@ -80,12 +95,19 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use ed25519_dalek::{Signer, SigningKey};
+use oneiron::agent_def::{CompactionOwnership, MemoryProfile};
 use oneiron::authority::{
     CapabilitySlip, HostSlipIssuer, MachineRole, PairingPrincipal, SlipCaveat, VerifiedSlip,
 };
 use oneiron::claim::ScopedRead;
+use oneiron::compaction::{
+    CompactionBackend, CompactionBackendRegistry, CompactionCheck, CompactionDriver,
+    CompactionGatePolicy, CompactionProduct, CompactionRefusal, CompactionRequest,
+    CompactionTierClass, CompactionWindowMessage, gate_compaction,
+};
 use oneiron::conversation_dag::{ScopePath, ScopeSelector};
 use oneiron::dreamer_consolidation::{DreamerChangeKind, ScopeSummaryExecutor};
 use oneiron::dreamer_runner::{
@@ -101,13 +123,14 @@ use oneiron::scope_summary::{
     ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget, SummaryEdit, SummaryPatchRequest,
     SummaryReadRequest, SummarySpan,
 };
+use oneiron::session_lifecycle::{SessionKey, SessionMintOutcome};
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallPurpose, ContentPart,
     DreamerAttemptExecution, DreamerAttemptExecutor, EdgeActorClass, EntityId, FinishReason,
     LlmBackend, LlmGenerateFuture, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse,
-    LlmStreamResult, LlmUsage, ModelId, ModelLocality, Vault, VaultConfig, WakeAttemptContext,
-    WakePassDeadline, WriteActor,
+    LlmStreamResult, LlmUsage, ModelId, ModelLocality, ModelTierRef, Vault, VaultConfig,
+    WakeAttemptContext, WakePassDeadline, WriteActor,
 };
 use serde_json::json;
 
@@ -133,6 +156,11 @@ const EDIT_TEXT: &str = " The offsite budget doubled too.";
 const LANE_REFUSAL: &str = "summary source outside the requester's read lane";
 /// The refusal of an Arc declared under a narrowed lane.
 const ARC_LANE_REFUSAL: &str = "an arc summary is not declared under a narrowed read lane";
+/// The revert's refusal of a SUMMARY that is no scope summary of the
+/// Dreamer's.
+const NOT_A_DREAMER_SCOPE_SUMMARY: &str = "this is not a scope summary the Dreamer wrote";
+/// The model tier, and the backend key, of the session's compaction.
+const EPOCH_TIER: &str = "summary-revert-epoch";
 
 /// A vault whose owner paired their own device and witnessed a
 /// conversation of one TURN.
@@ -864,6 +892,121 @@ fn claim_stands(fixture: &Fixture, claim: EntityId) -> bool {
         .is_some_and(|body| body.lifecycle.as_str() == "active")
 }
 
+/// The SUMMARY `summary` continues, as the owner reads its lineage: the
+/// predecessor its declaration named.
+fn predecessor_of(fixture: &Fixture, summary: EntityId) -> Option<String> {
+    fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .read_summary(&SummaryReadRequest {
+            summary_ref: summary.to_hex(),
+            spans: Vec::new(),
+        })
+        .expect("the owner reads the summary")
+        .value
+        .expect("FIXTURE: the summary has its document")
+        .metadata
+        .derivation
+        .previous
+}
+
+/// A network-free compaction backend: one window, one one-word summary.
+struct OneWordCompaction;
+
+impl CompactionBackend for OneWordCompaction {
+    fn backend_key(&self) -> &str {
+        EPOCH_TIER
+    }
+
+    fn tier_class(&self) -> CompactionTierClass {
+        CompactionTierClass::Cheap
+    }
+
+    fn compact(
+        &self,
+        _request: &CompactionRequest,
+        _retry: Option<CompactionCheck>,
+    ) -> Result<CompactionProduct, CompactionRefusal> {
+        Ok(CompactionProduct {
+            summary_text: r#"{"from": 0, "through": 0, "summary": "kept"}"#.into(),
+            finish: FinishReason::Stop,
+            latency: Duration::from_millis(1),
+        })
+    }
+}
+
+/// The epoch SUMMARY a session's compaction lands over the conversation's
+/// TURN and its MESSAGE, under the Dreamer's byline.
+fn dreamer_epoch_summary(fixture: &Fixture) -> EntityId {
+    let vault = &fixture.vault;
+    let session = match vault
+        .mint_session(
+            SessionKey {
+                actor: EntityId::now(),
+                machine: EntityId::now(),
+            },
+            vault.now_recorded_at(),
+        )
+        .expect("a session")
+    {
+        SessionMintOutcome::Minted(id) => id,
+        other => panic!("FIXTURE: the session was not minted: {other:?}"),
+    };
+    let mut registry = CompactionBackendRegistry::new();
+    registry
+        .register(Arc::new(OneWordCompaction))
+        .expect("the compaction backend");
+    let profile = MemoryProfile::new(
+        1000,
+        ModelTierRef(EPOCH_TIER.into()),
+        CompactionOwnership::Engine,
+    );
+    let mut driver = CompactionDriver::for_profile(&profile, &registry)
+        .expect("the compaction driver resolves")
+        .expect("an engine-owned profile compacts");
+    driver
+        .evaluate_now(vault, u64::MAX)
+        .expect("the window crosses its threshold");
+    let request = driver
+        .request_for(
+            vault,
+            &session,
+            vec![CompactionWindowMessage {
+                message_id: fixture.message,
+                turn_id: fixture.turn,
+                content: SOURCE_TEXT.to_owned(),
+                turn: 0,
+                tokens: 2,
+            }],
+        )
+        .expect("the sealed window");
+    let product = driver
+        .backend()
+        .compact(&request, None)
+        .expect("the backend's summary");
+    // The window holds two tokens against a zero floor, so the one-word
+    // summary passes the gate.
+    let gated = gate_compaction(
+        &request,
+        &product,
+        &CompactionGatePolicy {
+            floor_tokens: 0,
+            ..Default::default()
+        },
+    )
+    .expect("the one-word summary passes the gate");
+    driver
+        .integrate(
+            vault,
+            &session,
+            vault.dreamer_authority().expect("Dreamer authority"),
+            gated,
+            &[],
+        )
+        .expect("the epoch SUMMARY lands")
+        .summary_id
+}
+
 #[test]
 fn a_conversation_summary_whose_credential_ends_before_the_dreamer_runs_is_not_composed() {
     let fixture = fixture();
@@ -1321,5 +1464,93 @@ fn a_reverted_summary_restores_its_predecessor_with_the_predecessors_own_sources
         second.to_hex(),
         later.to_hex(),
         third.to_hex()
+    );
+}
+
+#[test]
+fn a_reverted_summary_restores_a_reused_predecessor_in_its_own_projection() {
+    let fixture = fixture();
+    let model = ScriptedSummaryModel::new(&fixture, false);
+    let sourced = owner_declares(
+        &fixture,
+        ScopeSummaryTarget::Sources {
+            scope: Some(canonical(fixture.conversation)),
+            sources: vec![fixture.turn],
+        },
+    );
+    let run = run_summary(&fixture, sourced, &model);
+    let first = landed_summary(&fixture, sourced, &run);
+    // The owner's summary of the whole conversation, of the same one TURN,
+    // reuses the source set's composition.
+    let whole = || ScopeSummaryTarget::Scope {
+        scope: canonical(fixture.conversation),
+        land_on: None,
+        as_record: false,
+    };
+    let queued = owner_declares(&fixture, whole());
+    let run = run_summary(&fixture, queued, &model);
+    assert_eq!(
+        (landed_summary(&fixture, queued, &run), model.calls()),
+        (first, 1),
+        "FIXTURE: the whole conversation's summary reuses SUMMARY {} with no model call",
+        first.to_hex()
+    );
+    // The TURN the owner appends re-derives the whole conversation's
+    // summary, the reused one its predecessor.
+    let (_, second) = rederived_after_later_turn(&fixture, &model);
+    assert_eq!(
+        predecessor_of(&fixture, second),
+        Some(first.to_hex()),
+        "FIXTURE: SUMMARY {} continues the reused SUMMARY {}",
+        second.to_hex(),
+        first.to_hex()
+    );
+    assert_eq!(
+        owner_reverts(&fixture, second),
+        Ok((Some(second), Some(first))),
+        "FIXTURE: the owner's revert archives SUMMARY {} and restores its predecessor {}",
+        second.to_hex(),
+        first.to_hex()
+    );
+    // The owner asks for the whole conversation's summary again.
+    let again = owner_declares(&fixture, whole());
+    let rederive = ScriptedSummaryModel::new(&fixture, false);
+    let run = run_summary(&fixture, again, &rederive);
+    let third = landed_summary(&fixture, again, &run);
+    assert_eq!(
+        predecessor_of(&fixture, third),
+        Some(first.to_hex()),
+        "actor=the owner; SUMMARY {} of the whole conversation re-derived SUMMARY {}, which that summary's declaration had reused from a source set's; the owner reverted it; expected the next summary of the whole conversation, {}, to continue SUMMARY {}, which the revert restored",
+        second.to_hex(),
+        first.to_hex(),
+        third.to_hex(),
+        first.to_hex()
+    );
+}
+
+#[test]
+fn the_owners_list_leaves_out_an_epoch_summary_the_dreamer_bylined_and_the_revert_refuses_it() {
+    let fixture = fixture();
+    let epoch = dreamer_epoch_summary(&fixture);
+    let listed = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .dreamer_changes(&fixture.owner_proof, 50)
+        .expect("the owner's list of the Dreamer's changes");
+    assert!(
+        !listed.changes.iter().any(|change| change.change == epoch),
+        "actor=the owner; a session's compaction landed epoch SUMMARY {} under the Dreamer's byline; expected their list of the Dreamer's changes to leave it out, as no scope summary a revert takes back; listed {:?}",
+        epoch.to_hex(),
+        listed
+            .changes
+            .iter()
+            .map(|change| (change.change.to_hex(), change.kind))
+            .collect::<Vec<_>>()
+    );
+    let reverted = owner_reverts(&fixture, epoch);
+    assert!(
+        matches!(&reverted, Err(refusal) if refusal.contains(NOT_A_DREAMER_SCOPE_SUMMARY)),
+        "actor=the owner; epoch SUMMARY {} landed under the Dreamer's byline; expected the revert to refuse it as no scope summary the Dreamer wrote; reverted {reverted:?}",
+        epoch.to_hex()
     );
 }
