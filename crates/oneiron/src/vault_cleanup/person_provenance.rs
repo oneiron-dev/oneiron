@@ -16,6 +16,7 @@
 use super::claim_source_is_machine_minted;
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::deletion::TombstoneReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
@@ -129,6 +130,59 @@ impl Vault {
             return Ok(false);
         }
         EXTRACTION_LINEAGE.put(&self.store, wtxn, id, &lineage)?;
+        Ok(true)
+    }
+
+    /// Restores the PERSON `id` for the Dreamer's new mention of it, when it
+    /// bears a cleanup-archive marker: the same record through the cleanup's
+    /// restore door ([`Self::restore_archived_in_txn`]), never a second one
+    /// (ARCH-0073 §6, ARCH-0055 §10; FIX
+    /// NATIVE-CLAIM-LANDS-ON-ARCHIVED-PERSON). Two callers, both the
+    /// Dreamer's: its person mint, when
+    /// [`Self::put_attempt_minted_person_in_txn`] wrote nothing for the id a
+    /// declaration derives, and its promotion writer, for the entity subject
+    /// of a claim it writes. A derivation's person item never calls it: that
+    /// item stays refused for an archived id.
+    ///
+    /// Returns `false` without writing when `id` bears no marker with the
+    /// cleanup-archive reason, when no row is stored for it, when the stored
+    /// row is not a PERSON, or when anything but the archive removes it: a
+    /// delete or an erase, applied, pending or published (a delete keeps the
+    /// marker of an archived row, and the door would fail the caller's
+    /// transaction there). Otherwise it calls the door and returns `true`.
+    /// It asks who archived the PERSON no more than the door does.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, a stored row whose header does not parse, and the
+    /// restore door's.
+    pub(crate) fn restore_mentioned_person_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        let archived = self
+            .archive_tombstone_in_txn(wtxn, id)?
+            .is_some_and(|marker| marker.reason == Some(TombstoneReason::ArchivedByCleanup));
+        if !archived {
+            return Ok(false);
+        }
+        let Some(row) = self.store.port_entity_record(wtxn, id)? else {
+            return Ok(false);
+        };
+        // The door looks for a hard-delete marker and a pending or published
+        // tombstone. A delete applied here whose publication was withdrawn
+        // leaves neither, only its row fence: `removed_in_txn` reads that too.
+        if row.entity_type != ENTITY_TYPE_PERSON
+            || crate::ports::removed_in_txn(&self.store, wtxn, id)?
+            || self.local_hard_delete_marker_exists_in_txn(wtxn, id)?
+            || self
+                .store
+                .entity_tombstone_present_in_txn(wtxn, id, row.learned_at)?
+        {
+            return Ok(false);
+        }
+        self.restore_archived_in_txn(wtxn, id)?;
         Ok(true)
     }
 }

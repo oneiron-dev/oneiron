@@ -231,6 +231,7 @@ pub mod model_step_submission_codec;
 pub mod msgpack_bridge;
 pub mod msgpack_duplicate_key;
 pub mod msgpack_trailing;
+pub mod native_person_mint;
 pub mod nightly;
 pub mod note_bm25f_repair;
 #[cfg(feature = "sync")]
