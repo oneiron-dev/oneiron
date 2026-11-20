@@ -2,6 +2,8 @@
 //! capability. A ruling carrier is never proof; only this private constructor
 //! can bind a consented usefulness-yes and held-out win to promoted bytes.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{ClaimRefinementMergeReceipt, SharedSkillMergeReceipt, package_codec::invalid};
 pub(super) use crate::store::claim_refinement_control::{
     RefinementControl, RefinementState, RefinementTarget, put_control, read_control,
@@ -211,7 +213,7 @@ pub(crate) fn validate_refinement_admission(
             if !same_stored_proposal
                 || body.approval != crate::claim::ClaimApprovalStatus::Proposed
                 || !declares_refinement(&body)
-                || origin != blake3::hash(data).as_bytes()
+                || origin != ContentHash::of(data).as_bytes()
             {
                 return Err(invalid("refinement origin requires exact local admission"));
             }
@@ -231,7 +233,7 @@ pub(crate) fn validate_refinement_admission(
             if !same_stored_candidate
                 || record.lifecycle_status != crate::skill::SkillLifecycle::Candidate
                 || !declares_skill_refinement(&record)
-                || skill_origin != blake3::hash(data).as_bytes()
+                || skill_origin != ContentHash::of(data).as_bytes()
             {
                 return Err(invalid(
                     "skill refinement origin requires useful-upstream admission",

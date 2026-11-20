@@ -53,6 +53,9 @@ impl PipelineBuilder<'_> {
             )));
         };
         space.admit_query(query.query_kind, &query.vector)?;
+        // The search admits before its top-k cut, so the call's made_by
+        // slice joins the admission: a row it drops takes no place.
+        let filters = self.bounded_result_filters(filters);
         let memory = self.memory_category;
         let results = crate::embed::search_media_space_in_txn(
             &self.read,

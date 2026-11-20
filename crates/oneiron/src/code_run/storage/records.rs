@@ -172,7 +172,7 @@ impl Vault {
     pub fn put_code_run_replay_record(&self, record: &CodeRunReplayRecord) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         let record = fence_replay_in_txn(self, &mut wtxn, Cow::Borrowed(record))?;
-        replay_rows::put(self, &mut wtxn, &record.run_id, &record)?;
+        replay_rows::put_fenced(self, &mut wtxn, &record)?;
         Ok(wtxn.commit()?)
     }
 
@@ -183,7 +183,7 @@ impl Vault {
         record: &CodeRunReplayRecord,
     ) -> Result<()> {
         let record = super::response_erase::fence_replay_in_txn(self, wtxn, Cow::Borrowed(record))?;
-        replay_rows::put(self, wtxn, &record.run_id, &record)?;
+        replay_rows::put_fenced(self, wtxn, &record)?;
         Ok(())
     }
 
@@ -292,7 +292,7 @@ impl Vault {
         let record = record.over_held(held.as_ref());
         // A record whose replies an erase took stays erased (FIX 5718).
         let record = fence_replay_in_txn(self, wtxn, record)?;
-        replay_rows::put(self, wtxn, &record.run_id, &record)?;
+        replay_rows::put_fenced(self, wtxn, &record)?;
         if let Some((key, count)) = next_heal_count {
             MODEL_HEAL_COUNTS.put(&self.store, wtxn, &key, &HealCount(count))?;
         }
@@ -552,8 +552,11 @@ impl Vault {
     /// Marks the occurrence of `output` that `owner` holds with the taint of
     /// every occurrence in `from` (each by the run that holds it), in one
     /// transaction: their taint refs join its own, and the first secret mark
-    /// among them stands as its own when it has none. A body made from a
-    /// tainted one is tainted as long as it is.
+    /// among them stands as its own when it has none. A secret named twice
+    /// keeps its lowest recorded generation, the fail-closed direction (the
+    /// older generation is the one a rotation has moved past), so a merge
+    /// across a rotation stays storable. A body made from a tainted one is
+    /// tainted as long as it is.
     pub(crate) fn inherit_code_run_result_marks(
         &self,
         owner: EntityId,
@@ -566,17 +569,21 @@ impl Vault {
             .get(&self.store, &wtxn, &key)?
             .unwrap_or_default();
         let mut secret = RAW_OUTPUT_SECRETS.get(&self.store, &wtxn, &key)?;
-        let (own_refs, own_secret) = (refs.len(), secret.is_some());
+        let (own_refs, own_secret) = (refs.clone(), secret.is_some());
         for (source, held) in from {
             let (more, marked) = self.result_marks_in_txn(&wtxn, Some(*source), held)?;
             for taint in more {
-                if !refs.contains(&taint) {
-                    refs.push(taint);
+                match refs
+                    .iter_mut()
+                    .find(|held| held.secret_ref == taint.secret_ref)
+                {
+                    Some(held) => held.generation = held.generation.min(taint.generation),
+                    None => refs.push(taint),
                 }
             }
             secret = secret.or(marked);
         }
-        if refs.len() > own_refs {
+        if refs != own_refs {
             validate_taint_refs(&refs)?;
             RAW_OUTPUT_TAINTS.put(&self.store, &mut wtxn, &key, &refs)?;
         }

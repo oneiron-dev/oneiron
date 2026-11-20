@@ -6,7 +6,9 @@
 //! - `session-start` binds a vault ([`bind`]), prints one line naming it,
 //!   and recalls a short block for the project ([`recall`]).
 //! - `prompt` recalls a short block for the prompt from the bound vault.
-//! - `hand-over` queues the session's log for the running `serve` to import.
+//! - `hand-over` queues the session's log for the running `serve` to import,
+//!   or sends it to the selected hosted vault every start of the session
+//!   bound and recorded ([`hand_over`], [`session_binding`]).
 //! - `bind` binds a vault as `session-start` does and prints it as JSON, for
 //!   a plugin that runs inside its host (Hermes's memory provider).
 //!
@@ -19,13 +21,22 @@
 //! agent's `--credential-file` for a pinned or local vault, and the one the
 //! hosted selection names, in its own auth mode, for the hosted vault it
 //! selected (`oneiron hosted`, [`hosted_command`]).
+//!
+//! `oneiron continue --cloud` ([`continue_command`]) lives here too: it
+//! reads the same hosted selection and calls its verbs through the same
+//! bridge the recall speaks to.
 
 mod bind;
+mod continue_command;
 mod hosted_command;
 mod hosted_selection;
 mod hosted_sign_in;
 mod recall;
+mod session_binding;
 
+pub use self::continue_command::continue_work;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::continue_command::test_support as continue_test_support;
 pub use self::hosted_command::hosted;
 
 use std::io::{Read as _, Write as _};
@@ -33,8 +44,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+use oneiron::ingest::history::HistorySource;
 use serde_json::{Map, Value};
 
+use self::bind::HandOverTarget;
 use self::hosted_selection::{HostedDiscovery, HostedVault};
 use self::recall::RecallAuth;
 use crate::cli::{HookArgs, HookBindArgs, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs};
@@ -80,13 +93,13 @@ fn context_reply(host: HookHost, said: &[String]) -> Option<String> {
 }
 
 /// The `oneiron import` source that reads `host`'s session log.
-const fn import_source(host: HookHost) -> &'static str {
+const fn import_source(host: HookHost) -> HistorySource {
     match host {
         // Hermes asks only `bind`; a hand-over under its name reads a Claude
         // Code log, as every hand-over did before hosts had their own.
-        HookHost::ClaudeCode | HookHost::Hermes => "claude-code",
-        HookHost::Codex => "codex",
-        HookHost::Cursor | HookHost::Copilot => "hook-transcript",
+        HookHost::ClaudeCode | HookHost::Hermes => HistorySource::ClaudeCode,
+        HookHost::Codex => HistorySource::Codex,
+        HookHost::Cursor | HookHost::Copilot => HistorySource::HookTranscript,
     }
 }
 
@@ -125,6 +138,11 @@ fn session_start(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
         args.common.settings_file.as_deref(),
         deadline,
     );
+    // A session's hand-over sends its log only to the vault every start of
+    // it bound.
+    if let Some(session) = session_id(host, &event) {
+        session_binding::record(host, session, bound.hosted.as_ref(), resumed(host, &event));
+    }
     let mut said = bound.lines;
     let Some(url) = bound.url else {
         return said;
@@ -234,7 +252,17 @@ fn recall_auth<'a>(
 /// host's logs ([`import_source`]): one small file in the queue of the
 /// config named, else of the running local vault, else of the default
 /// config, under the settings file named, else the running vault's own when
-/// the import takes that vault's config. Its output is not the host's.
+/// the import takes that vault's config. With no config named, the log goes
+/// by what the session's starts bound ([`bind::hand_over_target`]): to the
+/// selected hosted vault where every start bound that one and it is still
+/// selected, through `vault.imports.hook_transcript` as the selection's own
+/// credential, by the import that reads the host's logs, when the log is the
+/// event's own session's and sits where the host keeps its logs
+/// ([`continue_command::hand_over_hosted`]), with nothing queued here;
+/// nowhere where they bound a hosted vault no longer selected, or more than
+/// one vault. A send that fails is sent again whole by the session's next
+/// hand-over, and the import lands only what is new. Its output is not the
+/// host's.
 fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     let Some(event) = read_event() else {
         return;
@@ -246,16 +274,41 @@ fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     else {
         return;
     };
-    let mut command = oneiron_spawn::command(oneiron(args.common.oneiron.as_deref()));
+    let oneiron = oneiron(args.common.oneiron.as_deref());
+    let deadline = deadline(args.common.timeout);
+    // A config named here is a local queue's.
+    let session = session_id(host, &event).filter(|_| args.config.is_none());
+    let running = match (session, bind::hand_over_target(host, session)) {
+        (Some(session), HandOverTarget::Hosted(vault)) => {
+            let policy_ref = format!("policy:{}-hooks", host.as_str());
+            let _ = continue_command::hand_over_hosted(
+                &oneiron,
+                &vault,
+                host,
+                session,
+                Path::new(transcript),
+                policy_ref,
+                deadline,
+            );
+            return;
+        }
+        (_, HandOverTarget::Hosted(_) | HandOverTarget::Withheld) => return,
+        (_, HandOverTarget::Local(running)) => running.unwrap_or_default(),
+    };
+    let mut command = oneiron_spawn::command(oneiron);
     command
-        .args(["import", import_source(host), transcript, "--queue"])
+        .args([
+            "import",
+            import_source(host).source_id(),
+            transcript,
+            "--queue",
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     // A named file stands over a found one. The running vault's settings
     // file goes over its own config alone, never over another config named
     // here (FIX 5602).
-    let running = bind::running_config().unwrap_or_default();
     let its_own = args
         .config
         .as_deref()
@@ -271,7 +324,6 @@ fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     if let Some(settings_file) = settings_file {
         command.arg("--settings-file").arg(settings_file);
     }
-    let deadline = deadline(args.common.timeout);
     if let Ok(mut child) = command.spawn()
         && wait_until(&mut child, deadline).is_none()
     {
@@ -296,6 +348,36 @@ fn read_event() -> Option<Map<String, Value>> {
         Value::Object(event) => Some(event),
         _ => Some(Map::new()),
     }
+}
+
+/// The session `host`'s event names, when it names one: Cursor's
+/// `conversation_id`, which every Cursor event names (its `sessionStart`
+/// names it again as `session_id`, its `stop` only so), else `session_id`.
+fn session_id(host: HookHost, event: &Map<String, Value>) -> Option<&str> {
+    let named = |field: &str| {
+        event
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|session| !session.is_empty())
+    };
+    match host {
+        HookHost::Cursor => named("conversation_id").or_else(|| named("session_id")),
+        _ => named("session_id"),
+    }
+}
+
+/// Whether a session start of `host` goes on from turns that ran before it.
+/// Cursor runs `sessionStart` only when a conversation is created
+/// (cursor.com/docs/agent/hooks), so its starts never do. Any other host's
+/// does unless its `source` names a new session: `startup` or `clear` (Claude
+/// Code, Codex), `startup` or `new` (Copilot); a resume, a compaction, or no
+/// `source` named, goes on.
+fn resumed(host: HookHost, event: &Map<String, Value>) -> bool {
+    host != HookHost::Cursor
+        && !matches!(
+            event.get("source").and_then(Value::as_str),
+            Some("startup" | "clear" | "new")
+        )
 }
 
 /// The git repository's folder name, else the working directory's.

@@ -492,9 +492,72 @@ fn push_warning(
 }
 
 enum DocumentTimestamp {
-    Signed(Vec<u8>),
+    /// The timestamped document, and its token, whose chain the material
+    /// covers.
+    Signed(Vec<u8>, tsp::ValidatedToken),
     MissingMaterial(tsp::ValidatedToken),
     Unavailable,
+}
+
+/// How much of each list the B-LT material held before any archival
+/// authority's material was appended to it.
+#[derive(Clone, Copy)]
+struct MaterialExtent {
+    certs: usize,
+    ocsps: usize,
+    crls: usize,
+}
+
+impl MaterialExtent {
+    fn of(material: &super::DssMaterial) -> Self {
+        Self {
+            certs: material.certs_der.len(),
+            ocsps: material.ocsps_der.len(),
+            crls: material.crls_der.len(),
+        }
+    }
+}
+
+/// The B-LTA document again without what only an abandoned archival token
+/// needed. When `material` holds a certificate that is neither B-LT material
+/// nor on the final `token`'s chain (an authority whose token was replaced,
+/// after a failover, by one whose chain was covered already), the material
+/// goes back to its B-LT extent `lt` plus `token`'s own, gathered afresh (an
+/// abandoned authority's part may hold the very CRL `token`'s chain shares),
+/// the DSS is rebuilt from the same signed revision, and one more archival
+/// token is asked for. That document when its token's chain is covered;
+/// `None` when nothing was abandoned or that token is not covered, and the
+/// caller keeps the first. A verifier holds every DSS certificate to a
+/// path valid at the material's time, which an abandoned authority's
+/// certificate may no longer have.
+async fn without_abandoned_material(
+    ctx: &SealContext<'_>,
+    signed_bytes: &[u8],
+    material: &mut super::DssMaterial,
+    lt: MaterialExtent,
+    token: &tsp::ValidatedToken,
+) -> Result<Option<Vec<u8>>, SealError> {
+    let abandoned = material
+        .certs_der
+        .iter()
+        .skip(lt.certs)
+        .any(|cert| !token.tsa_chain_ders.contains(cert));
+    if !abandoned {
+        return Ok(None);
+    }
+    material.certs_der.truncate(lt.certs);
+    material.ocsps_der.truncate(lt.ocsps);
+    material.crls_der.truncate(lt.crls);
+    if !timestamp_material_present(ctx, material, token)
+        && !include_timestamp_material(ctx, material, token).await?
+    {
+        return Ok(None);
+    }
+    let bytes = append_dss(signed_bytes, ctx, material)?;
+    Ok(match append_doc_timestamp(&bytes, ctx, material).await? {
+        DocumentTimestamp::Signed(timestamped, _) => Some(timestamped),
+        DocumentTimestamp::MissingMaterial(_) | DocumentTimestamp::Unavailable => None,
+    })
 }
 
 /// Append the DocTimeStamp revision for B-LTA (§7.6). A selected token
@@ -528,7 +591,7 @@ async fn append_doc_timestamp(
         match pdf::patch_contents(&mut draft, &token.content_info_der, ctx.limits) {
             Ok(()) => {
                 return Ok(if timestamp_material_present(ctx, material, &token) {
-                    DocumentTimestamp::Signed(draft.bytes)
+                    DocumentTimestamp::Signed(draft.bytes, token)
                 } else {
                     DocumentTimestamp::MissingMaterial(token)
                 });
@@ -642,11 +705,23 @@ pub(crate) async fn assemble(
                 bytes = append_dss(&signed_bytes, ctx, &material)?;
                 achieved = PadesProfile::BaselineLt;
                 if target == PadesProfile::BaselineLta {
+                    let lt = MaterialExtent::of(&material);
                     loop {
                         match append_doc_timestamp(&bytes, ctx, &material).await? {
-                            DocumentTimestamp::Signed(timestamped) => {
+                            DocumentTimestamp::Signed(timestamped, token) => {
                                 bytes = timestamped;
                                 achieved = PadesProfile::BaselineLta;
+                                if let Some(pruned) = without_abandoned_material(
+                                    ctx,
+                                    &signed_bytes,
+                                    &mut material,
+                                    lt,
+                                    &token,
+                                )
+                                .await?
+                                {
+                                    bytes = pruned;
+                                }
                                 break;
                             }
                             DocumentTimestamp::MissingMaterial(archival_token) => {

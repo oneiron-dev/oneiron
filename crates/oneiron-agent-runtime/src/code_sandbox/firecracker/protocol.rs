@@ -120,7 +120,8 @@ pub(in crate::code_sandbox) struct GuestProgram<'a> {
     pub source: &'a str,
 }
 
-/// [`exchange_cancellable`] for a step nothing cancels.
+/// [`exchange_cancellable`] for a step nothing cancels and that streams no
+/// output.
 #[cfg(test)]
 #[allow(
     dead_code,
@@ -145,6 +146,7 @@ pub(in crate::code_sandbox) fn exchange(
         transport,
         None,
         &StepCancellation::never(),
+        &mut |_: crate::engine_executor::JsCodeModeStream<'_>, _: Vec<u8>| -> Result<()> { Ok(()) },
     )
 }
 
@@ -273,7 +275,8 @@ pub(in crate::code_sandbox) fn exchange_cancellable(
     exchanged
 }
 
-/// [`receive_proposals_cancellable`] for a step nothing cancels.
+/// [`receive_proposals_cancellable`] for a step nothing cancels and that
+/// streams no output.
 #[cfg(test)]
 #[allow(
     dead_code,
@@ -296,6 +299,7 @@ fn receive_proposals(
         transport,
         None,
         &StepCancellation::never(),
+        &mut |_: crate::engine_executor::JsCodeModeStream<'_>, _: Vec<u8>| -> Result<()> { Ok(()) },
     )
 }
 
@@ -695,4 +699,8 @@ fn workspace_path(path: &SandboxVirtualPath) -> Result<WorkspacePath> {
 }
 
 #[cfg(test)]
+// The path is spelled out: `code_sandbox::microvm` loads this file through a
+// `#[path]` too, and there a bare `mod tests;` resolves to
+// `firecracker/tests.rs`, the backend's tests, not this protocol's.
+#[path = "protocol/tests.rs"]
 mod tests;

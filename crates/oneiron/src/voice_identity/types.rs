@@ -291,6 +291,19 @@ pub struct VoiceWithdrawalReceipt {
     pub deleted_active_pointer: bool,
 }
 
+/// What one consent-log transaction recorded (VOICE-CONSENT-LOG-WHO = A):
+/// the subject whose voice may be recognized, for which purposes. It enrols
+/// no print; enrolment stays engine-only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceConsentReceipt {
+    pub consent_event_ref: String,
+    pub subject_ref: EntityId,
+    pub purposes: Vec<VoicePrintPurpose>,
+    /// An identical recorded consent was redelivered; nothing new was
+    /// written, and no owner was told again.
+    pub replayed: bool,
+}
+
 /// One subject's stored centroid and its enrollment provenance.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VoicePrintRecordV1 {

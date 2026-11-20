@@ -23,8 +23,9 @@
 //! labels as a reference and not as a name, takes its antecedent's link, so a pronoun
 //! that happens to spell someone's name is never linked to them. A
 //! coreferent name the key misses takes its antecedent's link and never
-//! mints; one whose own name keys elsewhere keeps its own and is merge
-//! evidence. The mood lands on the turn. The save writes no claim, no edge
+//! mints, unless it is a role phrase whose antecedent names another
+//! speaker's role person; one whose own name keys elsewhere keeps its own
+//! and is merge evidence. The mood lands on the turn. The save writes no claim, no edge
 //! and no merge.
 //!
 //! A span's antecedent may sit outside the turn's spans. A context link
@@ -52,6 +53,10 @@ use super::tags::{
 };
 use super::vector;
 use crate::attempt_queue::AttemptQueue;
+use crate::batch::phonetic_codes::{
+    every_part_sounds_like, linking_codes, names_for_body, sound_keys,
+};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::federation::record_scope::{birth_facet, scope_for_blob};
@@ -59,11 +64,14 @@ use crate::federation::{ScopeAxis, ScopeId};
 use crate::memory::extraction::{
     ContextLink, EncoderInput, EncoderOutput, SpeakerLink, SpeakerTarget,
 };
+use crate::pipeline::RetrievalParams;
 use crate::ports::{
-    EdgeDirection, EdgeStoreRead, EntityStoreRead, RetrievalIndexRead, TombstoneStoreRead,
+    EdgeDirection, EdgeStoreRead, EntityStoreRead, RetrievalIndexRead, SoundMatchAdmission,
+    TombstoneStoreRead,
 };
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::Store;
+use crate::vault::entity_revision::{ReadMode, read_entity_revision_including_archived_in_txn};
 use crate::{EntityId, Vault};
 
 /// The save path's version, the envelope's `version`.
@@ -258,7 +266,7 @@ pub(super) fn save_with_hint_read_in_txn(
                 let link = linker.hinted(
                     txn,
                     link,
-                    text,
+                    (text, &messages[span.message]),
                     message_text,
                     span.start,
                     span.end,
@@ -270,11 +278,22 @@ pub(super) fn save_with_hint_read_in_txn(
             // antecedent's link.
             (Some(inherited), None) => inherited.clone(),
             (Some(inherited), Some(kind)) => {
-                let hits = linker.candidates(txn, kind, text)?;
+                let possessor =
+                    role::possessor_in_txn(vault, txn, kind, text, &messages[span.message])?;
+                let hits = linker.candidates(txn, kind, text, possessor)?;
                 if hits.is_empty() {
                     // A name the key misses takes its antecedent's link and
-                    // never mints a twin of it.
-                    if inherited.kind() == Some(kind) {
+                    // never mints a twin of it; a role phrase never takes
+                    // another possessor's provisional person (FIX
+                    // LINKER-ROLE-PROVISIONAL-PER-SPEAKER).
+                    if inherited.kind() == Some(kind)
+                        && !provisional::names_other_possessor_in_txn(
+                            &vault.store,
+                            txn,
+                            inherited.entities(),
+                            possessor,
+                        )?
+                    {
                         inherited.clone()
                     } else {
                         let link =
@@ -303,7 +322,7 @@ pub(super) fn save_with_hint_read_in_txn(
                     let link = linker.hinted(
                         txn,
                         link,
-                        text,
+                        (text, &messages[span.message]),
                         message_text,
                         span.start,
                         span.end,
@@ -514,8 +533,10 @@ pub(crate) fn shares_world_in_txn(
     Linker::new(vault, txn, turn, 0)?.shares_world(txn, id)
 }
 
-/// The persons a mention of `name` in `turn` sounds like, as the Linker's
-/// phonetic rung finds them, for a re-check that runs outside a save.
+/// The persons a mention of `name` in `turn` sounds like, for a re-check
+/// that runs outside a save: those the Linker's phonetic rung finds
+/// ([`Linker::sounds_like`]), and those its sound match finds
+/// ([`Linker::sound_matches`]), which a save never links by.
 pub(crate) fn sounds_like_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -523,7 +544,39 @@ pub(crate) fn sounds_like_in_txn(
     kind: u8,
     name: &str,
 ) -> Result<Vec<EntityId>> {
-    Linker::new(vault, txn, turn, 0)?.sounds_like(txn, kind, name)
+    let linker = Linker::new(vault, txn, turn, 0)?;
+    let mut found: BTreeSet<EntityId> = linker.sounds_like(txn, kind, name)?.into_iter().collect();
+    found.extend(linker.sound_matches(txn, kind, name)?);
+    Ok(found.into_iter().collect())
+}
+
+/// The phonetic channel's shipped parameters with the sound match taken
+/// person by person, for the Linker's sound match: the shipped Normalized
+/// Phonetic Distance threshold, with no keep ratio of the nearest distance
+/// and no cap. Whether a person sounds like a name then rests on that person
+/// alone ([`Linker::sound_matches`]).
+const LINKER_SOUND_PARAMS: RetrievalParams = RetrievalParams {
+    phonetic_npd_keep_ratio: f32::INFINITY,
+    phonetic_npd_cap: usize::MAX,
+    ..RetrievalParams::shipped()
+};
+
+/// The names of record `id` at the revision its phonetic postings were
+/// written from ([`ReadMode::Indexed`]), archived or not, for the sound
+/// match: none for a record that is gone, withdrawn or unreadable.
+fn linker_names_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Vec<String>> {
+    let Some(raw) =
+        read_entity_revision_including_archived_in_txn(vault, txn, id, ReadMode::Indexed)?
+    else {
+        return Ok(Vec::new());
+    };
+    let (Some(header), Some(body)) = (
+        EntityMetadataHeader::parse(&raw),
+        raw.get(ENTITY_METADATA_HEADER_LEN..),
+    ) else {
+        return Ok(Vec::new());
+    };
+    Ok(names_for_body(header.entity_type, body))
 }
 
 /// The persons the speaker of `message` names by a mention of `name` in
@@ -605,9 +658,16 @@ impl<'v> Linker<'v> {
     /// The key's candidates for a mention: the canonical heads of the
     /// vault's live entities of `kind` whose hints match it, archived ones
     /// included (ARCH-0055 §10, resolution sees the archive), and the
-    /// provisional entities of `kind` with its name; each in a world the
-    /// turn is in.
-    fn candidates(&self, txn: &heed::RoTxn<'_>, kind: u8, mention: &str) -> Result<Vec<EntityId>> {
+    /// provisional entities of `kind` with its name and the mention's
+    /// `possessor` ([`role::possessor_in_txn`]: a role phrase finds only its
+    /// own speaker's); each in a world the turn is in.
+    fn candidates(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: u8,
+        mention: &str,
+        possessor: Option<EntityId>,
+    ) -> Result<Vec<EntityId>> {
         let mut found = BTreeSet::new();
         for hit in self.vault.lookup_identity_key_in_txn(txn, kind, mention)? {
             for head in self.vault.resolve_entity_in_txn(txn, &hit)? {
@@ -618,7 +678,9 @@ impl<'v> Linker<'v> {
                 }
             }
         }
-        for id in provisional::lookup_in_txn(&self.vault.store, txn, kind, mention)? {
+        for id in
+            provisional::lookup_possessed_in_txn(&self.vault.store, txn, kind, mention, possessor)?
+        {
             let origin =
                 provisional::get_in_txn(&self.vault.store, txn, &id)?.map(|entity| entity.origin);
             if let Some(origin) = origin
@@ -631,14 +693,14 @@ impl<'v> Linker<'v> {
     }
 
     /// `link` narrowed to the one candidate a saved identity hint picks for
-    /// the mention `name` at `start..end` of `text`, as the nightly re-check
-    /// would settle it; `link` itself when it names fewer than two or no
-    /// hint picks one.
+    /// the mention `name`, said in `message`, at `start..end` of `text`, as
+    /// the nightly re-check would settle it; `link` itself when it names
+    /// fewer than two or no hint picks one.
     fn hinted(
         &self,
         txn: &heed::RoTxn<'_>,
         link: MentionLink,
-        name: &str,
+        (name, message): (&str, &EntityId),
         text: &str,
         start: usize,
         end: usize,
@@ -650,15 +712,29 @@ impl<'v> Linker<'v> {
         if entities.len() < 2 {
             return Ok(link);
         }
+        let possessor = role::possessor_in_txn(self.vault, txn, *kind, name, message)?;
         let hinted = match hint_read {
             HintRead::Internal => {
                 crate::dreamer_runner::maintenance::identity::hinted_mention_in_txn(
-                    self.vault, txn, *kind, name, text, start, end, entities,
+                    self.vault,
+                    txn,
+                    (*kind, name, possessor),
+                    text,
+                    start,
+                    end,
+                    entities,
                 )?
             }
             HintRead::Caller(read) => {
                 crate::dreamer_runner::maintenance::identity::hinted_mention_scoped_in_txn(
-                    self.vault, txn, read, *kind, name, text, start, end, entities,
+                    self.vault,
+                    txn,
+                    read,
+                    (*kind, name, possessor),
+                    text,
+                    start,
+                    end,
+                    entities,
                 )?
             }
         };
@@ -733,7 +809,7 @@ impl<'v> Linker<'v> {
         if kind != ENTITY_TYPE_PERSON {
             return Ok(Vec::new());
         }
-        let codes = crate::batch::phonetic_codes::linking_codes(mention);
+        let codes = linking_codes(mention);
         let store = &self.vault.store;
         let mut hits: BTreeSet<EntityId> = store
             .port_retrieval_phonetic_search(txn, &codes.whole)?
@@ -763,6 +839,71 @@ impl<'v> Linker<'v> {
         let mut found = BTreeSet::new();
         for hit in hits {
             for head in self.vault.resolve_entity_in_txn(txn, &hit)? {
+                if linkable_in_txn(store, txn, &head, kind)? && self.shares_world(txn, &head)? {
+                    found.insert(head);
+                }
+            }
+        }
+        Ok(found.into_iter().collect())
+    }
+
+    /// The sound match (CROSS-ARCH-0013 `#two-uses`: canonicalize at
+    /// extraction), for a name the key misses: the canonical heads of the
+    /// live or archived persons, each in a world the turn is in, whose
+    /// stored sound keys are within the Normalized Phonetic Distance
+    /// threshold of the name's ([`sound_keys`]), and one of whose names holds
+    /// a part that sounds like each part of the name
+    /// ([`every_part_sounds_like`]), as the code rung asks every part's
+    /// Soundex code to match. A misheard name whose codes differ from the
+    /// person's still finds them. Each person is matched on their own sound
+    /// alone, as the key and the codes match each on their own: the match
+    /// keeps no ratio of the nearest distance and no cap
+    /// ([`LINKER_SOUND_PARAMS`]), so no other person, nearer or one a lane
+    /// serving the ask cannot read, moves a person in or out. A name of one
+    /// part, and a mention of any other kind, take none.
+    ///
+    /// A save never links by it: a mention only these persons sound like
+    /// mints, and the nightly re-check asks whether it is one of them or
+    /// someone new ([`sounds_like_in_txn`]). The link a save stores is
+    /// decided over the key and the codes alone, so a person that a lane
+    /// reading the turn cannot read never turns its mint into candidates by
+    /// sounding like the name.
+    fn sound_matches(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: u8,
+        mention: &str,
+    ) -> Result<Vec<EntityId>> {
+        // The code rung's gate: a name of one part takes none.
+        if kind != ENTITY_TYPE_PERSON || linking_codes(mention).whole.is_empty() {
+            return Ok(Vec::new());
+        }
+        let sound = sound_keys(mention);
+        let store = &self.vault.store;
+        let admission: &mut SoundMatchAdmission<'_> = &mut |id: &EntityId| {
+            let mut linkable = false;
+            for head in self.vault.resolve_entity_in_txn(txn, id)? {
+                if linkable_in_txn(store, txn, &head, kind)? && self.shares_world(txn, &head)? {
+                    linkable = true;
+                    break;
+                }
+            }
+            // The names are read last: each part's readings cost a G2P pass.
+            Ok(linkable
+                && linker_names_in_txn(self.vault, txn, id)?
+                    .iter()
+                    .any(|name| every_part_sounds_like(mention, name)))
+        };
+        let hits = store.port_retrieval_phonetic_search_with_deadline(
+            txn,
+            &sound,
+            &LINKER_SOUND_PARAMS,
+            None,
+            Some(admission),
+        )?;
+        let mut found = BTreeSet::new();
+        for hit in hits {
+            for head in self.vault.resolve_entity_in_txn(txn, &hit.id)? {
                 if linkable_in_txn(store, txn, &head, kind)? && self.shares_world(txn, &head)? {
                     found.insert(head);
                 }
@@ -881,7 +1022,8 @@ impl<'v> Linker<'v> {
         message: &EntityId,
         hint_read: HintRead<'_, '_>,
     ) -> Result<MentionLink> {
-        let mut entities = self.candidates(txn, kind, mention)?;
+        let possessor = role::possessor_in_txn(self.vault, txn, kind, mention, message)?;
+        let mut entities = self.candidates(txn, kind, mention, possessor)?;
         let unsure_role = match self.role_link(txn, kind, mention, message, hint_read, &entities)? {
             RoleRung::Link(link) => return Ok(link),
             RoleRung::Unsure => true,
@@ -910,6 +1052,7 @@ impl<'v> Linker<'v> {
                 origin: self.turn,
                 facet: self.facet,
                 minted_at: self.now,
+                possessor,
             },
         )?;
         self.minted += 1;

@@ -534,18 +534,21 @@ impl ModelRuntime {
         self.rests.questions()
     }
 
-    /// The owner's answer to quota question `id`; a top-up or pay-as-you-go
-    /// puts its offer back in rotation now, and `use_fallback` sends its
-    /// calls to `fallback`, one of the question's fallbacks, while it is
-    /// parked. `false` when no such question is open, it offers no such
-    /// choice, or it offers no such fallback.
+    /// The answer to quota question `id`, given by `answerer` (the owner,
+    /// or an agent his key lets give it), which the question's answer row
+    /// keeps; a top-up or pay-as-you-go puts its offer back in rotation now,
+    /// and `use_fallback` sends its calls to `fallback`, one of the
+    /// question's fallbacks, while it is parked. `false` when no such
+    /// question is open, it offers no such choice, or it offers no such
+    /// fallback.
     pub fn answer_quota(
         &self,
         id: &str,
         choice: QuotaChoice,
         fallback: Option<&str>,
+        answerer: QuotaAnswerer,
     ) -> oneiron::Result<bool> {
-        self.rests.answer(id, choice, fallback)
+        self.rests.answer(id, choice, fallback, answerer)
     }
 
     /// The seat for `role`, when at least one of its rungs can serve.

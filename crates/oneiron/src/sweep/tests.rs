@@ -44,11 +44,14 @@ fn h_rows(vault: &Vault) -> Vec<(Vec<u8>, Vec<u8>)> {
     rows
 }
 
+// OF-470/FIX 5844: a sweep appends a linked completion row; the initial receipt never mutates.
 fn receipt_sweep_complete_at(vault: &Vault, receipt_id: &EntityId) -> Option<u64> {
     let raw = vault.get_raw(receipt_id).unwrap().expect("receipt raw");
     let receipt = decode_redaction_audit_receipt(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
         .expect("receipt decode");
-    receipt.sweep_complete_at
+    let rtxn = vault.store.env.read_txn().unwrap();
+    crate::deletion::redaction_sweep_completion_in_txn(&vault.store, &rtxn, receipt_id, &receipt)
+        .expect("completion read")
 }
 
 fn write_h_row(vault: &Vault, seq: u64, value: &[u8]) -> Vec<u8> {
@@ -184,6 +187,7 @@ fn the_owners_maintain_compacts_a_live_hosts_idle_windows_and_a_scheduled_pass_l
     };
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let learned_at = 1_771_027_200;
     let erased = EntityId::now();
     put_entity(&vault, &erased, learned_at, b"erased-window-body");
@@ -248,6 +252,7 @@ fn a_window_opened_during_its_compaction_reads_the_compacted_window() {
 
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let id = EntityId::now();
     let learned_at = 1_771_027_200;
     put_entity(&vault, &id, learned_at, b"reopened-window-body");
@@ -525,6 +530,7 @@ fn retained_handle_cannot_resurrect_after_finalize() {
 
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let id = EntityId::now();
     let learned_at = 1_771_027_200;
     put_entity(&vault, &id, learned_at, b"retained-window-body");
@@ -844,6 +850,7 @@ fn sweep_raced_window_completes_on_clean_rerun() {
 
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let id = EntityId::now();
     put_entity(&vault, &id, 1_771_027_200, UNIT_SENTINEL);
 
@@ -910,6 +917,7 @@ fn sweep_defers_when_uw_carrier_appears_after_compaction_before_finalize() {
 
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let id = EntityId::now();
     put_entity(&vault, &id, 1_771_027_200, b"final-fence-body");
 

@@ -85,14 +85,18 @@ pub fn replay_hooks_as_owner(
 }
 
 /// [`replay_hooks_as_owner`], beside the rows its entries stand on
-/// ([`crate::Vault::hooks_replay_listing`]).
+/// ([`crate::Vault::hooks_replay_listing`]). The proof is checked again
+/// first, as every owner door checks it: it belongs to this vault's open, and
+/// its person is live and this vault's owner. A proof minted for anyone else,
+/// or one gone stale, replays nothing.
 pub fn replay_hooks_as_owner_listing(
     vault: &crate::Vault,
-    _owner: &crate::consent::AuthenticatedOwner,
+    owner: &crate::consent::AuthenticatedOwner,
     runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
     verdict: Option<std::sync::Arc<dyn crate::runtime_hooks::HookVerdict>>,
     input: &HooksReplayRequest,
 ) -> MemoryResult<(HooksReplayPage, Vec<crate::EntityId>)> {
+    owner.revalidate(vault)?;
     let asked = input.limit()?;
     let binding = crate::EntityId::from_hex(input.binding.trim())
         .map_err(|_| MemoryError::bad_request("binding is a hook binding's 32-hex id"))?;

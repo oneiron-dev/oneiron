@@ -1,12 +1,14 @@
 //! What a training swap question says and which results get one: the
 //! result in brief, and the expectation and digest a question freezes.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use crate::Vault;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::llm::manifest::{ModelManifest, ModelRole};
 use crate::skill_optimize::training_choice::TrainingState;
-use crate::training_pack::{SwapExpectation, TrainingRun};
+use crate::training_pack::{ExportCheck, SwapExpectation, TrainingRun};
 
 /// The most held-out metrics a question names; it counts the rest.
 const QUESTION_METRICS: usize = 8;
@@ -121,8 +123,30 @@ pub(super) fn candidate_in(
     }
     let expected = SwapExpectation::of(run, manifest)?;
     let checks = &run.result.as_ref().ok_or_else(not_scored)?.checks;
-    let bytes = crate::llm::canonical_json_bytes(&(&expected, checks))
-        .map_err(|_| Error::InvalidConfig("training swap digest encoding failed".into()))?;
-    let digest = bytes_to_hex_lower(blake3::hash(&bytes).as_bytes());
+    let digest = swap_question_digest(&expected, checks)?;
     Ok(Some((expected, digest)))
+}
+
+/// The digest a swap question freezes: plain BLAKE3 of the sorted JSON of
+/// what the swap binds against and the run's checks, lowercase hex. An ask's
+/// route and key store it and a renewal compares it, so it keeps its bytes (K,
+/// PLAN-UC-04 stage 6.4).
+fn swap_question_digest(expected: &SwapExpectation, checks: &ExportCheck) -> Result<String> {
+    let bytes = crate::llm::canonical_json_bytes(&(expected, checks))
+        .map_err(|_| Error::InvalidConfig("training swap digest encoding failed".into()))?;
+    Ok(bytes_to_hex_lower(
+        &LegacyDigest::new(purposes::training_pack::SWAP_QUESTION)
+            .raw(&bytes)
+            .finish(),
+    ))
+}
+
+/// [`swap_question_digest`], or `None` when the values do not encode. For the
+/// K-proof (`tests/fingerprint_keep_query_swap_piece_packet_repo_digests.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn swap_question_digest_for_test(
+    expected: &SwapExpectation,
+    checks: &ExportCheck,
+) -> Option<String> {
+    swap_question_digest(expected, checks).ok()
 }

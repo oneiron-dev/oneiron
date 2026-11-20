@@ -15,6 +15,7 @@ use loro::{ExportMode, LoroDoc};
 use oneiron::authority::holder_proof_challenge;
 use oneiron::dreamer_runner::{DreamerHomeNodeCandidate, DreamerRunnerStore};
 use oneiron::federation::ScopeAxis;
+use oneiron::schedule::JobOutcome;
 use oneiron::store::housekeeping_schedule::HousekeepingBudget;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
@@ -27,6 +28,20 @@ use oneiron::{EntityId, HnswConfig, Vault, VaultConfig};
 const WINDOW: &str = "2026-03";
 /// 2026-03-15 00:00 UTC, inside [`WINDOW`].
 const T0: u64 = 1_773_532_800;
+/// The job an actor's timer programs arm (setting stage 5b-3).
+const TIMER_JOB: &str = "dreamer_runner.program_timer";
+
+/// One runner pass on the vault's recording clock, which stands past `T0`: the Done runs of the
+/// actors' timer job, each recording the wakes its timers owe at their due times.
+fn release_due_timers(vault: &Vault) -> usize {
+    vault
+        .run_due(HousekeepingBudget::unbounded())
+        .unwrap()
+        .runs
+        .iter()
+        .filter(|run| run.job == TIMER_JOB && run.outcome == JobOutcome::Done)
+        .count()
+}
 
 fn config() -> VaultConfig {
     let mut cfg = VaultConfig::device();
@@ -144,7 +159,7 @@ fn a_carried_decision_never_consumes_an_occurrence_wake() {
     let (actor, slip, instrument) = agent_slip(&b);
     let registration =
         doors::plant_timer_arming(&b.vault, actor, &slip, &instrument, T0 - 60, T0).unwrap();
-    assert_eq!(b.vault.release_timer_program_wakes(T0).unwrap(), 1);
+    assert_eq!(release_due_timers(&b.vault), 1);
     let (occurrence, map_key, row) =
         doors::admitted_row_bytes(&b.vault, actor, registration).unwrap();
     assert!(doors::wake_owed_here(&b.vault, occurrence, registration).unwrap());
@@ -182,7 +197,7 @@ fn an_occurrence_decision_rides_no_window() {
     let (actor, slip, instrument) = agent_slip(&machine);
     let registration =
         doors::plant_timer_arming(&machine.vault, actor, &slip, &instrument, T0 - 60, T0).unwrap();
-    assert_eq!(machine.vault.release_timer_program_wakes(T0).unwrap(), 1);
+    assert_eq!(release_due_timers(&machine.vault), 1);
     let (occurrence, _, _) =
         doors::admitted_row_bytes(&machine.vault, actor, registration).unwrap();
 

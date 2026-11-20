@@ -4,6 +4,7 @@ use crate::code_run::FoldWordRef;
 use crate::compaction::output::OutputRef;
 use crate::model_binding::ModelRole;
 use crate::side_table::ErasedForm;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
@@ -51,7 +52,9 @@ impl ReplayRung {
 pub fn route_prompt_digest(prompt: Option<&str>) -> [u8; 32] {
     // A string always encodes as JSON; nothing here can fail.
     let json = serde_json::to_vec(&prompt).unwrap_or_default();
-    *blake3::hash(&json).as_bytes()
+    let mut digest = LegacyDigest::new(purposes::dreamer_runner::ROUTE_PROMPT);
+    digest.raw(&json);
+    digest.finish()
 }
 
 /// One captured step of a canonical attempt.

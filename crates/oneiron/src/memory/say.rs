@@ -188,6 +188,7 @@ impl Memory<'_> {
                     }],
                     occurred_at: crate::unix_seconds_now(),
                     assertions: marks.assertions,
+                    project: None,
                 })?;
                 Ok(SayAnswer::Delivered(SayReceipt {
                     room: room.to_hex(),

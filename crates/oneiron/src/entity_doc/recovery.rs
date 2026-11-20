@@ -28,7 +28,7 @@ use crate::store::canonical_document::CanonicalForkStatus;
 use crate::store::canonical_document::CanonicalSettleVerb;
 use crate::{EntityId, Result, Vault};
 use heed::{RoTxn, RwTxn};
-use loro::{ExportMode, Frontiers, UpdateOptions, VersionVector};
+use loro::{ExportMode, Frontiers, VersionVector};
 
 mod canonical_order;
 mod summary_meta;
@@ -608,9 +608,7 @@ fn replay(
             .doc
             .fork_at(&base)
             .map_err(|_| invalid("entity document version replay"))?;
-        branch
-            .get_text(BODY)
-            .update(text, UpdateOptions::default())
+        crate::text_diff::set_text(&branch.get_text(BODY), text)
             .map_err(|_| invalid("entity document version replay"))?;
         EntityDoc::replace_metadata(&branch, &version.metadata)?;
         summary_meta::write(&branch, &version.summary_meta)?;
@@ -780,10 +778,7 @@ fn bind_rows(
             // The output diverges from the replayed base in its own ops, so
             // a later MERGE or SWITCH lands it as the original would.
             let branch = doc.fork(&base)?;
-            branch
-                .doc
-                .get_text(BODY)
-                .update(output, UpdateOptions::default())
+            crate::text_diff::set_text(&branch.doc.get_text(BODY), output)
                 .map_err(|_| invalid("entity document fork replay"))?;
             EntityDoc::replace_metadata(
                 &branch.doc,

@@ -503,11 +503,34 @@ pub const SEAL_OBJECTIVE_FLAW: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Does an earlier calibration pick still fit the judge's rubric as edited, as the Coach's
+/// model reads the pick beside the rubric now in force (ARCH-0042 judge re-pin, OF-420,
+/// ARCH-0076 #decide-required)? Yes is the pick still fits, no is the rubric now calls for
+/// the other option. One question per pending pick, keyed by the checker protocol's digest
+/// and the rubric's digest; an abstain gives no verdict on the pick.
+pub const JUDGE_LABEL_FIT: QuestionFamily = QuestionFamily {
+    name: "skill_optimize.judge_label_fit",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// What the owner does about an offer parked on a spent window or spent credit: wait, top
 /// up, add an account, pay as you go, or use the usage left on another provider (OF-305,
 /// FIX 562). Asked of a person only; keyed by the parked offer's row and what was spent.
 pub const QUOTA_SPENT: QuestionFamily = QuestionFamily {
     name: "models.quota_spent",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// What the owner does about an agent run held at its spend cap (ARCH-0026 depletion ladder,
+/// policy knob; ARCH-0036 #offers-ask-home): with no overdraft configured the ladder asks up
+/// and never downgrades the run by itself. Asked of the owner role only; keyed by the run's
+/// root attempt, or, for a Dreamer try parked at its budget trap on a spend scope's cap or a
+/// resident's pinned share, by that try. Its fixed machine-lifecycle wording lives in
+/// agent_dispatch, the third wording exception.
+pub const RUN_BUDGET_SPENT: QuestionFamily = QuestionFamily {
+    name: "models.run_budget_spent",
     version: 1,
     class: DecisionClass::Judgment,
 };
@@ -577,6 +600,8 @@ pub const FAMILIES: &[QuestionFamily] = &[
     COMPACTION_SUPPORT,
     CLAIM_SOURCE_SUPPORT,
     SEAL_OBJECTIVE_FLAW,
+    JUDGE_LABEL_FIT,
     QUOTA_SPENT,
+    RUN_BUDGET_SPENT,
     MESSAGE_CLASS,
 ];

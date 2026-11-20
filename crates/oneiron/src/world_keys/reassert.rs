@@ -43,7 +43,10 @@ impl Vault {
     /// is no refusal. One settings edit with its receipt, and either the
     /// re-wraps and the world's key (this install holds the world) or an
     /// owner work request naming a holder (it does not), in one transaction.
-    /// The engine never calls it on its own.
+    /// The owner's own undelegated proof makes the edit, the re-wraps and the
+    /// key records carry the owner key's proof this install holds
+    /// ([`Vault::owner_act_proof_signer`]). The engine never calls it on its
+    /// own.
     pub fn reassert_world_privacy(
         &self,
         owner: &AuthenticatedOwner,
@@ -81,6 +84,7 @@ impl Vault {
             // A widen goes through the settings door's approval rule first
             // (FIX 8205).
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let owner_authored = owner.owner_answer_in_txn(self, txn)?;
             self.refuse_unanimous_widen_in_txn(txn, actor, world, &settings)?;
             let receipt = self.set_world_privacy_in_txn(
                 txn,
@@ -96,7 +100,13 @@ impl Vault {
                 .filter(|secret| holds(&after, world, secret.machine, &my_key));
             let done = match holder {
                 Some(secret) => self
-                    .reassert_held_world_keys_in_txn(txn, world, secret, None)?
+                    .reassert_held_world_keys_in_txn(
+                        txn,
+                        world,
+                        secret,
+                        None,
+                        owner_authored.as_ref(),
+                    )?
                     .ensures()
                     .then_some(secret),
                 None => None,
@@ -104,7 +114,13 @@ impl Vault {
             let receipt = match done {
                 Some(secret) => {
                     let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-                    let status = self.world_key_for_edit_in_txn(txn, actor, world, Ok(secret))?;
+                    let status = self.world_key_for_edit_in_txn(
+                        txn,
+                        actor,
+                        world,
+                        Ok(secret),
+                        owner_authored.as_ref(),
+                    )?;
                     self.settle_world_key_work_in_txn(txn, owner, receipt, status)?
                 }
                 None => self.record_reassert_work_in_txn(txn, owner, world, receipt)?,
