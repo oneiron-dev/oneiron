@@ -27,8 +27,6 @@
 //! no longer matches its act. The put of a row notes that pass; an erase here is read at the next
 //! one (the next authority commit, or the open).
 
-use std::io::Read;
-
 use oneiron_authority::authority::{
     POLICY_SETTING_INLINE_MAX, setting_slot_target, setting_value_digest,
 };
