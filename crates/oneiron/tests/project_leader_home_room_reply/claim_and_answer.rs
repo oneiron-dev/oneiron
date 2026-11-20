@@ -3,8 +3,13 @@
 //! even through the live DAG reply door, which takes no claim (finding 2). A
 //! name or a task keeps no claim for a holder the witness would refuse
 //! (finding 3). An answer seals its claim against another machine's
-//! concurrent takeover, in either order (finding 1). Each test is red at the
-//! round-1 head 995d059b623.
+//! concurrent takeover, in either order (finding 1). Each of these four is
+//! red at the round-1 head 995d059b623.
+//!
+//! The own review of round 2 added the two erased-claim tests: the seal
+//! writes no live copy of a claim back over its erased form (FIX 4870). Both
+//! are green at 995d059b623, which had no seal, and red at the round-2 head
+//! 33a9d1322fe.
 
 use oneiron::conversation_dag::{AddressMode, AppendRecord};
 use oneiron::registry::ENTITY_TYPE_TURN;
@@ -199,6 +204,89 @@ fn a_carried_answer_restores_the_claim_it_answered() -> TestResult {
         fixture.claim(fixture.other, asked)?,
         RoomClaimOutcome::HeldBy(answered),
         "other finds the answered turn held"
+    );
+    Ok(())
+}
+
+/// The erased form of `receipt`, as a machine that erased its actor carries
+/// it: the same receipt, naming no one.
+#[cfg(oneiron_test_support)]
+fn erased_copy(
+    receipt: &oneiron::workspace_roster::RoomClaimReceipt,
+) -> oneiron::workspace_roster::RoomClaimReceipt {
+    let mut erased = receipt.clone();
+    erased.actor = oneiron::receipt::ERASED_CALL_IDENTITY.to_owned();
+    erased
+}
+
+/// REVIEW-9956 round 2, own review (FIX 4870): `lead` claims and answers
+/// owen's turn. Another machine carries the erased form of `lead`'s claim,
+/// which stands here, as the erased form wins where copies meet. A third
+/// machine still carries the live copy of that receipt: the answer seals no
+/// live copy back over the erased form.
+///
+/// Red at the round-2 head 33a9d1322fe: the claim merge's seal writes the
+/// live copy back, since `lead` spoke the held answer.
+#[cfg(oneiron_test_support)]
+#[test]
+fn an_answer_seals_no_live_copy_over_an_erased_claim() -> TestResult {
+    use oneiron::test_doors::room_turn_claims::{held_claim, merge_replicated_claim};
+
+    let fixture = Fixture::open()?;
+    let asked = fixture.owen_speaks(serde_json::json!({}))?;
+    let answered = claimed_receipt(fixture.claim(fixture.lead, asked)?)?;
+    fixture.reply(fixture.lead, asked)?;
+    let erased = erased_copy(&answered);
+    assert_eq!(
+        merge_replicated_claim(&fixture.vault, &erased)?,
+        "Written",
+        "the erased form of the claim stands"
+    );
+    merge_replicated_claim(&fixture.vault, &answered)?;
+    assert_eq!(
+        held_claim(&fixture.vault, asked)?,
+        Some(erased),
+        "the live copy of an erased claim changes nothing"
+    );
+    Ok(())
+}
+
+/// REVIEW-9956 round 2, own review (FIX 4870): `lead` claims owen's turn,
+/// and another machine's erased form of that claim stands here. A third
+/// machine carries `lead`'s answer with the live copy of the claim: the
+/// answer seals no live copy back over the erased form.
+///
+/// Red at the round-2 head 33a9d1322fe: the response merge leaves the
+/// erased form out and writes the live copy as the answered claim.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_carried_answer_seals_no_live_copy_over_an_erased_claim() -> TestResult {
+    use oneiron::test_doors::room_turn_claims::{
+        held_claim, merge_replicated_answer, merge_replicated_claim,
+    };
+
+    let fixture = Fixture::open()?;
+    let asked = fixture.owen_speaks(serde_json::json!({}))?;
+    let answered = claimed_receipt(fixture.claim(fixture.lead, asked)?)?;
+    let erased = erased_copy(&answered);
+    assert_eq!(
+        merge_replicated_claim(&fixture.vault, &erased)?,
+        "Written",
+        "the erased form of the claim stands"
+    );
+    merge_replicated_answer(
+        &fixture.vault,
+        fixture.room,
+        asked,
+        EntityId::now(),
+        fixture.lead,
+        fixture.vault.now_recorded_at(),
+        std::slice::from_ref(&answered),
+    )?;
+    assert_eq!(
+        held_claim(&fixture.vault, asked)?,
+        Some(erased),
+        "the carried answer seals no live copy over the erased claim"
     );
     Ok(())
 }
