@@ -18,6 +18,10 @@
 //!
 //! T1 is the attack (red on main, green with the fix); T2 guards a believed
 //! row's withheld parent and T3 the whole delivery request (green on both).
+//! Review round 2 of #9476: a stranger batch above withheld parents still
+//! stores once the pending probes believe the whole batch (green on both),
+//! and a dropped row with a parent-scope fault keeps `InvalidEntry` (red
+//! before the fix, which read it `InvalidAncestry`).
 //! The stranger-row setup mirrors `stranger_parent_settled.rs`; the adoption
 //! runs the public checkpoint path (build, host-attest, pin, bundle, adopt) on
 //! the vault's own image, so no test door is needed.
@@ -48,7 +52,9 @@ use oneiron::sync::peer_route::authority_fold_settled;
 use oneiron::sync::replay::{ReplicatedEntity, replay_entity};
 use oneiron::world_keys::RecoveryRootSeed;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
-use oneiron_authority::authority::HomeCandidacy;
+use oneiron_authority::authority::{
+    HomeCandidacy, PolicyRevision, WorldKeyId, WorldKeyWrapsRecord, WrapRecipient,
+};
 
 /// The seed of the joining machine's machine key.
 const JOINING_SEED: u8 = 68;
@@ -558,6 +564,210 @@ fn adopted_strangers_dropped_row_keeps_its_invalid_ancestry_verdict() {
         fold.issues
             .contains(&AuthorityFoldIssue::InvalidAncestry(hash(&delivered))),
         "the fold past the adopted image dropped C's invalid-ancestry verdict: {:?}",
+        fold.issues
+    );
+}
+
+/// A batch of two stranger roots, each above a withheld parent, stores and
+/// leaves the adopted fold reading and peer serving settled. The pending
+/// probes believe the whole batch (#9476 review round 2), and a stranger's
+/// rows stay unbelieved there as in the stored log's belief, so their gaps
+/// refuse nothing and the batch does not wait for history. Green before and
+/// after that change: it guards it.
+#[test]
+fn adopted_stranger_granting_batch_above_withheld_still_stores() {
+    let served = ServedVault::self_host();
+    adopt_own_checkpoint(&served);
+    assert!(
+        served.vault.authority_fold().is_ok(),
+        "guard: the adopted vault's fold reads before the stranger batch"
+    );
+    let vault_id = served.vault_id();
+    // Two fresh stranger roots, each self-signed above its own withheld parent.
+    let mut batch = Vec::new();
+    let mut withheld = Vec::new();
+    for tag in [[0x51; 32], [0x52; 32]] {
+        let seed = RecoveryRootSeed::generate().expect("setup: a fresh stranger root seed");
+        let root = seed
+            .public(&vault_id)
+            .expect("setup: the stranger root's public half");
+        let anchor = seed.anchor();
+        withheld.push(tag);
+        let record = OwnerRootRecord {
+            owner: stranger_owner(),
+            root: root.id,
+            recovery_key: MachineEncryptionKey {
+                suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+                key: root.recovery_key.to_bytes(),
+            },
+            anchor_key: root.anchor_key,
+        };
+        let entry = signed(
+            vault_id,
+            1,
+            vec![tag],
+            AuthorityOp::OwnerRoot(record),
+            &anchor,
+        );
+        batch.push((entry, AT, 2u64));
+    }
+    for parent in &withheld {
+        assert!(
+            matches!(
+                served
+                    .vault
+                    .authority_log_entry_status(parent)
+                    .expect("setup: a withheld parent's status reads"),
+                AuthorityEntryStatus::Unknown
+            ),
+            "setup: each withheld parent is unknown, so the batch names missing parents"
+        );
+    }
+    // A batch that waits for history errs history-required here; this one
+    // stores, since both rows are unbelieved strangers.
+    let stored = served
+        .vault
+        .put_authority_log_entries(&batch)
+        .expect("a stranger granting batch above withheld must store, not pend");
+    assert_eq!(
+        stored.len(),
+        2,
+        "setup: both stranger roots stored, so the batch reached the log"
+    );
+    for (entry, _, _) in &batch {
+        let id = authority_log_entity_id(entry).expect("setup: the row's content id");
+        assert!(
+            served
+                .vault
+                .get_authority_log_entry(&id)
+                .expect("setup: the stored row reads back")
+                .is_some(),
+            "setup: each stranger root is stored, so the batch reached the log"
+        );
+    }
+    assert!(
+        served.vault.authority_fold().is_ok(),
+        "a stranger granting batch above withheld must leave the adopted fold reading"
+    );
+    assert!(
+        authority_fold_settled(&served.vault).expect("the settled read"),
+        "a stranger granting batch above withheld must leave peer serving settled"
+    );
+}
+
+/// A stranger's machine revision C names a covered side-branch row W of a
+/// world and its withheld parent Q: the adopted fold drops C above Q, and C
+/// keeps the `InvalidEntry` the stored log's fold gives a row naming another
+/// world's side row, never `InvalidAncestry` (#9476 review round 2). Red
+/// before the fix, where every dropped row read `InvalidAncestry`.
+#[test]
+fn adopted_dropped_row_with_scope_fault_keeps_invalid_entry() {
+    let served = ServedVault::self_host();
+    let request = served.joining_machine();
+    served.enrol(&request).expect("setup: the owner enrols M");
+    let (anchor, root_hash) = publish_stranger_root(&served.vault);
+    // W: M-signed WorldKeyWraps on a valid head, stored before adoption so the
+    // image covers it as a frontier row.
+    let vault_id = served.vault_id();
+    let head = served
+        .vault
+        .authority_fold()
+        .expect("setup: authority fold for W's parent")
+        .valid_entries
+        .iter()
+        .next()
+        .copied()
+        .expect("setup: the vault holds a valid row for W's parent");
+    let owner_person = served
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("setup: the vault's owner person for W");
+    let world = EntityId::from_bytes([0x77; 16]).expect("setup: W's world id parses");
+    let machine = request.machine;
+    let recipient = WrapRecipient::Machine(machine);
+    let record = WorldKeyWrapsRecord {
+        key: WorldKeyId {
+            world,
+            generation: 1,
+            mint: [0x78; 16],
+        },
+        commitment: [0x79; 32],
+        owner: owner_person,
+        policy: PolicyRevision([0; 32]),
+        machine,
+        wraps: vec![(recipient.clone(), vec![0xAA; 32])],
+        request: None,
+        permitted: vec![recipient],
+    };
+    let w_row = signed(
+        vault_id,
+        100,
+        vec![head],
+        AuthorityOp::WorldKeyWraps(record),
+        &signing(JOINING_SEED),
+    );
+    let w_hash = hash(&w_row);
+    deliver_via_replicated(&served.vault, &w_row)
+        .expect("setup: W lands through replicated ingest");
+    let w_id = authority_log_entity_id(&w_row).expect("setup: W's content-derived id");
+    assert!(
+        served
+            .vault
+            .get_authority_log_entry(&w_id)
+            .expect("setup: W reads back")
+            .is_some(),
+        "setup: W is stored, so the side-branch parent reached the log"
+    );
+    adopt_own_checkpoint(&served);
+    // C: the stranger's revision 2 naming W plus withheld Q (revision 1 on the
+    // stranger root, never stored).
+    let (withheld_hash, delivered_template) =
+        strangers_gapped_revision(&served, &anchor, root_hash);
+    let c_row = signed(
+        vault_id,
+        101,
+        vec![w_hash, withheld_hash],
+        delivered_template.op.clone(),
+        &anchor,
+    );
+    let c_hash = hash(&c_row);
+    deliver_via_replicated(&served.vault, &c_row).expect(
+        "setup: C lands through replicated ingest (the store door does not check parent scope)",
+    );
+    let c_id = authority_log_entity_id(&c_row).expect("setup: C's content-derived id");
+    assert!(
+        served
+            .vault
+            .get_authority_log_entry(&c_id)
+            .expect("setup: C reads back")
+            .is_some(),
+        "setup: C is stored, so the scoped row reached the log"
+    );
+    assert!(
+        matches!(
+            served
+                .vault
+                .authority_log_entry_status(&withheld_hash)
+                .expect("setup: Q's status reads"),
+            AuthorityEntryStatus::Unknown
+        ),
+        "setup: Q is withheld, so no peer holds the missing parent C names"
+    );
+    let fold = served
+        .vault
+        .authority_fold()
+        .expect("setup: the fold past the adopted image reads with dropped C");
+    assert!(
+        fold.issues
+            .contains(&AuthorityFoldIssue::InvalidEntry(c_hash)),
+        "a dropped row with a parent-scope fault must keep InvalidEntry: {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold
+            .issues
+            .contains(&AuthorityFoldIssue::InvalidAncestry(c_hash)),
+        "a dropped row with a parent-scope fault must not be InvalidAncestry: {:?}",
         fold.issues
     );
 }
