@@ -59,9 +59,10 @@
 //!    1 MiB body cap. Red on main: the input passes the 1 MiB cap, the
 //!    call is refused as in 6.
 //! 9. `real_sandbox::a_skill_answer_its_hook_guest_cannot_hold_is_refused_unjudged`:
-//!    a 3 MB answer of a million empty arrays passes the host's 8 MiB
-//!    bound but not the guest's interpreter heap: the guest reports it not
-//!    taken and the call is refused as in 6. Green on main too.
+//!    a 3 MB answer of a million empty arrays passes the host's input
+//!    limit (the guest's measured memory room) but not the guest's
+//!    interpreter heap: the guest reports it not taken and the call is
+//!    refused as in 6. Green on main too.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features
@@ -1323,10 +1324,10 @@ mod real_sandbox {
     use super::*;
 
     /// The channel test's answer `text` length: 2 MiB sits past the old 1 MiB
-    /// hook input cap and under the 8 MiB guest-memory bound.
+    /// hook input cap and under the guest's input limit.
     const CHANNEL_TWO_MIB_BYTES: usize = 2_097_152;
-    /// The heavy answer's empty arrays: about 3 MB of JSON, under the 8 MiB
-    /// bound, far past the hook guest's 24 MiB interpreter heap once parsed.
+    /// The heavy answer's empty arrays: about 3 MB of JSON, under the input
+    /// limit, far past the hook guest's 24 MiB interpreter heap once parsed.
     const HEAVY_ROWS: usize = 1_000_000;
 
     /// Stores the active callable whose answer is `title` and `rows`,
@@ -1386,8 +1387,8 @@ mod real_sandbox {
     }
 
     /// A 2 MiB skill answer reaches its blocking post hook and is redacted:
-    /// past the old 1 MiB hook input cap and under the 8 MiB guest-memory
-    /// bound, the real sandbox runs the staged Redact body on the whole
+    /// past the old 1 MiB hook input cap and under the guest's input
+    /// limit, the real sandbox runs the staged Redact body on the whole
     /// answer. Red on main: the host refuses the input past 1 MiB and the call
     /// is Skipped with the too-large cause.
     #[test]
@@ -1412,7 +1413,7 @@ mod real_sandbox {
     }
 
     /// A skill answer its hook's guest cannot hold is refused unjudged: about
-    /// 3 MB passes the host's 8 MiB bound, but its million empty arrays pass
+    /// 3 MB passes the host's input limit, but its million empty arrays pass
     /// the guest's interpreter heap, so the real sandbox reports the input not
     /// taken, the blocking post hook's body never starts, and the post chain
     /// refuses the call: the caller never reads the answer. Green on main too,

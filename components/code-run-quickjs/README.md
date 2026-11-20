@@ -196,8 +196,10 @@ out of memory) instead of trapping. The
 deadline is the hook's `budget_ms`, and it covers start-up and reads. Every
 read and verdict debits the host-call budget. A read request may carry 4 KiB,
 a verdict request 64 KiB, and an answer 256 KiB. The body is held to 1 MiB.
-The input is held only to the interpreter's memory; the host refuses one past
-8 MiB before the start, so its lowering always fits the guest's 32 MiB.
+The input is held only to the guest's memory: the host measures, once per
+sandbox, the room a fresh instance's 32 MiB can still grow by, less the 1 MiB
+body and the allocator's slack, and refuses a longer input before the start
+(checked before the body and budget), so a lowering never aborts the guest.
 A guest that cannot take its input answers `hook_input_not_taken`, and a
 blocking post hook on a skill answer its body never started on refuses the
 call.
