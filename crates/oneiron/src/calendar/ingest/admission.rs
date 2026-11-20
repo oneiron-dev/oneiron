@@ -32,8 +32,8 @@ use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 pub(in crate::calendar) use connector::{
     ConnectorAdmissionSource, ConnectorScreen, admit_connector_event, connector_event_ref,
-    delete_connector_resource, preflight_connector_feed, repeat_connector_echo,
-    sweep_connector_resource, sweep_connector_uids,
+    defer_connector_cancel, delete_connector_resource, preflight_connector_feed,
+    repeat_connector_echo, sweep_connector_resource, sweep_connector_uids,
 };
 use continuation::OwedProperties;
 pub(super) use continuation::run_ics_property_continuation_admitting;
@@ -633,13 +633,23 @@ impl PollAdmission<'_> {
         };
         // A cancelled version keeps the first sighting of the cancellation
         // its source already reported: a newer SEQUENCE of a cancel seen
-        // before a booking's start is not a cancel first seen now.
+        // before a booking's start is not a cancel first seen now. A
+        // cancelled version a pull held back unread while a cancelled write
+        // of the UID was in flight dates it too, once the write proved not
+        // to be the source's copy
+        // (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
         let cancelled_since = event.cancelled.then(|| {
             prior
                 .as_ref()
-                .and_then(|prior| prior.cancelled_since)
+                .and_then(|prior| prior.cancelled_since.or(prior.deferred_cancel_seen_at))
                 .unwrap_or(self.now)
         });
+        // A cancelled version of an EVENT the engine wrote to this calendar
+        // already cancelled is that write coming back (a provider that
+        // rewrites the stored resource), until the source shows the EVENT
+        // uncancelled.
+        let written_cancelled =
+            event.cancelled && prior.as_ref().is_some_and(|prior| prior.written_cancelled);
         Ok(CalendarPassportValue {
             system: self.system.to_owned(),
             uid: event.uid.clone(),
@@ -650,6 +660,8 @@ impl PollAdmission<'_> {
             last_seen_at: self.now,
             presence,
             cancelled_since,
+            written_cancelled,
+            deferred_cancel_seen_at: None,
         })
     }
 
