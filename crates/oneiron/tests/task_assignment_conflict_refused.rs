@@ -140,16 +140,23 @@ fn host() -> Host {
 }
 
 /// The owner's device: its own install, which the owner enrols as his on the host, holding
-/// the vault's authority history as sync gives it.
+/// the vault's authority history as sync gives it. Its install signer is loaded, so each
+/// fact its door writes carries its carrier's signature, which the host admits.
 struct Device {
     _dir: tempfile::TempDir,
     vault: Vault,
 }
 
+/// The device is enrolled as a work or school machine: an `Owned(Yours)` answer needs an
+/// owner-key proof that this hosted vault cannot give, and would land held, so the host
+/// would admit no fact the device signs.
 fn device(host: &Host) -> Device {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("the device's install");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault
+        .prepare_install_signing()
+        .expect("the device's install signer");
     let key = vault
         .machine_encryption_key(host.vault_id)
         .expect("the device's encryption key");
@@ -165,15 +172,20 @@ fn device(host: &Host) -> Device {
             GateDecisionId::now(),
         )
         .expect("the owner's proof");
-    host.vault
+    let landing = host
+        .vault
         .enroll_machine(
             &owner,
             ActSurface::HostedConsole,
             &request,
-            MachineRole::Owned(MachineOwnership::Yours),
+            MachineRole::Owned(MachineOwnership::WorkSchool),
             None,
         )
         .expect("the owner enrols the device as his");
+    assert!(
+        landing.held().is_none(),
+        "FIXTURE: the device's enrolment lands, so the host admits its carrier"
+    );
     let history = host
         .vault
         .export_signed_authority_history()
