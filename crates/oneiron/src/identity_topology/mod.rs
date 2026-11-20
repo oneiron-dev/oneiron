@@ -119,8 +119,8 @@ pub(crate) use admission_disposition::signed_validated_row_for_test;
 pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict, ProposerStamp};
 pub(crate) use admission_disposition::{SealTrust, core_digest, decision_in_force_by_seal_in_txn};
 pub(crate) use archive_restore::{
-    archived_topology_decision, current_merge_and_split_events_in_txn, is_free_byte_slot,
-    is_topology_refusal, restored_merge_or_split,
+    archived_topology_decision, current_merge_and_split_events_in_txn,
+    is_inline_merge_or_split_body, is_topology_refusal, restored_merge_or_split,
 };
 pub(crate) use attribution::{
     admitted_author_in_txn, author_carrier_actor, drop_unheld_author_marks_in_txn,

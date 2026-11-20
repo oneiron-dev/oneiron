@@ -317,17 +317,17 @@ impl Vault {
         // RESTORE-KEEPS-MERGES-AND-SPLITS: an owner's restore into a fresh
         // vault of an archive naming current merges or splits seals them
         // again with this install's keys, which load outside every
-        // transaction; with none, each stays archive data. Freshness is read
-        // before the keys load, since loading them can make a vault that
-        // already holds rows forget its machine identity (REVIEW-9756 P1-2);
-        // the writer reads it again.
+        // transaction; with none, each stays archive data. The keys load only
+        // into a vault this read finds fresh, and never by making it forget
+        // its machine: a writer can commit a row after this read (REVIEW-9756
+        // P1-2, rounds 1 and 2). The writer below reads freshness again.
         let topology_signing = owner.is_some()
             && !archive.manifest.current_identity_topology_events.is_empty()
             && {
                 let rtxn = self.store.env.read_txn()?;
                 self.first_non_bootstrap_row_in_txn(&rtxn)?.is_none()
             }
-            && self.prepare_install_signing_logged();
+            && self.prepare_install_signing_keeping_machine_logged();
         let mut wtxn = self.store.env.write_txn()?;
         let seeds = EngineSeedIdentities::load()?;
         let restore_fresh =

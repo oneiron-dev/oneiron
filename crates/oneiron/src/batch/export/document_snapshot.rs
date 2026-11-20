@@ -703,9 +703,12 @@ impl Vault {
                     .collect();
                 // RESTORE-KEEPS-MERGES-AND-SPLITS: the merges and splits this
                 // snapshot's effective ledger holds current, for the owner's
-                // restore to decide again.
+                // restore to decide again; only those whose record the
+                // archive carries, so none it keeps out is named here
+                // (REVIEW-9756 round 2 P1-3).
                 current_identity_topology_events =
                     crate::identity_topology::current_merge_and_split_events_in_txn(self, &rtxn)?;
+                current_identity_topology_events.retain(|event| included.contains(event));
             }
         }
         // FIX 11844: a custody secret only the fold knows here is named for

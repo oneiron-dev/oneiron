@@ -25,8 +25,7 @@ use super::ledger_fold::{IdentityTopologyAction, fold_identity_topology_log};
 use super::op_apply::IdentityOpWrite;
 use super::op_vocabulary::IdentityTopologyOp;
 use super::operation_parts::logical_identity_topology_event_with;
-use super::stored_event::StoredIdentityOpEvent;
-use super::wire_keys::{BODY_KEY_AMENDED, BODY_KEY_OPERATION_PAYLOAD};
+use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 
 /// The merge and split decisions this vault's effective ledger holds
 /// current, sorted: each names a row still in its Merged or Split shell.
@@ -112,13 +111,19 @@ pub(crate) fn restored_merge_or_split(
     ))
 }
 
-/// Whether a byte slot named `key` in a type-76 body holds free bytes (an
-/// operation part's slice of a larger record, an amended body) rather than a
-/// typed id, reassignment item or digest. An export without secrets keeps
-/// only the typed slots of a body the codec decodes whole.
+/// Whether `body` is a type-76 row the codec decodes whole as an inline
+/// merge or split: the only rows an export without secrets keeps the typed
+/// byte slots of (REVIEW-9756). Every byte slot of either is a participant,
+/// a reassignment item, the actor or an evidence ref; neither names another
+/// decision.
 #[must_use]
-pub(crate) fn is_free_byte_slot(key: &str) -> bool {
-    key == BODY_KEY_OPERATION_PAYLOAD || key == BODY_KEY_AMENDED
+pub(crate) fn is_inline_merge_or_split_body(body: &[u8]) -> bool {
+    decode_identity_topology_event_body(body).is_ok_and(|event| {
+        matches!(
+            event.action,
+            StoredIdentityOpAction::Merge { .. } | StoredIdentityOpAction::Split { .. }
+        )
+    })
 }
 
 /// Whether `error` is the topology door refusing a decision here (a
