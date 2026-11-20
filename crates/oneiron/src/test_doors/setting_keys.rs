@@ -331,4 +331,10 @@ crate::setting::setting_keys! {
         kind: Kind::new(ten).strictest(zero).lower(),
         scopes: &[ScopeKind::Vault, ScopeKind::Agent],
     };
+    /// A cap per outbound channel whose rows meet: a family key, lower is stricter, default 10
+    /// (stage 7b-3: the empty slot of an item's vault value row).
+    pub TEST_CHANNEL_CAP: u64 = "test.channel_cap" {
+        kind: Kind::new(ten).strictest(zero).lower(),
+        item: Some(ItemDomain { name: "outbound channels", admits: channel }),
+    };
 }

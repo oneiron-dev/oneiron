@@ -403,6 +403,8 @@ fn install_through_hook_in_txn(
         direction: None,
         surface: None,
         signed: None,
+        with: Vec::new(),
+        standing: None,
     };
     if (hooked.on_change)(vault, &mut savepoint, &change).is_err() {
         savepoint.abort();

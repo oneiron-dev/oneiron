@@ -6,7 +6,7 @@ use std::ops::Bound;
 use serde::{Deserialize, Serialize};
 
 use oneiron_authority::authority::{ActSurface, AuthorityEntryHash};
-use oneiron_setting_contract::RowKey;
+use oneiron_setting_contract::{ChangeStanding, RowKey};
 
 use super::read::{CONTENT_ROWS, ROWS, StoredRow};
 use super::{ChangeDirection, EncodedValue, Setter, SettingMode, SettingScope};
@@ -61,6 +61,15 @@ pub struct SettingChange {
     /// none was appended: the change named no act surface, or its record could not be signed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signed: Option<AuthorityEntryHash>,
+    /// The other live heads the value in force was met with on the machine that wrote the
+    /// change (stage 7b-3; DESIGN 1.6, "Receipts"). Empty on every other change, whose bytes it
+    /// leaves as they were.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub with: Vec<AuthorityEntryHash>,
+    /// How the signed acts the value came from stood there (stage 7b-3). Absent on a change no
+    /// projection of signed acts wrote or receipted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standing: Option<ChangeStanding>,
 }
 
 /// Writes `change` under the next sequence, in the caller's write; returns its sequence.
@@ -99,16 +108,42 @@ pub(super) fn record_signed_entry_in_txn(
     )
 }
 
+/// Names how the acts behind the change of sequence `sequence` stood and the other heads its
+/// value was met with, on its change row, in the caller's write (stage 7b-3): the receipt of a
+/// door's own change whose row the projection of its act left as the door wrote it. A change no
+/// longer stored is left as it is.
+///
+/// # Errors
+///
+/// A change row that does not decode; storage errors.
+pub(super) fn record_receipt_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    sequence: u64,
+    standing: ChangeStanding,
+    with: Vec<AuthorityEntryHash>,
+) -> Result<()> {
+    let Some(change) = CHANGES.get(store, txn, &sequence)? else {
+        return Ok(());
+    };
+    CHANGES.put(
+        store,
+        txn,
+        &sequence,
+        &SettingChange {
+            with,
+            standing: Some(standing),
+            ..change
+        },
+    )
+}
+
 /// The change of sequence `sequence`, while it stands: the record of the act that wrote the row a
 /// read's `revision` names, for a reader that cites the row it read.
 ///
 /// # Errors
 ///
 /// A change row that does not decode; storage errors.
-#[cfg_attr(
-    not(all(oneiron_test_support, feature = "test-support")),
-    allow(dead_code)
-)]
 pub(crate) fn change_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -190,13 +225,16 @@ fn scrub_rows_in_txn(
         {
             gone.push(key);
         } else if let Ok(stored) = rmp_serde::from_slice::<StoredRow>(&bytes) {
-            let erased = row_key
-                .and_then(|row_key| super::spec_named(&row_key.name).ok())
-                .and_then(|spec| spec.kind.erase_mentions_in(&stored.value, *id));
-            if stored.by == Some(*id) || erased.is_some() {
+            let spec = row_key.and_then(|row_key| super::spec_named(&row_key.name).ok());
+            let erased = spec.and_then(|spec| spec.kind.erase_mentions_in(&stored.value, *id));
+            let erased_local = spec
+                .zip(stored.local.as_ref())
+                .and_then(|(spec, local)| spec.kind.erase_mentions_in(local, *id));
+            if stored.by == Some(*id) || erased.is_some() || erased_local.is_some() {
                 let row = StoredRow {
                     by: stored.by.filter(|by| by != id),
                     value: erased.unwrap_or(stored.value),
+                    local: erased_local.or(stored.local),
                     ..stored
                 };
                 unnamed.push((key, row));

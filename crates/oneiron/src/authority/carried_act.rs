@@ -177,7 +177,10 @@ impl Vault {
         }
     }
 
-    fn append_carried_act_in_savepoint(
+    /// Signs, appends and folds the act `op` builds in a savepoint of
+    /// `txn`, not best effort: an act that is not counted fails, and its
+    /// savepoint is rolled back. The entry hash.
+    pub(super) fn append_carried_act_in_savepoint(
         &self,
         txn: &mut heed::RwTxn<'_>,
         op: impl FnOnce(EntityId) -> AuthorityOp,
@@ -186,6 +189,31 @@ impl Vault {
         let hash = self.append_carried_act_in_txn(&mut savepoint, op)?;
         savepoint.commit()?;
         Ok(hash)
+    }
+
+    /// This install as the carrier of an owner's act in `txn`, under `fold`,
+    /// the authority view in `txn`: its machine identity and install key,
+    /// when a live profile of it stands under that key; `None` otherwise. No
+    /// roster key, the host root included, carries an owner act (FIX 2222).
+    pub(super) fn owner_act_carrier_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+    ) -> Result<Option<(EntityId, ed25519_dalek::SigningKey)>> {
+        let Some(machine) = crate::identity::read_machine_id_in_txn(self, txn)? else {
+            return Ok(None);
+        };
+        let Some(key) = crate::identity::read_machine_signing_key_in_txn(self, txn)? else {
+            return Ok(None);
+        };
+        let public_key = key.verifying_key().to_bytes();
+        Ok(super::owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        )
+        .then_some((machine, key)))
     }
 
     /// Signs, appends and folds the act `op` builds in `txn`, naming the
@@ -197,19 +225,10 @@ impl Vault {
         op: impl FnOnce(EntityId) -> AuthorityOp,
     ) -> Result<AuthorityEntryHash> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        let machine = crate::identity::read_machine_id_in_txn(self, txn)?
-            .ok_or_else(|| authority_refused(NO_CARRIER))?;
-        let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?
+        let (machine, key) = self
+            .owner_act_carrier_in_txn(txn, &fold)?
             .ok_or_else(|| authority_refused(NO_CARRIER))?;
         let public_key = key.verifying_key().to_bytes();
-        if !super::owner_act_signer_admits(
-            fold.machine(machine),
-            &fold.roster,
-            &public_key,
-            fold.pinned_root.as_ref(),
-        ) {
-            return Err(authority_refused(NO_CARRIER));
-        }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
         let joiner = FrontierSigner::Install(machine, &key);
         let fold = self

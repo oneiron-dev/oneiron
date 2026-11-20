@@ -311,3 +311,352 @@ pub fn project_lines(vault: &Vault, project: EntityId) -> Result<Vec<EntityId>> 
     let txn = vault.store.env.read_txn()?;
     vault.project_lines_in_txn(&txn, project)
 }
+
+/// Another machine of the vault's owner (stage 7a-2): enrolled as the owner's own, its install
+/// key held by the test, so it signs setting acts as its own door would.
+#[cfg(feature = "test-support")]
+pub struct EnrolledMachine {
+    machine: EntityId,
+    key: ed25519_dalek::SigningKey,
+}
+
+/// Enrols a machine whose install key is derived from `seed` as one of the owner's own
+/// machines, by the owner's answer on this install.
+///
+/// # Errors
+///
+/// A vault with no authority root; the enrolment's refusal; storage errors.
+#[cfg(feature = "test-support")]
+pub fn enroll_machine_with_key(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    seed: u8,
+) -> Result<EnrolledMachine> {
+    use crate::authority::{
+        ActSurface, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+        MachineDeviceClass, MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership,
+        MachineRole, machine_profile_proof_transcript,
+    };
+    use ed25519_dalek::Signer;
+
+    let key = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+    let machine = EntityId::now();
+    let vault_id = vault
+        .authority_vault_id()?
+        .ok_or(Error::InvariantViolation(
+            "a peer machine needs a rooted vault",
+        ))?;
+    let machine_key = key.verifying_key().to_bytes();
+    let device_class = MachineDeviceClass::Computer;
+    let encryption_key = MachineEncryptionKey {
+        suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+        key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
+    };
+    let machine_proof = key
+        .sign(&machine_profile_proof_transcript(
+            &vault_id,
+            machine,
+            &machine_key,
+            device_class,
+            &encryption_key,
+        ))
+        .to_bytes();
+    vault.enroll_machine(
+        owner,
+        ActSurface::ThisInstall,
+        &MachineEnrolmentRequest {
+            vault_id,
+            machine,
+            machine_key,
+            device_class,
+            encryption_key,
+            machine_proof,
+            restored_from: None,
+        },
+        MachineRole::Owned(MachineOwnership::Yours),
+        None,
+    )?;
+    Ok(EnrolledMachine { machine, key })
+}
+
+/// Where the acts on `key`'s row (`item`, `mode`, `scope`) stand now: an act a peer signs on
+/// it later did not see any act appended since.
+#[cfg(feature = "test-support")]
+pub struct SettingFrontier(crate::authority::SettingFrontier);
+
+/// The frontier of `key`'s row `mode` at `scope`, for `item`.
+///
+/// # Errors
+///
+/// A key name of another shape; storage errors.
+#[cfg(feature = "test-support")]
+pub fn setting_frontier(
+    vault: &Vault,
+    key: &str,
+    item: Option<&str>,
+    mode: SettingMode,
+    scope: SettingScope,
+) -> Result<SettingFrontier> {
+    vault
+        .setting_frontier(&[row_key(key, item, mode, scope)])
+        .map(SettingFrontier)
+}
+
+/// One setting row as a test names it: its key, item, mode and scope.
+#[cfg(feature = "test-support")]
+pub type SlotName<'a> = (&'a str, Option<&'a str>, SettingMode, SettingScope);
+
+/// The frontier of the rows `slots` together (stage 7a-3): a batch signed on it names each row's
+/// revision as it stood.
+///
+/// # Errors
+///
+/// A key name of another shape; storage errors.
+#[cfg(feature = "test-support")]
+pub fn setting_frontier_of(vault: &Vault, slots: &[SlotName<'_>]) -> Result<SettingFrontier> {
+    let slots: Vec<_> = slots
+        .iter()
+        .map(|(key, item, mode, scope)| row_key(key, *item, *mode, scope.clone()))
+        .collect();
+    vault.setting_frontier(&slots).map(SettingFrontier)
+}
+
+#[cfg(feature = "test-support")]
+fn row_key(
+    key: &str,
+    item: Option<&str>,
+    mode: SettingMode,
+    scope: SettingScope,
+) -> oneiron_setting_contract::RowKey {
+    oneiron_setting_contract::RowKey {
+        name: key.to_owned(),
+        item: item.map(str::to_owned),
+        mode,
+        scope,
+    }
+}
+
+/// The owner `owner`'s change of `key`'s row (`item`, `mode`, `scope`) to `value` (`None`
+/// clears), as `signer`'s own door signs it on `frontier` at `ts`, landed here as a peer's entry
+/// lands: through the authority log's write door, whose commit runs the setting projection.
+///
+/// # Errors
+///
+/// The log's refusal of the entry; storage errors.
+#[cfg(feature = "test-support")]
+#[allow(clippy::too_many_arguments)]
+pub fn land_setting_act_from(
+    vault: &Vault,
+    signer: &EnrolledMachine,
+    owner: EntityId,
+    frontier: &SettingFrontier,
+    (key, item, mode, scope): (&str, Option<&str>, SettingMode, SettingScope),
+    value: Option<serde_json::Value>,
+    ts: u64,
+) -> Result<()> {
+    land_setting_batch_from(
+        vault,
+        signer,
+        owner,
+        frontier,
+        &[((key, item, mode, scope), value)],
+        ts,
+    )
+    .map(|_| ())
+}
+
+/// The owner `owner`'s change of each row of `rows` to its value (`None` clears) as ONE act
+/// (a batch, stage 7a-3), signed as `signer`'s own door signs it on `frontier` at `ts`, landed
+/// here as a peer's entry lands. A row `frontier` did not read names `seen` zero. Whether the
+/// fold here counts the entry (valid, and not held back).
+///
+/// # Errors
+///
+/// The log's refusal of the entry; storage errors.
+#[cfg(feature = "test-support")]
+pub fn land_setting_batch_from(
+    vault: &Vault,
+    signer: &EnrolledMachine,
+    owner: EntityId,
+    frontier: &SettingFrontier,
+    rows: &[(SlotName<'_>, Option<serde_json::Value>)],
+    ts: u64,
+) -> Result<bool> {
+    let rows = rows
+        .iter()
+        .map(|((key, item, mode, scope), value)| {
+            let inline = value
+                .as_ref()
+                .map(serde_json::to_vec)
+                .transpose()
+                .map_err(|_| Error::InvariantViolation("a setting value's JSON"))?;
+            Ok((row_key(key, *item, *mode, scope.clone()), inline))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let entry =
+        vault.sign_setting_act_as((signer.machine, &signer.key), owner, &frontier.0, rows, ts)?;
+    let hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
+    let at = crate::temporal::TimeRange { start: ts, end: ts };
+    vault.put_authority_log_entries(&[(entry, at, ts)])?;
+    let fold = vault.authority_fold()?;
+    Ok(fold.valid_entries.contains(&hash) && !fold.held_back_entries().contains(&hash))
+}
+
+/// The live acts on `key`'s row (`item`, `mode`, `scope`), a move's copy among them (stage
+/// 7a-4): what a copy of the row names. Empty when no act names the row.
+///
+/// # Errors
+///
+/// A key name of another shape; storage errors.
+#[cfg(feature = "test-support")]
+pub fn setting_slot_heads(
+    vault: &Vault,
+    (key, item, mode, scope): SlotName<'_>,
+) -> Result<Vec<oneiron_authority::authority::AuthorityEntryHash>> {
+    let target =
+        oneiron_authority::authority::setting_slot_target(&row_key(key, item, mode, scope))?;
+    let txn = vault.store.env.read_txn()?;
+    vault.setting_slot_live_in_txn(&txn, target)
+}
+
+/// One carried row a copy lists, with the acts it names, each by its own row.
+#[cfg(feature = "test-support")]
+pub type CopiedRow<'a> = (
+    SlotName<'a>,
+    Vec<(
+        SlotName<'a>,
+        oneiron_authority::authority::AuthorityEntryHash,
+    )>,
+);
+
+/// A move's copy of each carried row of `rows` (stage 7a-4), as `signer`'s own carry signs it on
+/// `frontier` at `ts`, landed here as a peer's entry lands. A row `frontier` did not read names
+/// `seen` zero. The entry's hash, and whether the fold here counts it (valid, and not held back).
+///
+/// # Errors
+///
+/// The log's refusal of the entry; storage errors.
+#[cfg(feature = "test-support")]
+pub fn land_setting_copy_from(
+    vault: &Vault,
+    signer: &EnrolledMachine,
+    frontier: &SettingFrontier,
+    rows: &[CopiedRow<'_>],
+    ts: u64,
+) -> Result<(oneiron_authority::authority::AuthorityEntryHash, bool)> {
+    let rows = rows
+        .iter()
+        .map(|((key, item, mode, scope), names)| {
+            let names = names
+                .iter()
+                .map(|((key, item, mode, scope), act)| {
+                    oneiron_authority::authority::SettingCopyName {
+                        slot: row_key(key, *item, *mode, scope.clone()),
+                        act: *act,
+                    }
+                })
+                .collect::<Vec<_>>();
+            (row_key(key, *item, *mode, scope.clone()), names)
+        })
+        .collect::<Vec<_>>();
+    let entry = vault.sign_setting_copy_as((signer.machine, &signer.key), &frontier.0, rows, ts)?;
+    let hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
+    let at = crate::temporal::TimeRange { start: ts, end: ts };
+    vault.put_authority_log_entries(&[(entry, at, ts)])?;
+    let fold = vault.authority_fold()?;
+    Ok((
+        hash,
+        fold.valid_entries.contains(&hash) && !fold.held_back_entries().contains(&hash),
+    ))
+}
+
+/// Whether the setting publish pass ran in this vault (stage 7a-3).
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(feature = "test-support")]
+pub fn settings_published(vault: &Vault) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    crate::setting::settings_published_in_txn(vault, &txn)
+}
+
+/// Forgets every setting row the projection wrote from signed acts, and its record (stage
+/// 7a-3): the install then holds the log and none of those rows, as a machine that took the log
+/// from another, until its next projection pass. The rows forgotten.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(feature = "test-support")]
+pub fn forget_projected_setting_rows(vault: &Vault) -> Result<usize> {
+    let mut txn = vault.store.env.write_txn()?;
+    let forgotten = crate::setting::forget_projected_rows_in_txn(vault, &mut txn)?;
+    txn.commit()?;
+    Ok(forgotten)
+}
+
+/// `test.ordered_cap` as a read at the places `known` resolves it: the value, its source and
+/// how the acts behind it stand.
+///
+/// # Errors
+///
+/// As `Setting::read_in_txn`.
+#[cfg(feature = "test-support")]
+pub fn ordered_cap_read(vault: &Vault, known: &[SettingScope]) -> Result<Resolved<u64>> {
+    let txn = vault.store.env.read_txn()?;
+    super::setting_keys::TEST_ORDERED_CAP.read_in_txn(vault, &txn, known, None)
+}
+
+/// One setting act a peer signed that this install has not landed yet (stage 7b-3 tests).
+#[cfg(feature = "test-support")]
+pub struct SignedSettingAct(oneiron_authority::authority::AuthorityLogEntry);
+
+/// The owner `owner`'s change of the row `slot` to `value` (`None` clears), signed as `signer`'s
+/// own door signs it on `frontier` at `ts`, `ahead` sequences past the signer's next one here,
+/// and not landed ([`land_signed_setting_act`]). Landed before an act its signer signs after it
+/// at the next sequence, it puts that act past the signer's sequence floor on this install,
+/// which then counts that act restriction only (stage 7b-3 tests).
+///
+/// # Errors
+///
+/// A key name of another shape; a value with no JSON; storage errors.
+#[cfg(feature = "test-support")]
+pub fn sign_setting_act_ahead(
+    vault: &Vault,
+    (signer, owner): (&EnrolledMachine, EntityId),
+    frontier: &SettingFrontier,
+    ((key, item, mode, scope), value): (SlotName<'_>, Option<serde_json::Value>),
+    (ts, ahead): (u64, u64),
+) -> Result<SignedSettingAct> {
+    let inline = value
+        .as_ref()
+        .map(serde_json::to_vec)
+        .transpose()
+        .map_err(|_| Error::InvariantViolation("a setting value's JSON"))?;
+    vault
+        .sign_setting_act_ahead_as(
+            (signer.machine, &signer.key),
+            (owner, &frontier.0),
+            vec![(row_key(key, item, mode, scope), inline)],
+            (ts, ahead),
+        )
+        .map(SignedSettingAct)
+}
+
+/// Lands `act` here at `ts`, as a peer's entry lands (stage 7b-3 tests). The entry's hash.
+///
+/// # Errors
+///
+/// The log's refusal of the entry; storage errors.
+#[cfg(feature = "test-support")]
+pub fn land_signed_setting_act(
+    vault: &Vault,
+    act: &SignedSettingAct,
+    ts: u64,
+) -> Result<oneiron_authority::authority::AuthorityEntryHash> {
+    let hash = oneiron_authority::authority::authority_entry_hash(&act.0)?;
+    let at = crate::temporal::TimeRange { start: ts, end: ts };
+    vault.put_authority_log_entries(&[(act.0.clone(), at, ts)])?;
+    Ok(hash)
+}

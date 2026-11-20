@@ -537,6 +537,23 @@ fn fold_merged_entry(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
+    // So is a move's setting copy, on each carried row's frontier, signed by
+    // its carrier alone with no owner act (stage 7a-4).
+    if let AuthorityOp::SettingCopy(copy) = &entry.op {
+        if let Err(issue) = super::policy_setting_choice::apply_setting_copy(
+            &mut state,
+            entry,
+            copy,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     // So is the owner's whole-vault export, which moves no fold state but a
     // refused one's mark (FIX 4624).
     if let AuthorityOp::ExportAct(record) = &entry.op {
@@ -961,6 +978,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::FullCopyMark(_)
         | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::PolicySettingSet(_)
+        | AuthorityOp::SettingCopy(_)
         | AuthorityOp::ExportAct(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)

@@ -305,6 +305,7 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         AuthorityOp::FullCopyMark(mark) => super::full_copy_mark::full_copy_mark_value(mark),
         AuthorityOp::AgentGrantAct(record) => super::agent_grant_act::agent_grant_act_value(record),
         AuthorityOp::PolicySettingSet(set) => super::policy_setting::policy_setting_value(set),
+        AuthorityOp::SettingCopy(copy) => super::setting_copy::setting_copy_value(copy),
         AuthorityOp::ExportAct(record) => super::export_act::export_act_value(record),
         AuthorityOp::OwnerKeyEnroll(enroll) => {
             super::owner_key_enrollment::owner_key_enroll_value(enroll)

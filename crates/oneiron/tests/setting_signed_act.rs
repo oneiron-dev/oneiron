@@ -6,7 +6,9 @@
 //! - a second change and a clear each append one more on that target, so each act's `seen`
 //!   named the one before it (the fold counts no other), and the clear keeps no value;
 //! - an equal value writes nothing and signs nothing;
-//! - a change that names no surface signs nothing, as before this stage;
+//! - a change of a key that does not travel naming no surface signs nothing, as before this stage
+//!   (a key that travels is signed from this install in a rooted vault: stage 7a-2,
+//!   `setting_act_write`);
 //! - changes in one write are each signed, and a caller's write that fails leaves none;
 //! - only the owner's change names a surface: an agent naming one is refused, nothing written;
 //! - the verb signs the owner's change from this install;
@@ -248,7 +250,10 @@ fn each_later_change_and_a_clear_sign_on_the_same_target_and_an_equal_value_sign
 fn a_change_naming_no_surface_signs_nothing() {
     let fx = Fixture::rooted();
     let before = fx.setting_acts();
-    let change = fx.change_of(&fx.owner_sets(SetSetting::vault_value(NUMBER, json!(5))));
+    let change = fx.change_of(&fx.owner_sets(SetSetting::vault_value(
+        "test.member_banner",
+        json!("hello"),
+    )));
     assert_eq!(change.surface, None);
     assert_eq!(change.signed, None);
     assert_eq!(fx.setting_acts(), before, "no act without a surface");
