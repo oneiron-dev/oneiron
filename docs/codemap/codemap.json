@@ -5368,7 +5368,7 @@
      "path": "src/authority/machine_answers.rs",
      "purpose": "The owner's machine answers as one install writes them (mesh PR1b): he enrols, re-marks and removes a…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 5
      }
@@ -5609,7 +5609,7 @@
      "surface": {
       "crate-vis": 84,
       "mod": 2,
-      "re-export": 91
+      "re-export": 93
      }
     },
     {
@@ -5788,6 +5788,21 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "OwnerKeyChange",
+      "OwnerKeyChangeKind"
+     ],
+     "path": "src/authority/owner_key_changes.rs",
+     "purpose": "The owner's list of owner key changes (the owner's ruling AUTH-5, pass 27 section 4.4): every enrolment and…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/authority/owner_key_enrollment.rs",
      "purpose": "The fold's judge of the owner's enrollment of one of his devices' own owner signing keys (FIX 4920; Engine…",
@@ -5876,6 +5891,26 @@
       "crate-vis": 3,
       "fn": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EndedOwnerKey",
+      "LastDeviceKeyConfirmation",
+      "MachineRemoval",
+      "MachineRemovalReceipt",
+      "OwnerKeyRemoval",
+      "RemainingOwnerKeys"
+     ],
+     "path": "src/authority/owner_key_removal_door.rs",
+     "purpose": "The owner removes a device's owner key (the owner's ruling AUTH-5, pass 27 row R1; Engine RULING…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 3,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -6279,6 +6314,7 @@
      "path": "src/authority/root_recovery_door.rs",
      "purpose": "The recovery root's one door (pass 27 section 4.3, row R4; Engine RULINGs WAYBACK-E2 = A and…",
      "surface": {
+      "crate-vis": 1,
       "enum": 3,
       "fn": 1
      }
@@ -50110,7 +50146,7 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
       "const": 1,
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 2,
       "fn": 9,
       "re-export": 4,
@@ -87564,7 +87600,7 @@
      "path": "src/sync/documents/mod.rs",
      "purpose": "Per-entity text documents",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 16,
       "re-export": 2,
       "struct": 2
@@ -109867,6 +109903,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/intent_source_facet.rs",
+     "purpose": "The owner's stated intent is born under the facet of the TURN its words came from (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/intent_source_label.rs",
      "purpose": "The owner's stated intent keeps the audience of the MESSAGE its words came from (OPUS-LEAKS, lead call G…",
      "surface": {}
@@ -111713,6 +111757,14 @@
      "notable": [],
      "path": "tests/owner_key_move_two_phase.rs",
      "purpose": "The owner-key move a device confirms (row HOSTED-OWNER-MOVE-TWO-PHASE; Engine RULING…",
+     "surface": {}
+    },
+    {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_key_removal.rs",
+     "purpose": "The owner removes a device's owner key (row AUTH-5 PR b)",
      "surface": {}
     },
     {
@@ -113803,6 +113855,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/setting_key_reserved_scope_id_refused.rs",
+     "purpose": "A setting write door refuses a scope whose id no reader decodes (SETTING-SCOPE-RESERVED-ID-NOT-ROUND-TRIPPED)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/setting_keyed_a_1.rs",
      "purpose": "DESIGN 15-setting-primitive, stage 1, lane SETTING-KEYED-A, PR K1: three plain tables become catalogue keys…",
      "surface": {}
@@ -115400,7 +115460,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 317,
+     "files": 319,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -117061,8 +117121,8 @@
    },
    "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8248,
-   "test_files": 1993
+   "source_files": 8250,
+   "test_files": 1996
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -161916,7 +161976,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/machine_routes.rs",
@@ -161982,7 +162042,7 @@
      "path": "src/api/owner_routes/owner_key_enrollment_routes.rs",
      "purpose": "`/v1/owner/owner-signing-keys`: the owner enrols a device's own Ed25519 owner signing key on the vault's…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 12
      }
     },
     {
@@ -178872,6 +178932,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/owner_key_removal_routes.rs",
+     "purpose": "Row AUTH-5 PR b (the owner's ruling AUTH-5): a managed host holds no owner key, so its server removes none",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/owner_plane_refusal_answers.rs",
      "purpose": "The owner plane's refusal maps make the same owner refusal of each engine code before and after they share…",
      "surface": {}
@@ -180589,10 +180657,10 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 69,
+   "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2044,
-   "test_files": 509
+   "test_files": 510
   },
   "oneiron-setting-contract": {
    "files": [
