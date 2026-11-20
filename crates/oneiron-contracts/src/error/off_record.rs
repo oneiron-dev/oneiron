@@ -67,18 +67,21 @@ pub enum OffRecordError {
     #[error("base write rejected: {entity_ref} is a live off-record overlay member")]
     OffRecordTaintedBaseWrite { entity_ref: String },
     /// ROOM-LOCAL-CUSTODY (the lead's ruling of 21 Nov): a run the off-record
-    /// room began holds handles of secrets the room keeps in its own custody,
-    /// and its stretch went on record since. Base holds no custody of those
-    /// values, and only a save of the room moves them there
-    /// (ROOM-CUSTODY-ON-RECORD-CARRY = A, the Engine 21 Nov 06:19), so the
-    /// run's record does not move to base: nothing was written, and the run
-    /// ends with the room. A save carries only the handles its saved rows
+    /// room began holds text shaped like a handle of a secret the room keeps
+    /// in its own custody, and its stretch went on record since. Base holds
+    /// no custody of such values, and only a save of the room moves them
+    /// there (ROOM-CUSTODY-ON-RECORD-CARRY = A, the Engine 21 Nov 06:19), so
+    /// the run's record does not move to base: nothing was written, and the
+    /// run ends with the room. The check reads the record's bytes and never
+    /// asks the room for a value, so the message says the record holds text
+    /// shaped like a handle and never that the room holds a secret
+    /// (REVIEW-10041 round 2). A save carries only the handles its saved rows
     /// name, so the message says a save keeps the secrets its saved talk
     /// names and never one the run alone holds (REVIEW-10041). Its kind is
     /// [`ErrorKind::OffRecordTaintedBaseWrite`]: a base write an off-record
     /// room's state refused.
     #[error(
-        "run {run_ref} holds secrets its off-record room keeps, so it cannot go on record and ends with the room: a save of the room keeps only the secrets its saved talk names, never one the run alone holds"
+        "run {run_ref} cannot go on record and ends with the room: its record holds text shaped like a secret handle of its off-record room, and a save of the room keeps only the secrets its saved talk names, never one the run alone holds"
     )]
     OffRecordRoomSecretsUnsaved { run_ref: String },
     /// ARCH-0052 D2 backstop (a) (ONE-1728, K7): the canonical-handle witness
