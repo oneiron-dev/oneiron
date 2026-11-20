@@ -7,7 +7,7 @@ use super::support::{authority_key_from_ed, sign_ed, unsigned_entry};
 use super::world_key_doors::{Fresh, fresh_install, own_request};
 use super::world_privacy::{settings, world_row};
 use super::world_reissue::{
-    admit, issue, profiled, read_on, revision, set_on, sync, with_predecessor,
+    admit, issue, profiled, read_on, remove_under, revision, set_on, sync, with_predecessor,
 };
 use super::*;
 use crate::world_keys::RecoveryRootSeed;
@@ -30,35 +30,6 @@ fn head(install: &Fresh, seed: &RecoveryRootSeed, machine: EntityId) -> MachineP
         .anchored[&anchor_key(seed)]
         .profile
         .clone()
-}
-
-/// `seed`'s anchor removes `machine` from its chain on `install`, listing
-/// `seen` as the edits its removal saw.
-fn remove_under(
-    install: &Fresh,
-    seed: &RecoveryRootSeed,
-    machine: EntityId,
-    seen: &[AuthorityEntryHash],
-) {
-    let current = head(install, seed, machine);
-    let profile = MachineProfile {
-        role: MachineRole::Removed,
-        revision: current.revision + 1,
-        seen_world_edits: seen.iter().copied().collect(),
-        ..current
-    };
-    let fold = install.vault.authority_fold().unwrap();
-    let entry = anchor_signed_entry(
-        &fold,
-        &seed.anchor(),
-        AuthorityOp::MachineProfile(profile),
-        2,
-    )
-    .unwrap();
-    install
-        .vault
-        .put_authority_log_entry(&entry, TimeRange { start: 2, end: 2 }, 2)
-        .unwrap();
 }
 
 /// The world's live edits on `install`.

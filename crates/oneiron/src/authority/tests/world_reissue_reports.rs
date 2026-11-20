@@ -8,7 +8,8 @@ use super::support::ed_key;
 use super::world_key_doors::{Fresh, enrol_own, fresh_install, keyed_machine};
 use super::world_privacy::{settings, stored_entries, world_row};
 use super::world_reissue::{
-    admit, edit_on, issue, pinned, profiled, read_on, revision, set_on, sync, with_predecessor,
+    admit, edit_on, issue, pinned, profiled, read_on, remove_under, revision, set_on, sync,
+    with_predecessor,
 };
 use super::*;
 use crate::world_keys::RecoveryRootSeed;
@@ -119,9 +120,10 @@ fn set_full(install: &Fresh, world: EntityId, privacy: WorldPrivacy) {
 /// 7c, a model-order conflict is the owner's to resolve (Sol R1h-F2): under
 /// R1, A widens W to `MyMachines`, then A and B concurrently set two
 /// different model orders, so W's model order is conflicted. R2 carries A,
+/// R2's anchor then removes A without seeing its edits ([`remove_under`]),
 /// and A re-pins: the narrowed report shows the earlier conflicted order,
 /// and nothing is edited. Only the owner's re-assertion of a complete
-/// setting changes W.
+/// setting, from the issuer, changes W.
 #[test]
 fn a_model_order_conflict_is_reported_and_never_resolved_by_the_engine() {
     let (host, world) = host_with_world();
@@ -151,6 +153,7 @@ fn a_model_order_conflict_is_reported_and_never_resolved_by_the_engine() {
         EffectiveModelOrder::Conflicted
     );
     let second = issue(&issuer, &[a.machine()]);
+    remove_under(&issuer, &second.seed, a.machine(), &[]);
     sync(&issuer.vault, &a.vault);
     let edits = |install: &Fresh| {
         stored_entries(&install.vault)
@@ -169,15 +172,17 @@ fn a_model_order_conflict_is_reported_and_never_resolved_by_the_engine() {
     assert_eq!(narrowed.earlier.models, EffectiveModelOrder::Conflicted);
     assert_eq!(narrowed.earlier.read, EffectiveRead::MyMachines);
 
-    a.vault
+    issuer
+        .vault
         .reassert_world_privacy(
-            &a.owner,
+            &issuer.owner,
             ActSurface::ThisInstall,
             world,
             ordered("route-a"),
-            revision(&a.vault, world),
+            revision(&issuer.vault, world),
         )
         .unwrap();
+    sync(&issuer.vault, &a.vault);
     let now = a.vault.world_privacy(world).unwrap();
     assert_eq!(now.read, EffectiveRead::MyMachines);
     assert_eq!(

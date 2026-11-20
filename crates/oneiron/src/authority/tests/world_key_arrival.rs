@@ -156,7 +156,9 @@ fn every_arrival_order_of_one_machines_world_rows_keeps_each_row() {
 /// Astra-c's vault: every install is a new install of one vault. The
 /// owner's root R anchors machine A, A's only admission. A makes the world
 /// `MyMachines` (E1; the door mints K for A and R in K2). R then anchors B,
-/// and A wraps K to B (K3). The issuer holds every row.
+/// and A wraps K to B (K3). The issuer holds every row. B's roster profile
+/// is `WorkSchool`, so it joins before R anchors it but reads K only from
+/// that anchor on (a `Yours` one would get K in K2).
 pub(super) struct Graph {
     pub(super) host: Host,
     pub(super) world: EntityId,
@@ -174,7 +176,11 @@ pub(super) fn graph() -> Graph {
     let a = fresh_install(&host);
     let b = fresh_install(&host);
     profiled(&host, &a.vault, MachineRole::Owned(MachineOwnership::Yours));
-    profiled(&host, &b.vault, MachineRole::Owned(MachineOwnership::Yours));
+    profiled(
+        &host,
+        &b.vault,
+        MachineRole::Owned(MachineOwnership::WorkSchool),
+    );
     with_predecessor(&host, &issuer.vault, &issuer.owner);
     let root = issue(&issuer, &[]);
     admit(&issuer, &root, &a);

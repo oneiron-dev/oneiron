@@ -85,6 +85,54 @@ pub(super) fn set_on(install: &Fresh, world: EntityId, read: ReadLocation) {
         .unwrap();
 }
 
+/// `seed`'s anchor removes `machine` on `install`, listing `seen` as the
+/// edits its removal saw: the next revision of the machine's chain under
+/// that anchor or, with none there, a first one copied from its roster
+/// profile. Under a pin of `seed`'s root the machine then carries nothing,
+/// so an act it carried that the removal did not see only narrows there. A
+/// live roster profile keeps its machine's acts at full strength under
+/// every pin that removes nothing (`owner_act_signer_admits`), so a fixture
+/// whose earlier widening must lose strength under a new root removes its
+/// carrier this way (REVIEW-9674 round 2 P1).
+pub(super) fn remove_under(
+    install: &Fresh,
+    seed: &RecoveryRootSeed,
+    machine: EntityId,
+    seen: &[AuthorityEntryHash],
+) {
+    let fold = install.vault.authority_fold().unwrap();
+    let folded = fold.machine(machine).unwrap();
+    let anchor = seed.anchor().verifying_key().to_bytes();
+    let profile = match folded.anchored.get(&anchor) {
+        Some(head) => MachineProfile {
+            revision: head.profile.revision + 1,
+            ..head.profile.clone()
+        },
+        None => MachineProfile {
+            revision: 1,
+            carrier: None,
+            act: None,
+            ..folded.roster.as_ref().unwrap().profile.clone()
+        },
+    };
+    let removal = MachineProfile {
+        role: MachineRole::Removed,
+        seen_world_edits: seen.iter().copied().collect(),
+        ..profile
+    };
+    let entry = anchor_signed_entry(
+        &fold,
+        &seed.anchor(),
+        AuthorityOp::MachineProfile(removal),
+        2,
+    )
+    .unwrap();
+    install
+        .vault
+        .put_authority_log_entry(&entry, TimeRange { start: 2, end: 2 }, 2)
+        .unwrap();
+}
+
 pub(super) fn read_on(install: &Fresh, world: EntityId) -> EffectiveRead {
     install.vault.world_privacy(world).unwrap().read
 }
@@ -265,10 +313,13 @@ pub(super) fn publish_root_on(install: &Fresh) -> RecoveryRootId {
 }
 
 /// 7c, re-assertion keeps a widening (Sol R1b-F2): under R1, A sets W to
-/// `OneMachine(A)` and widens it to `MyMachines`; the re-issue carries A.
+/// `OneMachine(A)` and widens it to `MyMachines`; the re-issue carries A,
+/// and R2's anchor then removes A without seeing the widening (A's live
+/// roster profile alone keeps its acts at full strength: [`remove_under`]).
 /// R2 installs read `OneMachine(A)` until the owner acts. A re-pins and
-/// lists W as narrowed, with A as its earlier signer, mine under R2; the
-/// owner re-asserts `MyMachines` from A, and R2 installs read it.
+/// lists W as narrowed, with A as its earlier signer, not mine under R2;
+/// the owner re-asserts `MyMachines` from the issuer, a live carrier, and
+/// R2 installs read it.
 #[test]
 fn re_assertion_keeps_a_widening() {
     let host = host();
@@ -283,6 +334,7 @@ fn re_assertion_keeps_a_widening() {
     set_on(&a, world, ReadLocation::MyMachines);
     sync(&a.vault, &issuer.vault);
     let second = issue(&issuer, &[a.machine()]);
+    remove_under(&issuer, &second.seed, a.machine(), &[]);
     assert_eq!(
         read_on(&issuer, world),
         EffectiveRead::OneMachine(a.machine())
@@ -296,19 +348,20 @@ fn re_assertion_keeps_a_widening() {
     assert_eq!(narrowed.world, world);
     assert_eq!(narrowed.earlier.read, EffectiveRead::MyMachines);
     assert_eq!(narrowed.now.read, EffectiveRead::OneMachine(a.machine()));
-    assert_eq!(narrowed.earlier_signers, vec![(a.machine(), true)]);
+    assert_eq!(narrowed.earlier_signers, vec![(a.machine(), false)]);
     assert_eq!(read_on(&a, world), EffectiveRead::OneMachine(a.machine()));
 
-    a.vault
+    issuer
+        .vault
         .reassert_world_privacy(
-            &a.owner,
+            &issuer.owner,
             ActSurface::ThisInstall,
             world,
             settings(ReadLocation::MyMachines),
-            revision(&a.vault, world),
+            revision(&issuer.vault, world),
         )
         .unwrap();
-    sync(&a.vault, &issuer.vault);
+    sync(&issuer.vault, &a.vault);
     for install in [&a, &issuer] {
         assert_eq!(read_on(install, world), EffectiveRead::MyMachines);
     }
@@ -316,11 +369,13 @@ fn re_assertion_keeps_a_widening() {
 
 /// 7c, the narrowed report at scale (Sol R1c-F4; the Engine's scaled
 /// oracle, 2026-10-15): under R1, A holds 24 worlds, each set to
-/// `OneMachine(A)` and widened to `MyMachines`; the re-issue carries A. A's
-/// re-pin lists every one as narrowed, and re-asserting each restores
-/// `MyMachines` on R2 installs. Nothing on the report path caps it (the
-/// carry list's 4096 cap is gone); 24 stands in for "more than 4096", which
-/// a lib-test fold cannot reach in time (48 took 26 minutes in debug).
+/// `OneMachine(A)` and widened to `MyMachines`; the re-issue carries A, and
+/// R2's anchor then removes A without seeing a widening ([`remove_under`]).
+/// A's re-pin lists every one as narrowed, and the issuer's re-assertion of
+/// each restores `MyMachines` on R2 installs. Nothing on the report path
+/// caps it (the carry list's 4096 cap is gone); 24 stands in for "more than
+/// 4096", which a lib-test fold cannot reach in time (48 took 26 minutes in
+/// debug).
 #[test]
 fn the_narrowed_report_lists_every_world_at_scale() {
     const WORLDS: usize = 24;
@@ -338,6 +393,7 @@ fn the_narrowed_report_lists_every_world_at_scale() {
     }
     sync(&a.vault, &issuer.vault);
     let second = issue(&issuer, &[a.machine()]);
+    remove_under(&issuer, &second.seed, a.machine(), &[]);
     sync(&issuer.vault, &a.vault);
 
     let report = a.vault.pin_owner_root(&a.owner, second.root).unwrap();
@@ -348,17 +404,18 @@ fn the_narrowed_report_lists_every_world_at_scale() {
         .collect();
     assert_eq!(narrowed, worlds);
     for world in &worlds {
-        a.vault
+        issuer
+            .vault
             .reassert_world_privacy(
-                &a.owner,
+                &issuer.owner,
                 ActSurface::ThisInstall,
                 *world,
                 settings(ReadLocation::MyMachines),
-                revision(&a.vault, *world),
+                revision(&issuer.vault, *world),
             )
             .unwrap();
     }
-    sync(&a.vault, &issuer.vault);
+    sync(&issuer.vault, &a.vault);
     for world in &worlds {
         for install in [&a, &issuer] {
             assert_eq!(read_on(install, *world), EffectiveRead::MyMachines);
@@ -368,9 +425,11 @@ fn the_narrowed_report_lists_every_world_at_scale() {
 
 /// 7c, a compromised old root's late widening is never promoted (Sol
 /// R1h-F1): R2 carries A while A still pins R1. A holder of R1's seed then
-/// admits its own machine H under R1, and H widens W from `MyMachines` to
-/// everywhere. A re-pins to R2: no settings edit is appended, W reads
-/// `MyMachines`, and the narrowed report flags H as not mine.
+/// admits its own machine H under R1 (the roster lists H as `WorkSchool`,
+/// so H carries), and H widens W from `MyMachines` to everywhere. R2's
+/// anchor removes H without seeing the widening ([`remove_under`]). A
+/// re-pins to R2: no settings edit is appended, W reads `MyMachines`, and
+/// the narrowed report flags H as not mine.
 #[test]
 fn a_compromised_old_roots_late_widening_is_never_promoted() {
     let host = host();
@@ -427,6 +486,7 @@ fn a_compromised_old_roots_late_widening_is_never_promoted() {
         ReadLocation::Everywhere,
     );
     assert_eq!(read_on(&a, world), EffectiveRead::Everywhere);
+    remove_under(&a, &second.seed, h.machine, &[]);
 
     let edits = |vault: &Vault| {
         stored_entries(vault)
