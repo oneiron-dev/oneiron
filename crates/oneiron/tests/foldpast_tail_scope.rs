@@ -11,12 +11,14 @@
 //! --all-features --no-fail-fast --test foldpast_tail_scope`.
 #![cfg(all(feature = "test-support", feature = "test-hooks", oneiron_test_support))]
 
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AuthorityAttestation, AuthorityCheckpointV2, AuthorityConfirmAction, AuthorityConfirmKind,
     AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthorityTier,
-    DeviceAuthority, FederationLifecycleAction, FederationPactStatus, HostSlipIssuer, ROLE_ADMIN,
-    ROLE_AGENT, ROLE_OWNER, authority_entry_hash,
+    DeviceAuthority, FederationLifecycleAction, FederationPactStatus, HostSlipIssuer,
+    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
+    MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole, ROLE_ADMIN, ROLE_AGENT,
+    ROLE_OWNER, authority_entry_hash, machine_profile_proof_transcript,
 };
 use oneiron::error::{Error, RecordError};
 use oneiron::test_doors::foldpast::{
@@ -1841,4 +1843,415 @@ fn names_a_covered_frontier(
     fold.actor_write_frontiers
         .get(key)
         .is_some_and(|frontiers| frontiers.iter().any(|frontier| frontier != hash))
+}
+
+/// An owned machine's role, as its owner answers "yours".
+const YOURS: MachineRole = MachineRole::Owned(MachineOwnership::Yours);
+
+/// Home with a machine's roster revisions covered, its adopter, the
+/// machine, its install key and the owner its profiles name.
+struct MachineHome {
+    fixture: Fixture,
+    machine: EntityId,
+    key: SigningKey,
+    owner: EntityId,
+}
+
+impl MachineHome {
+    /// The machine's roster revision `revision` in `role`.
+    fn profile(&self, role: MachineRole, revision: u64) -> AuthorityOp {
+        machine_profile(
+            &self.fixture.home,
+            self.machine,
+            self.owner,
+            &self.key,
+            role,
+            revision,
+        )
+    }
+}
+
+/// A machine profile with no owner act: `machine`'s revision `revision` in
+/// `role` for `owner`, which `key`, its install key, proves for `home`'s
+/// vault.
+fn machine_profile(
+    home: &Vault,
+    machine: EntityId,
+    owner: EntityId,
+    key: &SigningKey,
+    role: MachineRole,
+    revision: u64,
+) -> AuthorityOp {
+    let vault_id = home
+        .authority_fold()
+        .expect("home folds")
+        .vault_id
+        .expect("home's vault id");
+    let machine_key = key.verifying_key().to_bytes();
+    let device_class = MachineDeviceClass::Computer;
+    let encryption_key = MachineEncryptionKey {
+        suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+        key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
+    };
+    let machine_proof = key
+        .sign(&machine_profile_proof_transcript(
+            &vault_id,
+            machine,
+            &machine_key,
+            device_class,
+            &encryption_key,
+        ))
+        .to_bytes();
+    AuthorityOp::MachineProfile(MachineProfile {
+        machine,
+        owner,
+        machine_key,
+        device_class,
+        encryption_key,
+        role,
+        revision,
+        machine_proof,
+        seen_world_edits: std::collections::BTreeSet::new(),
+        carrier: None,
+        act: None,
+    })
+}
+
+/// Home with one machine whose roster revisions 1, 2, ... take `roles`,
+/// each signed by the host root and covered, and its adopter.
+fn machine_fixture(roles: &[MachineRole]) -> MachineHome {
+    let (home, issuer, home_dir) = root_home();
+    let machine = EntityId::now();
+    let owner = EntityId::now();
+    let key = SigningKey::from_bytes(&[0x71; 32]);
+    for (revision, role) in (1..).zip(roles) {
+        let op = machine_profile(&home, machine, owner, &key, *role, revision);
+        let entry = sign_next_host_op(&home, &issuer, op).expect("sign covered profile");
+        let hash = authority_entry_hash(&entry).expect("covered profile hash");
+        put_signed_entries(&home, &[entry]).expect("store covered profile");
+        assert!(
+            home.authority_fold()
+                .expect("home folds covered profile")
+                .valid_entries
+                .contains(&hash),
+            "every covered profile folds valid, so the image is clean"
+        );
+    }
+    let (adopting, adopt_dir) = checkpoint_and_adopt(&home, &issuer);
+    MachineHome {
+        fixture: Fixture {
+            home,
+            adopting,
+            issuer,
+            _home_dir: home_dir,
+            _adopt_dir: adopt_dir,
+        },
+        machine,
+        key,
+        owner,
+    }
+}
+
+/// Asserts that `fold` holds the profile `hash` valid at the head of
+/// `machine`'s roster chain, removed when `removed`.
+fn heads_roster(
+    fold: &oneiron::authority::AuthorityFold,
+    machine: EntityId,
+    hash: &[u8; 32],
+    removed: bool,
+) {
+    assert!(fold.valid_entries.contains(hash), "the profile folds valid");
+    let roster = fold
+        .machines
+        .get(&machine)
+        .and_then(|folded| folded.roster.as_ref())
+        .expect("the machine's roster revision");
+    assert_eq!(&roster.entry, hash, "the profile heads the roster chain");
+    assert_eq!(roster.removed, removed, "the machine is removed or not");
+}
+
+/// Asserts that the adopting vault's fold holds home's machines and roster.
+fn assert_machines_match(
+    home: &oneiron::authority::AuthorityFold,
+    adopting: &oneiron::authority::AuthorityFold,
+) {
+    assert_eq!(adopting.machines, home.machines, "machines match");
+    assert_eq!(adopting.roster, home.roster, "rosters match");
+}
+
+/// Asserts that home's image over its whole history keeps the tail
+/// profile `hash` as a roster mark, and as a restrictive fact exactly when
+/// it is a removal, and that the adopting vault's successor image keeps
+/// home's marks, facts and slip issuers.
+fn assert_successor_keeps_home_machine_safety(fixture: &Fixture, hash: &[u8; 32], removal: bool) {
+    use oneiron::test_doors::foldpast::{
+        image_revoke_fact_rows, image_roster_marks, image_slip_issuers,
+    };
+    let home_image = written_image(&fixture.home, &fixture.issuer);
+    let home_marks = image_roster_marks(&home_image);
+    assert!(
+        home_marks.contains(hash),
+        "home's image keeps the tail profile's mark"
+    );
+    let home_facts = image_revoke_fact_rows(&home_image);
+    assert_eq!(
+        home_facts.contains(hash),
+        removal,
+        "home's image proves a fact for a removal alone"
+    );
+    let successor = written_image(&fixture.adopting, &fixture.issuer);
+    assert_eq!(
+        image_roster_marks(&successor),
+        home_marks,
+        "the successor image keeps home's roster marks"
+    );
+    assert_eq!(
+        image_revoke_fact_rows(&successor),
+        home_facts,
+        "the successor image keeps home's restrictive facts"
+    );
+    assert_eq!(
+        image_slip_issuers(&successor),
+        image_slip_issuers(&home_image),
+        "the successor image keeps home's slip issuers"
+    );
+}
+
+#[test]
+fn machine_revision_past_an_adopted_image_folds_and_matches_home() {
+    let home = machine_fixture(&[YOURS]);
+    let tail = sign_and_share(
+        &home.fixture,
+        home.profile(MachineRole::Owned(MachineOwnership::WorkSchool), 2),
+    );
+    let hash = authority_entry_hash(&tail).expect("revision hash");
+    let home_fold = home
+        .fixture
+        .home
+        .authority_fold()
+        .expect("home folds revision");
+    let adopting_fold = home
+        .fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds revision");
+    heads_roster(&home_fold, home.machine, &hash, false);
+    heads_roster(&adopting_fold, home.machine, &hash, false);
+    assert_machines_match(&home_fold, &adopting_fold);
+    assert_successor_keeps_home_machine_safety(&home.fixture, &hash, false);
+}
+
+#[test]
+fn machine_removal_past_an_adopted_image_folds_and_matches_home() {
+    let home = machine_fixture(&[YOURS]);
+    let tail = sign_and_share(&home.fixture, home.profile(MachineRole::Removed, 2));
+    let hash = authority_entry_hash(&tail).expect("removal hash");
+    let home_fold = home
+        .fixture
+        .home
+        .authority_fold()
+        .expect("home folds removal");
+    let adopting_fold = home
+        .fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds removal");
+    heads_roster(&home_fold, home.machine, &hash, true);
+    heads_roster(&adopting_fold, home.machine, &hash, true);
+    assert_machines_match(&home_fold, &adopting_fold);
+    assert_successor_keeps_home_machine_safety(&home.fixture, &hash, true);
+}
+
+#[test]
+fn machine_revision_past_a_covered_removal_stays_removed() {
+    let home = machine_fixture(&[YOURS, MachineRole::Removed]);
+    let tail = sign_and_share(&home.fixture, home.profile(YOURS, 3));
+    let hash = authority_entry_hash(&tail).expect("revision hash");
+    let home_fold = home
+        .fixture
+        .home
+        .authority_fold()
+        .expect("home folds revision");
+    let adopting_fold = home
+        .fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds revision");
+    heads_roster(&home_fold, home.machine, &hash, true);
+    heads_roster(&adopting_fold, home.machine, &hash, true);
+    assert_machines_match(&home_fold, &adopting_fold);
+}
+
+#[test]
+fn machine_revision_then_removal_past_an_adopted_image_folds_and_matches_home() {
+    let home = machine_fixture(&[YOURS]);
+    let revision = sign_and_share(
+        &home.fixture,
+        home.profile(MachineRole::Owned(MachineOwnership::WorkSchool), 2),
+    );
+    let revision = authority_entry_hash(&revision).expect("revision hash");
+    let removal = sign_and_share(&home.fixture, home.profile(MachineRole::Removed, 3));
+    let removal = authority_entry_hash(&removal).expect("removal hash");
+    let home_fold = home
+        .fixture
+        .home
+        .authority_fold()
+        .expect("home folds the two rows");
+    let adopting_fold = home
+        .fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds the two rows");
+    // Two machine rows in one tail: it folds whole, and the removal heads
+    // the roster chain over the revision it follows.
+    assert!(
+        home_fold.valid_entries.contains(&revision),
+        "home folds the revision valid"
+    );
+    assert!(
+        adopting_fold.valid_entries.contains(&revision),
+        "adopting folds the revision valid"
+    );
+    heads_roster(&home_fold, home.machine, &removal, true);
+    heads_roster(&adopting_fold, home.machine, &removal, true);
+    assert_machines_match(&home_fold, &adopting_fold);
+    assert_successor_keeps_home_machine_safety(&home.fixture, &removal, true);
+}
+
+#[test]
+fn anchor_mark_past_an_adopted_image_still_needs_history() {
+    let (home, issuer, home_dir) = root_home();
+    let vault_id = home
+        .authority_fold()
+        .expect("home folds")
+        .vault_id
+        .expect("home's vault id");
+    // An owner root its own anchor signs alone, covered by the image: its
+    // anchor is in the image's merged root anchors.
+    let seed = oneiron::world_keys::RecoveryRootSeed::generate().expect("root seed");
+    let root = seed.public(&vault_id).expect("root's public facts");
+    let anchor = seed.anchor();
+    let record = oneiron::authority::OwnerRootRecord {
+        owner: EntityId::now(),
+        root: root.id,
+        recovery_key: MachineEncryptionKey {
+            suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+            key: root.recovery_key.to_bytes(),
+        },
+        anchor_key: root.anchor_key,
+    };
+    let published =
+        sign_next_op_as(&home, &anchor, AuthorityOp::OwnerRoot(record)).expect("sign root");
+    put_signed_entries(&home, std::slice::from_ref(&published)).expect("store root");
+    let (adopting, adopt_dir) = checkpoint_and_adopt(&home, &issuer);
+    let fixture = Fixture {
+        home,
+        adopting,
+        issuer,
+        _home_dir: home_dir,
+        _adopt_dir: adopt_dir,
+    };
+    // The anchor's mark of a machine, no owner act: the anchor's own chain
+    // folds it, not the roster, so it never folds serially past the image.
+    let op = machine_profile(
+        &fixture.home,
+        EntityId::now(),
+        EntityId::now(),
+        &SigningKey::from_bytes(&[0x73; 32]),
+        YOURS,
+        1,
+    );
+    let tail = sign_next_op_as(&fixture.home, &anchor, op).expect("sign mark");
+    let hash = authority_entry_hash(&tail).expect("mark hash");
+    put_signed_entries(&fixture.home, std::slice::from_ref(&tail)).expect("store on home");
+    assert!(
+        fixture
+            .home
+            .authority_fold()
+            .expect("home folds mark")
+            .valid_entries
+            .contains(&hash),
+        "home folds the anchor's mark"
+    );
+    asks_history(
+        put_signed_entries(&fixture.adopting, std::slice::from_ref(&tail))
+            .and_then(|()| fixture.adopting.authority_fold()),
+    );
+}
+
+#[test]
+fn machine_revision_beside_a_covered_row_still_needs_history() {
+    let ConcurrentHome {
+        home,
+        issuer,
+        home_dir,
+        next_seq,
+        heads,
+    } = concurrent_home();
+    let (adopting, adopt_dir) = checkpoint_and_adopt(&home, &issuer);
+    let fixture = Fixture {
+        home,
+        adopting,
+        issuer,
+        _home_dir: home_dir,
+        _adopt_dir: adopt_dir,
+    };
+    // A machine's first revision on one of the image's two frontier rows:
+    // the other covered row is beside it, not in its causal past.
+    let op = machine_profile(
+        &fixture.home,
+        EntityId::now(),
+        EntityId::now(),
+        &SigningKey::from_bytes(&[0x72; 32]),
+        YOURS,
+        1,
+    );
+    let tail = oneiron::test_doors::foldpast::sign_host_op_at(
+        &fixture.home,
+        &fixture.issuer,
+        op,
+        next_seq,
+        vec![heads[0]],
+    )
+    .expect("sign revision");
+    let hash = authority_entry_hash(&tail).expect("revision hash");
+    put_signed_entries(&fixture.home, std::slice::from_ref(&tail)).expect("store on home");
+    assert!(
+        fixture
+            .home
+            .authority_fold()
+            .expect("home folds revision")
+            .valid_entries
+            .contains(&hash),
+        "home folds the revision beside the other covered row"
+    );
+    asks_history(
+        put_signed_entries(&fixture.adopting, std::slice::from_ref(&tail))
+            .and_then(|()| fixture.adopting.authority_fold()),
+    );
+}
+
+#[test]
+fn machine_revision_by_a_non_owner_still_needs_history() {
+    let home = machine_fixture(&[YOURS]);
+    let tail = sign_next_op_as(&home.fixture.home, &agent_signing(), home.profile(YOURS, 2))
+        .expect("sign agent revision");
+    let hash = authority_entry_hash(&tail).expect("revision hash");
+    put_signed_entries(&home.fixture.home, std::slice::from_ref(&tail)).expect("store on home");
+    assert!(
+        !home
+            .fixture
+            .home
+            .authority_fold()
+            .expect("home folds revision")
+            .valid_entries
+            .contains(&hash),
+        "home rejects a revision no owner key signed"
+    );
+    // The adopter folds it rejected too, and a machine profile's tail folds
+    // whole: only the whole history tells it.
+    asks_history(
+        put_signed_entries(&home.fixture.adopting, std::slice::from_ref(&tail))
+            .and_then(|()| home.fixture.adopting.authority_fold()),
+    );
 }
