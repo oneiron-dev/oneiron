@@ -8,6 +8,13 @@
 //! written from a world follows its strictest input, DEC-0005). Where the
 //! same floor reads the person and the fact, the line still shows.
 //!
+//! A paired agent's floor is the envelope of the owner's Grants that name
+//! it, and its row check finds a Grant for each row on its own. So two
+//! Grants, one over the person's world and one over the fact's, each read
+//! one row and together showed the line (REVIEW-9975 P1). One Grant alone
+//! must read the person and every fact (RULING GRANT-COMBINE Q1 = A); a
+//! Grant over both worlds shows the line.
+//!
 //! The reader is a paired agent's credential, as `oneiron token pair` gives
 //! one: its pairing Scope narrows verbs only, and the owner's agent Grant
 //! sets its world ceiling. A key that carries a proof reads by its own floor
@@ -90,6 +97,8 @@ struct Fixture {
     agent: EntityId,
     person: EntityId,
     claim: EntityId,
+    /// The second world the owner created.
+    second: EntityId,
     /// The agent's credential, verified.
     slip: VerifiedSlip,
     /// The person's name as the owner's roster reads it.
@@ -134,28 +143,7 @@ impl Fixture {
             "vault.disclosure.ceiling.set",
             json!({"connection": format!("agent:{}", agent.to_hex()), "ceiling": "restricted"}),
         );
-        let mut authority_scope = Scope::top();
-        authority_scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(base_world_id())]));
-        authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
-        let minted = mint_agent_grant_as(
-            &vault,
-            &proof,
-            ActSurface::ThisInstall,
-            AgentGrantMintRequest {
-                agent,
-                authority_scope,
-                expires_at: None,
-                repo_bounds: None,
-                verb_classes: BTreeSet::new(),
-                wallet_ref: None,
-                working_view_bounds: None,
-            },
-        )
-        .expect("FIXTURE: the owner mints the agent a read Grant over base reality");
-        assert!(
-            minted.grant.confers,
-            "FIXTURE: the agent's read Grant over base reality is live"
-        );
+        mint_read_grant(&vault, &proof, agent, &[base_world_id()], "base reality");
         let slip = paired_agent_slip(&vault, &proof, agent);
 
         let evidence = message(
@@ -218,6 +206,7 @@ impl Fixture {
             agent,
             person,
             claim,
+            second,
             slip,
             name: Value::Null,
             _dir: dir,
@@ -228,6 +217,12 @@ impl Fixture {
 
     fn owner(&self) -> Memory<'_> {
         door::owner(&self.vault).expect("the embedded owner")
+    }
+
+    /// The owner mints the agent one more live read Grant, over `worlds`.
+    fn grant_the_agent(&self, worlds: &[EntityId], named: &str) {
+        let proof = owner_proof(&self.vault).expect("the owner's proof");
+        mint_read_grant(&self.vault, &proof, self.agent, worlds, named);
     }
 
     /// The agent's handle, every read bound to its credential.
@@ -300,6 +295,41 @@ impl Fixture {
         let got = call(&reader, "vault.people.get", json!({"pr": row["handle"]}));
         assert_eq!(got, row, "the agent's get answers the listed row ({why})");
     }
+}
+
+/// The owner mints `agent` one live read Grant over `worlds` alone, `named`
+/// in the fixture's words.
+fn mint_read_grant(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    agent: EntityId,
+    worlds: &[EntityId],
+    named: &str,
+) {
+    let mut authority_scope = Scope::top();
+    authority_scope.worlds = ScopeAxis::Some(worlds.iter().copied().map(ScopeId).collect());
+    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    let minted = mint_agent_grant_as(
+        vault,
+        owner,
+        ActSurface::ThisInstall,
+        AgentGrantMintRequest {
+            agent,
+            authority_scope,
+            expires_at: None,
+            repo_bounds: None,
+            verb_classes: BTreeSet::new(),
+            wallet_ref: None,
+            working_view_bounds: None,
+        },
+    )
+    .unwrap_or_else(|error| {
+        panic!("FIXTURE: the owner mints the agent a read Grant over {named}: {error}")
+    });
+    assert!(
+        minted.grant.confers,
+        "FIXTURE: the agent's read Grant over {named} is live"
+    );
 }
 
 /// `agent` pairs as class `agent` on a link the owner issues, redeems it
@@ -412,5 +442,27 @@ fn a_paired_agents_roster_shows_the_about_line_its_floor_reads_with_every_fact()
         &json!(LINE),
         "the agent's own floor reads the person and every fact the line was written from, yet its \
          roster shows no about line",
+    );
+}
+
+#[test]
+fn a_paired_agents_roster_shows_no_about_line_two_grants_read_only_together() {
+    let fixture = Fixture::open(FactWorld::Second);
+    fixture.grant_the_agent(&[fixture.second], "the second world");
+    assert!(
+        fixture.agent_reads(fixture.person) && fixture.agent_reads(fixture.claim),
+        "FIXTURE: the agent's credential reads the person under its Grant over base reality and \
+         the fact under its Grant over the second world"
+    );
+    fixture.assert_agent_row(
+        &Value::Null,
+        "one of the agent's Grants reads the person and the other the fact the line was written \
+         from, and neither reads both, yet its roster shows the line",
+    );
+    fixture.grant_the_agent(&[base_world_id(), fixture.second], "both worlds");
+    fixture.assert_agent_row(
+        &json!(LINE),
+        "the agent's Grant over both worlds alone reads the person and every fact the line was \
+         written from, yet its roster shows no about line",
     );
 }
