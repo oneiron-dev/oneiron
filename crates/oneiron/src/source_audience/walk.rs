@@ -945,12 +945,27 @@ impl Judge<'_, '_, '_> {
         }
         // A row whose floor is not known whole here (READ-LINEAGE L1; #9289
         // review 2 P1-1, P1-2) reads only to an owner who reads every source
-        // this vault holds, whatever its floor would name.
-        if let Ask::Read(viewers) = self.ask
+        // this vault holds, whatever its floor would name; and it does not
+        // travel on a restricted lane, which carries no audience (#9289
+        // review 3 P1-3). The owner's full window carries it, and the vault
+        // it lands in raises its floor from what that vault holds.
+        let restricted = matches!(
+            self.ask,
+            Ask::Travel {
+                every_support: true,
+                ..
+            }
+        );
+        if (matches!(self.ask, Ask::Read(_)) || restricted)
             && super::floor_waits_in(self.vault, self.txn, &id)?
-            && !self.waiting_floor_readable(viewers)?
         {
-            return Ok(Opened::Decided(false));
+            let admitted = match self.ask {
+                Ask::Read(viewers) => self.waiting_floor_readable(viewers)?,
+                Ask::Travel { .. } => false,
+            };
+            if !admitted {
+                return Ok(Opened::Decided(false));
+            }
         }
         // The policies a full-window carrier brought for a derived row (fix
         // list row 17207), and the floor its own write raised (READ-LINEAGE
