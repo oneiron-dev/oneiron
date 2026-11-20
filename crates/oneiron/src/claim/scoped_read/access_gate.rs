@@ -189,6 +189,48 @@ impl HeldAuthority {
         self.judge_cited_with_coreference(Some(id), judge)
     }
 
+    /// `judge` over one ref of a batch ref check
+    /// ([`super::ScopedRead::refs_readable_each`]), in this serving txn: this
+    /// call's relationship authority, lent to `judge` and taken back after it
+    /// as [`Self::judge_cited`] lends it, and this call's owner-exemption
+    /// verdicts, with the ref's own Grants, class verdicts and room
+    /// admissions, as a lone ref check holds them (blind review round 1 of
+    /// #9925). So a Grant that ends between two refs refuses the later one,
+    /// and one ref's class verdict never stands in for another's own check.
+    /// The relationship authority is lent only while `txn`'s authorization
+    /// time stands where it was loaded; a ref judged at a later time loads
+    /// its own, as a lone ref check does, so a relationship AccessGrant that
+    /// expires between two refs refuses the later one (round 2). A load in
+    /// one txn at one time reads the same authority, so the lent one changes
+    /// no verdict.
+    pub(super) fn judge_ref<T>(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        judge: impl FnOnce(&Self) -> Result<T>,
+    ) -> Result<T> {
+        let mut held = self.0.take();
+        if let Some(loaded_at) = held.as_ref().map(AccessContextSnapshot::observed_at)
+            && loaded_at != crate::ports::authorization_floor_in_txn(&vault.store, txn)?
+        {
+            held = None;
+        }
+        let one = Self(
+            RefCell::new(held),
+            self.1,
+            HeldGrants::fresh(self.2.asked().clone()),
+            ClassVerdicts::default(),
+            self.4,
+            self.5,
+            RoomVerdicts::default(),
+            self.7,
+            self.8.clone(),
+        );
+        let judged = judge(&one);
+        *self.0.borrow_mut() = one.0.into_inner();
+        judged
+    }
+
     fn judge_cited_with_coreference<T>(
         &self,
         id: Option<EntityId>,
