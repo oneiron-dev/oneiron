@@ -380,7 +380,7 @@ pub(crate) fn door_refuses_retired_standing(
                 read.is_some_and(|handoff| entry_signer_keys(&handoff).any(|key| key == signer))
             }) {
                 signed_handoff = true;
-                if before.handoffs.contains(candidate) {
+                if before.handoffs.contains(candidate) || fold.closed_handoffs.contains(candidate) {
                     handoffs.insert(*candidate);
                 }
             }
