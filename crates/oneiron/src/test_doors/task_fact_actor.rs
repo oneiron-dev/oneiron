@@ -2,7 +2,9 @@
 //! `tests/task_id_commits_to_maker.rs` (FIX TASK-ID-COMMITS-TO-MAKER): writes one TASK
 //! authority fact under this install's carrier, through the mint door or past its actor
 //! check, and reads what a TASK's facts prove about who may act on it. It also hands a
-//! fact row to the step a replicated put takes when it refuses a row deleted here.
+//! fact row to the step a replicated put takes when it refuses a row deleted here, and signs
+//! a fact row it writes nowhere, for `tests/restore_counts_live_task_facts.rs` to land
+//! without its link.
 
 use crate::error::Result;
 use crate::task_authority::{
@@ -80,6 +82,41 @@ pub fn write_unjudged_fact(
         let fact = fact_at(vault, txn, task, kind, actor, assigned)?;
         write_unjudged_task_authority_fact_in_txn(vault, txn, fact)
     })
+}
+
+/// A new row id and the body a member machine's door would store on it for `actor`'s
+/// `kind` fact about `task`, signed by this install's carrier, written nowhere: the row a
+/// replica can send ahead of its `ScopedTo` link. `None` when this install signs nothing
+/// (an unrooted vault, or no signer loaded).
+///
+/// # Errors
+///
+/// As the read transaction and the row id's mint.
+pub fn signed_fact_row(
+    vault: &Vault,
+    task: EntityId,
+    kind: TaskAuthorityFactKind,
+    actor: EntityId,
+) -> Result<Option<(EntityId, Vec<u8>)>> {
+    let fact_ref = vault.store.clock.entity_id()?;
+    let fact = TaskAuthorityFact {
+        task_ref: task,
+        kind,
+        actor_ref: actor,
+        assigned_ref: None,
+        actor_generation: None,
+        assigned_generation: None,
+        answered_heads: None,
+        occurred_at: vault.now_recorded_at(),
+        maker: None,
+    };
+    let txn = vault.store.env.read_txn()?;
+    Ok(
+        crate::task_authority::carried_task_authority_fact_body_in_txn(
+            vault, &txn, &fact_ref, &fact,
+        )?
+        .map(|body| (fact_ref, body)),
+    )
 }
 
 /// An Owner fact naming `owner` as `task`'s owner under the maker commitment of `maker`

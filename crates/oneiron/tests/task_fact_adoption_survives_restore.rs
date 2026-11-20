@@ -9,10 +9,18 @@
 //! `an_adopted_ack_still_counts_after_a_restore_drops_its_twin` is the red/green pair: red
 //! at f1ed0eb198e (adoption deleted the ack's mark, so after the restore the ack row has
 //! neither proof nor mark and the task reads unacked), green at 32a754b90e7 (the mark is
-//! kept and carried from the live vault, so the task still reads acked). The ACK is the
-//! case a mark-carrying restore can drop: `presence_is_authority`
-//! (`authority_plane.rs:868`) refuses a restore while a live-only Owner twin stands, but
-//! an acknowledgement moves no task authority.
+//! kept and carried from the live vault, so the task still reads acked).
+//!
+//! An adopted Owner fact does not refuse a restore of a checkpoint taken before its twin
+//! (blind review round 1 P1, REVIEW-10064, `authority_plane.rs:701`). The twin is a live-only
+//! fact row, and the restore compare read every live-only Owner, cancellation or assignment
+//! fact on a task the checkpoint holds as moved authority, though the checkpoint holds the
+//! same fact on the unsigned row the live fold still counts. Red on #10064's head
+//! 8d4b25c54e6d with this test: the restore in
+//! `an_adopted_owner_fact_does_not_refuse_a_restore_of_the_checkpoint_before_its_twin` is
+//! refused for "task authority". Green on the head: the restore drops the twin, the carried
+//! mark counts the unsigned Owner fact on the copy, and a cancel written since the
+//! checkpoint still refuses the restore.
 //! `adoption_twins_an_unsigned_fact_once_and_keeps_its_owner` (part 1) guards the head's
 //! twin check instead: green on both commits, red only if the head lost `twinned_here_in`
 //! (a second pass would twin the fact again).
@@ -332,5 +340,115 @@ fn an_adopted_ack_still_counts_after_a_restore_drops_its_twin() {
             .expect("a second adoption pass on the copy"),
         0,
         "the twin stands, so a second pass twins nothing"
+    );
+}
+
+#[test]
+fn an_adopted_owner_fact_does_not_refuse_a_restore_of_the_checkpoint_before_its_twin() {
+    // One keystore held across opens, as above.
+    let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
+    let dir = oneiron::test_support::restore_tempdir();
+    let path = dir.path().join("vault");
+
+    // Root the vault with the signer loaded, then drop it so the same path can reopen.
+    let owner = {
+        let vault = Vault::open_owned(&path, VaultConfig::device()).expect("a new vault");
+        vault.install_device_keystore(Arc::clone(&keystore));
+        assert_eq!(
+            vault
+                .profile_local_open(Some(b"task-fact-adoption-keeps-owner"), true)
+                .expect("the root door"),
+            LocalOpenProfile::RootedAndProfiled,
+        );
+        vault
+            .ensure_embedded_owner_actor()
+            .expect("the embedded owner")
+    };
+
+    // Reopen with no signer loaded: the task door writes the Owner fact unsigned, with its
+    // written-here mark.
+    let vault = Vault::open(&path, VaultConfig::device()).expect("reopen without a keystore");
+    let task = owner_task(&vault, owner, "owned while no signer was loaded");
+    let rows = fact_rows(&vault, task);
+    assert_eq!(rows.len(), 1, "the task door wrote one Owner fact");
+    assert!(
+        !is_signed(&rows[0].1),
+        "the Owner fact written with no signer loaded stores unsigned"
+    );
+
+    // Load the signer, then take the checkpoint before any adoption pass: it holds the
+    // unsigned Owner row, not its mark. The adoption pass then twins the Owner fact.
+    vault.install_device_keystore(Arc::clone(&keystore));
+    vault
+        .prepare_install_signing()
+        .expect("the install signer loads");
+    vault.ensure_vault_key().expect("the vault data key");
+    let key = vault.checkpoint_key().expect("the checkpoint key");
+    let image = dir.path().join("image");
+    vault
+        .snapshot_checkpoint(&image, 100)
+        .expect("a checkpoint holding the unsigned Owner fact");
+    assert_eq!(
+        vault
+            .adopt_unsigned_task_facts()
+            .expect("the adoption pass"),
+        1,
+        "the unsigned Owner fact gets one twin"
+    );
+    let rows = fact_rows(&vault, task);
+    assert_eq!(rows.len(), 2, "the unsigned row and its signed twin stand");
+    assert_eq!(
+        rows.iter().filter(|(_, body)| is_signed(body)).count(),
+        1,
+        "one of the two Owner rows carries this install's signature"
+    );
+
+    // The twin states the fact the checkpoint already holds on a row the live fold counts,
+    // so the restore moves no task authority: it goes through and drops the twin.
+    let restore = |into: &str| {
+        Vault::restore_checkpoint_keeping_authority(
+            &image,
+            &key,
+            &dir.path().join(into),
+            VaultConfig::device(),
+            &vault,
+            200,
+        )
+    };
+    let (copy, _) = match restore("restored") {
+        Ok(restored) => restored,
+        Err(error) => panic!(
+            "the adopted twin restates the checkpoint's own Owner fact, so the restore \
+             goes ahead; it was refused: {error}"
+        ),
+    };
+    let rows = fact_rows(&copy, task);
+    assert_eq!(
+        rows.len(),
+        1,
+        "the twin row is gone; the unsigned Owner fact stands"
+    );
+    assert!(
+        !is_signed(&rows[0].1),
+        "the Owner row that stands is the unsigned one the checkpoint held"
+    );
+    let here = copy
+        .task_authority_state(task)
+        .expect("the task reads on the copy")
+        .expect("the carried mark still counts the unsigned Owner fact on the copy");
+    assert_eq!(here.owner_ref, owner);
+    drop(copy);
+
+    // A cancel written since the checkpoint is no twin of a fact the checkpoint holds: it
+    // still refuses the restore.
+    mint_fact(&vault, task, TaskAuthorityFactKind::Cancelled, owner, None)
+        .expect("the owner's cancel");
+    let Err(error) = restore("restored-after-cancel") else {
+        panic!("restoring the checkpoint would bring the cancelled task back open");
+    };
+    let message = error.to_string();
+    assert!(
+        message.contains("would roll back") && message.contains("task authority"),
+        "{message}"
     );
 }

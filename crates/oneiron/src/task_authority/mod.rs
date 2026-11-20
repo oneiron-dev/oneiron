@@ -744,6 +744,24 @@ pub(crate) fn write_unjudged_task_authority_fact_in_txn(
     write_task_authority_fact_in_txn(vault, wtxn, fact)
 }
 
+/// The body [`write_task_authority_fact_in_txn`] would store for `fact` on the row
+/// `fact_ref` under this install's carrier, written nowhere; `None` when this install signs
+/// nothing. For the test door that stands in for a replica whose fact row arrives before
+/// its `ScopedTo` link.
+#[cfg(oneiron_test_support)]
+pub(crate) fn carried_task_authority_fact_body_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fact_ref: &EntityId,
+    fact: &TaskAuthorityFact,
+) -> Result<Option<Vec<u8>>> {
+    let unsigned = encode_task_authority_fact_body(fact);
+    Ok(
+        fact_proof::carrier_signature_in_txn(vault, txn, fact_ref, &unsigned)?
+            .map(|carrier| encode_carried_fact_body(fact, &carrier)),
+    )
+}
+
 /// Writes `fact` on a new row, signed by this install's carrier when one is
 /// loaded: [`put_task_authority_fact_in_txn`] past its check, and the root's
 /// twin of a fact a door already wrote.
