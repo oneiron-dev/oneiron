@@ -590,6 +590,63 @@ impl Vault {
         })
     }
 
+    /// [`Self::enrol_owner_signing_key_in_txn`] for `actor`, an owner the
+    /// caller judged live in `txn`, with `surface` as the act's audit-only
+    /// surface: the recovery wait's landing seam, which runs with no owner
+    /// proof (OPUS-WAYBACK): the hold authorized the act, and the landing
+    /// rechecks the owner's liveness itself. Every other caller takes the
+    /// authority door above.
+    ///
+    /// # Errors
+    /// As [`Self::enrol_owner_signing_key_as`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the enrollment's actor, surface, input, kind, predecessor and signer"
+    )]
+    pub(super) fn enrol_owner_signing_key_for_actor_in_txn<S>(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: EntityId,
+        surface: ActSurface,
+        input: OwnerKeyEnrollment,
+        kind: EnrolledOwnerKeyKind,
+        predecessor: AuthorityKey,
+        sign_predecessor: &mut S,
+    ) -> Result<OwnerKeyEnrollmentReceipt>
+    where
+        S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
+    {
+        let device = enrolled_device(input.public_key, input.proof, kind);
+        let (entry, machine) = self.write_owner_key_enroll_for_actor_in_txn(
+            txn,
+            (actor, surface),
+            Some(input.machine),
+            device,
+            predecessor,
+            sign_predecessor,
+            false,
+        )?;
+        Ok(OwnerKeyEnrollmentReceipt {
+            entry,
+            machine,
+            public_key: input.public_key,
+        })
+    }
+
+    /// The owner who acts under `authority`, revalidated in `txn`, and the
+    /// act's surface; an agent never enrols an owner key.
+    fn enrolling_owner_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        authority: &ActAuthority,
+    ) -> Result<(EntityId, ActSurface)> {
+        let (owner, surface) = match authority {
+            ActAuthority::Owner(owner, surface) => (owner, *surface),
+            ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
+        };
+        Ok((owner.revalidate_as_vault_owner_in_txn(self, txn)?, surface))
+    }
+
     /// [`Self::write_owner_key_enroll_as`] in the caller's write
     /// transaction, which commits it or not.
     #[expect(
@@ -609,9 +666,40 @@ impl Vault {
     where
         S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
     {
-        let (mut entry, carrier_key, built_on) = self.unsigned_owner_key_enroll_in_txn(
+        let actor = self.enrolling_owner_in_txn(txn, authority)?;
+        self.write_owner_key_enroll_for_actor_in_txn(
             txn,
-            authority,
+            actor,
+            holder,
+            device,
+            predecessor,
+            sign_predecessor,
+            confirming,
+        )
+    }
+
+    /// [`Self::write_owner_key_enroll_in_txn`] for `actor`, the owner who
+    /// acts and the act's surface, as the caller judged them in `txn`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the enrollment's actor, holder, device, predecessor, signer and confirming vouch"
+    )]
+    fn write_owner_key_enroll_for_actor_in_txn<S>(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: (EntityId, ActSurface),
+        holder: Option<EntityId>,
+        device: DeviceAuthority,
+        predecessor: AuthorityKey,
+        sign_predecessor: &mut S,
+        confirming: bool,
+    ) -> Result<(AuthorityEntryHash, EntityId)>
+    where
+        S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
+    {
+        let (mut entry, carrier_key, built_on) = self.unsigned_owner_key_enroll_for_actor_in_txn(
+            txn,
+            actor,
             holder,
             device,
             predecessor.clone(),
@@ -701,11 +789,28 @@ impl Vault {
         predecessor: AuthorityKey,
         confirming: bool,
     ) -> Result<(AuthorityLogEntry, ed25519_dalek::SigningKey, AuthorityView)> {
-        let (owner, surface) = match authority {
-            ActAuthority::Owner(owner, surface) => (owner, *surface),
-            ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
-        };
-        let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let actor = self.enrolling_owner_in_txn(txn, authority)?;
+        self.unsigned_owner_key_enroll_for_actor_in_txn(
+            txn,
+            actor,
+            holder,
+            device,
+            predecessor,
+            confirming,
+        )
+    }
+
+    /// [`Self::unsigned_owner_key_enroll_in_txn`] for `actor`, the owner who
+    /// acts and the act's surface, as the caller judged them in `txn`.
+    fn unsigned_owner_key_enroll_for_actor_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        (actor, surface): (EntityId, ActSurface),
+        holder: Option<EntityId>,
+        device: DeviceAuthority,
+        predecessor: AuthorityKey,
+        confirming: bool,
+    ) -> Result<(AuthorityLogEntry, ed25519_dalek::SigningKey, AuthorityView)> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let (carrier, carrier_key) = self

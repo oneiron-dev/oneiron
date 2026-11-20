@@ -421,6 +421,14 @@ pub(super) struct FoldState {
     /// carries it too (HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A). Custody also
     /// passes along `key_admitters`.
     pub(super) host_custody_keys: PersistentSet<AuthorityKey>,
+    /// Every key ever enrolled as the recovery root's authority key, merged
+    /// by union (OPUS-WAYBACK): each roster key whose `OwnerKeyEnroll` row
+    /// carries the recovery-authority attestation kind, live or revoked. It
+    /// only grows. A roster row cannot serve as this memory: the folded
+    /// roster drops the attestation kind, so only this set tells a recovery
+    /// hold's signer R from a device's owner key. A hold needs its signer
+    /// here and live; an answer needs its signer live and not here.
+    pub(super) recovery_authority_keys: PersistentSet<AuthorityKey>,
     pub(super) worlds: PersistentMap<EntityId, WorldFrontier>,
     pub(super) refused_world_edits: PersistentSet<AuthorityEntryHash>,
     /// Each grant's signed travel choices, merged as the worlds' edits are.
@@ -798,6 +806,9 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .host_custody_keys
         .extend(right.host_custody_keys.iter().cloned());
+    merged
+        .recovery_authority_keys
+        .extend(right.recovery_authority_keys.iter().cloned());
     for (key, admitters) in &right.key_admitters {
         merged
             .key_admitters

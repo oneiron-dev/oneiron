@@ -323,6 +323,10 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         AuthorityOp::RestoredMachineJoin(join) => {
             super::restored_machine_join::restored_machine_join_value(join)
         }
+        AuthorityOp::RecoveryHold(hold) => super::recovery_hold::recovery_hold_value(hold),
+        AuthorityOp::RecoveryHoldAnswer(answer) => {
+            super::recovery_hold::recovery_hold_answer_value(answer)
+        }
     }
 }
 

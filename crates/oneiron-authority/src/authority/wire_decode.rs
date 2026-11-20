@@ -291,6 +291,8 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_RESTORED_MACHINE_JOIN => {
             super::restored_machine_join::decode_restored_machine_join(entries)
         }
+        OP_KIND_RECOVERY_HOLD => super::recovery_hold::decode_recovery_hold(entries),
+        OP_KIND_RECOVERY_HOLD_ANSWER => super::recovery_hold::decode_recovery_hold_answer(entries),
         _ => Err(invalid_authority()),
     }
 }
