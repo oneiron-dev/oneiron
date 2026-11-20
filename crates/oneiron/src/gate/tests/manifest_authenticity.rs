@@ -42,6 +42,7 @@ fn replicated_actor_denial_narrows_a_class_wide_permit_only_for_that_actor() -> 
         )
         .commit()?;
     let policy = resolve(&vault)?;
+    // FIX 8780: an untrusted pack is a proposal; it never narrows
     assert!(
         crate::gate::resolution::check_claim_source_trust(
             &body,
@@ -49,7 +50,7 @@ fn replicated_actor_denial_narrows_a_class_wide_permit_only_for_that_actor() -> 
             &policy,
             None
         )
-        .is_err()
+        .is_ok()
     );
     crate::gate::resolution::check_claim_source_trust(&body, Some(&other.to_hex()), &policy, None)?;
     crate::gate::resolution::check_claim_source_trust(&body, None, &policy, None)?;
@@ -100,6 +101,7 @@ fn replicated_class_wide_cap_narrows_every_bound_actor_in_either_manifest_order(
             .commit()?;
         let policy = resolve(&vault)?;
         for actor in actors {
+            // FIX 8780: an untrusted pack is a proposal; it never narrows
             assert!(
                 crate::gate::resolution::check_claim_source_trust(
                     &band_two,
@@ -107,7 +109,7 @@ fn replicated_class_wide_cap_narrows_every_bound_actor_in_either_manifest_order(
                     &policy,
                     None,
                 )
-                .is_err()
+                .is_ok()
             );
             crate::gate::resolution::check_claim_source_trust(
                 &public,
@@ -116,6 +118,8 @@ fn replicated_class_wide_cap_narrows_every_bound_actor_in_either_manifest_order(
                 None,
             )?;
         }
+        // FIX 8780: an untrusted pack is a proposal; it never narrows
+        // R42: 0x83 has no actor-bound Generated row, so default-deny refuses (ceiling.rs:608-609).
         assert!(
             crate::gate::resolution::check_claim_source_trust(
                 &public,
@@ -183,6 +187,7 @@ fn replicated_multi_actor_denial_narrows_every_existing_bound_slot_in_either_ord
             .commit()?;
         let policy = resolve(&vault)?;
         for id in [actor, projector] {
+            // FIX 8780: an untrusted pack is a proposal; it never narrows
             assert!(
                 crate::gate::resolution::check_claim_source_trust(
                     &body,
@@ -190,7 +195,7 @@ fn replicated_multi_actor_denial_narrows_every_existing_bound_slot_in_either_ord
                     &policy,
                     None
                 )
-                .is_err()
+                .is_ok()
             );
         }
     }
@@ -304,9 +309,10 @@ fn untrusted_source_rows_only_narrow_present_slots_independent_of_scan_order() -
                 &narrower,
             )
             .commit()?;
+        // FIX 8780: an untrusted pack is a proposal; it never narrows
         assert!(
             crate::gate::resolution::check_claim_source_trust(&body, None, &resolve(&vault)?, None)
-                .is_err()
+                .is_ok()
         );
         let public = public_stamped(body);
         crate::gate::resolution::check_claim_source_trust(&public, None, &resolve(&vault)?, None)
@@ -326,6 +332,7 @@ fn untrusted_source_rows_only_narrow_present_slots_independent_of_scan_order() -
                 &unreceipted,
             )
             .commit()?;
+        // FIX 8780: an untrusted pack is a proposal; it never narrows
         assert!(
             crate::gate::resolution::check_claim_source_trust(
                 &public,
@@ -333,7 +340,7 @@ fn untrusted_source_rows_only_narrow_present_slots_independent_of_scan_order() -
                 &resolve(&vault)?,
                 None
             )
-            .is_err()
+            .is_ok()
         );
     }
     Ok(())
@@ -382,9 +389,10 @@ fn product_band_permit_needs_explicit_owner_reauthoring() -> Result<()> {
             &narrowing,
         )
         .commit()?;
+    // FIX 8780: an untrusted pack is a proposal; it never narrows
     assert!(
         crate::gate::resolution::check_claim_source_trust(&body, None, &resolve(&vault)?, None)
-            .is_err()
+            .is_ok()
     );
     assert!(
         vault

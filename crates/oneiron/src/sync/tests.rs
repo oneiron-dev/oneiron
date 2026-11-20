@@ -59,12 +59,8 @@ fn stamp() -> u64 {
 }
 
 fn entity_blob(entity_type: u8, at: u64, body: &[u8]) -> Vec<u8> {
-    let mut blob = vec![entity_type];
-    for field in [at, at, at] {
-        blob.extend_from_slice(&field.to_be_bytes());
-    }
-    blob.extend_from_slice(body);
-    blob
+    // Fresh test carrier: row_version 0, the value base writes for a new row.
+    crate::test_util::entity_record(entity_type, TimeRange { start: at, end: at }, at, 0, body)
 }
 
 /// A structurally valid type-76 merge event over participants this vault has not seen: the

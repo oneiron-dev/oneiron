@@ -74,7 +74,7 @@ pub use proposals::{
 };
 pub(crate) use proposals::{
     NoteEditLanding, erase_fork_actor_in_txn, erase_proposal_actor_in_txn,
-    erase_receipt_actor_in_txn, recovery_fork_value,
+    erase_receipt_actor_in_txn, landing_receipt_note, recovery_fork_value,
 };
 pub use sync_rows::{ACTOR_ERASE_NOTE_REQUEST_RECEIPT, NoteRequestReceiptErase};
 #[cfg(oneiron_test_support)]
@@ -296,6 +296,8 @@ pub(crate) use fork_downlink::{
 };
 #[cfg(feature = "sync")]
 mod fork_upload;
+#[cfg(all(feature = "sync", oneiron_test_support))]
+pub(crate) use fork_upload::fork_upload_refusal_in_txn;
 #[cfg(feature = "sync")]
 pub use fork_upload::{NoteForkUpload, NoteForkUploadOutcome, NoteForkUploadReceipt};
 #[cfg(feature = "sync")]
@@ -403,6 +405,8 @@ pub(crate) fn note_side_text_in_txn(
 }
 
 mod document_store;
+mod found_key_restore;
+pub(crate) use found_key_restore::restore_found_key_text_in_txn;
 mod saved;
 pub(crate) use document_store::deck_outline_document_in_txn;
 pub(crate) use document_store::resolve_deck_pin_in_txn;
@@ -425,6 +429,8 @@ pub use folder_source::{
     FolderSourceFile, OriginalBytes,
 };
 mod import;
+#[cfg(oneiron_test_support)]
+pub(crate) use import::note_import_content_hash_for_test;
 pub use import::{
     ImportedFile, ImportedNote, ImportedNoteBatch, ImportedNoteBatchReceipt, ImportedNoteLink,
     ImportedNoteStanding, NOTES_IMPORT_SOURCE,
@@ -456,6 +462,8 @@ pub(crate) use replica::{
 };
 #[cfg(all(test, feature = "sync"))]
 mod document_tests;
+#[cfg(all(test, feature = "sync"))]
+mod mask_splice_tests;
 #[cfg(all(test, feature = "sync"))]
 mod sync_tests;
 pub(crate) use document::MAX_NOTE_BYTES;

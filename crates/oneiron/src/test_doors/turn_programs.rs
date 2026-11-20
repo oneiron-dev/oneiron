@@ -261,15 +261,6 @@ pub fn erase_actor_programs(vault: &Vault, actor: EntityId) -> Result<()> {
     crate::dreamer_runner::turn_program_test_hooks::erase_actor_programs(vault, actor)
 }
 
-/// Each due row one of `actor`'s timers keeps: its due time and registration.
-///
-/// # Errors
-///
-/// A store failure.
-pub fn timer_due_rows_for_actor(vault: &Vault, actor: EntityId) -> Result<Vec<(u64, EntityId)>> {
-    crate::dreamer_runner::turn_program_test_hooks::timer_due_rows_for_actor(vault, actor)
-}
-
 /// Each idle or feed row one of `actor`'s programs keeps: its kind tag and registration.
 ///
 /// # Errors
@@ -314,4 +305,34 @@ pub fn admitted_row_bytes(
 #[cfg(feature = "sync")]
 pub fn decided_rows_for_turn(vault: &Vault, turn: EntityId) -> Result<usize> {
     crate::dreamer_runner::turn_program_test_hooks::decided_rows_for_turn(vault, turn)
+}
+
+#[cfg(feature = "sync")]
+pub use crate::dreamer_runner::turn_program_test_hooks::ImportedWakeImage;
+
+/// The owed wake TURN `turn` owes `registration`, read as an image of this
+/// vault taken now holds it. `None` when this machine owes no such wake.
+///
+/// # Errors
+///
+/// A store failure.
+#[cfg(feature = "sync")]
+pub fn imported_wake_image(
+    vault: &Vault,
+    turn: EntityId,
+    registration: EntityId,
+) -> Result<Option<ImportedWakeImage>> {
+    crate::dreamer_runner::turn_program_test_hooks::imported_wake_image(vault, turn, registration)
+}
+
+/// Puts `image` back as a historical restore replays it: the owed row and
+/// its imported mark return as content, and each live row this machine kept
+/// for the wake (a release, a decision) stands as it is.
+///
+/// # Errors
+///
+/// A store failure.
+#[cfg(feature = "sync")]
+pub fn restore_imported_wake_image(vault: &Vault, image: &ImportedWakeImage) -> Result<()> {
+    crate::dreamer_runner::turn_program_test_hooks::restore_imported_wake_image(vault, image)
 }

@@ -39,6 +39,7 @@ fn block_on_ready<F: Future>(future: F) -> F::Output {
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), embedding_test_config()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (dir, vault)
 }
 
@@ -93,6 +94,10 @@ fn seed_person(vault: &Vault, seed: u8) -> EntityId {
 
 fn gated_actor_write<'a>(vault: &'a Vault, run_ref: &str) -> GatedActorWrite<'a> {
     let actor = seed_person(vault, 0xA0);
+    crate::conversation_dag::fixtures::grant_reads(
+        vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+    );
     GatedActorWrite::new(
         vault,
         WriteActor::new(actor, EdgeActorClass::Agent),

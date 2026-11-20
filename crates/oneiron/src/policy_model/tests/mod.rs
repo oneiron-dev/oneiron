@@ -26,7 +26,7 @@ pub(super) use std::sync::{
     Mutex,
     atomic::{AtomicUsize, Ordering},
 };
-pub(super) use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+pub(super) use std::task::{Context, Poll};
 pub(super) use tempfile::TempDir;
 
 mod anonymous_chat;

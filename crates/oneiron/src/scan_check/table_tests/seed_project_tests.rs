@@ -38,7 +38,7 @@ fn default_edit(
     now: u64,
     seed: u8,
 ) {
-    let signing = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+    let signing = crate::subject_model::tests::authorization::host_signing_for_seed(seed);
     let key = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
     vault
         .set_project_creation_depth_default(depth, writer, now, key, |message| {
@@ -396,9 +396,10 @@ fn cycle_bind(vault: &Vault, auth: &crate::consent::AuthenticatedOwner, bound: u
 /// open board-siblings over it (depths 1..=`siblings`, each naming B), and
 /// B's birth plus S1 (depth 0) naming A back. The root is pinned to depth
 /// 10 first, so births land at 9 and every later state narrows. Births go
-/// through the live spawn door; every other row lands as engine history, so
-/// no live head rule applies. Returns the members, A first (A is the
-/// JointWork scope: `joint/mod.rs:149-150` observes `ids[0]`).
+/// through the live spawn door; every other row lands as a revision companion,
+/// keeping the stored PROJECT ancestry acyclic while the history holds the cycle.
+/// Returns the members, A first (A is the JointWork scope:
+/// `joint/mod.rs:149-150` observes `ids[0]`).
 ///
 /// Member ids use 0xC0, leaders 0xC1: clear of the 0x90 project family and
 /// the 0xB0 depth keys. Panics on failure, like every helper in this file.
@@ -489,18 +490,28 @@ fn plant_parent_cycle(vault: &Vault, siblings: usize) -> (EntityId, EntityId) {
     .expect("s1 proof");
     rows.push((b, rmp_serde::to_vec_named(&s1).expect("s1 bytes")));
     let kind = vault.project_type_byte().expect("kind");
+    let revision_kind = crate::workspace_roster::project::project_revision_type(&vault.store)
+        .expect("revision kind");
     vault
         .with_write_txn(|txn| {
             let mut batch = vault.batch_in();
             for (index, (id, bytes)) in rows.iter().enumerate() {
                 let at = 4 + index as u64;
-                batch = batch.put_engine_history(
-                    id,
+                for (revision, body) in crate::workspace_roster::project::capture_project_put(
+                    &vault.store,
+                    txn,
+                    *id,
                     kind,
-                    crate::temporal::TimeRange { start: at, end: at },
-                    at,
                     bytes,
-                );
+                )? {
+                    batch = batch.put_engine_history(
+                        &revision,
+                        revision_kind,
+                        crate::temporal::TimeRange { start: at, end: at },
+                        at,
+                        &body,
+                    );
+                }
             }
             batch.apply(txn)?;
             Ok(())
@@ -558,7 +569,8 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
         EngineScan::ProjectDepthDefaultRows => {
             // Three owner-signed creation-default edits, chained; the fold
             // serves the last one's depth.
-            let writer = rooted_writer(vault, 0xB0);
+            let writer = crate::subject_model::tests::authorization::root_host_owner(vault, 0xB0)
+                .expect("root owner");
             default_edit(vault, &writer, 9, 2, 0xB0);
             default_edit(vault, &writer, 8, 3, 0xB0);
             default_edit(vault, &writer, 7, 4, 0xB0);
@@ -580,20 +592,29 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
             // implicit birth; the fold serves the last one's depth.
             let root = vault.root_project().expect("root");
             let project = id(0x91, 1);
+            let leader = EntityId::from_hex(
+                &vault
+                    .project(root)
+                    .expect("root row")
+                    .expect("root stored")
+                    .leader,
+            )
+            .expect("root leader");
             let record =
-                crate::workspace_roster::ProjectRecord::new(project, Some(root), root, id(0x91, 0))
+                crate::workspace_roster::ProjectRecord::new(project, Some(root), root, leader)
                     .expect("record");
             vault.put_project(project, &record, 1).expect("project");
-            let writer = rooted_writer(vault, 0xB0);
-            crate::workspace_roster::set_project_depth_signed_for_test(
+            let writer = crate::subject_model::tests::authorization::root_host_owner(vault, 0xB0)
+                .expect("root owner");
+            crate::subject_model::tests::authorization::set_project_depth_with_host(
                 vault, project, 2, &writer, 2, 0xB0,
             )
             .expect("edit");
-            crate::workspace_roster::set_project_depth_signed_for_test(
+            crate::subject_model::tests::authorization::set_project_depth_with_host(
                 vault, project, 5, &writer, 3, 0xB0,
             )
             .expect("edit");
-            crate::workspace_roster::set_project_depth_signed_for_test(
+            crate::subject_model::tests::authorization::set_project_depth_with_host(
                 vault, project, 7, &writer, 4, 0xB0,
             )
             .expect("edit");
@@ -614,12 +635,13 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
         EngineScan::ProjectDepthSourceAncestors => {
             // Three chained default edits, then a signed birth pinned on
             // the last: resolving the depth walks four ancestors.
-            let writer = rooted_writer(vault, 0xB0);
+            let writer = crate::subject_model::tests::authorization::root_host_owner(vault, 0xB0)
+                .expect("root owner");
             default_edit(vault, &writer, 9, 2, 0xB0);
             default_edit(vault, &writer, 8, 3, 0xB0);
             default_edit(vault, &writer, 7, 4, 0xB0);
             let project = id(0x91, 2);
-            let signing = ed25519_dalek::SigningKey::from_bytes(&[0xB0; 32]);
+            let signing = crate::subject_model::tests::authorization::host_signing_for_seed(0xB0);
             let key = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
             vault
                 .with_write_txn(|wtxn| {

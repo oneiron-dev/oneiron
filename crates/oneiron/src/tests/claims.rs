@@ -371,6 +371,16 @@ fn put_claim_writes_claim_of_edge_atomically() -> Result<()> {
 #[test]
 fn type0_validation_guards_every_write_path() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    let facet = crate::claim::substrate_facet_id(seeded_entity_id(0xC1A1)).expect("subject facet");
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            test_time_range(1, 1),
+            1,
+            b"facet",
+        )
+        .expect("seed subject facet");
     let garbage: &[u8] = b"definitely not msgpack";
 
     // Path 1: Vault::put_entity.

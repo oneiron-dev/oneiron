@@ -230,6 +230,7 @@ fn receiving_room_replica_hides_claim_arriving_after_real_tombstone() -> Result<
     let person = put_actor(&source)?;
     let byline = crate::WriteActor::new(person, EdgeActorClass::Human);
     crate::conversation_dag::fixtures::grant(&source, byline, true);
+    crate::conversation_dag::fixtures::grant_reads(&source, byline);
     let room = EntityId::now();
     source.create_conversation(
         room,

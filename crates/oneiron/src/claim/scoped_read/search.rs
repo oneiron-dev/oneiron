@@ -167,17 +167,24 @@ impl ScopedRead<'_> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
+        // The plan and a deny-all answer's receipt in one snapshot, as the
+        // text and vector searches build theirs: on a lane that reports its
+        // live Grants its ceiling names them (FIX-LIST
+        // GRANT-RECEIPT-OTHER-READ-LANES).
+        let txn = self.grant_read_txn()?;
         let SearchPlan {
             filter,
             candidates,
             policy,
-        } = self.search_plan(requested)?;
+        } = self.search_plan_in(&txn, requested)?;
         if candidates.deny_all {
             return Ok(ScopedReadResult {
                 value: Vec::new(),
-                receipt: self.receipt_for(requested, &policy, &candidates, 0),
+                receipt: self.receipt_in(&txn, requested, &policy, &candidates, 0, None),
             });
         }
+        // The search opens its own snapshots: LMDB allows one per thread.
+        drop(txn);
         let excluded = self.request_exclusions(&policy, requested)?;
         let admitted = self.plan_gate(&filter, &policy, &excluded, requested);
         let results = self
@@ -225,17 +232,24 @@ impl ScopedRead<'_> {
         query_affect: Option<oneiron_contracts::affect::Vad>,
         media_memory: Option<&crate::host_memory::MachineMemory>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
+        // The plan and a deny-all answer's receipt in one snapshot, as the
+        // text and vector searches build theirs: on a lane that reports its
+        // live Grants its ceiling names them (FIX-LIST
+        // GRANT-RECEIPT-OTHER-READ-LANES).
+        let txn = self.grant_read_txn()?;
         let SearchPlan {
             filter,
             candidates,
             policy,
-        } = self.search_plan(requested)?;
+        } = self.search_plan_in(&txn, requested)?;
         if candidates.deny_all {
             return Ok(ScopedReadResult {
                 value: Vec::new(),
-                receipt: self.receipt_for(requested, &policy, &candidates, 0),
+                receipt: self.receipt_in(&txn, requested, &policy, &candidates, 0, None),
             });
         }
+        // The search opens its own snapshots: LMDB allows one per thread.
+        drop(txn);
         let excluded = self.request_exclusions(&policy, requested)?;
         let admitted = self.plan_gate(&filter, &policy, &excluded, requested);
         let mut pipeline = self
@@ -314,14 +328,6 @@ impl ScopedRead<'_> {
         })
     }
 
-    pub(super) fn resolve_retrieval_filter(
-        &self,
-        requested: Option<&RetrievalFilter>,
-    ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {
-        let txn = self.grant_read_txn()?;
-        self.resolve_retrieval_filter_in(&txn, requested)
-    }
-
     pub(super) fn resolve_retrieval_filter_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -395,17 +401,59 @@ impl ScopedRead<'_> {
     }
 
     /// This key's read filter under `policy`, narrowed by `requested`; with
-    /// no request, the key's own ceiling.
-    fn filter_under(
+    /// no request, the key's own ceiling. A filter from the binding-only
+    /// floor names its talk ([`Self::own_retrieval_floor`]) whatever the
+    /// request left of its kinds, so a request that names none of them
+    /// reads nothing and never falls back to the deny-all floor's
+    /// work-talk exception.
+    pub(super) fn filter_under(
         &self,
         policy: &PolicyManifestResolution,
         requested: Option<&RetrievalFilter>,
     ) -> Result<ResolvedRetrievalFilter> {
-        Ok(crate::gate::narrow_retrieval_filter(
-            &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
-            requested,
-        )?
-        .under_credential_of(&self.actor_key))
+        let (floor, work_talk_room) = self.own_retrieval_floor(policy);
+        let mut filter = crate::gate::narrow_retrieval_filter(&floor, requested)?
+            .under_credential_of(&self.actor_key);
+        filter.work_talk_room = work_talk_room;
+        Ok(filter)
+    }
+
+    /// This key's own retrieval floor under `policy`, with the work-talk
+    /// room it reads under that room's binding alone, if any
+    /// (WORK-TALK-BINDING-RECALL-FLOOR). A reader on a room turn of a work
+    /// talk whose binding names it ([`RoomTurnCeiling::work_talk`]) and
+    /// whose own floor is deny-all takes the talk's row kinds in its place:
+    /// no policy row admits it, it carries no credential or proof Scope,
+    /// and the policy has not failed closed. Each row those kinds let
+    /// through must sit in that one talk, under a binding that still admits
+    /// the reader in the row's snapshot (`own_row_readable_in`), so the
+    /// floor finds only what the reader's binding reads by id on this turn.
+    /// Every other key keeps its own floor exactly.
+    pub(super) fn own_retrieval_floor(
+        &self,
+        policy: &PolicyManifestResolution,
+    ) -> (crate::gate::RetrievalPolicyFloor, Option<EntityId>) {
+        let floor = policy.retrieval_floor_for_actor(Some(&self.actor_key));
+        let room = self
+            .actor_key
+            .room_turn
+            .as_ref()
+            .filter(|turn| turn.work_talk && turn.branch.is_none())
+            .map(|turn| turn.room)
+            .filter(|_| {
+                floor.deny_all
+                    && self.actor_key.vault_owner_ref().is_none()
+                    && self.actor_key.authority_scope().is_none()
+                    && !policy.is_fail_closed()
+                    && !policy.diagnostics().loaded_manifest_forces_fail_closed()
+            });
+        match room {
+            Some(room) => (
+                crate::gate::RetrievalPolicyFloor::work_talk_rows(),
+                Some(room),
+            ),
+            None => (floor, None),
+        }
     }
 
     #[expect(
@@ -444,8 +492,38 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
         filter: &ResolvedRetrievalFilter,
         policy: &PolicyManifestResolution,
+        previously_suppressed: SuppressedSearchRows,
+        revisions: &std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
+    ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
+        self.filter_search_results_reporting(
+            results,
+            limit,
+            requested,
+            filter,
+            policy,
+            previously_suppressed,
+            revisions,
+            self.receipts_include_live_grants,
+        )
+    }
+
+    /// [`Self::filter_search_results_with_suppression`], its receipt
+    /// reporting the key's live Grants when `report_live_grants`, whatever
+    /// this lane's own setting ([`Self::receipt_reporting_in`]).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "final scoring admission conjoins plan authority, fresh authority and source frontiers"
+    )]
+    pub(super) fn filter_search_results_reporting(
+        &self,
+        results: Vec<ScoredEntity>,
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+        filter: &ResolvedRetrievalFilter,
+        policy: &PolicyManifestResolution,
         mut previously_suppressed: SuppressedSearchRows,
         revisions: &std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
+        report_live_grants: bool,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
         let txn = self.grant_read_txn()?;
         // The scoring txn may have completed before a revocation. The final
@@ -471,7 +549,7 @@ impl ScopedRead<'_> {
         }
         for result in results {
             let id = result.id;
-            let admitted = self.admit_in(&txn, &result.id, || {
+            let admitted = self.admit_held_in(&txn, &result.id, &held, || {
                 let allowed = self
                     .is_entity_retrievable_held_in(&txn, policy, filter, &result.id, &held)?
                     && self.is_entity_retrievable_held_in(
@@ -522,7 +600,7 @@ impl ScopedRead<'_> {
                     self.within_ceilings_in(&txn, id, &ceilings, &ceiling_held)
                         .unwrap_or(false)
                         && self
-                            .admit_in(&txn, id, || Ok(None::<()>))
+                            .admit_held_in(&txn, id, &held, || Ok(None::<()>))
                             .map(|admitted| admitted.suppression() > 0)
                             .unwrap_or(false)
                 })
@@ -531,15 +609,32 @@ impl ScopedRead<'_> {
         // A search's receipt reports the candidates it ranked: the key's own
         // filter's rows and its own live Grants' (FIX 7528), so a later page
         // asked under it never refuses a row this search admitted.
-        let candidates = self.candidate_filter_in(&txn, policy, filter, requested);
-        let fresh_candidates =
-            self.candidate_filter_in(&txn, &fresh_policy, &fresh_filter, requested);
-        let mut receipt = self.receipt_for(requested, policy, &candidates, previously_suppressed);
-        receipt.restrict_with(&self.receipt_for(
+        let candidates =
+            self.receipt_candidates_in(&txn, policy, filter, requested, report_live_grants);
+        let fresh_candidates = self.receipt_candidates_in(
+            &txn,
+            &fresh_policy,
+            &fresh_filter,
+            requested,
+            report_live_grants,
+        );
+        let mut receipt = self.receipt_reporting_in(
+            &txn,
+            requested,
+            policy,
+            &candidates,
+            previously_suppressed,
+            Some(&held),
+            report_live_grants,
+        );
+        receipt.restrict_with(&self.receipt_reporting_in(
+            &txn,
             requested,
             &fresh_policy,
             &fresh_candidates,
             suppressed,
+            Some(&held),
+            report_live_grants,
         ));
         Ok(ScopedReadResult { value, receipt })
     }
@@ -633,7 +728,7 @@ impl ScopedRead<'_> {
         let mut suppressed = 0;
         for result in results {
             let id = result.id;
-            let admitted = self.admit_in(&txn, &result.id, || {
+            let admitted = self.admit_held_in(&txn, &result.id, &held, || {
                 self.is_entity_retrievable_held_in(&txn, &policy, &filter, &result.id, &held)
                     .map(|visible| visible.then_some(result))
             })?;
@@ -648,7 +743,7 @@ impl ScopedRead<'_> {
                 value.push(row);
             }
         }
-        let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
+        let receipt = self.receipt_in(&txn, requested, &policy, &filter, suppressed, Some(&held));
         Ok(ScopedReadResult { value, receipt })
     }
 }
@@ -705,6 +800,8 @@ impl<'v> ScopedRead<'v> {
             records_cover: self.records_cover.clone(),
             judged_at: self.judged_at,
             read_filter: RetrievalFilter::meet_requests(self.read_filter.as_ref(), request),
+            receipts_include_live_grants: self.receipts_include_live_grants,
+            cited_support: self.cited_support,
         })
     }
 }
@@ -892,6 +989,12 @@ impl<'v> ScopedRead<'v> {
     }
 }
 
+/// The most rows one snapshot's recall gate keeps an answer for (about 2.4 MB).
+/// A row first asked after the map is full is judged in full each time it is
+/// asked: a scoped text scan can visit the whole corpus, and the gate keeps no
+/// more of it than this.
+const RECALL_GATE_KEPT_JUDGEMENTS_MAX: usize = 1 << 16;
+
 /// [`ScopedRead::recall_candidate_gate`].
 pub(crate) struct RecallCandidateGate<'p, 'v> {
     read: &'p ScopedRead<'v>,
@@ -907,10 +1010,51 @@ impl crate::store::retrieval_values::CandidateGate for RecallCandidateGate<'_, '
         // A recall plan resolves its filter with no request beyond its
         // lane's bound caller filter (FIX 3977).
         let held = self.read.held_for(None);
+        // A row's judgement in this snapshot reads only the snapshot, the
+        // plan's policy and filter, and `held`, so the gate keeps each answer
+        // for the snapshot (row [RECALL-EXPANDED-ROW-FACTS-REREAD]): the PPR
+        // walk asks once for each edge it meets, and the post-blend filters
+        // ask again for every fused row. An error is never kept. A row asked
+        // in another transaction is judged there, as before. The conjuncts
+        // that read the clock are read at a row's first ask: an actor proof's
+        // expiry and its slip, share and support-delegation checks
+        // (`proof_live_in`), and a mined preference's decay
+        // (`preference_in_force_in`). The pack's own fresh admission at
+        // assembly (`filter_context_pack_listing_producers`) still refuses a
+        // row whose proof, grant or share lapses during the call.
+        let judged = std::cell::RefCell::new(std::collections::HashMap::<EntityId, bool>::new());
+        #[cfg(oneiron_test_support)]
+        let snapshot = crate::test_doors::recall_gate_judgements::open_snapshot();
         Box::new(
             move |_: &crate::store::StoreRead<'_>, rtxn: &heed::RoTxn<'_>, id: &EntityId| {
-                self.read
-                    .snapshot_candidate_in(txn, &held, rtxn, self.policy, self.filter, id)
+                if !std::ptr::eq(rtxn, txn) {
+                    return self.read.snapshot_candidate_in(
+                        txn,
+                        &held,
+                        rtxn,
+                        self.policy,
+                        self.filter,
+                        id,
+                    );
+                }
+                let kept = judged.borrow().get(id).copied();
+                if let Some(admits) = kept {
+                    return Ok(admits);
+                }
+                #[cfg(oneiron_test_support)]
+                crate::test_doors::recall_gate_judgements::record_judgement(snapshot, id);
+                let admits = self.read.is_entity_retrievable_held_in(
+                    rtxn,
+                    self.policy,
+                    self.filter,
+                    id,
+                    &held,
+                )?;
+                let mut judged = judged.borrow_mut();
+                if judged.len() < RECALL_GATE_KEPT_JUDGEMENTS_MAX {
+                    judged.insert(*id, admits);
+                }
+                Ok(admits)
             },
         )
     }

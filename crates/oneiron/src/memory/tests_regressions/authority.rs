@@ -51,6 +51,7 @@ fn asserted_actor_bindings_resolve_against_the_store() {
     let (_dir, vault) = open_vault();
     let owner = put_person(&vault, 0x5A);
     let subject = put_person(&vault, 0x5B);
+    grant_reads(&vault, owner);
     let owner_facade = facade_for(&vault, owner);
     let claim = owner_facade
         .claim_upsert(&claim_input(
@@ -207,6 +208,7 @@ fn retract_and_delete_enforce_actor_authority() {
             b"eiri agent",
         )
         .expect("put eiri agent");
+    grant_reads(&vault, first_party_agent);
     let eiri_facade = vault.memory(first_party_agent, EdgeActorClass::Agent);
     let mut agent_input = claim_input(
         "profile.mood",

@@ -90,7 +90,10 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
     config.map_size = 16 * 1024 * 1024;
     config.dimensions = 4;
     config.embedding_model = None;
-    crate::test_util::open_test_vault_with(config)
+    let (dir, vault) = crate::test_util::open_test_vault_with(config);
+    vault.prepare_install_signing().expect("install signing");
+    vault.ensure_vault_key().expect("mint the vault data key");
+    (dir, vault)
 }
 
 /// The live `counterparty_contact.*` head values for one contact, by predicate.

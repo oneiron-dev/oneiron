@@ -32,8 +32,9 @@
 //! # Lock semantics
 //!
 //! - A cold open loads and recovers, and an unload persists, its window
-//!   outside the registry mutex under a per-window transition mark. A second
-//!   open of the window, and `window`/`unload_window`/`discard_window`/
+//!   outside the registry mutex under a per-window transition mark, as the
+//!   slim drop persists each of its windows (FIX 27743). A second open of
+//!   the window, and `window`/`unload_window`/`discard_window`/
 //!   replacement of it, wait for the mark; `loaded_keys` lists no window in
 //!   transition and never waits; opens and unloads of other windows never
 //!   wait on it. The registry mutex covers only lookups, the fast path,
@@ -48,23 +49,26 @@
 //!   lock: Observer B's NOTE scrub lists the live windows inside an import's
 //!   callback (FIX 12128).
 //!   The registry lock before the materializer lock: a cold open takes the
-//!   materializer lock for step-5 forward remat, and an unload for its
-//!   persist, without the registry lock, and a replacement forwards its
-//!   candidate under the registry lock. Observer B's NOTE scrub takes the
-//!   registry lock only once its callback has dropped the materializer lock
-//!   (FIX 25183); every other observer callback takes only the materializer
-//!   lock. Code built on the manager must never acquire the registry lock
-//!   while holding the materializer lock.
+//!   materializer lock for step-5 forward remat, and an unload or the slim
+//!   drop for its persist, without the registry lock, and a replacement
+//!   forwards its candidate under the registry lock. Observer B's NOTE scrub
+//!   takes the registry lock only once its callback has dropped the
+//!   materializer lock (FIX 25183); every other observer callback takes only
+//!   the materializer lock. Code built on the manager must never acquire the
+//!   registry lock while holding the materializer lock.
 
 mod document_api;
+mod follow_refusals;
 mod live_mirror;
 mod pending_mirror;
 mod promotion;
+pub(crate) mod publication_window;
 mod ready;
 mod recovery_commits;
 mod replacement;
 
 pub(crate) use self::live_mirror::import_scope;
+pub(crate) use self::publication_window::PublicationWindow;
 // FIX 19634: each connection asks for the windows a policy wake readied.
 pub use self::ready::{READY_WINDOWS_PER_PASS, ReadyProgress};
 // FIX 14534: a world eviction waits for, or on the owner's word discards, the
@@ -123,6 +127,10 @@ pub struct WindowManager {
     /// Window promotion notices for the one live sync socket. Markers remain
     /// durable when there is no receiver; reconnect replays them from rp:w:.
     promotions: tokio::sync::broadcast::Sender<WindowKey>,
+    /// The followed windows the home refused on the one live sync socket
+    /// (FOLLOWED-TOMBSTONE-HELD-WINDOW-REFUSED-LIVE): the residence upkeep
+    /// asks for their tombstone id sets again, held here or not.
+    follows_refused: Mutex<std::collections::HashSet<WindowKey>>,
     /// Rows local commits wrote, on their way into the loaded windows.
     live_mirror: Arc<live_mirror::LiveMirror>,
     /// Test-only handle-issue pause slot (ONE-1608), owned by THIS manager.
@@ -171,6 +179,7 @@ impl WindowManager {
             transition: super::sweep_fence::SweepFence::default(),
             outbound: Arc::new(OutboundSink::new()),
             promotions: tokio::sync::broadcast::channel(64).0,
+            follows_refused: Mutex::default(),
             live_mirror: Arc::default(),
             #[cfg(test)]
             handle_issue_pause: Mutex::new(None),
@@ -277,7 +286,7 @@ impl WindowManager {
         // attach mutex, never the registry lock.
         self.attach_to_vault();
         let mut registry = self.lock_registry_settled(key);
-        // A window a sweep holds closed opens once the sweep is done.
+        // A window a sweep or a publication holds closed opens once it is released.
         while self.sweep_fence.holds(key) {
             drop(registry);
             self.sweep_fence.wait_until_open(key);
@@ -465,8 +474,8 @@ impl WindowManager {
     /// The window is marked closed under the registry lock, so no open of it
     /// is under way, and an open that comes during `f` waits and then reads
     /// what `f` wrote, rather than registering the history `f` drops. Opens
-    /// of other windows go through. A window another sweep holds closed is
-    /// left to it, so the mark is released only by the sweep that made it.
+    /// of other windows go through. A window another sweep or a publication
+    /// holds closed is left to it, so the mark is released only by its holder.
     pub(crate) fn while_window_closed<T>(
         &self,
         key: &WindowKey,
@@ -714,11 +723,23 @@ impl WindowManager {
     ///    any window still has an external `Arc` holder, return the existing
     ///    [`SyncError::WindowBusy`] information BEFORE persisting or removing any
     ///    registry entry — a busy window refuses the shed for all of them.
-    /// 2. Still under the pinned `registry → materializer` lock order, call
+    ///    Otherwise mark every window in transition, as
+    ///    [`unload_window`](Self::unload_window) marks its one, and release
+    ///    the mutex.
+    /// 2. Outside the registry mutex, under the marks, call
     ///    [`LoadedWindow::persist_state`] for every window. If any persist
     ///    fails, remove NONE: every window stays registered and observed.
-    /// 3. Only after every persist succeeds, take the registry, release the
-    ///    mutex, drop the windows and prune the issued-handle weak lists.
+    /// 3. Only after every persist succeeds, take the mutex again, remove the
+    ///    marked windows, release it, drop the windows, release the marks and
+    ///    prune the issued-handle weak lists.
+    ///
+    /// The persist runs outside the registry mutex because its merge imports
+    /// the stored rows into the observed doc: a NOTE tombstone among them
+    /// fires Observer B's NOTE scrub on this thread, and the scrub lists the
+    /// live windows through that mutex (FIX 27743).
+    /// [`loaded_keys`](Self::loaded_keys) lists no window in transition, so
+    /// the scrub passes over the windows this drop persists; each takes it
+    /// when it next opens (FIX 12129), as an unloaded window does.
     ///
     /// Never [`discard_window`](Self::discard_window): its no-persist
     /// semantics are for known-stale imports and would durably lose live doc
@@ -731,7 +752,7 @@ impl WindowManager {
     /// lower-bound proxy for the freed heap (chiefly Loro op history), never
     /// an RSS-delta predictor.
     pub(crate) fn drop_rebuildable_windows(&self) -> Result<crate::slim::HeapDropReport> {
-        let mut registry = self.lock_registry();
+        let registry = self.lock_registry();
 
         // Phase 1 — preflight EVERY window before any mutation, so a refusal
         // is a pure no-op the caller can retry (ONE-1150 semantics, widened
@@ -745,23 +766,51 @@ impl WindowManager {
                 }));
             }
         }
+        let (keys, windows): (Vec<WindowKey>, Vec<Arc<LoadedWindow>>) = registry
+            .iter()
+            .map(|(key, window)| (key.clone(), Arc::clone(window)))
+            .unzip();
+        // Every per-window step waits for these marks, so no handle to a
+        // window is minted while it persists. Whoever holds a registered
+        // window in transition holds a handle to it, so the preflight above
+        // refused every such window already.
+        let closing: Vec<_> = keys
+            .iter()
+            .map(|key| {
+                self.transition
+                    .close(key)
+                    .expect("a registered window no handle holds is in no transition")
+            })
+            .collect();
+        drop(registry);
 
-        // Phase 2 — persist every window while observers still cover its doc.
-        // A failure here returns with the registry untouched.
+        // Phase 2 — persist every window while observers still cover its doc,
+        // with the registry lock down (FIX 27743). A failure here returns with
+        // every window registered; the marks drop on return.
         let mut estimated_reclaimed_bytes = 0_u64;
-        for window in registry.values() {
+        for window in &windows {
             let state = window.persist_state(&self.vault)?;
             estimated_reclaimed_bytes =
                 estimated_reclaimed_bytes.saturating_add(state.len() as u64);
         }
 
-        // Phase 3 — deregister everything at once and drop the docs outside
-        // the registry lock.
-        let dropped = std::mem::take(&mut *registry);
+        // Phase 3 — deregister the persisted windows at once and drop the docs
+        // outside the registry lock, before their marks let a new open of
+        // them in. A window a cold open registered meanwhile stays.
+        let mut registry = self.lock_registry();
+        let dropped: Vec<Arc<LoadedWindow>> = keys
+            .iter()
+            .map(|key| {
+                registry
+                    .remove(key)
+                    .expect("window present under its transition mark")
+            })
+            .collect();
         drop(registry);
         let sync_windows = dropped.len() as u64;
-        let keys: Vec<WindowKey> = dropped.keys().cloned().collect();
         drop(dropped);
+        drop(windows);
+        drop(closing);
         for key in &keys {
             self.prune_issued_handles_for_key(key);
         }

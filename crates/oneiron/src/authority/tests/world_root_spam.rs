@@ -9,7 +9,7 @@ use super::world_chain_reads::{edit, fold_under};
 use super::world_hosted::anchor_on;
 use super::world_key_doors::fresh_install;
 use super::world_kit_gate::publish_root;
-use super::world_reissue::sync;
+use super::world_reissue::{sync, with_predecessor};
 use super::*;
 use crate::HostingPrivacyPosture::Hosted;
 use crate::world_keys::RecoveryRootSeed;
@@ -38,6 +38,7 @@ fn every_page(vault: &crate::Vault, limit: usize) -> BTreeMap<RecoveryRootId, us
 fn root_spam_pages_and_never_hides_an_operative_root() {
     let host = host();
     let issuer = fresh_install(&host);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let prepared = issuer.vault.prepare_owner_root(&issuer.owner).unwrap();
     let ours = prepared.seed().public(&host.vault_id).unwrap().id;
     issuer
@@ -129,11 +130,36 @@ fn spam_roots_below_an_old_root_never_evict_its_admissions() {
     parents.push(&old_published);
     let a_key = ed_key(233);
     let a = request_for(id, EntityId::now(), &a_key);
-    let mark = signed(id, &parents, &old_anchor, 2, profile(&a, YOURS, 1));
+    // Fable pass 29 section 6 ("the fix is a roster profile in the fixture"):
+    // an anchor's chain never admits a carrier (owner_act.rs:38-46,
+    // machine_standing.rs:376-379), so A and B each get a roster bootstrap
+    // profile (HostedNode, rev 1, cloud-signed, act-free) in their mark's past.
+    // HostedNode is never mine, so the not-mine assert below still holds.
+    let roster_a = signed(
+        id,
+        &parents,
+        &cloud,
+        1,
+        profile(&a, MachineRole::HostedNode, 1),
+    );
+    let mark = signed(
+        id,
+        &[&roster_a, &old_published],
+        &old_anchor,
+        2,
+        profile(&a, YOURS, 1),
+    );
     let (new, new_anchor, new_published) = publish(id, &genesis);
     let b_key = ed_key(234);
     let b = request_for(id, EntityId::now(), &b_key);
-    let new_mark = signed(id, &[&new_published], &new_anchor, 2, profile(&b, YOURS, 1));
+    let roster_b = signed(
+        id,
+        &[&new_published],
+        &cloud,
+        2,
+        profile(&b, MachineRole::HostedNode, 1),
+    );
+    let new_mark = signed(id, &[&roster_b], &new_anchor, 2, profile(&b, YOURS, 1));
     let world = EntityId::now();
     let narrowing = edit(
         id,
@@ -153,7 +179,7 @@ fn spam_roots_below_an_old_root_never_evict_its_admissions() {
     );
     let mut entries = vec![genesis, old_published, new_published];
     entries.extend(spam.iter().cloned());
-    entries.extend([mark, new_mark, narrowing.clone()]);
+    entries.extend([roster_a, roster_b, mark, new_mark, narrowing.clone()]);
     let fold = fold_under(&entries, Hosted, Some(&new));
     assert!(
         fold.machine(a.machine)

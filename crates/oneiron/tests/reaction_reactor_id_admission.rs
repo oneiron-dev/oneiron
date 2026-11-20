@@ -236,6 +236,26 @@ fn fixture() -> Fixture {
             .join_member(room, member, acting, at, HistoryChoice::Share)
             .expect("a member joins the room");
     }
+    // The room's MESSAGEs name no relationship, so an access-gated key reads
+    // them only on a grant over the room (FIX 10895); its seat alone opens none.
+    for principal in [outsider, insider] {
+        let grant = AccessGrant {
+            principal_ref: principal,
+            scope: AccessGrantScope::ConversationMessages {
+                conversation_ref: room,
+            },
+            capability: AccessGrantCapability::MessagesRead,
+            status: AccessGrantStatus::Active,
+            created_at: 1,
+            revoked_at: None,
+            expires_at: None,
+            authority_scope: read_preset(),
+            companion_bounds: None,
+        };
+        vault
+            .create_access_grant(&EntityId::now(), &grant)
+            .expect("a member’s grant on the room’s MESSAGEs");
+    }
     let room_message = EntityId::now();
     let open = message(room_message, ROOM_WORDS, None);
     vault
@@ -309,6 +329,14 @@ impl Fixture {
         assert!(
             self.reads(self.insider, &self.reaction),
             "FIXTURE: the member of R reads the reaction claim"
+        );
+        assert!(
+            self.reads(self.outsider, &self.room_message),
+            "FIXTURE: the outsider reads the room MESSAGE"
+        );
+        assert!(
+            self.reads(self.insider, &self.room_message),
+            "FIXTURE: the member of R reads the room MESSAGE"
         );
     }
 }

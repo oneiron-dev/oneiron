@@ -339,21 +339,34 @@ fn rematerialized_critical_claim_overwrite_invalidates_attachment_and_rejects_st
         binding.confirm_id,
         "changed replay must atomically invalidate the persisted attachment"
     );
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         vault.get_claim(&claim)?.expect("changed claim").approval,
-        ClaimApprovalStatus::Proposed,
-        "changed replay must not leave a critical claim Auto"
+        ClaimApprovalStatus::Auto,
+        "changed replay keeps the peer's Auto bytes; the obligation stays open"
+    );
+    assert!(
+        vault
+            .with_write_txn(|wtxn| vault.store.owner_answer_obligation_in_txn(wtxn, &claim))?
+            .is_some()
+    );
+    assert!(
+        !vault.claim_consolidation_eligible(
+            &claim,
+            crate::gate::ConsolidationReader::VadAnnotation
+        )?
     );
     // The CRDT continues to carry the peer's Auto bytes, so rematerializing it
-    // again must converge on the closed/tombstoned Proposed representation.
+    // again converges on the same Auto bytes; the open obligation still holds the claim.
     forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         vault
             .get_claim(&claim)?
             .expect("replayed changed claim")
             .approval,
-        ClaimApprovalStatus::Proposed,
-        "replaying the same changed peer body must not re-promote Auto"
+        ClaimApprovalStatus::Auto,
+        "replaying the same changed peer body keeps the peer's Auto bytes"
     );
 
     let (genesis, clear) = critical_confirm_owner_entry(
@@ -367,9 +380,10 @@ fn rematerialized_critical_claim_overwrite_invalidates_attachment_and_rejects_st
         CriticalWriteConfirmResolution::AlreadySettled,
         "a stale Clear cannot consume a ceremony for the changed body"
     );
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         vault.get_claim(&claim)?.expect("changed claim").approval,
-        ClaimApprovalStatus::Proposed
+        ClaimApprovalStatus::Auto
     );
     assert_eq!(
         vault.with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?,
@@ -422,12 +436,24 @@ fn replicated_critical_claim_overwrite_invalidates_attachment_before_stale_clear
                 && row.reason_codes == [GATE_REASON_CRITICAL_CONFIRM_REPLICATED_OVERWRITE]),
         "invalidation leaves a distinct durable closure receipt"
     );
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         vault
             .get_claim(&claim)?
             .expect("replacement claim")
             .approval,
-        ClaimApprovalStatus::Proposed
+        ClaimApprovalStatus::Auto
+    );
+    assert!(
+        vault
+            .with_write_txn(|wtxn| vault.store.owner_answer_obligation_in_txn(wtxn, &claim))?
+            .is_some()
+    );
+    assert!(
+        !vault.claim_consolidation_eligible(
+            &claim,
+            crate::gate::ConsolidationReader::VadAnnotation
+        )?
     );
     vault
         .batch()
@@ -440,13 +466,14 @@ fn replicated_critical_claim_overwrite_invalidates_attachment_before_stale_clear
             &replacement_data,
         )
         .commit()?;
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         vault
             .get_claim(&claim)?
             .expect("replayed replacement claim")
             .approval,
-        ClaimApprovalStatus::Proposed,
-        "a repeated changed replication must remain demoted"
+        ClaimApprovalStatus::Auto,
+        "a repeated changed replication keeps the peer's Auto bytes"
     );
 
     // A new local ceremony is distinct from the invalidated one. The old Clear
@@ -492,12 +519,24 @@ fn replicated_changed_claim_duplicate_in_one_batch_stays_proposed() -> Result<()
         .put_replicated(&claim, ENTITY_TYPE_CLAIM, test_time(5), 5, None, &data)
         .put_replicated(&claim, ENTITY_TYPE_CLAIM, test_time(5), 5, None, &data)
         .commit()?;
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         vault
             .get_claim(&claim)?
             .expect("replacement claim")
             .approval,
-        ClaimApprovalStatus::Proposed
+        ClaimApprovalStatus::Auto
+    );
+    assert!(
+        vault
+            .with_write_txn(|wtxn| vault.store.owner_answer_obligation_in_txn(wtxn, &claim))?
+            .is_some()
+    );
+    assert!(
+        !vault.claim_consolidation_eligible(
+            &claim,
+            crate::gate::ConsolidationReader::VadAnnotation
+        )?
     );
     Ok(())
 }
