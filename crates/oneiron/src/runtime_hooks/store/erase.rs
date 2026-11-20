@@ -207,10 +207,7 @@ pub(in crate::runtime_hooks) fn rows_named_by_call(
                 }
             }
         }
-        Err(_) => match DeepInput::read(input) {
-            Some(deep) => deep.named_rows(&mut rows),
-            None => spelled_ids_in(input, &mut rows),
-        },
+        Err(_) => spelled_ids_in(input, &mut rows),
     }
     if let Some(args) = landing_original {
         match serde_json::from_str::<Value>(args) {
@@ -296,23 +293,11 @@ enum DeepInputErase {
 /// tail's actors) names the marker and the rest stays, the result
 /// verbatim.
 fn erase_deep_verb_input(input: &str, erased: &ErasedIds) -> DeepInputErase {
-    let Some(mut deep) = DeepInput::read(input) else {
-        return if erased.spelled_in(input) {
-            DeepInputErase::Scrubbed
-        } else {
-            DeepInputErase::Unchanged
-        };
-    };
-    let mut named = BTreeSet::new();
-    deep.named_rows(&mut named);
-    if !named.is_disjoint(&erased.ids) {
-        return DeepInputErase::Depends;
+    if erased.spelled_in(input) {
+        DeepInputErase::Scrubbed
+    } else {
+        DeepInputErase::Unchanged
     }
-    if !name_erased_verb_actors(&mut deep.fields, erased) {
-        return DeepInputErase::Unchanged;
-    }
-    deep.to_text()
-        .map_or(DeepInputErase::Scrubbed, DeepInputErase::Renamed)
 }
 
 /// Door seam for `test_doors::typed_reply_handle`: what an erase of `ids`
