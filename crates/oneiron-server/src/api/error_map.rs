@@ -6,7 +6,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::rejection::QueryRejection;
 use oneiron::ErrorKind;
 
-pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
+pub(crate) fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
     // FIX 2222: the owner refusal a read key or a host action carries (a
     // self-hosted root that binds no live owner under its key, a broken
     // owner check) answers as the facade's `From<MemoryError>` does: a 403
