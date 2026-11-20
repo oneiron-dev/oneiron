@@ -1782,7 +1782,7 @@ impl Vault {
         }
         let changed = self.with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let mut changed = Vec::new();
+            let mut changed: Vec<&'static SettingSpec> = Vec::new();
             for target in &moved {
                 changed.extend(project_target_in_txn(self, txn, *target, now)?.changed);
             }
