@@ -9,10 +9,13 @@
 //! project, and after a replica carries any of these. Each batch end persists
 //! every changed view ([`super::refresh`]) and queues here, in the same
 //! transaction, the home room of each view that may now leave an answer wider
-//! than its row. A delete that unbinds a home room queues it too, with the
-//! rows it detaches. The vault's batch terminal, and the delete door after its
-//! unbind, then mark stale each standing answer a queued room left wider than
-//! a row it rests on, and empty the queue before the transaction commits.
+//! than its row, and of each frozen view it refreshes: a frozen view is served
+//! only while it still fits its parents, so a parent's narrowing can empty its
+//! room with the record unchanged. A delete or a purge that unbinds a home
+//! room queues it too, with the rows it detaches. The vault's batch terminal,
+//! and the delete and purge doors after their unbind, then mark stale each
+//! standing answer a queued room left wider than a row it rests on, and empty
+//! the queue before the transaction commits.
 
 use super::fold::ProjectEffective;
 use super::*;
@@ -70,16 +73,30 @@ impl RoomReach {
     }
 }
 
-/// Queues `project`'s home room when its served view moves from `before` to
-/// `after` in a way that may leave an answer wider than its row.
+/// Queues `project`'s home room when its persisted view moves from `before`
+/// to `after` in a way that may leave an answer wider than its row.
+///
+/// `frozen`: the record written is a frozen one. It is served only while it
+/// still fits its parents' views and its seal, which each read checks again
+/// (`history_policy::frozen_frontier`), so a parent's narrowing that wakes
+/// it can leave its room reading nothing while the record stays the same.
+/// Its room is queued whenever it read anything; the drain reads each
+/// answer's rows exactly, so a room that still reads them marks none.
 pub(super) fn queue_narrowed_room_in(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     project: EntityId,
     before: Option<&ProjectEffective>,
     after: Option<&ProjectEffective>,
+    frozen: bool,
 ) -> Result<()> {
-    if !RoomReach::of(before).strands_answers_at(&RoomReach::of(after)) {
+    let before = RoomReach::of(before);
+    let strands = if frozen {
+        before != RoomReach::Nothing
+    } else {
+        before.strands_answers_at(&RoomReach::of(after))
+    };
+    if !strands {
         return Ok(());
     }
     let room = home_room_id(project)?;
@@ -107,8 +124,8 @@ pub(super) fn queue_unbound_room_in(
 impl Vault {
     /// Marks stale, in `txn`, each standing answer a queued room left wider
     /// than a row it rests on, and empties the queue. Every batch terminal
-    /// runs it once its apply is staged, and the delete door after its
-    /// unbind, so each mark commits with the narrowing that caused it.
+    /// runs it once its apply is staged, and the delete and purge doors after
+    /// their unbind, so each mark commits with the narrowing that caused it.
     pub(crate) fn mark_answers_in_narrowed_rooms_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,

@@ -476,6 +476,7 @@ fn write(
     project: EntityId,
     (old, refresh): Plan,
 ) -> Result<bool> {
+    let frozen = matches!(&refresh, Refresh::Frozen(..));
     let record = match refresh {
         Refresh::Nothing => return Ok(false),
         Refresh::Within(record) => {
@@ -497,14 +498,19 @@ fn write(
     let changed = old.as_ref().is_none_or(|old| !old.same_view(&record));
     // A view that reads less may leave a standing answer wider than its row
     // (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS). A project with no view
-    // persisted before is new: no answer rests on its room yet.
-    if changed && let Some(old) = &old {
+    // persisted before is new: no answer rests on its room yet. A frozen
+    // record's served view is checked again at each read, so it narrows
+    // with the record unchanged.
+    if (changed || frozen)
+        && let Some(old) = &old
+    {
         super::room_narrowing::queue_narrowed_room_in(
             store,
             txn,
             project,
             old.effective.as_ref(),
             record.effective.as_ref(),
+            frozen,
         )?;
     }
     PROJECT_FRONTIER.put(store, txn, &project, &record)?;
