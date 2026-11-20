@@ -3,6 +3,17 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v42 (FIX HOSTED-REROOT-FOLD-RULE): stored authority-log rows keep their
+/// bytes and change meaning. A `ReRoot` signed by a key without the host's
+/// stamp (`ROLE_CLOUD` or tier `CloudCustodial`) no longer counts while the
+/// roster holds a live owner key with that stamp, a hosted vault's live host
+/// root, so such a move the vault already holds (a recovery kit's, imported
+/// or signed here) is refused, the host root stays live, and every row above
+/// the move is refused with it. The host's own move and every self-hosted
+/// vault fold as before. The authority fold schema moves 51 -> 52 with it.
+/// No old-meaning reader or migration is provided (the lead's M-1
+/// stored-change rule, path "loud").
+///
 /// v41 (row SEQ-FLOOR-S-WITHHELD-COSIGN; RULING
 /// SEQ-FLOOR-S-WITHHELD-COSIGN-SHAPE = A): stored authority-log rows keep
 /// their bytes and change meaning. A granting row the fold counts as a fork
@@ -264,7 +275,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 41;
+pub const STORAGE_ABI_VERSION: u16 = 42;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

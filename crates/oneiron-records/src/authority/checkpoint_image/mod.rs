@@ -105,7 +105,9 @@ use serde::Serialize;
 /// 51: the fold holds each act-free enrolment of a machine born of a restore until an entry
 /// signed by a joined machine descends from it, and refuses a revision that changes a
 /// machine's restore origin (row RESTORED-COPIES-ENROL-EACH-OTHER).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 51;
+/// 52: a `ReRoot` by a key without the host's stamp never counts while a live owner key with that
+/// stamp stands, and every row above such a move is refused with it (FIX HOSTED-REROOT-FOLD-RULE).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 52;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
