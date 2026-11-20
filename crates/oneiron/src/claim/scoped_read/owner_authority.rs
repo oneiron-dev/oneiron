@@ -203,6 +203,7 @@ impl ScopedReadActorKey {
         owner_key.unscoped_rows_open = self.unscoped_rows_open;
         owner_key.channel.clone_from(&self.channel);
         owner_key.owner_exemption = self.owner_exemption;
+        owner_key.relationship_gate_owner = self.relationship_gate_owner;
         owner_key.room_turn.clone_from(&self.room_turn);
         owner_key.phone_lines.clone_from(&self.phone_lines);
         owner_key.worlds.clone_from(&self.worlds);

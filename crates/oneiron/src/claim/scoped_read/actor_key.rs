@@ -74,6 +74,11 @@ pub struct ScopedReadActorKey {
     /// Set only on a narrower credential of the owner's; see
     /// [`Self::exempt_while_owner`].
     pub(super) owner_exemption: Option<EntityId>,
+    /// Set only on a key a saved lane's basis lifted the relationship gate
+    /// of on this owner's live binding alone, with no owner exemption beside
+    /// it; see [`Self::within_native_basis`] and
+    /// [`Self::relationship_gate_lift_owner`].
+    pub(super) relationship_gate_owner: Option<EntityId>,
     /// The room turn this key reads inside, when a host bound one.
     pub(super) room_turn: Option<Box<RoomTurnCeiling>>,
     /// Every phone call this key reads inside; each is an independent ceiling.
@@ -455,6 +460,7 @@ impl ScopedReadActorKey {
             owner: None,
             withdrawn_floor_owner: None,
             owner_exemption: None,
+            relationship_gate_owner: None,
             room_turn: None,
             phone_lines: Vec::new(),
             room_facets: None,
@@ -507,6 +513,7 @@ impl ScopedReadActorKey {
             owner: Some(owner),
             withdrawn_floor_owner: None,
             owner_exemption: None,
+            relationship_gate_owner: None,
             room_turn: None,
             phone_lines: Vec::new(),
             room_facets: None,
@@ -1057,6 +1064,16 @@ impl ScopedReadActorKey {
         }
     }
 
+    /// The owner whose live binding lifts this key's relationship gate: a
+    /// narrower credential's owner exemption ([`Self::exempt_while_owner`]),
+    /// or the owner a saved lane's rebuild lifted the gate on alone, with no
+    /// exemption beside it ([`Self::within_native_basis`]). Each read proves
+    /// that binding again in its own snapshot
+    /// ([`Self::relationship_gated_in`]).
+    pub(super) fn relationship_gate_lift_owner(&self) -> Option<EntityId> {
+        self.owner_exemption.or(self.relationship_gate_owner)
+    }
+
     /// The grant basis this key reads under, as a saved lane keeps it beside
     /// its frozen Scope (FIX 14344): its owner standing (the vault owner's
     /// floor, a narrower credential's owner exemption, or neither; each
@@ -1065,7 +1082,10 @@ impl ScopedReadActorKey {
     /// gate admitted rows on the grants of, and the actor class it reads as.
     /// A key rebuilt under a floor's basis holds the floor its owner
     /// alternative reads under, so a lane frozen again from it keeps that
-    /// standing (blind review round 2 P1 on #8065).
+    /// standing (blind review round 2 P1 on #8065). A key whose gate a saved
+    /// lane's basis lifted on its owner's live binding alone reads as no
+    /// gate binds it while that binding holds, so it names no gate and no
+    /// owner standing, as that lane's basis did (blind review P1 on #9716).
     pub(super) fn native_read_basis(&self) -> super::frozen::NativeReadBasis {
         use super::frozen::{NativeGrantGate, NativeOwnerStanding};
         let owner_standing = if self.owner.is_some() || self.rebuilt_under_floor_basis {
@@ -1075,7 +1095,7 @@ impl ScopedReadActorKey {
         } else {
             NativeOwnerStanding::Absent
         };
-        let grant_gate = if !self.enforce_access_grants {
+        let grant_gate = if !self.enforce_access_grants || self.relationship_gate_owner.is_some() {
             NativeGrantGate::Ungated
         } else if self.unscoped_rows_open {
             NativeGrantGate::Relationship
@@ -1085,7 +1105,9 @@ impl ScopedReadActorKey {
         super::frozen::NativeReadBasis {
             owner_standing,
             grant_gate,
-            grant_principal: self.principal_ref.filter(|_| self.enforce_access_grants),
+            grant_principal: self
+                .principal_ref
+                .filter(|_| grant_gate != NativeGrantGate::Ungated),
             actor_class: self.actor_class.clone(),
             classless: self.actor_class.is_none(),
         }
@@ -1144,6 +1166,12 @@ impl ScopedReadActorKey {
     ///   only where each key's gate let every row through while the owner
     ///   binding held: unbound, or lifted by an exemption. A floor's basis
     ///   records no exemption, so no exemption lifts a gate it read under.
+    /// - Where each gate let every row through but no exemption stands
+    ///   beside the meet, as under an ungated basis with no owner standing,
+    ///   the key's gate stays lifted on the owner binding that lifted it,
+    ///   and on nothing else ([`Self::relationship_gate_owner`]): no
+    ///   exemption, so no facet read past, and no floor (blind review P1 on
+    ///   #9716).
     /// - Its gate binds unless neither key's did (Sol F7 on #8061), with the
     ///   owner as principal where an ungated key held the floor, and it
     ///   closes unscoped rows where either gate closed them. A key a gate
@@ -1160,15 +1188,16 @@ impl ScopedReadActorKey {
     ///
     /// A key no gate bound held no exemption to keep: its lane, rebuilt over
     /// a key a gate binds, reads only the relationship rows its principal's
-    /// grants admit.
+    /// grants admit, unless an owner's live binding lifts that key's gate.
     #[must_use]
     pub(super) fn within_native_basis(mut self, basis: super::frozen::NativeReadBasis) -> Self {
         use super::frozen::{NativeGrantGate, NativeOwnerStanding};
         // What each gate let through: an unbound gate, every row; one an
-        // owner exemption lifts, every row while the owner binding holds; a
+        // owner's live binding lifts, every row while that binding holds; a
         // binding gate, an unscoped row only while it leaves them open.
         let key_ungated = !self.enforce_access_grants;
-        let key_lifted = key_ungated || self.owner_exemption.is_some();
+        let key_lift_owner = self.relationship_gate_lift_owner();
+        let key_lifted = key_ungated || key_lift_owner.is_some();
         let key_unscoped_open = key_ungated || self.unscoped_rows_open;
         let saved_ungated = basis.grant_gate == NativeGrantGate::Ungated;
         let saved_lifted = saved_ungated || basis.owner_standing == NativeOwnerStanding::Exemption;
@@ -1201,8 +1230,10 @@ impl ScopedReadActorKey {
         }
         self.enforce_access_grants = true;
         self.unscoped_rows_open = key_unscoped_open && saved_unscoped_open;
-        self.owner_exemption = if key_lifted && saved_lifted {
-            exemption_owner
+        let lifted = key_lifted && saved_lifted;
+        self.owner_exemption = if lifted { exemption_owner } else { None };
+        self.relationship_gate_owner = if lifted && self.owner_exemption.is_none() {
+            key_lift_owner
         } else {
             None
         };
