@@ -25,8 +25,8 @@ use rmpv::Value;
 mod editor_sources;
 mod remake;
 mod requester_lane;
-pub(super) use requester_lane::inherit_note_requester_lane;
 use requester_lane::require_sources_in_declared_lane;
+pub(super) use requester_lane::{declared_lane, inherit_requester_lane};
 
 pub(super) const REQUEST_VERSION: u64 = 2;
 /// The declaration key an explicit source set rides under (FIX 3198).
@@ -137,7 +137,7 @@ impl ScopeSummaryPlan {
     }
 
     /// The plan's evidence read in `txn`; a sitting's TURNs under the per-call
-    /// labels its lines cite (FIX 7509).
+    /// labels its lines cite (FIX 7509); its MESSAGEs judged in the declared lane.
     pub(crate) fn evidence_in_txn(
         &self,
         vault: &Vault,
@@ -156,7 +156,7 @@ impl ScopeSummaryPlan {
             evidence.editor_sources =
                 editor_sources::editor_sources_in_txn(vault, txn, &previous, &evidence)?;
         }
-        Ok(evidence)
+        requester_lane::evidence_in_declared_lane(vault, txn, self, evidence)
     }
 
     /// The requester's surface a landing's reply is checked and receipted on

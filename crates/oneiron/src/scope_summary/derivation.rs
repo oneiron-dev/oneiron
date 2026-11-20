@@ -64,8 +64,11 @@ pub(super) fn declaration(
     Value::Map(fields)
 }
 
-/// Re-derive a NOTE declaration under the original requester's frozen bound,
-/// including its actual grant basis. Other summary targets are unchanged.
+/// Re-derive a declaration under the original requester's frozen bound,
+/// including its actual grant basis, whatever its target: a projection and
+/// each declaration it queues keep the lane its first summary was declared
+/// under (FIX SUMMARY-REDERIVATION-DROPS-FROZEN-LANE), never the requester's
+/// own.
 fn inherited_declaration(
     request: &super::ScopeSummaryRequest,
     purpose: &str,
@@ -73,12 +76,7 @@ fn inherited_declaration(
     original: &Value,
 ) -> Result<Value> {
     let mut input = declaration(request, purpose, previous);
-    if matches!(
-        request.target,
-        super::ScopeSummaryTarget::Sources { scope: None, .. }
-    ) {
-        super::request::inherit_note_requester_lane(original, &mut input)?;
-    }
+    super::request::inherit_requester_lane(original, &mut input)?;
     Ok(input)
 }
 

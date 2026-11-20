@@ -11,6 +11,9 @@
 //! plan also rebuilds this lane in its own snapshot, at declaration,
 //! composition and landing: a NOTE set's to read its NOTEs (FIX 6322), a
 //! conversation's or a sitting's to judge its sources (review P1 of #9583).
+//! Round 2 of #9583 and #9590: the evidence a plan reads judges each
+//! MESSAGE whose words go to the model under the same rebuilt lane, every
+//! re-declaration keeps the lane, and no narrowed lane declares an Arc.
 
 use rmpv::Value;
 
@@ -22,6 +25,7 @@ use super::{
     enqueue_with_lineage_in_txn, plan_in_txn,
 };
 use crate::claim::{FrozenReadLane, ScopedRead};
+use crate::dreamer_consolidation::ScopeSummaryEvidence;
 use crate::error::Result;
 use crate::ports::ClaimReadStatus;
 use crate::store::conversation_record::{ScopePath, ScopeSelector};
@@ -164,6 +168,33 @@ pub(super) fn require_sources_in_declared_lane(
     Ok(())
 }
 
+/// `evidence`, read for `plan`, once the lane its declaration froze, rebuilt
+/// in `txn` over its requester's base read, reads each MESSAGE whose words
+/// the evidence gives the model (FIX SUMMARY-PLAN-JUDGES-TURNS-NOT-MESSAGES).
+/// The plan judged the TURNs; a TURN's MESSAGE is gated apart from it (a
+/// relationship grant, a records caveat), and the Dreamer reads it on its
+/// own lane. Composition, landing and reuse each read the evidence through
+/// here. A principal declaration adds nothing.
+///
+/// # Errors
+/// A MESSAGE the rebuilt lane does not read, a declaration whose frozen
+/// lane or read basis does not decode, and a store, fold or clock failure
+/// judging one.
+pub(super) fn evidence_in_declared_lane(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    plan: &ScopeSummaryPlan,
+    evidence: ScopeSummaryEvidence,
+) -> Result<ScopeSummaryEvidence> {
+    if evidence.messages.is_empty() {
+        return Ok(evidence);
+    }
+    let messages: Vec<EntityId> = evidence.messages.iter().map(|message| message.id).collect();
+    let input = derivation::decode(&plan.input)?;
+    require_sources_in_declared_lane(vault, txn, &input, plan.requester, &messages)?;
+    Ok(evidence)
+}
+
 /// `lane`, the requester's actor-level reply lane for `plan`, narrowed by
 /// the lane its declaration froze; unchanged for a declaration that froze
 /// none.
@@ -200,7 +231,7 @@ fn lane_value(frozen: &FrozenReadLane) -> Result<Value> {
 }
 
 /// The lane a declaration froze; its requester's own when it froze none.
-pub(super) fn declared_lane(input: &Value) -> Result<FrozenReadLane> {
+pub(in crate::scope_summary) fn declared_lane(input: &Value) -> Result<FrozenReadLane> {
     let Value::Map(fields) = input else {
         return Err(invalid("summary request must be a map"));
     };
@@ -246,9 +277,12 @@ pub(super) fn declared_read_basis(
     })
 }
 
-/// Preserve the producer's exact narrowing on a NOTE re-declaration. These
-/// are bounds, not new read authority; the native planner checks them again.
-pub(in crate::scope_summary) fn inherit_note_requester_lane(
+/// Preserve the producer's exact narrowing on a re-declaration of any
+/// target: a NOTE set's (FIX 6322), and a conversation's or thread's
+/// (FIX SUMMARY-REDERIVATION-DROPS-FROZEN-LANE). These are bounds, not new
+/// read authority; the native planner checks them again. A declaration that
+/// froze no lane, a sitting's or the Dreamer's Arc, adds nothing.
+pub(in crate::scope_summary) fn inherit_requester_lane(
     original: &Value,
     declaration: &mut Value,
 ) -> Result<()> {
