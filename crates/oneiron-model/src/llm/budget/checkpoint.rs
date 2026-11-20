@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 use super::guard::BudgetGuard;
-use super::ledger::{BudgetRowTally, LeaseState};
+use super::ledger::BudgetRowTally;
 use super::policy::{BudgetPolicyRow, BudgetPolicyTable};
 use super::state::BudgetState;
 use super::types::{BudgetExhaustionPolicy, BudgetThreshold};
@@ -22,6 +22,9 @@ pub struct BudgetCheckpoint {
     limit_units: u64,
     reserve_units: u64,
     on_budget_exhausted: BudgetExhaustionPolicy,
+    /// The last overdraft grant the meter took; absent when it took none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    overdraft_grant: Option<u64>,
     actor: Option<EntityId>,
     used_units: u64,
     shared_used_units: u64,
@@ -107,6 +110,7 @@ impl BudgetGuard {
             checkpoint.actor,
             policy,
         );
+        state.overdraft_grant = checkpoint.overdraft_grant;
         state.used_units = checkpoint.used_units;
         state.shared_used_units = checkpoint.shared_used_units;
         state.next_lease_seq = checkpoint.next_lease_seq;
@@ -129,11 +133,8 @@ impl BudgetGuard {
 
 /// The checkpoint of a meter whose lock the caller holds.
 fn checkpoint_locked(state: &BudgetState) -> Result<BudgetCheckpoint, BudgetDenied> {
-    if state
-        .leases
-        .values()
-        .any(|lease| lease.state == LeaseState::Open)
-    {
+    // The meter's table holds only open leases.
+    if !state.leases.is_empty() {
         return Err(BudgetDenied::LeaseInvalid);
     }
     let rows = state
@@ -153,6 +154,7 @@ fn checkpoint_locked(state: &BudgetState) -> Result<BudgetCheckpoint, BudgetDeni
         limit_units: state.limit_units,
         reserve_units: state.reserve_units,
         on_budget_exhausted: state.on_budget_exhausted,
+        overdraft_grant: state.overdraft_grant,
         actor: state.actor,
         used_units: state.used_units,
         shared_used_units: state.shared_used_units,

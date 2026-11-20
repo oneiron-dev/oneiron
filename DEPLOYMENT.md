@@ -216,6 +216,13 @@ vault id, rewrites the request's Host and URI authority to that internal
 authority, and composes every public URL: no public name reaches the vault,
 and no response names the internal one.
 
+A plain serve that names its vault also answers on `*.localhost`, with no
+artifact domain configured: `<name>.localhost:<artifact_port>/<artifact>/...`
+and `<app>--<name>.localhost:<artifact_port>/...`. Serve names both on its own
+log at start (`artifacts answer on *.localhost`); the unauthenticated
+`/api/health` names no vault. The bare `localhost` keeps `/a/`, so the vault
+name `localhost` is refused.
+
 Managed wake-ledger reports also carry logical `artifact_origins`: `vault`
 and `app` with an `artifact_id` from stored published pointers whose labels
 fit the existing per-app host codec. Preview pointers are excluded. These are
@@ -414,6 +421,7 @@ organ_loss_code_bytes = 64        # bytes of one loss's code an organ call's rec
 organ_memory_bytes = 2147483648   # bytes the organ host's budget holds when a live call grows past it (measured at the host's own budget); one elected call goes on with its overcommit on its receipt, new calls wait for the drain, and the row asks
 organ_mesh_object_bytes = 1073741824 # bytes of one object a peer stages on this node for a mesh organ call, spilled to disk; past it the object is staged whole and the row asks
 organ_mesh_staged_bytes = 1073741824 # bytes one mesh connection holds staged at once, both ways, spilled to disk; past it every object is staged and the row asks
+sandbox_egress_response_bytes = 33554432 # bytes of one HTTP or fixture response body a code sandbox's egress reads for its guest, under the host byte floor and the request deadline; past it the body is delivered whole and the row asks
 deadline_jobs_per_caller = 2048   # recalls and searches one caller has running at once under a deadline, each counted until its work ends; past it the job runs on and the row asks (the deadline_jobs_high check, naming the caller and the count, once per caller per minute)
 authority_record_items = 4096     # items one signed authority record carries for its owner (custody recipients, checkpoint roots, model routes, mesh addresses or ALPN grants, a machine revision's acknowledged acts); past it the record is signed and kept whole and the row asks
 connector_live_questions = 64     # rounds of foreign MCP questions (elicitation) one server holds live for connector callers; past it the question registers and waits like any other and the row asks; only the memory floor and a round's 120 s deadline end one

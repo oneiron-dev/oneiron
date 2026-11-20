@@ -155,6 +155,7 @@ impl Fixture {
                 messages,
                 occurred_at: self.vault.now_recorded_at(),
                 assertions: WitnessAssertions::default(),
+                project: None,
             })
             .expect("witness the turn");
         assert!(

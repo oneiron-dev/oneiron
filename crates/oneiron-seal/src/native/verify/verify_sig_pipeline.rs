@@ -13,8 +13,8 @@ use super::super::{cms, pdf};
 use super::timestamp_evidence::{TimestampEvidence, TimestampKind, TimestampResult};
 use super::verify_chain_gates::{VerifyCtx, malformed_input, memory_refused};
 use super::verify_dss_core::EmbeddedCert;
-use super::verify_evidence::CadesEvidence;
 pub(super) use super::verify_evidence::evaluate_envelope;
+use super::verify_evidence::{CadesEvidence, SignerBag};
 #[cfg(test)]
 #[path = "verify_tests_timestamp_evidence.rs"]
 mod verify_tests_timestamp_evidence;
@@ -469,10 +469,13 @@ pub(super) fn unpadded_cms(contents: &[u8]) -> Option<&[u8]> {
     Some(first.full)
 }
 
-/// Verify one CAdES-detached signature dictionary. On a parseable envelope
-/// the CMS certificate set is recorded in `covered` so the DSS binding can
-/// require the validation material to speak about this chain (§7.5 step 3).
-/// The CMS parse, its certificates' copies and the signer chain are held on
+/// Verify one CAdES-detached signature dictionary. Once the signer
+/// certificate is identified, its whole CMS bag is carried in the
+/// returned evidence, unselected: the path the DSS binding must speak
+/// about (§7.5 step 3, and no other certificate of the bag) is selected
+/// in Stage 2, at the signer's validation time, which a covering
+/// document timestamp may still decide when this envelope is read.
+/// The CMS parse, its certificates' copies and the bag copy are held on
 /// `memory` (FIX 12260); memory refused is `Err`, never a verdict.
 #[allow(clippy::too_many_lines)]
 pub(super) fn verify_cades_sig(
@@ -552,15 +555,10 @@ pub(super) fn verify_cades_sig(
             memory,
         )?;
         return Ok(CadesEvidence {
-            signer_chain: None,
+            signer_bag: None,
             timestamp,
         });
     };
-    EmbeddedCert::extend_admitted(
-        covered,
-        parsed.certificates.iter().map(Vec::as_slice),
-        memory,
-    )?;
     verify_signer(ctx, anchors, checks, &parsed, spans_digest, covered, memory)
 }
 
@@ -618,7 +616,7 @@ fn verify_signer(
         )?;
         let timestamp = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered, memory)?;
         return Ok(CadesEvidence {
-            signer_chain: None,
+            signer_bag: None,
             timestamp,
         });
     };
@@ -643,9 +641,20 @@ fn verify_signer(
         VerifyFindingCode::SignatureMismatch,
     )?;
     let timestamp = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered, memory)?;
-    let chain_ders = cms::chain_copy(&parsed.certificates, idx, memory)?;
+    // No chain is selected here and none joins the DSS binding set yet.
+    // Selecting at this envelope's signature timestamp or at the verify
+    // clock would freeze the wrong path when a later document timestamp
+    // covers this signer: Stage 2 validates the signer at that earlier
+    // time, where a same-key reissue in the bag may not even be valid.
+    // Stage 2 selects from this bag at the signer's validation time,
+    // and only that path joins the binding set, so an unrelated
+    // certificate the bag carries still needs no coverage of its own.
+    let signer_bag = SignerBag {
+        certificates: cms::bag_copy(&parsed.certificates, memory)?,
+        signer: idx,
+    };
     Ok(CadesEvidence {
-        signer_chain: Some(chain_ders),
+        signer_bag: Some(signer_bag),
         timestamp,
     })
 }

@@ -171,10 +171,14 @@ pub(crate) const SERVER_RECALL_DOC: &str =
 /// under the call's own caller (FIX 2905): its references ride in
 /// `residence`, apart from the local items; without them the pack is
 /// local-only and `partial`.
+///
+/// A caller in an off-record session that keeps no model-call record names
+/// no rows on its reranker's runs (census L5-25).
 ";
 
 /// FIX 2905: the server doors that also ask an opened device's home, by row, with the caller the call (or the MCP
-/// actor) admitted as the last argument.
+/// actor) admitted, then whether the caller's off-record session keeps no model-call record, so its reranker's runs
+/// name no rows (census L5-25), as the last two arguments.
 pub(crate) const HOME_SERVER_DOORS: &[(&str, &str)] = &[("vault.recall", "recall_home_listing")];
 
 /// FIX 3876: the rows whose page is read on the transport's own caller surface, then completed by the opened device's
@@ -434,7 +438,7 @@ pub(crate) fn facade_dispatch(
                 .and_then(|name| HOME_SERVER_DOORS.iter().find(|(row, _)| *row == name))
             {
                 Some((_, home_door)) => format!(
-                    "{home_door}(actor, class, auth.verified_slip().cloned(), auth.destination(), call.room_turn()?, facade_input(value)?, call.home_caller())"
+                    "{home_door}(actor, class, Some(auth), auth.destination(), call.room_turn()?, facade_input(value)?, call.home_caller(), server.vault().model_call_keeps_no_record_for(auth.off_record_session(), crate::api::call_receipt::request_principal(auth)))"
                 ),
                 None => format!(
                     "{}_listing(actor, class, auth.verified_slip().cloned(), auth.locality(), call.room_turn()?, facade_input(value)?)",
@@ -730,6 +734,13 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
     } else {
         ""
     };
+    // Only the admitted skill call's entry needs this call's own pre chain
+    // state: its post chain here may still run on the skill's answer.
+    let skill_hooks_arg = if name_value.is_str("self.skills.call") {
+        ", !hooks.passed_through()"
+    } else {
+        ""
+    };
     let paced_arg = if flag(row, "host_door_paced") {
         "Some(super::FacadePacedCall::of(call)?), "
     } else {
@@ -741,7 +752,7 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
         ""
     };
     let door = format!(
-        "super::host_doors::{method}(server, auth, {session_arg}{caller}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}facade_door_input(&mut hooks)?{fold_hooks_arg}).await"
+        "super::host_doors::{method}(server, auth, {session_arg}{caller}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}facade_door_input(&mut hooks)?{fold_hooks_arg}{skill_hooks_arg}).await"
     );
     // A door that fails after the pre chain ran keeps a session-only call's pre hook records and runs no post chain
     // (FIX 5527).
@@ -769,15 +780,32 @@ fn host_door(row: &Dict, method: &str) -> Result<String, GenerateError> {
         "output?"
     };
     let answer = if flag(row, "host_door_lists") {
-        format!(
-            "let ran = async {{
+        // The admitted skill call's post-hook view spills to its run past
+        // the inline size, bound as a readable result; a small view answers
+        // inline, as every other row's does.
+        if name_value.is_str("self.skills.call") {
+            format!(
+                "let ran = async {{
+                    let (output, listed) = {door};
+                    Ok::<_, FacadeApiError>((facade_output({door_output})?, listed))
+                }}.await;
+                let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+                let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
+                let spill_run = super::host_doors::skill_call_spill_run(&hooks);
+                let spill_rows = listed.clone();
+                Ok(FacadeCallOutput {{ value: super::host_doors::spill_admitted_skill_view(server, spill_run, {post_hooks}.await.map_err(|error| error.with_hook_notice(hook_notice))?, spill_rows).await, rows: super::host_doors::support::ListedRows::rows(listed), hook_notice }})"
+            )
+        } else {
+            format!(
+                "let ran = async {{
                     let (output, listed) = {door};
                     Ok::<_, FacadeApiError>((facade_output({door_output})?, listed))
                 }}.await;
                 let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
                 let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
                 Ok(FacadeCallOutput {{ value: {post_hooks}.await.map_err(|error| error.with_hook_notice(hook_notice))?, rows: super::host_doors::support::ListedRows::rows(listed), hook_notice }})"
-        )
+            )
+        }
     } else {
         format!(
             "let ran = async {{ Ok::<_, FacadeApiError>(facade_output({door}?)?) }}.await;

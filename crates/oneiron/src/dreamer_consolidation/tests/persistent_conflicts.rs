@@ -97,16 +97,29 @@ fn prior_head_disagreement_opens_one_persistent_marker_and_close_audit() -> Resu
             .count(),
         1
     );
-    let closed =
-        close_persistent_conflict(&vault, &run, id, Value::from("owner chose no"), vec![turn])?;
+    let closed = close_persistent_conflict(
+        &vault,
+        &run,
+        id,
+        Value::from("owner chose no"),
+        vec![turn],
+        None,
+    )?;
     assert_eq!(closed.landed.len(), 1, "{:?}", closed.rejected);
     assert_eq!(
         vault.get_claim(&closed.landed[0])?.unwrap().predicate,
         crate::claim::PREDICATE_CONFLICT_RESOLVED
     );
     assert_eq!(
-        close_persistent_conflict(&vault, &run, id, Value::from("owner chose no"), vec![turn])?
-            .landed,
+        close_persistent_conflict(
+            &vault,
+            &run,
+            id,
+            Value::from("owner chose no"),
+            vec![turn],
+            None,
+        )?
+        .landed,
         closed.landed
     );
     Ok(())
@@ -157,6 +170,7 @@ fn conflict_close_stays_in_the_marker_project() -> Result<()> {
             marker.claim_id,
             Value::from("tea"),
             vec![evidence],
+            None,
         )
     };
     assert!(matches!(
@@ -176,19 +190,29 @@ fn conflict_close_stays_in_the_marker_project() -> Result<()> {
 fn extraction_keeps_same_answers_for_different_topics_distinct_on_replay() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
-    let (admitted, turns, _) =
-        admitted_attempt_fixture(&vault, &store, 0xB4, &[("user", "I like coffee and tea")])?;
+    let (admitted, _turns, _) = admitted_attempt_fixture(
+        &vault,
+        &store,
+        0xB4,
+        &[("user", "Owen likes coffee and tea")],
+    )?;
     let subject = EntityId::now();
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        occurred(1),
+        1,
+        &super::super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?,
+    )?;
     let relationships = [EntityId::now(), EntityId::now()];
     let candidates: Vec<_> = relationships
         .into_iter()
         .flat_map(|rel| ["coffee", "tea"].into_iter().map(move |topic| (rel, topic)))
         .map(|(rel, topic)| {
             serde_json::json!({
-                "subject": subject.to_hex(), "predicate": "preference.food",
+                "subject": "P1", "predicate": "preference.food",
                 "value": "yes", "topic_key": topic, "rel": rel.to_hex(), "confidence": 0.9,
-                "evidence_refs": [{"source_id":turns[0].to_hex(), "byte_range":[0,1]}]
+                "evidence_refs": [{"source":"T1", "quote":"Owen"}]
             })
         })
         .collect();
@@ -214,14 +238,18 @@ fn extraction_keeps_same_answers_for_different_topics_distinct_on_replay() -> Re
             sink: &mut sink,
             inference: test_inference_host(),
             scope: None,
+            decisions: ConsolidationDecisions::shipped()?,
         };
         let mut ctx = WakeAttemptContext {
             vault: &vault,
             deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms: 21_000,
             prepared_wake: None,
             prepared_attempt: None,
+            spend_meter: None,
         };
         assert!(matches!(
             block_on_ready(executor.execute(&admitted, &mut ctx))?,

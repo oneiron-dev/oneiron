@@ -125,9 +125,13 @@ pub(crate) fn send_leave(
     let peer_vault = hex_field::<32>("peer_vault", &request.peer_vault)?;
     let destination = peer_url("peer", &request.peer, COOP_DELETION_PEER_PATH)?;
     let notices = with_issuer(server, |issuer| {
-        server
-            .vault()
-            .send_leave_erase_requests(owner, issuer, &peer_vault, &destination, now())
+        server.vault().send_leave_erase_requests(
+            owner,
+            issuer,
+            &peer_vault,
+            &destination,
+            unix_seconds_now(),
+        )
     })?;
     Ok(leave_erase_requests_sent(notices))
 }

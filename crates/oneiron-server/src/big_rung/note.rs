@@ -59,14 +59,18 @@ impl BigModel {
             host_segments: None,
         };
         let (ladder, request) = self.admit_decision_route(request).ok()?;
-        let run = self
-            .models
-            .funded_run(
-                format!("{NOTE_PURPOSE}:{}", EntityId::now().to_hex()),
-                crate::decision_verdict::rung_meter(&self.meter),
-                crate::decision_verdict::rung_payer(),
-            )
-            .sourced(sources);
+        // Inside a decision whose caller keeps no model-call record, the
+        // note's run names no rows (census L5-25).
+        let run = crate::decision_verdict::run_for_caller(
+            &self.vault,
+            self.models
+                .funded_run(
+                    format!("{NOTE_PURPOSE}:{}", EntityId::now().to_hex()),
+                    crate::decision_verdict::rung_meter(&self.meter),
+                    crate::decision_verdict::rung_payer(),
+                )
+                .sourced(sources),
+        );
         let deadline =
             CallDeadline::caller_with_wait_cap(budget, ladder.cooling_wait_budget(budget));
         let response = self

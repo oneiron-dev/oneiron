@@ -100,7 +100,11 @@ impl Vault {
         stamp: &DerivationStamp,
         batch: &DerivationBatch,
     ) -> Result<DerivationReceipt> {
-        batch.validate()?;
+        let max_items = super::setting_keys::BATCH_MAX_ITEMS
+            .read_in_txn(self, txn, &[], None)?
+            .value
+            .0;
+        batch.validate(usize::try_from(max_items).unwrap_or(usize::MAX))?;
         super::sources::recheck_in_txn(self, txn, stamp, batch)?;
         let mut context = ItemContext {
             batch: EntityId::now(),
@@ -167,6 +171,9 @@ impl Vault {
                     }
                     DerivationItem::Archive(archive) => {
                         super::archive::stage_in_txn(self, txn, &context, archive)?
+                    }
+                    DerivationItem::Person(person) => {
+                        super::person::stage_in_txn(self, txn, &context, person)?
                     }
                 }
             };
@@ -259,8 +266,8 @@ pub(super) fn refusal_receipt_in_txn(
 }
 
 /// Appends the receipt of one landed item the derive verdict judged
-/// (settlement, supersession, artifact, archive): the grant it was judged
-/// by and the frontier it was judged under, beside the item's reason
+/// (settlement, supersession, artifact, archive, person): the grant it was
+/// judged by and the frontier it was judged under, beside the item's reason
 /// tokens.
 pub(super) fn allowance_receipt_in_txn(
     vault: &Vault,

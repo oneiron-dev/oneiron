@@ -14,7 +14,8 @@ use crate::llm::run_admission::RunDeclaration;
 
 use super::{
     RUNS, TrainingAuthorization, TrainingAuthorizationSource, TrainingDeclarationPin, TrainingHold,
-    TrainingOwner, TrainingRun, TrainingState, TrainingTeachersPin, invalid, run_in_txn,
+    TrainingOwner, TrainingRun, TrainingRunCaller, TrainingState, TrainingTeachersPin,
+    admit_caller_in_txn, invalid, run_in_txn,
 };
 
 /// A `coach.training_run` job's input: the run and the spec its owner
@@ -185,10 +186,25 @@ impl Vault {
         detail: &str,
         at: u64,
     ) -> Result<TrainingRun> {
+        self.hold_training_run_for(id, code, detail, at, None)
+    }
+
+    /// [`Self::hold_training_run`] for the run's execute `caller`, when one
+    /// started the step: the hold's writer admits the caller again in its own
+    /// snapshot (LEARN-GRANT), and a caller it no longer admits writes no hold.
+    pub fn hold_training_run_for(
+        &self,
+        id: &EntityId,
+        code: &str,
+        detail: &str,
+        at: u64,
+        caller: Option<&TrainingRunCaller>,
+    ) -> Result<TrainingRun> {
         if code.trim().is_empty() {
             return Err(invalid("a training hold names its code"));
         }
         self.with_write_txn_grouped(|txn| {
+            admit_caller_in_txn(self, txn, caller)?;
             let mut run = run_in_txn(self, txn, id)?;
             if !run.awaits_host() {
                 return Err(invalid("only a run that waits on the host is held"));

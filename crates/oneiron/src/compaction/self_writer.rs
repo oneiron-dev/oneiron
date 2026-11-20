@@ -120,8 +120,6 @@ impl SelfCompactionUnavailable {
 }
 
 #[doc(hidden)]
-pub(super) use oneiron_records::compaction::self_writer::hex32;
-#[doc(hidden)]
 pub use oneiron_records::compaction::self_writer::{
     CompactionEvidence, CompactionHomeRef, CompactionLanding, CompactionStepRef, CompactionUsage,
     HOME_PART_WORN, compaction_home_worn_parts, compaction_home_worn_rows,
@@ -260,6 +258,27 @@ pub struct CompactionLandingReceipt {
     pub execution: CompactionExecution,
 }
 
+/// The record a pass keeps when a try is refused (FIX 7745): the refused
+/// call's own, when `backend` sent it before the refusal, the try the gate
+/// refused before it keeping its usage line; else the last try the gate
+/// refused, as before. Either way it holds every paid call of the pass.
+pub(crate) fn refused_pass_execution(
+    backend: &dyn super::CompactionBackend,
+    spent: Option<CompactionExecution>,
+    mut rejected: Vec<CompactionUsage>,
+    calls: Vec<CompactionCall>,
+) -> Option<CompactionExecution> {
+    match backend.take_refused_execution() {
+        Some(refused) => {
+            if let Some(prior) = spent {
+                rejected.push(prior.usage);
+            }
+            Some(refused.with_rejected(rejected).with_calls(calls))
+        }
+        None => spent.map(|spent| spent.with_rejected(rejected).with_calls(calls)),
+    }
+}
+
 impl CompactionExecution {
     /// The answering try, once the gate accepted `summary`: its snapshot is
     /// stamped, and the tries refused before it keep their own lines.
@@ -332,7 +351,7 @@ impl CompactionExecution {
     /// The accepted snapshot, when the gate accepted this pass.
     pub(crate) fn snapshot(&self) -> Option<CompactionSnapshotRef> {
         Some(CompactionSnapshotRef {
-            content_hash: hex32(self.snapshot_hash.as_deref()?)?,
+            content_hash: oneiron_hex::decode(self.snapshot_hash.as_deref()?)?,
             byte_len: self.snapshot_len?,
         })
     }

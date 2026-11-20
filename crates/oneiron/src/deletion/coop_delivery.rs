@@ -62,7 +62,8 @@ pub const COOP_DELETION_DELIVERY_ATTEMPT_KIND: &str = "cooperative_deletion.deli
 pub const COOP_DELETION_PEER_PATH: &str = "/v1/federation/courtesy-delete";
 /// The requester's route an answer is POSTed to.
 pub const COOP_DELETION_REPLY_PEER_PATH: &str = "/v1/federation/courtesy-delete/reply";
-/// How long an undelivered leg keeps retrying before it is `unreachable`.
+/// How long an undelivered leg keeps retrying before it is `unreachable`, unless
+/// `deletion.coop_delivery.give_up_secs` is set (its default).
 pub const COOP_DELETION_GIVE_UP_SECS: u64 = 7 * 24 * 60 * 60;
 /// The retry wait grows with the leg's age, between these bounds.
 const MIN_BACKOFF_SECS: u64 = 60;
@@ -603,7 +604,8 @@ impl Vault {
 
     /// Settles one claimed try: 2xx is `delivered`; a refusal is `unknown`;
     /// a failure retries with a wait that grows with the leg's age, until
-    /// [`COOP_DELETION_GIVE_UP_SECS`] makes it `unreachable`. The queue row
+    /// `deletion.coop_delivery.give_up_secs` (default
+    /// [`COOP_DELETION_GIVE_UP_SECS`]) makes it `unreachable`. The queue row
     /// and the ledger move in one transaction, fenced by the claim's lease.
     pub fn settle_cooperative_deletion_delivery(
         &self,
@@ -648,7 +650,28 @@ impl Vault {
                     )?;
                     CooperativeDeletionDeliveryStatus::Unknown
                 }
-                CooperativeDeletionTry::Failed(error) if age >= COOP_DELETION_GIVE_UP_SECS => {
+                CooperativeDeletionTry::Failed(error) => {
+                    // Read only on a failure, the one settle the give-up decides.
+                    let give_up = super::setting_keys::COOP_DELIVERY_GIVE_UP_SECS
+                        .read_in_txn(self, txn, &[], None)?
+                        .value;
+                    if age < give_up {
+                        self.store.attempt_operations.retry_in_txn(
+                            self,
+                            txn,
+                            RetryAttempt {
+                                id: attempt.id,
+                                lease_owner,
+                                attempt_count: attempt.attempt_count,
+                                backoff_until: now.saturating_add(
+                                    (age / 2).clamp(MIN_BACKOFF_SECS, MAX_BACKOFF_SECS),
+                                ),
+                                last_error: Some(error.clone()),
+                                now,
+                            },
+                        )?;
+                        return Ok(CooperativeDeletionDeliveryStatus::Sent);
+                    }
                     crate::ports::JobQueue::port_job_fail(
                         self,
                         txn,
@@ -661,23 +684,6 @@ impl Vault {
                         },
                     )?;
                     CooperativeDeletionDeliveryStatus::Unreachable
-                }
-                CooperativeDeletionTry::Failed(error) => {
-                    self.store.attempt_operations.retry_in_txn(
-                        self,
-                        txn,
-                        RetryAttempt {
-                            id: attempt.id,
-                            lease_owner,
-                            attempt_count: attempt.attempt_count,
-                            backoff_until: now.saturating_add(
-                                (age / 2).clamp(MIN_BACKOFF_SECS, MAX_BACKOFF_SECS),
-                            ),
-                            last_error: Some(error.clone()),
-                            now,
-                        },
-                    )?;
-                    return Ok(CooperativeDeletionDeliveryStatus::Sent);
                 }
             };
             move_leg(self, txn, payload, next, now)?;

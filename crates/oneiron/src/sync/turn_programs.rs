@@ -23,6 +23,12 @@
 //!   pinned history-free first; a wake this vault admitted is written as
 //!   decided (`Admitted`), which clears the machine that recorded it; an
 //!   arming a later intent here ended leaves a live window.
+//! - A wake its recording machine can no longer carry is retracted there and
+//!   released by the home (FIX TURNPROGRAM-LATE-WITHHOLD-DOUBLE-DECIDE; the
+//!   rule is the program's own, `retraction`). A wake row's `Owed` is marked
+//!   on the recording machine before the window carries it, and each pass,
+//!   each window open and each egress writes the latest row this vault knows
+//!   for a key over an earlier one, with or without the TURN beside it.
 
 use std::collections::BTreeMap;
 
@@ -232,10 +238,11 @@ fn mirror_arming_rows(
 }
 
 /// Writes into `doc`, base window `key`'s, the wake rows this vault owes for
-/// TURN `turn` that ride to the home, except over a carried row the home
-/// decided, and writes as decided each carried wake of the turn this vault
-/// admitted. Each emitted `Owed` row's arming is mirrored first into the same
-/// window. Returns whether it wrote; the caller commits.
+/// TURN `turn` that ride to the home, except over a carried row past `Owed`
+/// (retracted, released or decided), and writes as decided each carried wake
+/// of the turn this vault admitted. Each emitted `Owed` row's arming is
+/// mirrored first into the same window. Returns whether it wrote; the caller
+/// commits.
 pub(crate) fn mirror_turn_program_wakes(
     vault: &Vault,
     doc: &LoroDoc,
@@ -254,14 +261,14 @@ pub(crate) fn mirror_turn_program_wakes(
     } else {
         BTreeMap::new()
     };
-    let (rows, armings) = {
+    let (mut rows, armings) = {
         let rtxn = vault.store.env.read_txn()?;
         let mut rows: Vec<(String, Vec<u8>)> = replica::turn_wake_rows_in_txn(vault, &rtxn, turn)?
             .into_iter()
             .filter(|(map_key, _)| {
                 carried
                     .get(map_key)
-                    .is_none_or(|carried| !replica::wake_row_decided(carried))
+                    .is_none_or(|carried| !replica::wake_row_past_owed(carried))
             })
             .collect();
         for (map_key, bytes) in &carried {
@@ -292,11 +299,103 @@ pub(crate) fn mirror_turn_program_wakes(
         }
         (rows, armings)
     };
+    // Each wake about to ride as owed is marked first, in its own writer: a
+    // wake the window carries is admitted here by no door while another
+    // machine is the home. One that went or was retracted meanwhile rides no
+    // more.
+    let owed: Vec<String> = rows
+        .iter()
+        .filter(|(_, row)| !replica::wake_row_decided(row))
+        .map(|(map_key, _)| map_key.clone())
+        .collect();
+    if !owed.is_empty() {
+        let rides = replica::mark_carried_wakes(vault, key, &owed)?;
+        rows.retain(|(map_key, row)| replica::wake_row_decided(row) || rides.contains(map_key));
+    }
+    // The window may have taken a later row for one of these keys since
+    // `carried` was read: the housekeeping pass writes a retraction from its
+    // own thread. An `Owed` row goes over none.
+    if holds_map(doc, TURN_PROGRAM_WAKES_MAP) {
+        let map = doc.get_map(TURN_PROGRAM_WAKES_MAP);
+        rows.retain(|(map_key, row)| {
+            replica::wake_row_decided(row)
+                || !map_get_bytes(&map, map_key)
+                    .is_some_and(|held| replica::wake_row_past_owed(&held))
+        });
+    }
     if rows.is_empty() {
         return Ok(false);
     }
     let wrote_armings = !armings.is_empty() && mirror_arming_rows(vault, doc, key, &armings)?;
-    Ok(write_rows(&doc.get_map(TURN_PROGRAM_WAKES_MAP), &rows)? || wrote_armings)
+    let map = doc.get_map(TURN_PROGRAM_WAKES_MAP);
+    let wrote = write_rows(&map, &rows)?;
+    // A later row this machine wrote between that look and this write lies
+    // under the `Owed` row now. The pass that wrote it committed this vault's
+    // mark first, so the latest row this vault knows for each `Owed` row just
+    // written goes back over it: this mirror never leaves the window on a row
+    // earlier than the one this vault's own state names as it returns. A
+    // later row an import brought in that gap is written again by the next
+    // pass, as any row a window lost is.
+    if wrote {
+        let later = {
+            let rtxn = vault.store.env.read_txn()?;
+            let mut later = Vec::new();
+            for (map_key, row) in &rows {
+                if !replica::wake_row_decided(row)
+                    && let Some(known) =
+                        replica::outranking_wake_row_in_txn(vault, &rtxn, map_key, row)?
+                {
+                    later.push((map_key.clone(), known));
+                }
+            }
+            later
+        };
+        write_rows(&map, &later)?;
+    }
+    Ok(wrote || wrote_armings)
+}
+
+/// Writes into `doc`, base window `key`'s, the latest wake row this vault
+/// knows for each key, where it comes later in that key's order than the row
+/// the window carries: a decision over any other row, a release over a
+/// retraction, a retraction over an `Owed` row. It also writes the row of each
+/// wake this vault retracted whose key the window does not hold. It needs no
+/// TURN beside the row: a retracted wake's TURN may have left the window.
+/// Returns whether it wrote; the caller commits.
+pub(crate) fn mirror_turn_program_wake_answers(
+    vault: &Vault,
+    doc: &LoroDoc,
+    key: &WindowKey,
+) -> Result<bool> {
+    if key.world().is_some() {
+        return Ok(false);
+    }
+    let carried: BTreeMap<String, Vec<u8>> = if holds_map(doc, TURN_PROGRAM_WAKES_MAP) {
+        rows_of(&doc.get_map(TURN_PROGRAM_WAKES_MAP))
+            .into_iter()
+            .collect()
+    } else {
+        BTreeMap::new()
+    };
+    let rows = {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut rows = Vec::new();
+        for (map_key, bytes) in &carried {
+            if let Some(row) = replica::outranking_wake_row_in_txn(vault, &rtxn, map_key, bytes)? {
+                rows.push((map_key.clone(), row));
+            }
+        }
+        for (map_key, row) in replica::retracted_wake_rows_in_txn(vault, &rtxn, key)? {
+            if !carried.contains_key(&map_key) {
+                rows.push((map_key, row));
+            }
+        }
+        rows
+    };
+    if rows.is_empty() {
+        return Ok(false);
+    }
+    write_rows(&doc.get_map(TURN_PROGRAM_WAKES_MAP), &rows)
 }
 
 /// Merges every row window `key`'s document holds into this vault's, as a
@@ -377,8 +476,10 @@ fn merge_armings(vault: &Vault, window: &str, rows: Vec<(String, Option<Vec<u8>>
     }
 }
 
-/// Merges each carried wake row in one write, on the home only, and drops
-/// the riding wake this vault recorded for each row the window cleared.
+/// Merges each carried wake row in one write, each as
+/// `replica::merge_wake_row_in_txn` takes its kind (an `Owed` row on the
+/// home only), and drops the wake this vault carried for each row the
+/// window cleared.
 fn merge_wakes(vault: &Vault, window: &str, rows: Vec<(String, Option<Vec<u8>>)>) {
     if rows.is_empty() {
         return;
@@ -399,6 +500,9 @@ fn merge_wakes(vault: &Vault, window: &str, rows: Vec<(String, Option<Vec<u8>>)>
                     tracing::warn!(window, key = %map_key, reason, "turn program wake row does not merge here; left out");
                 }
             }
+            // The answer this vault holds to a carried retraction is owed
+            // to this window, loaded or not when the pass next writes.
+            replica::owe_retraction_answer_in_txn(vault, wtxn, window, map_key, bytes)?;
         }
         Ok(merged)
     });
@@ -410,10 +514,15 @@ fn merge_wakes(vault: &Vault, window: &str, rows: Vec<(String, Option<Vec<u8>>)>
 }
 
 /// Deletes from `doc` each row of either map naming an actor this vault
-/// erased, and writes as decided each wake row this vault admitted. A live doc keeps the old
+/// erased, and writes over each other wake row the latest row this vault
+/// knows for its key (a decision, a release or a retraction). A live doc keeps the old
 /// rows in its history, so `pin` names the window pinned history-free before
 /// an erased actor's row goes; the sweep, whose shallow cut drops that
-/// history, passes `None`. Returns whether a row went, committed.
+/// history, passes `None`. An egress, which names its window, also writes the
+/// row of each wake this vault retracted whose key the window does not hold,
+/// as [`mirror_turn_program_wake_answers`] does: an export between the pass's
+/// retraction and its mirror carries the retraction too. Returns whether a
+/// row went, committed.
 pub(crate) fn scrub_turn_programs(
     vault: &Vault,
     doc: &LoroDoc,
@@ -421,7 +530,8 @@ pub(crate) fn scrub_turn_programs(
 ) -> Result<bool> {
     let arms = holds_map(doc, TURN_PROGRAM_ARMS_MAP);
     let wakes = holds_map(doc, TURN_PROGRAM_WAKES_MAP);
-    if !arms && !wakes {
+    let base = pin.filter(|key| key.world().is_none());
+    if !arms && !wakes && base.is_none() {
         return Ok(false);
     }
     let mut doomed: Vec<(&'static str, String)> = Vec::new();
@@ -443,12 +553,23 @@ pub(crate) fn scrub_turn_programs(
                 }
             }
         }
+        let mut held = std::collections::BTreeSet::new();
         if wakes {
             for (map_key, bytes) in rows_of(&doc.get_map(TURN_PROGRAM_WAKES_MAP)) {
                 if erased(replica::wake_row_actor(&bytes))? {
                     erased_any = true;
-                    doomed.push((TURN_PROGRAM_WAKES_MAP, map_key));
-                } else if let Some(row) = replica::admitted_row_in_txn(vault, &rtxn, &bytes)? {
+                    doomed.push((TURN_PROGRAM_WAKES_MAP, map_key.clone()));
+                } else if let Some(row) =
+                    replica::outranking_wake_row_in_txn(vault, &rtxn, &map_key, &bytes)?
+                {
+                    decided.push((map_key.clone(), row));
+                }
+                held.insert(map_key);
+            }
+        }
+        if let Some(key) = base {
+            for (map_key, row) in replica::retracted_wake_rows_in_txn(vault, &rtxn, key)? {
+                if !held.contains(&map_key) {
                     decided.push((map_key, row));
                 }
             }
@@ -476,12 +597,14 @@ pub(crate) fn scrub_turn_programs(
 /// owed wake in its actor's compartment, held while the turn or
 /// conversation it names is, so the actor's erase retires it; a decided
 /// wake is ids alone under its turn. A row that does not decode is
-/// undecodable.
-pub(in crate::sync) fn checkpoint_entry(root: &str, value: &[u8]) -> Placement {
+/// undecodable; one filed under a key other than its own is a key mismatch
+/// (FIX SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW). Neither is placed under an
+/// owner.
+pub(in crate::sync) fn checkpoint_entry(root: &str, key: &str, value: &[u8]) -> Placement {
     let placement = if root == TURN_PROGRAM_ARMS_MAP {
-        replica::arming_row_placement(value)
+        replica::arming_row_placement(key, value)
     } else {
-        replica::wake_row_placement(value)
+        replica::wake_row_placement(key, value)
     };
     let entities = |ids: Vec<EntityId>| ids.iter().map(OwnerRef::entity).collect::<Vec<_>>();
     match placement {
@@ -492,6 +615,9 @@ pub(in crate::sync) fn checkpoint_entry(root: &str, value: &[u8]) -> Placement {
         Some(RowPlacement::Structure { dependencies }) => Placement::Structure {
             dependencies: entities(dependencies),
         },
+        Some(RowPlacement::KeyMismatch) => {
+            Placement::unclassified(None, SyncUnclassified::KeyMismatch)
+        }
         None => Placement::unclassified(None, SyncUnclassified::Undecodable),
     }
 }
@@ -527,13 +653,16 @@ impl Vault {
 
     /// Merges, on the elected home, every wake row its live base windows
     /// carry (FIX 5266): a wake that arrived before its arming is taken once
-    /// the arming has. Elsewhere it does nothing. Housekeeping runs it on
-    /// every pass, before it admits what is owed.
+    /// the arming has. A machine that waits for the home's answer to a wake
+    /// it retracted merges them too, so an answer an import's observer
+    /// failed to take is taken on the next pass. Elsewhere it does nothing.
+    /// Housekeeping runs it on every pass, before it admits what is owed.
     pub(crate) fn merge_carried_turn_program_wakes(&self) {
-        let home = self.store.env.read_txn().ok().and_then(|rtxn| {
-            crate::dreamer_runner::turn_program_replica::home_here_in_txn(self, &rtxn).ok()
+        let merges = self.store.env.read_txn().ok().is_some_and(|rtxn| {
+            replica::home_here_in_txn(self, &rtxn).ok() == Some(Some(true))
+                || replica::awaits_release_in_txn(self, &rtxn).unwrap_or(false)
         });
-        if home != Some(Some(true)) {
+        if !merges {
             return;
         }
         for window in self.live_windows() {
@@ -545,6 +674,66 @@ impl Vault {
                 .map(|(map_key, bytes)| (map_key, Some(bytes)))
                 .collect();
             merge_wakes(self, window.key.as_str(), rows);
+        }
+    }
+
+    /// Writes into every live base window the latest wake row this vault
+    /// knows for each key it carries, and the row of each wake this vault
+    /// retracted ([`mirror_turn_program_wake_answers`]). Housekeeping runs it
+    /// on every pass, after it admits what is owed. A base window this vault
+    /// owes such a row is stored first, loaded or not
+    /// ([`Self::store_turn_program_wake_rows_owed`]). Every other window is
+    /// best effort: one opened later writes its rows as it opens.
+    pub(crate) fn refresh_turn_program_wake_answers_in_live_windows(&self) {
+        self.store_turn_program_wake_rows_owed();
+        for window in self.live_windows() {
+            if window.key.world().is_some() {
+                continue;
+            }
+            match mirror_turn_program_wake_answers(self, &window.doc, &window.key) {
+                Ok(true) => {
+                    window
+                        .doc
+                        .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(window = %window.key, error = %error, "turn program wake answers not mirrored");
+                }
+            }
+        }
+    }
+
+    /// Stores the row each base window is owed (FIX
+    /// TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN): reads the entries,
+    /// then has the manager open each window they name that is not loaded,
+    /// write this vault's rows into it, persist it and mark it ready
+    /// (`WindowManager::store_windows_owed_rows`), then clears each entry it
+    /// read whose window that stored. An entry whose window was not stored
+    /// stays for the next pass, as every entry does when they cannot be read
+    /// or while no window manager is attached.
+    fn store_turn_program_wake_rows_owed(&self) {
+        let owed = match replica::RowsOwed::read(self) {
+            Ok(owed) => owed,
+            Err(error) => {
+                tracing::warn!(%error, "windows owed a turn program wake row not read");
+                return;
+            }
+        };
+        let manager = self.live_window_manager.lock().ok();
+        let Some(manager) = manager.and_then(|manager| manager.upgrade()) else {
+            return;
+        };
+        let stored = manager.store_windows_owed_rows(&owed.windows(), |window| {
+            if mirror_turn_program_wake_answers(self, &window.doc, &window.key)? {
+                window
+                    .doc
+                    .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+            }
+            Ok(())
+        });
+        if let Err(error) = owed.clear(self, &stored) {
+            tracing::warn!(%error, "windows owed a turn program wake row not cleared; the next pass clears them");
         }
     }
 

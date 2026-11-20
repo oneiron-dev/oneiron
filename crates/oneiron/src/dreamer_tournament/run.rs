@@ -202,6 +202,10 @@ pub fn run_dreamer_claim_tournament(
                 input.learned_at,
             )
             .apply(&mut wtxn)?;
+        // The winner is a new mention of its subject: about a PERSON under a
+        // cleanup archive, it restores her in the winner's own write
+        // (ARCH-0073 §6).
+        vault.restore_mentioned_subject_in_txn(&mut wtxn, winner_candidate.claim.subject())?;
     }
     wtxn.commit()?;
 
