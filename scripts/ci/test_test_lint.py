@@ -119,6 +119,12 @@ class Rules(unittest.TestCase):
         source = 'let a = "127.0.0.1:99999999999";\nlet b = "localhost:0";\nlet c = "x127.0.0.1:80";\n'
         self.assertEqual(rules(TEST_FILE, source), [])
 
+    def test_a_port_run_longer_than_ints_digit_limit_is_read_as_rust_reads_it(self):
+        # Rust's u32 parse drops leading zeros and refuses a run above u32::MAX at any length; Python's int()
+        # refuses a string of more than 4300 digits, which must not end the scan.
+        source = 'let a = "localhost:' + "0" * 5000 + '1";\nlet b = "localhost:' + "9" * 5000 + '";\n'
+        self.assertEqual(rules(TEST_FILE, source), [(1, "fixed-port")])
+
 
 class Totals(unittest.TestCase):
     def test_moving_a_finding_changes_no_total_and_a_new_one_raises_it(self):
