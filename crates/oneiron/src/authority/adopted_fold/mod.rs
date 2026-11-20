@@ -159,7 +159,7 @@ pub(super) fn fold_adopted_checkpoint_tail(
         issues,
         ..
     } = settled;
-    keep_dropped_verdicts(&mut fold, issues.len(), &dropped);
+    keep_dropped_verdicts(&mut fold, issues.len(), &dropped, &tail, image);
     // This install's own view, over the rows its stale-roster window reads:
     // the tail's first-seen times are the only ones it has.
     let window_secs = log.observations.policy.stale_roster_window_secs;

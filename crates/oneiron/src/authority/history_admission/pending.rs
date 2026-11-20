@@ -112,7 +112,11 @@ fn pending_history_of(
     }
     // Each row needs the history itself: its fold, with the batch rows it
     // rests on, needs it. A row that does not keeps the batch on today's
-    // path.
+    // path. Each fold believes the whole batch, as the fold will once the
+    // batch is stored: a key the batch enrolls vouches for the rows it signs
+    // (#9476 review round 2).
+    let _staged_batch =
+        super::super::log_structure::stage_batch_for_belief(arriving.values().cloned().collect());
     for (hash, entry) in &arriving {
         let mut own = BTreeMap::from([(*hash, entry.clone())]);
         let mut stack = entry.parent_hashes.clone();

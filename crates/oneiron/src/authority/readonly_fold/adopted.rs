@@ -70,8 +70,11 @@ pub(super) fn fold_adopted_in_txn(
     // The tail rows this install believes, judged as the store gate judges
     // them but with a root request's wait unresolved, since resolving it
     // reads this fold: the fold refuses only for the gaps these rows rest on
-    // (FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]).
-    let structure = crate::authority::log_structure::fold_belief_structure_in_txn(store, txn)?;
+    // (FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]). The arriving rows count
+    // as stored, as they will once stored, so a fold that answers here does
+    // not refuse after they land (#9476 review round 2).
+    let structure =
+        crate::authority::log_structure::fold_belief_structure_in_txn(store, txn, arriving)?;
     let believed: BTreeSet<_> = tail
         .iter()
         .filter(|(_, entry)| structure.believes(entry))
