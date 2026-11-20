@@ -872,6 +872,39 @@ fn docx_read_takes_an_attribute_of_another_namespace_under_the_r_prefix() {
     );
 }
 
+/// With a main relationships part present, an attribute of another namespace
+/// under the `r` prefix is no relationship reference to the linker either.
+#[test]
+fn docx_validate_takes_an_attribute_of_another_namespace_under_the_r_prefix() {
+    let base = document_with_no_relationships_part();
+    let document = xml_part(&base, "word/document.xml");
+    let labeled = document
+        .replace(
+            r#"mc:Ignorable="u""#,
+            r#"xmlns:r="urn:example:metadata" mc:Ignorable="u r""#,
+        )
+        .replacen("<w:p>", r#"<w:p r:id="label">"#, 1);
+    assert!(labeled.contains(r#"<w:p r:id="label">"#));
+    let bytes = with_part(&base, "word/document.xml", labeled.as_bytes());
+    let relationships = format!(r#"<Relationships xmlns="{PACKAGE_RELATIONSHIPS}"/>"#);
+    let bytes = rewrite_part(
+        &bytes,
+        None,
+        MAIN_PART_RELATIONSHIPS,
+        relationships.as_bytes(),
+    );
+    assert!(has_part(&bytes, MAIN_PART_RELATIONSHIPS));
+    let done = run(
+        "docx.validate",
+        json!({"document": 0, "limits": docx_limits()}),
+        &[&bytes],
+    );
+    match &done.reply {
+        Reply::Checked => {}
+        reply => panic!("expected Checked: {reply:?}"),
+    }
+}
+
 #[test]
 fn xlsx_read() {
     let book = read_workbook(&workbook());
