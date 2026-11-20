@@ -35,10 +35,12 @@ use oneiron::booking::{
     SessionKey,
 };
 use oneiron::calendar::CalendarError;
+use oneiron::calendar::claims::{CalendarStatusBasis, PREDICATE_CALENDAR_STATUS};
 use oneiron::calendar::connectors::{CalendarConnectorError, RemoteWriteReceipt};
 use oneiron::calendar::ingest::{
     IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse, run_ics_feed_poll,
 };
+use oneiron::{ClaimLifecycleStatus, EntityId};
 
 /// A provider that does every move and records each call.
 #[derive(Default)]
@@ -856,6 +858,332 @@ fn a_host_cancel_refunds_the_whole_deposit() {
             amount_minor: 4_000
         }
     );
+}
+
+/// How many live `calendar.status` heads on `event` read cancelled with
+/// `basis`. An `imported_cancel` head is a calendar's explicit cancellation,
+/// the evidence CAL-07 observes; an omission writes `imported_absence`.
+fn cancel_statuses(fixture: &Fixture, event: &EntityId, basis: CalendarStatusBasis) -> usize {
+    fixture
+        .vault
+        .claims_for_subject(event)
+        .expect("claims of the EVENT")
+        .into_iter()
+        .filter_map(|id| fixture.vault.get_claim(&id).expect("read the claim"))
+        .filter(|body| {
+            body.predicate == PREDICATE_CALENDAR_STATUS
+                && body.lifecycle == ClaimLifecycleStatus::Active
+        })
+        .filter(|body| {
+            let entries = body.value.as_map().expect("a status value is a map");
+            let field = |name: &str| {
+                entries
+                    .iter()
+                    .find(|(key, _)| key.as_str() == Some(name))
+                    .and_then(|(_, value)| value.as_str())
+            };
+            field("status") == Some("cancelled")
+                && field("basis").and_then(CalendarStatusBasis::parse) == Some(basis)
+        })
+        .count()
+}
+
+/// A captured booking at 09:00 under [`two_hour_terms`], written live to the
+/// host's seat, which is the only calendar that carries it: no feed or seat
+/// the booking was imported from holds a passport for its UID.
+fn written_only_booking(
+    fixture: &Fixture,
+    seat: &Seat,
+    key: &[u8],
+    payment: &str,
+) -> ConfirmReceipt {
+    let mut provider = RecordingProvider::default();
+    let booked = paid_booking(fixture, SessionKey::derive(key), payment, 9);
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut provider,
+        NOW + 50,
+    )
+    .expect("capture");
+    seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    assert_eq!(
+        state_of(fixture, payment),
+        DepositState::Captured {
+            amount_minor: 4_000
+        }
+    );
+    booked
+}
+
+#[test]
+fn a_host_delete_of_a_booking_written_only_to_the_seat_refunds_the_whole_deposit() {
+    // CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING (RULING A, Engine
+    // 20 Nov 22:41): a seat reports a resource the host deleted as a
+    // tombstone (CalDAV's sync answers 404 for it). The booking was only ever
+    // written to the host's seat, so no inbound source votes on its EVENT;
+    // the delete in the calendar it was written to is the host's cancel. A
+    // visitor's own cancel this late would refund nothing.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let booked = written_only_booking(&fixture, &seat, b"written-only-delete", "pi_written_only");
+
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::tombstone(&booked.calendar.uid)],
+        NOW + 120,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_written_only"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the host's delete of a booking written only to their calendar refunds it whole"
+    );
+    assert_eq!(
+        cancel_statuses(
+            &fixture,
+            &booked.calendar.event_ref,
+            CalendarStatusBasis::ImportedCancel
+        ),
+        1,
+        "the EVENT reads cancelled by the host's calendar"
+    );
+
+    // The provider reports the tombstone again: nothing is written twice.
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::tombstone(&booked.calendar.uid)],
+        NOW + 180,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        cancel_statuses(
+            &fixture,
+            &booked.calendar.event_ref,
+            CalendarStatusBasis::ImportedCancel
+        ),
+        1,
+        "a tombstone sent again writes no second cancellation"
+    );
+    let mut provider = RecordingProvider::default();
+    let pass = drain(&fixture, &mut provider, NOW + 190);
+    assert_eq!(pass.refunded, 1);
+    assert_eq!(
+        state_of(&fixture, "pi_written_only"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        }
+    );
+}
+
+#[test]
+fn a_tombstone_of_the_engine_s_own_cancelled_write_is_no_host_cancel() {
+    // The visitor cancels late (their rule keeps the deposit), and the engine
+    // writes the cancelled EVENT to the host's seat. A provider that keeps a
+    // cancelled event as a deleted one then reports that write as a
+    // tombstone: the engine's own cancel coming back, never the host's, so it
+    // records no imported cancellation and moves no money.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let booked = written_only_booking(&fixture, &seat, b"own-cancel-echo", "pi_own_cancel_echo");
+    fixture
+        .cancel(&booked.cancel_token, NOW + 60)
+        .expect("the visitor cancels");
+    seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 70);
+
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::tombstone(&booked.calendar.uid)],
+        NOW + 120,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_own_cancel_echo"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the tombstone of the engine's own cancelled write moves no money"
+    );
+    assert_eq!(
+        cancel_statuses(
+            &fixture,
+            &booked.calendar.event_ref,
+            CalendarStatusBasis::ImportedCancel
+        ),
+        0,
+        "the tombstone of the engine's own cancelled write is no host cancel"
+    );
+}
+
+#[test]
+fn a_tombstone_while_the_engine_s_cancelled_write_is_in_flight_is_no_host_cancel() {
+    // As above, but the provider stores the cancelled write and its answer is
+    // lost, so the write is still in flight when the pull reports it as a
+    // tombstone. The tombstone stays owed until the write settles, and is
+    // then the engine's own cancel.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let booked = written_only_booking(
+        &fixture,
+        &seat,
+        b"in-flight-cancel-tombstone",
+        "pi_in_flight_tombstone",
+    );
+    fixture
+        .cancel(&booked.cancel_token, NOW + 60)
+        .expect("the visitor cancels");
+    let stored = seat.write_with_lost_answer(&fixture.vault, booked.calendar.event_ref, NOW + 70);
+
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::tombstone(&booked.calendar.uid)],
+        NOW + 80,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        cancel_statuses(
+            &fixture,
+            &booked.calendar.event_ref,
+            CalendarStatusBasis::ImportedCancel
+        ),
+        0,
+        "a tombstone of the cancelled write before it settles is no host cancel"
+    );
+
+    let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 90);
+    assert_eq!(
+        wrote.sequence, stored,
+        "the next write resumes the one in flight"
+    );
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::tombstone(&booked.calendar.uid)],
+        NOW + 120,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_in_flight_tombstone"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the tombstone of the engine's own cancelled write moves no money"
+    );
+    assert_eq!(
+        cancel_statuses(
+            &fixture,
+            &booked.calendar.event_ref,
+            CalendarStatusBasis::ImportedCancel
+        ),
+        0,
+        "a tombstone of the cancelled write after it settled is no host cancel"
+    );
+}
+
+#[test]
+fn a_host_delete_waits_while_a_calendar_the_booking_was_not_written_to_shows_it() {
+    // Only an EVENT no inbound source carries is cancelled by the written-to
+    // calendar's tombstone alone. Here a seat the booking was never written
+    // to still shows it, so the host's delete waits on that calendar, as the
+    // multi-source law says, and settles, dated by the host's delete, once
+    // that calendar leaves the EVENT out too.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let shared = Seat::install(&fixture.vault, SHARED_SEAT_SYSTEM);
+    let booked = written_only_booking(&fixture, &seat, b"delete-waits", "pi_delete_waits");
+    let start = MONDAY + 9 * 3_600;
+    shared
+        .pull(
+            &fixture.vault,
+            &[SeatChange::foreign(
+                &shared,
+                &booked.calendar.uid,
+                start,
+                start + 30 * 60,
+                0,
+                false,
+            )],
+            NOW + 60,
+        )
+        .expect("seat pull");
+
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::tombstone(&booked.calendar.uid)],
+        NOW + 120,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_delete_waits"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the host's delete waits while another calendar shows the booking"
+    );
+    assert_eq!(
+        cancel_statuses(
+            &fixture,
+            &booked.calendar.event_ref,
+            CalendarStatusBasis::ImportedCancel
+        ),
+        0,
+        "the EVENT another calendar still shows reads live"
+    );
+
+    shared
+        .pull(
+            &fixture.vault,
+            &[SeatChange::tombstone(&booked.calendar.uid)],
+            NOW + 180,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_delete_waits"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "once no calendar shows the booking, the host's delete refunds it whole"
+    );
+}
+
+#[test]
+fn an_omission_of_a_booking_written_only_to_the_seat_cancels_nothing() {
+    // A complete listing that leaves the booking out is no cancellation
+    // evidence, and a calendar the booking was only written to casts no
+    // absence vote: the EVENT stays live and the deposit stands.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let booked = written_only_booking(&fixture, &seat, b"written-only-omission", "pi_omission");
+
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::omitted(&booked.calendar.uid)],
+        NOW + 120,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_omission"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "an omission moves no money"
+    );
+    for basis in [
+        CalendarStatusBasis::ImportedCancel,
+        CalendarStatusBasis::ImportedAbsence,
+    ] {
+        assert_eq!(
+            cancel_statuses(&fixture, &booked.calendar.event_ref, basis),
+            0,
+            "an omission of a written-only booking cancels nothing ({basis:?})"
+        );
+    }
 }
 
 #[test]
