@@ -648,8 +648,9 @@ fn spends_no_check_in_at_once() -> MemoryError {
 ///
 /// # Errors
 ///
-/// A person with no membership grant on the shared vault; as
-/// [`check_in::person_door_check_in_in_txn`].
+/// A person with no membership grant on the shared vault; a `check_in_ref`
+/// a Steward's own-item delete names ([`check_in::named_check_in_at_once`]);
+/// as [`check_in::person_door_check_in_in_txn`].
 fn person_delete_check_in_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -669,6 +670,12 @@ fn person_delete_check_in_in_txn(
         .ok_or_else(not_member)?;
     let role = RolePreset::of_grant_role(role);
     if role == RolePreset::Steward && target.owned_by_in(vault, txn, person)? {
+        // Its own item goes at once and spends no check-in, so one the call
+        // names is refused, as the judge refuses it for every act that goes
+        // at once (REVIEW-9839 P1).
+        if check_in_ref.is_some() {
+            return Err(check_in::named_check_in_at_once());
+        }
         return Ok(DoorCheckIn::Go(CheckInDecision {
             act_class: ActClass::Delete.as_str().to_owned(),
             role: role.as_str().to_owned(),
