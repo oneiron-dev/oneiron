@@ -46,7 +46,7 @@ crate::setting::setting_keys! {
     /// includes other callers, the agent may repeat what other callers said. The line's agent may
     /// narrow its own reach, and undo its own narrowing; going past your choice asks you first.
     pub CALL_REACH: PhoneReach = "voice.phone.reach" {
-        kind: Kind::new(reach_default).strictest(reach_default).tighter(reach_tighter),
+        kind: Kind::new(reach_default).strictest(reach_default).custom(reach_tighter),
         scopes: &[ScopeKind::Vault, ScopeKind::Agent],
         item: Some(ItemDomain { name: "phone lines", admits: phone_line_item }),
         set_by: SetBy::Subject,
