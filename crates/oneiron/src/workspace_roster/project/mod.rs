@@ -45,6 +45,7 @@ mod resolution;
 mod result_header;
 mod revision;
 mod room_facet_set;
+mod room_narrowing;
 mod roster;
 mod validity;
 mod widen;

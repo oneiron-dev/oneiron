@@ -565,6 +565,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "PROJECT_REVISIONS",
         "PROJECT_REVISION_AWAITING_MINT",
         "PROJECT_REVISION_BACKFILL",
+        "PROJECT_ROOM_NARROWING",
         "PROJECT_STRIPPED_PROOF",
         "PROJECT_WIDEN_ASK",
         "PROPOSAL_ACTOR_COUNT",
