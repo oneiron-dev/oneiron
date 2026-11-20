@@ -58,11 +58,17 @@ fn applied(
 
 /// The owner's budget the prediction `pending` names through `parent`: its parent's, once the
 /// owner's live predicted level for this machine is that directive and no newer prediction
-/// replaced it (Engine ruling PLAN-SIGNER A).
+/// replaced it (Engine ruling PLAN-SIGNER A). Only a prediction under the same `parent`, dated no
+/// later than `now` on this machine's wall clock, replaces it: one under another parent applies
+/// nowhere, and one dated ahead by another home's clock replaces nothing before this machine's
+/// clock reaches its date, as the home judges its own last set (FIX
+/// PREDICTED-FUTURE-DATED-BLOCKS-LATER). The wall clock, not the authority instant: that one
+/// stands still while this install is closed, so a home's honest dates would read as ahead of it.
 fn check_prediction_parent(
     pending: &ResidenceDirectiveState,
     directives: &[ResidenceDirective],
     parent: EntityId,
+    now: u64,
 ) -> Result<(u32, u32), TransportError> {
     let mut last: Option<(EntityId, u32, u32)> = None;
     let mut later = false;
@@ -77,9 +83,11 @@ fn check_prediction_parent(
             ResidenceAct::SyncAll | ResidenceAct::SyncOpened => {
                 last = None;
             }
-            ResidenceAct::Predicted { .. }
-                if (directive.issued_at, directive.id)
-                    > (pending.directive.issued_at, pending.directive.id) =>
+            ResidenceAct::Predicted { parent: named, .. }
+                if *named == parent
+                    && directive.issued_at <= now
+                    && (directive.issued_at, directive.id)
+                        > (pending.directive.issued_at, pending.directive.id) =>
             {
                 later = true;
             }
@@ -272,8 +280,11 @@ impl SyncConnection {
                 "a prediction applies under the owner's live predicted level",
             ))?;
         let directives = Self::directives_naming_machine(vault, machine).map_err(storage)?;
+        // Never below a second this machine has already recorded, so a wall clock stepped back
+        // does not make a prediction it took as due read as ahead.
+        let now = vault.store.clock.peek_recorded_at();
         let (window_budget, document_budget) =
-            check_prediction_parent(pending, &directives, parent)?;
+            check_prediction_parent(pending, &directives, parent, now)?;
         if window_count > window_budget || document_count > document_budget {
             return Err(TransportError::InvalidPayload(
                 "a prediction exceeds the owner's budget",
