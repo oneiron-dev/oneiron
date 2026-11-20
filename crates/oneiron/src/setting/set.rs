@@ -225,20 +225,25 @@ impl Vault {
     ) -> Result<SetSettingOutcome> {
         // Taken before the write opens, never inside it: a holder of the turn may be waiting on
         // the writer. An unknown key takes none; the write refuses it.
-        let _turn = match spec_named(&request.key)
+        let turn = match spec_named(&request.key)
             .ok()
             .and_then(|spec| spec.write_turn)
         {
             Some(turn) => Some((turn.take)(self)?),
             None => None,
         };
-        self.with_write_txn_grouped_after_commit(
+        let outcome = self.with_write_txn_grouped_after_commit(
             |txn| self.set_setting_in_txn(txn, caller, &request),
             |outcome| {
                 run_after_commit(self, &[(&request, &outcome)]);
                 Ok(outcome)
             },
-        )
+        );
+        // The projection pass this write's commit ran left the rows of keys with this turn for
+        // later: it runs now that the turn is released.
+        drop(turn);
+        super::project::project_deferred_settings(self);
+        outcome
     }
 
     /// [`Self::set_setting`] in the caller's write: the same wall, checks, power, change row and
