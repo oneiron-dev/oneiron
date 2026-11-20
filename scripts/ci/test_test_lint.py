@@ -177,6 +177,26 @@ class CommandLine(unittest.TestCase):
             listed = self.run_lint("--list", "--rule", "sleep", tree)
             self.assertEqual((listed.returncode, listed.stdout), (0, "crates/a/tests/t.rs:1: sleep: " + files["crates/a/tests/t.rs"]))
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the deep path needs Linux's 4,096-byte path limit")
+    def test_a_tree_deeper_than_pythons_recursion_limit_is_read(self):
+        # 1,100 directories: past the 1,000 frames a default interpreter allows, inside the path limit.
+        with tempfile.TemporaryDirectory() as tree:
+            directories = [Path(tree, "crates", "tests")]
+            directories[0].mkdir(parents=True)
+            for _ in range(1100):
+                directories.append(directories[-1] / "a")
+                directories[-1].mkdir()
+            source = directories[-1] / "lint.rs"
+            source.write_text("fn f() { std::thread::sleep(std::time::Duration::ZERO); }\n")
+            try:
+                result = self.run_lint("--count", tree)
+            finally:
+                # Removed one by one: the clean-up of a temporary directory may itself recurse.
+                source.unlink()
+                for directory in reversed(directories[1:]):
+                    directory.rmdir()
+            self.assertEqual((result.returncode, result.stdout), (0, "1 0 0 0 0\n"))
+
     def test_a_tree_with_no_rust_file_is_an_error_not_a_zero(self):
         with tempfile.TemporaryDirectory() as tree:
             Path(tree, "crates").mkdir()
