@@ -405,16 +405,8 @@ fn run_people(
     .ok_or_else(|| internal("run actor key invalid"))?;
     let read = server
         .vault
-        .scoped_read(key.clone().at(oneiron::claim::CallerLocality::OnDevice));
-    // The brief's prefix goes to whichever seat the run's ladder takes, and
-    // a later request reuses it on another seat, a hosted one too. So the
-    // `about` lines are judged for a destination off this device: a line a
-    // live Grant shows never carries a device-only world's fact to a hosted
-    // model (review round 1 of #9929).
-    let about_read = server
-        .vault
-        .scoped_read(key.at(oneiron::claim::CallerLocality::OffDevice));
-    read_people_with_about(server, &read, &about_read)
+        .scoped_read(key.at(oneiron::claim::CallerLocality::OnDevice));
+    read_people(server, &read)
 }
 
 /// The vault's people as `read` reads them, each `about` the stored line of
@@ -424,20 +416,13 @@ pub(super) fn read_people(
     server: &SyncServer,
     read: &oneiron::claim::ScopedRead<'_>,
 ) -> MemoryResult<oneiron::context_board::People> {
-    read_people_with_about(server, read, read)
-}
-
-/// [`read_people`], each `about` line judged under `about_read`.
-fn read_people_with_about(
-    server: &SyncServer,
-    read: &oneiron::claim::ScopedRead<'_>,
-    about_read: &oneiron::claim::ScopedRead<'_>,
-) -> MemoryResult<oneiron::context_board::People> {
     let now = oneiron_base::unix_millis_now();
     let mut people = oneiron::context_board::People::load(&server.vault, now, &mut |person| {
         read.is_entity_readable(&person)
     })?;
-    people.set_about_for_reader(about_read)?;
+    let applied = read.read_receipt(None, 0)?.applied;
+    let ceiling = (!applied.deny_all).then_some(applied.max_sensitivity_band);
+    people.set_about(&mut |person| server.vault.person_about_sourced(person, ceiling))?;
     people.disclose_names(&server.vault, read.actor_key())?;
     Ok(people)
 }
