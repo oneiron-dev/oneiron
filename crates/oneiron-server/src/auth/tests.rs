@@ -645,3 +645,13 @@ fn a_stored_grant_body_that_does_not_decode_is_a_store_fault_not_a_refusal() {
         &oneiron::Error::CorruptedIndex("entity header")
     ));
 }
+
+#[test]
+fn a_damaged_authority_clock_floor_is_a_store_fault_not_a_refusal() {
+    // An ordinary slip judged over a persisted authority clock floor that
+    // does not decode fails the fold with AuthorityClockCorrupt: the vault
+    // cannot answer, so the caller is answered 500, never 401.
+    assert!(slip_verification_store_fault(&oneiron::Error::Record(
+        oneiron::error::RecordError::AuthorityClockCorrupt
+    )));
+}
