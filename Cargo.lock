@@ -9034,6 +9034,7 @@ dependencies = [
  "oneiron-speech",
  "oneiron-store",
  "oneiron-vault-contract",
+ "p256",
  "quick-xml 0.42.0",
  "rand_core 0.6.4",
  "rayon",
