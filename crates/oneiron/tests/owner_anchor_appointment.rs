@@ -56,6 +56,12 @@
 //! vault's owner signing slot lock before its writer, so it waits for a
 //! door that holds that lock while it reads the slot. Red without the lock:
 //! the appointment renews the slot beside that read.
+//!
+//! FIX OWNER-SLOT-GET-ONLY-READERS-SEE-RENEWAL-GAP: a read of where the
+//! install's owner key rests and a hold of that key wait for the slot lock
+//! an appointment holds while it renews the slot. Red with those readers
+//! taking no lock: both answer between the renewal's delete and its create,
+//! and the rest read finds no key.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_anchor_appointment`.
 #![cfg(oneiron_test_support)]
@@ -86,7 +92,7 @@ use oneiron::store::GateDecisionId;
 use oneiron::test_doors::device_pin::steps_that_waited;
 use oneiron::test_doors::root_appointment::appoint_owner_root_between;
 use oneiron::test_support::bind_host_owner;
-use oneiron::world_keys::{DevicePin, RecoveryRootSeed};
+use oneiron::world_keys::{DevicePin, OwnerKeyRest, RecoveryRootSeed};
 use oneiron::{EdgeActorClass, EntityId, Error, Vault, VaultConfig};
 use oneiron_keystore::{
     AuthBoundSecretStore, DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality,
@@ -664,18 +670,20 @@ fn a_door_run_beside_a_committed_appointment_keeps_the_successor_in_the_slot() {
     assert!(owned.passes_owner_verbs());
 }
 
-/// A read of the owner signing slot paused before it reaches the keystore:
+/// A call on the owner signing slot paused before it reaches the keystore:
 /// it tells the test through the sender and goes on at the test's word on
 /// the receiver.
-type PausedRead = (mpsc::Sender<()>, mpsc::Receiver<()>);
+type PausedCall = (mpsc::Sender<()>, mpsc::Receiver<()>);
 
 /// The process-memory keystore, its hardware counting wrong PINs, with one
 /// read of the owner signing slot that a test pauses in the middle of a
 /// device PIN step (as `SteppedKeystore` of `tests/device_pin.rs` pauses a
-/// call), and one seed of that slot that a test has it refuse.
+/// call), one seed put in that slot that a test pauses, and one such seed
+/// that a test has it refuse.
 struct PausingKeystore {
     inner: MemoryKeystore,
-    pause: Mutex<Option<PausedRead>>,
+    pause_read: Mutex<Option<PausedCall>>,
+    pause_create: Mutex<Option<PausedCall>>,
     refuse_owner_slot_create: AtomicBool,
 }
 
@@ -683,7 +691,8 @@ impl PausingKeystore {
     fn hardware_counted() -> Self {
         Self {
             inner: MemoryKeystore::with_counted_auth_bound(32, 1000),
-            pause: Mutex::new(None),
+            pause_read: Mutex::new(None),
+            pause_create: Mutex::new(None),
             refuse_owner_slot_create: AtomicBool::new(false),
         }
     }
@@ -697,36 +706,52 @@ impl PausingKeystore {
     /// keystore. The test hears of it on the receiver and lets the read go
     /// on through the sender.
     fn pause_next_owner_slot_read(&self) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
-        let (reached, test_hears) = mpsc::channel();
-        let (test_resumes, resumed) = mpsc::channel();
-        *self.pause.lock().unwrap_or_else(PoisonError::into_inner) = Some((reached, resumed));
-        (test_hears, test_resumes)
+        arm_pause(&self.pause_read)
+    }
+
+    /// Pauses the next seed put in the owner signing slot before it reaches
+    /// the keystore: a renewal's, once it emptied the slot. The test hears
+    /// of it on the receiver and lets the put go on through the sender.
+    fn pause_next_owner_slot_create(&self) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        arm_pause(&self.pause_create)
+    }
+}
+
+/// Arms `pause` for the next call it pauses, and answers the test's ends
+/// of it: the receiver hears of the pause, the sender lets the call go on.
+fn arm_pause(pause: &Mutex<Option<PausedCall>>) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+    let (reached, test_hears) = mpsc::channel();
+    let (test_resumes, resumed) = mpsc::channel();
+    *pause.lock().unwrap_or_else(PoisonError::into_inner) = Some((reached, resumed));
+    (test_hears, test_resumes)
+}
+
+/// Pauses the calling keystore call when `pause` is armed, until the test
+/// lets it go on.
+fn wait_if_paused(pause: &Mutex<Option<PausedCall>>) {
+    let paused = pause.lock().unwrap_or_else(PoisonError::into_inner).take();
+    if let Some((reached, resumed)) = paused {
+        reached.send(()).expect("the test waits for the pause");
+        resumed
+            .recv_timeout(PAUSE_WAIT)
+            .expect("the test lets the paused call go on");
     }
 }
 
 impl DeviceKeystore for PausingKeystore {
     fn get(&self, slot: &KeystoreSlot) -> Result<Option<Zeroizing<[u8; 32]>>, KeystoreError> {
         if slot.kind == SlotKind::OwnerSigning {
-            let paused = self
-                .pause
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take();
-            if let Some((reached, resumed)) = paused {
-                reached.send(()).expect("the test waits for the pause");
-                resumed
-                    .recv_timeout(PAUSE_WAIT)
-                    .expect("the test lets the paused read go on");
-            }
+            wait_if_paused(&self.pause_read);
         }
         DeviceKeystore::get(&self.inner, slot)
     }
 
     fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<(), KeystoreError> {
-        if slot.kind == SlotKind::OwnerSigning
-            && self.refuse_owner_slot_create.swap(false, Ordering::SeqCst)
-        {
-            return Err(KeystoreError::Denied);
+        if slot.kind == SlotKind::OwnerSigning {
+            if self.refuse_owner_slot_create.swap(false, Ordering::SeqCst) {
+                return Err(KeystoreError::Denied);
+            }
+            wait_if_paused(&self.pause_create);
         }
         DeviceKeystore::create(&self.inner, slot, secret)
     }
@@ -989,6 +1014,99 @@ fn an_appointment_waits_for_a_door_that_holds_the_owner_signing_slot() {
     assert_eq!(read, held, "the read answers the slot's key from before");
     let receipt = appointment.expect("the appointment goes on once the read let the slot go");
     assert!(owned.live(&AuthorityKey::Ed25519(receipt.successor)));
+    let renewed = owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key")
+        .public_key();
+    assert_eq!(
+        renewed, receipt.successor,
+        "the slot holds the successor the roster names live"
+    );
+}
+
+/// FIX OWNER-SLOT-GET-ONLY-READERS-SEE-RENEWAL-GAP: an appointment renews
+/// this install's owner signing slot by emptying it and putting the
+/// successor's seed there, and the test pauses it in between. A read of
+/// where the owner key rests and a hold of that key, started then, wait for
+/// the owner signing slot lock the appointment holds; once the renewal goes
+/// on, the rest read finds the successor's seed in the slot, and the hold
+/// answers as a hold after the appointment does.
+#[test]
+fn a_read_of_the_owner_signing_slot_waits_for_its_renewal() {
+    let keystore = Arc::new(PausingKeystore::hardware_counted());
+    let owned = owned_on(Arc::<PausingKeystore>::clone(&keystore));
+    owned.revoke_unrelated_binding();
+    owned.fork();
+    assert!(owned.rootless(), "the fork leaves no live root key");
+    owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key");
+    assert_eq!(
+        owned.vault.device_owner_key_rest().expect("the rest reads"),
+        OwnerKeyRest::Slot,
+        "the install's owner signing key rests in its slot"
+    );
+
+    let appointing_owner = proof(&owned.vault, owned.person);
+    let (vault, seed) = (&owned.vault, &owned.seed);
+    let (rest_ended, rest_heard) = mpsc::channel();
+    let (hold_ended, hold_heard) = mpsc::channel();
+    let (appointment, rest, held, rest_beside, hold_beside) = thread::scope(|scope| {
+        let (reached, resume) = keystore.pause_next_owner_slot_create();
+        let appointment =
+            scope.spawn(move || vault.appoint_owner_root(&appointing_owner, seed, None));
+        reached
+            .recv_timeout(PAUSE_WAIT)
+            .expect("the appointment empties the slot and pauses before the successor's seed");
+        let rest = scope.spawn(move || {
+            let rest = vault.device_owner_key_rest();
+            let _heard = rest_ended.send(());
+            rest
+        });
+        let held = scope.spawn(move || {
+            let held = vault.hold_device_owner_signer_logged();
+            let _heard = hold_ended.send(());
+            held
+        });
+        let deadline = Instant::now() + SLOT_LOCK_WAIT;
+        let rest_beside = rest_heard
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .is_ok();
+        let hold_beside = hold_heard
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .is_ok();
+        resume.send(()).expect("the renewal goes on");
+        (
+            appointment.join().expect("the appointment's thread ends"),
+            rest.join().expect("the rest read's thread ends"),
+            held.join().expect("the hold's thread ends"),
+            rest_beside,
+            hold_beside,
+        )
+    });
+
+    let receipt = appointment.expect("the appointment goes on once its renewal does");
+    assert!(owned.live(&AuthorityKey::Ed25519(receipt.successor)));
+    assert_eq!(
+        rest.expect("the rest reads"),
+        OwnerKeyRest::Slot,
+        "the rest read finds the successor's seed in the slot, never the emptied slot"
+    );
+    assert!(
+        !rest_beside,
+        "the rest read waits for the renewal that holds the owner signing slot lock"
+    );
+    assert!(
+        !hold_beside,
+        "the hold waits for the renewal that holds the owner signing slot lock"
+    );
+    assert_eq!(
+        held,
+        owned.vault.hold_device_owner_signer_logged(),
+        "the hold answers as a hold after the appointment"
+    );
     let renewed = owned
         .vault
         .device_owner_signing_key()
