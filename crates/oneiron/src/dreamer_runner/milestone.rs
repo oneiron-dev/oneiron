@@ -48,10 +48,8 @@ pub(super) const MILESTONE_INDEX_CLAIM: SideTable<EntityId, Vec<u8>, Raw> =
     SideTable::new(&side_table::DREAMER_MILESTONE_INDEX_CLAIM);
 
 /// `dreamer.milestone_index.v1.c:` row key: attempt id, then `(at,
-/// learned_at, claim id)` — not a [`crate::side_table::FixedSideKey`] tuple
-/// because four fixed-width parts need one more slot than the built-in
-/// tuples spell.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// learned_at, claim id)`, the two times big-endian.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
 pub(super) struct MilestoneCandidateKey {
     pub(super) attempt_id: AttemptId,
     pub(super) at: u64,
@@ -59,25 +57,20 @@ pub(super) struct MilestoneCandidateKey {
     pub(super) claim_id: EntityId,
 }
 
-impl SideKey for MilestoneCandidateKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        self.attempt_id.encode_into(out);
-        out.extend_from_slice(&self.at.to_be_bytes());
-        out.extend_from_slice(&self.learned_at.to_be_bytes());
-        self.claim_id.encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (attempt_bytes, rest) = bytes.split_at_checked(16)?;
-        let (at_bytes, rest) = rest.split_at_checked(8)?;
-        let (learned_bytes, claim_bytes) = rest.split_at_checked(8)?;
-        Some(Self {
-            attempt_id: AttemptId::decode_key(attempt_bytes)?,
-            at: u64::from_be_bytes(at_bytes.try_into().ok()?),
-            learned_at: u64::from_be_bytes(learned_bytes.try_into().ok()?),
-            claim_id: EntityId::decode_key(claim_bytes)?,
-        })
-    }
+/// One [`MilestoneCandidateKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn milestone_candidate_key_pin_for_test(
+    attempt_id: AttemptId,
+    at: u64,
+    learned_at: u64,
+    claim_id: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&MilestoneCandidateKey {
+        attempt_id,
+        at,
+        learned_at,
+        claim_id,
+    })
 }
 
 impl From<&DreamerDurableMilestone> for MilestoneCandidateKey {
@@ -165,6 +158,7 @@ pub(super) fn apply_milestone_claim_in_txn(
         )?;
     }
     let milestone = stamp_agent_dispatch_milestone(attempt, milestone)?;
+    let subject = ClaimSubject::Entity(milestone.subject);
     let value = dreamer_milestone_value(attempt.id, milestone.kind, milestone.occurred.start);
     let candidate = ClaimCandidate::new(
         DREAMER_MILESTONE_PREDICATE,
@@ -188,7 +182,13 @@ pub(super) fn apply_milestone_claim_in_txn(
             milestone.occurred,
             milestone.learned_at,
         )
-        .apply(wtxn)
+        .apply(wtxn)?;
+    // The milestone is a new mention of its final subject: about a PERSON
+    // under a cleanup archive, it restores her in the milestone's own write
+    // (ARCH-0073 §6). An agent dispatch's subject is its attempt id, which
+    // names no PERSON and restores nothing.
+    vault.restore_mentioned_subject_in_txn(wtxn, subject)?;
+    Ok(())
 }
 
 /// Milestones co-committed for an agent-dispatch attempt carry AUTHORITATIVE

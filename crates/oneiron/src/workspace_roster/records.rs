@@ -1,6 +1,7 @@
 //! Pinned vault-meta prefixes, the step ladder, and stored roster/journal records.
 
 use super::*;
+use crate::side_table::NulFreeText;
 
 /// Body schema version for every record this module writes. The member
 /// row's `one_vault_told` and `companion_brought` keys (L7-05) are optional
@@ -162,33 +163,29 @@ impl RawValue for RosterMemberRow {
     }
 }
 
-/// The bytes after [`MEMBER`]'s declared prefix: `workspace_ref` then a NUL separator then the
-/// member person id as 32 lower-case hex characters. The NUL is unambiguous because
-/// [`WorkspaceRosterPreset::validate`] refuses a `workspace_ref` containing one.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The bytes after [`MEMBER`]'s declared prefix: `workspace_ref` then a NUL separator
+/// ([`ROSTER_KEY_SEPARATOR`]) then the member person id as 32 lower-case hex characters. The NUL
+/// is unambiguous because [`WorkspaceRosterPreset::validate`] refuses a `workspace_ref`
+/// containing one, and a key whose `workspace_ref` holds one is refused.
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
+#[side_key(sep = b'\0')]
 pub(super) struct RosterMemberKey {
+    #[side_key(rest, with = NulFreeText)]
     pub(super) workspace_ref: String,
+    #[side_key(with = HexId)]
     pub(super) person_ref: EntityId,
 }
 
-impl SideKey for RosterMemberKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.workspace_ref.as_bytes());
-        out.push(ROSTER_KEY_SEPARATOR);
-        out.extend_from_slice(self.person_ref.to_hex().as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let separator = bytes
-            .iter()
-            .position(|&byte| byte == ROSTER_KEY_SEPARATOR)?;
-        let workspace_ref = String::from_utf8(bytes[..separator].to_vec()).ok()?;
-        let HexId(person_ref) = HexId::decode_key(&bytes[separator + 1..])?;
-        Some(Self {
-            workspace_ref,
-            person_ref,
-        })
-    }
+/// One [`RosterMemberKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn roster_member_key_pin_for_test(
+    workspace_ref: &str,
+    person_ref: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&RosterMemberKey {
+        workspace_ref: workspace_ref.to_owned(),
+        person_ref,
+    })
 }
 
 /// A journal record as stored under [`ONBOARDING`].

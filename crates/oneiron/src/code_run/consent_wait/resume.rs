@@ -25,6 +25,7 @@
 //! later pass tries it again. The caller's own call still enters the run
 //! through its own gates.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -53,14 +54,13 @@ pub use oneiron_consent_state::code_run::consent_wait::resume::{
 };
 
 /// BLAKE3 over every field, for the binding digest the wait is sealed
-/// with (FIX 4606).
+/// with (FIX 4606; `purposes::code_run::CONSENT_RUN_ORIGIN`).
 pub(super) fn code_consent_run_origin_digest(
     code_consent_run_origin: &CodeConsentRunOrigin,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
+    let mut digest = LegacyDigest::new(purposes::code_run::CONSENT_RUN_ORIGIN);
     let mut field = |bytes: &[u8]| {
-        hasher.update(&(bytes.len() as u64).to_le_bytes());
-        hasher.update(bytes);
+        digest.len_u64_le(bytes.len()).raw(bytes);
     };
     let optional = |id: Option<EntityId>| id.map_or([0; 17], |id| present(id.as_bytes()));
     field(CODE_CONSENT_RUN_ORIGIN_DOMAIN);
@@ -114,7 +114,14 @@ pub(super) fn code_consent_run_origin_digest(
     field(&optional(code_consent_run_origin.session));
     field(&optional(code_consent_run_origin.room_turn));
     field(&[u8::from(code_consent_run_origin.forwarded_caller)]);
-    *hasher.finalize().as_bytes()
+    digest.finish()
+}
+
+/// [`code_consent_run_origin_digest`] for the K door
+/// (`test_doors::fingerprint_keep_code_run_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn code_consent_run_origin_digest_for_test(origin: &CodeConsentRunOrigin) -> [u8; 32] {
+    code_consent_run_origin_digest(origin)
 }
 
 /// Whether this origin names the caller the wait's binding keeps: a

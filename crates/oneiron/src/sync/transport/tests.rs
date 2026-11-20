@@ -4,8 +4,8 @@ use core::assert_matches;
 #[test]
 fn protocol_hello_wire_literals() {
     // Contract literals: the hello frame is EXACTLY
-    // [TAG_PROTOCOL_HELLO=3, PROTOCOL_VERSION=9]. A drifted tag or
-    // version byte is a silent wire break — assert the raw bytes.
+    // [TAG_PROTOCOL_HELLO=3, PROTOCOL_VERSION=9, ZSTD=1, SEALED=0x80].
+    // A drifted tag or version byte is a silent wire break — assert the raw bytes.
     // Version pinned 1→2 by the ONE-1140 atomic wire train (OD-5):
     // lease frames + connect sequence + leases registry + attested
     // receipts land behind this single bump; v1 peers close 4006.
@@ -21,8 +21,11 @@ fn protocol_hello_wire_literals() {
         LEGACY_FULL_WINDOW_PROTOCOL_VERSION, 6,
         "legacy full-window version is pinned to 6"
     );
-    assert_eq!(encode_protocol_hello(), vec![3u8, 9u8]);
-    assert_eq!(encode_legacy_full_window_protocol_hello(), vec![3u8, 6u8]);
+    assert_eq!(encode_protocol_hello(), vec![3u8, 9u8, 1u8, 0x80u8]);
+    assert_eq!(
+        encode_legacy_full_window_protocol_hello(),
+        vec![3u8, 6u8, 1u8, 0x80u8]
+    );
 }
 
 #[test]
@@ -152,7 +155,22 @@ fn protocol_hello_decode_rejects_malformed_frames() {
     let cases: &[(&str, &[u8])] = &[
         ("empty", &[]),
         ("tag_only", &[TAG_PROTOCOL_HELLO]),
-        ("trailing_bytes", &[TAG_PROTOCOL_HELLO, PROTOCOL_VERSION, 0]),
+        (
+            "too_many_codec_ids",
+            &[
+                TAG_PROTOCOL_HELLO,
+                PROTOCOL_VERSION,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+            ],
+        ),
         ("wrong_tag", &[TAG_VERSION_VECTOR, PROTOCOL_VERSION]),
     ];
     for (case_name, frame) in cases {

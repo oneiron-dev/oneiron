@@ -101,8 +101,8 @@
 # bench jobs' exits, metrics and promise states) in --out. The budget band is
 # report only. The cursor file is rewritten after each shard.
 #
-# ONEIRON_TESTKIT_TODAY is the night's date, so the testkit lint test fails an
-# expired quarantine entry. Plain bash 3.2 (macOS /bin/bash) runs it too.
+# ONEIRON_TESTKIT_TODAY is the night's date, so the testkit quarantine test fails
+# an expired quarantine entry. Plain bash 3.2 (macOS /bin/bash) runs it too.
 #
 # Usage: scripts/nightly/run_nightly.sh --out DIR [--date YYYY-MM-DD]
 #          [--shard-files N] [--cursor FILE] [--max-shards K]

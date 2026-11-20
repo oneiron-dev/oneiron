@@ -30,6 +30,8 @@ use crate::skill_attribution::{
 use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
 
+// The output archive's axes job, queued per request (ARM05 P2).
+mod archive_axes;
 // A paired eval measurement's job, queued per request (FIX 574).
 mod eval_measurement;
 // Q3 tuning's read, policy call and proposal (FIX 8708).
@@ -37,8 +39,10 @@ mod person_threshold;
 // Q2 tuning's quick picks, read, policy call and proposal (FIX 2437).
 mod think_threshold;
 
+pub use self::archive_axes::COACH_ARCHIVE_AXES_FACET;
 pub use self::think_threshold::ThinkThresholdPolicy;
 
+pub(crate) use self::archive_axes::enqueue_coach_archive_axes_in_txn;
 pub(crate) use self::eval_measurement::enqueue_coach_eval_measurement_in_txn;
 
 pub use crate::claim::maintenance_kind::COACH_HOST_QUEUE_KIND;
@@ -56,6 +60,12 @@ pub const COACH_PERSON_THRESHOLD_FACET: &str = "coach.person_threshold";
 /// Q2 tuning (FIX 2437): each quick pick that later proved wrong, read once,
 /// feeds a proposed think-threshold row.
 pub const COACH_THINK_THRESHOLD_FACET: &str = "coach.think_threshold";
+/// The slow retrieval loop (ARCH-0053 #tune-retrieval, census L1-18): one
+/// review of the retrieval receipts against the owner's imported
+/// `tune-oneiron-retrieval` skill. The nightly retrieval tune queues it
+/// after its bandit update; the host runs it through
+/// [`Vault::run_coach_retrieval_skill_review`].
+pub const COACH_RETRIEVAL_SKILL_REVIEW_FACET: &str = "coach.retrieval_skill_review";
 /// Observe, read-side hardening: the retrieval-miss detector over the stored
 /// retrieval runs.
 pub const COACH_READ_HARDENING_FACET: &str = "coach.read_hardening";

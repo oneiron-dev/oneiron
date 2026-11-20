@@ -165,7 +165,8 @@ struct AdmittedWrites {
     /// 17207).
     derived_floors: BTreeMap<EntityId, BTreeSet<EntityId>>,
     /// Every entity id the update's history inserts, and a snapshot's root
-    /// winners (census L6-05, [`super::UpdateInserts`]).
+    /// winners (census L6-05, [`super::UpdateInserts`]), with both ends of
+    /// each edge among them (HELD-ENTITY-DOCUMENT-DEFERRED).
     inserted: BTreeSet<EntityId>,
 }
 
@@ -199,6 +200,10 @@ fn check_window_update(
         candidate
     };
     let candidate_tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
+    // The owners a snapshot's encoded root carries, collected where that
+    // root is read below: a birth inserted past the root is judged with
+    // them, not only with the latest map a later delete emptied.
+    let mut root_owners = BTreeSet::new();
     // Engine A: one accumulator of source audience bindings and policy
     // revisions over the held map and everything the update can leave.
     let mut audiences = crate::sync::source_audiences::AdmissionRows::default();
@@ -403,6 +408,11 @@ fn check_window_update(
                 // Fix list row 16256: and each root row's.
                 if let Some(blob) = blob {
                     audiences.note_row(raw, blob);
+                    if let Ok(id) = EntityId::from_hex(raw)
+                        && id.to_hex() == raw
+                    {
+                        root_owners.insert(id);
+                    }
                 }
             });
             if let Some(error) = at_root {
@@ -501,7 +511,12 @@ fn check_window_update(
     // history retains the validated insertion that assigned its world. Keep
     // that evidence until every edge op in this same import is inspected.
     let mut historical = HashMap::<EntityId, Vec<u8>>::new();
+    let mut birth_owners = BTreeSet::new();
+    let births = ContainerID::new_root(crate::sync::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
+    let mut carries_birth = false;
     for op in operations.changes.iter().flat_map(|change| &change.ops) {
+        carries_birth |= op.container == births
+            && matches!(&op.content, JsonOpContent::Map(MapOp::Insert { .. }));
         if op.container == entities
             && let JsonOpContent::Map(MapOp::Insert {
                 key: raw_key,
@@ -510,7 +525,39 @@ fn check_window_update(
             && let Ok(id) = EntityId::from_hex(raw_key)
         {
             historical.insert(id, blob.to_vec());
+            if id.to_hex() == *raw_key {
+                birth_owners.insert(id);
+            }
         }
+    }
+    // A birth inserted in this range is judged against the state the range
+    // starts from as well as the inserts above, not only the candidate's
+    // latest map: a delete later in the range takes its owner (and the
+    // birth carrier) out of that map, as a hard delete in a full-history
+    // snapshot does. A snapshot starts from its encoded root, read above.
+    // An update starts from the state at its start frontiers, read off the
+    // candidate, which holds the held doc and the update together: the held
+    // doc's latest map is not that state once this update, or a concurrent
+    // local delete, has landed, so judging from it would refuse the same
+    // bytes on redelivery. A shallow candidate may hold no state at those
+    // frontiers to check out; the held latest map then stands in.
+    if metadata.mode.is_snapshot() {
+        birth_owners.extend(root_owners);
+    } else if carries_birth {
+        let at_start = candidate.fork();
+        let start = if at_start.checkout(&metadata.start_frontiers).is_ok() {
+            &at_start
+        } else {
+            doc
+        };
+        map_for_each_value_bytes(&start.get_map("entities"), |raw, blob| {
+            if blob.is_some()
+                && let Ok(id) = EntityId::from_hex(raw)
+                && id.to_hex() == raw
+            {
+                birth_owners.insert(id);
+            }
+        });
     }
     if metadata.mode.is_snapshot()
         && let (Some(key), Some(vault)) = (key, vault)
@@ -537,7 +584,6 @@ fn check_window_update(
         }
     }
     let witnesses = ContainerID::new_root("retained_claim_worlds", ContainerType::Map);
-    let births = ContainerID::new_root(crate::sync::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
     let custody = ContainerID::new_root(crate::sync::custody::CUSTODY_MAP, ContainerType::Map);
     let room_turns =
         ContainerID::new_root(crate::sync::room_turns::ROOM_TURNS_MAP, ContainerType::Map);
@@ -583,6 +629,7 @@ fn check_window_update(
         ContainerID::new_root(crate::sync::ingest::PEER_ORIGIN_MAP, ContainerType::Map);
     let writers =
         ContainerID::new_root(crate::sync::ingest::MESSAGE_WRITER_MAP, ContainerType::Map);
+    let mut edge_endpoints = BTreeSet::new();
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
             key: map_key,
@@ -593,8 +640,21 @@ fn check_window_update(
         };
         // FIX 6520: no peer writes under a barrier key; its removal still ships.
         super::shallow::refuse_barrier_write(&op.container, &map_key)?;
+        // An edge insert names both its ends: the sweep drops an edge with an
+        // erased end, so its re-put owes a compaction as a row's does
+        // (HELD-ENTITY-DOCUMENT-DEFERRED).
+        if op.container == edges
+            && let Some((source, _, target)) = crate::sync::bridge::parse_edge_key(&map_key)
+        {
+            edge_endpoints.extend([source, target]);
+        }
         if op.container == births {
-            crate::sync::row_birth::validate_carried_birth(&candidate, &map_key, &value)?;
+            crate::sync::row_birth::validate_carried_birth(
+                &candidate,
+                &map_key,
+                &value,
+                &birth_owners,
+            )?;
         } else if op.container == custody {
             // OF-422: put-then-delete still carries the bytes on the wire.
             crate::sync::custody::admit_custody_carrier(vault, key, &map_key, &value)?;
@@ -693,12 +753,18 @@ fn check_window_update(
     // that drops or changes it, wherever it comes in the range.
     audiences.refuse_dropped_obligations(vault, doc)?;
     let mut inserted: BTreeSet<EntityId> = historical.keys().copied().collect();
+    inserted.extend(edge_endpoints);
     if metadata.mode.is_snapshot()
         && let Some(Some(root)) = encoded_root_state(update)
     {
         root.get_map("entities").for_each(|raw_key, _| {
             if let Ok(id) = EntityId::from_hex(raw_key) {
                 inserted.insert(id);
+            }
+        });
+        root.get_map("edges").for_each(|raw_key, _| {
+            if let Some((source, _, target)) = crate::sync::bridge::parse_edge_key(raw_key) {
+                inserted.extend([source, target]);
             }
         });
     }

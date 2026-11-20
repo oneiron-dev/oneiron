@@ -8,7 +8,7 @@ use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort, is_solo, limit};
 use oneiron::{
     ContentPart, FatalLlmError, FinishReason, ImageContent, LlmCapability, LlmError, LlmInputUsage,
     LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmToolSpec,
-    LlmUsage, ModelLocality, ResponseFormat, RetryableLlmError,
+    LlmUsage, ModelLocality, ResponseFormat, RetryableLlmError, provider_finish_reason,
 };
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use std::collections::BTreeMap;
@@ -48,7 +48,8 @@ pub fn build_openai_chat_request(
     validate_capabilities(catalog, request, &provider_options, stream)?;
 
     let mut body = JsonMap::new();
-    for (key, value) in &request.params {
+    // A param only an own server is sent leaves a hosted API's body here.
+    for (key, value) in request.wire_params()? {
         body.insert(key.clone(), value.clone());
     }
     for (key, value) in provider_options.to_wire_fields() {
@@ -496,9 +497,7 @@ pub(crate) fn openai_finish_reason(reason: &str) -> FinishReason {
         "length" => FinishReason::Length,
         "tool_calls" | "function_call" => FinishReason::ToolCalls,
         "content_filter" => FinishReason::ContentFiltered,
-        other => FinishReason::Other {
-            name: other.to_owned(),
-        },
+        other => provider_finish_reason(other),
     }
 }
 

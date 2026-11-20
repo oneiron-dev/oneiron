@@ -137,6 +137,16 @@ fn a_mark_lasts_as_long_as_its_vector() {
     let open = || Arc::new(Vault::open_unseeded_for_test(dir.path(), config.clone()).unwrap());
     let (marked, replaced, deleted) = (entity_id(0xB1), entity_id(0xB2), entity_id(0xB3));
     let vault = open();
+    let facet = crate::claim::substrate_facet_id(entity_id(0xC1)).expect("subject facet");
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .expect("seed subject facet");
     for (id, text) in [
         (marked, TEXT),
         (replaced, "second line"),
@@ -183,6 +193,7 @@ fn a_replica_marks_the_vectors_it_computes_and_a_replay_keeps_them() {
                 ENTITY_TYPE_CLAIM,
                 TimeRange { start: 1, end: 1 },
                 1,
+                None,
                 &claim_body_bytes(TEXT),
             )
             .commit()
@@ -221,10 +232,12 @@ fn a_restore_marks_only_the_vectors_it_embeds_again() {
     assert_eq!(source.embedding_provenance(&id).unwrap(), Some(cpu()));
     let checkpoint = dir.path().join("checkpoint");
     source.snapshot_checkpoint(&checkpoint, 100).unwrap();
+    let key = source.checkpoint_key().unwrap();
     drop(source);
 
     let (restored, _) = Vault::restore_checkpoint(
         &checkpoint,
+        &key,
         &dir.path().join("restored"),
         config,
         crate::recovery::checkpoint::RestoreReason::Restore,
@@ -267,6 +280,7 @@ fn a_restore_under_no_model_is_embedded_once_a_worker_attaches() {
     drain_on(&source, cpu());
     let checkpoint = dir.path().join("checkpoint");
     source.snapshot_checkpoint(&checkpoint, 100).unwrap();
+    let key = source.checkpoint_key().unwrap();
     drop(source);
 
     let target = dir.path().join("restored");
@@ -274,6 +288,7 @@ fn a_restore_under_no_model_is_embedded_once_a_worker_attaches() {
     no_model.embedding_model = None;
     let (restored, _) = Vault::restore_checkpoint(
         &checkpoint,
+        &key,
         &target,
         no_model,
         crate::recovery::checkpoint::RestoreReason::Restore,

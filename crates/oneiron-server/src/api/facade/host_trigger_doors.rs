@@ -54,6 +54,7 @@ pub(crate) async fn host_compact(
             .iter()
             .flat_map(|message| [message.turn_id, message.message_id]),
     );
+    rows.extend(input.working_set.iter().copied());
     let (answer, mut listed) = as_owner(
         server,
         auth,

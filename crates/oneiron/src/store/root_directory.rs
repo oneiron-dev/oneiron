@@ -13,6 +13,32 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
+/// Makes the vault root `path` names, with any directory missing above it,
+/// owner-only: each one it makes is made exactly 0700 by [`make_directory`]
+/// before the next is made inside it, so no umask leaves it shared or closed
+/// to its owner. A root another user could write is one this vault's own
+/// restore refuses ([`refuse_shared_path`]). A directory already there, made
+/// meanwhile by another open, or put at its name by whoever may move entries
+/// in its parent keeps its mode.
+pub(crate) fn make_vault_root_all(path: &Path) -> Result<()> {
+    let path = std::path::absolute(path)?;
+    let mut missing = Vec::new();
+    let mut at = path.as_path();
+    while matches!(at.try_exists(), Ok(false)) {
+        missing.push(at.to_path_buf());
+        let Some(parent) = at.parent() else { break };
+        at = parent;
+    }
+    for directory in missing.into_iter().rev() {
+        match make_directory(&directory) {
+            Ok(_) => {}
+            Err(_) if directory.is_dir() => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 /// Removes the directory `path` names, with everything in it, only while
 /// that name holds the very directory `held` has open. A name that holds
 /// another directory, a link or nothing is refused, and both are left as

@@ -108,7 +108,7 @@ struct MergeDetail {
     /// Why it cannot merge now: its base, baseline or held-out reserve
     /// moved, or it no longer revises its base.
     #[serde(skip_serializing_if = "Option::is_none")]
-    unmergeable: Option<&'static str>,
+    unmergeable: Option<String>,
     /// The last merge's ruling on it.
     #[serde(skip_serializing_if = "Option::is_none")]
     receipt: Option<SharedSkillMergeReceipt>,
@@ -133,6 +133,9 @@ async fn merge_detail(
             match vault.shared_skill_merge_needs_owner(&candidate) {
                 Ok(needs) => (Some(needs), None),
                 Err(oneiron::Error::Artifact(ArtifactError::InvalidSkillBody(reason))) => {
+                    (None, Some(reason.to_owned()))
+                }
+                Err(oneiron::Error::Artifact(ArtifactError::SkillVersionKept(reason))) => {
                     (None, Some(reason))
                 }
                 Err(error) => return Err(error.into()),

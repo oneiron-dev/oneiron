@@ -108,6 +108,7 @@ impl NativeRawRead<'_> {
         let read = self.lane.child_of_tree_projected(
             root,
             max_depth,
+            None,
             |_| Ok::<_, Error>(Some(())),
             |_, nodes| {
                 let mut rows: Vec<_> = nodes

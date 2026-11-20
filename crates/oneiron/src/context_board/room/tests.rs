@@ -90,6 +90,7 @@ fn spoken(room: EntityId, turn: EntityId, at: u64) -> WitnessTurn {
         conversation_ref: room.to_hex(),
         turn_ref: Some(turn.to_hex()),
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: Some(EntityId::now().to_hex()),
             author: WitnessAuthor::User,
@@ -1018,25 +1019,30 @@ fn p7_follows_a_records_words_to_their_sources() -> Result<()> {
     };
     // A summary put again over other records leaves the copy's words with
     // the records they came from. The landing moved the room onto its DAG.
+    let writer = vault.memory(owner, EdgeActorClass::Human);
     let later = vault
-        .append_dag_record(&crate::conversation_dag::AppendRecord {
-            conversation: room,
-            parent: Some(copy),
-            reply_to: None,
-            quote: None,
-            address: crate::conversation_dag::AddressMode::Broadcast,
-            recipients: vec![],
-            advance: true,
-            kind: ENTITY_TYPE_TURN,
-            containing_turn: None,
-            occurred: TimeRange { start: 3, end: 3 },
-            learned_at: 3,
-            body: crate::conversation_dag::fixtures::body("later"),
-            text: vec![],
-            session: None,
-            actor: crate::WriteActor::new(owner, EdgeActorClass::Human),
-            thread_audience: None,
-        })?
+        .append_dag_record(
+            &writer,
+            &crate::conversation_dag::AppendRecord {
+                conversation: room,
+                parent: Some(copy),
+                reply_to: None,
+                quote: None,
+                address: crate::conversation_dag::AddressMode::Broadcast,
+                recipients: vec![],
+                advance: true,
+                kind: ENTITY_TYPE_TURN,
+                containing_turn: None,
+                occurred: TimeRange { start: 3, end: 3 },
+                learned_at: 3,
+                body: crate::conversation_dag::fixtures::body("later"),
+                text: vec![],
+                session: None,
+                actor: crate::WriteActor::new(owner, EdgeActorClass::Human),
+                thread_audience: None,
+            },
+        )
+        .expect("append")
         .id;
     recover(vec![later], 4)?;
     let sources = {
@@ -1181,6 +1187,7 @@ fn p7_follows_a_conversation_summary_to_the_turns_it_covers() -> Result<()> {
         ClaimApprovalStatus::Approved,
         crate::ClaimLifecycleStatus::Active,
     )?;
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     body.source = Some(ClaimSource::Observed);
     // A reader's grant makes later direct claim writes pend, so the
     // summary lands first.

@@ -10,11 +10,12 @@ use super::super::payload::{
     decode_self_dispatch_outcome, replay_denied_trap_error, replay_failed_trap_error,
     self_call_request_value,
 };
-use super::super::spawn_replay::replay_request_match;
+use super::super::spawn_replay::{BaseKnownRead, replay_request_match};
 use super::super::support::invalid_code_run_replay;
 use super::super::types::{SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfEffect};
 use super::{CodeRunBridgeCall, CodeRunReplayRecord};
 use crate::Result;
+use crate::code_run::RESPONSE_ERASED;
 
 impl CodeRunBridgeCall {
     /// This row's stored outcome for `call`, the call made at bridge
@@ -22,12 +23,15 @@ impl CodeRunBridgeCall {
     /// position, keeps the call's effect, and the call stamped as the row
     /// was meets its request. A spawn's miss is a mismatch, never a live
     /// call. A resumed pending step's replay shares the match (FIX 7703).
+    /// A value base custody holds, read through `base_known`, meets the
+    /// handle it took in the row (FIX REPLAY-COMPARE-KNOWN-MATCHER).
     pub(crate) fn strict_replay_answer(
         &self,
         index: u64,
         call: SelfCall,
+        base_known: Option<BaseKnownRead<'_>>,
     ) -> Result<SelfDispatchOutcome> {
-        self.strict_replay_answer_held(index, call, None)
+        self.strict_replay_answer_held(index, call, None, base_known)
     }
 
     /// [`Self::strict_replay_answer`] for a call whose input `held` may
@@ -38,6 +42,7 @@ impl CodeRunBridgeCall {
         index: u64,
         call: SelfCall,
         held: Option<&crate::code_run::actions::ActionBlobInput>,
+        base_known: Option<BaseKnownRead<'_>>,
     ) -> Result<SelfDispatchOutcome> {
         if self.seq != index {
             return Err(invalid_code_run_replay("code-run replay bridge seq drift"));
@@ -76,7 +81,9 @@ impl CodeRunBridgeCall {
                     |stored| Some(stored) == crate::code_run::actions::held_request_form(&request),
                 )
         };
-        if !replay_request_match(self.effect, &self.request, &request)?.is_hit() && !held_hit() {
+        if !replay_request_match(self.effect, &self.request, &request, base_known)?.is_hit()
+            && !held_hit()
+        {
             return Err(invalid_code_run_replay("code-run replay request mismatch"));
         }
         // A row can come from an in-memory record that never passed the
@@ -97,6 +104,12 @@ impl CodeRunBridgeCall {
 pub struct CodeRunReplayCursor<'a> {
     pub(super) record: &'a CodeRunReplayRecord,
     pub(super) next: Cell<usize>,
+    /// How each call's compare reads the values base custody holds (FIX
+    /// REPLAY-COMPARE-KNOWN-MATCHER); `None` for a record read in memory.
+    base_known: Option<BaseKnownRead<'a>>,
+    /// Whether a row whose call failed answers that failure rather than the
+    /// replay trap (FIX ACTION-REPLAY-FAILED-ANSWERS-TRAP).
+    failed_answered: bool,
 }
 
 impl<'a> CodeRunReplayCursor<'a> {
@@ -105,7 +118,29 @@ impl<'a> CodeRunReplayCursor<'a> {
         Self {
             record,
             next: Cell::new(0),
+            base_known: None,
+            failed_answered: false,
         }
+    }
+
+    /// This cursor, its calls compared with the values base custody holds,
+    /// read through `base_known` (FIX REPLAY-COMPARE-KNOWN-MATCHER): a
+    /// stored record whose rows the side-row wall admitted with custody.
+    #[must_use]
+    pub(crate) const fn with_base_known(mut self, base_known: BaseKnownRead<'a>) -> Self {
+        self.base_known = Some(base_known);
+        self
+    }
+
+    /// This cursor, each row whose call failed answering that failure as
+    /// its first making did, never the trap a guest program's replay raises
+    /// (FIX ACTION-REPLAY-FAILED-ANSWERS-TRAP, Engine ANSWER 20 Nov 09:10 =
+    /// A): an agent action made again under its idempotency key. A row whose
+    /// reply an erase took still traps as erased, since its effect ran.
+    #[must_use]
+    pub(crate) const fn answering_failed_calls(mut self) -> Self {
+        self.failed_answered = true;
+        self
     }
 
     #[must_use]
@@ -150,7 +185,8 @@ impl CodeRunReplayCursor<'_> {
             .ok_or(invalid_code_run_replay(
                 "code-run replay bridge log exhausted",
             ))?;
-        let outcome = stored.strict_replay_answer_held(index as u64, call, held)?;
+        let outcome =
+            stored.strict_replay_answer_held(index as u64, call, held, self.base_known)?;
         self.next.set(index + 1);
         match outcome {
             // A refused SDK verb reached the guest as a typed refusal it could
@@ -170,6 +206,13 @@ impl CodeRunReplayCursor<'_> {
                 Ok(SelfDispatchOutcome::Denied(result))
             }
             SelfDispatchOutcome::Denied(result) => Err(replay_denied_trap_error(&result)),
+            // An action made again answers its failed call as its first making
+            // did; an erased reply still traps, since its effect ran.
+            SelfDispatchOutcome::Failed(result)
+                if self.failed_answered && result.error != RESPONSE_ERASED =>
+            {
+                Ok(SelfDispatchOutcome::Failed(result))
+            }
             SelfDispatchOutcome::Failed(result) => Err(replay_failed_trap_error(&result)),
             outcome => Ok(outcome),
         }
