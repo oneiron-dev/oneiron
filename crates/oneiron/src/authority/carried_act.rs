@@ -177,7 +177,10 @@ impl Vault {
         }
     }
 
-    fn append_carried_act_in_savepoint(
+    /// Signs, appends and folds the act `op` builds in a savepoint of
+    /// `txn`, not best effort: an act that is not counted fails, and its
+    /// savepoint is rolled back. The entry hash.
+    pub(super) fn append_carried_act_in_savepoint(
         &self,
         txn: &mut heed::RwTxn<'_>,
         op: impl FnOnce(EntityId) -> AuthorityOp,

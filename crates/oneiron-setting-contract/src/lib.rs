@@ -101,7 +101,9 @@ pub enum Restore {
     Content,
 }
 
-/// Where a key's value holds. Recorded only: no value leaves its install yet (design stage 7).
+/// Where a key's value holds. From stage 7a-2 an owner's change of a `Vault` key whose value is
+/// closed ([`SettingValue::CLOSED`]) travels as its signed act to every machine of a rooted
+/// vault; an `Install` key's never leaves its install.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SettingSync {
@@ -164,6 +166,38 @@ pub struct Resolved<T> {
     pub source: SettingSource,
     /// The deciding row's revision; 0 when no row decided.
     pub revision: u64,
+    /// How the signed acts behind the rows the read walked stand (stage 7a-2): the least
+    /// settled of them.
+    pub standing: SettingStanding,
+}
+
+/// How the signed acts on one setting row stand, as this machine folds them (DESIGN 1.6, "Fold
+/// states, and the read's `source`"; stage 7a-2). `Pending` and `Held` come with stages 7b and
+/// 7c.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SettingStanding {
+    /// Every head agrees, or the row has no act: the row is as written. The default.
+    #[default]
+    Settled,
+    /// The heads of a key with no order differ: the row keeps the last value every head
+    /// descends from, until an act that saw them all replaces them.
+    Conflict,
+    /// A head's value does not decode or fails its check under this build: the row reads the
+    /// key's strictest value (DEC-0005 rule 4).
+    Quarantined,
 }
 
 /// The cell a learned key's fit is learned in (ARCH-0003 `#learning-settings`): the project its
@@ -199,7 +233,25 @@ pub enum SettingSource {
 
 #[cfg(test)]
 mod tests {
-    use super::{EntityId, Setter};
+    use super::{EntityId, Setter, SettingStanding, SettingValue};
+
+    #[test]
+    fn numbers_and_bools_are_closed_through_an_option_and_text_is_not() {
+        assert!(<u64 as SettingValue>::CLOSED);
+        assert!(<bool as SettingValue>::CLOSED);
+        assert!(<f64 as SettingValue>::CLOSED);
+        assert!(<Option<u32> as SettingValue>::CLOSED);
+        assert!(!<String as SettingValue>::CLOSED);
+        assert!(!<Option<String> as SettingValue>::CLOSED);
+        assert!(!<Vec<String> as SettingValue>::CLOSED);
+    }
+
+    #[test]
+    fn a_standing_is_settled_by_default_and_orders_toward_quarantine() {
+        assert_eq!(SettingStanding::default(), SettingStanding::Settled);
+        assert!(SettingStanding::Settled < SettingStanding::Conflict);
+        assert!(SettingStanding::Conflict < SettingStanding::Quarantined);
+    }
 
     #[test]
     fn every_setter_round_trips_as_a_stored_row_writes_it() {
