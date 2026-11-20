@@ -23,9 +23,12 @@
 //! key: the key door answers [`RecordError::OwnerKeyRequired`], and a machine
 //! removal there goes as before and lists the keys the device still holds.
 //!
-//! The last key held on a device: once no device key would remain, a change
-//! of the owner's needs recovery. The vault keeps asking for an owner key
-//! after the removal (the ratchet), so both doors ask first
+//! The last key held on a device: once no device key would remain, no owner
+//! key on a device proves a change of the owner's. Until one is enrolled
+//! again, the vault takes the host's word for his changes, as before his
+//! first key (the ratchet that would keep asking for an owner key instead,
+//! AUTH-5 LAST-OWNER-KEY = B, is held for a recovery path: FIX-LIST
+//! LAST-OWNER-KEY-RECOVERY-GAP). So both doors ask first
 //! ([`OwnerKeyRemoval::LastDeviceKey`], [`MachineRemoval::LastDeviceKey`])
 //! and store nothing until the owner confirms
 //! ([`LastDeviceKeyConfirmation::Given`]). The recovery root's authority key
@@ -35,9 +38,14 @@
 //! Both doors mark the rows their write counted for the vault's loaded
 //! windows, in the write, and announce them once it committed, as the
 //! recovery root's door does: the host and every replica then see the keys
-//! ended without a window reload. Another landing of a removal
-//! ([`Vault::set_machine_role`], the confirm of a held removal) commits as
-//! every other owner answer does.
+//! ended without a window reload. Every other landing of a removal
+//! ([`Vault::set_machine_role`], the confirm of a held removal) does the
+//! same with the rows its write counted.
+//!
+//! A removal ends every live key an enrolment names for the machine, a key
+//! that proves nothing for the owner yet among them (one a passkey vouched
+//! for, until a device key confirms it): the signer of the revocation is
+//! what must prove for the owner, not the key it ends.
 //!
 //! Each counted enrolment of a key speaks for itself. A key that one
 //! enrolment names as a device's key and another, on a branch that never saw
@@ -61,8 +69,8 @@ const NOT_ENROLLED: &str =
 /// The key is the recovery root's authority key. Nothing was written.
 const RECOVERY_ROOT_KEY: &str = "the key is the recovery root's authority key, which the recovery \
                                  root's door changes; nothing was written";
-/// The key no longer proves for the owner: it is revoked, or the roster no
-/// longer holds it as the owner's. Nothing was written.
+/// The key is not live: it is revoked, or the roster no longer holds it.
+/// Nothing was written.
 const NOT_LIVE: &str =
     "the key is not a live owner key on this vault's roster; nothing was written";
 /// A machine removal would end the last owner key held on a device, and the
@@ -78,8 +86,8 @@ const LAST_DEVICE_KEY_UNCONFIRMED: &str = "removing this machine ends the last o
 pub enum LastDeviceKeyConfirmation {
     /// The owner was not asked, or did not confirm.
     NotGiven,
-    /// The owner read that a later change of theirs needs recovery, and
-    /// confirmed.
+    /// The owner read that no owner key on a device would remain to prove
+    /// a later change of theirs, and confirmed.
     Given,
 }
 
@@ -100,8 +108,11 @@ pub struct RemainingOwnerKeys {
 }
 
 impl RemainingOwnerKeys {
-    /// Whether a later change of the owner's needs recovery: no key held on
-    /// a device remains.
+    /// Whether no key held on a device remains, so no owner key on a device
+    /// proves a later change of the owner's: the doors ask first. Until the
+    /// held ratchet lands (FIX-LIST LAST-OWNER-KEY-RECOVERY-GAP), the vault
+    /// then takes the host's word for his changes; with it, they would need
+    /// recovery.
     #[must_use]
     pub fn needs_recovery(&self) -> bool {
         self.device_keys == 0
@@ -143,11 +154,14 @@ pub struct MachineRemovalReceipt {
     /// The removal as the fold judged it: it stands, or it is held for the
     /// owner's proof.
     pub landing: MachineAnswerLanding,
-    /// The owner keys the removal ended: the machine's device keys, when the
-    /// removal stands and this install holds an owner key.
+    /// The owner keys the removal ended: each one whose revocation its write
+    /// counted, as the writer ended them. The machine's device keys, when
+    /// the removal stands and the owner key this install holds signed their
+    /// revocations.
     pub ended_keys: Vec<[u8; 32]>,
-    /// The owner keys the machine still holds live: the same keys, when the
-    /// removal is held or this install holds no owner key to end them with.
+    /// The owner keys the machine still holds live after the write: the
+    /// same keys, when the removal is held or this install held no owner key
+    /// to end them with.
     pub live_keys: Vec<[u8; 32]>,
     /// The owner keys that remain after the act.
     pub remaining: RemainingOwnerKeys,
@@ -178,9 +192,10 @@ impl Vault {
     /// [`RecordError::OwnerKeyRequired`] when this install holds no owner
     /// key; an authority refusal when no enrolment names `key`, when no
     /// counted enrolment names it as a device's key (the recovery root's
-    /// authority key), when it is not a live owner key, or when the fold
-    /// does not count the revocation; a refusal when the proof is no longer
-    /// the vault's live owner.
+    /// authority key), when it is not live (a key that proves nothing for
+    /// the owner yet is live, and ends), or when the fold does not count the
+    /// revocation; a refusal when the proof is no longer the vault's live
+    /// owner.
     pub fn remove_owner_key(
         &self,
         owner: &AuthenticatedOwner,
@@ -201,8 +216,7 @@ impl Vault {
         if enrolled.device_machines.is_empty() {
             return Err(authority_refused(RECOVERY_ROOT_KEY));
         }
-        if !enrolled.live || !fold.proves_owner_acts(&AuthorityKey::Ed25519(key), self.is_hosted())
-        {
+        if !enrolled.live {
             return Err(authority_refused(NOT_LIVE));
         }
         let ending = vec![enrolled];
@@ -290,25 +304,26 @@ impl Vault {
         }
         let mut answer = AnswerAct::by_owner(actor, surface, MachineRole::Removed, seen);
         answer.last_device_key = confirmation;
-        let landing = self.machine_role_answer_in_txn(
+        let (landing, ended) = self.machine_role_answer_in_txn(
             &mut txn,
             &fold,
             answer,
             machine,
             MachineRole::Removed,
         )?;
-        let after = self.authority_view_readonly_in_txn(&txn)?;
+        // The keys the writer ended, as it ended them: the question above
+        // read `ending` before the writer judged the signer again, so a
+        // signer gone since (a PIN window that closed, say) ends none.
+        let ended_keys: Vec<[u8; 32]> = ended.iter().map(|key| key.public_key).collect();
+        let ends_recovery_root = ending
+            .iter()
+            .any(|key| key.recovery_authority && ended_keys.contains(&key.public_key));
         let live_keys: Vec<[u8; 32]> = self
-            .device_keys_of_machine_in_txn(&txn, &after, machine)?
+            .device_keys_of_machine_in_txn(&txn, machine)?
             .into_iter()
             .map(|enrolled| enrolled.public_key)
             .collect();
-        let ends_recovery_root = landing.held().is_none() && holds_recovery_root(&ending);
-        let ended_keys = if landing.held().is_none() {
-            ending.into_iter().map(|key| key.public_key).collect()
-        } else {
-            Vec::new()
-        };
+        let after = self.authority_view_readonly_in_txn(&txn)?;
         let remaining = RemainingOwnerKeys {
             ends_recovery_root,
             ..self.owner_keys_remaining_in_txn(&txn, &after, &[])?
@@ -351,12 +366,15 @@ impl Vault {
                 "the machine's answer changed since it was read",
             ));
         }
-        let ended_keys = ending.iter().map(|key| key.public_key).collect();
         let ends_recovery_root = holds_recovery_root(&ending);
-        self.end_owner_keys_in_txn(txn, ending)?;
+        let ended_keys = self
+            .end_owner_keys_in_txn(txn, ending)?
+            .into_iter()
+            .map(|key| key.public_key)
+            .collect();
         let after = self.authority_view_readonly_in_txn(txn)?;
         let live_keys = self
-            .device_keys_of_machine_in_txn(txn, &after, machine)?
+            .device_keys_of_machine_in_txn(txn, machine)?
             .into_iter()
             .map(|enrolled| enrolled.public_key)
             .collect();
@@ -382,7 +400,7 @@ impl Vault {
     /// join. Answers them for the announcement once the write committed
     /// ([`Self::note_committed_authority_rows`]). A crash between the commit
     /// and the announcement still mirrors them.
-    fn mark_rows_counted_since_in_txn(
+    pub(super) fn mark_rows_counted_since_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         before: &AuthorityFold,
@@ -400,29 +418,25 @@ impl Vault {
     }
 
     /// The live keys that a counted enrolment names as a device's key for
-    /// `machine` and that prove for the owner on `fold`, ascending by key.
-    /// Each counted enrolment speaks for itself, whichever one the key's
-    /// row lists ([`EnrolledOwnerKey::device_machines`]): a key enrolled on
-    /// two branches for two machines is among both machines' keys, since it
-    /// proved it is held on each, and a key one enrolment names as this
-    /// machine's is among them although another marks it the recovery
-    /// root's authority key. A key enrolled only as the root's is never
-    /// among them: no machine holds it.
+    /// `machine`, ascending by key: on the roster and not revoked, whether
+    /// or not they prove for the owner yet. A key a passkey vouched for is
+    /// among them before a device key confirms it, since the machine holds
+    /// it all the same. Each counted enrolment speaks for itself, whichever
+    /// one the key's row lists ([`EnrolledOwnerKey::device_machines`]): a
+    /// key enrolled on two branches for two machines is among both
+    /// machines' keys, since it proved it is held on each, and a key one
+    /// enrolment names as this machine's is among them although another
+    /// marks it the recovery root's authority key. A key enrolled only as
+    /// the root's is never among them: no machine holds it.
     fn device_keys_of_machine_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        fold: &AuthorityFold,
         machine: EntityId,
     ) -> Result<Vec<EnrolledOwnerKey>> {
-        let hosted = self.is_hosted();
         Ok(self
             .enrolled_owner_keys_in_txn(txn)?
             .into_iter()
-            .filter(|enrolled| {
-                enrolled.live
-                    && enrolled.device_machines.contains(&machine)
-                    && fold.proves_owner_acts(&AuthorityKey::Ed25519(enrolled.public_key), hosted)
-            })
+            .filter(|enrolled| enrolled.live && enrolled.device_machines.contains(&machine))
             .collect())
     }
 
@@ -439,7 +453,7 @@ impl Vault {
         if self.owner_proof_signer(fold).is_none() {
             return Ok(Vec::new());
         }
-        self.device_keys_of_machine_in_txn(txn, fold, machine)
+        self.device_keys_of_machine_in_txn(txn, machine)
     }
 
     /// Refuses a removal that would end `ending`, the last owner key held on

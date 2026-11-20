@@ -333,9 +333,9 @@ pub(super) fn last_device_key_refusal(remaining: RemainingOwnerKeys) -> ApiError
     };
     ApiError::new(
         format!(
-            "this ends the last owner key held on a device; {recovery}. After it a change of the \
-             owner's needs recovery, and the vault keeps asking for an owner key. Nothing was \
-             written."
+            "this ends the last owner key held on a device; {recovery}. After it no owner key \
+             on a device proves a change of the owner's: until one is enrolled again, the vault \
+             takes the host's word for them. Nothing was written."
         ),
         ApiErrorDetails::InvalidState {
             state: Some(LAST_DEVICE_KEY.to_owned()),

@@ -17,7 +17,11 @@
 //! the key ended and which key signed its removal. Only a removal that a key
 //! of the owner's signed lists so: a managed host's root may sign a second
 //! revoke of a key that had already ended, and that entry is no act of the
-//! owner's.
+//! owner's. And only one that no settled fence from a branch it never saw
+//! holds a signer of: a removal whose signer a sibling handoff, appointment
+//! or counted revocation ended yields to it and ends nothing, so when its
+//! key ended all the same (a sibling `ReRoot` that fenced both keys, say),
+//! the removal is not why, and it lists nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -35,8 +39,8 @@ pub enum OwnerKeyChangeKind {
     Removed,
     /// The key ended, and no counted removal names it: this `RevokeDevice`
     /// of it is one the fold refused only because its own signer's key ended
-    /// too, on a branch that never saw this entry (two removals that cross
-    /// end both keys and count neither entry).
+    /// too, by a removal on a branch that never saw this entry (two removals
+    /// that cross end both keys and count neither entry).
     RemovedByEndedKey,
 }
 
@@ -68,7 +72,8 @@ impl Vault {
     /// enrolment entry, as [`Self::enrolled_owner_keys`] does; a key that
     /// two counted entries removed lists both removals. A key that ended
     /// with no counted removal lists each removal of it that a key of the
-    /// owner's signed and the fold refused for its signer alone
+    /// owner's signed and the fold refused for its signer alone, where only
+    /// removals that cross ended that signer
     /// ([`OwnerKeyChangeKind::RemovedByEndedKey`]). Empty before any
     /// enrolment.
     ///
@@ -85,20 +90,29 @@ impl Vault {
             .into_iter()
             .map(|key| (key.public_key, key))
             .collect();
-        let mut changes = Vec::new();
+        let mut rows = Vec::new();
         let mut stored = BTreeSet::new();
         for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, &txn)? {
             let entry = decode_authority_log_entry_body(&body)?;
             let hash = authority_entry_hash(&entry)?;
             stored.insert(hash);
-            changes.extend(owner_key_change(&fold, hosted, &enrolled, hash, &entry));
+            rows.push((hash, entry));
         }
         if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, &txn)?
         {
-            for (hash, entry) in evidence.carried_past(&stored) {
-                changes.extend(owner_key_change(&fold, hosted, &enrolled, *hash, entry));
-            }
+            rows.extend(
+                evidence
+                    .carried_past(&stored)
+                    .map(|(hash, entry)| (*hash, entry.clone())),
+            );
         }
+        let fences = SignerFences::of(&fold, &rows);
+        let mut changes: Vec<OwnerKeyChange> = rows
+            .iter()
+            .filter_map(|(hash, entry)| {
+                owner_key_change(&fold, hosted, &enrolled, &fences, *hash, entry)
+            })
+            .collect();
         // A counted removal of a key is the whole account of its end.
         let removed: BTreeSet<[u8; 32]> = changes
             .iter()
@@ -114,16 +128,106 @@ impl Vault {
     }
 }
 
+/// The settled fences that can make a refused removal yield, and the
+/// authority DAG of the rows this vault keeps, to place them against it.
+struct SignerFences<'a> {
+    /// Each key's counted `RevokeDevice` rows.
+    revocations: BTreeMap<&'a AuthorityKey, Vec<AuthorityEntryHash>>,
+    /// The closed handoffs, settled or in conflict, and the counted root
+    /// appointments.
+    handoffs: Vec<AuthorityEntryHash>,
+    /// Each kept row's parents.
+    parents: BTreeMap<AuthorityEntryHash, &'a [AuthorityEntryHash]>,
+}
+
+impl<'a> SignerFences<'a> {
+    /// The fences among `rows` on `fold`.
+    fn of(fold: &AuthorityFold, rows: &'a [(AuthorityEntryHash, AuthorityLogEntry)]) -> Self {
+        let mut fences = Self {
+            revocations: BTreeMap::new(),
+            handoffs: fold.closed_handoffs.iter().copied().collect(),
+            parents: BTreeMap::new(),
+        };
+        for (hash, entry) in rows {
+            fences.parents.insert(*hash, &entry.parent_hashes);
+            if !fold.valid_entries.contains(hash) {
+                continue;
+            }
+            match &entry.op {
+                AuthorityOp::RevokeDevice { revoked_key } => {
+                    fences
+                        .revocations
+                        .entry(revoked_key)
+                        .or_default()
+                        .push(*hash);
+                }
+                AuthorityOp::RootAppointment(_) => fences.handoffs.push(*hash),
+                _ => {}
+            }
+        }
+        fences
+    }
+
+    /// Whether a settled fence on a branch that never saw the refused
+    /// removal `entry`, at `hash`, holds a signer of it, so the removal
+    /// yielded to it and ended nothing: a counted revocation of the signer,
+    /// or a closed handoff or a counted appointment while such a fence holds
+    /// the signer. The fold keeps no handoff's keys apart, so a signer some
+    /// handoff holds counts as held by each handoff on a sibling branch. A
+    /// fence below the removal, or one that saw it (a recovery after two
+    /// removals that crossed, say), does not fence it.
+    fn fence_a_signer_of(
+        &self,
+        fold: &AuthorityFold,
+        hash: AuthorityEntryHash,
+        entry: &AuthorityLogEntry,
+    ) -> bool {
+        super::retired_signers::entry_signer_keys(entry).any(|key| {
+            let revoked = self
+                .revocations
+                .get(key)
+                .is_some_and(|rows| rows.iter().any(|row| self.concurrent(*row, hash)));
+            let handed_off = fold.handoff_or_appointment_retired_keys.contains(key)
+                && self.handoffs.iter().any(|row| self.concurrent(*row, hash));
+            revoked || handed_off
+        })
+    }
+
+    /// Whether `a` and `b` are on branches that never saw each other.
+    fn concurrent(&self, a: AuthorityEntryHash, b: AuthorityEntryHash) -> bool {
+        a != b && !self.descends(a, b) && !self.descends(b, a)
+    }
+
+    /// Whether `ancestor` is in the ancestry of `row`, as the kept rows name
+    /// it.
+    fn descends(&self, row: AuthorityEntryHash, ancestor: AuthorityEntryHash) -> bool {
+        let mut seen = BTreeSet::new();
+        let mut next = vec![row];
+        while let Some(current) = next.pop() {
+            for parent in self.parents.get(&current).copied().unwrap_or_default() {
+                if *parent == ancestor {
+                    return true;
+                }
+                if seen.insert(*parent) {
+                    next.push(*parent);
+                }
+            }
+        }
+        false
+    }
+}
+
 /// The owner key change `entry`, at `hash`, is on `fold`: a counted
 /// enrolment that stands for its key among `enrolled`, a counted
 /// `RevokeDevice` of a key an enrolment names, or a `RevokeDevice` of such a
-/// key that ended it uncounted ([`ended_by_a_refused_removal`]; `hosted` is
-/// as [`AuthorityFold::proves_owner_acts`] takes it). None for any other
-/// entry.
+/// key that ended it uncounted ([`ended_by_a_refused_removal`], and no fence
+/// of `fences` made it yield; `hosted` is as
+/// [`AuthorityFold::proves_owner_acts`] takes it). None for any other entry.
 fn owner_key_change(
     fold: &AuthorityFold,
     hosted: bool,
     enrolled: &BTreeMap<[u8; 32], EnrolledOwnerKey>,
+    fences: &SignerFences<'_>,
     hash: AuthorityEntryHash,
     entry: &AuthorityLogEntry,
 ) -> Option<OwnerKeyChange> {
@@ -141,6 +245,7 @@ fn owner_key_change(
                 (OwnerKeyChangeKind::Removed, key)
             } else if ended_by_a_refused_removal(fold, hash, key)
                 && signed_by_a_key_of_the_owners(fold, hosted, entry)
+                && !fences.fence_a_signer_of(fold, hash, entry)
             {
                 (OwnerKeyChangeKind::RemovedByEndedKey, key)
             } else {
@@ -166,7 +271,8 @@ fn owner_key_change(
 /// branch and only a removal of its signer, on a branch that never saw it,
 /// refused it. A refused entry of any other kind (a bad signature, a signer
 /// the roster never held) is no removal and lists nothing. The caller also
-/// asks who signed it ([`signed_by_a_key_of_the_owners`]).
+/// asks who signed it ([`signed_by_a_key_of_the_owners`]) and whether a
+/// settled fence made it yield ([`SignerFences::fence_a_signer_of`]).
 fn ended_by_a_refused_removal(
     fold: &AuthorityFold,
     hash: AuthorityEntryHash,
