@@ -1,4 +1,5 @@
 //! Receipted graph and timeline reads under the resolved actor floor.
+use super::access_gate::HeldAuthority;
 use super::{ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::conversation_dag::RoomVerdicts;
@@ -153,14 +154,19 @@ impl ScopedRead<'_> {
     /// Timeline metadata is rechecked against both the initial and final authority.
     /// A room's row and its turns, anchor or record, show only to a reader
     /// the room itself admits (L9-52, [`crate::Vault::room_structure_admitted`]).
+    /// Each snapshot's living rows take the authority that snapshot holds, as
+    /// a point read's do (FIX 7462): a live Grant of this key admits them
+    /// there (FIX-LIST SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS), and the
+    /// receipt reports it on a lane that opted in.
     pub fn memory_timeline(&self, anchor: &EntityId) -> Result<ScopedReadResult<MemoryTimeline>> {
         let (filter, policy) = {
             let txn = self.grant_read_txn()?;
             let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
+            let held = self.held_for(None);
             let rooms = RoomVerdicts::default();
             let admitted = self.admit_in(&txn, anchor, || {
                 Ok(
-                    (self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)?
+                    (self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor, &held)?
                         && self
                             .vault
                             .room_structure_admitted_held_in(self, &txn, anchor, &rooms)?)
@@ -173,7 +179,14 @@ impl ScopedRead<'_> {
                         anchor: *anchor,
                         records: Vec::new(),
                     },
-                    receipt: self.receipt_for(None, &policy, &filter, admitted.suppression()),
+                    receipt: self.receipt_in(
+                        &txn,
+                        None,
+                        &policy,
+                        &filter,
+                        admitted.suppression(),
+                        Some(&held),
+                    ),
                 });
             }
             (filter, policy)
@@ -181,15 +194,18 @@ impl ScopedRead<'_> {
         let mut timeline = self.vault.memory_timeline(anchor)?;
         let txn = self.grant_read_txn()?;
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, None)?;
+        // Held in this snapshot: its Grants are the ones live as it reads.
+        let held = self.held_for(None);
         let rooms = RoomVerdicts::default();
         let anchor_admitted = self.admit_in(&txn, anchor, || {
             Ok(
-                (self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)?
+                (self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor, &held)?
                     && self.timeline_anchor_allowed_in(
                         &txn,
                         &fresh_policy,
                         &fresh_filter,
                         anchor,
+                        &held,
                     )?
                     && self
                         .vault
@@ -201,9 +217,22 @@ impl ScopedRead<'_> {
             // An anchor the final snapshot refuses ends the read as it would
             // have on entry: only the anchor is judged, so no record of its
             // chain counts and the receipt cannot size the chain.
-            let mut receipt =
-                self.receipt_for(None, &policy, &filter, anchor_admitted.suppression());
-            receipt.restrict_with(&self.receipt_for(None, &fresh_policy, &fresh_filter, 0));
+            let mut receipt = self.receipt_in(
+                &txn,
+                None,
+                &policy,
+                &filter,
+                anchor_admitted.suppression(),
+                Some(&held),
+            );
+            receipt.restrict_with(&self.receipt_in(
+                &txn,
+                None,
+                &fresh_policy,
+                &fresh_filter,
+                0,
+                Some(&held),
+            ));
             return Ok(ScopedReadResult {
                 value: MemoryTimeline {
                     anchor: *anchor,
@@ -219,12 +248,13 @@ impl ScopedRead<'_> {
                 Ok((self
                     .vault
                     .room_structure_admitted_held_in(self, &txn, &record.id, &rooms)?
-                    && self.timeline_record_allowed_in(&txn, &policy, &filter, &record)?
+                    && self.timeline_record_allowed_in(&txn, &policy, &filter, &record, &held)?
                     && self.timeline_record_allowed_in(
                         &txn,
                         &fresh_policy,
                         &fresh_filter,
                         &record,
+                        &held,
                     )?)
                 .then_some(()))
             })?;
@@ -240,8 +270,15 @@ impl ScopedRead<'_> {
         }
         timeline.records = kept;
         // One count per withheld record: restrict_with adds the later count.
-        let mut receipt = self.receipt_for(None, &policy, &filter, suppressed);
-        receipt.restrict_with(&self.receipt_for(None, &fresh_policy, &fresh_filter, 0));
+        let mut receipt = self.receipt_in(&txn, None, &policy, &filter, suppressed, Some(&held));
+        receipt.restrict_with(&self.receipt_in(
+            &txn,
+            None,
+            &fresh_policy,
+            &fresh_filter,
+            0,
+            Some(&held),
+        ));
         self.charge_served(timeline.records.iter().map(|record| record.id));
         Ok(ScopedReadResult {
             value: timeline,
@@ -253,7 +290,9 @@ impl ScopedRead<'_> {
     /// retrieval search: closed claims are history, but their audience,
     /// predicate, world, sensitivity and policy gates still apply. Recheck
     /// each row against the caller's current authority snapshot before giving
-    /// its bytes to a renderer.
+    /// its bytes to a renderer. A row is judged under `requested` with the
+    /// key's live Grants in that snapshot, and counts as withheld when the
+    /// key's floor or one of those Grants alone admits it.
     pub fn memory_timeline_parts_with_receipt(
         &self,
         records: &[MemoryTimelineRecord],
@@ -261,6 +300,8 @@ impl ScopedRead<'_> {
     ) -> Result<ScopedReadResult<Vec<Option<TimelineEntityParts>>>> {
         let txn = self.vault.store.env.read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        let held = self.held_for(requested);
+        let floor_held = HeldAuthority::for_request(None);
         let mut suppressed = 0;
         let mut value = Vec::with_capacity(records.len());
         for record in records {
@@ -269,7 +310,7 @@ impl ScopedRead<'_> {
                 continue;
             }
             let admitted = self.admit_in(&txn, &record.id, || {
-                self.timeline_record_allowed_in(&txn, &policy, &filter, record)
+                self.timeline_record_allowed_in(&txn, &policy, &filter, record, &held)
                     .map(|visible| visible.then_some(()))
             })?;
             if admitted.suppression() > 0
@@ -277,7 +318,7 @@ impl ScopedRead<'_> {
                 && self
                     .actor_retrieval_floor(&policy)
                     .and_then(|floor| {
-                        self.timeline_record_allowed_in(&txn, &policy, &floor, record)
+                        self.timeline_record_allowed_in(&txn, &policy, &floor, record, &floor_held)
                     })
                     .unwrap_or(false)
             {
@@ -315,7 +356,7 @@ impl ScopedRead<'_> {
         );
         Ok(ScopedReadResult {
             value,
-            receipt: self.receipt_for(requested, &policy, &filter, suppressed),
+            receipt: self.receipt_in(&txn, requested, &policy, &filter, suppressed, Some(&held)),
         })
     }
 
@@ -323,6 +364,8 @@ impl ScopedRead<'_> {
     /// door tests ALL the ordinary authority predicates on the stored row,
     /// changing only the lifecycle input to the retrieval status gate. It
     /// never returns the normalized bytes; the caller receives the original.
+    /// The row takes `held`, the authority the read holds in `txn`, so a live
+    /// Grant of this key admits it as it admits the row on a point read.
     fn history_row_readable_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -330,22 +373,23 @@ impl ScopedRead<'_> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
         raw: &[u8],
+        held: &HeldAuthority,
     ) -> Result<bool> {
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
             || raw.len() == ENTITY_METADATA_HEADER_LEN
         {
-            return self.is_entity_raw_readable_with_filter_in(txn, policy, id, raw, filter);
+            return self.is_entity_raw_readable_held_in(txn, policy, id, raw, filter, held);
         }
         let mut claim = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         if claim.lifecycle == crate::claim::ClaimLifecycleStatus::Active {
-            return self.is_entity_raw_readable_with_filter_in(txn, policy, id, raw, filter);
+            return self.is_entity_raw_readable_held_in(txn, policy, id, raw, filter, held);
         }
         claim.lifecycle = crate::claim::ClaimLifecycleStatus::Active;
         let mut normalized = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
         normalized.extend_from_slice(&crate::claim::encode_claim_body(&claim)?);
-        self.is_entity_raw_readable_with_filter_in(txn, policy, id, &normalized, filter)
+        self.is_entity_raw_readable_held_in(txn, policy, id, &normalized, filter, held)
     }
 
     /// Reads the immutable A→B pair recorded with an accepted Supersedes edge,
@@ -361,7 +405,10 @@ impl ScopedRead<'_> {
     ) -> Result<ScopedReadResult<Option<SupersessionParts>>> {
         let txn = self.vault.store.env.read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
-        let receipt = |suppressed| self.receipt_for(requested, &policy, &filter, suppressed);
+        let held = self.held_for(requested);
+        let receipt = |suppressed| {
+            self.receipt_in(&txn, requested, &policy, &filter, suppressed, Some(&held))
+        };
         let mut linked = false;
         for edge in self.vault.port_edges(
             &txn,
@@ -436,8 +483,8 @@ impl ScopedRead<'_> {
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("supersession revision header"))?;
             if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
-                || !self.history_row_readable_in(&txn, &policy, &filter, &id, &current)?
-                || !self.history_row_readable_in(&txn, &policy, &filter, &id, &raw)?
+                || !self.history_row_readable_in(&txn, &policy, &filter, &id, &current, &held)?
+                || !self.history_row_readable_in(&txn, &policy, &filter, &id, &raw, &held)?
             {
                 return Ok(ScopedReadResult {
                     value: None,
@@ -475,6 +522,8 @@ impl ScopedRead<'_> {
         new: EntityId,
         pair: crate::claim::supersession_diff::RevisionPair,
     ) -> usize {
+        // The floor's own count: the key's floor, or one live Grant alone.
+        let floor_held = HeldAuthority::for_request(None);
         let readable = self.actor_retrieval_floor(policy).and_then(|floor| {
             for (id, revision, expected_hash) in [
                 (old, pair.before, pair.before_hash),
@@ -510,8 +559,15 @@ impl ScopedRead<'_> {
                         header.entity_type,
                         &raw[ENTITY_METADATA_HEADER_LEN..],
                     )
-                    || !self.history_row_readable_in(txn, policy, &floor, &id, &current)?
-                    || !self.history_row_readable_in(txn, policy, &floor, &id, &raw)?
+                    || !self.history_row_readable_in(
+                        txn,
+                        policy,
+                        &floor,
+                        &id,
+                        &current,
+                        &floor_held,
+                    )?
+                    || !self.history_row_readable_in(txn, policy, &floor, &id, &raw, &floor_held)?
                 {
                     return Ok(false);
                 }
@@ -527,9 +583,10 @@ impl ScopedRead<'_> {
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
+        held: &HeldAuthority,
     ) -> Result<bool> {
         if let Some(raw) = self.entity_record_in(txn, id)?.map(|row| row.encode())
-            && self.history_row_readable_in(txn, policy, filter, id, &raw)?
+            && self.history_row_readable_in(txn, policy, filter, id, &raw, held)?
         {
             return Ok(true);
         }
@@ -642,12 +699,15 @@ impl ScopedRead<'_> {
         )
     }
 
+    /// A living record takes `held`, the authority the read holds in `txn`;
+    /// a deleted record's shell keeps its own checks.
     fn timeline_record_allowed_in(
         &self,
         txn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
         record: &MemoryTimelineRecord,
+        held: &HeldAuthority,
     ) -> Result<bool> {
         let Some(raw) = self
             .entity_record_in(txn, &record.id)?
@@ -658,7 +718,11 @@ impl ScopedRead<'_> {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         // Never combine metadata captured before a rewrite with later authority.
-        if filter.deny_all
+        // A deleted record's shell meets this filter's deny_all and bands
+        // here. A living record meets them in the row gate at the end, where
+        // a live Grant of this key may admit it instead, as on a point read.
+        let shell = record.state == MemoryTimelineRecordState::Deleted;
+        if (shell && filter.deny_all)
             || !self.audience_readable_in(txn, &record.id)?
             || record.entity_type != Some(header.entity_type)
             || record.occurred_start != Some(header.occurred_start)
@@ -670,11 +734,11 @@ impl ScopedRead<'_> {
                 .store
                 .validate_entity_type(header.entity_type)
                 .is_err()
-            || !filter.read_scope().bands.contains(&header.entity_type)
+            || (shell && !filter.read_scope().bands.contains(&header.entity_type))
         {
             return Ok(false);
         }
-        if record.state == MemoryTimelineRecordState::Deleted {
+        if shell {
             // Claim history remains private. Relationship-scoped content cannot
             // prove its grant from an erased body. Other deletion metadata obeys
             // the same type ceiling as the short-reference hydrate door.
@@ -698,6 +762,6 @@ impl ScopedRead<'_> {
         if record.state == MemoryTimelineRecordState::Missing {
             return Ok(false);
         }
-        self.history_row_readable_in(txn, policy, filter, &record.id, &raw)
+        self.history_row_readable_in(txn, policy, filter, &record.id, &raw, held)
     }
 }
