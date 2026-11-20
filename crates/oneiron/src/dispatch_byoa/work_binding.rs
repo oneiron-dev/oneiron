@@ -36,6 +36,7 @@ use super::error::ByoaResult;
 use super::exhaust::{
     ByoaEgressPort, ByoaTerminalDisposition, ByoaTerminalReceipt, decode_byoa_record,
 };
+use super::official_seats::OfficialSeatStamp;
 use super::provider::ProviderAdapterRegistry;
 use super::record::{append_record_in_txn, head_record};
 use super::repo_binding::{ByoaRepoBinding, repo_stale_lease_reason};
@@ -466,33 +467,57 @@ pub(super) fn note_next_hop_in_txn(
     )
 }
 
+/// Where a seat search over `policy` from `request.choice` lands, read in
+/// `rtxn` with no write: the seat [`ByoaDispatcher::bind_runner_work_in_txn`]
+/// would take, or why no seat takes the work. A read-only door answers it
+/// without binding; the bind dispatches where it lands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum RunnerSeatSearch {
+    /// The first seat that takes the work: its index, its connector with
+    /// the work's staged input carried (boxed: a connector outweighs every
+    /// other answer), its adapter's placement context, and the work's
+    /// original request record, when its first seat drops the task and a
+    /// staged job holds it.
+    Found {
+        seat: usize,
+        connector: Box<ByoaConnectorSpec>,
+        context: Option<OfficialSeatStamp>,
+        task_source: Option<RunnerTaskSource>,
+    },
+    /// No seat this runtime may run is left: each one tried is named with
+    /// why.
+    NoSeat { skipped: Vec<SkippedRunnerSeat> },
+    /// Every seat this runtime may run is spent. `back_at` is the first time
+    /// one is back; none waits for the owner. Each seat passed over is named
+    /// with why.
+    Exhausted {
+        back_at: Option<u64>,
+        skipped: Vec<SkippedRunnerSeat>,
+    },
+}
+
 impl<B, E> ByoaDispatcher<'_, B, E>
 where
     B: ByoEndpointBackendFactory,
     E: ByoaEgressPort,
 {
-    /// Binds one step of a Dreamer attempt to a runner seat and dispatches
-    /// it there, in the caller's writer `wtxn` (OF-137). The first attempt
-    /// is a child of the Dreamer attempt; the binding and its first hop are
-    /// written in the same writer, so a park and resume of the parent finds
-    /// them again, and a second bind of the same parent and step returns
-    /// where the work stands without dispatching again. With
-    /// [`RunnerSeatChoice::NextSeat`] a seat a hosted-only bound keeps off
-    /// this runtime is passed over and named, a spent seat is passed over
-    /// and named until it is back (FIX 7453), and so is a CLI seat whose
-    /// argv cannot carry the task (FIX 7505).
+    /// Searches `policy` from `request.choice` for the seat that would take
+    /// the work, read in `rtxn` with no write. The bind's own search, moved
+    /// whole: the same policy and seat checks, the same quota read for an
+    /// ordered search, the same ordered loop with the same Spent, CLI argv
+    /// shape and hosted passes, and the same first passing seat.
     ///
     /// # Errors
     ///
     /// Refuses an invalid policy or seat index, an unknown runner, and every
-    /// refusal a dispatch has.
-    pub fn bind_runner_work_in_txn(
+    /// refusal a connector check has.
+    pub(super) fn search_runner_seat_in_txn(
         &self,
-        wtxn: &mut heed::RwTxn<'_>,
+        rtxn: &heed::RoTxn<'_>,
         registry: &ProviderAdapterRegistry,
         policy: &RunnerSeatPolicy,
-        request: BindRunnerWork,
-    ) -> ByoaResult<RunnerWorkBound> {
+        request: &BindRunnerWork,
+    ) -> ByoaResult<RunnerSeatSearch> {
         policy.validate(registry)?;
         let (start, only) = match request.choice {
             RunnerSeatChoice::Seat(seat) => (seat, true),
@@ -500,23 +525,10 @@ where
         };
         policy.seat(start)?;
         let vault = self.vault();
-        let binding = RunnerWorkBindingId::of(request.parent_attempt_id, &request.step_key)?;
-        if let Some(head) = head_hop(vault, wtxn, binding)? {
-            let reported = seat_index(head.seat);
-            // FIX 11644: an existing bind reports the current-policy seat too;
-            // a removed identity keeps the stored index for truth.
-            let seat = remap_seat(policy, &head, reported)?.unwrap_or(reported);
-            return Ok(RunnerWorkBound::Bound {
-                binding,
-                seat,
-                attempt: AttemptId::from_bytes(&head.attempt)?,
-                existing: true,
-            });
-        }
         let quotas = if only {
             Vec::new()
         } else {
-            seat_quotas_in_txn(vault, wtxn, policy, request.now)?
+            seat_quotas_in_txn(vault, rtxn, policy, request.now)?
         };
         let mut skipped = Vec::new();
         let mut spent_seen = false;
@@ -573,54 +585,122 @@ where
                 });
                 continue;
             }
-            let outcome = self.enqueue_in_txn(
-                wtxn,
-                ByoaEnqueue {
-                    user_login: seat.logs_in(),
-                    connector,
-                    task_ref: request.task_ref.map(|task_ref| task_ref.to_hex()),
-                    parent_attempt: Some(*request.parent_attempt_id.as_bytes()),
-                    dev_refs: None,
-                    run_id: request.run_id,
-                    dedupe_key: Some(format!("{RUNNER_WORK_DEDUPE_PREFIX}{}", binding.to_hex())),
-                    now: request.now,
-                    official_seat: context,
-                    work: Some(RunnerWorkBinding {
-                        binding: *binding.as_bytes(),
-                        task_source,
-                        checkout: *request.checkout_id.as_bytes(),
-                        staged_input: request.staged_input,
-                        repo_binding: None,
-                    }),
-                },
-            )?;
-            let attempt = outcome.status().attempt.id;
-            append_hop_in_txn(
-                vault,
-                wtxn,
-                binding,
-                None,
-                &RunnerWorkHop {
-                    attempt: *attempt.as_bytes(),
-                    seat: index as u64,
-                    quota: *seat_quota_id(seat)?.as_bytes(),
-                    skipped: Vec::new(),
-                    spent: None,
-                    observed_at: request.now,
-                },
-            )?;
-            return Ok(RunnerWorkBound::Bound {
-                binding,
+            return Ok(RunnerSeatSearch::Found {
                 seat: index,
-                attempt,
-                existing: false,
+                connector: Box::new(connector),
+                context,
+                task_source,
             });
         }
         Ok(if spent_seen {
-            RunnerWorkBound::Exhausted { back_at, skipped }
+            RunnerSeatSearch::Exhausted { back_at, skipped }
         } else {
-            RunnerWorkBound::NoSeat { skipped }
+            RunnerSeatSearch::NoSeat { skipped }
         })
+    }
+
+    /// Binds one step of a Dreamer attempt to a runner seat and dispatches
+    /// it there, in the caller's writer `wtxn` (OF-137). The first attempt
+    /// is a child of the Dreamer attempt; the binding and its first hop are
+    /// written in the same writer, so a park and resume of the parent finds
+    /// them again, and a second bind of the same parent and step returns
+    /// where the work stands without dispatching again. The seat search is
+    /// [`Self::search_runner_seat_in_txn`]: with
+    /// [`RunnerSeatChoice::NextSeat`] a seat a hosted-only bound keeps off
+    /// this runtime is passed over and named, a spent seat is passed over
+    /// and named until it is back (FIX 7453), and so is a CLI seat whose
+    /// argv cannot carry the task (FIX 7505).
+    ///
+    /// # Errors
+    ///
+    /// Refuses an invalid policy or seat index, an unknown runner, and every
+    /// refusal a dispatch has.
+    pub fn bind_runner_work_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        registry: &ProviderAdapterRegistry,
+        policy: &RunnerSeatPolicy,
+        request: BindRunnerWork,
+    ) -> ByoaResult<RunnerWorkBound> {
+        policy.validate(registry)?;
+        let start = match request.choice {
+            RunnerSeatChoice::Seat(seat) => seat,
+            RunnerSeatChoice::NextSeat { from } => from,
+        };
+        policy.seat(start)?;
+        let vault = self.vault();
+        let binding = RunnerWorkBindingId::of(request.parent_attempt_id, &request.step_key)?;
+        if let Some(head) = head_hop(vault, wtxn, binding)? {
+            let reported = seat_index(head.seat);
+            // FIX 11644: an existing bind reports the current-policy seat too;
+            // a removed identity keeps the stored index for truth.
+            let seat = remap_seat(policy, &head, reported)?.unwrap_or(reported);
+            return Ok(RunnerWorkBound::Bound {
+                binding,
+                seat,
+                attempt: AttemptId::from_bytes(&head.attempt)?,
+                existing: true,
+            });
+        }
+        match self.search_runner_seat_in_txn(wtxn, registry, policy, &request)? {
+            RunnerSeatSearch::Found {
+                seat: index,
+                connector,
+                context,
+                task_source,
+            } => {
+                let seat = policy.seat(index)?;
+                let outcome = self.enqueue_in_txn(
+                    wtxn,
+                    ByoaEnqueue {
+                        user_login: seat.logs_in(),
+                        connector: *connector,
+                        task_ref: request.task_ref.map(|task_ref| task_ref.to_hex()),
+                        parent_attempt: Some(*request.parent_attempt_id.as_bytes()),
+                        dev_refs: None,
+                        run_id: request.run_id,
+                        dedupe_key: Some(format!(
+                            "{RUNNER_WORK_DEDUPE_PREFIX}{}",
+                            binding.to_hex()
+                        )),
+                        now: request.now,
+                        official_seat: context,
+                        work: Some(RunnerWorkBinding {
+                            binding: *binding.as_bytes(),
+                            task_source,
+                            checkout: *request.checkout_id.as_bytes(),
+                            staged_input: request.staged_input,
+                            repo_binding: None,
+                        }),
+                    },
+                )?;
+                let attempt = outcome.status().attempt.id;
+                append_hop_in_txn(
+                    vault,
+                    wtxn,
+                    binding,
+                    None,
+                    &RunnerWorkHop {
+                        attempt: *attempt.as_bytes(),
+                        seat: index as u64,
+                        quota: *seat_quota_id(seat)?.as_bytes(),
+                        skipped: Vec::new(),
+                        spent: None,
+                        observed_at: request.now,
+                    },
+                )?;
+                Ok(RunnerWorkBound::Bound {
+                    binding,
+                    seat: index,
+                    attempt,
+                    existing: false,
+                })
+            }
+            RunnerSeatSearch::NoSeat { skipped } => Ok(RunnerWorkBound::NoSeat { skipped }),
+            RunnerSeatSearch::Exhausted { back_at, skipped } => {
+                Ok(RunnerWorkBound::Exhausted { back_at, skipped })
+            }
+        }
     }
 }
 

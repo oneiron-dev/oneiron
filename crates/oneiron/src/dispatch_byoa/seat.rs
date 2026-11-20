@@ -264,6 +264,10 @@ pub enum SeatPassedOver {
     /// search passes a seat over for this; an explicit seat keeps its
     /// refusal.
     CliArgvShape,
+    /// A seat whose connector is not a CLI one, passed over by a continued
+    /// outside session's search (census L10-17): its hand-over job rides
+    /// only a CLI connector, and a host claims only CLI work.
+    NonCliConnector,
 }
 
 impl std::fmt::Display for SeatPassedOver {
@@ -279,6 +283,9 @@ impl std::fmt::Display for SeatPassedOver {
             ),
             Self::CliArgvShape => f.write_str(
                 "this CLI seat's argv cannot carry the work's task (a control character)",
+            ),
+            Self::NonCliConnector => f.write_str(
+                "this seat's connector is not a CLI one, and only a host's CLI runner claims a continued session's work",
             ),
         }
     }
