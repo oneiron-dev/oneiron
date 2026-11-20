@@ -429,6 +429,37 @@ describe('binding the owner with their own passkey', () => {
     ])
   })
 
+  it('answers already-bound when a binding landed between prepare and land', async () => {
+    const refusal = new OwnerRouteRefusal(
+      409,
+      BIND_LAND,
+      'a live human binding already names this owner; there is nothing to bind',
+    )
+    const replies: Record<string, unknown> = {
+      [BIND_PREPARE]: { entry: BIND_ENTRY, challenge: base64UrlEncode(CHALLENGE) },
+    }
+    Object.defineProperty(replies, BIND_LAND, {
+      enumerable: true,
+      get() {
+        throw refusal
+      },
+    })
+    const { calls, transport } = recordingTransport(replies)
+    const { requested, credentials } = fakeCredentials({})
+
+    const outcome = await bindWithOwnerPasskey(
+      { transport, credentials },
+      base64UrlEncode(RAW_ID),
+    )
+
+    assert.deepEqual(outcome, { state: 'already-bound' })
+    assert.equal(requested.length, 1)
+    assert.deepEqual(
+      calls.map((call) => call.path),
+      [BIND_PREPARE, BIND_LAND],
+    )
+  })
+
   it('rejects with any other prepare refusal', async () => {
     const refusal = new OwnerRouteRefusal(400, BIND_PREPARE, 'no live passkey')
     const { transport } = refusingPrepare(refusal)

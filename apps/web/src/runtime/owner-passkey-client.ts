@@ -346,7 +346,8 @@ const OWNER_ALREADY_BOUND_DETAIL = 'a live human binding already names this owne
  * first `human` binding: the engine prepares the binding with the passkey as
  * its one signer, the person asserts its challenge with that passkey, and the
  * engine lands it once the vault counted it. Answers `already-bound` when a
- * binding names the owner already. Other refusals and a cancelled assertion
+ * binding names the owner already, at prepare or (a binding that landed
+ * elsewhere in between) at land. Other refusals and a cancelled assertion
  * throw, and nothing is bound.
  */
 export async function bindWithOwnerPasskey(
@@ -356,15 +357,8 @@ export async function bindWithOwnerPasskey(
 ): Promise<OwnerPasskeyBindingOutcome> {
   const rawId = base64UrlDecode(credentialId)
   const prepareRoute = `${OWNER_PASSKEYS_ROUTE}/bind/prepare`
-  let answer: unknown
-  try {
-    answer = await transport('POST', prepareRoute, { credential_id: credentialId })
-  } catch (error) {
-    if (error instanceof OwnerRouteRefusal && error.detail.includes(OWNER_ALREADY_BOUND_DETAIL)) {
-      return { state: 'already-bound' }
-    }
-    throw error
-  }
+  const answer = await askUnlessBound(transport, prepareRoute, { credential_id: credentialId })
+  if (answer === ALREADY_BOUND) return { state: 'already-bound' }
   const prepared = record(answer, prepareRoute)
   const entry = text(prepared, 'entry', prepareRoute)
   const assertion = await requestAssertion(
@@ -374,16 +368,16 @@ export async function bindWithOwnerPasskey(
     signal,
   )
 
+  // A binding that landed elsewhere since prepare answers the same refusal here.
   const landRoute = `${OWNER_PASSKEYS_ROUTE}/bind/land`
-  const receipt = record(
-    await transport('POST', landRoute, {
-      entry,
-      authenticator_data: assertion.authenticatorData,
-      client_data_json: assertion.clientDataJson,
-      signature: assertion.signature,
-    }),
-    landRoute,
-  )
+  const landed = await askUnlessBound(transport, landRoute, {
+    entry,
+    authenticator_data: assertion.authenticatorData,
+    client_data_json: assertion.clientDataJson,
+    signature: assertion.signature,
+  })
+  if (landed === ALREADY_BOUND) return { state: 'already-bound' }
+  const receipt = record(landed, landRoute)
   const epoch = receipt.epoch
   if (typeof epoch !== 'number') throw malformedReply(landRoute)
   return {
@@ -394,6 +388,29 @@ export async function bindWithOwnerPasskey(
       publicKey: text(receipt, 'public_key', landRoute),
       epoch,
     },
+  }
+}
+
+/** What `askUnlessBound` answers when a live binding names the owner already. */
+const ALREADY_BOUND = Symbol('already-bound')
+
+/**
+ * `transport`'s answer to `body` at `route`, or `ALREADY_BOUND` when the
+ * engine refused it because a live `human` binding names the owner already.
+ * Every other refusal throws.
+ */
+async function askUnlessBound(
+  transport: OwnerRouteTransport,
+  route: string,
+  body: Readonly<Record<string, string>>,
+): Promise<unknown> {
+  try {
+    return await transport('POST', route, body)
+  } catch (error) {
+    if (error instanceof OwnerRouteRefusal && error.detail.includes(OWNER_ALREADY_BOUND_DETAIL)) {
+      return ALREADY_BOUND
+    }
+    throw error
   }
 }
 
