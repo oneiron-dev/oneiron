@@ -814,6 +814,10 @@ impl RecoveryBoxHold for RecordingBoxHold<'_> {
         }
         Ok(())
     }
+
+    fn report_recovery_wait(&self, _wait: std::time::Duration) -> oneiron::Result<()> {
+        Ok(())
+    }
 }
 
 /// A hold that answers `Err` may still have reached the box (a lost answer,
