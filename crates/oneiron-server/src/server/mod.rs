@@ -17,6 +17,7 @@ mod desktop_seats;
 mod device_burst_drain;
 mod embedding;
 mod hook_regen_pass;
+pub(crate) mod hook_transcript_uploads;
 mod housekeeping;
 mod leases;
 mod lifecycle;
