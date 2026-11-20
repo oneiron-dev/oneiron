@@ -465,16 +465,21 @@ fn the_actorless_import_installs_nothing_and_retains_the_grant_byte_for_byte() {
 
 /// A grant without its live grantee is held back missing_live_entity.
 ///
-/// The destination keeps a live room (preseeded, as in the first test) while its grantee is
-/// a deleted shell: deleting a person neither refuses for room membership nor erases the
-/// room. The archive carries the grant and the room but not the grantee, so the landing
-/// reaches past the live room and holds the row back for the grantee.
+/// The destination keeps a live room (preseeded and synced, as in the first test) while its
+/// grantee is a deleted shell: deleting a person neither refuses for room membership nor
+/// erases the room. The archive carries the grant and the room but not the grantee. The room
+/// body names yuki's Admin role, so the destination takes that twin through the window sync
+/// first: its room then matches the archived one byte for byte (a room body that differs is
+/// an import collision), and the landing reaches past the live room and holds the row back
+/// for the grantee.
+#[cfg(feature = "sync")]
 #[test]
 fn a_grant_without_its_live_grantee_is_held_back_missing_live_entity() {
     let (_source_dir, source) = open_source_vault();
     let (room, _owen, yuki) = build_admin_grant_room(&source, WINDOW_OCCURRED, WINDOW_LEARNED_AT);
     let (_dest_dir, dest) = open_later_vault();
     preseed_destination_room(&dest);
+    mirror_room_window_into(&source, &dest);
     install_keystore(&dest);
     assert!(
         dest.delete_entity_with_reason(&yuki, DeleteReason::UserDelete)

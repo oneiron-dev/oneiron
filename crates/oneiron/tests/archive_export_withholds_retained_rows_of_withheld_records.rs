@@ -10,9 +10,15 @@
 //!   A customer hold then refuses the first NOTE's privacy erase, which keeps it stored and
 //!   use-limited: the export carries neither that NOTE nor its receipt, and still carries the
 //!   second NOTE's receipt.
+//! * `a_whole_vault_export_withholds_a_setting_change_whose_reason_names_a_use_limited_note`:
+//!   the owner changes a vault-scope setting twice, each change's reason citing one NOTE by its
+//!   hex id, the id an erase of that NOTE finds in a change's reason and drops the change by.
+//!   After a customer hold keeps the first NOTE use-limited, the export carries no change citing
+//!   it and still carries the change citing the second NOTE (own review P1, 20 Nov).
 //!
-//! The test runs red at the base (#9446 head 1adbb2714bf), whose export checks only the rows of
-//! three room tables, and green at the fix.
+//! The first test runs red at the base (#9446 head 1adbb2714bf), whose export checks only the
+//! rows of three room tables, and green at the fix. The second runs red at 0b834f36c37, whose
+//! export reads only a setting change's scope, and green at the fix.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test archive_export_withholds_retained_rows_of_withheld_records`.
 
 #[path = "archive_import_retained_side_rows.rs"]
@@ -21,6 +27,7 @@ mod retained_side_rows;
 use oneiron::deletion::LegalHoldTarget;
 use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::note::{NoteProgramEdit, NoteVerdict};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::{EdgeActorClass, EntityId, HostingPrivacyPosture, Vault, VaultConfig, WriteActor};
 use retained_side_rows::{export_whole, owner_proof, retained_rows, rows_for};
 
@@ -165,5 +172,76 @@ fn a_whole_vault_export_withholds_the_landing_receipt_of_a_use_limited_note() {
         receipt_tuples(&archive, free_receipt),
         1,
         "the archive still carries the unrestricted NOTE's landing receipt"
+    );
+}
+
+/// Sets the vault-scope `test.owner_number` to `value` as the owner, with a reason that cites
+/// `note` by its hex id. Returns the change's sequence, its `SETTING_CHANGE` key.
+fn change_citing(vault: &Vault, value: u64, note: EntityId) -> u64 {
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(&owner_proof(vault)),
+            SetSetting {
+                why: Some(format!("as agreed in note {}", note.to_hex())),
+                ..SetSetting::vault_value("test.owner_number", serde_json::json!(value))
+            },
+        )
+        .expect("FIXTURE: the owner changes the vault setting");
+    match outcome {
+        SetSettingOutcome::Applied {
+            sequence: Some(sequence),
+            ..
+        } => sequence,
+        other => panic!("FIXTURE: the change applies with a sequence: {other:?}"),
+    }
+}
+
+/// The `SETTING_CHANGE` tuples of whole-vault `archive` keyed by `sequence`.
+fn change_tuples(archive: &[u8], sequence: u64) -> usize {
+    rows_for(&retained_rows(archive), "SETTING_CHANGE")
+        .iter()
+        .filter(|(_, key, _)| key.as_slice() == sequence.to_be_bytes().as_slice())
+        .count()
+}
+
+#[test]
+fn a_whole_vault_export_withholds_a_setting_change_whose_reason_names_a_use_limited_note() {
+    let (_dir, vault) = open_hosted_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the vault names its embedded owner actor");
+    let actor = || WriteActor::new(owner, EdgeActorClass::Human);
+    let held_note = vault
+        .create_note("research", "Meeting notes.", actor())
+        .expect("FIXTURE: the owner writes the held NOTE");
+    let free_note = vault
+        .create_note("research", "Shopping list.", actor())
+        .expect("FIXTURE: the owner writes the free NOTE");
+    let held_change = change_citing(&vault, 9, held_note);
+    let free_change = change_citing(&vault, 10, free_note);
+    let before = export_whole(&vault);
+    for sequence in [held_change, free_change] {
+        assert_eq!(
+            change_tuples(&before, sequence),
+            1,
+            "FIXTURE: before the hold the archive carries each setting change"
+        );
+    }
+
+    use_limit(&vault, held_note);
+    let archive = export_whole(&vault);
+    assert!(
+        !archive_carries(&vault, &archive, held_note),
+        "FIXTURE: the archive carries no record of the use-limited NOTE"
+    );
+    assert_eq!(
+        change_tuples(&archive, held_change),
+        0,
+        "LEAK: the archive carries no setting change whose reason cites the use-limited NOTE"
+    );
+    assert_eq!(
+        change_tuples(&archive, free_change),
+        1,
+        "the archive still carries the setting change citing the unrestricted NOTE"
     );
 }
