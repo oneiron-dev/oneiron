@@ -213,6 +213,19 @@ impl Vault {
             return Ok(None);
         };
         let grant_ref = EntityId::from_hex(grant_ref).map_err(|_| invalid_authority())?;
+        self.current_member_grant_scope_in_txn(txn, grant_ref, &claims.holder_ref)
+    }
+
+    /// The current full Scope of `holder`'s membership grant `grant_ref`, as
+    /// [`Self::current_member_slip_scope_in_txn`] reads a slip's: `None` for a
+    /// grant that is no ordinary vault membership (a Delegate's, an own
+    /// device's), refused when the grant does not stand for `holder` now.
+    pub(super) fn current_member_grant_scope_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant_ref: EntityId,
+        holder: &str,
+    ) -> Result<Option<oneiron_authority::federation::Scope>> {
         let LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_FEDERATION_GRANT,
             body,
@@ -227,7 +240,7 @@ impl Vault {
         {
             return Ok(None);
         }
-        if grant.member_ref.to_hex() != claims.holder_ref
+        if grant.member_ref.to_hex() != holder
             || super::grant_known_withdrawn_in_txn(&self.store, txn, grant_ref)
             || WITHDRAWN.get(&self.store, txn, &grant_ref)?.is_some()
             || !grant.confers_at(self.instant_in_txn(txn)?.secs())
