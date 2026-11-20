@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 // A weave Admin's wrong labels, filed under its proof (OF-499 A3).
 mod admin;
 mod item_key;
-pub(super) use item_key::WeaveItemKey;
+pub(crate) use item_key::WeaveItemKey;
 
 /// Wrong-link labels, keyed by the link's edge ref, then the label's receipt id.
 const LABELS: SideTable<([u8; EDGE_REF_LEN], EntityId), StoredCorrection, Named> =
@@ -546,8 +546,6 @@ impl crate::Vault {
         Ok(labels)
     }
 }
-// FIX [LIBTEST-QUARANTINE-CLAIM-SCOPED-READ-WEAVE-CORRECTION-TESTS]: the lib test target's type check fails here (3 errors: E0063 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -850,21 +848,35 @@ mod tests {
             1,
             b"person",
         )?;
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault.put_entity(
+            &space,
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )?;
         vault
             .memory(person, crate::EdgeActorClass::Human)
             .witness(&crate::memory::WitnessTurn {
                 conversation_ref: entity(0xc4).to_hex(),
                 turn_ref: None,
+                thread_audience: None,
+                project: None,
                 occurred_at: 1_000,
                 messages: vec![crate::memory::WitnessMessage {
                     id: Some(message.to_hex()),
                     author: crate::memory::WitnessAuthor::User,
                     message_type: "dialogue".into(),
                     content: "grant-bound message".into(),
+                    parts: None,
                     metadata: Some(serde_json::json!({"rel": space.to_hex()})),
                     is_visible: true,
                     order: 0,
+                    quote: None,
                 }],
+                assertions: Default::default(),
             })
             .expect("witness message");
         vault.put_edge(&person, EdgeKind::Mentions, &message, 0.5)?;
@@ -879,6 +891,7 @@ mod tests {
                 created_at: 1_000,
                 revoked_at: None,
                 expires_at: Some(2_000),
+                companion_bounds: None,
             },
         )?;
         crate::test_util::authorize_readers(&vault, &[&person.to_hex()]);

@@ -115,6 +115,7 @@ async fn run_constraint_turn_in(
         visitor_tz: input.visitor_tz.clone(),
         constraint: Some(BookingConstraintInput::FreeText(input.free_text.clone())),
         session_ref: input.session_ref.clone(),
+        duration_min: None,
     });
     public_availability::validate_public_request(&authority.publication, &listing)?;
     validate_operation_shape(&listing, transport.credential.is_none())?;
@@ -290,6 +291,7 @@ impl SlotOracle for PublicSlotOracle<'_> {
             slots: mask.slots,
             flex_used: mask.flex_used,
             host_bindings: Vec::new(),
+            full_days: mask.full_days,
         })
     }
 }

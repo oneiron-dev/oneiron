@@ -68,7 +68,7 @@ impl RowStates for Resumed<'_> {
             let required = merged
                 .actor_revocation_hashes
                 .get(key)
-                .cloned()
+                .map(|hashes| hashes.to_btree_set())
                 .unwrap_or_default();
             let unchanged = self.fold.actor_bindings.get(key).is_some_and(|old| {
                 old.status == ActorBindingStatus::Active

@@ -1,17 +1,30 @@
 //! The native Dreamer attempt binding (untangle 6.9c, RULING S69C-DESIGN
 //! item 5): the in-process credential a host's job client calls under while
-//! one admitted strength attempt holds its lease.
+//! one admitted strength, conflict-settlement, extraction or psych profile
+//! attempt holds its lease.
 //!
 //! Only the engine mints one, from the admitted attempt: it keeps the
 //! attempt's lease (owner and generation), the authority stamp the engine
 //! recorded for the attempt at enqueue, and the attempt's run. Every call
 //! proves again, in the transaction it reads or writes in, that the lease
-//! still holds, the attempt is still that strength job under that stamp, and
+//! still holds, the attempt is still that facet's job under that stamp, and
 //! the Dreamer's Steward read reach and MACHINE binding are live. A binding
 //! is never serialized or cloned, and no call it makes succeeds once the
 //! lease ends, even while the object lives on.
 
+mod decisions;
+mod extraction_decisions;
+mod extraction_evidence;
+mod extraction_execution;
+mod extraction_step_inputs;
+mod extraction_steps;
 mod invocation;
+mod psych_profile_steps;
+
+pub use decisions::DreamerDecisionLender;
+pub use extraction_execution::ExtractionDecisionLoan;
+pub use extraction_steps::{ExtractionStepLoan, ExtractionStepRequest};
+pub use psych_profile_steps::{PsychProfileStepLoan, PsychProfileStepRequest};
 
 use std::fmt;
 use std::sync::Arc;
@@ -25,13 +38,30 @@ use crate::edge::EdgeActorClass;
 use crate::federation::{grant_scope, steward_reach_in};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_LEASE_REQUIRED, MemoryError, MemoryResult};
 use crate::write_envelope::{SourceLineage, WriteActor};
-use crate::{Result, Vault};
+use crate::{EntityId, Result, Vault};
 
 use super::authority::{DreamerAuthorityStamp, dreamer_facet_for_job_type};
-use super::maintenance::{CONSOLIDATION_STRENGTH_FACET, MAINTENANCE_QUEUE_KIND};
-use super::{DreamerAdmittedAttempt, decode_dreamer_attempt_payload};
+use super::maintenance::psych_profile::psych_profile_key_of_input;
+use super::maintenance::{
+    CONFLICT_SETTLE_FACET, CONSOLIDATION_STRENGTH_FACET, MAINTENANCE_QUEUE_KIND,
+    PSYCH_PROFILE_FACET,
+};
+use super::{DreamerAdmittedAttempt, DreamerConsolidationScope, decode_dreamer_attempt_payload};
+use crate::psych_profile::PsychProfileKey;
 
-/// One admitted strength attempt's live delegation, as the engine minted it.
+/// The operations one admitted Dreamer job may call through its binding.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BoundFacet {
+    Strength,
+    ConflictSettle,
+    /// The consolidation extraction job reads inputs and verdicts and runs bound generation steps.
+    Extraction,
+    /// One Psych Mirror profile job reads its key's ranked claims, runs one
+    /// bound generation step over them and commits PsychProfile items only.
+    PsychProfile,
+}
+
+/// One admitted Dreamer attempt's live delegation, as the engine minted it.
 /// It names identities only; the grant, scope and lease are read live at
 /// each call.
 pub struct DreamerAttemptBinding {
@@ -43,6 +73,13 @@ pub struct DreamerAttemptBinding {
     stamp: DreamerAuthorityStamp,
     /// The attempt's recorded run.
     run: Option<String>,
+    /// The job facet the binding was minted for.
+    facet: BoundFacet,
+    /// The profile key a psych profile attempt's input names; none for
+    /// another facet.
+    profile: Option<PsychProfileKey>,
+    /// The host's decision ladder, lent only when the host supplies one.
+    lender: Option<Arc<dyn DreamerDecisionLender>>,
 }
 
 /// Prints the attempt only: the binding is a credential.
@@ -58,12 +95,13 @@ impl fmt::Debug for DreamerAttemptBinding {
 
 impl Vault {
     /// Mints the binding a host's job client calls under for `admitted`, a
-    /// strength attempt this vault admitted and whose lease still holds.
+    /// strength, conflict-settlement, extraction or psych profile attempt
+    /// this vault admitted and whose lease still holds.
     ///
     /// # Errors
     ///
     /// `LEASE_REQUIRED` when the attempt's lease no longer holds;
-    /// `FORBIDDEN` when it is not a strength attempt under the Dreamer's
+    /// `FORBIDDEN` when it is not an admitted facet under the Dreamer's
     /// recorded stamp, or the Dreamer has no live Steward read reach or
     /// MACHINE binding; storage errors.
     pub fn bind_dreamer_attempt(
@@ -72,22 +110,32 @@ impl Vault {
     ) -> MemoryResult<DreamerAttemptBinding> {
         let record = &admitted.status.attempt;
         let lease = BorrowedAttemptLease::of(record).ok_or_else(lease_ended)?;
-        if !is_strength_attempt(record)? {
-            return Err(facet_refused());
-        }
+        let facet = bound_facet_for_attempt(record)?.ok_or_else(authority_moved)?;
+        let job_type = match facet {
+            BoundFacet::Strength => CONSOLIDATION_STRENGTH_FACET.to_owned(),
+            BoundFacet::ConflictSettle => CONFLICT_SETTLE_FACET.to_owned(),
+            BoundFacet::Extraction => decode_dreamer_attempt_payload(&record.payload)?.attempt_type,
+            BoundFacet::PsychProfile => PSYCH_PROFILE_FACET.to_owned(),
+        };
+        let profile = match facet {
+            BoundFacet::PsychProfile => Some(psych_profile_key_of_input(
+                &decode_dreamer_attempt_payload(&record.payload)?.input,
+            )?),
+            _ => None,
+        };
         let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
         let stamp = self
             .dreamer_attempt_authority_in_txn(&txn, record.id)?
-            .filter(|stamp| {
-                Some(stamp.facet.as_str())
-                    == dreamer_facet_for_job_type(CONSOLIDATION_STRENGTH_FACET)
-            })
+            .filter(|stamp| Some(stamp.facet.as_str()) == dreamer_facet_for_job_type(&job_type))
             .ok_or_else(authority_moved)?;
         let binding = DreamerAttemptBinding {
             vault: Arc::clone(self),
             lease,
             stamp,
             run: record.run_id.clone(),
+            facet,
+            profile,
+            lender: None,
         };
         binding.check_in_txn(&txn)?;
         Ok(binding)
@@ -95,6 +143,13 @@ impl Vault {
 }
 
 impl DreamerAttemptBinding {
+    /// Lends the host's decision ladder and learned bands to this attempt.
+    #[must_use]
+    pub fn lend_decisions(mut self, lender: Arc<dyn DreamerDecisionLender>) -> Self {
+        self.lender = Some(lender);
+        self
+    }
+
     /// The vault the binding acts on.
     #[must_use]
     pub fn vault(&self) -> &Arc<Vault> {
@@ -107,8 +162,21 @@ impl DreamerAttemptBinding {
         WriteActor::new(self.stamp.actor, EdgeActorClass::System)
     }
 
+    /// The profile key a psych profile binding's attempt names; `None` for
+    /// every other facet.
+    #[must_use]
+    pub(crate) fn psych_profile_key(&self) -> Option<PsychProfileKey> {
+        self.profile
+    }
+
+    /// The attempt this binding was minted for, as its entity id.
+    #[must_use]
+    pub(crate) fn attempt(&self) -> EntityId {
+        EntityId::from_bytes_unchecked(*self.lease.attempt().as_bytes())
+    }
+
     /// Proves the binding in `txn`: the lease holds at its owner and
-    /// generation, the attempt is still this strength job in this run under
+    /// generation, the attempt is still this facet's job in this run under
     /// this stamp, a standing Steward reach names `read`, and the Dreamer's
     /// MACHINE binding is live. No standing reach is no reach here: the
     /// manifest fallback of an unbound base agent never stands in.
@@ -121,7 +189,7 @@ impl DreamerAttemptBinding {
         let record = queue
             .get_in_txn(txn, self.lease.attempt())?
             .ok_or_else(lease_ended)?;
-        if !is_strength_attempt(&record)? || record.run_id != self.run {
+        if bound_facet_for_attempt(&record)? != Some(self.facet) || record.run_id != self.run {
             return Err(authority_moved());
         }
         if vault
@@ -162,12 +230,24 @@ impl DreamerAttemptBinding {
         self.check_in_txn(&txn)
     }
 
-    /// Commits `input`, Archive items only, as the Dreamer in this attempt
-    /// and run, in one writer that proves the binding before the batch
-    /// stages. A refused binding writes nothing: no batch, receipt or
-    /// archive.
+    /// Commits `input` as the Dreamer in this attempt and run, admitting
+    /// Archive items for strength, Settle items for conflict settlement,
+    /// PsychProfile items of the attempt's own key for a psych profile and
+    /// no item for extraction. One writer proves the binding before the batch
+    /// stages. A refused binding writes no batch, receipt, archive,
+    /// settlement or profile.
     fn commit(&self, input: DeriveCommitInput) -> MemoryResult<DeriveCommitView> {
-        let batch = strength_batch(input)?;
+        let batch = facet_batch(input, self.facet)?;
+        if let Some(key) = self.profile
+            && !batch.items.iter().all(|item| {
+                matches!(item, DerivationItem::PsychProfile(profile)
+                    if profile.profile.subject_ref == key.person
+                        && profile.facet == key.facet
+                        && profile.world == key.world)
+            })
+        {
+            return Err(facet_refused(self.facet));
+        }
         let stamp = DerivationStamp {
             actor: self.actor(),
             run: self.run.clone(),
@@ -184,25 +264,53 @@ impl DreamerAttemptBinding {
     }
 }
 
-/// Whether `record` is a strength job on the maintenance lane.
-fn is_strength_attempt(record: &AttemptRecord) -> Result<bool> {
-    Ok(record.kind == MAINTENANCE_QUEUE_KIND
-        && decode_dreamer_attempt_payload(&record.payload)?.attempt_type
-            == CONSOLIDATION_STRENGTH_FACET)
+/// The admitted facet of `record`, if it is a bound Dreamer job.
+fn bound_facet_for_attempt(record: &AttemptRecord) -> Result<Option<BoundFacet>> {
+    let scopes = [
+        DreamerConsolidationScope::Micro,
+        DreamerConsolidationScope::Meso,
+        DreamerConsolidationScope::Macro,
+    ];
+    if record.kind != MAINTENANCE_QUEUE_KIND
+        && !scopes
+            .iter()
+            .any(|scope| record.kind == scope.attempt_kind())
+    {
+        return Ok(None);
+    }
+    let attempt_type = decode_dreamer_attempt_payload(&record.payload)?.attempt_type;
+    if record.kind == MAINTENANCE_QUEUE_KIND {
+        return Ok(match attempt_type.as_str() {
+            CONSOLIDATION_STRENGTH_FACET => Some(BoundFacet::Strength),
+            CONFLICT_SETTLE_FACET => Some(BoundFacet::ConflictSettle),
+            PSYCH_PROFILE_FACET => Some(BoundFacet::PsychProfile),
+            _ => None,
+        });
+    }
+    Ok(scopes
+        .iter()
+        .any(|scope| record.kind == scope.attempt_kind() && attempt_type == scope.as_str())
+        .then_some(BoundFacet::Extraction))
 }
 
-/// The engine batch of `input`, which the strength facet admits only when
-/// every item is an Archive.
-fn strength_batch(input: DeriveCommitInput) -> MemoryResult<DerivationBatch> {
+/// The engine batch of `input`, admitted only when every item belongs to
+/// the bound facet. The extraction facet admits no item.
+fn facet_batch(input: DeriveCommitInput, facet: BoundFacet) -> MemoryResult<DerivationBatch> {
+    if facet == BoundFacet::Extraction {
+        return Err(facet_refused(facet));
+    }
     let batch = input.into_batch()?;
-    if batch
-        .items
-        .iter()
-        .all(|item| matches!(item, DerivationItem::Archive(_)))
-    {
+    if batch.items.iter().all(|item| {
+        matches!(
+            (facet, item),
+            (BoundFacet::Strength, DerivationItem::Archive(_))
+                | (BoundFacet::ConflictSettle, DerivationItem::Settle(_))
+                | (BoundFacet::PsychProfile, DerivationItem::PsychProfile(_))
+        )
+    }) {
         Ok(batch)
     } else {
-        Err(facet_refused())
+        Err(facet_refused(facet))
     }
 }
 
@@ -222,10 +330,24 @@ fn authority_moved() -> MemoryError {
     )
 }
 
-fn facet_refused() -> MemoryError {
-    MemoryError::new(
-        MEMORY_CODE_FORBIDDEN,
-        "the Dreamer strength facet does not admit this operation",
-        &["A strength attempt reads its observations page and commits Archive items only."],
-    )
+fn facet_refused(facet: BoundFacet) -> MemoryError {
+    let (message, hint) = match facet {
+        BoundFacet::Strength => (
+            "the Dreamer strength facet does not admit this operation",
+            "A strength attempt reads its observations page and commits Archive items only.",
+        ),
+        BoundFacet::ConflictSettle => (
+            "the Dreamer conflict settlement facet does not admit this operation",
+            "A conflict settlement attempt pages conflicts, asks ai.verdict and commits Settle items only.",
+        ),
+        BoundFacet::Extraction => (
+            "the Dreamer extraction facet does not admit this operation",
+            "An extraction attempt reads its inputs page, evidence spans and checked ai.verdict packs, and commits nothing.",
+        ),
+        BoundFacet::PsychProfile => (
+            "the Dreamer psych profile facet does not admit this operation",
+            "A psych profile attempt reads its key's sources page, runs one bound ai.steps.submit, reads that step's ai.steps.receipt, and commits PsychProfile items of its own key only.",
+        ),
+    };
+    MemoryError::new(MEMORY_CODE_FORBIDDEN, message, &[hint])
 }

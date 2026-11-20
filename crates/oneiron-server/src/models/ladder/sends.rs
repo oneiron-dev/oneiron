@@ -188,6 +188,15 @@ impl OfferLadder {
             context
         });
         loop {
+            // The caller's deadline is judged again right before the rung
+            // goes out: the wait for the worker's lease, or for the stream's
+            // first poll, may have outlasted it. Its permit settles unsent,
+            // so no reservation is kept as spend (review round 2 of #7831).
+            if context.deadline.expired() {
+                settle_failed(permit);
+                let _ = events.send(Err(CallDeadline::expiry())).await;
+                return Flow::Ended;
+            }
             let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
             let warmth = cache_warmth::Sending::of(&self.rests, &rung, &call);
             let ended = match gate.stream(call, permit.lease()) {

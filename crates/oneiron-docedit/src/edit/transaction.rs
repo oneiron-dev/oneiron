@@ -60,15 +60,7 @@ impl Digest {
         if text.len() != 64 {
             return None;
         }
-        let mut out = [0u8; 32];
-        for (index, byte) in out.iter_mut().enumerate() {
-            let pair = text.get(index * 2..index * 2 + 2)?;
-            if pair.bytes().any(|c| c.is_ascii_uppercase()) {
-                return None;
-            }
-            *byte = u8::from_str_radix(pair, 16).ok()?;
-        }
-        Some(Self(out))
+        oneiron_hex::decode(text).map(Self)
     }
 }
 

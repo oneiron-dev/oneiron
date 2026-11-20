@@ -16,7 +16,12 @@ fn test_vault_with_clock(clock: crate::ports::StoreClock) -> (tempfile::TempDir,
     cfg.map_size = 16 * 1024 * 1024;
     cfg.dimensions = 4;
     cfg.embedding_model = None;
-    open_test_vault_with(cfg)
+    let (tmp, vault) = open_test_vault_with(cfg);
+    // These tests cover surface-event routing, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
+    (tmp, vault)
 }
 
 fn subject_owner(vault: &Vault) -> Result<crate::write_envelope::WriteActor> {

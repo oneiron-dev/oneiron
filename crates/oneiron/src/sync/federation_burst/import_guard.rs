@@ -1,5 +1,5 @@
 //! Revalidate the retained batch and its acting proof in every import writer.
-use super::{FederationBurstWorkState, FederationPeer, ledger};
+use super::{BurstPeer, FederationBurstWorkState, FederationPeer, ledger};
 use crate::{Result, Vault};
 use std::cell::RefCell;
 
@@ -54,8 +54,13 @@ pub(crate) fn check_active_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Resul
                     "federation batch authority changed during import".into(),
                 ));
             }
-            if ledger::load(vault, txn, &import.peer, &import.batch)?
-                .is_none_or(|row| row.state != FederationBurstWorkState::Pending)
+            if ledger::load(
+                vault,
+                txn,
+                BurstPeer::Federated(&import.peer),
+                &import.batch,
+            )?
+            .is_none_or(|row| row.state != FederationBurstWorkState::Pending)
             {
                 return Err(crate::Error::InvalidConfig(
                     "federation batch is no longer pending".into(),

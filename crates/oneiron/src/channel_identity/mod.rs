@@ -36,6 +36,8 @@ mod actors;
 use oneiron_authority::channel_address as address;
 mod alias;
 mod assignment;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::assignment::index_key_for_test as assignment_index_key_for_test;
 mod auth_mode;
 mod binding;
 mod codec;
@@ -90,7 +92,8 @@ pub use self::transition::DelegatedProvisionRequest;
 
 pub(crate) use self::assignment::{
     AssignmentRekeys, clear_assignment_for_delete, close_claim_heads_for_delete_in_txn,
-    maintain_assignment_put, note_claim_delete_for_rekey, note_claim_put_for_rekey,
+    guard_generic_claim_put_in_txn, maintain_assignment_put, note_claim_delete_for_rekey,
+    note_claim_put_for_rekey,
 };
 #[cfg(test)]
 use self::codec::validate_channel_identity_body_bytes;

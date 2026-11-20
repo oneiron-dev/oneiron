@@ -133,6 +133,26 @@ async fn list(server: &Arc<SyncServer>, path: &str) -> Value {
     value
 }
 
+/// Every text part of every message in a fake-seen request body, in order: a
+/// message's content may be one string or a list of parts.
+fn seen_texts(request: &Value) -> Vec<String> {
+    let mut texts = Vec::new();
+    if let Some(messages) = request["messages"].as_array() {
+        for message in messages {
+            if let Some(text) = message["content"].as_str() {
+                texts.push(text.to_owned());
+            } else if let Some(parts) = message["content"].as_array() {
+                for part in parts {
+                    if let Some(text) = part["text"].as_str() {
+                        texts.push(text.to_owned());
+                    }
+                }
+            }
+        }
+    }
+    texts
+}
+
 #[tokio::test]
 async fn dag_routes_roundtrip_trunk_thread_fork_scope_migration_and_auth() {
     let (_dir, server, actor) = setup();
@@ -308,10 +328,20 @@ async fn dag_addressing_route_validates_recipients_without_limiting_listing() {
 
 #[tokio::test]
 async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply() {
-    let reply = Reply::Text {
-        text: "the Dreamer's summary".to_owned(),
-        model: "test-model".to_owned(),
-    };
+    // A route-declared scope summary is no sitting: it answers the typed
+    // text/keep contract (OF-028); the FIX 7509 lines contract is a sitting's
+    // only. Anything else on this one-model fake (a Micro round's extraction)
+    // is answered with no candidates.
+    let reply = Reply::Computed(Arc::new(move |request: &Value| {
+        let texts = seen_texts(request);
+        if !texts
+            .iter()
+            .any(|text| text.contains("Summarize these records."))
+        {
+            return json!({"candidates": []}).to_string();
+        }
+        json!({"text": "the Dreamer's summary", "keep": ""}).to_string()
+    }));
     let fake = FakeLlm::start(vec![], Some(reply)).await;
     let (_dir, server, actor, host) = setup_with_dreamer(&fake).await;
     let conv = post(
@@ -549,12 +579,14 @@ async fn a_facade_witness_turn_wakes_the_dreamer() {
         &key,
         json_request("POST", "/v1/core/facade/vault.witness", later_turn(&server)),
     );
-    let response = crate::build_app(Arc::clone(&server))
-        .oneshot(request)
-        .await
-        .unwrap();
-    let status = response.status();
-    let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+    let app = crate::build_app(Arc::clone(&server));
+    let (status, body) = crate::test_engine_stack::on_engine_stack(async move {
+        let response = app.oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        (status, body)
+    })
+    .await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
     assert!(
         eventually(Duration::from_secs(30), || read_by_a_round(
@@ -675,7 +707,9 @@ async fn a_summary_declaration_without_a_dreamer_is_refused() {
         json!({"advance": true, "body": {"txt": "root"}, "actor": actor}),
     )
     .await;
-    let request = json!({"scope": {"path": {"branch_span": {"after": root["id"], "through": root["id"]}}}, "actor": actor});
+    // The scope must resolve before the declaration reaches the writer gate
+    // (FIX 2951); an empty branch span is refused as a misshapen scope.
+    let request = json!({"scope": {"path": "canonical"}, "actor": actor});
     let (status, body) = route_json(
         server.clone(),
         json_request("POST", &format!("{path}/summaries"), request),
@@ -776,18 +810,22 @@ async fn records_thread_and_canonical_share_the_typed_dag() {
     let canonical = get(&server, &format!("{path}/canonical")).await;
     assert_eq!(canonical["records"], json!([root["id"]]));
     for uri in [format!("{path}/dag"), format!("{path}/dag/records")] {
-        let response = api_routes(server.clone())
-            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        let app = api_routes(server.clone());
+        let status = crate::test_engine_stack::on_engine_stack(async move {
+            app.oneshot(request).await.unwrap().status()
+        })
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 }
 
 #[tokio::test]
 async fn thread_meta_and_summary_routes_roundtrip() {
+    // Thread and canonical summaries answer in the typed text/keep contract
+    // (OF-028): the body the test reads back is the reply's text.
     let reply = Reply::Text {
-        text: "thread summary".to_owned(),
+        text: json!({"text": "thread summary", "keep": ""}).to_string(),
         model: "test-model".to_owned(),
     };
     let fake = FakeLlm::start(vec![], Some(reply)).await;
@@ -1189,8 +1227,10 @@ async fn room_with_only_deleted_childof_turns_lists_after_dag_migration() {
         ),
     )
     .await;
-    assert!(dag["head"].is_null());
-    assert_eq!(dag["main_line"], json!([]));
+    // The whole page is printed: what the head names decides whether a
+    // deleted shell is read as the head (round-4 R11, still red).
+    assert!(dag["head"].is_null(), "{dag}");
+    assert_eq!(dag["main_line"], json!([]), "{dag}");
     let list = list(&server, "/v1/core/conversations?limit=20").await;
     let rows = list["items"].as_array().unwrap();
     assert!(
@@ -1208,8 +1248,10 @@ async fn room_with_only_deleted_childof_turns_lists_after_dag_migration() {
 /// not that reply (review repros).
 #[tokio::test]
 async fn a_second_canonical_summary_never_reads_the_first_summarys_reply() {
+    // Canonical summaries answer in the typed text/keep contract (OF-028):
+    // the body the test reads back is the reply's text.
     let reply = Reply::Text {
-        text: "summary prose one".to_owned(),
+        text: json!({"text": "summary prose one", "keep": ""}).to_string(),
         model: "test-model".to_owned(),
     };
     let fake = FakeLlm::start(vec![], Some(reply)).await;
@@ -1306,12 +1348,52 @@ async fn a_second_canonical_summary_never_reads_the_first_summarys_reply() {
 async fn the_dreamers_extraction_and_narrative_roles_call_their_own_providers_under_their_own_runs()
 {
     use oneiron::llm::run_admission::{MemoryReceipts, RunEvent};
+    // Extraction-role work is two shapes now (FIX 7510): a Micro round's
+    // extraction, and the sieve follower's batched readings over the spans
+    // its question lists. Each answers in its own contract.
     let extractor = FakeLlm::start(
         vec![],
-        Some(Reply::text(json!({"candidates": []}).to_string())),
+        Some(Reply::Computed(Arc::new(move |request: &Value| {
+            let texts = seen_texts(request);
+            if texts
+                .first()
+                .is_some_and(|text| text.starts_with("Extract durable memory claims"))
+            {
+                return json!({"candidates": []}).to_string();
+            }
+            // The follower's question is the last part that parses as one:
+            // every span it lists is read back, unlinked, as its own kind.
+            let mut readings = Vec::new();
+            for text in texts.iter().rev() {
+                let Ok(question) = serde_json::from_str::<Value>(text) else {
+                    continue;
+                };
+                let Some(spans) = question.get("spans").and_then(Value::as_array) else {
+                    continue;
+                };
+                for span in spans {
+                    readings.push(json!({
+                        "span": span.get("span").cloned().unwrap_or(Value::Null),
+                        "kind": span.get("kind").cloned().unwrap_or(Value::Null),
+                        "novel": span.get("novel").and_then(Value::as_bool).unwrap_or(false),
+                        "confidence": span.get("confidence").cloned().unwrap_or(Value::Null),
+                        "entity": Value::Null,
+                    }));
+                }
+                break;
+            }
+            json!({"readings": readings}).to_string()
+        }))),
     )
     .await;
-    let narrator = FakeLlm::start(vec![], Some(Reply::text("thread summary"))).await;
+    // Thread summaries answer in the typed text/keep contract (OF-028).
+    let narrator = FakeLlm::start(
+        vec![],
+        Some(Reply::text(
+            json!({"text": "thread summary", "keep": ""}).to_string(),
+        )),
+    )
+    .await;
     let (_dir, vault) = rooted_vault();
     route_extraction(&vault);
     let models = crate::ai_host::test_support::models_toml(&format!(
@@ -1378,23 +1460,35 @@ summary_prompt = "Summarize these records."
     .await;
     let (summary, _) = dreamt_summary(&server, &root["id"]).await;
     assert_dreamer_body(&server, &summary, "thread summary");
+    let opens_with = |seen: &crate::fake_llm::Seen, prompt: &str| {
+        seen_texts(&seen.body)
+            .first()
+            .is_some_and(|text| text.starts_with(prompt))
+    };
+    let extraction =
+        |seen: &crate::fake_llm::Seen| opens_with(seen, "Extract durable memory claims");
+    // The sieve follower's batched reading (FIX 7510) quotes the turn too,
+    // and it can come before the Micro round's extraction: wait for the
+    // extraction call itself, not for any request naming "Osaka".
     assert!(
-        eventually(Duration::from_secs(30), || read_by_a_round(
-            &extractor, "Osaka"
-        ))
+        eventually(Duration::from_secs(30), || extractor
+            .seen()
+            .iter()
+            .any(extraction))
         .await,
-        "no Micro round read the turn"
+        "no Micro round extracted the turn"
     );
     host.shutdown().await;
 
-    let extraction = |seen: &crate::fake_llm::Seen| {
-        seen.body["messages"][0]["content"]
-            .as_str()
-            .is_some_and(|text| text.starts_with("Extract durable memory claims"))
+    // Both extraction-role shapes (FIX 7510) go to the extraction provider,
+    // and neither reaches the narrator's.
+    let extraction_role = |seen: &crate::fake_llm::Seen| {
+        extraction(seen) || opens_with(seen, "You follow one append-only log")
     };
-    assert!(extractor.seen().iter().all(extraction));
+    assert!(extractor.seen().iter().any(extraction));
+    assert!(extractor.seen().iter().all(extraction_role));
     assert!(!narrator.seen().is_empty());
-    assert!(!narrator.seen().iter().any(extraction));
+    assert!(!narrator.seen().iter().any(extraction_role));
     let rows = receipts.rows();
     for (run, fake) in [
         ("dreamer-pass/extraction_teacher", &extractor),

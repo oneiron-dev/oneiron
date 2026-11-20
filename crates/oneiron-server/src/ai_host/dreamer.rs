@@ -16,13 +16,13 @@ use std::time::{Duration, Instant};
 use oneiron::ModelId;
 use oneiron::agent_def::DreamingMode;
 use oneiron::dreamer_consolidation::{
-    CONFLICT_SETTLE_DIAL, ConflictSettleDecisions, DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE,
-    DREAMER_ROLES, ResidentDreamModel, RoleBackend, RoleBackends, SourcedBackend,
-    TASK_REALIZE_UNLENT_PARK_REASON, WEAVE_LENS_UNLENT_PARK_REASON, resident_of_dream_input,
-    run_resident_dream, settle_parked_conflicts_while,
+    DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, ResidentDreamModel,
+    RoleBackend, RoleBackends, SourcedBackend, TASK_REALIZE_UNLENT_PARK_REASON,
+    WEAVE_LENS_UNLENT_PARK_REASON, resident_of_dream_input, run_resident_dream,
 };
 use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
+use oneiron::dreamer_runner::maintenance::psych_profile;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::llm::{HostInferenceContext, WorkCancel, WorkClass, WorkContext};
@@ -34,10 +34,10 @@ use oneiron::{
     WakeAttemptContext, WakePassDeadline, WriteActor,
 };
 use oneiron_driver::{
-    AttachedPassFuture, AttemptQueueDeadlines, ConsolidationExecutorFactory, HintPusher,
-    HybridTick, IdleSample, PassAttachment, PassExecutorFactory, ProgramExecutorFactory, PushTick,
-    SessionLifecycleConfig, SessionLifecycleDriver, SessionTicks, ShutdownHandle,
-    SkillOptimizerLoan, TimerTick, WakePassFuture, WakePolicyTicks, WakeSupervisor,
+    AttachedPassFuture, AttemptQueueDeadlines, ConflictSettleCursor, ConsolidationExecutorFactory,
+    HintPusher, HybridTick, IdleSample, PassAttachment, PassExecutorFactory,
+    ProgramExecutorFactory, PushTick, SessionLifecycleConfig, SessionLifecycleDriver, SessionTicks,
+    ShutdownHandle, SkillOptimizerLoan, TimerTick, WakePassFuture, WakePolicyTicks, WakeSupervisor,
     WakeSupervisorConfig, WakeSupervisorReport,
 };
 
@@ -47,6 +47,7 @@ mod claim_authoring;
 mod claim_source_recheck;
 mod compaction_check;
 mod destination_bound;
+mod extraction_decisions;
 mod free_time;
 mod pause;
 mod request_sources;
@@ -59,6 +60,7 @@ use crate::config::models::{DreamerSettings, DreamerWording, ModelsConfig, role_
 use crate::decision_host::DecisionHost;
 use crate::models::{ModelRuntime, OfferLadder, RoleRefusal, RoleRoute, Seat};
 use crate::runtime::wall_clock_ms as now_ms;
+use extraction_decisions::ConflictSettleLender;
 use request_sources::SourcedRunBackend;
 use task_lend::TaskLend;
 
@@ -66,15 +68,6 @@ use task_lend::TaskLend;
 pub(super) const LEASE_OWNER: &str = oneiron::dreamer_runner::DREAMER_SERVER_PARK_OWNER;
 /// Base id of the per-pass durable budget rows (`dreamer:p<n>`).
 const BUDGET_ID: &str = "dreamer";
-/// The most parked conflicts one home-timer pass asks the ladder to settle.
-const CONFLICT_SETTLE_LIMIT: usize = 8;
-/// What one pass's settlement asks may spend between them.
-const CONFLICT_SETTLE_BUDGET: std::time::Duration = std::time::Duration::from_secs(60);
-/// How the host words a settlement ask.
-const CONFLICT_SETTLE_WORDING: &str = "These claims about one subject contradict each other. \
-Keep the one member that is true and let it supersede the rest, hold both if both can stand, \
-dismiss if they do not really conflict, or escalate if you cannot tell.";
-
 /// A running Dreamer: its stop handle, its hint producer and its thread.
 pub(super) struct DreamerHost {
     shutdown: ShutdownHandle,
@@ -138,6 +131,14 @@ pub(crate) struct DreamerControl {
 /// The host's control over each Dreamer pass, its home-timer pump and its
 /// stewardship drafts. `None` admits everything and never pauses.
 pub(super) type PassAdmission = Option<DreamerControl>;
+
+/// When a conflict settlement ask the host withholds its ladder from may ask
+/// again, in seconds: the next home-timer pass or so.
+const CONFLICT_SETTLE_RETRY_AFTER_SECS: u64 = 60;
+
+/// How often the home timer sweeps the psych profile keys: daily, as canon
+/// regenerates a profile at most daily per key (ARCH-0025).
+const PSYCH_PROFILE_SWEEP_SECS: u64 = psych_profile::PSYCH_PROFILE_REGENERATE_SECS;
 
 /// What the gate returns for one pass, held until that pass ends; `None`
 /// when the gate refuses.
@@ -381,7 +382,8 @@ async fn supervise(
             question_timer,
             serve,
             admission,
-            settle_after: None,
+            settle_after: ConflictSettleCursor::default(),
+            psych_profile_swept_day: None,
         };
         let factory = ProgramExecutorFactory::new(observed, Some(Box::new(programs)));
         let lifecycle = SessionLifecycleDriver::new(
@@ -439,7 +441,8 @@ async fn supervise(
 
 /// One Dreamer per vault: this server is the vault's always-on local node.
 /// It declares itself a MACRO home candidate that can run MACRO now (FIX
-/// 4898), keeps itself as its own candidate, and elects over the vault's
+/// 4898) and marks its own copy full (HOME-ELECTION-NEEDS-FULL-COPY), keeps
+/// itself as its own candidate, and elects over the vault's
 /// authorized candidates, so macro rounds admit here when it wins: alone,
 /// it elects itself. The node id it returns is this install's own, which
 /// admission matches. A device of another home (`device`) claims nothing:
@@ -449,6 +452,9 @@ fn claim_home_node(vault: &Vault, device: bool) -> oneiron::Result<u64> {
     let candidate = store.local_home_node_candidate(true, true, false)?;
     let node_id = candidate.node_id;
     if !device {
+        // The mark first: an election between the two writes then never
+        // ranks a marked device over this home's own declaration.
+        crate::home_candidacy::declare_home_full_copy(vault);
         crate::home_candidacy::declare(vault, true, false, true);
         store.elect_home_node(&[candidate], now_ms() / 1_000)?;
     }
@@ -539,9 +545,14 @@ struct ObservedFactory {
     /// responder's model calls block on.
     serve: tokio::runtime::Handle,
     admission: PassAdmission,
-    /// The last parked conflict a settlement pass asked about: the next
-    /// starts after it.
-    settle_after: Option<oneiron::EntityId>,
+    /// The last conflict asked about, shared across the factories rebuilt
+    /// for each pass. The next settlement attempt starts after it.
+    settle_after: ConflictSettleCursor,
+    /// The UTC day (Unix seconds / 86 400) of the last Psych Mirror sweep
+    /// this host ran: the home timer sweeps the profile keys at most once a
+    /// day, so a key whose attempt ended without a profile is asked again
+    /// the next day, not at every timer.
+    psych_profile_swept_day: Option<u64>,
 }
 
 /// A pass's admission, held while the pass runs: the supervisor takes it as
@@ -720,9 +731,26 @@ impl ObservedFactory {
             factory = factory.with_scope_summary_instruction(instruction.clone());
         }
         factory = factory.with_model_windows(self.windows.clone());
-        // The Dreamer's jobs bind each strength attempt in the served vault
-        // and run over that attempt's client (untangle 6.9c).
-        factory = factory.with_dreamer_job_vault(Arc::clone(&self.vault));
+        // The Dreamer's jobs bind each maintenance attempt in the served
+        // vault and run over that attempt's client (untangle 6.9c/6.9d).
+        factory = factory
+            .with_dreamer_job_vault(Arc::clone(&self.vault))
+            .with_conflict_settle_host(
+                Arc::new(ConflictSettleLender {
+                    question_timer: Arc::clone(&self.question_timer),
+                    admission: self.admission.clone(),
+                }),
+                self.settle_after.clone(),
+            )
+            .with_extraction_decisions(
+                Arc::new(extraction_decisions::ExtractionLoanGate::new(
+                    Arc::clone(&self.question_timer),
+                    self.admission.clone(),
+                    &routes,
+                    self.egress,
+                )),
+                self.serve.clone(),
+            );
         if let Some(instruction) = &self.person_about_instruction {
             factory = factory.with_person_about_instruction(instruction.clone());
         }
@@ -1029,13 +1057,14 @@ impl PassExecutorFactory for ObservedFactory {
         pause(&self.admission)
     }
 
-    /// The standing-question pump and the parked-conflict settlement, once
-    /// serve has bound the server, under the host's gate. Their model rungs
-    /// block on the server's runtime, so they run on a thread of their own,
-    /// off this pass's runtime; the pass waits for them. The host's pause
-    /// starts neither once it holds (FIX 6909); one already started
-    /// finishes under the gate, its unit in flight only, as the pass's
-    /// epoch stops each next one (FIX 7376).
+    /// Runs the standing-question pump and enqueues one deduped conflict
+    /// settlement attempt on the home node under the host's gate. The pump's
+    /// model rungs block on the server's runtime, so it runs on its own
+    /// thread, off this pass's runtime. Settlement runs as an admitted
+    /// attempt in the next pass, whose lender checks the pause before each ask
+    /// (FIX 7376). Once a day it also enqueues one deduped psych profile
+    /// attempt per due profile key (untangle 6.9i, RULING S69I-PR2-START =
+    /// A). A paused timer starts neither the pump nor an enqueue.
     fn run_home_timer(
         &mut self,
         _vault: &Vault,
@@ -1053,84 +1082,51 @@ impl PassExecutorFactory for ObservedFactory {
         if paused(epoch.as_ref()) {
             return Ok(());
         }
-        let dreamer = self.actor;
-        let after = self.settle_after;
         let joined = std::thread::scope(|scope| {
             crate::engine_thread("dreamer-question-pump".into())
                 .spawn_scoped(scope, || {
                     let mut may_start = || !paused(epoch.as_ref());
-                    let pumped =
-                        crate::decision_graph::pump_due_while(&server, now_secs, &mut may_start);
-                    let settled = if paused(epoch.as_ref()) {
-                        after
-                    } else {
-                        settle_parked(&server, dreamer, after, now_secs, &mut may_start)
-                    };
-                    (pumped, settled)
+                    crate::decision_graph::pump_due_while(&server, now_secs, &mut may_start)
                 })
-                .expect("failed to spawn thread")
-                .join()
-        });
-        let Ok((pumped, settled_to)) = joined else {
+                .map(|thread| thread.join())
+        })
+        .map_err(|error| {
+            oneiron::Error::InvalidConfig(format!("standing question pump thread failed: {error}"))
+        })?;
+        let Ok(pumped) = joined else {
             return Err(oneiron::Error::InvalidConfig(
                 "standing question pump panicked".into(),
             ));
         };
-        self.settle_after = settled_to;
+        if !paused(epoch.as_ref()) {
+            match crate::decision_graph::at_home(&server, now_secs) {
+                Ok(true) => {
+                    let vault = server.vault();
+                    // Like other parentless host maintenance, this has no
+                    // recipe run id and uses the attempt queue's seconds.
+                    if let Err(error) = vault.with_write_txn(|txn| {
+                        DreamerRunnerStore::new(vault)
+                            .enqueue_conflict_settle_in_txn(txn, None, now_secs)
+                    }) {
+                        tracing::warn!(kind = ?error.kind(), "conflict settlement enqueue failed");
+                    }
+                    let day = now_secs / PSYCH_PROFILE_SWEEP_SECS;
+                    if self.psych_profile_swept_day != Some(day) {
+                        self.psych_profile_swept_day = Some(day);
+                        if let Err(error) =
+                            psych_profile::enqueue_due_psych_profiles(vault, now_secs)
+                        {
+                            tracing::warn!(kind = ?error.kind(), "psych profile enqueue failed");
+                        }
+                    }
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(kind = ?error.kind(), "parked conflicts wait: the home check failed");
+                }
+            }
+        }
         pumped
-    }
-}
-
-/// Asks the ladder to settle the parked conflicts (OF-023), on the home node
-/// only: `pump_due_while`'s home gate is its own. The Dreamer's review stands from
-/// birth; each settlement applies at once and the owner reverts it, and a
-/// conflict the owner holds or reverted is left out. A conflict the ladder
-/// leaves stays for the owner, and the next pass starts after the last one
-/// asked: the cursor this returns. A failure logs by kind only, since its
-/// text can quote the vault. No next conflict is asked once `may_start`
-/// says no (FIX 7376).
-fn settle_parked(
-    server: &crate::server::SyncServer,
-    dreamer: WriteActor,
-    after: Option<oneiron::EntityId>,
-    now_secs: u64,
-    may_start: &mut impl FnMut() -> bool,
-) -> Option<oneiron::EntityId> {
-    let vault = server.vault();
-    match crate::decision_graph::at_home(server, now_secs) {
-        Ok(true) => {}
-        Ok(false) => return after,
-        Err(error) => {
-            tracing::warn!(kind = ?error.kind(), "parked conflicts wait: the home check failed");
-            return after;
-        }
-    }
-    let host = server.decision_host();
-    let deadline = oneiron::retrieval_depth::RetrievalDeadline::hard(
-        std::time::Instant::now(),
-        CONFLICT_SETTLE_BUDGET,
-    );
-    let decisions = ConflictSettleDecisions {
-        ladder: host.ladder().ladder(),
-        principal: dreamer.entity_ref(),
-        dial: CONFLICT_SETTLE_DIAL,
-        bands: host.bands(),
-        wording: CONFLICT_SETTLE_WORDING.to_owned(),
-        deadline: &deadline,
-    };
-    match settle_parked_conflicts_while(
-        &vault.memory(dreamer.entity_ref(), dreamer.actor_class()),
-        &decisions,
-        after,
-        CONFLICT_SETTLE_LIMIT,
-        now_secs.saturating_mul(1000),
-        may_start,
-    ) {
-        Ok(pass) => pass.last.or(after),
-        Err(error) => {
-            tracing::warn!(code = %error.code, "parked conflicts wait for the next pass");
-            after
-        }
     }
 }
 

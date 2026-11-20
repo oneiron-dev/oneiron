@@ -39,6 +39,8 @@ mod webhook;
 
 pub(crate) use push::{LinearPushError, push_body_line, push_task_now};
 pub(crate) use webhook::routes as webhook_routes;
+#[cfg(oneiron_test_support)]
+pub(crate) use webhook::signature_bytes;
 
 /// The tracker mapping the Linear webhook applies under (OF-427 C11): the
 /// server's `[linear]` mapping, a plain serve's direct config or webhook

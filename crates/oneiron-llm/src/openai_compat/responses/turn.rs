@@ -66,7 +66,7 @@ pub fn build_openai_responses_turn(
     validate_capabilities(catalog, request, &provider_options, stream)?;
 
     let mut head = JsonMap::new();
-    for (key, value) in &request.params {
+    for (key, value) in request.wire_params()? {
         // The chat names of the output cap are one Responses field.
         let key = match key.as_str() {
             "max_tokens" | "max_completion_tokens" => "max_output_tokens",

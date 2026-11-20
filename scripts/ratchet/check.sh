@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Ratchet: recompute 8 metrics and fail if any exceeds baseline.json. No jq
-# dependency — baseline's 8 "count" fields are the only ones at that depth,
+# Ratchet: recompute 13 metrics and fail if any exceeds baseline.json. No jq
+# dependency — baseline's 13 "count" fields are the only ones at that depth,
 # extracted in fixed order: giant_files, allow_attrs, print_macros,
 # process_global_statics, keyspace_census, raw_core_writes, raw_hasher_starts,
-# hand_name_tables. That order is
+# hand_name_tables, test_lint_sleep, test_lint_wall_clock, test_lint_network,
+# test_lint_fixed_port, test_lint_real_model. That order is
 # positional, so a new metric goes LAST in baseline.json's "metrics" object
 # and last in the `read -r` line below.
 #
@@ -99,13 +100,26 @@ raw_hashers=$(python3 scripts/ratchet/raw_hasher_starts.py --count .) \
 hand_names=$(python3 scripts/ratchet/hand_name_tables.py --count .) \
   || die "metric collection failed for hand_name_tables"
 
-for v in "$giants" "$allows" "$prints" "$globals" "$keyspace" "$raw_writes" "$raw_hashers" "$hand_names"; do
+# Sleeps, wall-clock reads, network, fixed ports and real models in TEST code
+# (Fable's test-strategy verdict, sections 3 and 4): five metrics, one per rule,
+# from one scan, in that order. Its own scanner, because test code is a whole
+# file or the item after a `#[cfg(test)]`, which no line pattern can see, and a
+# line may opt out with `testkit-lint: allow(<rule>) <reason>`. They block no
+# merge either.
+lint_counts=$(python3 scripts/ratchet/test_lint.py --count .) \
+  || die "metric collection failed for test_lint"
+read -r lint_sleep lint_wall_clock lint_network lint_fixed_port lint_real_model <<<"$lint_counts"
+
+for v in "$giants" "$allows" "$prints" "$globals" "$keyspace" "$raw_writes" "$raw_hashers" "$hand_names" \
+  "${lint_sleep:-}" "${lint_wall_clock:-}" "${lint_network:-}" "${lint_fixed_port:-}" "${lint_real_model:-}"; do
   is_num "$v" || die "computed metric is not numeric: '$v'"
 done
 
 [ -f "$BASE" ] && [ -r "$BASE" ] || die "baseline unreadable/invalid"
-read -r base_giants base_allows base_prints base_globals base_keyspace base_raw_writes base_raw_hashers base_hand_names <<<"$(grep -oE '"count": [0-9]+' "$BASE" | awk '{print $2}' | tr '\n' ' ')"
-for v in "${base_giants:-}" "${base_allows:-}" "${base_prints:-}" "${base_globals:-}" "${base_keyspace:-}" "${base_raw_writes:-}" "${base_raw_hashers:-}" "${base_hand_names:-}"; do
+read -r base_giants base_allows base_prints base_globals base_keyspace base_raw_writes base_raw_hashers base_hand_names \
+  base_lint_sleep base_lint_wall_clock base_lint_network base_lint_fixed_port base_lint_real_model <<<"$(grep -oE '"count": [0-9]+' "$BASE" | awk '{print $2}' | tr '\n' ' ')"
+for v in "${base_giants:-}" "${base_allows:-}" "${base_prints:-}" "${base_globals:-}" "${base_keyspace:-}" "${base_raw_writes:-}" "${base_raw_hashers:-}" "${base_hand_names:-}" \
+  "${base_lint_sleep:-}" "${base_lint_wall_clock:-}" "${base_lint_network:-}" "${base_lint_fixed_port:-}" "${base_lint_real_model:-}"; do
   is_num "$v" || die "baseline unreadable/invalid"
 done
 
@@ -121,5 +135,10 @@ check keyspace_census "$keyspace" "$base_keyspace"
 check raw_core_writes "$raw_writes" "$base_raw_writes"
 check raw_hasher_starts "$raw_hashers" "$base_raw_hashers"
 check hand_name_tables "$hand_names" "$base_hand_names"
+check test_lint_sleep "$lint_sleep" "$base_lint_sleep"
+check test_lint_wall_clock "$lint_wall_clock" "$base_lint_wall_clock"
+check test_lint_network "$lint_network" "$base_lint_network"
+check test_lint_fixed_port "$lint_fixed_port" "$base_lint_fixed_port"
+check test_lint_real_model "$lint_real_model" "$base_lint_real_model"
 
 [ "$fail" -eq 0 ] && echo "RATCHET-OK" || exit 1

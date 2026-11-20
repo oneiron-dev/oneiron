@@ -20,6 +20,7 @@ mod campaign_split;
 mod can;
 mod catalog_fragment;
 mod check_in;
+mod claim_refinement;
 mod comm_widen;
 mod connect_proposal;
 mod connector;
@@ -33,14 +34,17 @@ mod coreference;
 mod courtesy_delete;
 mod credential;
 mod custody_drain;
+mod data_key_generation;
 mod describe;
 mod diary;
 mod diary_pinned;
 mod disclosure;
+mod display_edits;
 mod embedding_space;
 mod engine_controls;
 mod eval_cohort;
 mod explain;
+mod extraction_verdict;
 mod fanout_launch;
 mod federation;
 #[cfg(feature = "sync")]
@@ -58,7 +62,7 @@ mod goal_optimize;
 mod grants;
 mod guest_document;
 mod guest_revoke;
-mod host;
+pub(crate) mod host;
 mod hub;
 mod identity_topology;
 mod inquiry;
@@ -67,6 +71,7 @@ mod legal_hold;
 mod linked_self_surface;
 mod live_run;
 mod live_voice;
+mod machine_names;
 mod mesh;
 mod model_manifest;
 mod model_pack;
@@ -78,6 +83,7 @@ mod off_record_rooms;
 mod off_record_runs;
 mod outbound_call_erase;
 mod outbox_diverged;
+mod owner_confirm;
 mod pack_preview;
 mod persona;
 mod proxy;
@@ -91,31 +97,40 @@ mod repo_copy_edit;
 mod repo_manifest_conflict;
 mod research;
 mod research_advance;
+mod research_authoring;
 mod research_root;
 mod reservoir_sources;
 mod residence;
 mod retrieval;
 mod revisions_read;
 mod root_requests;
+mod schedule;
 mod scratchpad;
 mod secret;
 mod secret_custody;
+mod secret_custody_list;
 mod secret_grant;
+mod secret_handle_edits;
 mod secret_use;
 mod self_actor;
 mod self_model_read;
 mod self_verbs;
 mod setting;
+pub(crate) mod setting_keys;
 mod share;
 mod shared;
 mod shared_admin;
 mod shared_members;
 mod shared_policy;
+mod skill_activation;
 mod skill_attribution;
 mod skill_defaults;
 mod skill_execution;
 mod skill_fit;
 mod skill_fork;
+mod skill_lifecycle;
+mod skill_merge;
+mod skill_pack_load;
 mod skills;
 mod standing;
 // FIX 17553: the owner resets a person's step-up passkeys.
@@ -124,10 +139,13 @@ mod support_grant;
 mod sync_outbox;
 #[cfg(feature = "sync")]
 mod sync_quarantine;
+// ROLE-TRAINING-RUN: the owner's role prepare and the bounded run read.
+mod training_runs;
 mod trusted_contact;
 mod uncertain_send;
 mod verb_table;
 mod voice_bank;
+mod voice_recognition;
 mod weave;
 mod web_connector;
 mod wire_health;
@@ -340,6 +358,7 @@ pub use crate::memory::affect::QueryAffect;
 
 pub use self::asset_masked_read::*;
 pub use self::connector_source_rows_read::*;
+pub use self::schedule::*;
 pub use self::setting::*;
 pub use self::skill_package_read::*;
 
@@ -362,6 +381,7 @@ pub use self::catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
 };
 pub use self::check_in::*;
+pub use self::claim_refinement::*;
 pub use self::comm_widen::*;
 pub use self::connect_proposal::*;
 pub use self::connector::*;
@@ -375,14 +395,17 @@ pub use self::coreference::*;
 pub use self::courtesy_delete::*;
 pub use self::credential::*;
 pub use self::custody_drain::*;
+pub use self::data_key_generation::*;
 pub use self::describe::*;
 pub use self::diary::*;
 pub use self::diary_pinned::*;
 pub use self::disclosure::*;
+pub use self::display_edits::*;
 pub use self::embedding_space::*;
 pub use self::engine_controls::*;
 pub use self::eval_cohort::*;
 pub use self::explain::*;
+pub use self::extraction_verdict::*;
 pub use self::fanout_launch::*;
 pub use self::federation::*;
 #[cfg(feature = "sync")]
@@ -407,6 +430,7 @@ pub use self::inquiry::*;
 pub use self::legal_hold::*;
 pub use self::live_run::*;
 pub use self::live_voice::*;
+pub use self::machine_names::*;
 pub use self::mesh::*;
 pub use self::model_manifest::*;
 pub use self::model_pack::*;
@@ -418,6 +442,7 @@ pub use self::off_record_rooms::*;
 pub use self::off_record_runs::*;
 pub use self::outbound_call_erase::*;
 pub use self::outbox_diverged::*;
+pub use self::owner_confirm::*;
 pub use self::pack_preview::*;
 pub use self::persona::*;
 pub use self::proxy::*;
@@ -430,6 +455,7 @@ pub use self::repo_copy_edit::*;
 pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
 pub use self::research_advance::*;
+pub use self::research_authoring::*;
 pub use self::research_root::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;
@@ -439,7 +465,9 @@ pub use self::root_requests::*;
 pub use self::scratchpad::*;
 pub use self::secret::*;
 pub use self::secret_custody::*;
+pub use self::secret_custody_list::*;
 pub use self::secret_grant::*;
+pub use self::secret_handle_edits::*;
 pub use self::secret_use::*;
 pub use self::self_actor::*;
 pub use self::self_model_read::*;
@@ -449,10 +477,14 @@ pub use self::shared::*;
 pub use self::shared_admin::*;
 pub use self::shared_members::*;
 pub use self::shared_policy::*;
+pub use self::skill_activation::*;
 pub use self::skill_attribution::*;
 pub use self::skill_defaults::*;
 pub use self::skill_execution::*;
 pub use self::skill_fit::*;
+pub use self::skill_lifecycle::*;
+pub use self::skill_merge::*;
+pub use self::skill_pack_load::*;
 pub use self::skills::*;
 pub use self::standing::*;
 pub use self::step_up::*;
@@ -460,9 +492,11 @@ pub use self::support_grant::*;
 pub use self::sync_outbox::*;
 #[cfg(feature = "sync")]
 pub use self::sync_quarantine::*;
+pub use self::training_runs::*;
 pub use self::trusted_contact::*;
 pub use self::uncertain_send::*;
 pub use self::voice_bank::*;
+pub use self::voice_recognition::*;
 pub use self::weave::*;
 pub use self::web_connector::*;
 pub use self::wire_health::*;
@@ -643,8 +677,6 @@ fn verb_input_schema_is_built_once_per_process() {
     assert!(std::ptr::eq(first, second));
 }
 
-// FIX [LIBTEST-QUARANTINE-VERBS-ITEMS]: the lib test target's type check fails here (5 errors: E0599 x5); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 #[test]
 fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
@@ -660,11 +692,12 @@ fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
             verb.as_str()
         );
     }
-    assert!(AgentVerb::TasksAsk.is_section());
-    assert!(AgentVerb::RoomsSpeak.writes());
-    assert!(AgentVerb::RoomsList.is_facade());
-    assert!(!AgentVerb::BoardExpand.is_facade());
-    assert_eq!(AgentVerb::Recall.argument_fields(), &["spec"]);
+    assert!(AgentVerb::Ask.is_section());
+    assert!(AgentVerb::VaultRoomsSpeak.writes());
+    assert!(AgentVerb::VaultRoomsList.is_facade());
+    // A host-served row (the browser context) is no facade verb; board.expand, the old pin, is gone.
+    assert!(!AgentVerb::SelfBrowserClick.is_facade());
+    assert_eq!(AgentVerb::VaultRecall.argument_fields(), &["spec"]);
     assert!(AgentVerb::from_name("not.a.verb").is_none());
 }
 
@@ -733,6 +766,7 @@ fn a_recall_the_engine_refuses_never_embeds_its_query() {
         query_affect: None,
         telemetry: None,
         filter: None,
+        operation_id: None,
     };
     let call = |deadline_ms| RecallRequest {
         effort: Some(crate::memory::RecallEffort::Call),

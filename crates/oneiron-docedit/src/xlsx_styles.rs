@@ -14,9 +14,9 @@ use std::fmt::{Display, Write as _};
 mod cell_format;
 mod check;
 mod dxf;
-use cell_format::XlsxAlignment;
 pub use cell_format::{
-    XlsxBorder, XlsxColor, XlsxEdge, XlsxFill, XlsxFont, XlsxFormat, XlsxNumberFormat,
+    XlsxAlignment, XlsxBorder, XlsxColor, XlsxEdge, XlsxFill, XlsxFont, XlsxFormat,
+    XlsxNumberFormat, XlsxProtection,
 };
 pub use check::check_format;
 pub(crate) use dxf::write_dxfs;

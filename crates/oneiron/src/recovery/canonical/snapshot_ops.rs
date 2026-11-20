@@ -2,6 +2,8 @@
 //! The entry point is `CanonicalSnapshot::decode`.
 //! `super` owns bounded encoding and private codec helpers.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::*;
 
 impl CanonicalSnapshot {
@@ -30,6 +32,6 @@ impl CanonicalSnapshot {
     }
 
     pub fn blake3(&self) -> Result<[u8; 32]> {
-        Ok(*blake3::hash(&self.encode()?).as_bytes())
+        Ok(*ContentHash::of(&self.encode()?).as_bytes())
     }
 }
