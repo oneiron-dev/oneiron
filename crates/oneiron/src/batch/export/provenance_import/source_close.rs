@@ -23,7 +23,7 @@ pub(super) enum SourceClose {
 /// held record closed as the source's writer closed it, at the archived
 /// `valid_to`, is the archived row byte for byte, and the held envelope is
 /// the archived one with `occurred.end` where the open record put it. The
-/// reverse of [`super::closed_here`]. `None` for any other difference.
+/// reverse of [`super::cohort_kept_out::closed_here`]. `None` for any other difference.
 pub(super) fn closed_at_source(
     row: &ExportEntity,
     body: &ClaimBody,
