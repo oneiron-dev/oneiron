@@ -131,7 +131,13 @@ impl Vault {
             return Ok(());
         };
         let invitee = EntityId::from_hex(&claims.holder_ref).map_err(|_| invalid_authority())?;
-        if !self.invitation_slip_stands_in_txn(txn, invitee, invitation, &claims.binding_key, now) {
+        if !self.invitation_slip_stands_in_txn(
+            txn,
+            invitee,
+            invitation,
+            &claims.binding_key,
+            now,
+        )? {
             return Err(invalid_authority());
         }
         Ok(())
@@ -178,6 +184,7 @@ impl Vault {
         if let Some(share) = &claims.share_ref {
             let share = EntityId::from_hex(share).map_err(|_| invalid_authority())?;
             let holder = EntityId::from_hex(&claims.holder_ref).map_err(|_| invalid_authority())?;
+            crate::share::require_share_header_in_txn(&self.store, txn, &share)?;
             crate::share::live_share_for_holder_in_txn(self, txn, &share, &holder, now)?
                 .ok_or_else(invalid_authority)?;
         }
