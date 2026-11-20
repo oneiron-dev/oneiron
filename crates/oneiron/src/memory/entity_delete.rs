@@ -316,13 +316,18 @@ impl Memory<'_> {
     /// A confirmed impact preview is valid only while the original body is
     /// live. After this call's own soft scrub commits, publication still
     /// rechecks owner authority but must not compare the shell to that body.
+    /// `claim`, an owner erase's alone, rides the delete's linearizing write.
     pub(super) fn safe_delete_preview_checked(
         &self,
         entity_ref: &str,
         reason: DeleteReason,
         check: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
+        claim: Option<crate::deletion::DeletionClaim<'_>>,
     ) -> MemoryResult<DeleteReceipt> {
-        self.safe_delete_checked_in_phase(entity_ref, reason, check, true, None)
+        if claim.is_some() && reason != DeleteReason::OwnerErase {
+            return Err(Error::InvariantViolation("a claimed delete is an owner erase").into());
+        }
+        self.safe_delete_checked_in_phase(entity_ref, reason, check, true, claim)
     }
 
     fn safe_delete_checked_in_phase(
@@ -585,11 +590,16 @@ impl Memory<'_> {
         } else {
             DeleteReason::UserDelete
         };
-        self.safe_delete_preview_checked(&preview.entity().to_hex(), reason, |txn| {
-            preview
-                .check_after_unshare(self.vault, txn)
-                .map_err(Into::into)
-        })
+        self.safe_delete_preview_checked(
+            &preview.entity().to_hex(),
+            reason,
+            |txn| {
+                preview
+                    .check_after_unshare(self.vault, txn)
+                    .map_err(Into::into)
+            },
+            None,
+        )
     }
 }
 

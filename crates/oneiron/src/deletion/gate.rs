@@ -72,19 +72,32 @@ type DeletionCheck<'a> = &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>;
 type DeletionClaimWrite<'a> =
     &'a dyn Fn(&mut heed::RwTxn<'_>, &[u8; 16], Option<&EntityId>) -> Result<()>;
 
-/// The original authority act beside its ordinary in-transaction claim. The
-/// staged deletion sidecar keeps that identity if publication rolls back after
-/// the shared document changed; recovery never infers it from a request id.
+/// The original authority act, when the claim names one, beside its ordinary
+/// in-transaction claim. The staged deletion sidecar keeps that identity if
+/// publication rolls back after the shared document changed; recovery never
+/// infers it from a request id.
 #[derive(Clone, Copy)]
 pub(crate) struct DeletionClaim<'a> {
-    authority_act: EntityId,
+    authority_act: Option<EntityId>,
     apply: DeletionClaimWrite<'a>,
 }
 
 impl<'a> DeletionClaim<'a> {
     pub(crate) fn new(authority_act: EntityId, apply: DeletionClaimWrite<'a>) -> Self {
         Self {
-            authority_act,
+            authority_act: Some(authority_act),
+            apply,
+        }
+    }
+
+    /// A claim that names no authority act: a write the delete makes in its
+    /// linearizing transaction alone, as an owner erase spends the check-in
+    /// it applies there (FIX CHECK-IN-SPEND-BEFORE-RECORD-ERASE). The staged
+    /// deletion sidecar names no act for it, so a recovery that finishes the
+    /// delete makes no such write.
+    pub(crate) fn unnamed(apply: DeletionClaimWrite<'a>) -> Self {
+        Self {
+            authority_act: None,
             apply,
         }
     }
@@ -194,7 +207,7 @@ impl<'a> GatedDeletion<'a> {
     }
 
     pub(super) fn claimed_authority_act(&self) -> Option<EntityId> {
-        self.claim.map(|claim| claim.authority_act)
+        self.claim.and_then(|claim| claim.authority_act)
     }
 
     /// See [`DeletionClaim`] for the one reason that carries a claim.

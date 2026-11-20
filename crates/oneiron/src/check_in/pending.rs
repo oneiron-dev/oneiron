@@ -600,6 +600,45 @@ pub(crate) fn record_objection_in_txn(
     Ok(row)
 }
 
+/// The row `id` as [`consume_pending_check_in_in_txn`] finds it before it
+/// spends it: asked for `effect_digest`, eligible, and not yet spent; with
+/// its eligible basis.
+fn spendable_row_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    effect_digest: &[u8; 32],
+) -> Result<(PendingCheckIn, EligibleBasis)> {
+    let row = PENDING.get(store, txn, id)?.ok_or(Error::EntityNotFound)?;
+    if row.effect_digest != *effect_digest {
+        return Err(refuse("the act is another effect than the one asked"));
+    }
+    let basis = row
+        .eligible_basis()
+        .ok_or_else(|| refuse("the check-in did not make the act eligible"))?;
+    if row.consumed_at.is_some() {
+        return Err(refuse("the act this check-in held already ran"));
+    }
+    Ok((row, basis))
+}
+
+/// Checks in `txn`, writing nothing, that [`consume_pending_check_in_in_txn`]
+/// would spend `id` for `effect_digest`: for an act whose spend lands in a
+/// later writer, so a row it could not spend refuses it before its first
+/// write.
+///
+/// # Errors
+///
+/// As [`consume_pending_check_in_in_txn`].
+pub(crate) fn check_pending_check_in_spendable_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    effect_digest: &[u8; 32],
+) -> Result<()> {
+    spendable_row_in_txn(store, txn, id, effect_digest).map(|_| ())
+}
+
 /// Spends the settled row `id` for the act it held, in the act's own `txn`
 /// at `now` (Engine ruling P23-SHAPE Q2 = A): the commit that runs the
 /// effect is the commit that marks the row used, so a replay or a second
@@ -620,18 +659,7 @@ pub(crate) fn consume_pending_check_in_in_txn(
     effect_digest: &[u8; 32],
     now: u64,
 ) -> Result<EligibleBasis> {
-    let mut row = PENDING
-        .get(&vault.store, txn, id)?
-        .ok_or(Error::EntityNotFound)?;
-    if row.effect_digest != *effect_digest {
-        return Err(refuse("the act is another effect than the one asked"));
-    }
-    let basis = row
-        .eligible_basis()
-        .ok_or_else(|| refuse("the check-in did not make the act eligible"))?;
-    if row.consumed_at.is_some() {
-        return Err(refuse("the act this check-in held already ran"));
-    }
+    let (mut row, basis) = spendable_row_in_txn(&vault.store, txn, id, effect_digest)?;
     row.consumed_at = Some(now);
     let fields = ReceiptFields::new(&row).with("basis", basis.as_str().to_owned());
     let asker = row.asker;
