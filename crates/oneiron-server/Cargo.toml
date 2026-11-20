@@ -283,6 +283,13 @@ required-features = ["oneiron/test-support", "mesh"]
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
 
+# Its server's vault holds a `MemoryKeystore` (`oneiron-keystore/test-keystore`, forwarded by
+# `oneiron/test-support`).
+[[test]]
+name = "pairing_owner_act"
+path = "tests/pairing_owner_act.rs"
+required-features = ["oneiron/test-support"]
+
 [dev-dependencies]
 oneiron-remote = { path = "../oneiron-remote" }
 # `util` carries `ServiceExt::oneshot`, which the router-level rows in
