@@ -166,11 +166,12 @@ fn write_pack(dir: &Path) -> Ids {
     ids
 }
 
-/// Run the world-scoped arm over the fixture pack in `dir` into `card`.
-fn run_arm(dir: &Path, card: &Path) -> std::process::Output {
+/// Run the world-scoped arm over the fixture pack in `dir` into `card`,
+/// with `hidden_share` per mille hidden under [`SEED`].
+fn run_arm(dir: &Path, card: &Path, hidden_share: u32) -> std::process::Output {
     let pack_dir = dir.to_str().expect("fixture dir");
     let out = card.to_str().expect("scorecard path");
-    let share = HIDDEN_SHARE.to_string();
+    let share = hidden_share.to_string();
     let seed = SEED.to_string();
     scorecard(&[
         "run",
@@ -196,13 +197,13 @@ fn world_scoped_arm_serves_and_grades_readable_records_only() {
     let dir = tempfile::tempdir().expect("scorecard fixture dir");
     let ids = write_pack(dir.path());
     let card_path = dir.path().join("world-scoped.json");
-    let result = run_arm(dir.path(), &card_path);
+    let result = run_arm(dir.path(), &card_path, HIDDEN_SHARE);
     let stderr = String::from_utf8_lossy(&result.stderr);
     let stdout = String::from_utf8_lossy(&result.stdout);
     assert!(
         result.status.success(),
-        "the world-scoped arm runs; a second-world record served to the agent fails the run: \
-         stdout {stdout} stderr {stderr}"
+        "the world-scoped arm runs (on main the arm and its flags are unknown, exit 2), and a \
+         second-world record served to the agent would fail it: stdout {stdout} stderr {stderr}"
     );
     let line = summary(&result);
     assert_eq!(line["arm"], "world-scoped");
@@ -246,7 +247,7 @@ fn world_scoped_arm_serves_and_grades_readable_records_only() {
     assert_eq!(per_query[0]["recall_at_5"], 1.0);
 
     let again_path = dir.path().join("world-scoped-again.json");
-    let again = run_arm(dir.path(), &again_path);
+    let again = run_arm(dir.path(), &again_path, HIDDEN_SHARE);
     assert!(again.status.success(), "the second run succeeds");
     let again_line = summary(&again);
     assert_eq!(
@@ -255,6 +256,47 @@ fn world_scoped_arm_serves_and_grades_readable_records_only() {
     );
     assert_eq!(again_line["params_digest"], line["params_digest"]);
     assert_eq!(again_line["partition_digest"], line["partition_digest"]);
+    let again_card: Value =
+        serde_json::from_slice(&std::fs::read(&again_path).expect("second scorecard reads"))
+            .expect("second scorecard is JSON");
+    assert_eq!(
+        again_card["per_query"][0]["ranked_digest"], per_query[0]["ranked_digest"],
+        "a second fresh vault ranks the same: two builds' cards compare ranking for ranking"
+    );
+}
+
+/// The positive control: with no hidden share the same pack's claims all
+/// sit in the base world, so the agent is served every record holding the
+/// query words. The two second-world claims the first test keeps out are
+/// searchable claims, not rows that never reached the text index.
+#[test]
+fn world_scoped_arm_with_no_hidden_share_serves_every_match() {
+    let dir = tempfile::tempdir().expect("scorecard fixture dir");
+    write_pack(dir.path());
+    let card_path = dir.path().join("world-scoped-open.json");
+    let result = run_arm(dir.path(), &card_path, 0);
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(result.status.success(), "the open run succeeds: {stdout}");
+    let line = summary(&result);
+    assert_eq!(line["records_hidden"], 0);
+    assert_eq!(line["records_readable"], 7);
+    assert_eq!(line["queries_dropped"], 0);
+    assert_eq!(
+        line["pack_digest"], line["source_pack_digest"],
+        "nothing hidden: the view is the source slice"
+    );
+    let card: Value =
+        serde_json::from_slice(&std::fs::read(&card_path).expect("scorecard file reads"))
+            .expect("scorecard file is JSON");
+    assert_eq!(card["query_count"], 2);
+    let per_query = card["per_query"].as_array().expect("per-query scores");
+    assert_eq!(per_query[0]["query_id"], "query-harbour");
+    assert_eq!(
+        per_query[0]["returned"], 3,
+        "all three records holding the query words are served once readable"
+    );
+    assert_eq!(per_query[1]["query_id"], "query-mountain");
+    assert_eq!(per_query[1]["returned"], 1);
 }
 
 #[test]
