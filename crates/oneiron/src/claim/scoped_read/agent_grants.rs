@@ -153,16 +153,8 @@ impl ScopedRead<'_> {
         let Some(reader) = self.grant_reader() else {
             return false;
         };
-        let request = match asked {
-            AskedFilter::Known(request) => request.clone(),
-            // B's own filter, met with the Grant's floor: never wider than
-            // the caller asked. One that reads nothing leaves A nothing, and
-            // so does a binding-only floor, whose kinds are its talk's and
-            // no request's (WORK-TALK-BINDING-RECALL-FLOOR).
-            AskedFilter::Unknown if filter.deny_all || filter.work_talk_room.is_some() => {
-                return false;
-            }
-            AskedFilter::Unknown => Some(as_request(filter)),
+        let Some(request) = grant_request(filter, asked) else {
+            return false;
         };
         let grants = authority.grants().of(reader, || {
             reader_grants_or_empty_in(self.vault, rtxn, reader)
@@ -177,6 +169,53 @@ impl ScopedRead<'_> {
                 authority,
                 scope,
             ) {
+                Ok(true) => return true,
+                Ok(false) => {}
+                Err(error) => warn_grant_errors(1, &[*grant], Some(error.kind())),
+            }
+        }
+        false
+    }
+
+    /// A for a deleted record's shell of type `entity_type`, tried only once
+    /// B refused it (Engine ANSWER GRANT-AGENT-DELETED-SHELLS = A): whether
+    /// one of the reader's own live Grants alone reads that type under the
+    /// floor a proof of it gives this key, the read's request met on top,
+    /// and `holds` the place the shell still proves. Two Grants never
+    /// combine. As for a row, `filter` is the one B judged the shell under,
+    /// and a Grant that cannot be judged admits nothing and is counted.
+    pub(super) fn own_shell_readable_by_grant_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        entity_type: u8,
+        authority: &HeldAuthority,
+        mut holds: impl FnMut(&Scope) -> Result<bool>,
+    ) -> bool {
+        let Some(reader) = self.grant_reader() else {
+            return false;
+        };
+        let Some(request) = grant_request(filter, authority.grants().asked()) else {
+            return false;
+        };
+        let grants = authority.grants().of(reader, || {
+            reader_grants_or_empty_in(self.vault, rtxn, reader)
+        });
+        for (grant, scope) in &*grants {
+            // The floor a proof of this Grant gives the key, the request met
+            // on top, as the row's A judges a row under it.
+            let floor =
+                policy.retrieval_floor_for_actor_with_scope(Some(&self.actor_key), Some(scope));
+            let reads =
+                crate::gate::narrow_retrieval_filter(&floor, request.as_ref()).and_then(|under| {
+                    let under =
+                        self.under_caller_filter(under.under_credential_of(&self.actor_key));
+                    Ok(!under.deny_all
+                        && under.read_scope().bands.contains(&entity_type)
+                        && holds(scope)?)
+                });
+            match reads {
                 Ok(true) => return true,
                 Ok(false) => {}
                 Err(error) => warn_grant_errors(1, &[*grant], Some(error.kind())),
@@ -550,6 +589,23 @@ fn reader_grants_or_empty_in(
         warn_grant_errors(1, &[], Some(error.kind()));
         Vec::new()
     })
+}
+
+/// What A asks of a row or shell under each Grant: the request the read
+/// asked, `asked`. For a read whose request A does not see, B's own
+/// `filter`, met with the Grant's floor: never wider than the caller asked.
+/// One that reads nothing leaves A nothing (`None`), and so does a
+/// binding-only floor, whose kinds are its talk's and no request's
+/// (WORK-TALK-BINDING-RECALL-FLOOR).
+fn grant_request(
+    filter: &ResolvedRetrievalFilter,
+    asked: &AskedFilter,
+) -> Option<Option<RetrievalFilter>> {
+    match asked {
+        AskedFilter::Known(request) => Some(request.clone()),
+        AskedFilter::Unknown if filter.deny_all || filter.work_talk_room.is_some() => None,
+        AskedFilter::Unknown => Some(Some(as_request(filter))),
+    }
 }
 
 /// `filter` as a request: met with a floor, it narrows that floor to what
