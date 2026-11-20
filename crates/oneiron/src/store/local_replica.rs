@@ -209,6 +209,9 @@ pub(crate) struct RemovedReplica {
     /// The window rows went with the last removable member. `false` when the
     /// outbox deferred the call or `remaining` is not zero: call again.
     pub(crate) complete: bool,
+    /// Gate decisions the owner's discard made skeletons, for the caller's
+    /// vault to withdraw the unclear rows filed under their receipts.
+    pub(crate) discarded_gate_decisions: Vec<crate::store::GateDecisionId>,
 }
 
 /// Removes one canonical window's local LMDB replica in the caller's write
@@ -340,7 +343,8 @@ fn tear_members(
     crate::dreamer_wake::demote_in_txn(store, txn, &removal.gone)?;
     let edges = doc.get_map("edges");
     if keep.release_local_members {
-        discard_owned_payload(store, txn, &removal.order)?;
+        let skeletons = discard_owned_payload(store, txn, &removal.order)?;
+        report.discarded_gate_decisions.extend(skeletons);
     }
     for id in &removal.order {
         let released = members.released.contains(id);

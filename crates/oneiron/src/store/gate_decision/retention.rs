@@ -608,6 +608,13 @@ impl Vault {
         for record in &eligible {
             self.store
                 .delete_gate_decision_record_in_txn(&mut txn, record)?;
+            // Its unclear row leaves the Coach's clustering with it (FIX
+            // [GATE-RECEIPT-UNCLEAR-ROW-OUTLIVES-RECORD-REMOVAL]).
+            crate::skill_attribution::delete_gate_receipt_unclear_in_txn(
+                self,
+                &mut txn,
+                std::slice::from_ref(&record.decision_id),
+            )?;
         }
         // Commit the intent WITH row removal, then touch exterior keys.
         // A crash before commit leaves readable rows; a crash after commit

@@ -308,6 +308,29 @@ pub(crate) fn delete_unclear_in_txn(
     crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(vault, wtxn, &key)
 }
 
+/// Withdraws the amendment row filed under the receipt `gate:<hex>` of each
+/// Gate decision in `decisions`, as [`delete_unclear_in_txn`] does: a writer
+/// that removed the decision's record (the retention sweep) or made it its
+/// retention skeleton with no claim erased (the owner's discard of a world
+/// copy) left its notes no judgment to stand behind (FIX
+/// [GATE-RECEIPT-UNCLEAR-ROW-OUTLIVES-RECORD-REMOVAL]). A decision with no
+/// row changes nothing.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn delete_gate_receipt_unclear_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    decisions: &[crate::store::GateDecisionId],
+) -> Result<()> {
+    for decision in decisions {
+        let receipt = format!("gate:{}", decision.to_hex());
+        delete_unclear_in_txn(vault, wtxn, AttributionLane::Amendment, &receipt)?;
+    }
+    Ok(())
+}
+
 /// Drops every unclear row whose context names erased `entity` — its actor,
 /// skill, project or a row its judge read — whole, notes and all: a note's
 /// words can quote any of them, so nilling a field would leave the words
