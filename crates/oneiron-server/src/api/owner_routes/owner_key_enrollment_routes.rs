@@ -128,7 +128,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/owner-signing-keys/changes",
-                summary: "Every enrollment and removal of an enrolled owner key that the vault's log holds, newest first: the entry, `enrolled`, `removed` or `removed_by_ended_key` (two removals that crossed ended both keys), the key, the machine its enrollment names, its kind, the key that signed the entry and when. Every owner device reads the same list, so it is the notice of a key change. Empty before any enrollment.",
+                summary: "Every enrollment, confirmation and removal of an enrolled owner key, a device's, the recovery root's or a passkey, that the vault's log holds, newest first: the entry, `enrolled`, `confirmed` (a key only a passkey vouched for now signs in full), `removed` or `removed_by_ended_key` (two removals that crossed ended both keys), the key, its `shape` (`device_key` or `passkey`), the machine its enrollment names, its kind (null for a passkey), the key that signed the entry and when. Every owner device reads the same list, so it is the notice of a key change. Empty before any enrollment.",
                 row: None,
                 shape: None,
             },
@@ -248,18 +248,26 @@ struct ListReply {
 struct ChangeReply {
     /// The change's authority entry, as 64 hex.
     entry: String,
-    /// `enrolled`, `removed`, or `removed_by_ended_key`: the key ended
-    /// through a removal the vault did not count, because a crossing removal
-    /// ended that removal's own signer.
+    /// `enrolled`; `confirmed`: a key only a passkey vouched for was vouched
+    /// for again by a key that may confirm it, and now signs in full;
+    /// `removed`; or `removed_by_ended_key`: the key ended through a removal
+    /// the vault did not count, because a crossing removal ended that
+    /// removal's own signer.
     change: &'static str,
-    /// The key, as 64 hex.
+    /// The key, as hex: 64 for a device's or the recovery root's Ed25519
+    /// key, 66 for a passkey's compressed SEC1 key.
     public_key: String,
-    /// The machine the key's enrollment names, as 32 hex.
+    /// `device_key` or `passkey`: the key's shape, as the authority audit's
+    /// `detail` names it.
+    shape: &'static str,
+    /// The machine the key's enrollment names, as 32 hex; for a passkey, the
+    /// carrier that served its ceremony.
     machine: String,
-    /// `device` or `recovery_authority`, as the list's `kind`.
-    kind: EnrolledOwnerKeyKind,
+    /// `device` or `recovery_authority`, as the list's `kind`; null for a
+    /// passkey.
+    kind: Option<EnrolledOwnerKeyKind>,
     /// The key that signed the entry, as hex: an enrollment's predecessor, a
-    /// removal's proof.
+    /// confirmation's confirming key, a removal's proof.
     signed_by: String,
     /// When it was signed, advisory unix seconds.
     at: u64,
@@ -445,10 +453,15 @@ fn change_reply(change: &OwnerKeyChange) -> ChangeReply {
         entry: revision_hex(&change.entry),
         change: match change.change {
             OwnerKeyChangeKind::Enrolled => "enrolled",
+            OwnerKeyChangeKind::Confirmed => "confirmed",
             OwnerKeyChangeKind::Removed => "removed",
             OwnerKeyChangeKind::RemovedByEndedKey => "removed_by_ended_key",
         },
-        public_key: revision_hex(&change.public_key),
+        public_key: authority_key_hex(&change.public_key),
+        shape: match change.public_key {
+            AuthorityKey::Ed25519(_) => "device_key",
+            AuthorityKey::P256(_) => "passkey",
+        },
         machine: change.machine.to_hex(),
         kind: change.kind,
         signed_by: authority_key_hex(&change.signed_by),

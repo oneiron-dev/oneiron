@@ -1515,7 +1515,9 @@ fn two_removals_that_cross_both_show_in_the_changes_list() {
         .expect("the owner reads the key changes");
     let first_line = changes
         .iter()
-        .find(|change| change.entry == first_removal && change.public_key == second_key)
+        .find(|change| {
+            change.entry == first_removal && change.public_key == AuthorityKey::Ed25519(second_key)
+        })
         .expect("two removals that cross both show in the changes list: the first removal shows");
     assert_ne!(
         first_line.change,
@@ -1524,7 +1526,10 @@ fn two_removals_that_cross_both_show_in_the_changes_list() {
     );
     let crossing_line = changes
         .iter()
-        .find(|change| change.entry == second_removal && change.public_key == predecessor_key)
+        .find(|change| {
+            change.entry == second_removal
+                && change.public_key == AuthorityKey::Ed25519(predecessor_key)
+        })
         .expect(
             "two removals that cross both show in the changes list: the crossing removal shows",
         );
@@ -2149,7 +2154,8 @@ fn a_removals_rows_are_marked_for_the_live_mirror() {
         .expect("the owner reads the key changes")
         .into_iter()
         .find(|change| {
-            change.change == OwnerKeyChangeKind::Removed && change.public_key == second_key
+            change.change == OwnerKeyChangeKind::Removed
+                && change.public_key == AuthorityKey::Ed25519(second_key)
         })
         .expect("the changes list shows the key's removal")
         .entry;
@@ -2424,7 +2430,8 @@ fn a_removal_through_the_answer_door_marks_its_rows_for_the_live_mirror() {
         .expect("the owner reads the key changes")
         .into_iter()
         .find(|change| {
-            change.change == OwnerKeyChangeKind::Removed && change.public_key == second_key
+            change.change == OwnerKeyChangeKind::Removed
+                && change.public_key == AuthorityKey::Ed25519(second_key)
         })
         .expect("the changes list shows the second key's removal")
         .entry;
@@ -2500,7 +2507,8 @@ fn a_confirmed_held_removal_marks_its_revocation_for_the_live_mirror() {
         .expect("the owner reads the key changes")
         .into_iter()
         .find(|change| {
-            change.change == OwnerKeyChangeKind::Removed && change.public_key == second_key
+            change.change == OwnerKeyChangeKind::Removed
+                && change.public_key == AuthorityKey::Ed25519(second_key)
         })
         .expect("the confirmed removal ended the second key")
         .entry;
@@ -2778,7 +2786,7 @@ fn a_removal_whose_signer_another_crossing_ended_is_not_in_the_changes_list() {
     ] {
         assert!(
             changes.iter().any(|change| change.entry == removal
-                && change.public_key == key
+                && change.public_key == AuthorityKey::Ed25519(key)
                 && change.change == OwnerKeyChangeKind::RemovedByEndedKey),
             "each removal of a crossing that ended its key shows as RemovedByEndedKey: {row}: \
              {changes:?}"
