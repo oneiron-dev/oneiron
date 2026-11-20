@@ -3,10 +3,13 @@
 //! compaction request over a window the test writes, for a pass a host's
 //! backend is sent directly. And for its `api::tests::ai_chat_self_compaction`
 //! (FIX-LIST SELF-COMPACTION-AUTO-FALLBACK-UNTESTED): what a landed
-//! conversation summary's receipt says wrote it. Compiled only under
+//! conversation summary's receipt says wrote it. And for `oneiron`'s
+//! `tests/compaction_turn_past_input_room.rs` (FIX-LIST
+//! COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS): a chat log whose window
+//! holds turns the test writes. Compiled only under
 //! `--cfg oneiron_test_support`; never API.
 
-use crate::compaction::{CompactionExecution, CompactionRequest, CompactionWindowMessage};
+use crate::compaction::{ChatLog, CompactionExecution, CompactionRequest, CompactionWindowMessage};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::vault::Vault;
@@ -52,5 +55,21 @@ pub fn conversation_landing_execution(
     Ok(
         crate::compaction::conversation_receipt_in(&vault.store, &txn, summary)?
             .map(|receipt| receipt.execution),
+    )
+}
+
+/// A chat log of `conversation` whose window holds `texts`, one user turn
+/// each numbered from 0, on a fresh SESSION id, with `uncompacted_tokens`
+/// held against the profile's threshold: the log `seal_conversation_flight`
+/// sizes its window from, on its writer's input room. No row is read, and no
+/// turn is pinned by a projection.
+#[must_use]
+pub fn chat_log_window(conversation: EntityId, texts: &[&str], uncompacted_tokens: u64) -> ChatLog {
+    ChatLog::for_test_window(
+        conversation,
+        EntityId::now(),
+        "user",
+        texts,
+        uncompacted_tokens,
     )
 }
