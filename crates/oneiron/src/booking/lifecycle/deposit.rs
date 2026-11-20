@@ -51,7 +51,8 @@ mod settle;
 
 pub(crate) use self::held::note_unattributed_cancel_in_txn;
 pub(super) use self::held::{
-    HeldDeposit, HeldDepositKind, held_deposit_in_txn, unattributed_cancel_sequence_in_txn,
+    EmergencyReturn, HeldDeposit, HeldDepositKind, emergency_return_in_txn, held_deposit_in_txn,
+    unattributed_cancel_sequence_in_txn,
 };
 pub(super) use self::refund::{
     cap_refund_on_visitor_reschedule_in_writer, refund_on_host_cancel_in_writer,
@@ -165,6 +166,14 @@ struct DepositRow {
     /// cancel Oneiron cannot attribute. Unset on every other row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     unattributed_cancel: Option<UnattributedCancel>,
+    /// The SEQUENCE of the owner's BK-09 emergency cancel that gave this
+    /// deposit back whole (released a capture still due, or owed a captured
+    /// one back), in that cancel's own commit: the booking the visitor picks
+    /// again from its proposals carries no deposit, and the owner's card
+    /// says the emergency cancel returned it (RULING
+    /// DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A). Unset on every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    emergency_return_sequence: Option<u32>,
     updated_at: u64,
 }
 
@@ -343,6 +352,7 @@ pub fn begin_deposit_checkout(
                 refunded_minor: 0,
                 balance_owed_after_refund: false,
                 unattributed_cancel: None,
+                emergency_return_sequence: None,
                 updated_at: now_utc,
             },
         };
