@@ -24,6 +24,7 @@ use crate::dreamer_runner::authority::{BaseAgent, base_agent_for_facet};
 use crate::setting::{EngineSetting, SettingCaller};
 use crate::side_table::{self, SideTable};
 use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Result, Vault};
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 const POLICY_CONFIRMED: SideTable<EntityId, [u8; 32], side_table::Raw> =
@@ -536,6 +537,6 @@ fn load_policy_proposal(
     request.claim_value()?;
     Ok(ProactivityPolicyProposal {
         request,
-        revision: *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes(),
+        revision: *ContentHash::of(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes(),
     })
 }

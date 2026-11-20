@@ -148,3 +148,64 @@ pub fn rebuild_index(vault: &Vault) -> Result<()> {
 pub fn set_ledger_revision(vault: &Vault, room: EntityId, revision: u64) -> Result<()> {
     support::set_ledger_revision(vault, room, revision)
 }
+
+/// A scoped audience read as `audience[0]`, over `room_rows`: installs a
+/// `core:read` grant for the reader so the audience check runs, filters the
+/// rows through `for_audience(audience)`, and returns `(kept, ledger_reads)`.
+/// `audience` must not be empty; its first member is the reader, as the
+/// tests read as the member they name.
+///
+/// # Errors
+///
+/// The store's, or the grant's.
+pub fn audience_read(
+    vault: &Vault,
+    room_rows: &[EntityId],
+    audience: &[EntityId],
+) -> Result<(usize, usize)> {
+    let reader = *audience
+        .first()
+        .ok_or(crate::error::Error::InvalidConfig("audience".into()))?;
+    // Scoped reads are default-deny: without a `core:read` grant the policy
+    // gate refuses each row before the audience check runs, so the kept count
+    // would prove nothing. Install one for the reader on a second manifest,
+    // as the quarantined conversation test does.
+    let scope = crate::federation::scope_codec::encode_scope_value(
+        &crate::federation::scope_codec::read_preset(),
+    )?;
+    let policy = rmpv::Value::Map(vec![
+        ("schema_version".into(), "1.2".into()),
+        ("pack_id".into(), "membership-index-test".into()),
+        ("pack_version".into(), "1".into()),
+        ("min_engine_version".into(), "0.0.0".into()),
+        ("defaults".into(), rmpv::Value::Map(vec![])),
+        ("rules".into(), rmpv::Value::Array(vec![])),
+        ("actor_ceilings".into(), rmpv::Value::Array(vec![])),
+        (
+            "scoped_grants".into(),
+            rmpv::Value::Array(vec![rmpv::Value::Map(vec![
+                ("actor_ref".into(), reader.to_hex().into()),
+                ("effector".into(), "core:read".into()),
+                ("scope".into(), scope),
+                ("receipt_required".into(), false.into()),
+            ])]),
+        ),
+    ]);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &policy)
+        .map_err(|_| crate::error::Error::InvalidConfig("encode policy".into()))?;
+    crate::test_fixtures::put_policy_manifest_bytes(vault, EntityId::now(), &bytes)?;
+    let Some(key) = crate::claim::ScopedReadActorKey::new(reader.to_hex()) else {
+        return Err(crate::error::Error::InvalidConfig("reader".into()));
+    };
+    let read = vault.scoped_read(key).for_audience(audience);
+    let hits: Vec<crate::pipeline::ScoredEntity> = room_rows
+        .iter()
+        .map(|id| crate::pipeline::ScoredEntity {
+            id: *id,
+            score: 1.0,
+        })
+        .collect();
+    let kept = read.filter_scored_entities(hits)?.len();
+    Ok((kept, read.audience_ledger_reads()?))
+}

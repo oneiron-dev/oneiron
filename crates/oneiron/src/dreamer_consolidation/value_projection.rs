@@ -1,7 +1,7 @@
 //! Data projection between extraction/merge JSON and claim MessagePack values.
 use rmpv::Value;
 
-pub(super) fn rmpv_to_json(value: &Value) -> serde_json::Value {
+pub(crate) fn rmpv_to_json(value: &Value) -> serde_json::Value {
     match value {
         Value::Nil => serde_json::Value::Null,
         Value::Boolean(flag) => serde_json::Value::Bool(*flag),

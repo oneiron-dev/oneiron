@@ -52,10 +52,15 @@ impl<T: ManifestDbs> RetrievalIndexExecution for TextIndexView<'_, T> {
                 options,
             )?
         };
+        // A use-limited row is kept for storage only: it is no hit, as a
+        // deleted or stale one is not (FIX USE-LIMIT-NOT-ASKED-BY-SERVING-DOORS).
         let mut visible = Vec::with_capacity(rows.len());
         for row in rows {
             let state = super::TombstoneStoreRead::port_deletion_state(self.target, txn, &row.id)?;
-            if !state.deleted && !state.stale {
+            if !state.deleted
+                && !state.stale
+                && crate::store::legal_hold::use_limit_in_txn(self.target, txn, &row.id)?.is_none()
+            {
                 visible.push(row);
             }
         }

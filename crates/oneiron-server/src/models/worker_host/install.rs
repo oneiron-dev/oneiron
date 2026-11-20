@@ -21,6 +21,7 @@ use crate::config::models::{ArtifactSource, NativeServer, WorkerArtifact};
 use crate::model_artifacts::ArtifactError;
 use crate::model_artifacts::catalog::house_artifact;
 use crate::model_artifacts::install::{ArtifactState, ArtifactStore, HubToken};
+use crate::model_artifacts::licence::LicencePolicy;
 use crate::model_artifacts::manifest::{ArtifactClass, ArtifactFormat, ArtifactManifest};
 
 /// The interpreter version the embedded EXL3 lock is resolved for.
@@ -188,7 +189,7 @@ pub(super) async fn weights(
             Some(dir) => store.verify_dir(&manifest, dir),
             None => {
                 note_on_disk(&store, &manifest);
-                store.install(&manifest, token.as_ref())
+                store.install(&manifest, token.as_ref(), LicencePolicy::bound())
             }
         };
         installed.map(|installed| (installed, manifest))

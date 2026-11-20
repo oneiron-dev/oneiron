@@ -505,7 +505,7 @@ impl Vault {
             };
             let receipt = self
                 .memory(actor.entity_ref(), actor.actor_class())
-                .apply_note_operation_in_lane(txn, note, &operation, None, lane)?;
+                .apply_note_operation_in_lane(txn, note, &operation, None, lane, landing)?;
             return Ok(match receipt.outcome {
                 super::NoteScalarEditOutcome::Applied(_) => {
                     NoteProgramEditOutcome::Edited { head: doc.head }

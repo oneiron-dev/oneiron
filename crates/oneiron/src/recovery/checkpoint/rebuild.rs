@@ -252,6 +252,9 @@ pub(super) fn rebuild(
         crate::conversation::rebuild_membership_index_in_txn(vault, txn)?;
         crate::attempt_queue::rebuild_checkpoint_indexes(&vault.store, txn, opaque_attempts)?;
         vault.store.rebuild_commitment_due_sidecars(txn)?;
+        // The restored waits are content and the armed jobs live: each unsettled wait's `until`
+        // is armed again, so a restored wait still cuts off (DESIGN 15-setting-primitive, 5b-4).
+        crate::agent_dispatch::rearm_restored_wait_deadlines_in_txn(vault, txn)?;
         // The armed jobs' due index is not imaged: the restored rows rebuild it (DESIGN
         // 15-setting-primitive, stage 0.2).
         crate::schedule::rebuild_schedule_due_in_txn(&vault.store, txn)?;
@@ -268,6 +271,8 @@ pub(super) fn rebuild(
 pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<()> {
     // Restored PERSON rows bypassed the body staging that keeps their party keys.
     crate::store::person_party_keys::backfill_person_party_key_index(vault, true)?;
+    // Restored TASK rows bypassed the row staging that files speakers' entries.
+    crate::task_verb::speaker_entry_index::backfill_speaker_entry_index(vault, true)?;
     crate::skill_hub::backfill_content_hash_index_if_needed(vault)?;
     // Restored authority-log rows bypassed the Grant member index's writer.
     crate::federation::backfill_agent_grant_member_index(vault, true)?;

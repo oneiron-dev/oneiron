@@ -21,8 +21,6 @@
 mod seam;
 
 mod tests_executor;
-// FIX [LIBTEST-QUARANTINE-BRANCH-STORE-ORACLE-TESTS-LEAK-SWEEP]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod tests_leak_sweep;
 mod tests_promote;
 mod tests_substrate;

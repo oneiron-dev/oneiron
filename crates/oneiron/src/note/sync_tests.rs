@@ -33,6 +33,7 @@ fn selector(vault: &Vault, actor: EntityId, role: FederationGrantRole) -> SyncSe
             crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &crate::federation::encode_federation_grant_body(&grant).expect("encode fixture grant"),
         )
         .commit()
@@ -68,6 +69,7 @@ fn replicate_row(from: &Vault, to: &Vault, id: EntityId) {
             header.entity_type,
             TimeRange { start: 1, end: 1 },
             header.learned_at,
+            None,
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
         )
         .commit()
@@ -169,7 +171,17 @@ fn note_raw_import_writer_impersonation_revocation_and_birth_overwrite_are_refus
     );
     let manager = manager(vault.clone());
     let handle = manager.documents().open(note).unwrap();
-    assert!(handle.edit_text(0, 0, "raw ").is_err());
+    assert!(
+        handle
+            .edit_text(
+                crate::write_envelope::WriteActor::new(author, EdgeActorClass::Human),
+                1,
+                0,
+                0,
+                "raw ",
+            )
+            .is_err()
+    );
     let forged = loro::LoroDoc::new();
     forged.get_map("pins").insert("forged", "pin").unwrap();
     forged.commit_with(
@@ -188,7 +200,7 @@ fn note_raw_import_writer_impersonation_revocation_and_birth_overwrite_are_refus
             .is_err()
     );
     let mut birth = decode_note_body(&vault.get(&note).unwrap().unwrap()).unwrap();
-    birth.author_ref = stranger;
+    birth.author_ref = NoteActor::Actor(stranger);
     assert!(
         vault
             .batch()
@@ -197,6 +209,7 @@ fn note_raw_import_writer_impersonation_revocation_and_birth_overwrite_are_refus
                 crate::registry::ENTITY_TYPE_NOTE,
                 TimeRange { start: 1, end: 1 },
                 1,
+                None,
                 &encode_note_body(&birth).unwrap()
             )
             .commit()
@@ -233,7 +246,7 @@ fn note_raw_import_writer_impersonation_revocation_and_birth_overwrite_are_refus
             .authorship
             .iter()
             .any(|record| record.operation == op.request_id
-                && record.actor == author
+                && record.actor == NoteActor::Actor(author)
                 && record.grant == Some(selectors.grant_id.to_hex()))
     );
     let next = edit(&vault, note, 0, 0, "revoked ");
@@ -271,7 +284,17 @@ fn note_raw_import_writer_impersonation_revocation_and_birth_overwrite_are_refus
         .delete_entity_with_options(&note, crate::deletion::DeleteEntityOptions { purge: true })
         .unwrap();
     assert!(handle.text().is_err());
-    assert!(handle.edit_text(0, 0, "resurrect").is_err());
+    assert!(
+        handle
+            .edit_text(
+                crate::write_envelope::WriteActor::new(author, EdgeActorClass::Human),
+                1,
+                0,
+                0,
+                "resurrect",
+            )
+            .is_err()
+    );
     assert!(memory.apply_note_ops(note, &after.frontier, &[]).is_err());
     for prefix in ["d:e:", "sv:e:", "ssv:e:", "ds:e:"] {
         assert!(
@@ -290,6 +313,10 @@ fn note_citations_and_authorship_cross_peer_state_reopen_and_guard_reviewed_edit
     let a = Arc::new(Vault::open(a_dir.path(), VaultConfig::device()).unwrap());
     let b = Arc::new(Vault::open(b_dir.path(), VaultConfig::device()).unwrap());
     let author = actor(&a);
+    crate::conversation_dag::fixtures::grant_reads(
+        &a,
+        crate::WriteActor::new(author, EdgeActorClass::Human),
+    );
     let memory = a.memory(author, EdgeActorClass::Human);
     let claim = EntityId::now();
     memory
@@ -308,6 +335,7 @@ fn note_citations_and_authorship_cross_peer_state_reopen_and_guard_reviewed_edit
             occurred_at: None,
             learned_at: None,
             salience: None,
+            confidence_details: None,
         })
         .unwrap();
     let source = EntityId::from_hex(
@@ -691,6 +719,7 @@ fn note_birth_refusal_quarantines_without_wedging_valid_siblings_or_replay() {
             kind,
             TimeRange { start: 1, end: 1 },
             header.learned_at,
+            0,
             body,
         );
         crate::sync::loro_support::map_insert_bytes(&entities, &entity.to_hex(), &blob).unwrap();
@@ -783,6 +812,7 @@ mod program {
         let dir = tempfile::tempdir().expect("create note fixture directory");
         let vault =
             Vault::open(dir.path(), VaultConfig::default()).expect("open note fixture vault");
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let owner = vault
             .ensure_embedded_owner_actor()
             .expect("create fixture owner");
@@ -883,7 +913,12 @@ mod program {
             .unwrap();
         vault
             .with_write_txn(|txn| {
-                crate::batch::deindex_entity(&vault.store, txn, &note).map(|_| ())
+                crate::batch::deindex_entity(
+                    &crate::secret_custody::CustodyWrite::of(&vault),
+                    txn,
+                    &note,
+                )
+                .map(|_| ())
             })
             .unwrap();
         assert!(vault.get_raw(&note).unwrap().is_none());
@@ -1099,6 +1134,11 @@ mod program {
             let (_dir, source, actor) = fixture();
             let peer_dir = tempfile::tempdir().unwrap();
             let peer = Vault::open(peer_dir.path(), VaultConfig::default()).unwrap();
+            peer.install_device_keystore(std::sync::Arc::new(
+                oneiron_keystore::MemoryKeystore::new(),
+            ));
+            peer.prepare_install_signing().expect("install signing");
+
             let note = source.create_note("research", "erase me", actor).unwrap();
             let fork = rewrite(&source, note, "erase this fork", actor);
             let bundle = source

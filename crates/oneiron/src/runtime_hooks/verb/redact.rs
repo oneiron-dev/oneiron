@@ -6,22 +6,35 @@
 //! Redact names any number of paths of any length, and every one is applied
 //! before the caller sees the view (FIX 10086).
 
+mod text;
+
 use serde_json::Value;
+
+pub(super) use text::hide_in_text;
 
 /// Hides `path` in `view`. A path that names nothing hides nothing.
 pub(super) fn hide(view: &mut Value, path: &str) {
-    if path.is_empty() {
+    let Some(segments) = segments(path) else {
         *view = Value::Null;
         return;
+    };
+    hide_at(view, &segments);
+}
+
+/// `path` as the segments it walks: a JSON pointer split on `/`, each with
+/// `~1` and `~0` undone, else split on `.`. `None` for the empty path, which
+/// names the whole view.
+fn segments(path: &str) -> Option<Vec<String>> {
+    if path.is_empty() {
+        return None;
     }
-    let segments: Vec<String> = match path.strip_prefix('/') {
+    Some(match path.strip_prefix('/') {
         Some(pointer) => pointer
             .split('/')
             .map(|segment| segment.replace("~1", "/").replace("~0", "~"))
             .collect(),
         None => path.split('.').map(str::to_owned).collect(),
-    };
-    hide_at(view, &segments);
+    })
 }
 
 fn hide_at(node: &mut Value, path: &[String]) {

@@ -1,5 +1,7 @@
 //! The host doors of the owner's courtesy delete rows (OF-273):
-//! `vault.courtesy_delete.send`, `.sent`, `.incoming` and `.answer`.
+//! `vault.courtesy_delete.send`, `.sent`, `.incoming` and `.answer`, and of
+//! the leave rows built on them (L7-09): `vault.leave.holdings` and
+//! `vault.leave.erase_requests.send`.
 //! `host_doors` re-exports them, so the generated HTTP facade handler and
 //! the MCP dispatcher call them by the name every host door has. Each takes
 //! the vault owner's proof as `/v1/owner/courtesy-delete/*` takes it
@@ -18,8 +20,9 @@ use std::sync::Arc;
 use oneiron::EntityId;
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryError};
 use oneiron::task_verb::sdk::{
-    CourtesyDeleteAnswerRequest, CourtesyDeleteIncoming, CourtesyDeleteSendRequest,
-    CourtesyDeleteSent, EmptyRequest,
+    self, CourtesyDeleteAnswerRequest, CourtesyDeleteIncoming, CourtesyDeleteSendRequest,
+    CourtesyDeleteSent, EmptyRequest, LeaveEraseRequestsSendRequest, LeaveEraseRequestsSent,
+    LeaveHoldings, LeaveHoldingsRequest,
 };
 
 use super::host_doors::support::{Listed, internal};
@@ -85,6 +88,50 @@ pub(crate) async fn vault_courtesy_delete_send(
             courtesy_delete::send(server, owner, &input).map_err(|error| refusal(VERB, error))
         },
         |_| Vec::new(),
+    )
+    .await
+}
+
+/// `vault.leave.erase_requests.send`: the one action of a leave (L7-09),
+/// one ask per pact with the other vault that this vault ended, signed with
+/// this host's key and queued. Like a sent ask, it lists no row.
+pub(crate) async fn vault_leave_erase_requests_send(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: LeaveEraseRequestsSendRequest,
+) -> Listed<LeaveEraseRequestsSent> {
+    const VERB: &str = "vault.leave.erase_requests.send";
+    as_owner_naming(
+        server,
+        auth,
+        VERB,
+        move |server, owner| {
+            courtesy_delete::send_leave(server, owner, &input).map_err(|error| refusal(VERB, error))
+        },
+        |_| Vec::new(),
+    )
+    .await
+}
+
+/// `vault.leave.holdings`: what this vault holds from another vault, by
+/// attribution (L7-09). It lists each world and each record it names.
+pub(crate) async fn vault_leave_holdings(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: LeaveHoldingsRequest,
+) -> Listed<LeaveHoldings> {
+    const VERB: &str = "vault.leave.holdings";
+    as_owner_naming(
+        server,
+        auth,
+        VERB,
+        move |server, owner| sdk::read_leave_holdings(server.vault(), owner, input),
+        |held| {
+            held.worlds
+                .iter()
+                .flat_map(|world| std::iter::once(world.world).chain(world.records.iter().copied()))
+                .collect()
+        },
     )
     .await
 }

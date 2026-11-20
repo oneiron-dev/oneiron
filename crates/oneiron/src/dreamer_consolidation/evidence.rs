@@ -1,11 +1,11 @@
 //! Parent-verified evidence is the sole scoped consolidation handoff.
 //! Raw model locators carry no source/trust authority; the prepared reader
 //! binds each citation to one exact source version before selection or writes.
-use super::SwarmEvidenceRef;
 use super::provenance::{ConsolidationEvidenceEnvelope, PromotionCandidate, source_meet};
 use super::resources::BranchResources;
 use super::support::invalid_consolidation;
 use super::turn_text::MessageSpan;
+use super::{SwarmEvidenceRef, VerifiedSwarmEvidence};
 use crate::claim::ClaimSource;
 use crate::{EntityId, Result, Vault};
 use oneiron_model::llm::ScopeResource;
@@ -140,6 +140,39 @@ impl ExtractedCandidate {
     }
 }
 
+/// What verification reads from its branch.
+/// A native branch and a bound projection both supply per-source verification, versions, spans, and projections.
+/// The generic verification below reads only through this trait, so both paths share one collapse and meet rule.
+pub(super) trait EvidenceReader {
+    /// Verifies each reference against the branch it was read from.
+    fn read_verified_refs(&self, refs: &[SwarmEvidenceRef]) -> Result<Vec<VerifiedSwarmEvidence>>;
+    /// Returns the exact version the branch pinned for the source.
+    fn read_source_version(&self, id: &EntityId) -> Result<ScopeResource>;
+    /// Returns the MESSAGE words the reference covers at the branch revisions.
+    fn read_message_spans(&self, entry: &SwarmEvidenceRef) -> Result<Vec<MessageSpan>>;
+    /// Returns the MESSAGEs the frozen text the reference cites joins in order.
+    fn read_projection(&self, entry: &SwarmEvidenceRef) -> Vec<EntityId>;
+}
+
+impl EvidenceReader for BranchResources<'_> {
+    /// Verifies each reference against the branch it was read from.
+    fn read_verified_refs(&self, refs: &[SwarmEvidenceRef]) -> Result<Vec<VerifiedSwarmEvidence>> {
+        self.verify_evidence_refs(refs)
+    }
+    /// Returns the exact version the branch pinned for the source.
+    fn read_source_version(&self, id: &EntityId) -> Result<ScopeResource> {
+        self.source_version(id)
+    }
+    /// Returns the MESSAGE words the reference covers at the branch revisions.
+    fn read_message_spans(&self, entry: &SwarmEvidenceRef) -> Result<Vec<MessageSpan>> {
+        self.message_spans(entry)
+    }
+    /// Returns the MESSAGEs the frozen text the reference cites joins in order.
+    fn read_projection(&self, entry: &SwarmEvidenceRef) -> Vec<EntityId> {
+        self.projection(entry)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct VerifiedCitation {
     locator: EvidenceLocator,
@@ -162,8 +195,11 @@ pub(crate) struct VerifiedEvidenceSet {
 }
 
 impl VerifiedEvidenceSet {
-    pub(super) fn verify(
-        resources: &BranchResources<'_>,
+    /// Verifies each reference through the reader that holds its branch.
+    /// The reader supplies per-source verification, versions, spans, and projections.
+    /// Collapse and the meet fold through the one shared rule below.
+    pub(super) fn verify<R: EvidenceReader>(
+        reader: &R,
         refs: &[EvidenceLocator],
         inherited_meet: ClaimSource,
     ) -> Result<Self> {
@@ -171,16 +207,16 @@ impl VerifiedEvidenceSet {
             return Err(invalid_consolidation("empty scoped evidence"));
         }
         let raw: Vec<_> = refs.iter().map(|locator| locator.reference()).collect();
-        let verified = resources.verify_evidence_refs(&raw)?;
+        let verified = reader.read_verified_refs(&raw)?;
         let mut rows = Vec::new();
         for (locator, fact) in refs.iter().zip(verified) {
             rows.push(VerifiedCitation {
                 locator: *locator,
                 hash: fact.content_hash,
-                version: resources.source_version(&locator.source_id())?,
+                version: reader.read_source_version(&locator.source_id())?,
                 trust: fact.trust_class,
-                messages: resources.message_spans(&locator.reference())?,
-                projection: resources.projection(&locator.reference()),
+                messages: reader.read_message_spans(&locator.reference())?,
+                projection: reader.read_projection(&locator.reference()),
             });
         }
         Ok(Self::from_rows(rows, inherited_meet))
@@ -595,9 +631,18 @@ impl VerifiedCandidate {
         resources: &BranchResources<'_>,
         extracted: ExtractedCandidate,
     ) -> Result<Self> {
+        Self::from_extracted_with_reader(resources, extracted)
+    }
+    /// Builds one verified candidate through the reader that holds its branch.
+    /// The reader supplies per-source verification for the extracted references.
+    /// Turn references and the meet fold from the verified set exactly as native does.
+    pub(super) fn from_extracted_with_reader<R: EvidenceReader>(
+        reader: &R,
+        extracted: ExtractedCandidate,
+    ) -> Result<Self> {
         let sources = extracted.sources().map(<[EntityId]>::to_vec);
         let (mut proposal, refs) = extracted.into_parts();
-        let evidence = VerifiedEvidenceSet::verify(resources, &refs, proposal.evidence_meet)?;
+        let evidence = VerifiedEvidenceSet::verify(reader, &refs, proposal.evidence_meet)?;
         proposal.evidence_turn_refs = evidence.refs();
         proposal.evidence_meet = evidence.meet();
         Ok(Self {

@@ -46,6 +46,15 @@ impl Memory<'_> {
                 "a new witnessed turn needs one non-system speaker",
             ));
         }
+        // A project position is a base birth stamp (FIX
+        // WITNESS-TURN-NO-PROJECT-POSITION): an overlay stages no stamps,
+        // and promote replays the journal verbatim, so a session witness
+        // takes none.
+        if matches!(landing, Landing::Overlay { .. }) && turn.project.is_some() {
+            return Err(MemoryError::bad_request(
+                "a project position lands on record; an off-record session witness takes none",
+            ));
+        }
 
         let imported = match landing {
             Landing::Base { imported, .. } => imported.cloned(),
