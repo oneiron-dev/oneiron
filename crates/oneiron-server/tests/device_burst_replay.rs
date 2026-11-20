@@ -11,6 +11,10 @@
 //! the rows the home's admission read it as inserting, so a hard erase of
 //! one of them scrubs its held bytes (#9226 review round 2).
 //!
+//! One batch has one landing at a time (FIX DEVICE-BURST-ALLOW-DRAIN-OVERLAP):
+//! the drain leaves a batch whose landing a socket claimed, and a send of
+//! bytes whose batch another landing holds is answered as held.
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --features oneiron/test-support
 //! --no-fail-fast --test device_burst_replay`.
@@ -28,9 +32,11 @@ use oneiron::DeleteReason;
 use oneiron::sync::WindowKey;
 use oneiron::sync::federation_burst::{
     DeviceBurstAdmission, DevicePeer, FederationBurstDisposition, FederationBurstWorkState,
-    admit_device_window_update,
+    admit_device_window_update, device_update_batch_ref,
 };
-use oneiron_server::test_doors::device_burst_drain::drain_device_bursts_once;
+use oneiron_server::test_doors::device_burst_drain::{
+    claim_device_burst_landing, drain_device_bursts_once,
+};
 
 #[test]
 fn a_held_device_burst_lands_by_its_homes_drain_without_a_human() {
@@ -173,5 +179,120 @@ async fn held_delta_scrubbed_by_erase() {
         home.held_rows(&burst_rows),
         0,
         "no row of the scrubbed burst lands"
+    );
+}
+
+/// FIX DEVICE-BURST-ALLOW-DRAIN-OVERLAP, the drain's side. A batch the burst
+/// core allowed stays retained, its receipt Pending, until the socket that
+/// sent it ends it, and it is due to the drain once the device's rate is
+/// ready. While the socket's claim on its landing stands, the drain leaves
+/// it; once the socket gave up with the batch retained, the next pass lands
+/// it. Red when the drain ignores the claim: it lands the batch the socket is
+/// landing, so the same bytes persist twice.
+#[test]
+fn the_drain_leaves_a_batch_whose_socket_lands_it_and_lands_it_once_the_socket_gives_up() {
+    run_on_engine_stack("device-burst-claim-drain", drain_leaves_claimed_batch);
+}
+
+async fn drain_leaves_claimed_batch() {
+    let device = Device::new();
+    let (trickle, trickle_rows) = device.rows_update(1);
+    let home = Home::new(DevicePeer::Unproven, operations(&trickle)).await;
+    let key = WindowKey::try_new(WINDOW).unwrap();
+    // A socket's UPDATE arm claims the batch's landing, and the burst core
+    // allows the trickle, which is at the device's baseline.
+    let batch_ref = device_update_batch_ref(&DevicePeer::Unproven, &key, &trickle, false).unwrap();
+    let claim = claim_device_burst_landing(&home.server, batch_ref.clone())
+        .expect("no landing holds a batch nobody sent");
+    let work =
+        match admit_device_window_update(&home.vault, &DevicePeer::Unproven, &key, &trickle, &[])
+            .unwrap()
+        {
+            DeviceBurstAdmission::Allow(work) => work,
+            other => panic!("the trickle at the baseline is allowed: {other:?}"),
+        };
+    assert_eq!(work.batch_ref(), batch_ref, "the claim names the batch");
+    assert!(
+        claim_device_burst_landing(&home.server, batch_ref.clone()).is_none(),
+        "a claimed batch has one landing"
+    );
+
+    // Two seconds on, the device's rate is ready and the batch is due, while
+    // the socket still lands it: the drain leaves it.
+    home.clock.set(home.now + 2);
+    assert_eq!(
+        drain_device_bursts_once(&home.server).await.unwrap(),
+        0,
+        "the drain leaves the batch its socket lands"
+    );
+    assert_eq!(
+        home.held_rows(&trickle_rows),
+        0,
+        "the drain lands nothing of it"
+    );
+    assert_eq!(
+        home.receipt(DevicePeer::Unproven, &batch_ref).state,
+        FederationBurstWorkState::Pending,
+        "the batch waits for its socket to end it"
+    );
+
+    // The socket gave up with the batch retained: the next pass lands it.
+    drop(claim);
+    assert_eq!(
+        drain_device_bursts_once(&home.server).await.unwrap(),
+        1,
+        "the drain lands the batch its socket gave up"
+    );
+    assert!(
+        home.until_committed(|| home.held_rows(&trickle_rows) == 1)
+            .await,
+        "the batch's row lands at the home"
+    );
+    assert_eq!(
+        home.receipt(DevicePeer::Unproven, &batch_ref).state,
+        FederationBurstWorkState::Imported
+    );
+}
+
+/// FIX DEVICE-BURST-ALLOW-DRAIN-OVERLAP, the socket's side. While another
+/// landing holds a batch (the drain, landing the same bytes held from an
+/// earlier send), the device's send of those bytes is answered as held and
+/// lands nothing from the socket. Once that landing ends, the same send
+/// lands. Red when the socket ignores the claim: it lands the bytes the other
+/// landing holds, and the device gets no held answer.
+#[test]
+fn a_send_of_a_batch_another_landing_holds_is_answered_as_held() {
+    run_on_engine_stack("device-burst-claim-socket", send_of_claimed_batch_is_held);
+}
+
+async fn send_of_claimed_batch_is_held() {
+    let device = Device::new();
+    let (trickle, trickle_rows) = device.rows_update(1);
+    let home = Home::new(DevicePeer::Unproven, operations(&trickle)).await;
+    let key = WindowKey::try_new(WINDOW).unwrap();
+    // The root socket is on the full-window lane, so its batch is not a
+    // promoted window's.
+    let batch_ref = device_update_batch_ref(&DevicePeer::Unproven, &key, &trickle, false).unwrap();
+    let claim = claim_device_burst_landing(&home.server, batch_ref)
+        .expect("no landing holds a batch nobody sent");
+    let mut socket = home.connect_root().await;
+    send_update(&mut socket, &trickle).await;
+    assert!(
+        held_answer(&mut socket).await,
+        "the home answers the send as held while another landing holds its batch"
+    );
+    assert_eq!(
+        home.held_rows(&trickle_rows),
+        0,
+        "nothing of the send lands from the socket"
+    );
+
+    // That landing ended: the device's next send of the bytes lands.
+    drop(claim);
+    send_update(&mut socket, &trickle).await;
+    assert!(
+        home.until_committed(|| home.held_rows(&trickle_rows) == 1)
+            .await,
+        "the send lands once no other landing holds its batch"
     );
 }
