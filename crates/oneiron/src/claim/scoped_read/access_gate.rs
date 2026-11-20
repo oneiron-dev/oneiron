@@ -16,6 +16,7 @@ use crate::registry::{
 use crate::store::Store;
 use oneiron_authority::federation::Scope;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 fn private_scope(scope: Option<&rmpv::Value>) -> bool {
     let Some(scope) = scope else { return false };
@@ -58,7 +59,10 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (RelationshipScope, bool) {
 /// retrieval hit for this read in this serving txn ([`Self::room_verdicts`],
 /// L9-52); no other row checks share it. The eighth names the one record a
 /// named read judges through its cleanup archive
-/// ([`Self::reading_archive_of`]).
+/// ([`Self::reading_archive_of`]). The ninth holds, for the same serving
+/// txn, whether each owner's relationship exemption holds there
+/// ([`Self::owner_exemption_holds_in`]); every row check of that txn, a
+/// peer's included, shares it.
 #[derive(Default)]
 pub(super) struct HeldAuthority(
     RefCell<Option<AccessContextSnapshot>>,
@@ -69,7 +73,15 @@ pub(super) struct HeldAuthority(
     Option<EntityId>,
     RoomVerdicts,
     Option<EntityId>,
+    OwnerExemptions,
 );
+
+/// Whether each owner's relationship exemption holds in one serving txn, by
+/// owner ([`HeldAuthority::owner_exemption_holds_in`]). The verdict depends
+/// on that snapshot and the owner alone, so the row checks of the txn share
+/// one.
+#[derive(Clone, Default)]
+pub(super) struct OwnerExemptions(Rc<RefCell<Vec<(EntityId, bool)>>>);
 
 impl HeldAuthority {
     /// The row checks of one serving txn whose filter the read resolved from
@@ -84,6 +96,7 @@ impl HeldAuthority {
             None,
             RoomVerdicts::default(),
             None,
+            OwnerExemptions::default(),
         )
     }
 
@@ -100,6 +113,7 @@ impl HeldAuthority {
             self.5,
             RoomVerdicts::default(),
             self.7,
+            OwnerExemptions::default(),
         )
     }
 
@@ -118,6 +132,7 @@ impl HeldAuthority {
             self.5,
             RoomVerdicts::default(),
             self.7,
+            self.8.clone(),
         )
     }
 
@@ -135,6 +150,7 @@ impl HeldAuthority {
             self.5,
             RoomVerdicts::default(),
             None,
+            self.8.clone(),
         )
     }
 
@@ -187,6 +203,7 @@ impl HeldAuthority {
             id,
             RoomVerdicts::default(),
             None,
+            self.8.clone(),
         );
         let judged = judge(&cited);
         *self.0.borrow_mut() = cited.0.into_inner();
@@ -254,6 +271,33 @@ impl HeldAuthority {
         *held = Some(context);
         Ok(allowed)
     }
+
+    /// Whether `owner`'s relationship exemption holds in `txn`
+    /// ([`crate::memory::owner_exemption_holds_in_txn`]): judged at the
+    /// first row check of this serving txn that asks, then reused. Its
+    /// liveness test folds the identity lifecycle, which no row of the txn
+    /// changes (FIX OWNER-EXEMPTION-LIFECYCLE-FOLD-PER-ROW). A judgement
+    /// that fails holds nothing and is the read's error.
+    pub(super) fn owner_exemption_holds_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        owner: EntityId,
+    ) -> crate::memory::MemoryResult<bool> {
+        let held = self
+            .8
+            .0
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == owner)
+            .map(|(_, holds)| *holds);
+        if let Some(holds) = held {
+            return Ok(holds);
+        }
+        let holds = crate::memory::owner_exemption_holds_in_txn(vault, txn, owner)?;
+        self.8.0.borrow_mut().push((owner, holds));
+        Ok(holds)
+    }
 }
 
 impl ScopedReadActorKey {
@@ -269,14 +313,35 @@ impl ScopedReadActorKey {
         vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
     ) -> Result<bool> {
+        self.relationship_gated_by(|owner| {
+            crate::memory::owner_exemption_holds_in_txn(vault, txn, owner)
+        })
+    }
+
+    /// [`Self::relationship_gated_in`] for a row check of the serving txn
+    /// `authority` holds: the owner's exemption is judged once in that txn,
+    /// not once per row ([`HeldAuthority::owner_exemption_holds_in`]).
+    pub(super) fn relationship_gated_held_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        self.relationship_gated_by(|owner| authority.owner_exemption_holds_in(vault, txn, owner))
+    }
+
+    fn relationship_gated_by(
+        &self,
+        exemption_holds: impl FnOnce(EntityId) -> crate::memory::MemoryResult<bool>,
+    ) -> Result<bool> {
         if !self.enforce_access_grants {
             return Ok(false);
         }
         let Some(owner) = self.relationship_gate_lift_owner() else {
             return Ok(true);
         };
-        crate::memory::owner_exemption_holds_in_txn(vault, txn, owner)
-            .map(|owner| !owner)
+        exemption_holds(owner)
+            .map(|holds| !holds)
             .map_err(|refusal| {
                 crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(
                     Box::new(refusal),
@@ -321,10 +386,16 @@ impl ScopedRead<'_> {
         read(&txn)
     }
 
-    /// Whether this read's relationship gate binds in `txn`; see
-    /// [`ScopedReadActorKey::relationship_gated_in`].
-    pub(super) fn relationship_gated_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
-        self.actor_key.relationship_gated_in(self.vault, txn)
+    /// Whether this read's relationship gate binds in `txn`, the serving txn
+    /// `authority` holds; see
+    /// [`ScopedReadActorKey::relationship_gated_held_in`].
+    pub(super) fn relationship_gated_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        self.actor_key
+            .relationship_gated_held_in(self.vault, txn, authority)
     }
 
     /// Whether the relationship gate admits the claim `id` in `txn`, judged
@@ -338,7 +409,7 @@ impl ScopedRead<'_> {
         body: &ClaimBody,
         authority: &HeldAuthority,
     ) -> Result<bool> {
-        if !self.relationship_gated_in(txn)? {
+        if !self.relationship_gated_in(txn, authority)? {
             return Ok(true);
         }
         let read = RelationshipRead::claim(body);
@@ -360,8 +431,9 @@ impl ScopedRead<'_> {
         space: RelationshipScope,
         private: bool,
         record: &Scope,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
-        if !self.relationship_gated_in(txn)? {
+        if !self.relationship_gated_in(txn, authority)? {
             return Ok(true);
         }
         let read = RelationshipRead::Gated {
@@ -415,7 +487,7 @@ impl ScopedRead<'_> {
         raw: &[u8],
         authority: &HeldAuthority,
     ) -> Result<bool> {
-        if !self.relationship_gated_in(txn)? {
+        if !self.relationship_gated_in(txn, authority)? {
             return Ok(true);
         }
         // The row's position is content, read where this read reads it: a
