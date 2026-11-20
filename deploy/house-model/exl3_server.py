@@ -130,10 +130,13 @@ DEFAULT_IN_FLIGHT = 4
 # with nothing else in flight.
 SOLO_FIELD = "oneiron_solo"
 # The shared KV pool, in tokens, when the launcher names none; never less than
-# one full request (`full_request_pool`).
-# INF 1 (FIX 6974): the largest pool measured at four in flight whose peak
-# leaves 2 GiB of the card's 24564 MiB, at a 22488 MiB peak.
-DEFAULT_CACHE_TOKENS = 40192
+# one full request (`full_request_pool`). 64000 is 250 pages (Engine TASK
+# HOUSE-MODEL-CACHE-TOKENS-64000, QWEN-EVAL-1 on mel at 400 W, preliminary):
+# +25.2 % median packets per hour over INF 1's 40192 (FIX 6974), inside the
+# stock grader band, at a 23568 MiB peak against 22528. That leaves about
+# 1 GiB of the card's 24564 MiB, not the 2 GiB INF 1 kept. The referee picks
+# between 64000 and 68096 here, in this one value.
+DEFAULT_CACHE_TOKENS = 64000
 # Submitted requests that wait for admission. Past it a request waits in its
 # own handler for a place; it is never refused.
 INGRESS_CAPACITY = 4
