@@ -86,7 +86,7 @@ impl Vault {
             .and_then(|hex| blake3::Hash::from_hex(hex).ok())
             .map(|hash| *hash.as_bytes());
         let format = format.to_owned();
-        self.record_carried_act_in_txn(txn, "export", owner_authored, |machine| {
+        self.record_owner_carried_act_in_txn(txn, "export", owner_authored, |machine| {
             AuthorityOp::ExportAct(ExportActRecord {
                 act,
                 machine,
