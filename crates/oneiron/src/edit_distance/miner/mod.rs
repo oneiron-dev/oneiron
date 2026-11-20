@@ -146,9 +146,26 @@ use crate::write_envelope::{ClaimCandidate, WriteActor};
 #[cfg(test)]
 use rmpv::Value;
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-MINER-TESTS]: the lib test target's type check fails here (10 errors: E0560 x4, E0061 x3, E0308 x2, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
 mod stored_fields;
+
+/// Sample substitution mint-mark bytes for the trailing-bytes test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn miner_mint_mark_sample_for_test() -> Vec<u8> {
+    use crate::side_table::RawValue;
+    model::StoredMintMark::new(
+        config::MARK_KIND_SKILL_EDIT,
+        &crate::entity_id::EntityId::now(),
+    )
+    .to_raw()
+    .expect("a mint-mark row serializes")
+}
+
+/// Whether `raw` decodes as a substitution mint mark, for the trailing-bytes test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn miner_mint_mark_decode_for_test(raw: &[u8]) -> bool {
+    use crate::side_table::RawValue;
+    model::StoredMintMark::from_raw(raw).is_ok()
+}

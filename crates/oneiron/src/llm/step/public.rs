@@ -38,6 +38,9 @@ use crate::{EdgeActorClass, Vault, WriteActor};
 pub use super::media_step::media_step_key;
 pub use super::settled::{SettledStepRequest, SettledStepView, settled_step_as_owner};
 
+mod parked;
+pub use parked::{ParkedStep, parked_as_owner};
+
 pub(crate) use crate::model_step_record::MODEL_STEP_ATTEMPT_KIND;
 pub use crate::store::model_step_submission::{
     ModelStepFailure, ModelStepFailureClass, ModelStepResult, ModelStepRetryPolicy,
@@ -47,7 +50,8 @@ const WORKER: &str = "model-step-door";
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::llm::step::public::{
-    ModelStepReceipt, ModelStepReceiptRequest, ModelStepSubmitRequest,
+    DecisionStepQuestion, DecisionStepSubmit, ModelStepReceipt, ModelStepReceiptRequest,
+    ModelStepSubmitRequest, StepSubmit, StepSubmitAnswer,
 };
 
 /// Submit or resume the caller's own logical step. Successes AND terminal
@@ -635,21 +639,24 @@ fn keep_correction(vault: &Vault, id: AttemptId, point: &CorrectionPoint) -> boo
 }
 
 /// The result a step's outcome is saved as on its submission row. An offer
-/// that rests for its health past this submission's wait (FIX 11226) parks
-/// the step, unsent and unfailed, until the offer is back, keeping the sends
-/// it made. Every other outcome is saved by the shared conversion
-/// ([`step_result`]): a persistence fault is no result, so a later submission
-/// can finish that write path.
+/// that rests for its health past this submission's wait (FIX 11226), or no
+/// rung serves at this hour (UNBUILT-14), parks the step, unsent and unfailed,
+/// until the offer is back, keeping the sends it made. Every other outcome is
+/// saved by the shared conversion ([`step_result`]): a persistence fault is
+/// no result, so a later submission can finish that write path.
 fn submitted_step_result(
     vault: &Vault,
     id: AttemptId,
     row: &Submission,
     outcome: DurableStepResult<StepOutcome>,
 ) -> MemoryResult<ModelStepResult> {
-    if let Err(DurableStepError::Llm(LlmError::Retryable(RetryableLlmError::HealthRest {
-        resets_at,
-        ..
-    }))) = &outcome
+    // Its offer rests for its health past this submission's wait (FIX 11226),
+    // or no rung serves at this hour (UNBUILT-14): the step parks, unsent and
+    // unfailed, until the offer is back, keeping the sends it made.
+    if let Err(DurableStepError::Llm(LlmError::Retryable(
+        RetryableLlmError::HealthRest { resets_at, .. }
+        | RetryableLlmError::OutsideHours { resets_at, .. },
+    ))) = &outcome
     {
         return Ok(ModelStepResult::Parked {
             until: resets_at.first().copied(),

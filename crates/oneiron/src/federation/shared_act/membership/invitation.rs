@@ -19,6 +19,7 @@ use crate::authority::{CapabilitySlip, HostSlipIssuer, PairingLink, PendingInvit
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
+use crate::federation::setting_keys::SHARED_INVITATION_TTL;
 use crate::federation::{FederationGrantRole as Role, OrgAdminPower, SharedVaultWrite};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
@@ -27,7 +28,8 @@ use std::collections::BTreeSet;
 const INVITATION_PREFIX: &[u8] = b"shared-vault:invitation:v1:";
 /// `side_table::SHARED_VAULT_INVITATION_KEY`: the key an invitation's slips bind.
 const INVITATION_KEY_PREFIX: &[u8] = b"shared-vault:invitation-key:v1:";
-/// How long an invitation stays open on the store clock.
+/// How long an invitation stays open on the store clock until the owner sets
+/// another lifetime (the Setting key `federation.invitation.ttl_secs`).
 pub const SHARED_INVITATION_TTL_SECS: u64 = 14 * 24 * 60 * 60;
 
 #[doc(hidden)]
@@ -40,7 +42,8 @@ pub struct SharedInvitation {
     pub id: String,
     #[serde(with = "crate::federation::vault_id_decimal")]
     pub vault_id: u64,
-    /// The PERSON whose `add_member` power issued it, hex.
+    /// The PERSON whose `add_member` power issued it, hex; the erased marker
+    /// (`receipt::ERASED_CALL_IDENTITY`) once a hard erase took them out.
     pub inviter: String,
     /// The PERSON it admits, hex.
     pub invitee: String,
@@ -99,19 +102,29 @@ impl InvitationKeyBinding {
 }
 
 impl Vault {
+    /// `invitee`'s invitation `id` as stored: `None` when no row is stored,
+    /// else the row decoded (`Err` inside when it does not decode).
+    fn stored_invitation_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        invitee: EntityId,
+        id: &str,
+    ) -> Result<Option<Result<SharedInvitation>>> {
+        let id = EntityId::from_hex(id)?.to_hex();
+        Ok(self
+            .store
+            .vault_meta
+            .get(txn, &invitation_key(&invitee, &id))?
+            .map(|raw| decode(&raw)))
+    }
     fn invitation_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         invitee: EntityId,
         id: &str,
     ) -> Result<SharedInvitation> {
-        let id = EntityId::from_hex(id)?.to_hex();
-        let raw = self
-            .store
-            .vault_meta
-            .get(txn, &invitation_key(&invitee, &id))?
-            .ok_or_else(invalid)?;
-        decode(&raw)
+        self.stored_invitation_in_txn(txn, invitee, id)?
+            .ok_or_else(invalid)?
     }
     fn put_invitation_in_txn(
         &self,
@@ -196,7 +209,7 @@ impl Vault {
             let invitation: SharedInvitation = decode(&raw)?;
             if invitation.vault_id == vault_id
                 && invitation.state == SharedInvitationState::Pending
-                && now < invitation.expires_at
+                && !oneiron_store::expiry::is_expired(now, invitation.expires_at)
             {
                 pending.push(invitation);
             }
@@ -209,6 +222,10 @@ impl Vault {
     /// `holder_key` is the key it records, and the independent credential
     /// that bound it, if one did, is live (FIX 8745). A slip minted to a key
     /// no binding records, or since replaced, does not.
+    ///
+    /// `Err` when the vault cannot answer: a failed read, or a stored
+    /// invitation or key binding row that does not decode. That is this
+    /// vault's fault, never the slip's refusal (RATCHET-9413 review round 2).
     pub(crate) fn invitation_slip_stands_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -216,22 +233,43 @@ impl Vault {
         id: &str,
         holder_key: &[u8; 32],
         now: u64,
-    ) -> bool {
-        let pending = self.invitation_in_txn(txn, invitee, id).is_ok_and(|open| {
-            open.state == SharedInvitationState::Pending && now < open.expires_at
-        });
-        pending
-            && self
-                .invitation_key_binding_in_txn(txn, invitee, id)
-                .is_ok_and(|binding| {
-                    binding.is_some_and(|binding| {
-                        binding.holder_key == *holder_key
-                            && binding.source_slip.is_none_or(|source| {
-                                self.capability_slip_id_is_live_in_txn(txn, &source)
-                                    .unwrap_or(false)
-                            })
-                    })
-                })
+    ) -> Result<bool> {
+        // An id that does not parse names no invitation here.
+        let Ok(id) = EntityId::from_hex(id) else {
+            return Ok(false);
+        };
+        let id = id.to_hex();
+        let open = match self.stored_invitation_in_txn(txn, invitee, &id)? {
+            None => return Ok(false),
+            Some(open) => {
+                open.map_err(|_| crate::error::Error::CorruptedIndex("shared invitation"))?
+            }
+        };
+        if open.state != SharedInvitationState::Pending
+            || oneiron_store::expiry::is_expired(now, open.expires_at)
+        {
+            return Ok(false);
+        }
+        let binding = match self.invitation_key_binding_in_txn(txn, invitee, &id) {
+            Ok(binding) => binding,
+            // The id parsed above, so this is the stored binding not decoding.
+            Err(crate::error::Error::InvalidConfig(_)) => {
+                return Err(crate::error::Error::CorruptedIndex(
+                    "shared invitation key binding",
+                ));
+            }
+            Err(error) => return Err(error),
+        };
+        let Some(binding) = binding else {
+            return Ok(false);
+        };
+        if binding.holder_key != *holder_key {
+            return Ok(false);
+        }
+        match binding.source_slip {
+            None => Ok(true),
+            Some(source) => self.capability_slip_id_is_live_in_txn(txn, &source),
+        }
     }
 
     /// `invitee`'s invitation `id`, open for a slip at `now`: into
@@ -247,7 +285,7 @@ impl Vault {
         let invitation = self.invitation_in_txn(txn, invitee, id)?;
         if invitation.vault_id != vault_id
             || invitation.state != SharedInvitationState::Pending
-            || now >= invitation.expires_at
+            || oneiron_store::expiry::is_expired(now, invitation.expires_at)
         {
             return Err(invalid());
         }
@@ -257,6 +295,8 @@ impl Vault {
     /// Whether `member` holds an open invitation to `vault_id`: pending and
     /// not expired at `now`. The `add_member` effect refuses while one
     /// stands, and so does a Steward's ask to add them (review of #6917).
+    /// One whose inviter a hard erase scrubbed can no longer be accepted, so
+    /// it does not stand: a live `add_member` holder may invite them again.
     pub(in crate::federation::shared_act) fn open_invitation_stands_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -267,13 +307,20 @@ impl Vault {
         Ok(self
             .invitations_of_in_txn(txn, member, vault_id)?
             .iter()
-            .any(|open| open.state == SharedInvitationState::Pending && now < open.expires_at))
+            .any(|open| {
+                open.state == SharedInvitationState::Pending
+                    && !oneiron_store::expiry::is_expired(now, open.expires_at)
+                    && open.inviter != ERASED_CALL_IDENTITY
+            }))
     }
 
     /// The `add_member` effect: one pending invitation of `member` at `role`,
     /// refused while another of theirs to this vault is still open. `founding`
     /// marks the creation writer's own invitations. It names no key: the
-    /// invitee binds one ([`Vault::mint_invitation_slip`]).
+    /// invitee binds one ([`Vault::mint_invitation_slip`]). It stays open for
+    /// the owner's `federation.invitation.ttl_secs`, read in this writer
+    /// ([`SHARED_INVITATION_TTL_SECS`] until the owner sets another, never
+    /// under a second).
     pub(super) fn issue_invitation_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -287,6 +334,10 @@ impl Vault {
         if self.open_invitation_stands_in_txn(txn, vault_id, member, now)? {
             return Err(invalid());
         }
+        let ttl_secs = SHARED_INVITATION_TTL
+            .read_in_txn(self, txn, &[], None)?
+            .value
+            .max(1);
         let invitation = SharedInvitation {
             id: self.store.clock.entity_id()?.to_hex(),
             vault_id,
@@ -294,9 +345,8 @@ impl Vault {
             invitee: member.to_hex(),
             role,
             issued_at: now,
-            expires_at: now
-                .checked_add(SHARED_INVITATION_TTL_SECS)
-                .ok_or_else(invalid)?,
+            // An owner's lifetime past the clock's end is one that never ends.
+            expires_at: oneiron_store::expiry::expires_at_saturating(now, ttl_secs),
             state: SharedInvitationState::Pending,
             founding,
         };
@@ -504,10 +554,11 @@ impl Vault {
         now: u64,
     ) -> Result<Effect> {
         let mut invitation = self.invitation_in_txn(txn, actor, invitation_id)?;
+        refuse_an_erased_inviter(&invitation)?;
         let inviter = EntityId::from_hex(&invitation.inviter)?;
         if invitation.vault_id != vault_id
             || invitation.state != SharedInvitationState::Pending
-            || now >= invitation.expires_at
+            || oneiron_store::expiry::is_expired(now, invitation.expires_at)
             || self.member_role_in_txn(txn, vault_id, actor)?.is_some()
         {
             return Err(invalid());
@@ -557,7 +608,13 @@ impl Vault {
             {
                 return Err(invalid());
             }
-            let inviter = EntityId::from_hex(&invitation.inviter)?;
+            // An inviter a hard erase scrubbed is no one to tell; the invitee
+            // still declines.
+            let notify = if invitation.inviter == ERASED_CALL_IDENTITY {
+                BTreeSet::new()
+            } else {
+                BTreeSet::from([EntityId::from_hex(&invitation.inviter)?])
+            };
             invitation.state = SharedInvitationState::Declined { at: now };
             self.put_invitation_in_txn(txn, &invitation)?;
             Ok(Effect {
@@ -568,7 +625,7 @@ impl Vault {
                 grants: Vec::new(),
                 revoked_slips: Vec::new(),
                 detach: None,
-                notify: BTreeSet::from([inviter]),
+                notify,
             })
         })
     }
@@ -625,7 +682,86 @@ impl Vault {
         Ok(self
             .invitations_of_in_txn(&txn, reader, vault_id)?
             .into_iter()
-            .filter(|open| open.state == SharedInvitationState::Pending && now < open.expires_at)
+            .filter(|open| {
+                open.state == SharedInvitationState::Pending
+                    && !oneiron_store::expiry::is_expired(now, open.expires_at)
+            })
             .collect())
+    }
+}
+
+// The invitation tables' actor scrub (SHARED-INVITATION-ACTOR-ERASE; the
+// shared-act family's rule, Engine RULING ROW4-SHARED-ACT-ERASE = B with the
+// lead's condition, 13 Nov 21:09). A hard erase of a person deletes their own
+// invitations and the keys they bound to them, and writes the erased marker
+// over the inviter or withdrawer of another person's invitation; its id,
+// role, clocks and state stay. An invitation whose inviter was erased no
+// longer admits: its `add_member` power can no longer be judged.
+
+use super::super::actor_erase::{RowEdit, delete_own_rows, rewrite_rows, scrub};
+use crate::receipt::ERASED_CALL_IDENTITY;
+use crate::side_table::{self, Raw, SideTable};
+
+/// Invitations. Key: hex32 (invitee) ":" hex32 (invitation id).
+const INVITATIONS: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SHARED_VAULT_INVITATION);
+/// The keys invitations' slips bind. Key: hex32 (invitee) ":" hex32
+/// (invitation id).
+const INVITATION_KEYS: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SHARED_VAULT_INVITATION_KEY);
+
+/// Why an invitation whose inviter was erased does not admit.
+const ERASED_INVITER_REFUSAL: &str =
+    "this invitation's inviter's identity was erased; it can no longer be accepted";
+
+/// Refuses, with [`ERASED_INVITER_REFUSAL`], an invitation whose inviter a
+/// hard erase scrubbed.
+fn refuse_an_erased_inviter(invitation: &SharedInvitation) -> Result<()> {
+    if invitation.inviter == ERASED_CALL_IDENTITY {
+        return Err(crate::error::Error::InvalidConfig(
+            ERASED_INVITER_REFUSAL.to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+impl Vault {
+    /// The invitation-key table's actor scrub: the keys the person bound to
+    /// their own invitations go; no other row names them.
+    pub(crate) fn erase_shared_invitation_key_actor_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        if crate::deletion::names_no_actor(self, txn, actor)? {
+            return Ok(());
+        }
+        delete_own_rows(self, txn, &INVITATION_KEYS, actor)
+    }
+
+    /// The invitation table's actor scrub: the person's own invitations go;
+    /// another's keeps its scaffold, with the erased marker where its
+    /// inviter or withdrawer named them.
+    pub(crate) fn erase_shared_invitation_actor_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        if crate::deletion::names_no_actor(self, txn, actor)? {
+            return Ok(());
+        }
+        delete_own_rows(self, txn, &INVITATIONS, actor)?;
+        rewrite_rows(self, txn, &INVITATIONS, |raw| {
+            let mut invitation: SharedInvitation = decode(raw)?;
+            let mut changed = scrub(&mut invitation.inviter, actor);
+            if let SharedInvitationState::Withdrawn { by, .. } = &mut invitation.state {
+                changed |= scrub(by, actor);
+            }
+            Ok(if changed {
+                RowEdit::Rewrite(encode(&invitation)?)
+            } else {
+                RowEdit::Keep
+            })
+        })
     }
 }

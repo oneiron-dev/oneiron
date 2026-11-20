@@ -11,6 +11,8 @@
 
 mod output;
 mod request;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{output::cache_identity_digest_for_test, request::route_digest_for_test};
 
 use super::executor::ConsolidationExecutor;
 use super::roles::{DREAMER_EXTRACTION_ROLE, RoleCall, bind_reasoning};
@@ -216,7 +218,7 @@ impl ConsolidationExecutor<'_> {
                 policy: &policy,
                 sizing: Sizing::new(
                     self.roles.follower_window_tokens(),
-                    policy.follower_sizing_bytes_per_token,
+                    policy.follower_sizing_token_bytes,
                 ),
                 key,
                 writer,

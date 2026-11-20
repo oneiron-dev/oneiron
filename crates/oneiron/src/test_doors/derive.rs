@@ -232,7 +232,7 @@ pub fn grant_core_read_beside_derive_rows(
     let policy = crate::gate::default_policy_manifest_id()?;
     let body = vault.get(&policy)?.ok_or(crate::Error::EntityNotFound)?;
     let body = crate::gate::body_with_agent_derive_rows(&body, &agent.to_hex())?;
-    crate::test_support::put_policy_manifest_bytes(vault, policy, &body)
+    crate::test_fixtures::put_policy_manifest_bytes(vault, policy, &body)
 }
 
 /// Whether `reader` of `class` reads `row` on the recorded lane the record
@@ -443,10 +443,60 @@ pub fn grant_derive_rows(vault: &Vault, agents: &[EntityId]) -> Result<()> {
     for agent in agents {
         body = crate::gate::body_with_agent_derive_rows(&body, &agent.to_hex())?;
     }
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &body,
+    )
+}
+
+/// [`grant_derive_rows`], each agent's `core:read` grant also naming
+/// `actor_class` beside its actor ref: a read row only a key of that class
+/// matches (ARRIVAL-READER-KEY-CLASSLESS).
+///
+/// # Errors
+///
+/// The vault's, or a shipped policy body that does not decode as a map of
+/// scoped grant rows.
+pub fn grant_derive_rows_with_read_class(
+    vault: &Vault,
+    agents: &[EntityId],
+    actor_class: &str,
+) -> Result<()> {
+    use rmpv::Value;
+    let malformed = || crate::Error::InvariantViolation("shipped policy scoped grants");
+    let mut body = crate::gate::default_policy_manifest()?;
+    for agent in agents {
+        body = crate::gate::body_with_agent_derive_rows(&body, &agent.to_hex())?;
+    }
+    let mut policy = rmpv::decode::read_value(&mut body.as_slice()).map_err(|_| malformed())?;
+    let refs: Vec<String> = agents.iter().map(EntityId::to_hex).collect();
+    let Value::Map(entries) = &mut policy else {
+        return Err(malformed());
+    };
+    let Some((_, Value::Array(rows))) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("scoped_grants"))
+    else {
+        return Err(malformed());
+    };
+    for row in rows {
+        let Value::Map(fields) = row else {
+            return Err(malformed());
+        };
+        if fields.iter().any(|(key, value)| {
+            key.as_str() == Some("actor_ref")
+                && value.as_str().is_some_and(|r| refs.iter().any(|a| a == r))
+        }) {
+            fields.push((Value::from("actor_class"), Value::from(actor_class)));
+        }
+    }
+    let mut named = Vec::new();
+    rmpv::encode::write_value(&mut named, &policy).map_err(|_| malformed())?;
+    crate::test_fixtures::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &named,
     )
 }
 
@@ -465,6 +515,47 @@ pub fn narrow_steward_grant_to_project(
     let raw = vault.get(&grant)?.ok_or(crate::Error::EntityNotFound)?;
     let mut body = decode_federation_grant_body(&raw)?;
     body.authority_scope.audience = std::iter::once(ScopeId(project)).collect();
+    let now = vault.now_recorded_at();
+    vault.with_write_txn_grouped(|txn| {
+        crate::batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            vec![crate::batch::BatchOp::Put {
+                id: grant,
+                entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+                occurred: crate::TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                row_version: None,
+                data: encode_federation_grant_body(&body)?,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    })
+}
+
+/// Expires the agent grant `grant` at second 1, as if the owner had minted
+/// it with an expiry long passed, leaving every other field unchanged.
+///
+/// # Errors
+///
+/// The vault's, or a missing or malformed grant row.
+pub fn expire_agent_grant(vault: &Vault, grant: EntityId) -> Result<()> {
+    use crate::federation::{decode_federation_grant_body, encode_federation_grant_body};
+    let raw = vault.get(&grant)?.ok_or(crate::Error::EntityNotFound)?;
+    let mut body = decode_federation_grant_body(&raw)?;
+    body.expires_at = Some(1);
     let now = vault.now_recorded_at();
     vault.with_write_txn_grouped(|txn| {
         crate::batch::apply_ops(
@@ -558,7 +649,7 @@ pub fn permit_imported_auto(vault: &Vault, actor: EntityId) -> Result<()> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &Value::Map(entries))
         .map_err(|_| invalid("encode policy"))?;
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &bytes,
@@ -918,6 +1009,7 @@ pub fn witness_turn(vault: &Vault, words: &str) -> Result<EntityId> {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
                 author: WitnessAuthor::User,
@@ -998,7 +1090,7 @@ pub fn grant_topology_seal(vault: &Vault, agent: EntityId) -> Result<EntityId> {
     use crate::federation::{Scope, ScopeAxis};
 
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-    let issuer = crate::test_support::test_host_issuer();
+    let issuer = crate::test_fixtures::test_host_issuer();
     let owner = super::steward::owner(vault)?;
     vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
     let mut scope = Scope::top();

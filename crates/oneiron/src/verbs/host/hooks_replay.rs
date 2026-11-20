@@ -9,11 +9,6 @@ pub use oneiron_verb_wire::verbs::host::hooks_replay::{
     HOOKS_REPLAY_LIMIT_DEFAULT, HookReplayOutcome, HooksReplayRequest,
 };
 
-/// The most entries one `vault.hooks.replay` page holds, the engine's own
-/// page quantum: a larger limit is served a page at a time through
-/// `next_cursor` (FIX 8629).
-pub const HOOKS_REPLAY_PAGE_MAX: usize = 256;
-
 /// One page of `vault.hooks.replay`: its rows, and where the next starts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HooksReplayPage {
@@ -23,11 +18,11 @@ pub struct HooksReplayPage {
     pub next_cursor: Option<String>,
     /// The replay has read every entry its hook takes.
     pub done: bool,
-    /// The rows this page could hold: the request's limit, or
-    /// [`HOOKS_REPLAY_PAGE_MAX`] when it asked for more.
+    /// The rows this page could hold: the request's limit, or the owner's
+    /// `hooks.replay.page_max` (256 by default) when it asked for more.
     pub effective_limit: usize,
-    /// The request's limit was past [`HOOKS_REPLAY_PAGE_MAX`] and this page
-    /// was served at it; `next_cursor` continues to the rest.
+    /// The request's limit was past the owner's `hooks.replay.page_max` and
+    /// this page was served at it; `next_cursor` continues to the rest.
     #[serde(default)]
     pub limit_clamped: bool,
 }
@@ -90,16 +85,19 @@ pub fn replay_hooks_as_owner(
 }
 
 /// [`replay_hooks_as_owner`], beside the rows its entries stand on
-/// ([`crate::Vault::hooks_replay_listing`]).
+/// ([`crate::Vault::hooks_replay_listing`]). The proof is checked again
+/// first, as every owner door checks it: it belongs to this vault's open, and
+/// its person is live and this vault's owner. A proof minted for anyone else,
+/// or one gone stale, replays nothing.
 pub fn replay_hooks_as_owner_listing(
     vault: &crate::Vault,
-    _owner: &crate::consent::AuthenticatedOwner,
+    owner: &crate::consent::AuthenticatedOwner,
     runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
     verdict: Option<std::sync::Arc<dyn crate::runtime_hooks::HookVerdict>>,
     input: &HooksReplayRequest,
 ) -> MemoryResult<(HooksReplayPage, Vec<crate::EntityId>)> {
+    owner.revalidate(vault)?;
     let asked = input.limit()?;
-    let limit = asked.min(HOOKS_REPLAY_PAGE_MAX);
     let binding = crate::EntityId::from_hex(input.binding.trim())
         .map_err(|_| MemoryError::bad_request("binding is a hook binding's 32-hex id"))?;
     let since = input
@@ -113,7 +111,7 @@ pub fn replay_hooks_as_owner_listing(
         .transpose()
         .map_err(|_| MemoryError::bad_request("cursor is not a vault.hooks.replay next_cursor"))?;
     let (page, listed) = vault
-        .hooks_replay_page_listing(runtime, verdict, binding, since, cursor, limit)
+        .hooks_replay_page_listing(runtime, verdict, binding, since, cursor, asked)
         .map_err(|error| match error {
             crate::Error::EntityNotFound => {
                 MemoryError::not_found(format!("no hook binding {}", input.binding.trim()))
@@ -121,6 +119,9 @@ pub fn replay_hooks_as_owner_listing(
             crate::Error::InvalidConfig(message) => MemoryError::bad_request(message),
             other => other.into(),
         })?;
+    // The page read the owner's `hooks.replay.page_max` once and says which
+    // bound it was cut at, so the reply reports the same one.
+    let limit = page.limit;
     Ok((
         HooksReplayPage {
             rows: page.entries.into_iter().map(HookReplayRow::from).collect(),

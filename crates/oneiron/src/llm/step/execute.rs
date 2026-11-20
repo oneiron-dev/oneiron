@@ -8,7 +8,8 @@ use super::budget_wait::wake_budget_trap_in_txn;
 use super::retry::TransportRetries;
 use super::source::StepSource;
 use super::step_claim::{
-    decode_step_claim_value, load_step_response_in_txn, log_terminal_step, step_index_lookup_in_txn,
+    decode_step_claim_value, load_step_response_in_txn, log_terminal_step,
+    step_index_lookup_in_txn, verdict_only_reply,
 };
 use super::step_state::{
     StepStateDisposition, StepStateOwners, step_state_delete, step_state_write_owned,
@@ -20,7 +21,9 @@ use super::types::{
     DurableStepResult, ReplyCheck, StepEffectBinding, StepOutcome, StepProgression,
 };
 use crate::agent_dispatch::SpendCapRefusal;
+use crate::attempt_queue::AttemptId;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, StepCalls, current_legibility};
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
 use crate::store::model_step_submission::StepBudgetRefusal;
 
@@ -310,15 +313,18 @@ pub(super) async fn durable_step(
             ctx.attempt_id,
             step_hash,
             ctx.now_ms,
-            super::schema::generate(
-                backend,
-                &request,
-                &admission.lease,
-                guard,
-                calls,
-                &capture,
-                check,
-                retries,
+            tracing::Instrument::instrument(
+                super::schema::generate(
+                    backend,
+                    &request,
+                    &admission.lease,
+                    guard,
+                    calls,
+                    &capture,
+                    check,
+                    retries,
+                ),
+                model_step_span(ctx.attempt_id, &step_hash),
             ),
         )
         .await;
@@ -415,11 +421,14 @@ pub(super) async fn durable_step(
             }
             return trapped;
         }
-        // A health rest the step could not wait out (FIX 11226): nothing went
-        // out and nothing failed, so it is no failed step and takes no
-        // failure policy. The caller parks the step until the offer is back.
+        // A health rest the step could not wait out (FIX 11226), or hours no
+        // rung serves in (UNBUILT-14): nothing went out and nothing failed, so
+        // it is no failed step and takes no failure policy. The caller parks
+        // the step until the offer is back.
         Err(DurableStepError::Llm(
-            source @ LlmError::Retryable(RetryableLlmError::HealthRest { .. }),
+            source @ LlmError::Retryable(
+                RetryableLlmError::HealthRest { .. } | RetryableLlmError::OutsideHours { .. },
+            ),
         )) if !answered => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
             return Err(DurableStepError::Llm(source));
@@ -480,6 +489,16 @@ pub(super) async fn durable_step(
     // a no-op once the guard is disarmed.
     let lease_settle = LeaseSettleOnDrop::new(guard, &admission.lease, &response.usage);
 
+    // An attempt held out of the replay capture keeps its verdict alone
+    // (FIX CLAIM-RECHECK-REPLY-PARTS): the step row, the claim and the
+    // returned answer all carry that one copy, so a fresh answer and a memo
+    // replay read the same bytes.
+    let response = if crate::self_heal::blocked_reports::steps_uncaptured(ctx.vault, ctx.attempt_id)
+    {
+        verdict_only_reply(response)
+    } else {
+        response
+    };
     let payload = serde_json::to_vec(&response).inspect_err(|_| {
         if let Some(usage) = unsaved_usage.as_deref_mut() {
             *usage = Some(response.usage.clone());
@@ -551,6 +570,20 @@ pub(super) async fn durable_step(
         legibility: step_legibility(ctx, guard),
         failure_policy,
     })
+}
+
+/// The span a step's model call runs in, its corrections and retries too
+/// (FIX DREAMER-CALL-ATTEMPT-ID): the attempt as its stage line prints it and
+/// 16 hex of the step hash, ids only. Debug under `oneiron::model::send`, the
+/// target of the server's `model request sent` line at each physical send,
+/// so one log directive shows which attempt and step sent each body.
+fn model_step_span(attempt: AttemptId, step_hash: &[u8; 32]) -> tracing::Span {
+    tracing::debug_span!(
+        target: "oneiron::model::send",
+        "model_step",
+        attempt = %bytes_to_hex_lower(attempt.as_bytes()),
+        step = %bytes_to_hex_lower(&step_hash[..8]),
+    )
 }
 
 /// Verify a persisted step and resolve resident eligibility in the SAME
@@ -803,6 +836,7 @@ pub(super) fn budget_trap(
             reason,
             TrapBindingScope::Attempt,
         )?;
+        let asked_wait = wait.clone();
         store.park_attempt_with_wait_in_txn(
             wtxn,
             crate::dreamer_runner::ParkDreamerAttempt {
@@ -820,6 +854,18 @@ pub(super) fn budget_trap(
         } else {
             None
         };
+        // A park only an owner act ends (a spend scope's cap, a resident's
+        // pinned share) asks the owner in its own write (RUNBUDGET-SCOPE = B).
+        if resumed.is_none()
+            && let Some(wait) = &asked_wait
+        {
+            crate::agent_dispatch::queue_budget_trap_ask_in_txn(
+                ctx.vault,
+                wtxn,
+                ctx.attempt_id,
+                wait,
+            )?;
+        }
         Ok(Ok((trap, resumed)))
     })?;
     let (trap, resumed) = parked.map_err(DurableStepError::BudgetRefused)?;
@@ -980,7 +1026,7 @@ fn settle_failed_usage(guard: &BudgetGuard, lease: &super::BudgetLease, usage: &
     // lease before it failed (FIX 7218); settling again is a no-op, where an
     // abort would be refused as an invalid lease.
     let settled_already = matches!(
-        guard.lease_observation(lease.id()),
+        guard.lease_observation(lease),
         Some(super::super::BudgetLeaseState::Settled { .. })
     );
     let settled = if settled_already || usage.input.total > 0 || usage.output.total > 0 {

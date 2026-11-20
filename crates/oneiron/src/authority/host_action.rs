@@ -18,6 +18,7 @@ use crate::claim::ScopedReadActorKey;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
+use crate::memory::OwnerRow;
 use crate::write_envelope::WriteActor;
 use oneiron_contracts::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError,
@@ -101,6 +102,32 @@ impl HostActionGuard {
     /// ([`host_action_refused`] tells both from a failure to judge).
     pub(crate) fn holds_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
         vault.host_action_still_holds_in_txn(txn, self.root.as_ref(), self.owner)
+    }
+
+    /// [`Self::holds_in`] at the publication of a delete whose own scrub of
+    /// `scrubbed` committed before it. When `scrubbed` is this action's
+    /// owner, the owner's delete of their own PERSON, the owner-verb rule
+    /// reads that PERSON as the owner deleting itself
+    /// ([`OwnerRow::DeletingItself`]) and its liveness is not asked; the
+    /// posture, the root and its mint signer's active binding of this owner
+    /// hold as before. Any other `scrubbed` is [`Self::holds_in`].
+    pub(crate) fn holds_after_own_scrub_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        scrubbed: &EntityId,
+    ) -> Result<()> {
+        let row = if *scrubbed == self.owner {
+            OwnerRow::DeletingItself
+        } else {
+            OwnerRow::Live
+        };
+        vault.host_action_acts_as_in_txn(
+            txn,
+            self.root.as_ref().map(HostRoot::Presented),
+            self.owner,
+            row,
+        )
     }
 
     /// The host root this action acts under, by slip id; `None` for the
@@ -220,6 +247,7 @@ impl HostActionIdentity {
             txn,
             self.root.as_ref().map(HostRoot::Recorded),
             self.owner,
+            OwnerRow::Live,
         )
     }
 }
@@ -296,18 +324,20 @@ impl Vault {
         root: Option<&VerifiedSlip>,
         owner: EntityId,
     ) -> Result<()> {
-        self.host_action_acts_as_in_txn(txn, root.map(HostRoot::Presented), owner)
+        self.host_action_acts_as_in_txn(txn, root.map(HostRoot::Presented), owner, OwnerRow::Live)
     }
 
     /// The one recheck a guard and a durable identity share: `root` (the
-    /// dev mode for `None`) still acts as `owner`.
+    /// dev mode for `None`) still acts as `owner`, whose own PERSON row is
+    /// asked as `row` says.
     fn host_action_acts_as_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         root: Option<HostRoot<'_>>,
         owner: EntityId,
+        row: OwnerRow,
     ) -> Result<()> {
-        if self.host_action_owner_by_in_txn(txn, root)? != owner {
+        if self.host_action_owner_by_in_txn(txn, root, row)? != owner {
             return Err(owner_refusal(MemoryError::new(
                 MEMORY_CODE_OWNER_BINDING_REQUIRED,
                 "the owner this host action was resolved for is no longer the one it acts as",
@@ -326,15 +356,18 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         root: Option<&VerifiedSlip>,
     ) -> Result<EntityId> {
-        self.host_action_owner_by_in_txn(txn, root.map(HostRoot::Presented))
+        self.host_action_owner_by_in_txn(txn, root.map(HostRoot::Presented), OwnerRow::Live)
     }
 
     /// [`Self::host_action_owner_in_txn`] for a root presented now or
-    /// recorded by a durable identity.
+    /// recorded by a durable identity, asking `row` of the owner's own
+    /// PERSON: [`OwnerRow::DeletingItself`] reads it as the owner deleting
+    /// itself and does not ask its liveness.
     fn host_action_owner_by_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         root: Option<HostRoot<'_>>,
+        row: OwnerRow,
     ) -> Result<EntityId> {
         if self.privacy_posture() != crate::HostingPrivacyPosture::SelfHostLocal {
             return Err(Error::HostActionRequiresSupportGrant);
@@ -342,12 +375,13 @@ impl Vault {
         let owner = crate::vault::embedded_owner_actor_id()?;
         // The owner-verb rule first: a fold that cannot be judged suspends a
         // host action as it suspends every owner verb.
-        crate::memory::verify_owner_actor_binding_in_txn(self, txn, owner)
-            .map_err(owner_refusal)?;
+        crate::memory::verify_owner_binding_in_txn(self, txn, owner, row).map_err(owner_refusal)?;
         if let Some(root) = root {
             self.root_binds_owner_in_txn(txn, root, owner)?;
         }
-        if !crate::consent::person_is_live_in_txn(self, txn, &owner)? {
+        if matches!(row, OwnerRow::Live)
+            && !crate::consent::person_is_live_in_txn(self, txn, &owner)?
+        {
             return Err(owner_refusal(MemoryError::new(
                 MEMORY_CODE_OWNER_BINDING_REQUIRED,
                 format!("the vault's owner {} is not a live person", owner.to_hex()),

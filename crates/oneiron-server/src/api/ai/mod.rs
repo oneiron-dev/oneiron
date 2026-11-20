@@ -13,12 +13,13 @@ use axum::{Json, Router};
 use oneiron_driver::SessionHint;
 use serde::Deserialize;
 
+use oneiron::EntityId;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::{VaultRef, WorkerMode};
 
 use crate::auth::{CoreAuth, CoreScope};
 use crate::config::models::role_key;
-use crate::models::{QuotaChoice, SeatState, TaggerRuntimeStatus, TaggerStatus};
+use crate::models::{QuotaAnswerer, QuotaChoice, SeatState, TaggerRuntimeStatus, TaggerStatus};
 use crate::oneironer::TaggerSlot;
 use crate::server::SyncServer;
 
@@ -110,10 +111,25 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Respon
     models.tagger = server.tagger_slot().as_deref().map(tagger_status);
     point_tagger_seat(&mut models);
     name_worker_machines(&server, &mut models).await;
+    // The owner's open asks about runs held at their spend cap (ARCH-0036
+    // #offers-ask-home): the status shows them; the decision queue owns them.
+    let budget_questions = oneiron::agent_dispatch::run_budget_questions(server.vault())
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "the run-budget asks could not be read");
+            Vec::new()
+        });
+    // And about Dreamer work parked at a spend cap or a pinned share.
+    let budget_trap_questions = oneiron::agent_dispatch::budget_trap_questions(server.vault())
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "the budget trap asks could not be read");
+            Vec::new()
+        });
     Json(serde_json::json!({
         "ai": server.ai.status(),
         "models": models,
         "quota_questions": server.ai.model_runtime().quota_questions(),
+        "budget_questions": budget_questions,
+        "budget_trap_questions": budget_trap_questions,
     }))
     .into_response()
 }
@@ -230,6 +246,29 @@ struct QuotaAnswer {
     fallback: Option<String>,
 }
 
+/// The agent behind `auth`, when it is one: an `agent` actor class with a
+/// principal that parses to an entity. Members and every other non-owner
+/// caller are not agents.
+fn agent_caller(auth: &CoreAuth) -> Option<EntityId> {
+    if auth.actor_class() != Some("agent") {
+        return None;
+    }
+    auth.principal_ref()
+        .and_then(|reference| EntityId::from_hex(reference).ok())
+}
+
+/// A quota answer's wire name: the item `models.quota.agent_may_answer`
+/// admits for it. It stays the answer's `snake_case` spelling.
+fn quota_choice_wire_name(choice: QuotaChoice) -> &'static str {
+    match choice {
+        QuotaChoice::Wait => "wait",
+        QuotaChoice::TopUp => "top_up",
+        QuotaChoice::AddAccount => "add_account",
+        QuotaChoice::PayAsYouGo => "pay_as_you_go",
+        QuotaChoice::UseFallback => "use_fallback",
+    }
+}
+
 /// The owner's answer to a quota question in `GET /v1/ai/status` (OF-305):
 /// `top_up` or `pay_as_you_go` puts the parked offer back in rotation now,
 /// `wait` and `add_account` close the question and leave it parked until
@@ -242,21 +281,72 @@ async fn answer_quota(
     Path(question): Path<String>,
     Json(answer): Json<QuotaAnswer>,
 ) -> Response {
-    if !auth.is_owner_grade() {
+    // Restriction wave 11: the owner takes today's path; an agent the
+    // owner lets give this answer takes the agent path below; anyone
+    // else is refused as before.
+    let agent = if auth.is_owner_grade() {
+        None
+    } else {
+        agent_caller(&auth)
+    };
+    if !auth.is_owner_grade() && agent.is_none() {
         return refusal(
             StatusCode::FORBIDDEN,
             "owner_required",
             "quota questions are the owner's",
         );
     }
+    // The key first, so a closed key answers exactly today's refusal.
+    if let Some(agent) = agent {
+        match server
+            .vault()
+            .agent_may_answer_quota(agent, quota_choice_wire_name(answer.choice))
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                return refusal(
+                    StatusCode::FORBIDDEN,
+                    "owner_required",
+                    "quota questions are the owner's",
+                );
+            }
+            Err(_) => {
+                return refusal(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "quota_unwritable",
+                    "the answer could not be kept",
+                );
+            }
+        }
+    }
+    // The agent's answer is a write: its credential carries core Read and
+    // Write, as a wave plan's does.
+    if agent.is_some()
+        && let Err(error) = auth
+            .require(CoreScope::Read)
+            .and_then(|()| auth.require(CoreScope::Write))
+    {
+        return error.into_response();
+    }
     // FIX 2222: an owner act; a hosted operator's root is refused, typed.
     if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
         return error.into_response();
     }
+    // The agent answers on a live credential, as a wave plan does.
+    if agent.is_some() && !auth.credential_is_live(server.vault()) {
+        return refusal(
+            StatusCode::UNAUTHORIZED,
+            "credential_revoked",
+            "the admission credential is no longer live",
+        );
+    }
+    // The question's answer row keeps who answered (WAVE11-QUOTA-CANON).
+    let answerer = agent.map_or(QuotaAnswerer::Owner, QuotaAnswerer::Agent);
     match server.ai.model_runtime().answer_quota(
         &question,
         answer.choice,
         answer.fallback.as_deref(),
+        answerer,
     ) {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => refusal(
@@ -338,7 +428,7 @@ async fn session(
 
 /// A remote caller names its machine through the request's verified proof,
 /// never a JSON field. Direct on-device callers run on this install.
-pub(super) fn bound_session_key(
+pub(crate) fn bound_session_key(
     server: &SyncServer,
     actor: oneiron::EntityId,
     peer: oneiron::authority::PeerMachine,

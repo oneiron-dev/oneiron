@@ -76,6 +76,9 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         coach::COACH_SKILL_DISCOVERY_FACET => Some(coach::COACH_SKILL_DISCOVERY_FACET),
         coach::COACH_PERSON_THRESHOLD_FACET => Some(coach::COACH_PERSON_THRESHOLD_FACET),
         coach::COACH_THINK_THRESHOLD_FACET => Some(coach::COACH_THINK_THRESHOLD_FACET),
+        coach::COACH_RETRIEVAL_SKILL_REVIEW_FACET => {
+            Some(coach::COACH_RETRIEVAL_SKILL_REVIEW_FACET)
+        }
         coach::COACH_READ_HARDENING_FACET => Some(coach::COACH_READ_HARDENING_FACET),
         coach::COACH_TRIPWIRES_FACET => Some(coach::COACH_TRIPWIRES_FACET),
         coach::COACH_TRADEOFF_ESCALATION_FACET => Some(coach::COACH_TRADEOFF_ESCALATION_FACET),
@@ -100,6 +103,7 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         }
         coach::COACH_OFFER_CHECK_FACET => Some(coach::COACH_OFFER_CHECK_FACET),
         coach::COACH_EVAL_MEASUREMENT_FACET => Some(coach::COACH_EVAL_MEASUREMENT_FACET),
+        coach::COACH_ARCHIVE_AXES_FACET => Some(coach::COACH_ARCHIVE_AXES_FACET),
         coach::COACH_TRAINING_RUN_FACET => Some(coach::COACH_TRAINING_RUN_FACET),
         coach::COACH_TRAINING_OFFERS_FACET => Some(coach::COACH_TRAINING_OFFERS_FACET),
         coach::COACH_DRAFTER_RETRAIN_FACET => Some(coach::COACH_DRAFTER_RETRAIN_FACET),

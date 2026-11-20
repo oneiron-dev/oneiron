@@ -2,6 +2,8 @@
 //! their existing TAG_SYNC_UPDATE encoding; large ones arrive as one digest-bound
 //! image and import only once every part is present.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{MAX_DECODED_PAYLOAD_BYTES, TAG_SYNC_UPDATE, TransportError};
 
 /// A part of one root snapshot or delta, server to client only.
@@ -62,7 +64,8 @@ pub fn root_update_frames(bytes: &[u8]) -> RootUpdateFrames<'_> {
     RootUpdateFrames {
         bytes,
         offset: 0,
-        digest: (bytes.len() > MAX_DECODED_PAYLOAD_BYTES).then(|| *blake3::hash(bytes).as_bytes()),
+        digest: (bytes.len() > MAX_DECODED_PAYLOAD_BYTES)
+            .then(|| *ContentHash::of(bytes).as_bytes()),
         sent: false,
     }
 }

@@ -16,7 +16,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/a1.rs` | src | s | 1 struct · 1 fn · 5 crate-vis | A1 | One permissive A1 core (FIX 9207, ruling B): trim + any case + `$` + unbounded letters/digits + full… |
 | `src/bin/deck-create-cases.rs` | src | s | — | — | `deck-create-cases`: the engine half of the `deck-create-v1` oracle runner |
 | `src/bin/deck-gate-cases.rs` | src | s | — | — | `deck-gate-cases`: the engine half of the OF-510 deck gate runner |
-| `src/contract/mod.rs` | src | L | 40 struct · 7 enum · 1 trait · 14 fn · 6 const | AssetMedia, AssetOrigin, Call, ContractError, CreatedSlide, DeckAsset, DeckCreateArgs, DeckCreated +40 | The document engine's contract (ARCH-0075 section 2, "an organ crate with a hosted API"): one versioned… |
+| `src/contract/args.rs` | src | m | 21 struct · 2 enum · 3 fn | AssetMedia, AssetOrigin, DeckAsset, DeckCreateArgs, DeckNames, DeckReadArgs, DeckTransactionArgs, DocumentLocationArgs +15 | The args of the op table's calls: the ceilings a caller supplies, each op's typed args, and the types their… |
+| `src/contract/description.rs` | src | s | 3 fn | — | What `contract.describe` answers from: the op table's discovery rows, the JSON schemas of a call and a… |
+| `src/contract/mod.rs` | src | m | 19 struct · 5 enum · 1 trait · 8 fn · 6 const · 2 re-export | Call, ContractError, CreatedSlide, DeckCreated, DeckPlaceholder, DeckRead, DeckShape, DeckSlide +17 | The document engine's contract (ARCH-0075 section 2, "an organ crate with a hosted API"): one versioned… |
 | `src/contract/run.rs` | src | m | 1 crate-vis | — | The handlers behind [`super::execute`]: each op maps its args onto one native door and the door's refusals… |
 | `src/deck/animation.rs` | src | s | 3 struct · 2 enum · 2 fn · 1 crate-vis | AnimationIndex, AnimationTarget, Connection, TargetRole, TextRange | The animation and connector index |
 | `src/deck/colour.rs` | src | s | 3 struct · 1 enum · 1 crate-vis | Colour, ColourSpec, ColourTransform, Rgba | Colours stay symbolic: a scheme slot and its ordered transforms are kept as written, and the computed colour… |
@@ -216,9 +218,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/adversarial.rs` | test | s | — | — | — |
 | `tests/breaker.rs` | test | s | — | — | — |
 | `tests/comment_anchors.rs` | test | m | — | — | Native Word comment ranges for the comment-anchor scenarios (owner ask 2026-10-16; the cases come from… |
+| `tests/contract.rs` | test | L | — | — | — |
 | `tests/deck_create_oracle_receipt.rs` | test | m | — | — | L4-20 (ARCH-0077 slides lane): the `deck-create-v1` Office receipts committed under… |
 | `tests/deck_fit_evidence.rs` | test | m | — | — | L4-20 PR 2 (ARCH-0077 slides lane, `slides:oracle`): `emit` certifies a unit's fit only from a clean stored… |
 | `tests/docedit_register_names.rs` | test | s | — | — | The names of 2 name lists in `oneiron-docedit`, one line per row, generated from… |
 | `tests/identity.rs` | test | s | — | — | — |
 | `tests/revisions.rs` | test | s | — | — | — |
 | `tests/stemma_reader.rs` | test | s | — | — | The stemma fork reads untrusted DOCX parts with quick-xml |
+| `tests/xlsx_format_part_types.rs` | test | s | — | — | A caller in another crate writes a cell format's alignment and protection by name |

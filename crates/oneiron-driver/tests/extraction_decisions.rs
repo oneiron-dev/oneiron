@@ -96,13 +96,27 @@ fn run_case(
     script: Script,
     single_valued: &[&str],
 ) -> TestResult<Run> {
+    run_case_citing(heads, words, candidates, script, single_valued, &[])
+}
+
+/// As `run_case`; each `(candidate, row)` pair makes that candidate also cite
+/// that served TURN row, so it stands on one more evidence TURN than the rest.
+fn run_case_citing(
+    heads: &[(&str, &str)],
+    words: &[&str],
+    candidates: &[(&str, Value)],
+    script: Script,
+    single_valued: &[&str],
+    also_cites: &[(usize, usize)],
+) -> TestResult<Run> {
     let (_dir, vault) = support::open_vault()?;
-    if !single_valued.is_empty() {
-        support::seed_single_valued(&vault, single_valued)?;
-    }
     let subject = support::seed_person(&vault, "owen")?;
     for &(predicate, value) in heads {
         support::land_head(&vault, subject, predicate, value, ClaimSource::Generated)?;
+    }
+    // The Generated permit rewrite starts from shipped policy, so the seed lands after it.
+    if !single_valued.is_empty() {
+        support::seed_single_valued(&vault, single_valued)?;
     }
     let turns = support::witness_turns(&vault, words)?;
     let (counts, recorded, reasoner) = keyed(script);
@@ -113,7 +127,14 @@ fn run_case(
     let mut built = Vec::with_capacity(candidates.len());
     for (n, (predicate, value)) in candidates.iter().enumerate() {
         let row = &served[n % served.len()];
-        let evidence = [(row.0.clone(), row.1.clone(), 0, 4)];
+        let mut evidence: Vec<(String, Value, u64, u64)> =
+            vec![(row.0.clone(), row.1.clone(), 0, 4)];
+        for (_, also) in also_cites.iter().filter(|(candidate, _)| *candidate == n) {
+            let row = served
+                .get(*also)
+                .ok_or("an extra cite names no served TURN")?;
+            evidence.push((row.0.clone(), row.1.clone(), 0, 4));
+        }
         built.push(support::listed_candidate(
             n,
             &subject_hex,
@@ -252,6 +273,36 @@ fn two_member_merge_and_identity_final() -> TestResult<()> {
                 .any(|call| call.state.get("final_choice").is_some())
         );
     }
+    Ok(())
+}
+
+/// The second operand is the stronger one, so the selection's ready order is
+/// not the reply's order: the pack lists the component in ready order.
+#[test]
+fn stronger_second_operand_decides_in_ready_order() -> TestResult<()> {
+    // The engine nominates over a pack's operands in the order given (extraction_pack/reads.rs
+    // resolution_conflict), as native nominates over its ready list (assembly.rs:176).
+    let run = run_case_citing(
+        &[],
+        &["owen chooses green tea", "owen chooses black coffee"],
+        &[
+            ("preference.food", json!("green tea")),
+            ("preference.food", json!("black coffee")),
+        ],
+        merge_script(),
+        &[],
+        &[(1, 0)],
+    )?;
+    let outcome = &run.outcome;
+    assert_eq!(outcome.selection.ready, [1, 0]);
+    assert_eq!(outcome.sets.len(), 1);
+    assert_eq!(outcome.route.judge_sets[0].candidate_indexes, [1, 0]);
+    let SetOutcome::Decided(decision) = &outcome.sets[0] else {
+        panic!("the merge decides");
+    };
+    assert_eq!(decision.resolution, Resolution::Merge);
+    assert_eq!(decision.identity, Some(1));
+    assert_eq!((run.counts.correction(), run.counts.resolution()), (0, 1));
     Ok(())
 }
 

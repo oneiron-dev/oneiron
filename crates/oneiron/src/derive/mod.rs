@@ -32,8 +32,10 @@ mod claim;
 mod commit;
 mod evidence;
 mod link;
+mod person;
 mod record;
 mod revert;
+pub(crate) mod setting_keys;
 mod settle;
 mod sources;
 mod supersede;
@@ -42,35 +44,44 @@ mod wire;
 
 pub use archive::{
     ARCHIVE_CONFIG_CHANGED, ARCHIVE_NEEDS_ATTEMPT, ARCHIVE_NO_OBSERVED_SOURCE, ARCHIVE_NOT_A_CLAIM,
-    ARCHIVE_OBSERVATION_CHANGED, ARCHIVE_POLICY_CHANGED, ARCHIVE_SCORE_NOT_BELOW_POLICY,
-    ARCHIVE_SOURCE_MOVED, ARCHIVE_SOURCE_WITHHELD,
+    ARCHIVE_OBSERVATION_CHANGED, ARCHIVE_POLICY_CHANGED, ARCHIVE_RESTRICTION,
+    ARCHIVE_SCORE_NOT_BELOW_POLICY, ARCHIVE_SOURCE_MOVED, ARCHIVE_SOURCE_WITHHELD,
 };
 pub use artifact::{
     PROFILE_MALFORMED, PROFILE_SOURCE_UNREAD, PROFILE_SUBJECT_UNREAD, PersonAboutFacts,
 };
 pub use batch::{
     DerivationBatch, DerivationItem, DerivationStamp, DerivedAboutLine, DerivedArchive,
-    DerivedClaim, DerivedEvidence, DerivedPersonAbout, DerivedPsychProfile, DerivedSameAs,
-    DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef, MAX_BATCH_ITEMS,
+    DerivedClaim, DerivedEvidence, DerivedPerson, DerivedPersonAbout, DerivedPsychProfile,
+    DerivedSameAs, DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef,
+    MAX_BATCH_ITEMS,
 };
 pub use commit::{DerivationReceipt, ItemOutcome, ItemReceipt};
 pub use evidence::{EVIDENCE_HEAD_NOT_A_CLAIM, EVIDENCE_UNVERIFIED};
-pub use link::{SAME_AS_NOT_CLAIMS, TOPOLOGY_NEEDS_GRANT, TOPOLOGY_REJECTED, TOPOLOGY_UNREAD};
+pub use link::{
+    SAME_AS_NOT_CLAIMS, TOPOLOGY_NEEDS_GRANT, TOPOLOGY_REJECTED, TOPOLOGY_RESTRICTION,
+    TOPOLOGY_UNREAD,
+};
+pub use person::{
+    PERSON_ID_TAKEN, PERSON_NAME_UNREAD, PERSON_NEEDS_ATTEMPT, PERSON_SOURCE_INADMISSIBLE,
+};
 pub use record::{DerivationBatchRecord, ItemRecord};
 pub use revert::{
     DERIVE_REVERT_CONTENT_KIND, DeriveRevertReceipt, REVERT_CHANGED_SINCE, REVERT_INVERSE_REFUSED,
-    REVERT_NO_INVERSE, REVERT_NOT_YOURS,
+    REVERT_LIFTS_RESTRICTION, REVERT_NO_INVERSE, REVERT_NOT_YOURS,
 };
 pub use settle::{SETTLE_OWNER_HOLD, SETTLE_REFUSED};
 pub use sources::{SOURCE_MOVED, SOURCE_WITHHELD};
 pub use supersede::{
     SUPERSEDE_LIFECYCLE, SUPERSEDE_PROTECTED_SOURCE, SUPERSEDE_REPLACEMENT_UNSETTLED,
+    SUPERSEDE_RESTRICTION,
 };
 pub use wire::{
     DeriveArchiveInput, DeriveClaimInput, DeriveCommitInput, DeriveCommitView, DeriveEvidenceInput,
-    DeriveItemInput, DeriveItemView, DeriveLeftItemView, DerivePsychProfileInput, DeriveRef,
-    DeriveRevertInput, DeriveRevertView, DeriveSameAsInput, DeriveSettleInput,
-    DeriveSettlementInput, DeriveStrengthSignals, DeriveSupersedeInput, DeriveTopologyInput,
+    DeriveItemInput, DeriveItemView, DeriveLeftItemView, DerivePersonInput,
+    DerivePsychProfileInput, DeriveRef, DeriveRevertInput, DeriveRevertView, DeriveSameAsInput,
+    DeriveSettleInput, DeriveSettlementInput, DeriveStrengthSignals, DeriveSupersedeInput,
+    DeriveTopologyInput,
 };
 
 /// The provenance `surface` a derivation commit stamps on every row it
@@ -82,6 +93,13 @@ pub const DERIVE_BATCH_KEY: &str = "batch";
 
 /// The refusal token of an item that names a refused item of its batch.
 pub const DEPENDENCY_REFUSED: &str = "gate.deny.derive.dependency_refused";
+
+/// The refusal of an item staged while the committing actor's read
+/// credential is not live: a base agent whose Steward grant lacks `read`,
+/// or whose MACHINE binding is revoked, reads nothing. The claim and
+/// evidence items refuse with this token instead of aborting the batch,
+/// and the source recheck denies the commit with it.
+pub const READ_NOT_LIVE: &str = "gate.deny.derive.read_not_live";
 
 /// The gate decision ledger's content kind for a derivation item's refusal
 /// receipt.

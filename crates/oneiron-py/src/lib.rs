@@ -101,6 +101,7 @@ impl WitnessTurnInput {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
             thread_audience: self.thread_audience,
+            project: None,
             messages,
             occurred_at,
             assertions: self.assertions,
@@ -166,6 +167,7 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
             reason_codes: Vec::new(),
             legal_hold: None,
             room_join_hold: None,
+            pending: None,
         })
     })
 }
@@ -188,6 +190,7 @@ fn encode_error(error: serde_json::Error) -> PyErr {
         reason_codes: Vec::new(),
         legal_hold: None,
         room_join_hold: None,
+        pending: None,
     })
 }
 
@@ -246,6 +249,8 @@ impl NativeClient {
         let options = oneiron_remote::OpenOptions {
             dimensions,
             device_class: host_device_class(device_class.as_deref())?,
+            machine_reported_name: None,
+            machine_reported_model: None,
             hold_checkpoint_root_signer: false,
         };
         let inner = py
@@ -314,6 +319,13 @@ impl NativeClient {
         let inner = py
             .detach(|| self.inner.as_actor(&actor_key))
             .map_err(raise)?;
+        Ok(self.rebound(inner))
+    }
+
+    /// Returns a NEW handle that answers asks as this install's owner device
+    /// (UC-05); refuses when connected.
+    fn as_owner_device(&self, py: Python<'_>) -> PyResult<Self> {
+        let inner = py.detach(|| self.inner.as_owner_device()).map_err(raise)?;
         Ok(self.rebound(inner))
     }
 

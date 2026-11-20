@@ -40,7 +40,7 @@ impl CitationPin {
         let anchor = &self.anchor;
         let whole = anchor.entity == self.entity
             && !anchor.quote.is_empty()
-            && blake3::hash(anchor.quote.as_bytes()).as_bytes() == &anchor.hash
+            && TextAnchor::quote_hash(&anchor.quote) == anchor.hash
             && decode_frontier(&anchor.frontier).is_ok()
             && loro::cursor::Cursor::decode(&anchor.start).is_ok()
             && loro::cursor::Cursor::decode(&anchor.end).is_ok();
@@ -117,6 +117,58 @@ pub(super) const ENTITY_DOC_PIN: SideTable<HexPair, CitationPin, Named> =
 /// entity then receipt id.
 pub(super) const ENTITY_DOC_PURGE_RECEIPT: SideTable<HexPair, PurgeReceipt, Named> =
     SideTable::new(&side_table::ENTITY_DOC_PURGE_RECEIPT);
+
+/// One pin's fixed fields for the checkpoint-pins door: a pin whose
+/// anchor the door passes as plain values.
+#[cfg(oneiron_test_support)]
+pub(crate) struct PinsCitationPin {
+    /// The quoted document's slot, fixed hex.
+    pub document: String,
+    /// The causal frontier the pin quotes.
+    pub frontier: Vec<u8>,
+    /// The quoted span's cursors.
+    pub start: Vec<u8>,
+    /// The quoted span's end cursor.
+    pub end: Vec<u8>,
+    /// The quoted text.
+    pub quote: String,
+    /// The anchor's quote hash, fixed: no checkpoint path checks it
+    /// against the quote.
+    pub hash: [u8; 32],
+    /// The act the pin records.
+    pub actor: DocActor,
+}
+
+/// Puts a citation pin for the checkpoint-pins door: `citation`'s pin
+/// over `entity`'s document at `pin`'s anchor.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_citation_pin_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+    citation: &EntityId,
+    pin: &PinsCitationPin,
+) -> Result<()> {
+    ENTITY_DOC_PIN.put(
+        store,
+        txn,
+        &HexPair(HexId(*entity), HexId(*citation)),
+        &CitationPin {
+            citation: citation.to_hex(),
+            entity: entity.to_hex(),
+            document: pin.document.clone(),
+            anchor: TextAnchor {
+                entity: entity.to_hex(),
+                frontier: pin.frontier.clone(),
+                start: pin.start.clone(),
+                end: pin.end.clone(),
+                hash: pin.hash,
+                quote: pin.quote.clone(),
+            },
+            actor: pin.actor,
+        },
+    )
+}
 
 /// Erasing `actor` from the citation pins (FIX 3520): each pin it made stays,
 /// since its frontier floors the history a purge may drop, with its quote
@@ -209,7 +261,7 @@ impl Vault {
                 .skip(start)
                 .take(end - start)
                 .collect();
-            if quote != anchor.quote || blake3::hash(quote.as_bytes()).as_bytes() != &anchor.hash {
+            if quote != anchor.quote || TextAnchor::quote_hash(&quote) != anchor.hash {
                 return Err(invalid("citation quote does not match pinned version"));
             }
             let pin = CitationPin {
@@ -517,7 +569,7 @@ impl Vault {
         let quote: String = origin.text().chars().skip(from).take(to - from).collect();
         if quote.is_empty()
             || quote != anchor.quote
-            || blake3::hash(quote.as_bytes()).as_bytes() != &anchor.hash
+            || TextAnchor::quote_hash(&quote) != anchor.hash
         {
             return Err(invalid("citation quote does not match pinned version"));
         }

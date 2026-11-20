@@ -216,10 +216,8 @@ fn task_and_symbol_point_claim_lmdb_and_memory() -> Result<()> {
         TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition,
     };
     let clock = ManualClock::new(100);
-    let config = crate::VaultConfig {
-        store_clock: clock.bundle(),
-        ..crate::VaultConfig::default()
-    };
+    let mut config = crate::VaultConfig::device();
+    config.store_clock = clock.bundle();
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), config)?;
     let memory = super::super::memory::Memory::new(ManualClock::new(100).bundle());
@@ -393,6 +391,7 @@ fn production_mutations_audit_atomically_and_keep_world_time() -> Result<()> {
                 entity_type: ENTITY_TYPE_PERSON,
                 occurred,
                 learned_at: 30,
+                row_version: 0,
                 body: b"rolled back".to_vec(),
             },
         )?;

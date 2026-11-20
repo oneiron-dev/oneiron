@@ -15,6 +15,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/bin/oneiron-testkit-probe-server.rs` | src | s | — | — | A socket-activated HTTP server for the testkit's own tests of `ServerProcess` |
 | `src/bin/oneiron-testkit-seed.rs` | src | s | — | — | Builds a fixture vault from a JSONL seed, for the E2E runner's snapshot fixtures (Fable's verdict, section… |
 | `src/canary.rs` | src | L | 6 struct · 3 enum · 26 fn · 6 const | Canary, CanaryActor, CanaryClass, CanaryScan, CanarySighting, CanaryVault, ClaimBand, PendingClass +1 | The canary leak detector, step 1 (Fable's review of verdict 52, 2026-11-10, section 4 idea 1) |
+| `src/canary/export_archive.rs` | src | s | 1 crate-vis | — | The whole-vault export as a scan surface ([CANARY-SCAN-COVERAGE] step 4) |
+| `src/canary/named_refs.rs` | src | m | 5 crate-vis | — | The refs a scan's answers name, and the reads that follow them ([CANARY-SCAN-COVERAGE] step 2): a list… |
+| `src/canary/point_doors.rs` | src | s | 1 crate-vis | — | The scan's point and ledger doors ([CANARY-SCAN-COVERAGE] step 1 and 3): the keyed value at the canary… |
 | `src/clock.rs` | src | s | 1 struct · 7 fn · 1 const | FakeClock | The fake clock: time that moves only when the test moves it |
 | `src/door.rs` | src | s | 2 fn | — | The in-process verb door: a public verb, by name, with JSON in and JSON out, through… |
 | `src/dreamer.rs` | src | L | 6 struct · 2 enum · 15 fn · 3 const | DreamerAttemptRun, DreamerPass, DreamerPassError, DreamerPassFailure, DreamerPassReport, PassBudget, QueueRow, WakeKind | One in-process Dreamer wake pass on the kit's fake clock, its model calls answered by a [`ScriptedBackend`]… |
@@ -30,7 +33,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/model/generator.rs` | src | s | 1 enum · 2 fn | Step | — |
 | `src/model/mod.rs` | src | m | 11 struct · 3 enum · 27 fn · 1 type · 1 const · 2 mod | Actor, Aud, Claim, ClaimKey, Ent, Entity, Observed, Outcome +6 | A reference model of the vault and seeded step sequences checked against the engine (Fable's verdict 52… |
 | `src/model/tests.rs` | test | m | — | — | — |
-| `src/pending_door.rs` | src | s | 2 struct · 7 fn · 1 const | PendingDoors, WaitingTest | The nightly pending-door filter (Engine ruling 03:32, 10 Nov; Fable's verdict, section 1, "Door waits")… |
+| `src/pending_door.rs` | src | m | 2 struct · 9 fn · 1 const | PendingDoors, WaitingTest | The nightly pending-door filter (Engine ruling 03:32, 10 Nov; Fable's verdict, section 1, "Door waits")… |
 | `src/provider/backend.rs` | src | s | 1 struct · 5 fn | ScriptedBackend | [`ScriptedBackend`]: the script as an in-process [`LlmBackend`], for door tests that hand the engine a… |
 | `src/provider/digest.rs` | src | s | 1 struct · 6 fn · 2 const | PromptDigest | The prompt digest a scripted reply is keyed by |
 | `src/provider/http.rs` | src | s | 7 crate-vis | — | A minimal HTTP/1.1 server on loopback for the scripted provider: one request per connection, answered with… |

@@ -29,6 +29,21 @@ pub use oneiron_records::workspace_roster::project::leader_chat::LeaderChat;
 fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
     [prefix, id.as_bytes()].concat()
 }
+
+/// Binds room `id` as leader chat `chat` under this vault's private key and returns the
+/// binding's bytes: the private admission marker the common put door checks
+/// ([`Vault::open_leader_chat_in_txn`], and `test_doors::archive_room_ledger`).
+pub(crate) fn bind_leader_chat_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    chat: &LeaderChat,
+) -> Result<Vec<u8>> {
+    let bytes = encode(chat)?;
+    vault.store.vault_meta.put(txn, &key(CHAT, id), &bytes)?;
+    Ok(bytes)
+}
+
 /// A local typed writer alone can grant a one-transaction ChildOf permit.
 pub(crate) fn permit_record(
     store: &crate::store::Store,
@@ -396,14 +411,13 @@ impl Vault {
             member_ids: chat.persons.into_iter().flatten().collect(),
             ..Default::default()
         };
-        let bytes = encode(&chat)?;
+        // The private admission marker is checked by the common put door.
+        // The body binding itself travels with replicated conversations.
+        let bytes = bind_leader_chat_in_txn(self, txn, id, &chat)?;
         body.extra.insert(
             CHAT_FIELD.to_owned(),
             rmp_serde::from_slice(&bytes).map_err(|_| denied())?,
         );
-        // The private admission marker is checked by the common put door.
-        // The body binding itself travels with replicated conversations.
-        self.store.vault_meta.put(txn, &key(CHAT, id), &bytes)?;
         crate::conversation::create_in_txn(
             self,
             txn,

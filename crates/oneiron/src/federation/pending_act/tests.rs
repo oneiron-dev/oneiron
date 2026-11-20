@@ -1,8 +1,13 @@
 const WEEK: u64 = 7 * 24 * 60 * 60;
 use super::*;
 use crate::TimeRange;
-use crate::federation::InitialSharedMember;
+use crate::federation::{DeleteVaultPlan, InitialSharedMember};
 use crate::store::GateDecisionId;
+
+/// A `delete_vault` plan that decodes, as the start door now requires.
+fn delete_vault_plan() -> Vec<u8> {
+    serde_json::to_vec(&DeleteVaultPlan { v: 1 }).expect("encode the delete_vault plan")
+}
 
 fn fixture(
     preset: SharedVaultPreset,
@@ -31,14 +36,9 @@ fn fixture_on(
     // Membership defaults and act rows are manifest policy: keep the seeded
     // manifest rather than the legacy test opener that removes policy rows.
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(
-        dir.path(),
-        crate::VaultConfig {
-            store_clock,
-            ..crate::test_util::embedding_test_config()
-        },
-    )
-    .unwrap();
+    let mut config = crate::test_util::embedding_test_config();
+    config.store_clock = store_clock;
+    let vault = Vault::open(dir.path(), config).unwrap();
     let mut holders = Vec::new();
     // The first is the personal vault's owner, who shares it.
     let owner = vault.ensure_embedded_owner_actor().unwrap();
@@ -88,9 +88,10 @@ fn fixture_on(
 fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Result<()> {
     let clock = crate::ports::ManualClock::new(100);
     let (dir, vault, owner, other, admin) = fixture_on(SharedVaultPreset::Team, clock.bundle());
-    let act = vault.start_authority_act(&owner, 42, "delete_vault", b"opaque".to_vec())?;
+    let plan = delete_vault_plan();
+    let act = vault.start_authority_act(&owner, 42, "delete_vault", plan.clone())?;
     assert_eq!(act.deadline, 100 + WEEK);
-    assert_eq!(act.payload, b"opaque");
+    assert_eq!(act.payload, plan);
     assert_eq!(vault.pending_act_started_events(&owner, 42, 101)?.len(), 1);
     assert_eq!(vault.pending_act_started_events(&other, 42, 101)?.len(), 1);
     assert!(
@@ -99,7 +100,7 @@ fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Re
             .is_empty()
     );
     // An act nobody objects to, for a first objection at its deadline.
-    let unopposed = vault.start_authority_act(&owner, 42, "delete_vault", Vec::new())?;
+    let unopposed = vault.start_authority_act(&owner, 42, "delete_vault", plan.clone())?;
     clock.set(101);
     assert!(
         vault
@@ -115,13 +116,9 @@ fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Re
     assert!(!held.completed);
     assert!(!vault.advance_authority_act(&act.id, 100 + WEEK)?.completed);
     drop(vault);
-    let reopened = Vault::open(
-        dir.path(),
-        crate::VaultConfig {
-            store_clock: clock.bundle(),
-            ..crate::test_util::embedding_test_config()
-        },
-    )?;
+    let mut config = crate::test_util::embedding_test_config();
+    config.store_clock = clock.bundle();
+    let reopened = Vault::open(dir.path(), config)?;
     // A proof binds to the open it was minted on: the reopened vault takes a
     // fresh one.
     let other = reopened.authenticate_owner(
@@ -362,6 +359,7 @@ fn read_only_owner_cannot_start_or_edit_policy() -> Result<()> {
                 crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
                 TimeRange { start: 10, end: 10 },
                 10,
+                None,
                 &super::super::encode_federation_grant_body(&grant)?,
             )
             .commit()?;
@@ -684,6 +682,7 @@ fn manifest_without_owner_door_does_not_change_wait() -> Result<()> {
                 crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
                 TimeRange { start: 50, end: 50 },
                 50,
+                None,
                 &body,
             )
             .commit()?;
@@ -745,6 +744,7 @@ fn malformed_act_policy_table_refuses_start() -> Result<()> {
                 entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
                 occurred: TimeRange { start: 50, end: 50 },
                 learned_at: 50,
+                row_version: None,
                 data: body,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
@@ -808,7 +808,7 @@ fn a_bypass_grant_never_skips_another_owners_objection_window() -> Result<()> {
     assert_eq!(evaluation.decision, ConsentDecision::Auto);
     assert!(evaluation.bypassed_by.is_some());
 
-    let act = vault.start_authority_act(&owner, 42, "delete_vault", Vec::new())?;
+    let act = vault.start_authority_act(&owner, 42, "delete_vault", delete_vault_plan())?;
     assert_eq!(act.deadline, 100 + WEEK, "the bypass opens no shortcut");
     assert!(!act.completed);
     vault.change_authority_objection(&other, &act.id, true)?;

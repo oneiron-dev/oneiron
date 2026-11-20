@@ -5,6 +5,7 @@
 //! in private LMDB rows and is not sync materialized as vault entities.
 
 mod admission;
+pub(crate) mod archive_restore;
 mod attempt_binding;
 mod claim_authoring;
 mod codec;
@@ -30,12 +31,12 @@ mod store;
 mod types;
 mod wake_park;
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-RUNNER-TESTS]: the lib test target's type check fails here (9 errors: E0063 x5, E0061 x2, E0308 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
 pub(crate) use self::admission::AdmittedBudgetLine;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::free_time::free_time_policy_digest_for_test;
 
 // The globs below keep the pre-split surface byte-identical: `pub` items stay `pub`,
 // `pub(crate)` seams stay `pub(crate)`, and `pub(super)` internals become
@@ -65,6 +66,7 @@ pub use self::free_time::*;
 pub(crate) use self::home::{declared_home_candidate, home_candidate_rank, reelect_home_in_txn};
 pub(crate) use self::lease_fence::DreamerTryLease;
 pub use self::milestone::*;
+pub(crate) use self::outage_due::OUTAGE_RESUME_JOB;
 pub use self::outage_due::{outage_park_reason, outage_retry_after};
 pub use self::owner_doors::*;
 pub use self::park_release::{
@@ -74,6 +76,7 @@ pub use self::park_release::{
 // The owner notice's source, for the integration test doors (`test_doors::wake_d1_park_release`).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::park_release::park_release_notice_source;
+pub(crate) use self::program::PROGRAM_TIMER_JOB;
 pub use self::program::{
     ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin, ProgramTrigger,
     TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain,
@@ -83,11 +86,10 @@ pub(crate) use self::program::{
     ProgramHold, ProgramWrite, TurnProgramAuthority, TurnProgramBinding, TurnProgramBound,
     TurnProgramEntered, arm_turn_program_in_txn, bind_program_write_in_txn,
     disarm_turn_program_in_txn, drain_turn_program_wakes, erase_turn_program_actor_in_txn,
-    is_withdrawal_refusal, join_program_checkpoint_in_txn, next_program_timer_at,
-    note_program_write_uncertain, program_actor_for_attempt_in_txn, program_milestone_envelope,
-    record_turn_program_wakes_in_txn, release_idle_programs, release_program_wakes,
-    settle_program_outbound_in_txn, settle_program_write_in_txn, turn_program_erase_details,
-    turn_programs_armed_in_txn,
+    is_withdrawal_refusal, join_program_checkpoint_in_txn, note_program_write_uncertain,
+    program_actor_for_attempt_in_txn, program_milestone_envelope, record_turn_program_wakes_in_txn,
+    release_idle_programs, release_program_wakes, settle_program_outbound_in_txn,
+    settle_program_write_in_txn, turn_program_erase_details, turn_programs_armed_in_txn,
 };
 // FIX 5266: a turn program's rows on the window plane, for the sync carriers.
 #[cfg(feature = "sync")]
@@ -114,7 +116,8 @@ pub use self::program::{
 };
 // FIX 5880: the owner's release of a held turn program.
 pub use self::program::{
-    ProgramHoldReleaseAction, ProgramHoldReleaseView, ReleaseTurnProgramHoldRequest,
+    PROGRAM_HOLD_RELEASE_VERB, ProgramHoldReleaseAction, ProgramHoldReleaseView,
+    ReleaseTurnProgramHoldRequest, release_turn_program_hold_as_delegate,
     release_turn_program_hold_as_owner,
 };
 // FIX 11429: the waking actor's rebind of a turn program to a live slip.
@@ -122,6 +125,7 @@ pub use self::program::{TurnProgramRebindReceipt, TurnProgramRebindRequest, rebi
 #[cfg(feature = "sync")]
 pub use self::progress::*;
 pub use self::recipe::*;
+pub(crate) use self::seat_wait::SEAT_RESET_JOB;
 pub use self::seat_wait::{
     ModelSeatAvailability, ModelSeatAvailableSource, ModelSeatSource, ModelSeatState,
 };
@@ -168,7 +172,11 @@ pub(crate) mod tables;
 pub(crate) use self::free_time::dreamer_free_time_cycle_accepts_masked;
 pub(crate) use self::maintenance::call_receipt_accepts_masked;
 pub(crate) use self::maintenance::digest::dreamer_proactivity_digest_accepts_masked;
-pub(crate) use self::maintenance::digest::dreamer_proactivity_presentation_accepts_masked;
 pub(crate) use self::maintenance::dreamer_curator_rubric_accepts_masked;
 pub(crate) use self::maintenance::stewardship::dreamer_stewardship_rules_accepts_masked;
 pub(crate) use self::store::dreamer_parked_accepts_masked;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    admission::budget_reservation_key_pin_for_test, milestone::milestone_candidate_key_pin_for_test,
+};

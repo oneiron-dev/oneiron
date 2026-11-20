@@ -491,7 +491,18 @@ pub(crate) fn open_conflict_in_txn(
 /// closes), under the claim lifecycle's own guards: a generated claim still
 /// never supersedes user-stated truth.
 /// Only a `person` closes user-stated truth at all: an agent's settlement
-/// that would is refused, and the conflict stays for the owner. `close_as`
+/// that would is refused, and the conflict stays for the owner. Only a
+/// `person` supersedes a member that restricts someone's access either
+/// (a delivery window, an opt-out, a do-not-contact, a held campaign
+/// membership, ...; [`crate::federation::claim_removal_widens_in`]),
+/// whatever its source: removing a restriction widens access, and an
+/// agent's widening always asks the person affected (canon
+/// #widen-world-floor). An agent holder's or the Dreamer's settlement that
+/// would is refused, and the conflict stays for a person holder or the
+/// owner (RULING RESTRICTION-CLOSE-BY-CONFLICT-SETTLE). So is a Keep by no
+/// person that approves a retained curator finding whose rung would retract,
+/// weaken or mark stale a restricting claim, a member or not (RULING
+/// RESTRICTION-CLOSE-BY-CURATOR-APPROVAL). `close_as`
 /// attributes a delegate's close; the owner's close is the owner's. The
 /// answering claim then records the settlement on the marker's own axes.
 /// `keep_as` says how a kept retained alternative lands (FIX 5753). `now` is
@@ -521,6 +532,23 @@ pub(crate) fn apply_settlement_in_txn(
             .iter()
             .find(|alternative| alternative.id == selected)
         {
+            // A Keep that approves its landing applies a curator finding's
+            // rung as the finding lands (FIX 5423), on a target that need not
+            // be a member. Asked before the landing: once the rung applied,
+            // its target no longer reads as restricting anyone.
+            if !person
+                && matches!(keep_as, KeepAs::Approved(_))
+                && crate::dreamer_runner::maintenance::curator_proposal_lifts_restriction_in(
+                    vault,
+                    txn,
+                    &alternative.predicate,
+                    &alternative.value,
+                )?
+            {
+                return Err(invalid_consolidation(
+                    "only a person keeps a curator finding that lifts a claim restricting someone's access",
+                ));
+            }
             match super::retained_keep::keep_in_txn(
                 vault,
                 txn,
@@ -573,6 +601,11 @@ pub(crate) fn apply_settlement_in_txn(
             if !person && matches!(body.source, None | Some(ClaimSource::UserStated)) {
                 return Err(invalid_consolidation(
                     "only a person supersedes user-stated truth",
+                ));
+            }
+            if !person && crate::federation::claim_removal_widens_in(vault, txn, &body)? {
+                return Err(invalid_consolidation(
+                    "only a person supersedes a claim that restricts someone's access",
                 ));
             }
             vault.cancel_deferred_claim_in_txn(txn, &loser)?;
@@ -783,6 +816,43 @@ pub(crate) fn revert_settlement_in_txn(
         reverted.retracted = Some(kept);
     }
     Ok(reverted)
+}
+
+/// Whether reverting the settlement `resolved` answers would retract a
+/// claim that restricts someone's access
+/// ([`crate::federation::claim_removal_widens_in`]): the winner it landed
+/// from its marker's retained candidates, still standing, which
+/// [`revert_settlement_in_txn`] retracts. The members it restores close
+/// nothing. An answer that is no standing settlement's lifts nothing: its
+/// revert refuses.
+pub(crate) fn settlement_revert_lifts_restriction_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    resolved: EntityId,
+) -> Result<bool> {
+    let Some(answer) = vault.get_claim_in_txn(txn, &resolved)? else {
+        return Ok(false);
+    };
+    if answer.predicate != PREDICATE_CONFLICT_RESOLVED || !claim_surfaceable(&answer) {
+        return Ok(false);
+    }
+    let Some(resolution) = string_at(&answer.value, "resolution")
+        .filter(|resolution| string_at(resolution, "settlement").is_some())
+    else {
+        return Ok(false);
+    };
+    let Some(kept) = marker_ids(resolution, "kept").next() else {
+        return Ok(false);
+    };
+    if marker_ids(resolution, MATERIALIZED_KEY).next() != Some(kept) {
+        return Ok(false);
+    }
+    match vault.get_claim_in_txn(txn, &kept)? {
+        Some(body) if body.lifecycle == ClaimLifecycleStatus::Active => {
+            crate::federation::claim_removal_widens_in(vault, txn, &body)
+        }
+        _ => Ok(false),
+    }
 }
 
 /// Where a revert's fresh Dreamer copy says it came from: its provenance

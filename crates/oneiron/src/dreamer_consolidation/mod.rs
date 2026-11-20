@@ -65,6 +65,7 @@ mod provenance;
 pub(crate) mod psych_profile_step;
 mod recipe_failure;
 pub(crate) mod redirty;
+mod relation_extraction;
 mod request_sources;
 mod residency;
 mod resident_dream;
@@ -72,6 +73,8 @@ mod resident_for_human;
 mod resident_health;
 pub(crate) mod resources;
 mod retained_conflict;
+#[cfg(oneiron_test_support)]
+pub(crate) use retained_conflict::retained_field_for_test;
 mod retained_keep;
 mod revert;
 pub(crate) mod reviewed;
@@ -81,6 +84,7 @@ pub mod routing;
 mod running_buckets;
 mod scope_summary_attempt;
 pub mod selection;
+pub(crate) mod setting_keys;
 pub(crate) mod settle;
 mod sieve_attempt;
 mod sieve_decisions;
@@ -93,11 +97,9 @@ mod task_realize;
 mod thing_agent;
 mod turn_text;
 mod wake_plan;
-mod watermark;
+pub(crate) mod watermark;
 mod weave_lens;
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-CONSOLIDATION-TESTS]: the lib test target's type check fails here (160 errors: E0063 x82, E0308 x28, E0061 x27, E0027 x12, E0277 x4, E0599 x3, E0609 x3, E0716 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -106,7 +108,12 @@ pub use branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
 pub use conflict::*;
 pub(crate) use conflict::{candidate_probe_body, topic_key_canonical_bytes};
 pub use executor::*;
-pub(crate) use extracted_people::{delete_lineage_origin_in_txn, pin_lineage_origin_in_txn};
+#[cfg(oneiron_test_support)]
+pub(crate) use extracted_people::mint_named_person_for_test;
+pub(crate) use extracted_people::{
+    delete_lineage_origin_in_txn, has_name_span, normalize_name_span, origin_in_txn,
+    pin_lineage_origin_in_txn, speaker_admissible_in_txn,
+};
 pub use gap::*;
 pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub(crate) use partition::PartitionAudience;
@@ -135,6 +142,8 @@ pub(crate) use resident_dream::{resident_dream_input, resident_dream_progress_in
 pub use resident_for_human::run_free_time_for_human;
 #[cfg(oneiron_test_support)]
 pub(crate) use resources::extraction_routing_door;
+#[cfg(oneiron_test_support)]
+pub(crate) use resources::open_conflict_door;
 pub use resources::{NightlyLinkGrantRequest, ScopedConsolidationWrite, mint_nightly_link_grant};
 pub use retained_conflict::RetainedAlternative;
 pub(crate) use retained_keep::SettlementApplied;
@@ -163,7 +172,7 @@ pub use settle::{
 };
 pub(crate) use settle::{
     apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,
-    revert_settlement_in_txn, settled_answers_in_txn,
+    revert_settlement_in_txn, settled_answers_in_txn, settlement_revert_lifts_restriction_in,
 };
 pub use sieve_ports::{
     ExtractionPorts, NeighbourhoodExtraction, NeighbourhoodExtractionPort, PortFuture,
@@ -187,6 +196,8 @@ pub use thing_agent::{
     ThingDecideOutput, ThingExtractInput, ThingExtractOutput, ThingPortCall, ThingPortReply,
     ThingPortRequest, ThingProposalRef,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use turn_text::MessageSpan;
 pub(crate) use turn_text::compaction_span::{
     ConversationSpanRead, conversation_span_text, conversation_span_text_in,
     scoped_turn_body_text_in, scoped_turn_text_in,
@@ -252,6 +263,20 @@ pub(crate) fn side_door_turn_text_for_test(
     turn_text::read_turn_text(vault, turn)
 }
 
+/// The stored and compared digests' seams for the K door
+/// (`test_doors::fingerprint_keep_dreamer_consolidation_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    call_labels::labels_digest_for_test,
+    follower_attempt::{cache_identity_digest_for_test, route_digest_for_test},
+    note_text::note_text_fingerprint_for_test,
+    scope_summary_attempt::{
+        arc_composition_params_hash_for_test, arc_parts_params_hash_for_test,
+        session_pages_params_hash_for_test,
+    },
+    turn_text::attribution_hash_for_test,
+};
+
 /// The writer's re-check of a side door's TURN record, read as the Dreamer in
 /// a fresh snapshot, for the integration regression doors (X01). Not API.
 #[cfg(oneiron_test_support)]
@@ -265,6 +290,15 @@ pub(crate) fn side_door_recheck_for_test(
     record.check_live_in(&read, &txn, turn)
 }
 
+/// The park cause a recipe step takes on `error` ([`recipe_failure`]), for
+/// tests/message_rel_relationship_row.rs. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn recipe_park_cause_for_test(
+    error: &crate::Error,
+) -> crate::dreamer_runner::DreamerParkCause {
+    recipe_failure::RecipeFailure::of_error(error).park_cause()
+}
+
 /// Encodes the candidates retained on a conflict marker.
 #[cfg(oneiron_test_support)]
 pub(crate) fn retained_alternatives_entry_for_test(
@@ -273,3 +307,8 @@ pub(crate) fn retained_alternatives_entry_for_test(
 ) -> crate::Result<(rmpv::Value, rmpv::Value)> {
     retained_conflict::alternatives_entry(members, attempt)
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    gap::branch_gap_key_pin_for_test, neighbourhood::listing_pin_key_pin_for_test,
+};

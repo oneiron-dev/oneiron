@@ -217,7 +217,7 @@ fn serve_start_of_a_managed_vault_mints_no_default_grant() {
     let vault_path = dir.path().join("vault");
     let config = dir.path().join("oneiron.toml");
     // `oneiron init` keeps the keys a config file already holds.
-    std::fs::write(
+    crate::owner_only_file::write_owner_only_file(
         &config,
         "privacy_posture = \"managed\"\nhosted_kms_key_ref = \"kms://example/serve-start-backfill\"\n",
     )

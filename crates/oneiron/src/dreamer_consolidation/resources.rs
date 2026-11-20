@@ -51,6 +51,8 @@ use crate::write_envelope::WriteActor;
 use crate::{Result, Vault};
 #[cfg(oneiron_test_support)]
 pub(crate) use bound_read::extraction_routing_door;
+#[cfg(oneiron_test_support)]
+pub(crate) use bound_read::open_conflict_door;
 use oneiron_model::llm::{LlmResponse, Scope, ScopeResource};
 pub use write::ScopedConsolidationWrite;
 pub(crate) use write::{ConsolidationFence, RowRevision};
@@ -555,7 +557,7 @@ impl<'a> BranchResources<'a> {
             super::gap::ReflectionGap,
             super::evidence::VerifiedEvidenceSet,
         )>,
-        now: u64,
+        now_ms: u64,
     ) -> Result<super::gap::GapQueueDelta> {
         self.check_axes(scope)?;
         let mut persisted = Vec::new();
@@ -581,18 +583,16 @@ impl<'a> BranchResources<'a> {
             self.origin.axes(),
             &self.write_fence(),
             persisted,
-            now,
+            now_ms,
         )
     }
 
-    // FIX [LIBTEST-QUARANTINE-DREAMER-CONSOLIDATION-TESTS]: the lib test target's type check fails here (1 error: E0609 x1, no field `branch`); every caller is in that gated module; port it with them, then drop this gate
-    #[cfg(any())]
     #[cfg(test)]
     pub(super) fn upsert_gaps(
         &self,
         scope: &Scope,
         gaps: Vec<super::gap::ReflectionGap>,
-        now: u64,
+        now_ms: u64,
     ) -> Result<super::gap::GapQueueDelta> {
         self.check_axes(scope)?;
         for gap in &gaps {
@@ -622,13 +622,14 @@ impl<'a> BranchResources<'a> {
                 }
             }
         }
-        super::gap::upsert_branch_gap_queue(
+        super::gap::upsert_origin_gap_queue(
             self.read.vault(),
             scope,
-            &self.branch,
+            self.origin.gap_projection(scope),
+            self.origin.axes(),
             &self.write_fence(),
             gaps,
-            now,
+            now_ms,
         )
     }
 

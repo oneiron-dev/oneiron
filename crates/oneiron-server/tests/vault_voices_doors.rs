@@ -3,8 +3,9 @@
 //!
 //! Every case drives the real routes in process (`build_app` + `oneshot`):
 //! `POST /v1/core/facade/<verb>` for `vault.voices.packs.put`,
-//! `.render_consent`, `.targets.provision`, `.targets.evict`, `.inspect` and
-//! `.lineage`, and the owner's voice-bank routes under `/v1/ai/voices`.
+//! `.render_consent`, `.targets.provision`, `.targets.evict`, `.inspect`,
+//! `.lineage`, `.recognition.withdraw` and `.recognition.consent`, and the
+//! owner's voice-bank routes under `/v1/ai/voices`.
 //! Callers: the owner on the host root credential, whose live PERSON is the
 //! subject of the owner's own voice; a second live person on their own
 //! paired human credential; and an agent on its own paired credential, the
@@ -25,14 +26,32 @@
 //!   enrolls another's (`oneiron/agents/oneiron-arch-0061-voice-loop-v1.md:8`
 //!   "counterparties only on logged consent"; no door enrolls a counterparty);
 //! - a render withdrawal ends the grant and keeps the consent record
-//!   (`oneiron-arch-0061-voice-loop-v1.md:124` keeps the record; the
-//!   voiceprint half of that line is the recognition bank's, which no door
-//!   reaches, see the PR body);
+//!   (`oneiron-arch-0061-voice-loop-v1.md:124` keeps the record);
+//! - withdrawing voice-recognition consent deletes the voiceprint and its
+//!   samples, and keeps the consent record (`oneiron-arch-0061-voice-loop-v1.md:124`,
+//!   promise-dura-13; VOICE-RECOGNITION-CONSENT-NO-DOOR): a person withdraws
+//!   their own voice, the owner any subject's, and nobody else another's.
+//!   No door enrolls a print, so these cases enroll on the served vault
+//!   through the engine's public calls;
+//! - the way out is never harder than the way in (VOICE-WITHDRAW-AGENT = C,
+//!   VOICE-WITHDRAW-AGENT-GRANT = A): an agent whose own Grant names the
+//!   consent-log verb `vault.voices.recognition.consent` logs a
+//!   counterparty's spoken withdrawal on a call, the owner is told which
+//!   consent was withdrawn, and the withdrawal only narrows;
+//! - logging voice-recognition consent enrols nothing (VOICE-CONSENT-LOG-WHO = A;
+//!   oneiron-arch-0061 "the agent logs who/when/what"): a person logs their own
+//!   voice, the owner any subject's, and an agent with the consent-log Grant a
+//!   counterparty's spoken yes on a call, telling each live owner who agreed, for
+//!   which purposes, and under which Grant; enrolment reads the door's consent;
 //! - the `/v1/ai/voices` routes are the owner's alone
 //!   (`crates/oneiron-server/src/api/ai/voices.rs` `owner_only`).
 //!
-//! These promises hold on main. Their red proof is a seeded fault (Test rules
-//! v2, rule 5), named in the PR.
+//! These promises hold on main, but for the recognition withdrawal and consent,
+//! whose doors main does not have: their cases are red on main, the two consent
+//! cases because main's server knows no such route (run against main's code
+//! they fail at the first consent call), and the withdrawal agent's case
+//! is also red on the door's first PR (#8973), which refuses every agent.
+//! The others' red proof is a seeded fault (Test rules v2, rule 5), named in the PR.
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support --test
@@ -58,7 +77,13 @@ use oneiron::authority::{
 };
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::registry::ENTITY_TYPE_PERSON;
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::voice_identity::{
+    VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState, VoiceEmbeddingFamily,
+    VoiceEmbeddingSpaceV1, VoiceEnrollmentLegalContext, VoiceEnrollmentOrigin,
+    VoiceEnrollmentRequest, VoiceEnrollmentSampleV1, VoiceMatchPolicy, VoiceMatchRequest,
+    VoicePrintPurpose, VoiceRunCoverage, VoiceSegmentEmbeddingInput,
+};
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
@@ -70,6 +95,12 @@ const PROVISION: &str = "vault.voices.targets.provision";
 const EVICT: &str = "vault.voices.targets.evict";
 const INSPECT: &str = "vault.voices.inspect";
 const LINEAGE: &str = "vault.voices.lineage";
+const RECOGNITION_WITHDRAW: &str = "vault.voices.recognition.withdraw";
+const GRANT_MINT: &str = "vault.agents.grants.mint";
+/// The verb an agent's Grant names to log recognition consent, and with it
+/// a spoken withdrawal: the engine's `VOICE_RECOGNITION_CONSENT_VERB`,
+/// spelled out so a change of that name turns this file red.
+const RECOGNITION_CONSENT: &str = "vault.voices.recognition.consent";
 
 /// The owner's own voice, a real person's.
 const OWNER_VOICE: &str = "doors-custody-owner-voice";
@@ -279,6 +310,93 @@ fn pack(voice_id: &str, pack_id: &str, origin: Value, audio: &str) -> Value {
     })
 }
 
+/// The embedding space the recognition cases enroll and match in.
+fn voice_space() -> VoiceEmbeddingSpaceV1 {
+    VoiceEmbeddingSpaceV1::new(
+        VoiceEmbeddingFamily::EcapaTdnn,
+        "ecapa/voxceleb",
+        "rev-1",
+        16_000,
+        4,
+        "mono/16k/vad-v1",
+    )
+    .expect("the embedding space")
+}
+
+/// A unit vector of the space along `axis`: one per enrolled subject, so a
+/// segment at it matches that subject's print alone.
+fn axis_vector(axis: usize) -> Vec<f32> {
+    let mut vector = vec![0.0; 4];
+    vector[axis] = 1.0;
+    vector
+}
+
+/// The enrollment of `subject`'s print under the logged grant `grant_id`:
+/// one solo-session sample at `vector`, requested at `requested_at`.
+fn enrollment(
+    subject: EntityId,
+    grant_id: &str,
+    vector: &[f32],
+    requested_at: u64,
+) -> VoiceEnrollmentRequest {
+    VoiceEnrollmentRequest {
+        subject_ref: subject,
+        contact_ref: None,
+        relationship_ref: None,
+        consent_event_ref: grant_id.to_owned(),
+        purpose: VoicePrintPurpose::MeetingAttribution,
+        space: voice_space(),
+        samples: vec![VoiceEnrollmentSampleV1 {
+            sample_id: "sample-1".to_owned(),
+            source_ref: "solo-session-1".to_owned(),
+            language: "en".to_owned(),
+            origin: VoiceEnrollmentOrigin::AuthenticatedSoloSession {
+                session_ref: "solo-session-1".to_owned(),
+                speaker_count: 1,
+            },
+            duration_ms: 4_000,
+            source_sha256: "ab".repeat(32),
+            vector: vector.to_vec(),
+        }],
+        requested_at,
+        legal: VoiceEnrollmentLegalContext::unresolved(),
+    }
+}
+
+/// The `recognition.withdraw` input of withdrawal `event_id` at
+/// `occurred_at`, of `subject`'s voice when one is named.
+fn recognition_withdrawal(event_id: &str, occurred_at: u64, subject: Option<EntityId>) -> Value {
+    let mut input = json!({
+        "event_id": event_id,
+        "occurred_at": occurred_at,
+        "basis": {"ConversationalNotice": {"notice": "please stop learning my voice"}},
+    });
+    if let Some(subject) = subject {
+        input["subject"] = json!(subject.to_hex());
+    }
+    input
+}
+
+/// The `recognition.consent` input of consent `event_id` at `occurred_at`,
+/// for `purposes`, of `subject`'s voice when one is named.
+fn recognition_consent(
+    event_id: &str,
+    occurred_at: u64,
+    subject: Option<EntityId>,
+    purposes: &[&str],
+) -> Value {
+    let mut input = json!({
+        "event_id": event_id,
+        "occurred_at": occurred_at,
+        "purposes": purposes,
+        "basis": {"ConversationalNotice": {"notice": "please learn my voice so you know it's me"}},
+    });
+    if let Some(subject) = subject {
+        input["subject"] = json!(subject.to_hex());
+    }
+    input
+}
+
 impl Served {
     fn holder(&self, caller: Caller) -> Option<&Holder> {
         match caller {
@@ -427,6 +545,127 @@ impl Served {
             .as_array()
             .expect("a lineage list")
             .clone()
+    }
+
+    /// `subject`'s voiceprint at `vector`, enrolled on the served vault
+    /// through the engine's public calls (no door enrolls a print): the owner
+    /// logs the grant `grant_id` for both
+    /// purposes, then one solo sample enrolls. Both come before `at`, the
+    /// grant first.
+    fn enroll_print(&self, subject: EntityId, grant_id: &str, vector: &[f32], at: u64) {
+        self.vault
+            .record_voice_consent(&VoiceConsentEventV1 {
+                event_id: grant_id.to_owned(),
+                subject_ref: subject,
+                recorded_by_ref: self.owner_person,
+                occurred_at: at - 20,
+                purposes: vec![
+                    VoicePrintPurpose::MeetingAttribution,
+                    VoicePrintPurpose::LiveInterlocutor,
+                ],
+                basis: VoiceConsentBasis::ConversationalNotice {
+                    notice: "I learn your voice so I know it's you".to_owned(),
+                },
+                state: VoiceConsentState::Granted,
+            })
+            .expect("the logged recognition grant");
+        self.vault
+            .enroll_voice_print(&enrollment(subject, grant_id, vector, at - 10))
+            .expect("the enrolled print");
+    }
+
+    /// Whom the served vault recognizes in one segment at `vector`, in a
+    /// fresh session `session`: `None` when no enrolled print matches it.
+    fn recognized(&self, session: &str, vector: &[f32]) -> Option<EntityId> {
+        let space = voice_space();
+        let roster = self
+            .vault
+            .resolve_voice_segments(&VoiceMatchRequest {
+                voice_session_ref: session.to_owned(),
+                recording_id: format!("{session}-recording"),
+                space_id: space.space_id.clone(),
+                segments: vec![VoiceSegmentEmbeddingInput {
+                    segment_id: "segment-1".to_owned(),
+                    diarization_label: "cluster-1".to_owned(),
+                    speaker_key: "cluster-1".to_owned(),
+                    start_ms: 0,
+                    end_ms: 1_000,
+                    space_id: space.space_id,
+                    vector: vector.to_vec(),
+                }],
+                invite_attendee_refs: Vec::new(),
+                policy: VoiceMatchPolicy::with_known_default(0.7),
+                created_at: self.vault.now_recorded_at(),
+                purpose: VoicePrintPurpose::MeetingAttribution,
+                coverage: VoiceRunCoverage::Partial,
+            })
+            .expect("the match");
+        roster.segments[0].subject_ref
+    }
+
+    /// The owner mints the agent one Grant naming `read` (so the Grant
+    /// confers) and `verbs`, at the Grant mint door: answers its id.
+    async fn grant_agent(&self, verbs: &[&str]) -> String {
+        let verbs: Vec<&str> = std::iter::once("read")
+            .chain(verbs.iter().copied())
+            .collect();
+        let minted = self
+            .ok(
+                Caller::Owner,
+                GRANT_MINT,
+                json!({
+                    "agent": self.agent.actor.to_hex(),
+                    "authority_scope": {
+                        "worlds": {"kind": "all"},
+                        "facets": {"kind": "all"},
+                        "bands": {"kind": "all"},
+                        "audience": {"kind": "all"},
+                        "verbs": {"kind": "some", "values": verbs},
+                        "sensitivity": {"kind": "at_most", "value": "restricted"},
+                    },
+                }),
+            )
+            .await;
+        assert_eq!(
+            minted["grant"]["confers"], true,
+            "the Grant confers: {minted}"
+        );
+        minted["grant"]["grant_ref"]
+            .as_str()
+            .expect("the Grant's id")
+            .to_owned()
+    }
+
+    /// The owner's inbox notices that a person's spoken recognition
+    /// withdrawal was logged, as (result, detail).
+    fn withdrawal_notices(&self) -> Vec<(Option<String>, Option<String>)> {
+        self.vault
+            .memory(self.owner_person, EdgeActorClass::Human)
+            .inbox_list(None, 100)
+            .expect("the owner's inbox")
+            .rows
+            .into_iter()
+            .filter(|row| {
+                serde_json::to_value(row.kind).ok() == Some(json!("voice_recognition_withdrawn"))
+            })
+            .map(|row| (row.source.result, row.source.detail))
+            .collect()
+    }
+
+    /// The owner's inbox notices that a counterparty's spoken recognition
+    /// consent was logged, as (result, detail).
+    fn consent_notices(&self) -> Vec<(Option<String>, Option<String>)> {
+        self.vault
+            .memory(self.owner_person, EdgeActorClass::Human)
+            .inbox_list(None, 100)
+            .expect("the owner's inbox")
+            .rows
+            .into_iter()
+            .filter(|row| {
+                serde_json::to_value(row.kind).ok() == Some(json!("voice_recognition_consented"))
+            })
+            .map(|row| (row.source.result, row.source.detail))
+            .collect()
     }
 }
 
@@ -831,5 +1070,589 @@ fn the_voice_routes_are_the_owners_alone() {
         let (status, after) = served.send(Caller::Owner, Method::GET, &view, None).await;
         assert_eq!(status, StatusCode::OK, "{after}");
         assert_eq!(after, before, "nothing of the voice changed");
+    });
+}
+
+/// The owner withdraws recognition consent for their own voice at the door:
+/// the print, its sample and its active pointer are deleted, so nothing
+/// recognizes the voice any more, and the withdrawal stays in the consent
+/// log, so the old grant enrolls nothing again and a replay deletes nothing.
+/// The render bank keeps its own consent and packs. (promise-dura-13.)
+#[test]
+fn a_recognition_withdrawal_deletes_the_print_and_keeps_the_consent_record() {
+    run_on_engine_stack("voices-recognition-withdrawal", || async {
+        let served = served().await;
+        served.bank_owner_voice().await;
+        let now = served.vault.now_recorded_at();
+        let owner = served.owner_person;
+        served.enroll_print(owner, "owner-recognition-grant", &axis_vector(0), now);
+        assert_eq!(
+            served.recognized("before-withdrawal", &axis_vector(0)),
+            Some(owner),
+            "the enrolled print recognizes the owner"
+        );
+
+        let withdrawal = recognition_withdrawal("owner-recognition-withdrawal", now, None);
+        let receipt = served
+            .ok(Caller::Owner, RECOGNITION_WITHDRAW, withdrawal.clone())
+            .await;
+        assert_eq!(receipt["subject"], owner.to_hex(), "{receipt}");
+        assert_eq!(receipt["recorded_by"], owner.to_hex(), "{receipt}");
+        assert_eq!(receipt["replayed"], false, "{receipt}");
+        assert_eq!(receipt["already_absent"], false, "{receipt}");
+        assert_eq!(receipt["deleted_print"], true, "{receipt}");
+        assert_eq!(receipt["deleted_sample_count"], 1, "{receipt}");
+        assert!(
+            receipt["deleted_vector_count"].as_u64() >= Some(1),
+            "the sample's vector is deleted: {receipt}"
+        );
+        assert_eq!(receipt["deleted_active_pointer"], true, "{receipt}");
+        assert_eq!(
+            served.recognized("after-withdrawal", &axis_vector(0)),
+            None,
+            "no print recognizes the owner after the withdrawal"
+        );
+
+        // The withdrawal stays in the consent log: the grant it withdrew
+        // enrolls nothing again, and its replay finds it recorded.
+        assert!(
+            served
+                .vault
+                .enroll_voice_print(&enrollment(
+                    owner,
+                    "owner-recognition-grant",
+                    &axis_vector(0),
+                    now,
+                ))
+                .is_err(),
+            "the withdrawn grant enrolls no new print"
+        );
+        let replay = served
+            .ok(Caller::Owner, RECOGNITION_WITHDRAW, withdrawal)
+            .await;
+        assert_eq!(replay["replayed"], true, "{replay}");
+        assert_eq!(replay["deleted_print"], false, "{replay}");
+        assert_eq!(replay["deleted_sample_count"], 0, "{replay}");
+
+        // The render bank keeps its own consent and its pack.
+        let inspection = served.inspect(Caller::Owner, OWNER_VOICE).await;
+        assert_eq!(
+            inspection["identity"]["pack_ids"],
+            json!([OWNER_PACK]),
+            "the banked pack stays: {inspection}"
+        );
+        assert_eq!(
+            inspection["render_consent"]["state"], "granted",
+            "the render grant stays: {inspection}"
+        );
+    });
+}
+
+/// A person withdraws recognition consent for their own voice, and only the
+/// vault owner for another subject's, such as a counterparty who holds no
+/// credential here. A person naming another subject and an agent with no
+/// Grant are refused, and every print they named still recognizes its
+/// subject.
+#[test]
+fn a_person_withdraws_their_own_voice_and_the_owner_any_subjects() {
+    run_on_engine_stack("voices-recognition-who", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let owner = served.owner_person;
+        let person = served.person.actor;
+        let counterparty = EntityId::now();
+        served.enroll_print(owner, "owner-grant", &axis_vector(0), now);
+        served.enroll_print(person, "person-grant", &axis_vector(1), now);
+        served.enroll_print(counterparty, "counterparty-grant", &axis_vector(2), now);
+
+        let refused = [
+            (Caller::Person, Some(owner)),
+            (Caller::Person, Some(counterparty)),
+            (Caller::Agent, None),
+            (Caller::Agent, Some(owner)),
+            (Caller::Agent, Some(counterparty)),
+        ];
+        for (index, (caller, subject)) in refused.into_iter().enumerate() {
+            let input = recognition_withdrawal(&format!("refused-{index}"), now, subject);
+            let (status, body) = served.post(caller, RECOGNITION_WITHDRAW, input).await;
+            assert!(
+                !status.is_success(),
+                "{caller:?} on {subject:?} is refused: {status} {body}"
+            );
+        }
+        assert_eq!(
+            served.recognized("after-refusals-owner", &axis_vector(0)),
+            Some(owner)
+        );
+        assert_eq!(
+            served.recognized("after-refusals-person", &axis_vector(1)),
+            Some(person)
+        );
+        assert_eq!(
+            served.recognized("after-refusals-counterparty", &axis_vector(2)),
+            Some(counterparty)
+        );
+
+        let own = served
+            .ok(
+                Caller::Person,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("person-withdrawal", now, None),
+            )
+            .await;
+        assert_eq!(own["subject"], person.to_hex(), "{own}");
+        assert_eq!(own["recorded_by"], person.to_hex(), "{own}");
+        assert_eq!(own["deleted_print"], true, "{own}");
+        assert_eq!(
+            served.recognized("after-person-withdrawal", &axis_vector(1)),
+            None
+        );
+
+        let for_counterparty = served
+            .ok(
+                Caller::Owner,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("counterparty-withdrawal", now, Some(counterparty)),
+            )
+            .await;
+        assert_eq!(
+            for_counterparty["subject"],
+            counterparty.to_hex(),
+            "{for_counterparty}"
+        );
+        assert_eq!(
+            for_counterparty["recorded_by"],
+            owner.to_hex(),
+            "the owner records the counterparty's word: {for_counterparty}"
+        );
+        assert_eq!(
+            for_counterparty["deleted_print"], true,
+            "{for_counterparty}"
+        );
+        assert_eq!(
+            served.recognized("after-counterparty-withdrawal", &axis_vector(2)),
+            None
+        );
+        assert_eq!(
+            served.recognized("after-both-withdrawals", &axis_vector(0)),
+            Some(owner),
+            "the owner's own print is untouched"
+        );
+    });
+}
+
+/// An agent whose own Grant names the consent-log verb logs a
+/// counterparty's spoken withdrawal on a call (VOICE-WITHDRAW-AGENT = C,
+/// VOICE-WITHDRAW-AGENT-GRANT = A; lead: "the way out must never be harder
+/// than the way in"): the print goes, the agent records the withdrawal,
+/// and the owner is told in their inbox who asked and which consent it
+/// was. An agent with no Grant, or with a conferring one that names the
+/// withdraw verb but not the consent-log verb, is refused; the consent-log
+/// Grant reaches no owner's voice and needs a subject. The withdrawal only
+/// narrows: the withdrawn grant enrolls nothing again, every other print
+/// still recognizes its subject, and a replay deletes nothing and tells no
+/// one again.
+#[test]
+fn an_agent_with_the_consent_log_grant_logs_a_counterpartys_withdrawal_and_tells_the_owner() {
+    run_on_engine_stack("voices-recognition-agent", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let owner = served.owner_person;
+        let person = served.person.actor;
+        let agent = served.agent.actor;
+        let counterparty = EntityId::now();
+        served.enroll_print(owner, "owner-grant", &axis_vector(0), now);
+        served.enroll_print(person, "person-grant", &axis_vector(1), now);
+        served.enroll_print(counterparty, "counterparty-grant", &axis_vector(2), now);
+
+        // No Grant, then a conferring Grant naming the withdraw verb and not
+        // the consent-log verb: refused.
+        for (index, verb) in [None, Some(RECOGNITION_WITHDRAW)].into_iter().enumerate() {
+            if let Some(verb) = verb {
+                served.grant_agent(&[verb]).await;
+            }
+            let input =
+                recognition_withdrawal(&format!("ungranted-{index}"), now, Some(counterparty));
+            let (status, body) = served
+                .post(Caller::Agent, RECOGNITION_WITHDRAW, input)
+                .await;
+            assert_eq!(
+                error_code(&body),
+                Some("FORBIDDEN"),
+                "an agent whose Grant names {verb:?} is refused: {status} {body}"
+            );
+        }
+        assert_eq!(
+            served.recognized("after-ungranted", &axis_vector(2)),
+            Some(counterparty)
+        );
+
+        let grant = served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        // The consent-log Grant reaches no owner's voice and needs a subject.
+        for (index, subject) in [Some(owner), None].into_iter().enumerate() {
+            let input = recognition_withdrawal(&format!("out-of-reach-{index}"), now, subject);
+            let (status, body) = served
+                .post(Caller::Agent, RECOGNITION_WITHDRAW, input)
+                .await;
+            assert!(
+                !status.is_success(),
+                "the agent on {subject:?} is refused: {status} {body}"
+            );
+        }
+        assert_eq!(
+            served.recognized("after-out-of-reach", &axis_vector(0)),
+            Some(owner)
+        );
+        assert!(
+            served.withdrawal_notices().is_empty(),
+            "a refusal tells no one"
+        );
+
+        let withdrawal =
+            recognition_withdrawal("counterparty-spoken-withdrawal", now, Some(counterparty));
+        let receipt = served
+            .ok(Caller::Agent, RECOGNITION_WITHDRAW, withdrawal.clone())
+            .await;
+        assert_eq!(receipt["subject"], counterparty.to_hex(), "{receipt}");
+        assert_eq!(
+            receipt["recorded_by"],
+            agent.to_hex(),
+            "the agent records the counterparty's word: {receipt}"
+        );
+        assert_eq!(receipt["replayed"], false, "{receipt}");
+        assert_eq!(receipt["deleted_print"], true, "{receipt}");
+        assert_eq!(receipt["deleted_sample_count"], 1, "{receipt}");
+        assert_eq!(receipt["deleted_active_pointer"], true, "{receipt}");
+        assert_eq!(
+            served.recognized("after-agent-withdrawal", &axis_vector(2)),
+            None
+        );
+
+        // The owner is told, once, who asked and which consent it was.
+        let notices = served.withdrawal_notices();
+        assert_eq!(
+            notices.len(),
+            1,
+            "one notice for the one owner: {notices:?}"
+        );
+        let (result, detail) = &notices[0];
+        assert_eq!(result.as_deref(), Some("counterparty-spoken-withdrawal"));
+        let detail = detail.as_deref().expect("the notice says who asked");
+        assert!(
+            detail.contains("asked to stop voice recognition on a call"),
+            "{detail}"
+        );
+        assert!(detail.contains("recognition consent"), "{detail}");
+        assert!(
+            detail.contains(&agent.to_hex()) && detail.contains(&grant),
+            "the notice names the agent and its Grant: {detail}"
+        );
+
+        // It only narrows: the withdrawn grant enrolls nothing again, every
+        // other print still recognizes its subject, and a replay deletes
+        // nothing and tells no one again.
+        assert!(
+            served
+                .vault
+                .enroll_voice_print(&enrollment(
+                    counterparty,
+                    "counterparty-grant",
+                    &axis_vector(2),
+                    now,
+                ))
+                .is_err(),
+            "the withdrawn grant enrolls no new print"
+        );
+        assert_eq!(
+            served.recognized("after-agent-owner", &axis_vector(0)),
+            Some(owner)
+        );
+        assert_eq!(
+            served.recognized("after-agent-person", &axis_vector(1)),
+            Some(person)
+        );
+        let replay = served
+            .ok(Caller::Agent, RECOGNITION_WITHDRAW, withdrawal)
+            .await;
+        assert_eq!(replay["replayed"], true, "{replay}");
+        assert_eq!(replay["deleted_print"], false, "{replay}");
+        assert_eq!(
+            served.withdrawal_notices().len(),
+            1,
+            "a replay tells no one again"
+        );
+    });
+}
+
+/// A person logs voice-recognition consent for their own voice, and only the
+/// vault owner for another subject's, such as a counterparty who holds no
+/// credential here (VOICE-CONSENT-LOG-WHO = A). The door's consent enrols no
+/// print itself, but enrolment reads it: the counterparty's print enrols on
+/// the logged event id and is recognized. A replay answers replayed, a
+/// different decision under the event id is refused, and person and owner
+/// acts tell no one.
+#[test]
+fn a_person_logs_consent_for_their_own_voice_and_the_owner_any_subjects() {
+    run_on_engine_stack("voices-recognition-consent-who", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let owner = served.owner_person;
+        let person = served.person.actor;
+        let counterparty = EntityId::now();
+
+        let own = served
+            .ok(
+                Caller::Person,
+                RECOGNITION_CONSENT,
+                recognition_consent("person-consent", now, None, &["meeting_attribution"]),
+            )
+            .await;
+        assert_eq!(own["subject"], person.to_hex(), "{own}");
+        assert_eq!(own["recorded_by"], person.to_hex(), "{own}");
+        assert_eq!(own["replayed"], false, "{own}");
+        assert_eq!(own["purposes"], json!(["meeting_attribution"]), "{own}");
+
+        let (status, body) = served
+            .post(
+                Caller::Person,
+                RECOGNITION_CONSENT,
+                recognition_consent(
+                    "person-for-counterparty",
+                    now,
+                    Some(counterparty),
+                    &["meeting_attribution"],
+                ),
+            )
+            .await;
+        assert!(
+            !status.is_success(),
+            "the person naming another subject is refused: {status} {body}"
+        );
+
+        let grant_id = "counterparty-consent";
+        let granted = served
+            .ok(
+                Caller::Owner,
+                RECOGNITION_CONSENT,
+                recognition_consent(grant_id, now, Some(counterparty), &["meeting_attribution"]),
+            )
+            .await;
+        assert_eq!(granted["subject"], counterparty.to_hex(), "{granted}");
+        assert_eq!(
+            granted["recorded_by"],
+            owner.to_hex(),
+            "the owner records the counterparty's word: {granted}"
+        );
+        assert_eq!(granted["replayed"], false, "{granted}");
+        assert_eq!(
+            granted["purposes"],
+            json!(["meeting_attribution"]),
+            "{granted}"
+        );
+
+        served
+            .vault
+            .enroll_voice_print(&enrollment(
+                counterparty,
+                grant_id,
+                &axis_vector(2),
+                now + 10,
+            ))
+            .expect("the print enrols on the door's consent");
+        assert_eq!(
+            served.recognized("after-consent", &axis_vector(2)),
+            Some(counterparty)
+        );
+
+        let replay = served
+            .ok(
+                Caller::Owner,
+                RECOGNITION_CONSENT,
+                recognition_consent(grant_id, now, Some(counterparty), &["meeting_attribution"]),
+            )
+            .await;
+        assert_eq!(replay["replayed"], true, "{replay}");
+
+        let (status, body) = served
+            .post(
+                Caller::Owner,
+                RECOGNITION_CONSENT,
+                recognition_consent(grant_id, now, Some(counterparty), &["live_interlocutor"]),
+            )
+            .await;
+        assert!(
+            !status.is_success(),
+            "a different decision under the event id is refused: {status} {body}"
+        );
+
+        // A consent dated past the vault's clock is refused: it would outlive a
+        // withdrawal logged before its date.
+        let (status, body) = served
+            .post(
+                Caller::Owner,
+                RECOGNITION_CONSENT,
+                recognition_consent(
+                    "future-dated-consent",
+                    now + 3_600,
+                    Some(counterparty),
+                    &["meeting_attribution"],
+                ),
+            )
+            .await;
+        assert!(
+            !status.is_success(),
+            "a consent dated an hour ahead is refused: {status} {body}"
+        );
+        // Not even a minute ahead (REVIEW-9224 P1): a withdrawal the subject
+        // then logs at the vault's time would be dated before the grant, and the
+        // grant would outlive it.
+        let (status, body) = served
+            .post(
+                Caller::Owner,
+                RECOGNITION_CONSENT,
+                recognition_consent(
+                    "minute-ahead-consent",
+                    now + 60,
+                    Some(counterparty),
+                    &["meeting_attribution"],
+                ),
+            )
+            .await;
+        assert!(
+            !status.is_success(),
+            "a consent dated a minute ahead is refused: {status} {body}"
+        );
+
+        assert!(
+            served.consent_notices().is_empty(),
+            "person and owner acts tell no one"
+        );
+    });
+}
+
+/// An agent whose own Grant names the consent-log verb logs a
+/// counterparty's spoken consent on a call (VOICE-CONSENT-LOG-WHO = A;
+/// oneiron-arch-0061 "the agent logs who/when/what"): the agent records the
+/// consent, and the owner is told in their inbox who agreed, for which
+/// purposes, and under which Grant. An agent with no Grant, or with a
+/// conferring one that names the withdraw verb but not the consent-log verb,
+/// is refused; the consent-log Grant reaches no live owner's voice and needs
+/// a subject. A replay answers replayed and tells no one again, and the
+/// counterparty's print then enrols on the logged event id and is recognized.
+/// Logging consent enrols nothing.
+#[test]
+fn an_agent_with_the_consent_log_grant_logs_a_counterpartys_consent_and_tells_the_owner() {
+    run_on_engine_stack("voices-recognition-consent-agent", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let owner = served.owner_person;
+        let agent = served.agent.actor;
+        let counterparty = EntityId::now();
+
+        // No Grant, then a conferring Grant naming the withdraw verb and not
+        // the consent-log verb: refused.
+        for (index, verb) in [None, Some(RECOGNITION_WITHDRAW)].into_iter().enumerate() {
+            if let Some(verb) = verb {
+                served.grant_agent(&[verb]).await;
+            }
+            let input = recognition_consent(
+                &format!("ungranted-{index}"),
+                now,
+                Some(counterparty),
+                &["meeting_attribution"],
+            );
+            let (status, body) = served.post(Caller::Agent, RECOGNITION_CONSENT, input).await;
+            assert_eq!(
+                error_code(&body),
+                Some("FORBIDDEN"),
+                "an agent whose Grant names {verb:?} is refused: {status} {body}"
+            );
+        }
+
+        let grant = served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        // The consent-log Grant reaches no live owner's voice, nor the agent's
+        // own, and needs a subject.
+        for (index, subject) in [Some(owner), Some(agent), None].into_iter().enumerate() {
+            let input = recognition_consent(
+                &format!("out-of-reach-{index}"),
+                now,
+                subject,
+                &["meeting_attribution"],
+            );
+            let (status, body) = served.post(Caller::Agent, RECOGNITION_CONSENT, input).await;
+            assert!(
+                !status.is_success(),
+                "the agent on {subject:?} is refused: {status} {body}"
+            );
+        }
+        assert!(
+            served.consent_notices().is_empty(),
+            "a refusal tells no one"
+        );
+
+        let consent_id = "counterparty-spoken-consent";
+        let consent = recognition_consent(
+            consent_id,
+            now,
+            Some(counterparty),
+            &["meeting_attribution"],
+        );
+        let receipt = served
+            .ok(Caller::Agent, RECOGNITION_CONSENT, consent.clone())
+            .await;
+        assert_eq!(receipt["subject"], counterparty.to_hex(), "{receipt}");
+        assert_eq!(
+            receipt["recorded_by"],
+            agent.to_hex(),
+            "the agent records the counterparty's word: {receipt}"
+        );
+        assert_eq!(receipt["replayed"], false, "{receipt}");
+        assert_eq!(
+            receipt["purposes"],
+            json!(["meeting_attribution"]),
+            "{receipt}"
+        );
+
+        // The owner is told, once, who agreed and for which purposes.
+        let notices = served.consent_notices();
+        assert_eq!(
+            notices.len(),
+            1,
+            "one notice for the one owner: {notices:?}"
+        );
+        let (result, detail) = &notices[0];
+        assert_eq!(result.as_deref(), Some(consent_id));
+        let detail = detail.as_deref().expect("the notice says who agreed");
+        assert!(
+            detail.contains("agreed to voice recognition on a call"),
+            "{detail}"
+        );
+        assert!(detail.contains("meeting_attribution"), "{detail}");
+        assert!(
+            detail.contains(&agent.to_hex()) && detail.contains(&grant),
+            "the notice names the agent and its Grant: {detail}"
+        );
+
+        let replay = served.ok(Caller::Agent, RECOGNITION_CONSENT, consent).await;
+        assert_eq!(replay["replayed"], true, "{replay}");
+        assert_eq!(
+            served.consent_notices().len(),
+            1,
+            "a replay tells no one again"
+        );
+
+        served
+            .vault
+            .enroll_voice_print(&enrollment(
+                counterparty,
+                consent_id,
+                &axis_vector(2),
+                now + 10,
+            ))
+            .expect("the print enrols on the agent-logged consent");
+        assert_eq!(
+            served.recognized("after-agent-consent", &axis_vector(2)),
+            Some(counterparty)
+        );
     });
 }

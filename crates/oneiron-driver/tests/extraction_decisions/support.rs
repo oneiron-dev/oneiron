@@ -4,6 +4,7 @@
 //! through the extraction verdict fixture, and counts each generation by family.
 //! Vault, selection and head shapes follow the observed support; big values follow
 //! the packs support; the lender follows the extraction verdict parity fixture.
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,7 +13,9 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
 use oneiron::BudgetLease;
+use oneiron::ClaimCandidate;
 use oneiron::ContentPart;
+use oneiron::EdgeActorClass;
 use oneiron::EntityId;
 use oneiron::FatalLlmError;
 use oneiron::FinishReason;
@@ -33,13 +36,18 @@ use oneiron::TimeRange;
 use oneiron::UnsupportedCapability;
 use oneiron::Vault;
 use oneiron::VaultConfig;
+use oneiron::WriteActor;
+use oneiron::WriteEnvelope;
+use oneiron::WriteProvenance;
 use oneiron::claim::ClaimApprovalStatus;
 use oneiron::claim::ClaimBody;
 use oneiron::claim::ClaimLifecycleStatus;
 use oneiron::claim::ClaimSource;
 use oneiron::claim::ClaimSubject;
 use oneiron::dreamer_consolidation::selection::SelectionConfig;
+use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
+use oneiron::test_doors::derive::grant_derive_rows;
 use oneiron::test_doors::extraction_inputs::enqueue_admitted_extraction_attempt;
 use oneiron::test_doors::extraction_inputs::witness_extraction_turns;
 use oneiron::test_doors::extraction_verdict::ExtractionVerdictFixture;
@@ -302,6 +310,11 @@ pub(crate) fn seed_person(vault: &Vault, name: &str) -> TestResult<EntityId> {
 }
 
 /// Lands one active auto head with the given predicate and value.
+///
+/// A Generated head lands attributed, under the subject's actor-bound permit:
+/// an unattributed Generated put at Auto pends on source trust. Any other
+/// source keeps the plain put. The permit rewrite starts from shipped policy,
+/// so callers seed single-valued predicates after landing, not before.
 pub(crate) fn land_head(
     vault: &Vault,
     subject: EntityId,
@@ -310,6 +323,35 @@ pub(crate) fn land_head(
     source: ClaimSource,
 ) -> TestResult<EntityId> {
     let head = EntityId::now();
+    let now = vault.now_recorded_at();
+    if source == ClaimSource::Generated {
+        grant_derive_rows(vault, &[subject])?;
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(subject, EdgeActorClass::Human),
+            ClaimSource::Generated,
+            WriteProvenance::new(RmpValue::from("generated-head-fixture"))?,
+            ClaimApprovalStatus::Auto,
+        );
+        vault
+            .batch()
+            .claim_candidate(
+                &head,
+                ClaimCandidate::new(
+                    predicate,
+                    ClaimSubject::Entity(subject),
+                    RmpValue::from(value),
+                    1.0,
+                ),
+                &envelope,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )
+            .commit()?;
+        return Ok(head);
+    }
     let mut body = ClaimBody::new(
         predicate,
         ClaimSubject::Entity(subject),
@@ -320,7 +362,6 @@ pub(crate) fn land_head(
     )?;
     body.source = Some(source);
     body.scope_facet = vault.default_facet()?;
-    let now = vault.now_recorded_at();
     vault.put_claim(
         &head,
         &body,
@@ -361,6 +402,44 @@ pub(crate) fn bind_lent(
     String,
     Arc<ExtractionVerdictFixture>,
 )> {
+    let bound = bind_lent_attempt(vault, turns, reasoner)?;
+    Ok((
+        bound.client,
+        bound.attempt,
+        bound.now_ms,
+        bound.page,
+        bound.config,
+        bound.policy_pin,
+        bound.lent,
+    ))
+}
+
+/// Holds one admitted attempt bound with the lent scripted ladder, with its admission kept for a native leg on the same attempt.
+pub(crate) struct LentAttempt {
+    /// Holds the bound client of the attempt.
+    pub(crate) client: OneironClient,
+    /// Names the attempt as 32 lowercase hex digits.
+    pub(crate) attempt: String,
+    /// Holds the attempt's admission, which a native oracle leg runs on.
+    pub(crate) admitted: DreamerAdmittedAttempt,
+    /// Holds the clock for observations and assembly.
+    pub(crate) now_ms: u64,
+    /// Holds the bound inputs page.
+    pub(crate) page: Value,
+    /// Holds the selection policy the page served.
+    pub(crate) config: ExtractionSelectionConfig,
+    /// Names the policy pin the page served.
+    pub(crate) policy_pin: String,
+    /// Holds the lent fixture both legs spend through.
+    pub(crate) lent: Arc<ExtractionVerdictFixture>,
+}
+
+/// Binds one admitted attempt with the lent scripted ladder, reads its inputs page and keeps its admission.
+pub(crate) fn bind_lent_attempt(
+    vault: &Arc<Vault>,
+    turns: &[EntityId],
+    reasoner: Arc<KeyedReasoner>,
+) -> TestResult<LentAttempt> {
     let (id, admitted) = enqueue_admitted_extraction_attempt(vault, turns, 1_000)?;
     let attempt: String = id
         .as_bytes()
@@ -387,7 +466,16 @@ pub(crate) fn bind_lent(
         page["policy"]["selection"].clone(),
         &policy_pin,
     )?;
-    Ok((client, attempt, now_ms, page, config, policy_pin, lent))
+    Ok(LentAttempt {
+        client,
+        attempt,
+        admitted,
+        now_ms,
+        page,
+        config,
+        policy_pin,
+        lent,
+    })
 }
 
 /// Reads served turn refs with versions from a bound inputs page.

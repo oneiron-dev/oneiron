@@ -1,6 +1,7 @@
 //! Receipted graph and timeline reads under the resolved actor floor.
 use super::{ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::conversation_dag::RoomVerdicts;
 use crate::deletion::{MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState};
 use crate::edge::EdgeKind;
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
@@ -86,6 +87,7 @@ impl ScopedRead<'_> {
                 break;
             }
         }
+        self.charge_served(kept.iter().map(|(id, _, _)| *id));
         Ok(Some(kept))
     }
 
@@ -133,6 +135,8 @@ impl ScopedRead<'_> {
             usize::MAX,
             false,
         )?;
+        // A withheld centre or peer counts; an opaque one never does.
+        let suppressed = admitted.source.suppression() + admitted.suppressed;
         let value = admitted.source.visible().then(|| {
             admitted
                 .edges
@@ -142,18 +146,26 @@ impl ScopedRead<'_> {
         });
         Ok(ScopedReadResult {
             value,
-            receipt: self.receipt_for(None, &policy, &filter, 0),
+            receipt: self.receipt_for(None, &policy, &filter, suppressed),
         })
     }
 
     /// Timeline metadata is rechecked against both the initial and final authority.
+    /// A room's row and its turns, anchor or record, show only to a reader
+    /// the room itself admits (L9-52, [`crate::Vault::room_structure_admitted`]).
     pub fn memory_timeline(&self, anchor: &EntityId) -> Result<ScopedReadResult<MemoryTimeline>> {
         let (filter, policy) = {
             let txn = self.grant_read_txn()?;
             let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
+            let rooms = RoomVerdicts::default();
             let admitted = self.admit_in(&txn, anchor, || {
-                self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)
-                    .map(|visible| visible.then_some(()))
+                Ok(
+                    (self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)?
+                        && self
+                            .vault
+                            .room_structure_admitted_held_in(self, &txn, anchor, &rooms)?)
+                    .then_some(()),
+                )
             })?;
             if !admitted.visible() {
                 return Ok(ScopedReadResult {
@@ -161,7 +173,7 @@ impl ScopedRead<'_> {
                         anchor: *anchor,
                         records: Vec::new(),
                     },
-                    receipt: self.receipt_for(None, &policy, &filter, 0),
+                    receipt: self.receipt_for(None, &policy, &filter, admitted.suppression()),
                 });
             }
             (filter, policy)
@@ -169,12 +181,44 @@ impl ScopedRead<'_> {
         let mut timeline = self.vault.memory_timeline(anchor)?;
         let txn = self.grant_read_txn()?;
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, None)?;
-        let anchor_allowed = self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)?
-            && self.timeline_anchor_allowed_in(&txn, &fresh_policy, &fresh_filter, anchor)?;
+        let rooms = RoomVerdicts::default();
+        let anchor_admitted = self.admit_in(&txn, anchor, || {
+            Ok(
+                (self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)?
+                    && self.timeline_anchor_allowed_in(
+                        &txn,
+                        &fresh_policy,
+                        &fresh_filter,
+                        anchor,
+                    )?
+                    && self
+                        .vault
+                        .room_structure_admitted_held_in(self, &txn, anchor, &rooms)?)
+                .then_some(()),
+            )
+        })?;
+        if !anchor_admitted.visible() {
+            // An anchor the final snapshot refuses ends the read as it would
+            // have on entry: only the anchor is judged, so no record of its
+            // chain counts and the receipt cannot size the chain.
+            let mut receipt =
+                self.receipt_for(None, &policy, &filter, anchor_admitted.suppression());
+            receipt.restrict_with(&self.receipt_for(None, &fresh_policy, &fresh_filter, 0));
+            return Ok(ScopedReadResult {
+                value: MemoryTimeline {
+                    anchor: *anchor,
+                    records: Vec::new(),
+                },
+                receipt,
+            });
+        }
         let mut kept = Vec::new();
+        let mut suppressed = 0;
         for record in timeline.records {
             let admitted = self.admit_in(&txn, &record.id, || {
-                Ok((anchor_allowed
+                Ok((self
+                    .vault
+                    .room_structure_admitted_held_in(self, &txn, &record.id, &rooms)?
                     && self.timeline_record_allowed_in(&txn, &policy, &filter, &record)?
                     && self.timeline_record_allowed_in(
                         &txn,
@@ -184,6 +228,7 @@ impl ScopedRead<'_> {
                     )?)
                 .then_some(()))
             })?;
+            suppressed += admitted.suppression();
             if admitted.visible() {
                 kept.push(record);
             }
@@ -194,8 +239,10 @@ impl ScopedRead<'_> {
             record.superseded_by.retain(|id| ids.contains(id));
         }
         timeline.records = kept;
-        let mut receipt = self.receipt_for(None, &policy, &filter, 0);
+        // One count per withheld record: restrict_with adds the later count.
+        let mut receipt = self.receipt_for(None, &policy, &filter, suppressed);
         receipt.restrict_with(&self.receipt_for(None, &fresh_policy, &fresh_filter, 0));
+        self.charge_served(timeline.records.iter().map(|record| record.id));
         Ok(ScopedReadResult {
             value: timeline,
             receipt,
@@ -249,6 +296,9 @@ impl ScopedRead<'_> {
             };
             // A file-plane ASSET reads as its body, never its manifest.
             let raw = self.vault.scoped_row_bytes_in_txn(&txn, &record.id, raw)?;
+            // A reaction claim names its reactor only to a reader who may
+            // read them (FIX REACTION-CLAIM-VALUE-REACTOR-ID).
+            let raw = self.redact_reaction_row_in(&txn, raw)?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             value.push(Some((
@@ -257,6 +307,12 @@ impl ScopedRead<'_> {
                 raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
             )));
         }
+        self.charge_served(
+            records
+                .iter()
+                .zip(&value)
+                .filter_map(|(record, part)| part.as_ref().map(|_| record.id)),
+        );
         Ok(ScopedReadResult {
             value,
             receipt: self.receipt_for(requested, &policy, &filter, suppressed),
@@ -390,6 +446,7 @@ impl ScopedRead<'_> {
                     ),
                 });
             }
+            let raw = self.redact_reaction_row_in(&txn, raw)?;
             parts.push((
                 header.entity_type,
                 header.learned_at,
@@ -403,6 +460,7 @@ impl ScopedRead<'_> {
         let before = parts
             .pop()
             .ok_or(Error::CorruptedIndex("supersession before parts"))?;
+        self.charge_served([*old, *new]);
         Ok(ScopedReadResult {
             value: Some((before, after)),
             receipt: receipt(0),
@@ -551,7 +609,16 @@ impl ScopedRead<'_> {
                 )?,
             };
             let position = world.map_or_else(Scope::top, super::actor_key::record_world_scope);
-            return Ok(position.is_narrowing_of(&self.actor_key.world_ceiling()));
+            // One agent Grant alone must hold it too (FIX
+            // AGENT-GRANT-ENVELOPE-ONLY-PATHS).
+            return Ok(position.is_narrowing_of(&self.actor_key.world_ceiling())
+                && self.one_grant_alternative_holds_shell_in(
+                    txn,
+                    &super::access_gate::HeldAuthority::for_request(None),
+                    id,
+                    raw,
+                    &position,
+                )?);
         }
         let kept = match self.session_view {
             Some(view) => scope_for_blob(view, txn, *id, raw)?,
@@ -563,11 +630,16 @@ impl ScopedRead<'_> {
             verbs: ScopeAxis::Some(["read".to_owned()].into()),
             ..default_stamp(header.entity_type, *id)
         });
-        Ok(crate::gate::scoped_read_record_allowed(
-            policy,
-            &self.actor_key,
-            &position,
-        ))
+        Ok(
+            crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &position)
+                && self.one_grant_alternative_admits_record_in(
+                    txn,
+                    &super::access_gate::HeldAuthority::for_request(None),
+                    policy,
+                    &position,
+                    Some((id, Some(raw))),
+                )?,
+        )
     }
 
     fn timeline_record_allowed_in(

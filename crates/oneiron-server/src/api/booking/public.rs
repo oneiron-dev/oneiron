@@ -5,13 +5,14 @@ use axum::extract::rejection::PathRejection;
 use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, LOCATION, X_CONTENT_TYPE_OPTIONS};
 use axum::http::{HeaderValue, StatusCode};
 use oneiron::booking::{
-    BookingPageLens, BookingPageModel, BookingPagePublication, BookingVerb,
-    PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction, PublicBookingPageToken,
-    load_public_booking_page, slot_mask,
+    BookingPageLens, BookingPageModel, BookingPagePresentation, BookingPagePublication,
+    BookingVerb, PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction, PublicBookingPageToken,
+    slot_mask,
 };
+use oneiron::settings::ReadDestination;
 
 use super::*;
-use crate::auth::ClientAddress;
+use crate::auth::{ClientAddress, Locality};
 
 // -------------------------------------------------------------------------
 // Public booking boundary (ONE-1815)
@@ -54,26 +55,29 @@ async fn public_booking_not_found_response() -> ApiError {
 }
 
 /// Configuration locates the internal subject; only the durable owner claim
-/// grants public access. Every miss has the same response and no token echo.
+/// grants public access. Every miss has the same response and no token echo,
+/// a page kept from `destination` included
+/// ([`resolve_public_booking_page_listing`]).
 pub(crate) fn resolve_public_booking_page(
     server: &SyncServer,
     page_token: &str,
+    destination: &ReadDestination,
 ) -> Result<(EntityId, BookingPagePublication), ApiError> {
-    let page_ref = oneiron::booking::resolve_public_booking_token(&server.vault, page_token)
-        .map_err(|_| public_booking_not_found())?
-        .ok_or_else(public_booking_not_found)?;
-    let publication = load_public_booking_page(&server.vault, page_ref, now_secs()?)
-        .map_err(|_| public_booking_not_found())?
-        .ok_or_else(public_booking_not_found)?;
+    let (page_ref, publication, _) =
+        resolve_public_booking_page_listing(server, page_token, destination)?;
     Ok((page_ref, publication))
 }
 
 /// [`resolve_public_booking_page`], beside the rows the publication was read
 /// from (FIX 4777): the page, its publication claim and each event-type
-/// claim it validated, from that one read.
+/// claim it validated, from that one read. Those rows configure every slot
+/// the page offers, so a page one of whose rows a world withheld from
+/// `destination` keeps is no page there (DEC-0005, census L5-29): the same
+/// miss, naming no world and no reason.
 pub(crate) fn resolve_public_booking_page_listing(
     server: &SyncServer,
     page_token: &str,
+    destination: &ReadDestination,
 ) -> Result<(EntityId, BookingPagePublication, Vec<EntityId>), ApiError> {
     let page_ref = oneiron::booking::resolve_public_booking_token(&server.vault, page_token)
         .map_err(|_| public_booking_not_found())?
@@ -82,18 +86,35 @@ pub(crate) fn resolve_public_booking_page_listing(
         oneiron::booking::load_public_booking_page_listing(&server.vault, page_ref, now_secs()?)
             .map_err(|_| public_booking_not_found())?
             .ok_or_else(public_booking_not_found)?;
+    if destination.is_off_device()
+        && !server
+            .vault
+            .rows_may_leave_for(&rows, destination)
+            .map_err(|_| public_booking_not_found())?
+    {
+        return Err(public_booking_not_found());
+    }
     Ok((page_ref, publication, rows))
+}
+
+/// Where a public booking answer goes (DEC-0005): the visitor's connection
+/// locality, toward a machine nobody proved. A page token or a source
+/// address proves no machine.
+fn public_destination(Locality(locality): Locality) -> ReadDestination {
+    oneiron::settings::read_destination_at(locality, oneiron::authority::PeerMachine::Unknown)
 }
 
 pub(crate) async fn render_public_booking_page(
     State(server): State<Arc<SyncServer>>,
     client: ClientAddress,
+    locality: Locality,
     path: Result<Path<String>, PathRejection>,
     RawQuery(query): RawQuery,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Path(page_token) = path.map_err(|_| public_booking_not_found())?;
-    let (_, publication) = resolve_public_booking_page(&server, &page_token)?;
-    let transport = public_http_transport_context(client)?;
+    let destination = public_destination(locality);
+    let (_, publication) = resolve_public_booking_page(&server, &page_token, &destination)?;
+    let transport = public_http_transport_context(client, destination)?;
     let session = format!(
         "public-render-{}",
         transport.source_ip.to_string().replace(':', "-")
@@ -101,7 +122,9 @@ pub(crate) async fn render_public_booking_page(
     let hint = oneiron::booking::parse_booking_slot_link(query.as_deref()).filter(|hint| {
         publication.event_types.iter().any(|card| {
             card.key == hint.event_type
-                && hint.end_utc - hint.start_utc == u64::from(card.duration_min) * 60
+                && hint_duration_min(hint).is_some_and(|minutes| {
+                    super::public_availability::card_offers_minutes(card, u32::from(minutes))
+                })
         })
     });
     let input = if let Some(hint) = &hint {
@@ -117,6 +140,7 @@ pub(crate) async fn render_public_booking_page(
             visitor_tz: hint.visitor_tz.clone(),
             constraint: None,
             session_ref: session,
+            duration_min: hint_duration_min(hint),
         }
     } else {
         publication
@@ -128,6 +152,7 @@ pub(crate) async fn render_public_booking_page(
         window: input.window,
         constraint: None,
         visitor_tz: input.visitor_tz.clone(),
+        duration_min: input.duration_min,
     };
     let response = execute_booking_operation(
         &server,
@@ -136,7 +161,13 @@ pub(crate) async fn render_public_booking_page(
         &transport,
     )
     .await?;
-    let BookingOperationResponse::Availability { slots, flex_used } = response else {
+    let BookingOperationResponse::Availability {
+        slots,
+        flex_used,
+        full_days,
+        ..
+    } = response
+    else {
         return Err(ApiError::internal_server_error(
             "booking availability response invariant",
         ));
@@ -149,12 +180,13 @@ pub(crate) async fn render_public_booking_page(
             slots,
             flex_used,
             host_bindings: Vec::new(),
+            full_days,
         },
     );
     let slots = oneiron::booking::bounded_public_slots(mask).map_err(booking_error)?;
     // Do not emit an obsolete snapshot after an owner revokes or edits it
     // while admission is awaiting. No second admission or solver call.
-    let (_, current) = resolve_public_booking_page(&server, &page_token)?;
+    let (_, current) = resolve_public_booking_page(&server, &page_token, &transport.destination)?;
     if current != publication {
         return Err(public_booking_not_found());
     }
@@ -166,12 +198,14 @@ pub(crate) async fn render_public_booking_page(
         .booking_conversion_policy(None)
         .map_err(booking_error)?;
     let model = BookingPageModel::new(
-        publication.owner_display,
-        publication.event_types,
+        BookingPagePresentation {
+            owner_display: publication.owner_display,
+            event_types: publication.event_types,
+            constraint_field: publication.constraint_field,
+            theme: publication.theme,
+            landing: publication.landing,
+        },
         slots,
-        publication.constraint_field,
-        publication.theme,
-        publication.landing,
         request.visitor_tz,
         &policy,
     )
@@ -180,6 +214,14 @@ pub(crate) async fn render_public_booking_page(
         ApiError::internal_server_error("public booking model assembly failed")
     })?;
     public_booking_page_json(model, PublicBookingPageToken(page_token), hint.as_ref()).map(Json)
+}
+
+/// The length a slot link's interval names, in whole minutes.
+fn hint_duration_min(hint: &oneiron::booking::BookingSlotLinkHint) -> Option<u16> {
+    SolveRequest::slot_duration_min(oneiron::TimeRange {
+        start: hint.start_utc,
+        end: hint.end_utc,
+    })
 }
 
 fn public_booking_page_json(
@@ -207,13 +249,15 @@ fn public_booking_page_json(
 async fn public_booking_availability(
     State(server): State<Arc<SyncServer>>,
     client: ClientAddress,
+    locality: Locality,
     path: Result<Path<String>, PathRejection>,
     payload: Result<Json<BookingAvailabilityInput>, JsonRejection>,
 ) -> Result<Json<BookingOperationResponse>, ApiError> {
     let Path(token) = path.map_err(|_| public_booking_not_found())?;
-    resolve_public_booking_page(&server, &token)?;
+    let destination = public_destination(locality);
+    resolve_public_booking_page(&server, &token, &destination)?;
     let input = json_payload(payload)?;
-    let transport = public_http_transport_context(client)?;
+    let transport = public_http_transport_context(client, destination)?;
     execute_booking_operation(
         &server,
         &token,
@@ -229,13 +273,15 @@ async fn public_booking_availability(
 async fn public_booking_constraint_turn(
     State(server): State<Arc<SyncServer>>,
     client: ClientAddress,
+    locality: Locality,
     path: Result<Path<String>, PathRejection>,
     payload: Result<Json<super::front::ConstraintTurnInput>, JsonRejection>,
 ) -> Result<Json<super::front::ConstraintTurnResponse>, ApiError> {
     let Path(token) = path.map_err(|_| public_booking_not_found())?;
-    let (page_ref, publication) = resolve_public_booking_page(&server, &token)?;
+    let destination = public_destination(locality);
+    let (page_ref, publication) = resolve_public_booking_page(&server, &token, &destination)?;
     let input = json_payload(payload)?;
-    let transport = public_http_transport_context(client)?;
+    let transport = public_http_transport_context(client, destination)?;
     let authority = oneiron::booking::publication::PublicBookingAuthority {
         page_ref,
         publication,
@@ -276,6 +322,7 @@ fn match_public_booking_verb(
 pub(crate) async fn invoke_public_booking_verb(
     State(server): State<Arc<SyncServer>>,
     client: ClientAddress,
+    locality: Locality,
     path: Result<Path<(String, String)>, PathRejection>,
     payload: Result<Json<BookingOperationRequest>, JsonRejection>,
 ) -> Result<Json<BookingOperationResponse>, ApiError> {
@@ -284,7 +331,8 @@ pub(crate) async fn invoke_public_booking_verb(
     if !is_booking_pack_verb(&verb) {
         return Err(public_booking_not_found());
     }
-    let (_, publication) = resolve_public_booking_page(&server, &page_token)?;
+    let destination = public_destination(locality);
+    let (_, publication) = resolve_public_booking_page(&server, &page_token, &destination)?;
     let request = json_payload(payload)?;
     // A configured but unlisted event type is not part of this publication.
     if let BookingOperationRequest::Book(BookingBookInput::Hold(input)) = &request
@@ -295,7 +343,7 @@ pub(crate) async fn invoke_public_booking_verb(
     {
         return Err(public_booking_not_found());
     }
-    let transport = public_http_transport_context(client)?;
+    let transport = public_http_transport_context(client, destination)?;
     dispatch_public_booking_verb(&server, &page_token, &verb, request, &transport)
         .await
         .map(Json)
@@ -316,9 +364,11 @@ async fn dispatch_public_booking_verb(
 
 /// Only the connection supplies the public source IP: its own peer, or the
 /// client a configured trusted proxy names ([`ClientAddress`]). Bearer headers
-/// have no role here. Missing context fails closed.
+/// have no role here. Missing context fails closed. Its answer goes to
+/// `destination` ([`public_destination`]).
 fn public_http_transport_context(
     ClientAddress(client): ClientAddress,
+    destination: ReadDestination,
 ) -> Result<BookingTransportContext, ApiError> {
     let source_ip = client.ok_or_else(|| {
         ApiError::internal_server_error("public booking peer context unavailable")
@@ -328,10 +378,12 @@ fn public_http_transport_context(
         authenticated_actor_ref: None,
         credential: None,
         owner_grade: false,
+        owner_verified: false,
         principal: None,
         requires_publication: true,
         payer_guard: None,
         transport: BookingTransport::AnonymousHttp,
+        destination,
     })
 }
 
@@ -386,8 +438,17 @@ mod availability_tests;
 #[path = "client_address_tests.rs"]
 mod client_address_tests;
 #[cfg(test)]
+#[path = "public_deposit_tests.rs"]
+mod deposit_tests;
+#[cfg(test)]
+#[path = "public_duration_tests.rs"]
+mod duration_tests;
+#[cfg(test)]
 #[path = "public_fixture.rs"]
 mod fixture;
+#[cfg(test)]
+#[path = "public_grant_view_tests.rs"]
+mod grant_view_tests;
 #[cfg(test)]
 #[path = "public_lifecycle_tests.rs"]
 mod lifecycle_tests;

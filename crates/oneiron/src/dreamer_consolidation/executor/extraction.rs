@@ -20,6 +20,8 @@ pub(in crate::dreamer_consolidation) use super::merge_resolution::{
 mod cited;
 pub(in crate::dreamer_consolidation) mod corrections;
 mod decided;
+#[cfg(oneiron_test_support)]
+pub(crate) mod native_decisions_parity;
 mod quote_binding;
 mod wire;
 pub(in crate::dreamer_consolidation) use cited::CitationCheck;
@@ -140,7 +142,7 @@ impl ConsolidationExecutor<'_> {
                 "child evidence hash disagrees with the ledger"
             );
         }
-        let authored = authored_fallback(response);
+        let authored = authored_fallback(response) || wire::is_relation_reply(response);
         let mut parsed = Vec::new();
         let mut skipped = 0_usize;
         for item in items {

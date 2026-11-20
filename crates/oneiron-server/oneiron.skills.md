@@ -204,6 +204,7 @@ Every paired slip carries a slip id, its identity. Two pairings of identical cla
     - `"encryption_key"`: base64 of 1600 bytes;
     - `"machine_proof"`: 128 hex.
   - The proof is the install key's signature over `b"oneiron/machine-profile/v1\0" || vault_id || machine || machine_key || device_class UTF-8 || 0x00 || suite (u16 BE) || encryption_key`.
+  - An install a restore made also sends `"restored_from"`: 64 hex, the checkpoint image it came from. Its proof then signs `b"oneiron/machine-profile/v2\0" || vault_id || machine || machine_key || device_class UTF-8 || 0x00 || suite (u16 BE) || encryption_key || restored_from`, and the vault counts it only once a machine already joined signs an entry after its enrolment.
 - **Naming the machine on later requests.** A request names its machine with `x-oneiron-machine: {"machine": "<32 hex>", "signature": "<128 hex>"}`. The signature is the install key's, over `b"oneiron/machine-proof/v1\0" || vault_id || machine || BLAKE3(slip token) || binding timestamp (u64 BE) || binding nonce UTF-8`.
   - The header rides the request's own `x-oneiron-binding` proof, so it is single-use with it.
   - A missing, malformed or unverifiable header never refuses the request. The peer is then an unknown machine.
@@ -1280,12 +1281,22 @@ Operations:
 - `availability` — body: `event_type`, `window` (`start`/`end`, UTC seconds), `visitor_tz`,
   `constraint` (`null`, `{"kind":"object","value":{...}}`, or `{"kind":"free_text","value":"..."}`),
   `session_ref`. Free text is normalized into a canonical constraint before any solve; the original
-  sentence never reaches the oracle. Response: `slots` (UTC `start_utc`/`end_utc`/`rank`) plus
-  `flex_used`.
+  sentence never reaches the oracle. Response: `slots` (UTC `start_utc`/`end_utc`/`rank`),
+  `flex_used`, and `full_days`: each visitor-local day (`date`, `YYYY-MM-DD`) whose times a meeting
+  cap removed, with the `cap` that filled it (`daily` or `weekly`). A full day has no slots; it
+  carries no booking detail. A caller whose live calendar grants name every calendar a host binds
+  also gets `busy`: per host, its `calendar_refs` and opaque `busy` blocks (`start_utc`/`end_utc`)
+  inside the host's working hours. The field is absent for every other caller.
 - `book` — body is tagged by `stage`. `hold` takes `event_type`, `selected_slot`, `visitor_tz`,
   `constraint`, `session_ref`, `checkout_lease_token`, `idempotency_key`, and returns
   `hold_token`, `selected_slot`, and a server-capped `expires_at`. There is no TTL field: a longer
-  hold requires a server-issued checkout lease, not a caller's ask. `confirm` takes `hold_token`,
+  hold requires a server-issued checkout lease, not a caller's ask. The vault's owner alone may add
+  `cap_override_reason` (1-4096 bytes) to hold a day a meeting cap filled; the reason is recorded on
+  the booking, and any other caller gets a 400. An event type whose card shows a `deposit` also takes
+  `deposit_terms`, the card's `deposit` as the visitor read it: a hold without them, or with terms
+  the owner has since changed, is refused (`booking_deposit_terms_required`,
+  `booking_deposit_terms_changed`) before any payment is created, and the hold returns `deposit`,
+  the checkout the visitor pays in. `confirm` takes `hold_token`,
   `booker_email`, `intake`, `session_ref`, `idempotency_key`, and returns separate
   `reschedule_token` and `cancel_token`. When the slot went to someone else the answer is
   `stage: slot_taken` with the oracle's nearest `alternatives`.
@@ -1600,13 +1611,13 @@ Fully specified entries:
     "error_code": "UNAUTHORIZED",
     "human_message": "request is not authorized",
     "recovery_suggestions": [
-      "Send Authorization: Bearer credentials and retry."
+      "Send Authorization: Bearer credentials and a fresh x-oneiron-binding holder proof, then retry."
     ],
     "wire_fields": {
       "code": "UNAUTHORIZED",
       "message": "request is not authorized",
       "details": { "code": "UNAUTHORIZED" },
-      "suggestions": ["Send Authorization: Bearer credentials and retry."]
+      "suggestions": ["Send Authorization: Bearer credentials and a fresh x-oneiron-binding holder proof, then retry."]
     }
   },
   {
@@ -1666,6 +1677,7 @@ Codes the server's HTTP error type defines:
 - `OWNER_BINDING_REQUIRED`
 - `COURTESY_DELETE_UNAUTHENTICATED`
 - `CONTROL_SCOPE_DENIED`
+- `PROCESS_NOT_READY` (503): this vault process's event loop is hung (`draining`) or recovering from a hang (`recovering`); it takes no new work, and work it admitted runs to its end. Retry after the `Retry-After` wait (`details.retryAfterSecs`).
 - `4001`
 - `4002`
 - `4003`
@@ -1674,7 +1686,7 @@ Codes the server's HTTP error type defines:
 
 ### Recovery Rules
 
-- Auth failures: send the logged `v2.slip.*` in `Authorization: Bearer` with a fresh `x-oneiron-binding` holder proof made for this request, then retry once. Never resend an earlier proof; the server's `UNAUTHORIZED` suggestion names only the bearer.
+- Auth failures: send the logged `v2.slip.*` in `Authorization: Bearer` with a fresh `x-oneiron-binding` holder proof made for this request, then retry once. Never resend an earlier proof.
 - Bad path ids: validate 32 lowercase hex characters before retrying entity or edge reads.
 - Bad vector query: send comma-separated `f32` values with no empty segments.
 - Invalid view: use `summary`, `standard`, or `full`.

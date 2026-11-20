@@ -23,11 +23,13 @@ fn put_entry(scope: JournalScope, id: EntityId, kind: u8, data: Vec<u8>) -> Jour
             entity_type: kind,
             occurred,
             learned_at: 100,
+            row_version: None,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: true,
             hub_sync_imported: false,
         },
+        source_run: None,
     }
 }
 
@@ -114,8 +116,8 @@ fn check_session_program(
     // hiding an incorrectly staged claim or on a committed-only journal read.
     for commit in [false, true] {
         let mut txn = vault.store.env.write_txn()?;
-        let segment = overlay.install_txn_segment()?;
         let view = session.read_view()?;
+        let segment = overlay.install_txn_segment()?;
         let BatchOp::Put { id: first_id, .. } = &entries[0].op else {
             panic!("fixture must contain only puts");
         };
@@ -131,8 +133,8 @@ fn check_session_program(
             &mut txn,
             entries.clone(),
         );
-        // Admission refreshes its own entity accessor, never a logical read
-        // view that a caller already holds.
+        // The comparison view predates the writer's segment and stays frozen;
+        // admission reads the segment's current preview for earlier ops.
         assert_eq!(
             view.entities.get(&txn, first_id.as_bytes())?.as_deref(),
             before.as_deref(),

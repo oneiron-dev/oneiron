@@ -65,6 +65,11 @@ impl<'r> BranchPins<'r> {
         }
     }
 
+    /// The prior head the branch holds for `id`, when it holds one.
+    pub(in crate::dreamer_consolidation) fn prior(self, id: EntityId) -> Option<&'r PriorHead> {
+        self.priors.get(&id)
+    }
+
     /// The exact version the branch pinned for `id`.
     pub(in crate::dreamer_consolidation) fn source_version(
         self,
@@ -129,6 +134,9 @@ pub(in crate::dreamer_consolidation) struct OwnedPins {
     known: Neighbourhood,
     project: Option<EntityId>,
     texts: BTreeMap<EntityId, String>,
+    /// Where each projected MESSAGE sits in its TURN's text in `texts`: the
+    /// MESSAGE id, byte offset and length, as the TURN text laid them out.
+    places: BTreeMap<EntityId, Vec<(EntityId, usize, usize)>>,
 }
 
 impl OwnedPins {
@@ -146,6 +154,20 @@ impl OwnedPins {
     /// to cite, or would refuse to read it.
     pub(in crate::dreamer_consolidation) fn cited_text(&self, id: &EntityId) -> Option<&str> {
         self.texts.get(id).map(String::as_str)
+    }
+
+    /// The byte offset MESSAGE `message`'s words start at in TURN `turn`'s
+    /// cited text, when that text projects it.
+    pub(in crate::dreamer_consolidation) fn message_offset(
+        &self,
+        turn: &EntityId,
+        message: &EntityId,
+    ) -> Option<usize> {
+        self.places
+            .get(turn)?
+            .iter()
+            .find(|(id, ..)| id == message)
+            .map(|(_, offset, _)| *offset)
     }
 }
 
@@ -174,6 +196,12 @@ impl BranchResources<'_> {
             .texts
             .keys()
             .filter_map(|id| Some((*id, self.cited_text(id).ok()??.to_owned())))
+            .collect::<BTreeMap<_, _>>();
+        let places = self
+            .texts
+            .iter()
+            .filter(|(id, _)| texts.contains_key(*id))
+            .map(|(id, text)| (*id, text.message_places().to_vec()))
             .collect();
         OwnedPins {
             sources: self.sources.clone(),
@@ -181,6 +209,7 @@ impl BranchResources<'_> {
             known: self.known.clone(),
             project: self.scope.project,
             texts,
+            places,
         }
     }
 

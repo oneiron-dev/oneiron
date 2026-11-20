@@ -42,6 +42,7 @@ use crate::scope_summary::{
     ArcChildPlan, ArcChildRow, ArcManifest, ArcPendingCause, ArcPins, ArcRange, ArcWorkState,
     ChildMode, MemberKind, ScopeSummaryPlan, arc_member_kinds, check_manifest,
 };
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use std::collections::BTreeSet;
 use std::ops::ControlFlow;
 
@@ -186,7 +187,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             window,
         ))
         .map_err(|_| invalid_consolidation("summary policy did not encode"))?;
-        let params_hash = *blake3::hash(&params).as_bytes();
+        let params_hash = arc_parts_params_hash(&params);
         Ok((params_hash, plan.composition_memo(evidence, &params_hash)?))
     }
 
@@ -792,4 +793,20 @@ fn split_row(run: &ArcRun<'_>, row: &ArcChildRow, ranges: &[ArcRange]) -> Result
         reviewed: row.reviewed.clone(),
         ..fresh
     })
+}
+
+/// An Arc composed in parts: its params JSON (instruction, model, schema,
+/// `ARC_PARTS_DOMAIN`, window), with no tag written
+/// (`purposes::dreamer_consolidation::ARC_PARTS_PARAMS`).
+fn arc_parts_params_hash(params: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purposes::dreamer_consolidation::ARC_PARTS_PARAMS)
+        .raw(params)
+        .finish()
+}
+
+/// [`arc_parts_params_hash`] for the K door
+/// (`test_doors::fingerprint_keep_dreamer_consolidation_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn arc_parts_params_hash_for_test(params: &[u8]) -> [u8; 32] {
+    arc_parts_params_hash(params)
 }

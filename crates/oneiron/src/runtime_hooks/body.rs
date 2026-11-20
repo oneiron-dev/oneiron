@@ -3,8 +3,10 @@
 
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
+
 use crate::skill_hub::pack_catalog::HookActorClass;
-use crate::{EdgeActorClass, EntityId, Result};
+use crate::{EdgeActorClass, EntityId, Error, Result};
 
 use super::filter;
 use super::grant::HookGrant;
@@ -45,6 +47,16 @@ pub trait HookBodyRuntime: Send + Sync {
     /// The exact runtime that executes the body, when the implementation has
     /// a stable identity. A run records it in its derivation envelope.
     fn runtime_identity(&self) -> Option<String> {
+        None
+    }
+
+    /// The longest hook input, in bytes, this runtime runs a body with: a
+    /// longer input fails the run before the body starts. `None` when the
+    /// runtime caps nothing, so every input runs. The post chain's strict
+    /// skill-answer refusal reads it (SKILL-POST-HOOK-SEES-LARGE-ANSWER-CARD
+    /// P1-A): a blocking post hook whose input passed it never judged the
+    /// answer.
+    fn message_limit(&self) -> Option<usize> {
         None
     }
 }
@@ -101,6 +113,30 @@ impl HookBodyUsage {
 /// runtime did not measure.
 const HOOK_USAGE_UNAVAILABLE: &str = "unavailable";
 
+/// The longest body budget, in milliseconds, a hook selector may name when
+/// the owner sets no cap: today's bound, kept as the default.
+pub const DEFAULT_HOOK_MAX_BUDGET_MS: u32 = 60_000;
+
+/// The `runtime_hooks.hook.max_budget_ms` value: the longest body budget, in
+/// milliseconds, a hook selector may name. An accounting deadline, never a
+/// stop; at least 1; a higher value is a loosening.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(transparent)]
+pub struct HookMaxBudgetMs(pub u32);
+
+impl crate::setting::SettingValue for HookMaxBudgetMs {
+    fn check(self) -> Result<Self> {
+        if self.0 == 0 {
+            return Err(Error::InvalidConfig(
+                "a hook's longest budget is at least one millisecond".into(),
+            ));
+        }
+        Ok(self)
+    }
+}
+
 /// One hook run's clock (FIX 8842). Its caller makes it once, before the
 /// body runs, and reads its overrun once the run has ended. Its deadline,
 /// `budget_ms` after its start, is an accounting deadline, never a stop: an
@@ -114,6 +150,7 @@ const HOOK_USAGE_UNAVAILABLE: &str = "unavailable";
 pub struct HookRunContext {
     started: Instant,
     budget_ms: u32,
+    max_budget_ms: u32,
     deadline: Instant,
     /// Time spent in read and verdict callbacks so far.
     callbacks: Duration,
@@ -133,6 +170,7 @@ impl HookRunContext {
         Self {
             started,
             budget_ms,
+            max_budget_ms: DEFAULT_HOOK_MAX_BUDGET_MS,
             deadline: started + Duration::from_millis(u64::from(budget_ms)),
             callbacks: Duration::ZERO,
             read_overruns: 0,
@@ -145,6 +183,20 @@ impl HookRunContext {
     #[must_use]
     pub const fn budget_ms(&self) -> u32 {
         self.budget_ms
+    }
+
+    /// The longest budget this run admits, from the vault's
+    /// `runtime_hooks.hook.max_budget_ms` key; [`Self::new`] sets the default.
+    #[must_use]
+    pub const fn max_budget_ms(&self) -> u32 {
+        self.max_budget_ms
+    }
+
+    /// This run, admitting budgets up to `max_budget_ms`.
+    #[must_use]
+    pub const fn with_max_budget_ms(mut self, max_budget_ms: u32) -> Self {
+        self.max_budget_ms = max_budget_ms;
+        self
     }
 
     /// The run's accounting deadline: advisory context for a callback (a

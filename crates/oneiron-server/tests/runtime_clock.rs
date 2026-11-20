@@ -4,6 +4,9 @@
 #![cfg(unix)]
 #![allow(clippy::unwrap_used)]
 
+#[path = "support/owner_only_file.rs"]
+mod owner_only_file;
+
 use std::fs::File;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -160,7 +163,7 @@ fn a_managed_settings_file_that_sets_the_vaults_clock_is_refused() {
     ] {
         let dir = tempfile::tempdir().unwrap();
         let settings = dir.path().join("settings.toml");
-        std::fs::write(&settings, text).unwrap();
+        crate::owner_only_file::write_owner_only_file(&settings, text).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_oneiron-server"))
             .arg("serve")
             .arg("--managed-by-hypnos")

@@ -7,8 +7,8 @@ use serde::Serialize;
 
 /// A row an item names: `{"stored": "<id>"}` for a stored row, or
 /// `{"local": "<name>"}` for the row an earlier item of the batch creates.
-/// Only a claim, a settlement, a SameAs and a topology item create a row
-/// that can be named; a stored row is always named as stored.
+/// Only a claim, a settlement, a SameAs, a topology and a person item create
+/// a row that can be named; a stored row is always named as stored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeriveRef {
