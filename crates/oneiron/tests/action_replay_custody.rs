@@ -8,16 +8,27 @@
 //! replay request mismatch"). An agent's action made again under its
 //! idempotency key is one such replay.
 //!
+//! FIX ACTION-REPLAY-FAILED-ANSWERS-TRAP (Engine ANSWER 20 Nov 09:10 = A): an
+//! action made again under its idempotency key whose first making failed
+//! answers that failure again, as the first making answered it. Before, it
+//! answered the replay trap a guest program's replay raises ("replayed failed
+//! self trap"), which reads as a corrupt artifact. A guest program's replay
+//! keeps its trap. Red on the base: both action cases, whose fixture agent's
+//! first making fails. Guard (green on both): the guest program's trap.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test action_replay_custody`.
 #![cfg(oneiron_test_support)]
 
 use std::sync::Arc;
 
-use oneiron::code_run::SelfDispatchOutcome;
 use oneiron::code_run::actions::ActionDispatch;
+use oneiron::code_run::{
+    CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord, SelfCall, SelfDispatchOutcome,
+    SelfDispatcher, SelfFailedResult, SelfMemoryPutClaimCall,
+};
 use oneiron::test_doors::action_replay_custody::remember_twice;
-use oneiron::{Error, Vault, VaultConfig};
+use oneiron::{ClaimCandidate, ClaimSubject, EntityId, Error, TimeRange, Vault, VaultConfig};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -41,18 +52,15 @@ fn vault() -> TestResult<(tempfile::TempDir, Vault)> {
 }
 
 /// Checks that the action's second making answered from the row its first
-/// making recorded: as the first answered; for a first making whose call
-/// failed, with the trap the replay cursor raises for that row's failed call;
-/// or, for a first making a gate refused, with that refusal again. Never a
-/// drift from the row.
+/// making recorded: as the first answered, a failed call's failure too; or,
+/// for a first making a gate refused, with that refusal again. Never a drift
+/// from the row.
 ///
 /// The fixture's agent reads under a deny-all scope, so its claim's subject
 /// does not resolve for it and the first making's call fails
-/// (INVENTED_REFERENCE). The second making still meets the row, which a
-/// drift never does, and answers its failed call with the trap. The proof
-/// of 19 Nov (b8458-4) expected the first answer again and failed at the
-/// head of #8458 for that reason alone (FIX-LIST
-/// [ACTION-REPLAY-PROOF-FAILED-FIRST-MAKING]).
+/// (INVENTED_REFERENCE). The second making meets the row, which a drift never
+/// does, and answers that failure again (FIX
+/// ACTION-REPLAY-FAILED-ANSWERS-TRAP).
 fn answered_from_row(answers: [oneiron::Result<ActionDispatch>; 2]) -> TestResult {
     let [first, second] = answers;
     let second = second.map_err(|error| format!("{error:?}"));
@@ -63,14 +71,6 @@ fn answered_from_row(answers: [oneiron::Result<ActionDispatch>; 2]) -> TestResul
         );
     }
     match first {
-        Ok(first) if matches!(first.outcome, SelfDispatchOutcome::Failed(_)) => {
-            assert!(
-                second
-                    .as_ref()
-                    .is_err_and(|error| error.contains(REPLAYED_FAILED_TRAP)),
-                "the action made again answers its row's failed call with its trap: {second:?}"
-            );
-        }
         Ok(first) => assert_eq!(
             second,
             Ok(first),
@@ -101,8 +101,8 @@ fn an_action_made_again_with_a_passphrase_custody_holds_answers_from_its_row() -
     answered_from_row(remember_twice(&vault, HELD_PASSPHRASE, "held-passphrase")?)
 }
 
-/// Guard: the same action with a passphrase no custody record holds keeps
-/// it as written in its row, and answers from that row on main and head.
+/// The same action with a passphrase no custody record holds keeps it as
+/// written in its row, and answers from that row.
 #[test]
 fn an_action_made_again_with_a_passphrase_no_custody_holds_answers_from_its_row() -> TestResult {
     let (_directory, vault) = vault()?;
@@ -118,4 +118,45 @@ fn an_action_made_again_with_a_passphrase_no_custody_holds_answers_from_its_row(
         UNHELD_PASSPHRASE,
         "unheld-passphrase",
     )?)
+}
+
+/// Guard: a guest program's replay keeps its trap. The replay cursor answers
+/// a row whose call failed with the replay trap, on the base and the head;
+/// only an action made again under its key answers the failure itself.
+#[test]
+fn a_guest_programs_replay_of_a_failed_call_keeps_its_trap() -> TestResult {
+    let agent = EntityId::now();
+    let note = ClaimCandidate::new(
+        "note.text",
+        ClaimSubject::Entity(agent),
+        rmpv::Value::from("plain words"),
+        1.0,
+    );
+    let call = SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+        agent,
+        note,
+        TimeRange { start: 1, end: 1 },
+        1,
+    ));
+    let failed = SelfDispatchOutcome::Failed(SelfFailedResult {
+        effect: call.effect(),
+        error: "INVENTED_REFERENCE".to_owned(),
+        code: None,
+        disk_floor: None,
+    });
+    let mut record = CodeRunReplayRecord::new(EntityId::now(), CodeRunDeterminism::new(1, [7; 32]));
+    record
+        .bridge_calls
+        .push(CodeRunBridgeCall::record(0, &call, &failed, 1, 1)?);
+    let answer = record
+        .replay_cursor()
+        .dispatch(call)
+        .map_err(|error| format!("{error:?}"));
+    assert!(
+        answer
+            .as_ref()
+            .is_err_and(|error| error.contains(REPLAYED_FAILED_TRAP)),
+        "a guest program's replay answers a failed call with its trap: {answer:?}"
+    );
+    Ok(())
 }
