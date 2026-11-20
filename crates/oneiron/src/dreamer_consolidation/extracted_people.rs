@@ -24,6 +24,11 @@ mod bindings;
 pub(super) use bindings::{MintNamespace, PersonBindings, bind_people, original_try};
 pub(crate) use bindings::{delete_lineage_origin_in_txn, origin_in_txn, pin_lineage_origin_in_txn};
 
+#[cfg(oneiron_test_support)]
+mod mint_door;
+#[cfg(oneiron_test_support)]
+pub(crate) use mint_door::mint_named_person_for_test;
+
 pub(super) fn mint_extracted_people(
     vault: &Vault,
     people: &PersonBindings,
