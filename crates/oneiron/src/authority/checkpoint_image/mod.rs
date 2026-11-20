@@ -308,6 +308,14 @@ impl AuthorityCheckpointV2 {
         {
             return Ok(self);
         }
+        self.drop_residence_bodies();
+        Ok(self)
+    }
+
+    /// What an image past [`AUTHORITY_CHECKPOINT_V2_COMPACTION_BYTES`] keeps
+    /// (FIX 11400): no residence directive's or result's body, each such row
+    /// requiring none, and the overflow marked.
+    pub(super) fn drop_residence_bodies(&mut self) {
         for row in self.rows.values_mut() {
             let is_residence = row.body.as_ref().is_some_and(|body| {
                 decode_authority_log_entry_body(body).is_ok_and(|entry| {
@@ -323,7 +331,6 @@ impl AuthorityCheckpointV2 {
             }
         }
         self.residence_overflow = AUTHORITY_RESIDENCE_BODY_OVERFLOW;
-        Ok(self)
     }
 
     fn shape(&self) -> Result<()> {
