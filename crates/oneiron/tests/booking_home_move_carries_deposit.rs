@@ -344,10 +344,13 @@ fn a_provider_cancel_during_the_move_is_applied_where_the_deposit_landed() {
         payment_id: "pi_move_void".to_owned(),
         kind: DepositProviderEventKind::Canceled,
     };
+    let on_old_home = record_deposit_provider_event(&old_home.vault, &cancel, NOW + 50)
+        .expect("the old home answers the event");
+    // By its name, so the red run on main, which has no such answer, fails
+    // on this assert rather than to compile.
     assert_eq!(
-        record_deposit_provider_event(&old_home.vault, &cancel, NOW + 50)
-            .expect("the old home answers the event"),
-        DepositProviderEventOutcome::Deferred,
+        format!("{on_old_home:?}"),
+        "Deferred",
         "the frozen old home defers the event, so the provider delivers it again"
     );
     assert_eq!(
