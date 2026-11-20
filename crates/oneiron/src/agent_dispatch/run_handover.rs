@@ -42,8 +42,7 @@
 //! The same pass renews this machine's own lease on each run with a try
 //! pending in its queue (`own_agent_run_lease_renewal`): a parked or queued
 //! try, or a step that runs past half a hold, commits nothing that renews it.
-//! A queued try the claim refuses, an orphaned child, runs nowhere here: the
-//! pass neither renews a lease for it nor keeps it at a take (REVIEW-9863).
+//! An orphaned child the claim refuses is neither renewed nor kept (REVIEW-9863).
 //!
 //! The old executor needs nothing from here: slice 5's fence stands it down
 //! at its next step commit or effect, and its settlement ends its local try
@@ -260,13 +259,12 @@ impl Vault {
             for (task_ref, body) in runs {
                 let lease = body.executor;
                 let pending = local.get(&task_ref).copied();
-                // REVIEW-9863: a queued try the claim refuses holds no lease.
                 let orphaned = queued_orphaned_child_in(self, &rtxn, pending.map(|(id, _)| id))?;
                 if lease.node_id == node_id {
                     if let Some(held_until) =
                         own_agent_run_lease_renewal(lease, pending.is_some() && !orphaned, now)
                     {
-                        renew.push((task_ref, lease, held_until));
+                        renew.push((task_ref, lease, held_until, pending.map(|(id, _)| id)));
                     }
                     continue;
                 }
@@ -355,7 +353,11 @@ impl Vault {
         if !renew.is_empty() {
             reap.renewed = self.with_write_txn_grouped(|wtxn| {
                 let mut renewed = 0_usize;
-                for (task_ref, lease, held_until) in renew {
+                for (task_ref, lease, held_until, try_id) in renew {
+                    // REVIEW-9863: sync may rewrite the TASK unproven after the read.
+                    if queued_orphaned_child_in(self, &*wtxn, try_id)? {
+                        continue;
+                    }
                     let mut done = false;
                     update_agent_run_task_body_in_txn(self, wtxn, task_ref, now, |body| {
                         if body.outcome.is_none() && body.executor.same_holding(lease) {
