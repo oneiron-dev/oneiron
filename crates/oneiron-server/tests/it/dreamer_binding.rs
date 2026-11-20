@@ -613,3 +613,85 @@ async fn an_off_contract_answer_is_refused_with_no_schema_on_any_wire() {
     }
     assert_eq!(written[0], written[1], "both arms refuse it the same way");
 }
+
+/// A seat whose own server comes before a hosted rung routes as hosted by
+/// its widest rung, yet its own server answers first (REVIEW-9787 P1). That
+/// rung's extraction call still names `max_tokens` 12,288 and the
+/// RESEARCH-1232 sampling, and no wire is sent the list that names them.
+#[tokio::test]
+async fn an_own_server_before_a_hosted_rung_gets_the_answer_cap_and_sampling() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault_path = dir.path().join("vault");
+    std::fs::create_dir_all(&vault_path).unwrap();
+    witness(
+        &vault_path,
+        EntityId::now(),
+        "I'm Owen and I live in Lisbon.",
+        true,
+        "own-before-hosted",
+    );
+    let case = Case {
+        predicate: "residence.city",
+        first: ("I'm Owen and I live in Lisbon.", "Lisbon"),
+        owner_states_first: false,
+        second: ("", ""),
+        seeded_before_critical_classes: false,
+        granted: false,
+    };
+    let own = FakeLlm::start(Vec::new(), Some(follows_the_prompt(&case))).await;
+    let hosted = FakeLlm::start(Vec::new(), Some(follows_the_prompt(&case))).await;
+    let models = format!(
+        r#"
+[models]
+local = "local:test-model"
+cloud = "hosted:test-model"
+prefer_local = true
+extraction_egress = true
+
+[models.providers.local]
+kind = "local-openai-compat"
+base_url = "{own}"
+
+[models.providers.hosted]
+kind = "openai-compat"
+base_url = "{hosted}"
+"#,
+        own = own.base_url,
+        hosted = hosted.base_url,
+    );
+    let config = write_config(dir.path(), &vault_path, free_port(), &models);
+    let granted = oneiron(
+        &config,
+        &["dreamer", "grant", "--extraction-route", "third_party"],
+    )
+    .output()
+    .unwrap();
+    assert!(
+        granted.status.success(),
+        "grant: {}",
+        String::from_utf8_lossy(&granted.stderr)
+    );
+    serve_until(&config, &own, 1).await;
+    let seen = own.seen();
+    let extraction: Vec<_> = seen
+        .iter()
+        .filter(|call| text(&call.body["messages"][0]).starts_with("Extract durable memory claims"))
+        .collect();
+    assert!(!extraction.is_empty(), "the own server answered the pass");
+    for call in extraction {
+        let body = &call.body;
+        assert_eq!(body["max_tokens"], 12_288, "{body}");
+        for (field, value) in [
+            ("temperature", json!(0.7)),
+            ("top_p", json!(0.8)),
+            ("top_k", json!(20)),
+            ("min_p", json!(0.0)),
+            ("presence_penalty", json!(1.5)),
+            ("frequency_penalty", json!(0.0)),
+            ("repetition_penalty", json!(1.0)),
+        ] {
+            assert_eq!(body[field], value, "{field}: {body}");
+        }
+        assert_eq!(body.get("own_server_only"), None, "{body}");
+    }
+}
