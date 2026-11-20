@@ -8,9 +8,11 @@
 //! replay of the marker in that span (a window open, another door's
 //! `publish_pending_tombstones`, a window replacement) would publish it with
 //! no re-proof. Each replay reader therefore leaves a marker held here to its
-//! publication, and the reverse pass reads its id as the tombstone that
-//! publication writes. The set belongs to the vault's store, not to the
-//! process, and a crash empties it.
+//! publication. It locks the set before it opens its LMDB snapshot and keeps
+//! it locked through its marker selection, so a marker it reads is either
+//! still held, or its publication ended before the snapshot opened, which
+//! then shows the marker's withdrawal or retirement. The set belongs to the
+//! vault's store, not to the process, and a crash empties it.
 
 use std::collections::BTreeSet;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -46,27 +48,29 @@ impl TombstonePublicationsInFlight {
         }
     }
 
+    /// The held markers, locked until the returned view drops. A replay
+    /// reader takes it before it opens its LMDB snapshot and drops it after
+    /// its marker selection; it takes no other lock while it holds it.
+    pub(crate) fn lock(&self) -> HeldMarkers<'_> {
+        HeldMarkers(self.markers())
+    }
+
+    fn markers(&self) -> MutexGuard<'_, BTreeSet<HeldMarker>> {
+        self.markers.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// The held markers, locked ([`TombstonePublicationsInFlight::lock`]).
+pub(crate) struct HeldMarkers<'a>(MutexGuard<'a, BTreeSet<HeldMarker>>);
+
+impl HeldMarkers<'_> {
     /// Whether the marker `raw` at `id` in `window_label` waits for its own
     /// publication.
     pub(crate) fn holds_marker(&self, window_label: &str, id: &EntityId, raw: &[u8]) -> bool {
         let Ok(value) = <[u8; TOMBSTONE_VALUE_V2_LEN]>::try_from(raw) else {
             return false;
         };
-        self.markers()
-            .contains(&(window_label.to_owned(), *id, value))
-    }
-
-    /// The ids whose publication into `window_label` is in flight.
-    pub(crate) fn entities_in(&self, window_label: &str) -> BTreeSet<EntityId> {
-        self.markers()
-            .iter()
-            .filter(|(window, _, _)| window == window_label)
-            .map(|(_, id, _)| *id)
-            .collect()
-    }
-
-    fn markers(&self) -> MutexGuard<'_, BTreeSet<HeldMarker>> {
-        self.markers.lock().unwrap_or_else(PoisonError::into_inner)
+        self.0.contains(&(window_label.to_owned(), *id, value))
     }
 }
 

@@ -316,25 +316,22 @@ fn marker_ids(
 /// The `pt:` markers staged in `window_key`. A malformed marker key is left
 /// in place and logged: a deletion intent is never silently dropped. A
 /// marker whose soft delete is still publishing it is that publication's,
-/// which re-proves the delete first, and is left to it.
+/// which re-proves the delete first, and is left to it. The held set is
+/// locked before the snapshot opens: a marker read is still held, or its
+/// publication ended before the snapshot, which then shows its withdrawal.
 fn pending_tombstone_markers(
     vault: &Vault,
     window_key: &WindowKey,
 ) -> Result<Vec<(crate::sync::window_rows::WindowEntityHexKey, Vec<u8>)>> {
     let mut markers: Vec<(crate::sync::window_rows::WindowEntityHexKey, Vec<u8>)> = Vec::new();
+    let held = vault.store.tombstone_publications_in_flight.lock();
     let rtxn = vault.store.env.read_txn()?;
     for entry in vault
         .store
         .port_pending_tombstones_in_window(&rtxn, WindowAddress::new(window_key.as_str()))?
     {
         match entry {
-            Ok(row)
-                if vault.store.tombstone_publications_in_flight.holds_marker(
-                    &row.window_label,
-                    &row.id,
-                    &row.raw,
-                ) =>
-            {
+            Ok(row) if held.holds_marker(&row.window_label, &row.id, &row.raw) => {
                 tracing::debug!(
                     entity = %row.id.to_hex(),
                     "pt replay: marker left to its own publication"
