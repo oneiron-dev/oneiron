@@ -29,6 +29,21 @@ pub(super) struct Projection {
     pub(super) current: Option<String>,
     pub(super) observed: [u8; 32],
     pub(super) arc: Option<super::arc_gate::ArcState>,
+    /// The summary `current` replaced in this row, with the declaration it
+    /// stood under here, which the owner's revert of `current` restores
+    /// (review round 2 of #9808). A summary a declaration reused stands in
+    /// that declaration's row under the row's declaration, not its own. A
+    /// row written before rows kept it reads `None`.
+    #[serde(default)]
+    pub(super) replaced: Option<ReplacedSummary>,
+}
+
+/// What [`Projection::replaced`] keeps: the summary, and the row's
+/// declaration while that summary was current.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct ReplacedSummary {
+    pub(super) summary: String,
+    pub(super) request: Vec<u8>,
 }
 
 pub(super) fn encode(value: &Value) -> Result<Vec<u8>> {
@@ -222,16 +237,19 @@ pub(super) fn register_in_txn(
 /// [`register_in_txn`] of `summary` in the projection `input` declares,
 /// with the source set it admitted and the lane it froze. Only its purpose
 /// is read of the rest: the prior summary it names is lineage, and a
-/// rollback's restored summary may name one since erased. With
-/// `unobserved_when_refused`, an observation a lost grant, an erased source
-/// or a gone scope refuses leaves the projection unobserved, as a
-/// re-derivation's does, rather than failing the write.
+/// rollback's restored summary may name one since erased. The row keeps
+/// the summary `summary` replaced in it, with that summary's declaration
+/// here. With `restoring` (a rollback putting back the summary the reverted
+/// one replaced), an observation a lost grant, an erased source or a gone
+/// scope refuses leaves the projection unobserved, as a re-derivation's
+/// does, rather than failing the write; and the row keeps no replaced
+/// summary, since what the restored one replaced here is not known.
 fn register_declared_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     input: &Value,
     summary: EntityId,
-    unobserved_when_refused: bool,
+    restoring: bool,
 ) -> Result<()> {
     let request = decode_request(vault, txn, input)?;
     let purpose = declared_purpose_in_txn(vault, txn, input)?;
@@ -257,10 +275,10 @@ fn register_declared_in_txn(
             // own hash, as an unreadable scope does at the commit boundary,
             // so the first commit after the promotion that reads it
             // re-derives. So does an observation a lost grant, an erased
-            // source or a gone scope refuses, with `unobserved_when_refused`.
+            // source or a gone scope refuses, when `restoring`.
             Err(error)
                 if crate::store::conversation_residency::waits_on_residency(&error)
-                    || (unobserved_when_refused
+                    || (restoring
                         && matches!(
                             error,
                             Error::EntityNotFound | Error::InvalidClaimBody(_) | Error::Record(_)
@@ -271,32 +289,45 @@ fn register_declared_in_txn(
             Err(error) => return Err(error),
         }
     };
-    let state = PROJECTION
-        .get(&vault.store, txn, &key)?
-        .and_then(|projection| projection.arc);
+    let existing = PROJECTION.get(&vault.store, txn, &key)?;
+    let current = summary.to_hex();
+    let replaced = match &existing {
+        Some(row) if !restoring => match &row.current {
+            Some(held) if *held == current => row.replaced.clone(),
+            Some(held) => Some(ReplacedSummary {
+                summary: held.clone(),
+                request: row.request.clone(),
+            }),
+            None => None,
+        },
+        _ => None,
+    };
+    let state = existing.and_then(|projection| projection.arc);
     PROJECTION.put(
         &vault.store,
         txn,
         &key,
         &Projection {
             request,
-            current: Some(summary.to_hex()),
+            current: Some(current),
             observed,
             arc: if arc {
                 Some(state.unwrap_or_default())
             } else {
                 None
             },
+            replaced,
         },
     )
 }
 
 /// Takes the projection back from `summary`, a Dreamer summary the owner's
 /// revert withdraws (owner ruling 10-18): the summary it replaced is current
-/// again while that one stands, and with none standing the projection goes,
-/// so the next request derives afresh. A projection a later summary holds is
-/// left as it is. Returns the summary current after it, and every standing
-/// `merge.summary` header that lands `summary`.
+/// again while that one stands, under the declaration it stood under in
+/// this projection ([`restored_declaration_in_txn`]), and with none standing
+/// the projection goes, so the next request derives afresh. A projection a
+/// later summary holds is left as it is. Returns the summary current after
+/// it, and every standing `merge.summary` header that lands `summary`.
 pub(crate) fn roll_back_summary_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -323,18 +354,17 @@ pub(crate) fn roll_back_summary_in_txn(
     if let Some(previous) = previous {
         let state =
             crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &previous)?;
-        if !state.deleted && vault.archive_tombstone_in_txn(txn, &previous)?.is_none() {
-            // The summary it replaced stands again under its own
-            // declaration, not the reverted one's: the lane it froze
-            // (review P1 of #9683) and the source set it admitted (review
-            // P1 of #9808). A lane that no longer reads its sources leaves
-            // it unobserved: the owner's revert never waits on a
-            // requester's credential.
-            let declared = decode(
-                &crate::entity_doc::summary_meta_in_txn(vault, txn, &previous)?
-                    .derivation
-                    .request,
-            )?;
+        // The summary it replaced stands again under the declaration it
+        // stood under here, not the reverted one's: the lane it froze
+        // (review P1 of #9683) and the source set it admitted (review P1 of
+        // #9808). A lane that no longer reads its sources leaves it
+        // unobserved: the owner's revert never waits on a requester's
+        // credential.
+        if !state.deleted
+            && vault.archive_tombstone_in_txn(txn, &previous)?.is_none()
+            && let Some(declared) =
+                restored_declaration_in_txn(vault, txn, &key, &projection, previous)?
+        {
             register_declared_in_txn(vault, txn, &declared, previous, true)?;
             return Ok((Some(previous), headers));
         }
@@ -347,6 +377,34 @@ pub(crate) fn roll_back_summary_in_txn(
     }
     PROJECTION.delete(&vault.store, txn, &key)?;
     Ok((None, headers))
+}
+
+/// The declaration `previous` stood under in the projection row `key`,
+/// which a rollback restores it under: the one the row kept when the
+/// reverted summary replaced it (review round 2 of #9808). A summary a
+/// declaration reused so comes back in that declaration's row, with the
+/// source set and lane it stood under there. A row written before rows kept
+/// it restores `previous` under its own declaration when that declares this
+/// row, and under none otherwise.
+fn restored_declaration_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &[u8; 32],
+    projection: &Projection,
+    previous: EntityId,
+) -> Result<Option<Value>> {
+    if let Some(replaced) = &projection.replaced
+        && replaced.summary == previous.to_hex()
+    {
+        return Ok(Some(decode(&replaced.request)?));
+    }
+    let own = decode(
+        &crate::entity_doc::summary_meta_in_txn(vault, txn, &previous)?
+            .derivation
+            .request,
+    )?;
+    let purpose = declared_purpose_in_txn(vault, txn, &own)?;
+    Ok((projection_key(&decode_request(vault, txn, &own)?, &purpose.id)? == *key).then_some(own))
 }
 
 thread_local! {

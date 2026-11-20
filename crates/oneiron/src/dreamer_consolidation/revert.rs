@@ -274,7 +274,7 @@ pub(crate) fn revert_authored_change_in_txn(
             }
             if !summary_by_in_txn(vault, txn, &change, &record.body, dreamer) {
                 return Err(invalid_consolidation(
-                    "the Dreamer did not write this summary",
+                    "this is not a scope summary the Dreamer wrote",
                 ));
             }
             let (current, headers) =
@@ -448,13 +448,15 @@ fn claim_kind(body: &ClaimBody) -> DreamerChangeKind {
     }
 }
 
-/// Whether the standing SUMMARY `summary`, stored as `stored`, is the
-/// Dreamer's. A summary with a document stores a pointer row, which is no
-/// summary body: its body is read through the document, as every summary
-/// read does (FIX DREAMER-REVERT-DECODES-SUMMARY-POINTER-ROW). Only its
-/// producer is read, never its text: an edit may leave the text blank, and
-/// the owner still reverts the summary (review P1 of #9808). A body that
-/// does not resolve or names no producer is no Dreamer summary.
+/// Whether the standing SUMMARY `summary`, stored as `stored`, is a scope
+/// summary the Dreamer wrote. A summary with a document stores a pointer
+/// row, which is no summary body: its body is read through the document, as
+/// every summary read does (FIX DREAMER-REVERT-DECODES-SUMMARY-POINTER-ROW).
+/// Only its producer is read, never its text: an edit may leave the text
+/// blank, and the owner still reverts the summary (review P1 of #9808). A
+/// body that does not resolve, is no scope summary's, or names no producer
+/// is none: an epoch SUMMARY the Dreamer bylined has no scope summary's
+/// projection or document to take back (review round 2 of #9808).
 fn summary_by_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
