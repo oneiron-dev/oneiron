@@ -39,8 +39,11 @@
 //! beside its act and has not reached this install leaves it too: the row reads as it did before
 //! that act, `Pending`, until the value arrives (stage 7c-1; DESIGN 1.6, "Fold states"). A value
 //! beside an act that does not match its digest, or was erased, reads the key's strictest value,
-//! `Quarantined`, whenever that happens: a pass reads a row again once a value beside an act it
-//! read holds otherwise.
+//! `Quarantined`, whenever that happens, while a later act waits for its own value too: a pass
+//! reads a row again once a value beside an act it read, or one the row's value came from, holds
+//! otherwise. On a key that names no strictest value such a row reads no value of it: the key's
+//! default, `Quarantined`. A pass projects each row in a savepoint of its own: a row a key's hook
+//! refuses on this install stays as it was, logged, and the next pass reads it again.
 //!
 //! The read on proofs (stage 7b-3; DESIGN 1.6, "The read of one slot", "Fold states" and
 //! "Receipts"):
@@ -84,10 +87,13 @@ use oneiron_contracts::fingerprint::{Fingerprinter, purposes};
 use oneiron_setting_contract::{ChangeStanding, Order, RowKey, SettingStanding};
 
 use super::beside::{
-    BesideHeld, BesideRead, beside_row_id, beside_row_read_in_txn, slot_value_in_txn,
+    BesideHeld, BesideRead, beside_row_id, beside_row_read_in_txn, put_beside_value_in_txn,
+    slot_value, watch_rows_in_txn,
 };
 use super::born::is_born_value_slot;
-use super::change::{record_change_in_txn, record_receipt_in_txn, record_signed_entry_in_txn};
+use super::change::{
+    change_in_txn, record_change_in_txn, record_receipt_in_txn, record_signed_entry_in_txn,
+};
 use super::pack::{fold_layer, layer_default_in_txn, project_pack_in_txn, proved_pack_row_in_txn};
 use super::read::{StoredRow, table_of};
 use super::{
@@ -153,6 +159,11 @@ struct BesideSeen {
     /// BLAKE3 over the JSON bytes of the act's value.
     digest: [u8; 32],
     held: BesideHeld,
+    /// Whether the row's value as stored here came from it: while a later act waits for its own
+    /// value, a pass reads it again, and the row reads the key's strictest value once it is
+    /// erased here or no longer matches its act ([`BesideReads::carry_kept_in_txn`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    kept: bool,
 }
 
 /// The rows beside acts one projection reads, by row ([`Projection::beside`]).
@@ -160,27 +171,76 @@ struct BesideSeen {
 struct BesideReads(RefCell<BTreeMap<EntityId, BesideSeen>>);
 
 impl BesideReads {
-    /// Reads the row beside an act on the row `slot` whose value's JSON bytes have BLAKE3
+    /// Reads the row beside the act `act` on the row `slot` whose value's JSON bytes have BLAKE3
     /// `digest`, in `txn`, and notes what it held.
     fn read_in_txn(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
-        slot: &RowKey,
+        (slot, act): (&RowKey, &AuthorityEntryHash),
         digest: [u8; 32],
     ) -> Result<BesideRead> {
-        let row = beside_row_id(slot, &digest)?;
+        let row = beside_row_id(slot, &digest, act)?;
         let read = beside_row_read_in_txn(vault, txn, row, digest)?;
         let held = read.held();
-        self.0
-            .borrow_mut()
-            .insert(row, BesideSeen { row, digest, held });
+        let mut seen = self.0.borrow_mut();
+        let kept = seen.get(&row).is_some_and(|seen| seen.kept);
+        seen.insert(
+            row,
+            BesideSeen {
+                row,
+                digest,
+                held,
+                kept,
+            },
+        );
         Ok(read)
     }
 
-    /// The rows read, in row order.
-    fn into_seen(self) -> Vec<BesideSeen> {
-        self.0.into_inner().into_values().collect()
+    /// Reads again, in `txn`, each row the row's value came from as the target's last projection
+    /// recorded it (`last`), and notes it as kept. Whether one that held its act's value then
+    /// does not now: erased here, or no longer matching its act (stage 7c-1).
+    fn carry_kept_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        last: &[BesideSeen],
+    ) -> Result<bool> {
+        let mut lost = false;
+        for kept in last.iter().filter(|seen| seen.kept) {
+            let held = beside_row_read_in_txn(vault, txn, kept.row, kept.digest)?.held();
+            lost |= kept.held == BesideHeld::Value && held == BesideHeld::Unreadable;
+            self.0
+                .borrow_mut()
+                .entry(kept.row)
+                .and_modify(|seen| seen.kept = true)
+                .or_insert(BesideSeen {
+                    held,
+                    kept: true,
+                    ..*kept
+                });
+        }
+        Ok(lost)
+    }
+
+    /// Whether a row read holds something that is not its act's value, or was erased here.
+    fn any_unreadable(&self) -> bool {
+        self.0
+            .borrow()
+            .values()
+            .any(|seen| seen.held == BesideHeld::Unreadable)
+    }
+
+    /// The rows read, in row order; each one the row's value came from where `kept`.
+    fn into_seen(self, kept: bool) -> Vec<BesideSeen> {
+        self.0
+            .into_inner()
+            .into_values()
+            .map(|seen| BesideSeen {
+                kept: seen.kept || kept,
+                ..seen
+            })
+            .collect()
     }
 }
 
@@ -215,7 +275,7 @@ pub struct SettingsProjected {
 /// Whether an owner's change of a row of `spec` travels as its signed act (stage 7a-2): a
 /// `sync: vault` key that is not learned, whose seed weight does not travel yet. Its value rides
 /// inside the act where the key's value type is closed and its JSON fits, else beside it (stage
-/// 7c-1, [`slot_value_in_txn`]). A carried row travels too (stage 7a-4): a move's copy brings it
+/// 7c-1, [`slot_value`]). A carried row travels too (stage 7a-4): a move's copy brings it
 /// to every machine, and the owner's clear of it is his act.
 pub(super) fn travels(spec: &SettingSpec) -> bool {
     spec.sync == SettingSync::Vault && !spec.is_learned()
@@ -235,7 +295,7 @@ pub(super) fn rooted_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool
 
 /// Appends the owner `owner`'s applied change `recorded` of a row of `spec` that travels as its
 /// signed act, in the change's write `txn`, from `surface`, with its value inside the act or
-/// beside it ([`slot_value_in_txn`]); names the entry on the change row; and projects the row
+/// beside it ([`slot_value`]); names the entry on the change row; and projects the row
 /// from the fold in the same write.
 ///
 /// # Errors
@@ -265,19 +325,26 @@ pub(super) fn append_act_in_txn(
         Some(prior) => json_bytes(spec, prior)?,
         None => b"null".to_vec(),
     });
-    let value = slot_value_in_txn(vault, txn, spec, &slot, json)?;
+    let (value, beside) = slot_value(spec, json);
     let signed = vault.append_setting_slot_act_in_txn(
         txn,
         SettingSlotAct {
             owner,
             surface,
-            rows: vec![SettingSlotRow { slot, prior, value }],
+            rows: vec![SettingSlotRow {
+                slot: slot.clone(),
+                prior,
+                value,
+            }],
         },
     )?;
     // An act that waits for the owner's proof changes nothing, here as on every other machine:
     // the door refuses it with the reason, and nothing of the change is stored (module doc).
     if vault.setting_act_waits_in_txn(txn, signed)? {
         return Err(Error::Record(RecordError::OwnerKeyRequired));
+    }
+    if let Some(json) = beside {
+        put_beside_value_in_txn(vault, txn, (&slot, &signed), &json)?;
     }
     record_signed_entry_in_txn(&vault.store, txn, recorded, signed)?;
     let now = recorded.at;
@@ -530,7 +597,9 @@ fn value_of(
         HeadBody::Inline(Some(bytes)) => {
             Ok(inline_value(spec, bytes).map_err(|()| Short::Unreadable))
         }
-        HeadBody::Beside(digest) => beside_of(vault, txn, reads, spec, &head.slot, *digest),
+        HeadBody::Beside(digest) => {
+            beside_of(vault, txn, reads, spec, (&head.slot, &head.act), *digest)
+        }
         HeadBody::Copy(names) => {
             copy_value_in_txn(vault, txn, (reads, name_counts), spec, names, depth)
         }
@@ -541,17 +610,17 @@ fn value_of(
     }
 }
 
-/// The value beside an act on the row `slot` whose JSON bytes have BLAKE3 `digest`, under
+/// The value beside the act `act` on the row `slot` whose JSON bytes have BLAKE3 `digest`, under
 /// `spec`, noted in `reads` (stage 7c-1; [`value_of`]).
 fn beside_of(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     reads: &BesideReads,
     spec: &SettingSpec,
-    slot: &RowKey,
+    (slot, act): (&RowKey, &AuthorityEntryHash),
     digest: [u8; 32],
 ) -> Result<std::result::Result<Option<EncodedValue>, Short>> {
-    Ok(match reads.read_in_txn(vault, txn, slot, digest)? {
+    Ok(match reads.read_in_txn(vault, txn, (slot, act), digest)? {
         BesideRead::Here(bytes) => inline_value(spec, &bytes).map_err(|()| Short::Unreadable),
         BesideRead::Absent => Err(Short::Inert(Inert::Awaiting)),
         BesideRead::Unreadable => Err(Short::Unreadable),
@@ -833,13 +902,7 @@ fn combine(
             .filter(|act| *act != deciding.act)
             .collect()
     };
-    let quarantined = || Projected {
-        value: Some(EncodedValue(vec![UNREADABLE_VALUE])),
-        keep: strictest.is_none(),
-        standing: ChangeStanding::Quarantined,
-        deciding: newest.credit(),
-        with: others(&newest.credit()),
-    };
+    let quarantined = || quarantined_of(strictest.is_some(), (newest, heads), reads);
     // Two copies of one act the row's reading meets disagree: what it says cannot be read.
     if fold
         .counts
@@ -947,6 +1010,31 @@ fn combine(
         Err(Short::Unreadable) => Ok(quarantined()),
         Err(Short::Inert(why)) => Err(why),
     })
+}
+
+/// What a quarantined row of the heads `heads`, the newest first, keeps (DESIGN 1.6, "Fold
+/// states"), on a key that names a strictest value where `has_strictest`: the unreadable
+/// marker, which every read takes as that strictest value. On a key that names none, the row as
+/// it is; but no row where a value beside an act it read (`reads`) was erased here or does not
+/// match its act, so no read takes that value and the key reads its default (stage 7c-1).
+fn quarantined_of(
+    has_strictest: bool,
+    (newest, heads): (&Head, &[Head]),
+    reads: &BesideReads,
+) -> Projected {
+    let unwritten = !has_strictest && reads.any_unreadable();
+    let deciding = newest.credit();
+    Projected {
+        value: (!unwritten).then(|| EncodedValue(vec![UNREADABLE_VALUE])),
+        keep: !has_strictest && !unwritten,
+        standing: ChangeStanding::Quarantined,
+        with: heads
+            .iter()
+            .map(|head| head.act)
+            .filter(|act| *act != deciding.act)
+            .collect(),
+        deciding,
+    }
 }
 
 /// Why a walk of a row's acts gives no value.
@@ -1238,8 +1326,9 @@ pub(super) fn project_target_in_txn(
         (fold.conflict, in_force),
         &fold.asking,
     );
-    if let Some(projection) = PROJECTIONS.get(&vault.store, txn, &target_key(target))?
-        && !moved_since(vault, txn, &projection, basis)?
+    let last = PROJECTIONS.get(&vault.store, txn, &target_key(target))?;
+    if let Some(projection) = &last
+        && !moved_since(vault, txn, projection, basis)?
     {
         return Ok(TargetProjected::UNMOVED);
     }
@@ -1261,10 +1350,10 @@ pub(super) fn project_target_in_txn(
         // Only proposals name the row: they change nothing, and it reads `Pending` while they
         // ask (stage 7b-3).
         if !fold.asking.is_empty() {
-            PROJECTIONS.put(
-                &vault.store,
+            record_projection_in_txn(
+                vault,
                 txn,
-                &target_key(target),
+                target,
                 &Projection {
                     slot: Vec::new(),
                     basis,
@@ -1304,18 +1393,27 @@ pub(super) fn project_target_in_txn(
     }
     let projected = match combine(vault, txn, &reads, (spec, target), &heads, &fold)? {
         Ok(projected) => projected,
+        // A later act waits for its own value (stage 7c-1): the row keeps the value it holds
+        // while every row beside an act that value came from holds it, and reads the key's
+        // strictest value, `Quarantined`, once one is erased here or no longer matches its act.
+        Err(Inert::Awaiting) => {
+            let kept = last.as_ref().map_or(&[][..], |last| last.beside.as_slice());
+            match heads.first() {
+                Some(newest) if reads.carry_kept_in_txn(vault, txn, kept)? => {
+                    let has_strictest = spec.kind.strictest_value()?.is_some();
+                    quarantined_of(has_strictest, (newest, &heads), &reads)
+                }
+                _ => return leave_in_txn(vault, txn, inert(Inert::Awaiting), reads),
+            }
+        }
         Err(why) => return leave_in_txn(vault, txn, inert(why), reads),
     };
-    let kept = match slot.mode {
-        SettingMode::Carried => carried_row_in_txn(vault, txn, spec, &slot, &heads)?,
+    let local = match slot.mode {
+        SettingMode::Carried => own_carry_bound_in_txn(vault, txn, spec, &slot, &heads)?,
         SettingMode::Value | SettingMode::Pin => None,
     };
-    let bound = kept
-        .as_ref()
-        .map(|row| row.local.clone().unwrap_or_else(|| row.value.clone()))
-        .filter(|bound| spec.kind.decodes(bound));
-    let projected = met_with_local(spec, projected, bound.as_ref());
-    let local = kept.and_then(|row| row.local);
+    let bound = local.as_ref().filter(|bound| spec.kind.decodes(bound));
+    let projected = met_with_local(spec, projected, bound);
     let birth = birth_of_in_txn(vault, txn, (&reads, &fold.name_counts), spec, &heads)?;
     let changed = write_row_in_txn(
         vault,
@@ -1334,16 +1432,16 @@ pub(super) fn project_target_in_txn(
             .counts
             .values()
             .any(|counted| counted.count != ChoiceCount::Full);
-    PROJECTIONS.put(
-        &vault.store,
+    record_projection_in_txn(
+        vault,
         txn,
-        &target_key(target),
+        target,
         &Projection {
             slot: slot.encode(),
             basis,
             standing: projected.standing.read_as(),
             pin_read_as_value,
-            beside: reads.into_seen(),
+            beside: reads.into_seen(!projected.keep),
             unknown_key: None,
         },
     )?;
@@ -1374,28 +1472,39 @@ fn birth_of_in_txn(
     Ok(read.ok().map(|(_, seeded)| seeded))
 }
 
-/// The carried row `slot` as stored here, which bounds its projection (stage 7a-4): by the bound
-/// this install's own carry wrote (`StoredRow::local`), or, for a row with none (one a copy
-/// wrote, or an older build's carry), by its value, so a carried row only tightens until it is
-/// released. `None` once the owner released it (every head a clear of it), and where no row
-/// decodes.
-fn carried_row_in_txn(
+/// The bound this install's own carry keeps on the carried row `slot`, which bounds its
+/// projection (stage 7a-4, RULING SETTING-7A-4-COPY Q2 = A): what its carry wrote
+/// (`StoredRow::local`), or, on a row an older build's carry wrote with none, the row's value,
+/// which the projection then writes as `local`. A row the projection wrote from a copy keeps no
+/// bound: every other machine reads the copy alone, so a value a copy gave never holds a later
+/// read of it, as one that arrives after the copy. `None` once the owner released the row
+/// (every head a clear of it), and where no row decodes.
+fn own_carry_bound_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     spec: &SettingSpec,
     slot: &RowKey,
     heads: &[Head],
-) -> Result<Option<StoredRow>> {
+) -> Result<Option<EncodedValue>> {
     if heads.iter().all(|head| !head.carries_value()) {
         return Ok(None);
     }
-    Ok(table_of(spec)
+    let Some(row) = table_of(spec)
         .get_bytes(&vault.store, txn, &slot.encode())?
-        .and_then(|bytes| rmp_serde::from_slice::<StoredRow>(&bytes).ok()))
+        .and_then(|bytes| rmp_serde::from_slice::<StoredRow>(&bytes).ok())
+    else {
+        return Ok(None);
+    };
+    if row.local.is_some() {
+        return Ok(row.local);
+    }
+    let projected = change_in_txn(&vault.store, txn, row.change)?
+        .is_some_and(|change| change.standing.is_some());
+    Ok((!projected && spec.kind.decodes(&row.value)).then_some(row.value))
 }
 
-/// `projected` met with the bound a carried row keeps here ([`carried_row_in_txn`], stage 7a-4):
-/// a copy never loosens what this install carried. A quarantined row stays quarantined.
+/// `projected` met with the bound a carried row keeps here ([`own_carry_bound_in_txn`], stage
+/// 7a-4): a copy never loosens what this install carried. A quarantined row stays quarantined.
 fn met_with_local(
     spec: &SettingSpec,
     mut projected: Projected,
@@ -1466,11 +1575,32 @@ fn leave_in_txn(
             pending_as_last_in_txn(vault, txn, (target, basis), Vec::new(), Some(key))?
         }
         Inert::Awaiting => {
-            pending_as_last_in_txn(vault, txn, (target, basis), reads.into_seen(), None)?
+            pending_as_last_in_txn(vault, txn, (target, basis), reads.into_seen(false), None)?
         }
     };
-    PROJECTIONS.put(&vault.store, txn, &target_key(target), &projection)?;
+    record_projection_in_txn(vault, txn, target, &projection)?;
     Ok(TargetProjected::UNMOVED)
+}
+
+/// Records `projection` as `target`'s, in `txn`, and names the rows beside acts it read in
+/// place of the rows the last one read, so a put of one notes the pass ([`watch_rows_in_txn`]).
+fn record_projection_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    target: EntityId,
+    projection: &Projection,
+) -> Result<()> {
+    let key = target_key(target);
+    let rows_of = |projection: &Projection| -> Vec<EntityId> {
+        projection.beside.iter().map(|seen| seen.row).collect()
+    };
+    let last = PROJECTIONS
+        .get(&vault.store, txn, &key)?
+        .map(|last| rows_of(&last))
+        .unwrap_or_default();
+    watch_rows_in_txn(&vault.store, txn, target, (&last, &rows_of(projection)))?;
+    PROJECTIONS.put(&vault.store, txn, &key, projection)?;
+    Ok(())
 }
 
 /// A `Pending` projection of `target` at `basis` with the rows beside acts it read (`beside`) and
@@ -1786,7 +1916,20 @@ impl Vault {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let mut changed: Vec<&'static SettingSpec> = Vec::new();
             for target in &moved {
-                changed.extend(project_target_in_txn(self, txn, *target, now)?.changed);
+                // Each row in a savepoint of its own: one a key's hook refuses on this install
+                // (its manifest, a seat installed here) stays as it was, and the others land.
+                let mut savepoint = self.store.env.nested_write_txn(txn)?;
+                match project_target_in_txn(self, &mut savepoint, *target, now) {
+                    Ok(projected) => {
+                        savepoint.commit()?;
+                        changed.extend(projected.changed);
+                    }
+                    Err(Error::InvalidConfig(reason)) => tracing::warn!(
+                        reason = %reason,
+                        "the next pass reads again a setting row its key refused here"
+                    ),
+                    Err(error) => return Err(error),
+                }
             }
             Ok(changed)
         })?;
