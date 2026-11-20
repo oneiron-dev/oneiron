@@ -164,7 +164,10 @@ impl Vault {
                 // it (L7-41).
                 let device;
                 let federated;
-                let peer = if work.kind == WorkKind::DeviceUpdate {
+                let peer = if matches!(
+                    work.kind,
+                    WorkKind::DeviceUpdate | WorkKind::DeviceResidenceUpdate
+                ) {
                     device = DevicePeer::decode(&work.selector)?;
                     BurstPeer::Device(&device)
                 } else {

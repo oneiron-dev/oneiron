@@ -78,7 +78,7 @@ impl SyncClient {
                     "selector is not an inbound update",
                 ));
             }
-            WorkKind::DeviceUpdate => {
+            WorkKind::DeviceUpdate | WorkKind::DeviceResidenceUpdate => {
                 return Err(TransportError::InvalidPayload(
                     "an own device's update is not a federation update",
                 ));

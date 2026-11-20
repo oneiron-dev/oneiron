@@ -105,24 +105,22 @@ fn receive_pack_rejects_secret_under_hostile_inherited_git_config() {
         git(&repo, &["rev-parse", "refs/heads/hostile-clean"]),
         clean.as_str()
     );
-    let published = vault.origin_publication_ids(None).unwrap();
-    let (_, report) = push(
+    let (tip, report) = push(
         "secret.txt",
         "token=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n",
         "refs/heads/hostile-secret",
     );
-    // Refused by detection: the one reason names the secret's path. Unreadable
-    // input, a scan that cannot run and a lost intent write name no path.
-    let DoorWindowVerdict::Rejected { reasons } = &report.door.verdict else {
-        panic!("secret push admitted: {:?}", report.door.verdict);
-    };
-    assert_eq!(reasons.len(), 1, "{reasons:?}");
-    assert!(reasons[0].starts_with("secret.txt: "), "{reasons:?}");
-    assert!(!reasons[0].contains("ghp_"));
-    assert!(report.landing.is_none());
-    assert!(git(&repo, &["for-each-ref", "refs/heads/hostile-secret"]).is_empty());
+    // FIX7608: detection admits+marks instead of rejecting; masked readers serve the masked copy.
+    assert!(matches!(
+        report.door.verdict,
+        DoorWindowVerdict::AdmitMarked { .. }
+    ));
+    assert!(report.landing.is_some());
+    assert_eq!(
+        git(&repo, &["rev-parse", "refs/heads/hostile-secret"]),
+        tip.as_str()
+    );
     assert_eq!(git(&repo, &["rev-parse", "refs/heads/main"]), head.as_str());
-    assert_eq!(vault.origin_publication_ids(None).unwrap(), published);
 }
 
 /// Frames one record the way the vetted hook does.

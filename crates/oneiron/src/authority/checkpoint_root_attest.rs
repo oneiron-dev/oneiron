@@ -98,7 +98,9 @@ pub const ASK_WORD_PROOF_DOMAIN: &[u8] = b"oneiron/tasks/ask-word-owner-proof/v1
 /// attestation's, and, as an owner key's proof, over the transcript of an
 /// owner act (row CARRIER-OWNER-PROOF). It signs nothing else.
 pub trait CheckpointRootSigner: Send + Sync {
-    /// The root key it signs as.
+    /// The root key it signs as. A vault that holds the signer asks it once,
+    /// at the hold ([`Vault::hold_checkpoint_root_signer`]), outside every
+    /// lock of the vault, and reads that answer from then on.
     fn root(&self) -> AuthorityKey;
     /// The root's raw signature over `statement`, which must be a checkpoint
     /// statement, made on `vault`. A root whose right to sign can end checks
@@ -171,6 +173,21 @@ pub trait CheckpointRootSigner: Send + Sync {
     fn is_host_root(&self) -> bool {
         false
     }
+}
+
+/// A root signer a vault handle holds, with its root and whether it is a
+/// host root ([`CheckpointRootSigner::is_host_root`]), each asked once at
+/// the hold. A list update, an owner proof's pick inside a door's
+/// transaction and that proof's key read these, never the signer: a host's
+/// signer may read the vault to answer, and a read that waits for the owner
+/// signing slot lock under the list's lock or a door's writer would wait in
+/// a cycle with a door that holds that lock and waits for the writer
+/// (REVIEW-9678 round 2 P1).
+#[derive(Clone)]
+pub(crate) struct HeldRootSigner {
+    pub(crate) root: AuthorityKey,
+    pub(crate) host_root: bool,
+    pub(crate) signer: Arc<dyn CheckpointRootSigner>,
 }
 
 impl CheckpointRootSigner for HostSlipIssuer {
@@ -268,15 +285,20 @@ pub(super) fn peer_refused() -> Error {
 impl Vault {
     /// Holds `signer` on this handle for the device sync's steady pass, in
     /// place of one held for the same root: a host holds its own root's, and
-    /// a device its owner key's (FIX 4921). Never persisted.
+    /// a device its owner key's (FIX 4921). Never persisted. `signer`'s root
+    /// and kind are asked here, before the list's lock (`HeldRootSigner`).
     pub fn hold_checkpoint_root_signer(&self, signer: Arc<dyn CheckpointRootSigner>) {
-        let root = signer.root();
+        let signer = HeldRootSigner {
+            root: signer.root(),
+            host_root: signer.is_host_root(),
+            signer,
+        };
         let mut held = self
             .world_keys
             .checkpoint_roots
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        held.retain(|other| other.root() != root);
+        held.retain(|other| other.root != signer.root);
         held.push(signer);
     }
 
@@ -295,7 +317,7 @@ impl Vault {
     /// in the order of each one's latest hold: a signer held again moves to
     /// the end. The list is a copy: a signer's answer may read the vault,
     /// and none is asked under the list's lock.
-    pub(super) fn held_checkpoint_root_signers(&self) -> Vec<Arc<dyn CheckpointRootSigner>> {
+    pub(super) fn held_checkpoint_root_signers(&self) -> Vec<HeldRootSigner> {
         self.world_keys
             .checkpoint_roots
             .lock()
@@ -313,7 +335,8 @@ impl Vault {
     pub fn checkpoint_root_signers(&self) -> Vec<Arc<dyn CheckpointRootSigner>> {
         self.held_checkpoint_root_signers()
             .into_iter()
-            .filter(|signer| signer.signs_now(self))
+            .filter(|held| held.signer.signs_now(self))
+            .map(|held| held.signer)
             .collect()
     }
 
@@ -324,7 +347,7 @@ impl Vault {
             .checkpoint_roots
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .retain(|held| held.root() != *root);
+            .retain(|held| held.root != *root);
     }
 
     /// `signer`'s root attests checkpoint image `image`, which another host

@@ -2,7 +2,7 @@ use super::super::RestoreReason;
 use crate::authority::{CapabilitySlip, HostSlipIssuer};
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
 use crate::federation::ScopeAxis;
-use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
+use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use crate::store::GateDecisionId;
 use crate::{EntityId, Vault, VaultConfig, temporal::TimeRange};
 use std::collections::BTreeSet;
@@ -288,7 +288,7 @@ fn a_refused_restore_removes_only_the_copy_it_made() {
 
 /// ASTRA-9A-2 F1: the secret-scan switch is live policy. Backed up while
 /// off, switched on, restored: the scan stays on, its receipts stay, and a
-/// credential-shaped write is still refused.
+/// credential-shaped write still keeps only a custody handle in its text.
 #[test]
 fn restore_keeps_the_secret_scan_the_owner_switched_on_since() {
     use crate::policy_model::SecretScanMode;
@@ -324,18 +324,24 @@ fn restore_keeps_the_secret_scan_the_owner_switched_on_since() {
         live.secret_scan_change_log().unwrap()
     );
     let leak = EntityId::now();
-    let refused = restored.put_entity(
-        &leak,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"note to self: ghp_0123456789abcdefghijklmnopqrstuvwxyzAB",
-    );
+    restored
+        .put_entity(
+            &leak,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"note to self: ghp_0123456789abcdefghijklmnopqrstuvwxyzAB",
+        )
+        .unwrap();
+    let stored = restored.get(&leak).unwrap().expect("masked row stored");
+    // OF-560 / G04 = A: maskable text keeps the custody handle, not a refused write.
     assert!(
-        refused.is_err(),
-        "the scan refuses a credential-shaped write"
+        stored
+            .windows(b"[secret sc".len())
+            .any(|w| w == b"[secret sc")
     );
-    assert!(restored.get(&leak).unwrap().is_none());
+    // OF-560 / G04 = A: the generic row read must not expose the raw credential.
+    assert!(!stored.windows(4).any(|w| w == b"ghp_"));
 }
 
 /// SOL-9A-2-R2 F11: a relationship's participants decide who reads its
@@ -860,14 +866,19 @@ fn restore_refuses_to_revive_a_grant_deleted_since() {
     let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
     live.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let grant = EntityId::now();
+    let person = person(&live, b"grant person");
+    let facet = EntityId::now();
+    live.put_entity(
+        &facet,
+        ENTITY_TYPE_FACET,
+        TimeRange { start: 1, end: 1 },
+        1,
+        br#"{"name":"grant facet"}"#,
+    )
+    .unwrap();
     live.create_access_grant(
         &grant,
-        &crate::AccessGrant::companion_profile_read(
-            EntityId::now(),
-            EntityId::now(),
-            Some(EntityId::now()),
-            10,
-        ),
+        &crate::AccessGrant::companion_profile_read(EntityId::now(), person, Some(facet), 10),
     )
     .unwrap();
     let image = root.path().join("backup");

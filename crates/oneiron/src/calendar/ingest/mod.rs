@@ -41,7 +41,7 @@
 mod admission;
 mod calendar_source;
 pub mod door;
-pub(crate) use admission::ensure_ics_import_actor;
+pub(crate) use admission::{clear_absence_cancellation_in_txn, ensure_ics_import_actor};
 mod consent;
 pub(in crate::calendar) use admission::{
     ConnectorAdmissionSource, ConnectorScreen, admit_connector_event, connector_event_ref,

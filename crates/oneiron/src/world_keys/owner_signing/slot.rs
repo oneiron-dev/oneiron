@@ -94,10 +94,9 @@ impl OwnerSigningSlot {
     /// answers `fresh`'s key as read back from the slot (it signs while the
     /// slot holds its seed) with what the slot held before. The door holds
     /// the vault's `owner_signing_slot_lock` from before its writer to its
-    /// commit, so no other door of this process that takes that lock reads
-    /// or renews the slot in between. The get-only readers
-    /// `hold_device_owner_signer` and `device_owner_key_rest` take no lock and
-    /// may find the slot empty for that moment (FIX
+    /// commit, so no other door of this process reads or renews the slot in
+    /// between: each takes that lock, the get-only readers
+    /// `hold_device_owner_signer` and `device_owner_key_rest` too (FIX
     /// OWNER-SLOT-GET-ONLY-READERS-SEE-RENEWAL-GAP).
     ///
     /// # Errors

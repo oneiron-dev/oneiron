@@ -5,8 +5,11 @@ use std::ops::ControlFlow;
 use loro::{LoroDoc, VersionVector};
 
 use oneiron::authority::PeerMachine;
-use oneiron::sync::federation_burst::{DeviceBurstAdmission, DevicePeer, FederationBurstWorkState};
-use oneiron::sync::residence::{admit_promoted_window_update, promotion_covers_full_window_for};
+use oneiron::sync::federation_burst::{
+    DeviceBurstAdmission, DevicePeer, FederationBurstWorkState, admit_device_residence_update,
+    admit_device_window_update, admit_promoted_device_window_update,
+};
+use oneiron::sync::residence::promotion_covers_full_window_for;
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::window::WindowExport;
 use oneiron::sync::{
@@ -418,7 +421,12 @@ pub(super) async fn handle_window_sync(
                     return Err(refusal);
                 }
             };
+            // A residence socket's rows are judged against its promotion's
+            // grant; the device's authority is read in the same snapshot, for
+            // a burst of it to be held under (#9226 review round 2).
+            let device = device_peer(server, conn_state);
             let mut write_auth = None;
+            let mut row_admission = None;
             if protocol::is_residence_version(conn_state.protocol_version) {
                 let selector = conn_state
                     .promoted_windows
@@ -428,15 +436,16 @@ pub(super) async fn handle_window_sync(
                 auth.require(crate::auth::CoreScope::Write)
                     .map_err(|_| ProtocolError::RpcNoPrincipal)?;
                 let proof = auth.verified_slip().ok_or(ProtocolError::RpcNoPrincipal)?;
-                admit_promoted_window_update(
-                    &server.vault,
-                    &doc,
-                    selector_grant_scope(),
-                    selector,
-                    proof,
-                    update,
-                )
-                .map_err(map_selector_filter_err)?;
+                row_admission = Some(
+                    admit_promoted_device_window_update(
+                        server.vault(),
+                        &device,
+                        &doc,
+                        (selector_grant_scope(), selector, proof),
+                        update,
+                    )
+                    .map_err(map_selector_filter_err)?,
+                );
                 write_auth = Some(auth);
             }
             // The pads it owes reach custody here before it persists (FIX
@@ -459,17 +468,24 @@ pub(super) async fn handle_window_sync(
             // or relays (arch-0023b `#decision-federation-26`; L7-41): allowed,
             // it lands below; deferred or isolated, it is answered as held, and
             // the home's drain lands it once the device's rate is back at its
-            // baseline (`server/device_burst_drain.rs`).
-            let device = device_peer(server, conn_state);
-            let burst = match oneiron::sync::federation_burst::admit_device_window_update(
-                server.vault(),
-                &device,
-                &key,
-                update,
-                &[],
-            )
-            .map_err(map_update_admission_err)?
-            {
+            // baseline (`server/device_burst_drain.rs`). The rows its bytes
+            // carry, which an erase of any scrubs, are those the home's
+            // admission read it as inserting on the home window: a delta that
+            // builds on the home's own operations inserts rows an import into
+            // an empty document never applies (#9226 review round 2).
+            let carried = inserts.ids().collect::<Vec<_>>();
+            let admitted = match row_admission {
+                Some(admission) => admit_device_residence_update(
+                    server.vault(),
+                    &device,
+                    &key,
+                    update,
+                    &carried,
+                    admission,
+                ),
+                None => admit_device_window_update(server.vault(), &device, &key, update, &carried),
+            };
+            let burst = match admitted.map_err(map_update_admission_err)? {
                 DeviceBurstAdmission::Allow(burst) => burst,
                 // The same bytes already settled here (#8386 review): landed,
                 // they are acknowledged with nothing persisted, imported or
@@ -524,10 +540,10 @@ pub(super) async fn handle_window_sync(
                 (&key, &doc),
                 update,
                 inserts,
-                (
-                    write_auth,
-                    protocol::is_residence_version(conn_state.protocol_version),
-                ),
+                DeviceWriteRecheck::Credential {
+                    auth: write_auth,
+                    promoted: protocol::is_residence_version(conn_state.protocol_version),
+                },
             )
             .await;
             // The burst core's batch ends as the landing went (L7-41): landed,
@@ -616,6 +632,28 @@ pub(super) struct LandedDeviceUpdate {
     pub(super) settled_positions: Option<oneiron::sync::OwnDevicePositionImport>,
 }
 
+/// What the writer that persists an own device's update judges again
+/// before its bytes append.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum DeviceWriteRecheck<'a> {
+    /// The Write credential of the socket that sent it, when one bound it.
+    /// `promoted` is a socket on the residence protocol, which writes only
+    /// promoted windows: the writer also judges the update's destination
+    /// for the socket's machine again, as world privacy may have changed
+    /// since the pre-write check.
+    Credential {
+        auth: Option<&'a CoreAuth>,
+        promoted: bool,
+    },
+    /// The retained batch the home's drain replays, which no socket sent:
+    /// still held, and its device's authority as the burst core held it
+    /// ([`oneiron::sync::federation_burst::DeviceBurstWork::stands_in_txn`]).
+    /// One a residence socket sent also has its destination judged for the
+    /// device's machine again, as `Credential { promoted: true }` has (#9226
+    /// review round 2).
+    Retained(&'a oneiron::sync::federation_burst::DeviceBurstWork),
+}
+
 /// Lands an own device's admitted window `update` at its home. A copy edit
 /// lands on its source first and is admitted again as the source edit it is
 /// (FIX 7608 slice 4); a ruled hold persists, imports and relays nothing, its
@@ -626,11 +664,8 @@ pub(super) struct LandedDeviceUpdate {
 /// home's drain lands, which no socket sent (L7-41). `inserts` are the
 /// entity ids the update's history inserts as its admission read them, which
 /// owe a compaction when one names a row hard-deleted here (census L6-05); a
-/// translated copy's admission reads its own. `write_auth`, when given, is
-/// rechecked in the writer that persists the update. `promoted` is a socket
-/// on the residence protocol, which writes only promoted windows: the
-/// writer judges the update's destination for `machine` again, as world
-/// privacy may have changed since the pre-write check.
+/// translated copy's admission reads its own. `recheck` is what the writer
+/// that persists the update judges again.
 ///
 /// # Errors
 /// The copy translation's store failure; a translated update the window
@@ -643,7 +678,7 @@ pub(super) async fn land_device_update(
     (key, doc): (&WindowKey, &LoroDoc),
     update: &[u8],
     inserts: oneiron::sync::window::UpdateInserts,
-    (write_auth, promoted): (Option<&CoreAuth>, bool),
+    recheck: DeviceWriteRecheck<'_>,
 ) -> Result<Option<LandedDeviceUpdate>, DeviceLandingError> {
     let admitted = oneiron::sync::selector::admit_repo_sync_frame(
         server.vault.as_ref(),
@@ -696,15 +731,22 @@ pub(super) async fn land_device_update(
             // A promoted window's write judges its destination in the
             // committing transaction, as a document's does: world privacy
             // may have changed since the pre-write check.
-            let stored = if promoted {
-                server.persist_promoted_imported_update(
-                    key, &persisted, &inserts, &landings, write_auth, machine, doc,
-                )
-            } else {
-                server.persist_imported_update(key, &persisted, &inserts, &landings, write_auth)
-            };
-            stored
-                .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
+            match recheck {
+                DeviceWriteRecheck::Credential {
+                    auth,
+                    promoted: true,
+                } => server.persist_promoted_imported_update(
+                    key, &persisted, &inserts, &landings, auth, machine, doc,
+                ),
+                DeviceWriteRecheck::Credential {
+                    auth,
+                    promoted: false,
+                } => server.persist_imported_update(key, &persisted, &inserts, &landings, auth),
+                DeviceWriteRecheck::Retained(work) => server.persist_retained_device_update(
+                    key, &persisted, &inserts, &landings, work, doc,
+                ),
+            }
+            .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
             let positions = oneiron::sync::prepare_own_device_push_positions(
                 server.vault(),
                 machine,

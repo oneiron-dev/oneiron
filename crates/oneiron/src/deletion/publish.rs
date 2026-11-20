@@ -8,12 +8,13 @@ use crate::error::Result;
 use crate::store::GateDecisionRecord;
 
 use super::delete::PendingConfirmedErase;
-use super::gate::GatedDeletion;
+use super::gate::{GatedDeletion, OwnerAtPublication};
 // Publication-time authority re-verification only exists where there is a
 // publication; the no-feature arm publishes nothing.
 #[cfg(feature = "sync")]
 use super::gate::{
-    claim_in_txn, reverify_deletion_authority_before_publication, revoke_guest_grants_in_txn,
+    claim_in_txn, reverify_deletion_authority_before_publication, reverify_owner_at_publication,
+    revoke_guest_grants_in_txn,
 };
 // Both cfg arms of this shim require the `sync` feature, and its only call
 // site below is sync-gated with it; the import carries the same gate so a
@@ -75,6 +76,7 @@ const PAD_TOMBSTONE_PUBLISH_FAILURE_POLICY: PadTombstonePublishFailure =
 impl Vault {
     /// [`Self::write_crdt_tombstone_due`] for a delete that is no due
     /// owner-confirmed erase.
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn write_crdt_tombstone(
         &self,
         id: &EntityId,
@@ -83,6 +85,7 @@ impl Vault {
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
+        owner: Option<OwnerAtPublication<'_>>,
     ) -> Result<bool> {
         self.write_crdt_tombstone_due(
             id,
@@ -92,12 +95,13 @@ impl Vault {
             gate_decision,
             gate,
             None,
+            owner,
         )
     }
 
     /// Publishes the tombstone of a delete; a due owner-confirmed erase
     /// (`due`) re-proves in the publish transaction that it still waits
-    /// (FIX 6337).
+    /// (FIX 6337), and the vault owner's own delete re-proves `owner` there.
     #[cfg(feature = "sync")]
     #[allow(clippy::too_many_arguments)]
     pub(super) fn write_crdt_tombstone_due(
@@ -109,6 +113,7 @@ impl Vault {
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
         due: Option<&PendingConfirmedErase>,
+        owner: Option<OwnerAtPublication<'_>>,
     ) -> Result<bool> {
         let mut doc_mutated = false;
         let outcome = self.write_crdt_tombstone_impl(
@@ -119,6 +124,7 @@ impl Vault {
             gate_decision,
             gate,
             due,
+            owner,
             &mut doc_mutated,
         );
         crate::sync::note::deleted_elsewhere(self, window_label, outcome.is_ok().then_some(*id));
@@ -198,12 +204,12 @@ impl Vault {
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
         due: Option<&PendingConfirmedErase>,
+        owner: Option<OwnerAtPublication<'_>>,
         doc_mutated: &mut bool,
     ) -> Result<bool> {
         use super::delete_bearing_update::export_tombstone_commit_delta;
         use crate::store::loro_document::{doc_version_vector, entity_carriers};
         use crate::store::window_protocol::DELETION_TOMBSTONE_ORIGIN;
-        use crate::store::window_rows::CarrierRemoval;
         use crate::sync::bridge::with_deletion_tombstone_observer_a_suppressed;
         use crate::sync::schema::create_window_doc;
         use crate::sync::window::{load_window_from_state, merge_persisted_state_into_doc};
@@ -250,7 +256,7 @@ impl Vault {
             // therefore ordered strictly before this delete (seen — nothing
             // is published) or strictly after it (LMDB's single writer makes
             // it wait for this commit). The steps that need their own write
-            // txn — the mode scrub, the gate staging and the carrier mark —
+            // txn — the mode scrub, the gate staging and the suppression mark —
             // run before it opens, since LMDB admits no nested writer. Lock order
             // materializer → LMDB txn matches every other holder; the registry
             // lock is NOT held here (manager lock-order pin).
@@ -268,14 +274,14 @@ impl Vault {
                     gate_decision.map(|decision| decision.decision_id),
                 );
                 super::tombstone_scope::capture_deleted_scope(self, id, value);
-                // Marked before the publish txn opens, which LMDB cannot nest:
-                // a failed publish keeps the mutated live doc, and a later
-                // persist would make its removal durable without the mark.
-                self.store.sync_hooks.mark_removed_carriers_first(
-                    self,
-                    CarrierRemoval::LocalPublication,
-                    &entity_carriers(&window.doc, &[*id]),
-                )?;
+                // Suppressed before the publish txn opens, which LMDB cannot
+                // nest: a failed publish keeps the mutated live doc, and a
+                // later persist would make its removal durable without the
+                // mark. The carrier's records leave in the publish txn.
+                let removed_carriers = entity_carriers(&window.doc, &[*id]);
+                self.store
+                    .sync_hooks
+                    .suppress_published_carriers_first(self, &removed_carriers)?;
                 let mut wtxn = self.begin_tombstone_publish_txn(
                     id,
                     window_ts,
@@ -284,6 +290,8 @@ impl Vault {
                     gate_decision,
                     gate,
                     due,
+                    owner,
+                    &removed_carriers,
                 )?;
                 let vv_before = window.doc.oplog_vv();
                 let (delete_update, (snapshot, owes_compaction), vv) =
@@ -367,11 +375,10 @@ impl Vault {
             gate_decision.map(|decision| decision.decision_id),
         );
         super::tombstone_scope::capture_deleted_scope(self, id, value);
-        self.store.sync_hooks.mark_removed_carriers_first(
-            self,
-            CarrierRemoval::LocalPublication,
-            &entity_carriers(&doc, &[*id]),
-        )?;
+        let removed_carriers = entity_carriers(&doc, &[*id]);
+        self.store
+            .sync_hooks
+            .suppress_published_carriers_first(self, &removed_carriers)?;
         // Same authority boundary as the live path: the transient doc is
         // mutated only after this txn's re-fold passes, and its bytes reach
         // `d:w:`/`u:w:`/`q:` in that same txn.
@@ -383,6 +390,8 @@ impl Vault {
             gate_decision,
             gate,
             due,
+            owner,
+            &removed_carriers,
         )?;
         let vv_before = doc.oplog_vv();
         self.store
@@ -559,6 +568,12 @@ impl Vault {
     /// A due owner-confirmed erase (`due`) re-proves here that it still
     /// waits, and a hold's refusal names the owner its row records. None
     /// waiting cancels it, withdrawn as a refusal is (FIX 6337).
+    ///
+    /// The records of who brought or wrote each of `removed_carriers`, the
+    /// carriers this publication takes out of the document, leave in this
+    /// txn once its refusals pass: a refused publication keeps the carrier, so
+    /// a peer's row it brought must still read as the peer's. Only their
+    /// task-authority suppression committed before this txn opened.
     #[cfg(feature = "sync")]
     #[allow(clippy::too_many_arguments)]
     fn begin_tombstone_publish_txn(
@@ -570,12 +585,15 @@ impl Vault {
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
         due: Option<&PendingConfirmedErase>,
+        owner: Option<OwnerAtPublication<'_>>,
+        removed_carriers: &[(EntityId, Vec<u8>)],
     ) -> Result<heed::RwTxn<'_>> {
         let mut wtxn = self.store.env.write_txn()?;
         if let Err(refusal) =
             crate::blob_artifact::esign::reject_event_delete(&self.store, &wtxn, id)
                 .and_then(|()| due.map_or(Ok(()), |due| due.prove_in(self, &wtxn, id).map(drop)))
                 .and_then(|()| reverify_deletion_authority_before_publication(gate, &wtxn))
+                .and_then(|()| reverify_owner_at_publication(self, owner, id, &wtxn))
                 // The last-bound-owner guard at this delete's linearizing
                 // commit (round-1 P1 of #7900): a hard delete publishes before
                 // it purges, so the publish decides the guard and the later
@@ -670,6 +688,9 @@ impl Vault {
                 &Vec::new(),
             )?;
         }
+        self.store
+            .sync_hooks
+            .forget_removed_carrier_records_in_txn(self, &mut wtxn, removed_carriers)?;
         Ok(wtxn)
     }
 
@@ -1003,6 +1024,7 @@ impl Vault {
         _gate_decision: Option<&GateDecisionRecord>,
         _gate: Option<&GatedDeletion<'_>>,
         _due: Option<&PendingConfirmedErase>,
+        _owner: Option<OwnerAtPublication<'_>>,
     ) -> Result<bool> {
         // No CRDT in this build — nothing is published, so there is no publish
         // commit and therefore NO linearization point here. `false` is the
@@ -1093,6 +1115,7 @@ mod live_query_publication_tests {
                 1_772_000_000,
                 tee.window.as_str(),
                 &value,
+                None,
                 None,
                 None,
             );

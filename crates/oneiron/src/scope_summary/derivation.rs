@@ -64,8 +64,11 @@ pub(super) fn declaration(
     Value::Map(fields)
 }
 
-/// Re-derive a NOTE declaration under the original requester's frozen bound,
-/// including its actual grant basis. Other summary targets are unchanged.
+/// Re-derive a declaration under the original requester's frozen bound,
+/// including its actual grant basis, whatever its target: a projection and
+/// each declaration it queues keep the lane its first summary was declared
+/// under (FIX SUMMARY-REDERIVATION-DROPS-FROZEN-LANE), never the requester's
+/// own.
 fn inherited_declaration(
     request: &super::ScopeSummaryRequest,
     purpose: &str,
@@ -73,12 +76,7 @@ fn inherited_declaration(
     original: &Value,
 ) -> Result<Value> {
     let mut input = declaration(request, purpose, previous);
-    if matches!(
-        request.target,
-        super::ScopeSummaryTarget::Sources { scope: None, .. }
-    ) {
-        super::request::inherit_note_requester_lane(original, &mut input)?;
-    }
+    super::request::inherit_requester_lane(original, &mut input)?;
     Ok(input)
 }
 
@@ -203,16 +201,32 @@ pub(super) fn register_in_txn(
     input: &Value,
     summary: EntityId,
 ) -> Result<()> {
+    register_declared_in_txn(vault, txn, input, input, summary, false)
+}
+
+/// [`register_in_txn`] of `summary` in the projection `input` declares,
+/// under the lane `declared` froze. With `unobserved_when_refused`, an
+/// observation a lost grant, an erased source or a gone scope refuses
+/// leaves the projection unobserved, as a re-derivation's does, rather than
+/// failing the write.
+fn register_declared_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    input: &Value,
+    declared: &Value,
+    summary: EntityId,
+    unobserved_when_refused: bool,
+) -> Result<()> {
     let request = decode_request(vault, txn, input)?;
     let (purpose, _, _, _) = options(vault, txn, input)?;
     let key = projection_key(&request, &purpose.id)?;
-    let normalized = inherited_declaration(&request, &purpose.id, None, input)?;
+    let normalized = inherited_declaration(&request, &purpose.id, None, declared)?;
     let request = encode(&normalized)?;
     let current_input = inherited_declaration(
         &decode_request(vault, txn, input)?,
         &purpose.id,
         Some(summary),
-        input,
+        declared,
     )?;
     // An Arc is re-derived through its gate (FIX 7509 P8), never by an
     // observation, and its row keeps its gate state.
@@ -228,6 +242,11 @@ pub(super) fn register_in_txn(
             // so the first commit after the promotion that reads it
             // re-derives.
             Err(error) if crate::store::conversation_residency::waits_on_residency(&error) => {
+                *blake3::hash(&encode(&current_input)?).as_bytes()
+            }
+            Err(Error::EntityNotFound | Error::InvalidClaimBody(_) | Error::Record(_))
+                if unobserved_when_refused =>
+            {
                 *blake3::hash(&encode(&current_input)?).as_bytes()
             }
             Err(error) => return Err(error),
@@ -290,7 +309,17 @@ pub(crate) fn roll_back_summary_in_txn(
         let state =
             crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &previous)?;
         if !state.deleted && vault.archive_tombstone_in_txn(txn, &previous)?.is_none() {
-            register_in_txn(vault, txn, &input, previous)?;
+            // The summary it replaced stands again under the lane its own
+            // declaration froze, not the reverted one's, and a lane that no
+            // longer reads its sources leaves it unobserved: the owner's
+            // revert never waits on a requester's credential (review P1 of
+            // #9683).
+            let declared = decode(
+                &crate::entity_doc::summary_meta_in_txn(vault, txn, &previous)?
+                    .derivation
+                    .request,
+            )?;
+            register_declared_in_txn(vault, txn, &input, &declared, previous, true)?;
             return Ok((Some(previous), header));
         }
     }

@@ -74,7 +74,7 @@ pub fn prepare_selector_fetch(
         WorkKind::Selector,
         payload,
         (1, &[]),
-        None,
+        (None, None),
     )?;
     Ok(PreparedSelectorFetch {
         selector: peer.selector.clone(),

@@ -36,6 +36,12 @@ pub(super) fn host() -> Host {
     vault
         .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
         .expect("serving install profile");
+    vault
+        .enrol_device_owner_signing_key(
+            &ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall),
+            &issuer,
+        )
+        .expect("this install's device owner key");
     Host {
         _dir: dir,
         vault,

@@ -163,7 +163,7 @@ pub(crate) fn placed_facets_in(
 
 /// The room the row `id` of type `kind` sits in: a room itself, and the room
 /// a MESSAGE or TURN is said in.
-fn room_of(
+pub(crate) fn room_of(
     view: &(impl ManifestDbs + MachineHistoryScope),
     txn: &heed::RoTxn<'_>,
     id: EntityId,

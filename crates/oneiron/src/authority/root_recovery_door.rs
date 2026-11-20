@@ -203,7 +203,7 @@ impl Vault {
         // this install's successor's making and the commit.
         let device_pin = self.device_pin();
         let _step = device_pin.as_deref().map(DevicePin::step);
-        let _slot_lock = install.is_some().then(|| {
+        let slot_lock = install.is_some().then(|| {
             self.store
                 .owner_signing_slot_lock
                 .lock()
@@ -252,6 +252,10 @@ impl Vault {
         self.mark_authority_rows_in_txn(&mut txn, &rows)?;
         txn.commit()?;
         self.note_committed_authority_rows(rows);
+        // The successor is held once the slot lock is let go: a hold asks
+        // every signer held for its root, and a signer's answer may read the
+        // slot (REVIEW-9678 P1).
+        drop(slot_lock);
         if let Some(key) = held {
             self.hold_checkpoint_root_signer(Arc::new(key));
         }

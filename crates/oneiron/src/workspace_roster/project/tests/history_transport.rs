@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 fn blob(kind: u8, at: u64, body: &[u8]) -> Vec<u8> {
     let mut blob = vec![kind];
-    for field in [at, at, at] {
+    for field in [at, at, at, 0] {
         blob.extend_from_slice(&field.to_be_bytes());
     }
     blob.extend_from_slice(body);

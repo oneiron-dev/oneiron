@@ -824,7 +824,8 @@ fn scoped_receipts_count_no_row_the_grant_refuses_and_refresh_point_authority() 
         .single();
     assert!(denied.value.is_none());
     assert!(denied.receipt.applied.deny_all);
-    assert_eq!(denied.receipt.suppressed_count, 1);
+    // O36: no own grant means no existence count (point_reads.rs:549-550; present at 571efc03606).
+    assert_eq!(denied.receipt.suppressed_count, 0);
     let missing = reader
         .read(&[crate::claim::PointRead::id(test_id(0x53))], None)?
         .single();
@@ -866,14 +867,16 @@ fn graph_read_receipts_clamp_nonclaim_types_and_include_unnarrowed_reads() -> Re
     install(&[ENTITY_TYPE_TURN])?;
     let narrowed_edges = read.edges_out(&source)?;
     assert!(narrowed_edges.value.unwrap().is_empty());
-    assert_eq!(narrowed_edges.receipt.suppressed_count, 1);
+    // R44: TURN-only withholds Supports target + birth FacetOf FACET (graph_reads.rs:138; e98039cb50b).
+    assert_eq!(narrowed_edges.receipt.suppressed_count, 2);
     let timeline = read.memory_timeline(&source)?;
     assert_eq!(timeline.records.len(), 1);
     assert_eq!(timeline.receipt.suppressed_count, 0);
     install(&[ENTITY_TYPE_TURN, ENTITY_TYPE_ASSET])?;
     let complete = read.edges_out(&source)?;
     assert_eq!(complete.value.unwrap()[0].target, target);
-    assert_eq!(complete.receipt.suppressed_count, 0);
+    // R44: TURN+ASSET still withholds the birth FacetOf FACET (graph_reads.rs:138; e98039cb50b).
+    assert_eq!(complete.receipt.suppressed_count, 1);
     assert!(complete.receipt.replan_hint.is_empty());
     Ok(())
 }

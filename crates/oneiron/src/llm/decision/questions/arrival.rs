@@ -282,28 +282,39 @@ fn enqueue_arrivals(
                 .map(|((_, question, root), _)| (question, root)),
         );
         for (question, unit) in roots {
-            let Some(head) = QUESTION_HEAD.get(store, txn, &super::store::HeadKey(question))?
-            else {
-                continue;
-            };
-            let Some(record) = QUESTION_VERSION.get(
-                store,
-                txn,
-                &VersionKey {
-                    id: question,
-                    version: head.version,
-                },
-            )?
-            else {
-                continue;
-            };
-            if !head.paused
-                && record.definition.refresh.on_arrival
-                && record.definition.units.contains(&unit)
-            {
-                PENDING.put(store, txn, &(question, unit), &EntityId::now())?;
-            }
+            queue_arrival_in_txn(store, txn, question, unit)?;
         }
+    }
+    Ok(())
+}
+
+/// Queues an arrival of `unit` for `question` when its head is live, its
+/// version refreshes on arrival and covers `unit`.
+pub(super) fn queue_arrival_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    question: EntityId,
+    unit: EntityId,
+) -> Result<()> {
+    let Some(head) = QUESTION_HEAD.get(store, txn, &super::store::HeadKey(question))? else {
+        return Ok(());
+    };
+    let Some(record) = QUESTION_VERSION.get(
+        store,
+        txn,
+        &VersionKey {
+            id: question,
+            version: head.version,
+        },
+    )?
+    else {
+        return Ok(());
+    };
+    if !head.paused
+        && record.definition.refresh.on_arrival
+        && record.definition.units.contains(&unit)
+    {
+        PENDING.put(store, txn, &(question, unit), &EntityId::now())?;
     }
     Ok(())
 }

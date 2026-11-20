@@ -197,6 +197,7 @@ impl SyncClient {
                 SyncProtocolValidation::FederationPeerUnbound,
             ))
         })?;
+        let burst_peer = BurstPeer::Federated(&peer);
         // The grant is revalidated and the peer's standing read over it before
         // admission: no standing refuses the update (FIX 360).
         let standing = peer
@@ -206,17 +207,13 @@ impl SyncClient {
             FederationAdmissionRole::Member => WorkKind::MemberUpdate,
             FederationAdmissionRole::Guest => WorkKind::GuestUpdate,
         };
-        let (batch_id, _) = crate::sync::federation_burst::DeferredWork::identity(
-            BurstPeer::Federated(&peer),
-            &key,
-            kind,
-            update,
-        )
-        .map_err(map_federated_admission_err)?;
+        let (batch_id, _) =
+            crate::sync::federation_burst::DeferredWork::identity(burst_peer, &key, kind, update)
+                .map_err(map_federated_admission_err)?;
         let batch_ref = blake3::Hash::from(batch_id).to_hex().to_string();
         match self
             .vault
-            .federation_burst_disposition(BurstPeer::Federated(&peer), &batch_ref)
+            .federation_burst_disposition(burst_peer, &batch_ref)
         {
             Ok(receipt) if receipt.state.is_settled() => return Ok(receipt),
             Ok(_) | Err(crate::Error::EntityNotFound) => {}
@@ -240,7 +237,7 @@ impl SyncClient {
             Err(error) => {
                 let error = map_federated_admission_err(error);
                 if matches!(error, TransportError::InvalidPayload(_)) {
-                    record_outcome(&self.vault, BurstPeer::Federated(&peer), true)
+                    record_outcome(&self.vault, burst_peer, true)
                         .map_err(map_federated_admission_err)?;
                 }
                 return Err(error);
@@ -267,12 +264,12 @@ impl SyncClient {
         let carried = carried.into_iter().collect::<Vec<_>>();
         let (decision, work) = admit_work(
             &self.vault,
-            BurstPeer::Federated(&peer),
+            burst_peer,
             &key,
             kind,
             update,
             (writes, carried.as_slice()),
-            Some(parts.as_slice()),
+            (Some(parts.as_slice()), None),
         )
         .map_err(map_federated_admission_err)?;
         if let FederationBurstDecision::Defer { request_id, inputs }
@@ -289,7 +286,7 @@ impl SyncClient {
                 });
             return self
                 .vault
-                .federation_burst_disposition(BurstPeer::Federated(&peer), &batch_ref)
+                .federation_burst_disposition(burst_peer, &batch_ref)
                 .map_err(map_federated_admission_err);
         }
         let work = work.ok_or(TransportError::InvalidPayload(
@@ -303,10 +300,10 @@ impl SyncClient {
             &work.authority_digest,
             || self.import_peer_update(&admitted, peer.grant(), delivery),
         )?;
-        work.complete(&self.vault, BurstPeer::Federated(&peer))
+        work.complete(&self.vault, burst_peer)
             .map_err(map_federated_admission_err)?;
         self.vault
-            .federation_burst_disposition(BurstPeer::Federated(&peer), &batch_ref)
+            .federation_burst_disposition(burst_peer, &batch_ref)
             .map_err(map_federated_admission_err)
     }
 

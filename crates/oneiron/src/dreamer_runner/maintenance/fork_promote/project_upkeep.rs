@@ -130,7 +130,9 @@ pub(super) fn run(
         match upkeep.project(*project, teams, report) {
             Ok(()) => {}
             Err(Error::Artifact(
-                ArtifactError::InvalidSkillBody(_) | ArtifactError::InvalidAgentDispatchInput(_),
+                ArtifactError::InvalidSkillBody(_)
+                | ArtifactError::InvalidAgentDispatchInput(_)
+                | ArtifactError::SkillVersionKept(_),
             )) => report.upkeep_refused += 1,
             Err(error) => return Err(error),
         }

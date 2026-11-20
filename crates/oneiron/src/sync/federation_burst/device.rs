@@ -4,14 +4,20 @@
 //! isolate-and-propose or defer, against the peer's own baseline and the
 //! vault's size; never a plain block, never a pause for a human).
 
+use std::collections::BTreeSet;
+
 use loro::LoroDoc;
+use oneiron_contracts::fingerprint::ContentHasher;
 
 use super::{
     BurstPeer, DeferredWork, FederationBurstDecision, FederationBurstPeerRef,
-    FederationBurstWorkState, WorkKind, admit_work, corrupt,
+    FederationBurstWorkState, WorkKind, admit_work, corrupt, hash_grant_pacts,
 };
-use crate::authority::PeerMachine;
-use crate::sync::WindowKey;
+use crate::authority::{PeerMachine, VerifiedSlip, WorldPrivacyView};
+use crate::federation::{FederationGrantScope, decode_federation_grant_body};
+use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
+use crate::sync::{SyncSelector, WindowKey};
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Error, Result, Vault};
 
 /// An own device as its connection proved it, in the order its home reads
@@ -61,7 +67,7 @@ impl DevicePeer {
     /// The baseline its writes count against. A machine keeps its baseline
     /// across a new key.
     pub(super) fn digest(&self) -> [u8; 32] {
-        let mut hash = blake3::Hasher::new();
+        let mut hash = ContentHasher::new();
         hash.update(b"oneiron/device-peer/v1");
         match self {
             Self::Machine { machine, .. } => {
@@ -76,7 +82,7 @@ impl DevicePeer {
                 hash.update(b"unproven");
             }
         }
-        *hash.finalize().as_bytes()
+        hash.finish().into_bytes()
     }
 
     /// The bytes that bind its retained work to it: the device as its
@@ -127,15 +133,31 @@ impl DevicePeer {
     /// What its retained work is held under: whether it still stands here as
     /// its connection proved it (a machine on the same proof key, and the
     /// slip of its Write credential standing as the home's persist recheck
-    /// reads one: unexpired, unrevoked, its grant and member scope standing).
-    /// A machine removed or proving another key since, or a slip that has
-    /// expired or been revoked since, ends that work `StaleAuthority`
-    /// (FIX 7999). The UPDATE arm held it only past that same credential's
-    /// live check.
+    /// reads one: unexpired, unrevoked, its grant and member scope standing),
+    /// and, under a slip, the write authority the home's residence arm
+    /// admitted its update under ([`Self::hash_write_authority_in`]). A
+    /// machine removed or proving another key since, a slip that has expired
+    /// or been revoked since (FIX 7999), and any change of that write
+    /// authority since (BURST-REPLAY-SKIPS-ROW-ADMISSION) end that work
+    /// `StaleAuthority`. The UPDATE arm held it only past that same
+    /// credential's live check and that same row admission.
     pub(super) fn authority_digest_in_txn(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
+    ) -> Result<[u8; 32]> {
+        self.authority_digest_at_in_txn(vault, txn, crate::unix_seconds_now())
+    }
+
+    /// [`Self::authority_digest_in_txn`] with each grant's end judged at
+    /// `now_secs`: the clock reading the residence arm's row admission took,
+    /// when it is read in that admission's snapshot
+    /// ([`admit_promoted_device_window_update`]).
+    fn authority_digest_at_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        now_secs: u64,
     ) -> Result<[u8; 32]> {
         let (machine_stands, slip) = match self {
             Self::Machine { machine, key, slip } => (
@@ -152,11 +174,99 @@ impl DevicePeer {
             Some(slip) => vault.folded_slip_stands_in_txn(txn, slip)?,
             None => true,
         };
-        let mut hash = blake3::Hasher::new();
-        hash.update(b"oneiron/device-peer-authority/v1");
+        let mut hash = ContentHasher::new();
+        hash.update(b"oneiron/device-peer-authority/v2");
         hash.update(&self.encode());
         hash.update(&[u8::from(machine_stands), u8::from(slip_stands)]);
-        Ok(*hash.finalize().as_bytes())
+        if let Some(slip) = slip {
+            self.hash_write_authority_in(&mut hash, vault, (txn, now_secs), slip)?;
+        }
+        Ok(hash.finish().into_bytes())
+    }
+
+    /// Hashes into `hash` the write authority the home's residence arm
+    /// admitted an update of this device's under, the slip `slip` bound to
+    /// its connection: the live row of each grant the arm may have judged it
+    /// under (the slip's own grant, and every grant of the slip's holder
+    /// under the residence selector's scope, which the selector names), with
+    /// whether it confers at `now_secs` as the arm judges a grant's end, on
+    /// the wall clock (`authorize_in_txn`), the pacts that
+    /// bind each, and the worlds kept off the device's machine. The held work
+    /// keeps no selector, so the drain cannot judge its rows again; any edit
+    /// of one of these since, a narrowing in place included, and any of those
+    /// grants expired since end the work `StaleAuthority` before it lands. A
+    /// widening ends it too, and the device sends its update again.
+    fn hash_write_authority_in(
+        &self,
+        hash: &mut ContentHasher,
+        vault: &Vault,
+        (txn, now_secs): (&heed::RoTxn<'_>, u64),
+        slip: &[u8; 32],
+    ) -> Result<()> {
+        let fold = vault.authority_view_readonly_in_txn(txn)?;
+        let Some(mint) = fold.slips.mints.get(slip) else {
+            hash.update(b"no-mint");
+            return Ok(());
+        };
+        let claims = &mint.action.claims;
+        let mut grants = vault
+            .residence_scope_grants_in_txn(txn, &claims.holder_ref)?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        match claims.grant_ref.as_deref().map(EntityId::from_hex) {
+            Some(Ok(grant)) => {
+                grants.insert(grant);
+            }
+            Some(Err(_)) => {
+                hash.update(b"unreadable-grant-ref");
+            }
+            None => {}
+        }
+        // A grant's expiry passing changes no row, so whether it confers is
+        // hashed too (#9226 review), on the clock the row admission judged
+        // it on: the wall clock, not the vault's grant clock, which can stand
+        // past a grant's end the wall clock has not reached (#9226 review
+        // round 2). The slip's own grant stands as the persist recheck reads
+        // it, in `slip_stands`.
+        hash.update(b"grants");
+        hash.update(&(grants.len() as u64).to_be_bytes());
+        for grant in grants {
+            hash.update(grant.as_bytes());
+            let row = live_entity_row_in_txn(&vault.store, txn, &grant)?;
+            match vault.get_raw_in(txn, &grant)?.filter(|_| row.is_live()) {
+                Some(raw) => {
+                    hash.update(b"live");
+                    hash.update(&(raw.len() as u64).to_be_bytes());
+                    hash.update(&raw);
+                    let confers = match &row {
+                        LiveEntityRow::Live {
+                            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+                            body,
+                        } => decode_federation_grant_body(body)?.confers_at(now_secs),
+                        _ => false,
+                    };
+                    hash.update(&[u8::from(confers)]);
+                }
+                None => {
+                    hash.update(b"gone");
+                }
+            }
+            hash_grant_pacts(hash, &fold, grant)?;
+        }
+        match WorldPrivacyView::load_unless_conflicted_in(vault, txn)? {
+            Some(view) => {
+                let withheld = view.withheld_for_peer(self.machine())?;
+                hash.update(b"withheld");
+                hash.update(&(withheld.len() as u64).to_be_bytes());
+                for world in withheld {
+                    hash.update(world.as_bytes());
+                }
+            }
+            None => {
+                hash.update(b"conflicted");
+            }
+        }
+        Ok(())
     }
 
     /// The device as its receipts name it.
@@ -227,6 +337,35 @@ impl DeviceBurstWork {
         blake3::Hash::from(self.work.id).to_hex().to_string()
     }
 
+    /// Whether a residence socket sent it to a window it promoted
+    /// ([`admit_device_residence_update`]): the writer that persists its
+    /// replay judges its destination for the device's machine again, as the
+    /// socket's own landing does (#9226 review round 2).
+    #[must_use]
+    pub fn promoted(&self) -> bool {
+        self.work.kind == WorkKind::DeviceResidenceUpdate
+    }
+
+    /// Whether the batch still stands in `txn` as [`ready_device_work`]
+    /// handed it back: still held under its key, and its device's authority
+    /// digest the one it was held under. The drain judged both in its own
+    /// read, before its home loaded the window; the home judges them again
+    /// in the writer that persists the update's bytes, so a grant narrowed,
+    /// expired or revoked, a world kept off the device, or the batch ended or
+    /// erased in between lands nothing (#9226 review).
+    ///
+    /// # Errors
+    /// A store error, or a held row that does not decode.
+    pub fn stands_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        let held = match vault.store.sync_queue.get(txn, &self.work.key())? {
+            Some(value) => DeferredWork::decode(&value)?.id == self.work.id,
+            None => false,
+        };
+        Ok(held
+            && BurstPeer::Device(&self.peer).authority_digest_in_txn(vault, txn)?
+                == self.work.authority_digest)
+    }
+
     /// Ends the batch landed: its receipt reads `Imported`.
     ///
     /// # Errors
@@ -263,6 +402,81 @@ pub fn admit_device_window_update(
     update: &[u8],
     carried: &[EntityId],
 ) -> Result<DeviceBurstAdmission> {
+    admit_device_update(vault, peer, key, update, carried, None)
+}
+
+/// What an own device's update to a promoted window was admitted under at
+/// its home, row by row ([`admit_promoted_device_window_update`]): the
+/// device's authority digest, read in that admission's snapshot and on its
+/// clock reading. Its burst is held under it
+/// ([`admit_device_residence_update`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PromotedRowAdmission {
+    authority_digest: [u8; 32],
+}
+
+/// [`crate::sync::residence::admit_promoted_window_update`] for an own
+/// device's update at its home: it refuses what that door refuses, and
+/// answers the device's authority as read in the same snapshot and on the
+/// same clock reading, for its burst to be held under (#9226 review round
+/// 2).
+///
+/// # Errors
+/// What that door returns; a store error reading the device's authority.
+pub fn admit_promoted_device_window_update(
+    vault: &Vault,
+    peer: &DevicePeer,
+    source: &LoroDoc,
+    writer: (FederationGrantScope, &SyncSelector, &VerifiedSlip),
+    update: &[u8],
+) -> Result<PromotedRowAdmission> {
+    crate::sync::residence::admit_promoted_window_update_then(
+        vault,
+        source,
+        writer,
+        update,
+        |txn, now_secs| {
+            Ok(PromotedRowAdmission {
+                authority_digest: peer.authority_digest_at_in_txn(vault, txn, now_secs)?,
+            })
+        },
+    )
+}
+
+/// [`admit_device_window_update`] for an update a residence socket sent to a
+/// window it promoted, whose rows passed
+/// [`admit_promoted_device_window_update`] as `admission`. Its batch is held
+/// under the authority that admission read, not the one the burst core's
+/// writer reads: a grant narrowed, expired or revoked, or a world kept off
+/// the device, in between never lands it. Its replay judges its destination
+/// for the device's machine again ([`DeviceBurstWork::promoted`]) (#9226
+/// review round 2).
+///
+/// # Errors
+/// What [`admit_device_window_update`] returns.
+pub fn admit_device_residence_update(
+    vault: &Vault,
+    peer: &DevicePeer,
+    key: &WindowKey,
+    update: &[u8],
+    carried: &[EntityId],
+    admission: PromotedRowAdmission,
+) -> Result<DeviceBurstAdmission> {
+    admit_device_update(vault, peer, key, update, carried, Some(admission))
+}
+
+fn admit_device_update(
+    vault: &Vault,
+    peer: &DevicePeer,
+    key: &WindowKey,
+    update: &[u8],
+    carried: &[EntityId],
+    admission: Option<PromotedRowAdmission>,
+) -> Result<DeviceBurstAdmission> {
+    let kind = match admission {
+        Some(_) => WorkKind::DeviceResidenceUpdate,
+        None => WorkKind::DeviceUpdate,
+    };
     let writes = update_operations(update)?;
     let mut rows = crate::sync::ingest::payload_rows(key, update);
     rows.extend(carried.iter().copied());
@@ -272,14 +486,16 @@ pub fn admit_device_window_update(
         vault,
         BurstPeer::Device(peer),
         key,
-        WorkKind::DeviceUpdate,
+        kind,
         update,
         (writes, carried.as_slice()),
-        Some(parts.as_slice()),
+        (
+            Some(parts.as_slice()),
+            admission.map(|admitted| admitted.authority_digest),
+        ),
     )?;
     let Some(work) = work else {
-        let (id, _) =
-            DeferredWork::identity(BurstPeer::Device(peer), key, WorkKind::DeviceUpdate, update)?;
+        let (id, _) = DeferredWork::identity(BurstPeer::Device(peer), key, kind, update)?;
         let batch_ref = blake3::Hash::from(id).to_hex().to_string();
         let state = vault
             .federation_burst_disposition(BurstPeer::Device(peer), &batch_ref)?

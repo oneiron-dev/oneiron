@@ -359,9 +359,14 @@ fn reverse_rematerialize_scan(
             continue;
         }
 
-        let retained_shell = {
+        // The snapshot opens after the carrier bytes were read, so a shell
+        // read there is read fenced here: its scrub committed the row's
+        // deletion fence with it. A row deleted here (a soft delete between
+        // its scrub and its own publication, which re-proves the delete) is
+        // never mirrored, as egress withdraws its carrier.
+        let (retained_shell, deleted_here) = {
             let txn = vault.store.env.read_txn()?;
-            super::types::retained_world_shell_belongs_to_window(
+            let retained_shell = super::types::retained_world_shell_belongs_to_window(
                 vault,
                 &txn,
                 doc,
@@ -370,7 +375,10 @@ fn reverse_rematerialize_scan(
                 &raw,
                 window_key,
                 false,
-            )?
+            )?;
+            let deleted_here =
+                crate::deletion::row_deletion_marked(&vault.store, &txn, id, Some(raw.as_slice()))?;
+            (retained_shell, deleted_here)
         };
         // Excluded credentials and the local default manifest have no live
         // carrier or incident edge. Scrub history as well as the live map when
@@ -395,7 +403,7 @@ fn reverse_rematerialize_scan(
         // restore the carrier. Ordinary rows retain delete-wins semantics,
         // including non-binary values and case-shifted aliases.
         let protected_tombstone = protected_tombstones.contains(id);
-        if !protected_tombstone && tombstones.contains(id) && !retained_shell {
+        if !protected_tombstone && (tombstones.contains(id) || deleted_here) && !retained_shell {
             continue;
         }
 

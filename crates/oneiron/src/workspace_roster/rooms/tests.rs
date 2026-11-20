@@ -814,7 +814,8 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
         &[owner, agent],
         Some(&[crate::registry::ENTITY_TYPE_TASK]),
     )?;
-    assert!(human.rooms_trunk(room, trunk).unwrap().headers.is_empty());
+    // Withheld trunk TURN is refused, not served empty (history.rs:807-819, FIX5545).
+    assert!(human.rooms_trunk(room, trunk).is_err());
     assert_eq!(
         human
             .rooms_get_thread(room, root)

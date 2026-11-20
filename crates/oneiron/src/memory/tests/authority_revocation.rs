@@ -24,6 +24,8 @@ fn owner_verbs_require_active_owner_binding_when_rooted() {
             serde_json::json!("calm"),
         ))
         .expect("agent claim");
+    let stranger = put_person(&vault, 0x61);
+    grant_reads(&vault, stranger);
 
     root_vault_binding(&vault, 0x71, owner, "human");
 
@@ -48,7 +50,6 @@ fn owner_verbs_require_active_owner_binding_when_rooted() {
         .expect("bound owner deletes");
 
     // An UNBOUND human actor on the same rooted vault is refused on all three.
-    let stranger = put_person(&vault, 0x61);
     let stranger_facade = facade_for(&vault, stranger);
     let victim = put_person(&vault, 0x62);
     let other_claim = agent_facade
@@ -642,7 +643,7 @@ fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
     use crate::claim::PointRead;
     use crate::federation::ScopeAxis;
     let (_dir, vault) = open_vault();
-    let owner = put_owner(&vault);
+    let owner = put_person(&vault, 0x6D);
     // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
     // (MESSAGE-REL-NAMES = A).
     vault
@@ -992,7 +993,6 @@ fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
     // A connected peer: `route_live` would hand it the tombstone the instant
     // the publish leaked one.
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    manager.outbound().attach(tx);
     let window_key = WindowKey::from_timestamp(1);
     let window = manager
         .open_window(&window_key)
@@ -1001,10 +1001,14 @@ fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
     // Control: with the binding live, the same path publishes end to end — so
     // the assertions below pin the refusal, not a broken fixture.
     let warmup = put_person(&vault, 0x97);
+    // FIX 3787/5133: cold-open recovery routes live, so attach after it for an empty baseline.
+    manager.outbound().attach(tx);
     facade_for(&vault, owner)
         .safe_delete(&warmup.to_hex(), SafeDeleteReason::UserHardDelete)
         .expect("control: a bound owner publishes a tombstone");
     rx.try_recv().expect("control: the peer receives it");
+    // FIX 3787/5133: drain control traffic so the refusal sees only the raced delete.
+    while rx.try_recv().is_ok() {}
 
     // Two-phase rendezvous: `arrived` fires once the deleter's gate sidecar is
     // durably staged (its txn committed, no lock held); `resume` releases it
