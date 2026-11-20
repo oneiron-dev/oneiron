@@ -487,18 +487,27 @@ fn a_missing_opening_uses_page_site_but_an_invalid_open_url_does_not_fall_back()
     assert_eq!(got.gaps, [at(1, "click", DraftGapKind::MissingOpening)]);
     assert!(!got.complete);
 
-    let url = "https://{{name}}/";
-    let steps = [DraftStep {
-        requested_origin: None,
-        action: Ok(ReplayAction::Open {
-            url: url.to_owned(),
-        }),
-        ..open(1, SHOP)
-    }];
-    let got = draft_from_steps(&input(), &steps, &page())
+    let opening = |url: &str| {
+        [DraftStep {
+            requested_origin: None,
+            action: Ok(ReplayAction::Open {
+                url: url.to_owned(),
+            }),
+            ..open(1, SHOP)
+        }]
+    };
+    let got = draft_from_steps(&input(), &opening("ftp://shop.example/form"), &page())
         .expect("drafting does not validate a program's site");
     assert_eq!(got.site, None);
     assert_eq!(got.origin.as_deref(), Some(SHOP));
     assert!(got.gaps.is_empty());
     assert!(got.complete);
+
+    // A host that takes a slot names no site either, and its `{{` is a gap of its own.
+    let got = draft_from_steps(&input(), &opening("https://{{name}}/"), &page())
+        .expect("drafting does not validate a program's site");
+    assert_eq!(got.site, None);
+    assert_eq!(got.origin.as_deref(), Some(SHOP));
+    assert_eq!(got.gaps, [at(1, "open", DraftGapKind::LiteralOpensSlot)]);
+    assert!(!got.complete);
 }
