@@ -762,6 +762,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/document_import/issue_archive_restore.rs` | src | s | 2 crate-vis | — | Owner-only ISSUE recovery, separate from generic maintenance-row admission |
 | `src/batch/export/document_import/owner_archive_restore.rs` | src | m | 1 fn · 19 crate-vis | — | The owner act and call-scoped source permit for a whole-vault archive restore, the claims that restore… |
 | `src/batch/export/document_import/seed_replacement.rs` | src | s | 1 crate-vis | — | Owner-edited engine seeds restored only after the import proves a fresh destination |
+| `src/batch/export/document_import/unseated_rooms.rs` | src | s | 2 crate-vis | — | Archived rooms this vault cannot seat (fix list rows ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM-REFUSED and… |
 | `src/batch/export/document_snapshot.rs` | src | L | 4 fn · 7 crate-vis | — | Snapshot enumeration for whole-vault export |
 | `src/batch/export/document_tests.rs` | test | L | — | — | Observable whole-vault export/import contracts |
 | `src/batch/export/document_types.rs` | src | m | 14 struct · 3 enum · 10 fn · 1 re-export · 1 crate-vis | ArchiveSideTableOmission, ArchiveSpeakers, ExportDerivationEnvelope, ExportEntity, ExportLedger, ExportPack, ExportPackSource, ExportRowBirth +9 | The typed whole-vault document: what the archive's JSONL rows assemble into on import, and what the snapshot… |
@@ -2388,7 +2389,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/contract_oracle/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Persisted, deterministic Rust/JavaScript API, schema and command-output contracts |
 | `src/conversation/archive_restore.rs` | src | s | 1 crate-vis | — | Owner restore of archived room role grants (SIDE-4b G5) |
 | `src/conversation/attendee.rs` | src | m | 2 struct · 7 fn · 1 re-export · 3 crate-vis | ContainerAttendeeEntry, ContainerAttendeeEvent | An attendee's first entry into a chat or room (OF-365, ILDF2 P5) |
-| `src/conversation/body.rs` | src | m | 4 fn · 1 re-export · 4 crate-vis | — | Forward-compatible room body codec and the all-writer membership guard |
+| `src/conversation/body.rs` | src | m | 4 fn · 1 re-export · 5 crate-vis | — | Forward-compatible room body codec and the all-writer membership guard |
 | `src/conversation/chat_breakpoint.rs` | src | m | 1 struct · 1 enum · 8 fn · 1 re-export · 5 crate-vis | ChatBreakpoint, ChatBreakpointStale | `chat_breakpoint_storage` (FIX 4465 D): a self agent's per-reply chat breakpoint, the restart-readable seed… |
 | `src/conversation/closed.rs` | src | s | 1 crate-vis | — | The marker the room closed-setting door sets while it rewrites whether a room is closed (ARCH-0082… |
 | `src/conversation/deletion/mod.rs` | src | m | 3 fn · 7 crate-vis | — | Actor-bound room deletion and per-person erasure over the existing delete door |
@@ -9104,6 +9105,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/archive_import_reserved_families.rs` | test | s | — | — | The whole-vault import's one decision per reserved predicate family, and two families whose omitted rows… |
 | `tests/archive_import_retained_side_receipt.rs` | test | s | — | — | The whole-vault import receipt's retained-rows summary (SIDE-2a) |
 | `tests/archive_import_retained_side_rows.rs` | test | L | 10 crate-vis | — | Whole-vault archive retention of side-table rows (SIDE-1, OF-222) |
+| `tests/archive_import_rooms_not_seated_here.rs` | test | m | — | — | Fix list rows ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM-REFUSED and ARCHIVE-IMPORT-ROOM-PINS-OR-CLOSED-REFUSED… |
 | `tests/archive_judge.rs` | test | m | — | — | The output archive's judge (ARM05 P3; ARCH-0053 #output-archive: an output's cell is a typed judgment over… |
 | `tests/archive_producer_receipts.rs` | test | L | — | — | The output archive's receipts resolve to engine-minted producer records (FIX ARCHIVE-RECEIPT-UNVERIFIED… |
 | `tests/archive_restore_inbox_group.rs` | test | m | — | — | The owner approves the claims of one whole-vault restore in one receipted act (RULING 02:26 13 Nov, NOTE… |
