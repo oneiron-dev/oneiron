@@ -3,8 +3,8 @@
 use super::scripted_chromium::ScriptedChromium;
 use super::workflow_store::{StoreState, WorkflowStore};
 use oneiron_browser::{
-    BrowserEngine, BrowserError, BrowserGuest, BrowserSession, GuestLimits, HandleRetention,
-    SendPolicy,
+    BrowserEngine, BrowserError, BrowserGuest, BrowserRequestHandler, BrowserSession, GuestLimits,
+    HandleRetention, SendPolicy,
 };
 use oneiron_container::{
     EgressRelay, FenceProof, GuestSeccomp, HostNetFloor, HttpRequest, HttpResponse, SessionLease,
@@ -56,6 +56,26 @@ impl SessionFixture {
 /// Attaches the real session on a socket pair without installing a library.
 pub(crate) fn attach_session(url: &str) -> (BrowserSession, ScriptedChromium) {
     let (stream, peer) = ScriptedChromium::start(url, false);
+    attach_peer(stream, peer, BrowserEngine::Chromium, "generation-1", None)
+}
+
+/// Attaches a second session for replay, in the proposing session's request custody.
+pub(crate) fn attach_replay_session(
+    engine: BrowserEngine,
+    requests: Option<Arc<dyn BrowserRequestHandler>>,
+) -> (BrowserSession, ScriptedChromium) {
+    let (stream, peer) = ScriptedChromium::start_replay();
+    attach_peer(stream, peer, engine, "generation-2", requests)
+}
+
+/// Attaches the session on the supplied peer's transport.
+fn attach_peer(
+    stream: UnixStream,
+    peer: ScriptedChromium,
+    engine: BrowserEngine,
+    generation: &str,
+    requests: Option<Arc<dyn BrowserRequestHandler>>,
+) -> (BrowserSession, ScriptedChromium) {
     let config = BrowserGuest {
         runtime: PathBuf::from("no-runtime"),
         image: IMAGE.to_owned(),
@@ -69,15 +89,15 @@ pub(crate) fn attach_session(url: &str) -> (BrowserSession, ScriptedChromium) {
         policy: SendPolicy::default(),
         fixture: None,
         fixture_forward: None,
-        engine: BrowserEngine::Chromium,
+        engine,
     };
     let attached = BrowserSession::attach(
         &config,
-        transport(stream),
+        transport(stream, generation),
         Arc::new(NoEgress),
         Box::new(Unmetered),
         None,
-        None,
+        requests,
     );
     let session = expect_answer(&peer, attached, "the scripted Chromium session attaches");
     (session, peer)
@@ -99,8 +119,7 @@ pub(crate) fn expect_answer<T>(
 }
 
 /// Names the fixture's accepted attach fence without running a fence or a guest.
-fn manifest() -> SessionManifest {
-    let generation = "generation-1".to_owned();
+fn manifest(generation: &str) -> SessionManifest {
     SessionManifest {
         backend: "test".to_owned(),
         runtime: "test".to_owned(),
@@ -113,10 +132,10 @@ fn manifest() -> SessionManifest {
             seccomp_hash: "seccomp".to_owned(),
             network_routes: Vec::new(),
             network_evidence_digest: "evidence".to_owned(),
-            sandbox_generation: generation.clone(),
+            sandbox_generation: generation.to_owned(),
             launcher_digest: "launcher".to_owned(),
         }),
-        generation,
+        generation: generation.to_owned(),
         fence_unproven: false,
         image_release: Default::default(),
         guest_pressure: None,
@@ -124,11 +143,11 @@ fn manifest() -> SessionManifest {
 }
 
 /// Splits the host end into the public attach transport's reader and writer.
-fn transport(stream: UnixStream) -> SessionTransport {
+fn transport(stream: UnixStream, generation: &str) -> SessionTransport {
     SessionTransport {
         reader: Box::new(stream.try_clone().expect("the host reader socket clones")),
         writer: Box::new(stream),
-        manifest: manifest(),
+        manifest: manifest(generation),
         lease: Box::new(RunningLease),
     }
 }
@@ -143,7 +162,7 @@ impl SessionLease for RunningLease {
 }
 
 /// Allows the session to retain handles without a host memory floor.
-struct Unmetered;
+pub(crate) struct Unmetered;
 
 impl HandleRetention for Unmetered {
     fn resize(&mut self, _bytes: usize) -> bool {
