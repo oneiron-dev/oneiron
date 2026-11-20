@@ -195,9 +195,14 @@ impl Fixture {
 
     /// One complete poll of the host's calendar feed carrying `events`.
     fn poll_host_feed(&self, events: &[FeedEvent<'_>], etag: &str, now: u64) {
+        self.poll_host_feed_body(feed(events), etag, now);
+    }
+
+    /// One complete poll of the host's calendar feed answering `body`.
+    fn poll_host_feed_body(&self, body: Vec<u8>, etag: &str, now: u64) {
         let fetcher = ScriptedFeed(Mutex::new(Some(IcsFetchResponse::Complete {
             etag: Some(etag.to_owned()),
-            body: feed(events),
+            body,
         })));
         let config = IcsFeedPollConfig {
             secret_ref: format!("ics-feed:{HOST_FEED_SYSTEM}"),
@@ -315,6 +320,14 @@ fn feed(events: &[FeedEvent<'_>]) -> Vec<u8> {
     }
     out.push_str("END:VCALENDAR\r\n");
     out.into_bytes()
+}
+
+/// [`feed`] with each VEVENT cancelled (`STATUS:CANCELLED`).
+fn cancelled_feed(events: &[FeedEvent<'_>]) -> Vec<u8> {
+    String::from_utf8(feed(events))
+        .expect("the fixture feed is UTF-8")
+        .replace("END:VEVENT\r\n", "STATUS:CANCELLED\r\nEND:VEVENT\r\n")
+        .into_bytes()
 }
 
 struct LifecycleSolver<'a> {
@@ -620,6 +633,86 @@ fn a_booking_the_feed_left_out_moves_as_a_booking_when_it_returns_at_another_slo
             "sequence": 1,
         })],
         "one revised invite to the booker is queued for the move's SEQUENCE"
+    );
+}
+
+/// Review round 1 of #9677: a booking the host's feed cancelled and then left
+/// out stays cancelled by that cancellation. The omission never replaces it,
+/// so when the feed carries the booking again, live at another slot, the
+/// cancellation still stands: the EVENT keeps its booked slot, the booking
+/// takes no revision and a token reschedule still refuses it as cancelled.
+/// Had the omission replaced the cancellation, that live VEVENT would end it
+/// and move a booking the host cancelled.
+#[test]
+fn a_booking_the_feed_cancelled_then_left_out_stays_cancelled_when_it_returns_at_another_slot() {
+    let fixture = Fixture::open();
+    let (booked, booked_slot) =
+        book_seen_by_the_host_feed(&fixture, b"feed-cancel-omission-return");
+    let event = booked.calendar.event_ref;
+    // 16:00, outside the host's working hours: no solve offers it.
+    let moved = TimeRange {
+        start: MONDAY + 16 * 3_600,
+        end: MONDAY + 16 * 3_600 + u64::from(DEFAULT_INTRO_DURATION_MIN) * 60,
+    };
+
+    // The host's feed cancels the booking, then leaves it out.
+    fixture.poll_host_feed_body(
+        cancelled_feed(&[FeedEvent {
+            uid: &booked.calendar.uid,
+            sequence: 1,
+            slot: booked_slot,
+            summary: "intro-call",
+        }]),
+        "v2",
+        NOW + 120,
+    );
+    fixture.poll_host_feed(&[], "v3", NOW + 150);
+
+    // The host's feed carries it again, live and moved to 16:00.
+    fixture.poll_host_feed(
+        &[FeedEvent {
+            uid: &booked.calendar.uid,
+            sequence: 2,
+            slot: moved,
+            summary: "intro-call",
+        }],
+        "v4",
+        NOW + 180,
+    );
+
+    assert_eq!(
+        fixture.booking_sequence(&event),
+        0,
+        "the cancelled booking takes no revision"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .get_occurred(&event)
+            .expect("booking occurrence"),
+        inclusive(booked_slot),
+        "the cancelled booking's EVENT keeps its booked slot"
+    );
+    assert!(
+        fixture.queued_revision_invites().is_empty(),
+        "no revised invite is queued for a cancelled booking"
+    );
+    let refused = fixture.run(
+        BookingVerbRequest::Reschedule(RescheduleSpec {
+            token: booked.reschedule_token.clone(),
+            new_slot: moved,
+            visitor_tz: "UTC".to_owned(),
+            constraint: None,
+            idempotency_key: None,
+        }),
+        NOW + 210,
+    );
+    assert!(
+        matches!(
+            &refused,
+            Err(BookingError::InvalidConstraint(detail)) if detail.contains("cancelled")
+        ),
+        "the host's cancellation still stands; got {refused:?}"
     );
 }
 
