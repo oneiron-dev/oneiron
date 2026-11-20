@@ -374,9 +374,8 @@ const _: () = assert!(ROOM_SECRET_SIGIL.as_bytes()[0] != HANDLE_TAG.as_bytes()[0
 /// The custody handle as a value streams, read as `custody_handle` reads
 /// it: past the handle quotes trimmed from both ends, `sc` and digits
 /// whole, or `[secret `, `sc` or a room's `r`, digits, `]` and then blanks
-/// only. The
-/// handle reading's last trim, of `,` and `;`, takes nothing here: no
-/// segment holds either.
+/// only. The handle reading's last trim, of `,` and `;`, takes nothing
+/// here: no segment holds either.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 enum Handle {
     /// The quotes trimmed from the start.

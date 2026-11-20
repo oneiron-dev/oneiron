@@ -80,8 +80,10 @@ impl SessionOverlay {
     /// Keeps `value`, which the wall lifted for `reason`, in this room's own
     /// custody and answers its room handle: the handle it already has when
     /// the room keeps it, else a new one.
-    /// Only a live room keeps a secret: a sealed (on-record), closing or
-    /// closed room refuses, so nothing outlives the close that wipes it.
+    /// Only a room whose rows still stage keeps a secret: a live one, or one
+    /// sealing on record while its last writer drains. A sealed (on-record),
+    /// closing or closed room refuses, so nothing outlives the close that
+    /// wipes it.
     ///
     /// A value a write kept that did not commit stays until the close: no
     /// row holds its handle, and the same value written again takes it.
@@ -94,7 +96,10 @@ impl SessionOverlay {
             .lifecycle
             .lock()
             .map_err(|_| Error::InvariantViolation("session overlay lifecycle mutex poisoned"))?;
-        if lifecycle.state != OverlayLifecycleState::Live {
+        if !matches!(
+            lifecycle.state,
+            OverlayLifecycleState::Live | OverlayLifecycleState::Sealing
+        ) {
             return Err(Error::OffRecord(
                 OffRecordError::OffRecordOverlayLeaseClosed {
                     generation: lifecycle.generation,
