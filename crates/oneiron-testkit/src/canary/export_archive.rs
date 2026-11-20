@@ -4,8 +4,11 @@
 //! archive into its typed document, without importing a row, and reads the
 //! document's JSON, where every stored string is a JSON string (a
 //! MessagePack body is a run of typed nodes, each string node holding its
-//! text). The document leaves the custody records out, so the scan reads
-//! them from the archive's own member, each less its value.
+//! text; the ref walk reads each run as the value it spells). The scan asks
+//! for the archive without custody values (`include_secrets: false`), so no
+//! surface it keeps, the raw answer included, holds one: each custody record
+//! goes as its id, name, handle and metadata. The document leaves the custody
+//! records out, so the scan reads them from the archive's own member.
 
 use std::io::Read as _;
 
@@ -22,12 +25,15 @@ const EXPORT_CUSTODY_SURFACE: &str = "vault.export (custody records decoded)";
 /// The archive member that holds one custody record per line.
 const CUSTODY_MEMBER: &str = "records/secret_custody.jsonl";
 /// The custody record field that carries the secret value (its custody
-/// body, standard base64), present only in an archive that carries values.
+/// body, standard base64), filled only in an archive that carries values:
+/// the scan asks for none, and drops the field should one come.
 const CUSTODY_VALUE_FIELD: &str = "body";
 
 impl Reader<'_, '_> {
-    /// Asks `vault.export` for the whole-vault archive (refused to an agent:
-    /// owner only), decodes it with [`Vault::read_whole_vault_archive`],
+    /// Asks `vault.export` for the whole-vault archive without custody
+    /// values (refused to an agent: owner only; `include_secrets` absent
+    /// would carry each value that opens on this device, in the answer the
+    /// scan keeps), decodes it with [`Vault::read_whole_vault_archive`],
     /// which validates every member, and keeps the document's JSON; then
     /// reads the archive's custody records, which the document leaves out:
     /// each record's id, name, handle and metadata, never its value. Every
@@ -36,7 +42,11 @@ impl Reader<'_, '_> {
     /// Markdown copy of the same rows), the archive's attached files, and a
     /// custody record's value.
     pub(super) fn read_export(&mut self, vault: &Vault) {
-        let Some(answer) = self.read("vault.export", "vault.export", json!({})) else {
+        let Some(answer) = self.read(
+            "vault.export",
+            "vault.export",
+            json!({"include_secrets": false}),
+        ) else {
             return;
         };
         let export = match serde_json::from_value::<ExportAnswer>(answer) {

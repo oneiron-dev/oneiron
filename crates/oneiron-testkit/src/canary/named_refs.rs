@@ -40,11 +40,13 @@ pub(super) enum NamedRef {
 }
 
 impl NamedRef {
-    /// The ref `text` is, if any, as the field `key` names it.
+    /// The ref `text` is, if any, as the field `key` names it. An id is
+    /// kept in lower case, the spelling every answer writes, so one written
+    /// in either case is followed once.
     fn parse(key: Option<&str>, text: &str) -> Option<Self> {
         match key {
             Some("issue_ref") if is_entity_hex(text) => {
-                return Some(Self::ReportIssue(text.to_owned()));
+                return Some(Self::ReportIssue(text.to_ascii_lowercase()));
             }
             Some("proposal_ref") if !text.is_empty() => {
                 return Some(Self::SummaryProposal(text.to_owned()));
@@ -52,13 +54,19 @@ impl NamedRef {
             _ => {}
         }
         if is_entity_hex(text) {
-            return Some(Self::Entity(text.to_owned()));
+            return Some(Self::Entity(text.to_ascii_lowercase()));
         }
-        if text.strip_prefix("call:").is_some_and(is_entity_hex) {
-            return Some(Self::CallReceipt(text.to_owned()));
+        if let Some(id) = text.strip_prefix("call:").filter(|id| is_entity_hex(id)) {
+            return Some(Self::CallReceipt(format!(
+                "call:{}",
+                id.to_ascii_lowercase()
+            )));
         }
-        if text.strip_prefix("emit:").is_some_and(is_entity_hex) {
-            return Some(Self::ContextReceipt(text.to_owned()));
+        if let Some(id) = text.strip_prefix("emit:").filter(|id| is_entity_hex(id)) {
+            return Some(Self::ContextReceipt(format!(
+                "emit:{}",
+                id.to_ascii_lowercase()
+            )));
         }
         None
     }
@@ -199,11 +207,22 @@ impl Reader<'_, '_> {
 
 /// Every ref `value` names, with the field each string sits under (an array
 /// keeps its field's name). An object's keys name refs too, by their own
-/// form alone: an answer may index its values by entity id.
+/// form alone: an answer may index its values by entity id. An exported
+/// MessagePack value, which a decoded export writes as its archive nodes,
+/// is read as the value those nodes spell ([`node_run`]).
 fn named_refs(value: &Value, key: Option<&str>, out: &mut Vec<NamedRef>) {
     match value {
         Value::String(text) => out.extend(NamedRef::parse(key, text)),
         Value::Array(items) => {
+            if let Some(run) = node_run(items) {
+                out.extend(run.named);
+                out.extend(
+                    run.unkeyed
+                        .iter()
+                        .filter_map(|text| NamedRef::parse(key, text)),
+                );
+                return;
+            }
             for item in items {
                 named_refs(item, key, out);
             }
@@ -218,13 +237,119 @@ fn named_refs(value: &Value, key: Option<&str>, out: &mut Vec<NamedRef>) {
     }
 }
 
-/// Whether `text` is an entity id as every answer writes one: 32 lower-case
-/// hex.
+/// What one subtree of an exported value's archive nodes names: the refs
+/// read under a map key of their own, the texts no map key holds yet (an
+/// array passes its field's key down), and the subtree's own text when it is
+/// one text leaf, which a map reads as the key of the value after it.
+#[derive(Debug, Default)]
+struct NodeRefs {
+    named: Vec<NamedRef>,
+    unkeyed: Vec<String>,
+    text: Option<String>,
+}
+
+impl NodeRefs {
+    fn leaf(text: String) -> Self {
+        Self {
+            named: Vec::new(),
+            unkeyed: vec![text.clone()],
+            text: Some(text),
+        }
+    }
+}
+
+/// The refs `items` name when they are an exported MessagePack value's
+/// archive nodes (oneiron's `serialize::export_value::tree`): each node
+/// `{"type": .., "value": ..}` or a nil `null`, a container after its items
+/// as their count, the root last. Each map value is read under its own key,
+/// as the value the nodes spell would name it, and an entity reference (an
+/// id's bytes) as its 32 hex. `None` when `items` are no node run of one
+/// root. The nodes are read on a stack of their own, as the archive form
+/// is flat: no depth of value spends the call stack.
+fn node_run(items: &[Value]) -> Option<NodeRefs> {
+    let mut built: Vec<NodeRefs> = Vec::new();
+    let mut nodes = 0_usize;
+    for item in items {
+        let node = match item {
+            Value::Null => NodeRefs::default(),
+            Value::Object(fields) => {
+                if fields.keys().any(|name| name != "type" && name != "value") {
+                    return None;
+                }
+                nodes += 1;
+                let value = fields.get("value");
+                match fields.get("type")?.as_str()? {
+                    "string" | "binary_text" => NodeRefs::leaf(value?.as_str()?.to_owned()),
+                    "entity_reference" => NodeRefs::leaf(id_hex(value?)?),
+                    "boolean" | "integer" | "f32" | "f64" | "binary" | "ext" => NodeRefs::default(),
+                    "array" => {
+                        let mut array = NodeRefs::default();
+                        for item in last_built(&mut built, node_count(value)?)? {
+                            array.named.extend(item.named);
+                            array.unkeyed.extend(item.unkeyed);
+                        }
+                        array
+                    }
+                    "map" => {
+                        let mut map = NodeRefs::default();
+                        let pairs = last_built(&mut built, node_count(value)?.checked_mul(2)?)?;
+                        let mut pairs = pairs.into_iter();
+                        while let (Some(name), Some(item)) = (pairs.next(), pairs.next()) {
+                            map.named.extend(name.named);
+                            map.named.extend(
+                                name.unkeyed
+                                    .iter()
+                                    .filter_map(|text| NamedRef::parse(None, text)),
+                            );
+                            map.named.extend(item.named);
+                            map.named.extend(
+                                item.unkeyed
+                                    .iter()
+                                    .filter_map(|text| NamedRef::parse(name.text.as_deref(), text)),
+                            );
+                        }
+                        map
+                    }
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        built.push(node);
+    }
+    if nodes == 0 || built.len() != 1 {
+        return None;
+    }
+    built.pop()
+}
+
+/// The last `len` subtrees built, in order; `None` when fewer were built.
+fn last_built(built: &mut Vec<NodeRefs>, len: usize) -> Option<Vec<NodeRefs>> {
+    let at = built.len().checked_sub(len)?;
+    Some(built.split_off(at))
+}
+
+/// A container node's item count.
+fn node_count(value: Option<&Value>) -> Option<usize> {
+    usize::try_from(value?.as_u64()?).ok()
+}
+
+/// The lower-case hex of an entity reference node's bytes.
+fn id_hex(value: &Value) -> Option<String> {
+    value
+        .as_array()?
+        .iter()
+        .map(|byte| {
+            let byte = u8::try_from(byte.as_u64()?).ok()?;
+            Some(format!("{byte:02x}"))
+        })
+        .collect()
+}
+
+/// Whether `text` is an entity id: 32 hex, in either case, as the point
+/// doors read one (every answer writes lower case).
 fn is_entity_hex(text: &str) -> bool {
-    text.len() == 32
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    text.len() == 32 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 #[cfg(test)]
