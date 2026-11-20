@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand, ValueEnum};
 
 use super::{
-    RestoreWrapArgs, SecretBindArgs, SecretImportSupplementArgs, SecretPendingArgs,
+    KitPieceArgs, RestoreWrapArgs, SecretBindArgs, SecretImportSupplementArgs, SecretPendingArgs,
     SecretShowSupplementArgs, SecretUnbindArgs, VaultUnlockArgs,
 };
 use crate::config::ServeArgs;
@@ -139,7 +139,7 @@ pub struct MaintainArgs {
 #[derive(Args, Clone, Debug)]
 pub struct RestoreArgs {
     /// The backup file.
-    #[arg(required_unless_present = "activate")]
+    #[arg(required_unless_present_any = ["activate", "join"])]
     pub backup: Option<PathBuf>,
 
     /// Activate the previous vault a restore set aside at this path, which
@@ -235,6 +235,21 @@ pub struct RestoreArgs {
     #[arg(long, value_name = "URL", conflicts_with_all = ["activate", "rehearse", "inspect"])]
     pub custody_home: Option<String>,
 
+    /// Restore nothing: join this install, which a restore where no vault was
+    /// made, to its vault, as the owner's word that no other machine of the
+    /// vault is left to pair it. The configured host root, an owner key on a
+    /// self-host vault, files the install's enrolment and signs the word.
+    /// While a machine of the vault that has joined is left, pair this
+    /// install from it instead. Stop `serve` first.
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "backup", "activate", "rehearse", "inspect", "open_pads", "pad_machine",
+            "custody_home", "trust", "capsule", "wrap_to",
+        ]
+    )]
+    pub join: bool,
+
     #[command(flatten)]
     pub wrap: RestoreWrapArgs,
 
@@ -321,6 +336,93 @@ pub enum VaultKeyCommand {
     /// The recovery preset: `standard`, or `nobody-but-me`, where the
     /// printed sheet alone restores the vault. Shown, or set with `--set`.
     RecoveryPreset(Box<VaultKeyRecoveryPresetArgs>),
+    /// Start a new data-key generation: everything written after it is sealed
+    /// under a fresh key. `--preview` names the wraps it would remove.
+    NewGeneration(Box<VaultKeyNewGenerationArgs>),
+}
+
+/// A passkey the owner keeps: its credential NAME and the FILE holding its
+/// PRF output.
+#[derive(Clone, Debug)]
+pub struct KeptPasskeyArg {
+    /// The passkey's credential name.
+    pub name: String,
+    /// The owner-only file holding the passkey's PRF output.
+    pub file: PathBuf,
+}
+
+/// `NAME=FILE`, split at the first `=`.
+fn kept_passkey(text: &str) -> Result<KeptPasskeyArg, String> {
+    let (name, file) = kept_way(text, "a kept passkey is NAME=FILE")?;
+    Ok(KeptPasskeyArg {
+        name: name.to_owned(),
+        file: PathBuf::from(file),
+    })
+}
+
+/// An escrow the owner keeps: its LABEL and the FILE holding the recipient's
+/// hybrid public key bytes.
+#[derive(Clone, Debug)]
+pub struct KeptEscrowArg {
+    /// The escrow's label.
+    pub label: String,
+    /// The file holding the recipient's hybrid public key bytes.
+    pub file: PathBuf,
+}
+
+/// `LABEL=FILE`, split at the first `=`.
+fn kept_escrow(text: &str) -> Result<KeptEscrowArg, String> {
+    let (label, file) = kept_way(text, "a kept escrow is LABEL=FILE")?;
+    Ok(KeptEscrowArg {
+        label: label.to_owned(),
+        file: PathBuf::from(file),
+    })
+}
+
+/// `NAME=FILE` split at the first `=`, neither side empty; `what` words any
+/// other text.
+fn kept_way<'t>(text: &'t str, what: &str) -> Result<(&'t str, &'t str), String> {
+    let refused = || what.to_owned();
+    let (name, file) = text.split_once('=').ok_or_else(refused)?;
+    if name.is_empty() || file.is_empty() {
+        return Err(refused());
+    }
+    Ok((name, file))
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct VaultKeyNewGenerationArgs {
+    /// Print the wraps the act would remove; read no secret; change nothing.
+    #[arg(long)]
+    pub preview: bool,
+
+    /// The owner keeps the vault password, read as a secret from stdin or
+    /// `--secret-file`.
+    #[arg(long)]
+    pub keep_password: bool,
+
+    /// A passkey the owner keeps: NAME=FILE, FILE an owner-only file holding
+    /// the passkey's PRF output.
+    #[arg(long = "keep-passkey", value_name = "NAME=FILE", value_parser = kept_passkey)]
+    pub keep_passkeys: Vec<KeptPasskeyArg>,
+
+    /// An escrow the owner keeps: LABEL=FILE, FILE holding the recipient's
+    /// hybrid public key bytes.
+    #[arg(long = "keep-escrow", value_name = "LABEL=FILE", value_parser = kept_escrow)]
+    pub keep_escrows: Vec<KeptEscrowArg>,
+
+    /// A wrap id the owner confirms for removal.
+    #[arg(long = "confirm-removal", value_name = "ID")]
+    pub confirm_removals: Vec<String>,
+
+    #[command(flatten)]
+    pub unlock: VaultUnlockArgs,
+
+    #[command(flatten)]
+    pub secret: SecretSourceArgs,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 /// The owner's recovery preset, as `vault-key recovery-preset --set` names
@@ -349,6 +451,13 @@ pub struct VaultKeyRecoveryPresetArgs {
     /// sheet's code is written to, once. Print it and keep it offline.
     #[arg(long, value_name = "FILE")]
     pub sheet_out: Option<PathBuf>,
+
+    /// With `--set nobody-but-me`: the recovery kit that replaces the key
+    /// the box could release, as `recovery-kit confirm` takes it. Give two
+    /// pieces, or one and the passphrase. Without it the switch is refused
+    /// while a generation is live.
+    #[command(flatten)]
+    pub kit: KitPieceArgs,
 
     #[command(flatten)]
     pub unlock: VaultUnlockArgs,
@@ -1392,6 +1501,11 @@ pub struct EmbeddingSpaceProbePutArgs {
 pub struct EmbeddingSpaceProbeDeleteArgs {
     /// The probe's id, 32 hex, as `probes list` names it.
     pub id: String,
+
+    /// Another asker's approved check-in for deleting this probe, 32 hex:
+    /// the delete applies it on your own proof and spends it.
+    #[arg(long, value_name = "HEX")]
+    pub check_in_ref: Option<String>,
 
     #[command(flatten)]
     pub serve: ServeArgs,

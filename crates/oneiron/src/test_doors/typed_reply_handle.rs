@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord, ExecutorStorage, GatedActorWrite,
-    ProgramStepFeedback, ProgramStepIdentity, SelfCall, SelfDispatchOutcome, TaskWaitFinding,
-    TaskWaitSetCall, TaskWaitSetResult, TypeDiagnostics, code_run_replay_abi_layout_checks,
+    ProgramStepFeedback, ProgramStepIdentity, ReaderReadCapture, SelfCall, SelfDispatchOutcome,
+    SelfSkillCall, StepContextCapture, StepReplayContext, TaskWaitFinding, TaskWaitSetCall,
+    TaskWaitSetResult, TypeDiagnostics, code_run_replay_abi_layout_checks,
     decode_code_run_replay_record, encode_code_run_replay_record,
 };
 use crate::consent::AuthenticatedOwner;
@@ -17,8 +18,8 @@ use crate::error::{Error, Result};
 use crate::runtime_hooks::{HookBodyRun, HookBodyRuntime, HookRunContext};
 use crate::skill_hub::HubFile;
 use crate::skill_hub::pack_catalog::{
-    HookAuthor, HookOutcomeKind, HookPhase, HookRenderClass, HookSelector, PackHookBinding,
-    PackSource,
+    HookActorClass, HookAuthor, HookOutcomeKind, HookPhase, HookRenderClass, HookSelector,
+    PackHookBinding, PackSource,
 };
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -53,6 +54,82 @@ impl HookBodyRuntime for RedactRuntime {
     }
 }
 
+/// A [`RedactRuntime`] that redacts `paths` only when its input holds
+/// `needle` verbatim, and otherwise a path that names nothing: a test reads
+/// off the caller's view whether the hook's input carried the needle.
+pub struct InputMatchRedactRuntime {
+    paths: Vec<String>,
+    needle: String,
+}
+
+impl HookBodyRuntime for InputMatchRedactRuntime {
+    fn run_hook(
+        &self,
+        _body: &str,
+        input_json: &str,
+        _context: &mut HookRunContext,
+        _read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
+    ) -> Result<HookBodyRun> {
+        let paths = if input_json.contains(&self.needle) {
+            self.paths.clone()
+        } else {
+            vec!["/input-lacks-the-needle".to_owned()]
+        };
+        let outcome_json = serde_json::to_string(&serde_json::json!({
+            "kind": "redact",
+            "paths": paths,
+        }))
+        .map_err(|error| {
+            Error::InvalidConfig(format!("redact outcome does not encode: {error}"))
+        })?;
+        Ok(HookBodyRun {
+            outcome_json,
+            fuel_used: Some(0),
+            host_calls: 1,
+        })
+    }
+}
+
+/// A [`RedactRuntime`] that also caps the hook input it runs on at
+/// `message_bytes`, as the real sandbox refuses an input its guest cannot
+/// hold: an input past it fails the run before the body starts, reported
+/// as never taken, with the sandbox's own refusal. What a test installs to
+/// stand a blocking post hook on an answer its hook cannot judge whole.
+pub struct CappedRedactRuntime {
+    paths: Vec<String>,
+    message_bytes: usize,
+}
+
+impl HookBodyRuntime for CappedRedactRuntime {
+    fn run_hook(
+        &self,
+        _body: &str,
+        input_json: &str,
+        context: &mut HookRunContext,
+        _read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
+    ) -> Result<HookBodyRun> {
+        if input_json.len() > self.message_bytes {
+            context.report_usage(crate::runtime_hooks::HookBodyUsage::NOT_RUN);
+            context.report_input_not_taken();
+            return Err(Error::InvalidConfig(
+                "hook input exceeds the guest memory".to_owned(),
+            ));
+        }
+        let outcome_json = serde_json::to_string(&serde_json::json!({
+            "kind": "redact",
+            "paths": self.paths,
+        }))
+        .map_err(|error| {
+            Error::InvalidConfig(format!("redact outcome does not encode: {error}"))
+        })?;
+        Ok(HookBodyRun {
+            outcome_json,
+            fuel_used: Some(0),
+            host_calls: 1,
+        })
+    }
+}
+
 /// Binds one post hook on `verb` whose body answers a Redact, as an owner's
 /// pack bind writes it: its pack source is staged first, so the body's bytes
 /// read back. Answers the binding's id.
@@ -67,11 +144,76 @@ pub fn bind_redact_post_hook(
     proof: &AuthenticatedOwner,
     verb: &str,
 ) -> Result<EntityId> {
+    bind_redact_post_hook_for_actors(vault, owner, proof, verb, Vec::new())
+}
+
+/// [`bind_redact_post_hook`] as a blocking hook: a run that fails on it
+/// fails safe, as a blocking hook's failure does. What a test binds to
+/// stand a blocking post hook on a skill answer its hook cannot judge.
+/// Answers the binding's id.
+///
+/// # Errors
+///
+/// The owner's proof no longer valid, the pack source's, or the write's
+/// refusal.
+pub fn bind_blocking_redact_post_hook(
+    vault: &Vault,
+    owner: EntityId,
+    proof: &AuthenticatedOwner,
+    verb: &str,
+) -> Result<EntityId> {
+    bind_redact_post_hook_inner(vault, owner, proof, verb, Vec::new(), true, Vec::new())
+}
+
+/// [`bind_redact_post_hook`] with served filter `served`: the hook runs only
+/// on a result that serves a row the filter takes ([SKILL-ANSWER-DEEP-JSON-STACK-SAFE]).
+///
+/// # Errors
+///
+/// The owner's proof no longer valid, the pack source's, or the write's
+/// refusal.
+pub fn bind_served_redact_post_hook(
+    vault: &Vault,
+    owner: EntityId,
+    proof: &AuthenticatedOwner,
+    verb: &str,
+    served: Vec<String>,
+) -> Result<EntityId> {
+    bind_redact_post_hook_inner(vault, owner, proof, verb, Vec::new(), false, served)
+}
+
+/// [`bind_redact_post_hook`] taking only calls by one of `actors` (every
+/// class when it is empty, as a selector with no actors reads): what a test
+/// binds to stand a hook on a verb that cannot take its caller.
+///
+/// # Errors
+///
+/// The owner's proof no longer valid, the pack source's, or the write's
+/// refusal.
+pub fn bind_redact_post_hook_for_actors(
+    vault: &Vault,
+    owner: EntityId,
+    proof: &AuthenticatedOwner,
+    verb: &str,
+    actors: Vec<HookActorClass>,
+) -> Result<EntityId> {
+    bind_redact_post_hook_inner(vault, owner, proof, verb, actors, false, Vec::new())
+}
+
+fn bind_redact_post_hook_inner(
+    vault: &Vault,
+    owner: EntityId,
+    proof: &AuthenticatedOwner,
+    verb: &str,
+    actors: Vec<HookActorClass>,
+    blocking: bool,
+    served: Vec<String>,
+) -> Result<EntityId> {
     let body_bytes = b"return { kind: \"redact\", paths: [\"/output/title\"] };\n";
     let pack_md = "---\nname: test.typed-reply\ndescription: Redact test pack for typed reply handles\nversion: 1.0.0\nkind: capability\nhooks: [\"redact-title\"]\n---\nTest pack body.\n"
         .to_owned();
     let hook_md = format!(
-        "---\nname: redact-title\nversion: 1.0.0\nverbs: [\"{verb}\"]\nphase: post\npriority: 0\nbudget_ms: 200\nblocking: false\noutcomes: [\"redact\"]\n---\nHides the title for the redaction test.\n"
+        "---\nname: redact-title\nversion: 1.0.0\nverbs: [\"{verb}\"]\nphase: post\npriority: 0\nbudget_ms: 200\nblocking: {blocking}\noutcomes: [\"redact\"]\n---\nHides the title for the redaction test.\n"
     );
     let source = PackSource::from_files(vec![
         HubFile::new("PACK.md", pack_md.into_bytes()),
@@ -94,14 +236,14 @@ pub fn bind_redact_post_hook(
         body_hash: blake3::Hash::from(body_hash).to_hex().to_string(),
         selector: HookSelector {
             verbs: vec![verb.to_owned()],
-            actors: Vec::new(),
+            actors,
             scope: None,
             phase: HookPhase::Post,
             priority: 0,
             budget_ms: 200,
-            blocking: false,
+            blocking,
             outcomes: vec![HookOutcomeKind::Redact],
-            served: Vec::new(),
+            served,
             render_class: HookRenderClass::default(),
         },
         enabled: true,
@@ -121,6 +263,77 @@ pub fn bind_redact_post_hook(
 pub fn install_redact_runtime(vault: &Vault, paths: Vec<String>) -> Result<()> {
     vault
         .install_hook_runtime(Arc::new(RedactRuntime { paths }))
+        .map_err(Error::InvalidConfig)
+}
+
+/// Hands `vault`'s verb hooks the [`InputMatchRedactRuntime`] redacting
+/// `paths` when an input holds `needle`. The runtime is per vault: each test
+/// vault installs its own.
+///
+/// # Errors
+///
+/// Another sandbox already installed on the vault.
+pub fn install_input_match_redact_runtime(
+    vault: &Vault,
+    paths: Vec<String>,
+    needle: String,
+) -> Result<()> {
+    vault
+        .install_hook_runtime(Arc::new(InputMatchRedactRuntime { paths, needle }))
+        .map_err(Error::InvalidConfig)
+}
+
+/// The verb chain's Redact of `paths` applied to `view`, a value, path by
+/// path ([SKILL-ANSWER-DEEP-JSON-STACK-SAFE]).
+pub fn redact_view_value(view: &mut serde_json::Value, paths: &[String]) {
+    crate::runtime_hooks::verb::redact_value_for_test(view, paths);
+}
+
+/// The same Redact applied to `text`, the view held as JSON text, as a post
+/// chain applies it to a skill answer it never reads into a value: `None`
+/// when it hid nothing.
+///
+/// # Errors
+///
+/// `text` does not read as JSON.
+pub fn redact_view_text(text: &str, paths: &[String]) -> Result<Option<String>> {
+    crate::runtime_hooks::verb::redact_text_for_test(text, paths)
+}
+
+/// The rows a verb run's saved hook `input` names, as its run record keeps
+/// them so an erase of one retires the run's payload: read from the decoded
+/// input, or, when it does not decode (it nests past a value's limit), from
+/// every id it spells, its escapes read.
+pub fn rows_named_by_hook_input(input: &str) -> Vec<EntityId> {
+    crate::runtime_hooks::verb::rows_named_by_input_for_test(input)
+}
+
+/// What a permanent erase of `ids` does to a verb run whose saved hook
+/// `input` does not decode (it nests past a value's limit): `"depends"` when
+/// its args or result name one (the run retires), `"renamed"` with the input
+/// it keeps when only an actor in it is one (that actor names the erased
+/// marker), `"unchanged"`, or `"scrubbed"` when it loses its payload.
+pub fn erase_of_deep_hook_input(input: &str, ids: &[EntityId]) -> (&'static str, Option<String>) {
+    crate::runtime_hooks::verb::erase_deep_input_for_test(input, ids)
+}
+
+/// Hands `vault`'s verb hooks the [`CappedRedactRuntime`] redacting `paths`
+/// over inputs up to `message_bytes`. The runtime is per vault: each test
+/// vault installs its own.
+///
+/// # Errors
+///
+/// Another sandbox already installed on the vault.
+pub fn install_capped_redact_runtime(
+    vault: &Vault,
+    paths: Vec<String>,
+    message_bytes: usize,
+) -> Result<()> {
+    vault
+        .install_hook_runtime(Arc::new(CappedRedactRuntime {
+            paths,
+            message_bytes,
+        }))
         .map_err(Error::InvalidConfig)
 }
 
@@ -332,4 +545,32 @@ fn stored_program_steps_len(outcome: &rmpv::Value) -> Result<usize> {
     let steps: Vec<ProgramStepFeedback> = serde_json::from_str(text)
         .map_err(|_| Error::InvalidClaimBody("probe program steps do not decode"))?;
     Ok(steps.len())
+}
+
+/// Whether a hook view kept for one skill call leaves a step replay
+/// context that reads back. Answers whether the capture kept the view and
+/// is complete, and whether the encoded context decodes to itself.
+pub fn replay_context_view_reads_back(view: serde_json::Value) -> (bool, bool) {
+    let mut capture = StepContextCapture::new(None);
+    let call = SelfCall::SkillsCall(SelfSkillCall {
+        skill: EntityId::now(),
+        args: serde_json::json!({}),
+    });
+    capture
+        .guest_responses
+        .keep(&call, Some(0), Some(&view), None);
+    let kept = capture.guest_responses.complete && capture.guest_responses.at(0).is_some();
+    let context = StepReplayContext {
+        run: EntityId::now(),
+        step: 1,
+        bridge_start: 0,
+        bridge_end: 1,
+        guest_responses: capture.guest_responses,
+        reader_reads: ReaderReadCapture::new(None),
+        callables: Vec::new(),
+        deliveries: Vec::new(),
+    };
+    let bytes = context.encode().expect("the step replay context encodes");
+    let reads_back = StepReplayContext::decode(&bytes) == Some(context);
+    (kept, reads_back)
 }

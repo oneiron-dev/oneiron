@@ -23,6 +23,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use super::coach::{COACH_FOLD_DEFAULT_PREDICATE, COACH_FOLD_SUGGESTIONS_FACET};
 use super::proposals;
 use crate::agent_dispatch::{agent_dispatch_actor, decode_agent_dispatch_input};
@@ -41,7 +43,6 @@ const FOLD_SUGGESTION_MIN_RUNS: usize = 3;
 /// have unfolded again for that kind still to count as folded well. Canon
 /// names no number: one in five.
 const FOLD_SUGGESTION_MAX_UNFOLD_PERCENT: u64 = 20;
-const STATE_DOMAIN: &[u8] = b"oneiron:coach-fold-suggestions:v1";
 
 /// A hash of the defaults the Coach last suggested for one agent type, so an
 /// unchanged habit is not suggested again. Key: id16 of the AGENT_DEF row.
@@ -230,16 +231,15 @@ impl FoldSuggestion {
 
 /// A hash of the defaults themselves, never of the counts behind them.
 fn suggestion_state(definition: EntityId, suggestions: &[FoldSuggestion]) -> [u8; 32] {
-    let mut hash = blake3::Hasher::new();
-    hash.update(STATE_DOMAIN);
-    hash.update(definition.as_bytes());
+    let mut hash = LegacyDigest::new(purposes::dreamer_runner::FOLD_SUGGESTION_STATE);
+    hash.raw(definition.as_bytes());
     for suggestion in suggestions {
-        hash.update(suggestion.kind.as_bytes());
-        hash.update(&[0]);
-        hash.update(&suggestion.keep_last_steps.unwrap_or(u64::MAX).to_be_bytes());
-        hash.update(&suggestion.median_span_steps.to_be_bytes());
+        hash.raw(suggestion.kind.as_bytes());
+        hash.raw(&[0]);
+        hash.raw(&suggestion.keep_last_steps.unwrap_or(u64::MAX).to_be_bytes());
+        hash.raw(&suggestion.median_span_steps.to_be_bytes());
     }
-    *hash.finalize().as_bytes()
+    hash.finish()
 }
 
 /// One agent type's suggestions in one write: one Proposed finding per kind,
@@ -272,4 +272,27 @@ fn suggest(
         }
         SUGGESTED.put(&vault.store, txn, &definition, &state)
     })
+}
+
+/// [`suggestion_state`] over `(kind, keep_last_steps, median_span_steps)`
+/// rows; the counts it never reads are zero.
+#[cfg(oneiron_test_support)]
+pub(crate) fn suggestion_state_for_test(
+    definition: EntityId,
+    rows: &[(&'static str, Option<u64>, u64)],
+) -> [u8; 32] {
+    let suggestions: Vec<FoldSuggestion> = rows
+        .iter()
+        .map(
+            |&(kind, keep_last_steps, median_span_steps)| FoldSuggestion {
+                kind,
+                keep_last_steps,
+                median_span_steps,
+                runs: 0,
+                folds: 0,
+                unfolded: 0,
+            },
+        )
+        .collect();
+    suggestion_state(definition, &suggestions)
 }

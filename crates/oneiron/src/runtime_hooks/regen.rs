@@ -34,6 +34,7 @@ pub use pass::HookRegenPassReport;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
@@ -75,12 +76,8 @@ impl HookContractStamp {
     #[must_use]
     pub fn current() -> Self {
         Self {
-            verb_table: blake3::hash(contract::VERB_TABLE.as_bytes())
-                .to_hex()
-                .to_string(),
-            sandbox: blake3::hash(contract::HOOK_WORLD.as_bytes())
-                .to_hex()
-                .to_string(),
+            verb_table: ContentHash::of(contract::VERB_TABLE.as_bytes()).to_hex(),
+            sandbox: ContentHash::of(contract::HOOK_WORLD.as_bytes()).to_hex(),
         }
     }
 }

@@ -166,6 +166,14 @@ impl UpstreamIssuer {
     }
 }
 
+/// Which credential a call presents to its connector's upstream: the
+/// digest of the header the call presents, salted per server, or `None` for
+/// a call that presents nothing. A child keeps in memory what its calls
+/// fetched, so a call that presents another credential goes to a new child
+/// (FIX [STDIO-CHILD-SHARED-ACROSS-CREDENTIALS]).
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct PresentedCredential(Option<[u8; 32]>);
+
 /// The upstream doors of one server's stdio connector children, each found
 /// by the digest of the reference its child holds.
 #[derive(Default)]
@@ -174,6 +182,9 @@ pub struct UpstreamDoors {
     /// The door's client, built at its first send; `None` when it could
     /// not be built.
     client: OnceLock<Option<reqwest::Client>>,
+    /// The salt of each [`PresentedCredential`], drawn from the OS at its
+    /// first use: no digest of a header outlives this server.
+    salt: OnceLock<[u8; 32]>,
 }
 
 /// One child's door.
@@ -251,7 +262,7 @@ impl UpstreamDoors {
     ) -> (UpstreamTicket, UpstreamEnv) {
         let name = normalize_name(name);
         let reference = mint_reference();
-        let digest = digest(&reference);
+        let digest = digest(reference.as_bytes());
         let base_url = Zeroizing::new(format!(
             "{}{UPSTREAM_DOOR_PATH}/{name}",
             door_origin.trim_end_matches('/')
@@ -286,7 +297,7 @@ impl UpstreamDoors {
     ) -> Result<(Admitted, watch::Receiver<()>), Refusal> {
         let doors = lock(&self.doors);
         let door = doors
-            .get(&digest(presented))
+            .get(&digest(presented.as_bytes()))
             .filter(|door| door.name == name)
             .ok_or(Refusal::Unknown)?;
         let call = door.call.as_ref().ok_or(Refusal::NotInCall)?;
@@ -296,6 +307,17 @@ impl UpstreamDoors {
             _lease: call.lease.clone(),
         };
         Ok((admitted, call.ended.subscribe()))
+    }
+
+    /// Which credential `held` presents; see [`PresentedCredential`].
+    pub(super) fn presented(&self, held: &UpstreamHeld) -> PresentedCredential {
+        PresentedCredential(held.auth.as_ref().map(|auth| {
+            let salt = self.salt.get_or_init(mint_salt);
+            let mut salted = Zeroizing::new(Vec::with_capacity(salt.len() + auth.len()));
+            salted.extend_from_slice(salt);
+            salted.extend_from_slice(auth.as_bytes());
+            digest(&salted)
+        }))
     }
 
     /// The connector client's policy: no proxy, no redirect, its connect
@@ -368,8 +390,15 @@ fn mint_reference() -> Zeroizing<String> {
     text
 }
 
-fn digest(reference: &str) -> [u8; 32] {
-    *blake3::hash(reference.as_bytes()).as_bytes()
+/// A fresh salt for [`PresentedCredential`]: 32 random bytes from the OS.
+fn mint_salt() -> [u8; 32] {
+    let mut salt = [0_u8; 32];
+    rand_core::OsRng.fill_bytes(&mut salt);
+    salt
+}
+
+fn digest(bytes: &[u8]) -> [u8; 32] {
+    *blake3::hash(bytes).as_bytes()
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

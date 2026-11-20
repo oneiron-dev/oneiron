@@ -2,7 +2,10 @@
 //! the delete a non-owner's role or Grant admits (ARCH-0043 DEL-2), judged
 //! by check-in first (ROLES-CHECKIN 2k5).
 
-use super::support::{verify_actor_binding_in_txn, verify_deletion_authority_in_txn};
+use super::support::{
+    verify_actor_binding_in_txn, verify_deletion_authority_in_txn,
+    verify_own_person_deletion_authority_in_txn,
+};
 use super::{
     DELETE_RECEIPT_VERSION_RELEASE, DeleteReceipt, DeleteRequestState, MEMORY_CODE_FORBIDDEN,
     MEMORY_CODE_OWNER_BINDING_REQUIRED, Memory, MemoryError, MemoryResult, SafeDeleteReason,
@@ -92,7 +95,8 @@ impl Memory<'_> {
     /// # Errors
     ///
     /// As [`Self::safe_delete`]; `BAD_REQUEST` for a `check_in_ref` that is
-    /// no check-in id, or that an Owner's or an agent's delete names;
+    /// no check-in id, that an Owner's or an agent's delete names, or that a
+    /// person's delete that goes at once names;
     /// `CHECK_IN_PENDING` while the delete waits; a check-in that does not
     /// apply; `FORBIDDEN` when the role or Grant the judge read changed
     /// before the delete committed.
@@ -218,8 +222,9 @@ impl Memory<'_> {
     /// # Errors
     ///
     /// `authority`'s refusal; `BAD_REQUEST` for a `check_in_ref` an Owner's
-    /// or an agent's delete names; a person with no membership grant; as
-    /// [`check_in::person_door_check_in_in_txn`].
+    /// or an agent's delete names, or a person's that goes at once
+    /// ([`check_in::named_check_in_at_once`]); a person with no membership
+    /// grant; as [`check_in::person_door_check_in_in_txn`].
     pub(super) fn role_delete_check_in(
         &self,
         target: &DeleteTarget,
@@ -250,6 +255,9 @@ impl Memory<'_> {
                         verb,
                         check_in_ref,
                     )? {
+                        // A delete that goes at once comes back with no
+                        // check-in: the judge refuses a `check_in_ref` it
+                        // names ([`check_in::named_check_in_at_once`]).
                         DoorCheckIn::Go(decision) => Some(decision),
                         DoorCheckIn::Wait(check_in) => {
                             return Ok(RoleDeleteCheckIn::Waits(check_in));
@@ -286,7 +294,11 @@ impl Memory<'_> {
         )
     }
 
-    pub(super) fn safe_delete_checked(
+    /// The owner's delete of `entity_ref` with `check` rerun in each of its
+    /// writes before publication, beside the delete's own authority: the
+    /// archive purge's preview, a note's tombstone, and the standing
+    /// `erase_request_reply` setting a courtesy ask is answered under.
+    pub(crate) fn safe_delete_checked(
         &self,
         entity_ref: &str,
         reason: SafeDeleteReason,
@@ -364,11 +376,25 @@ impl Memory<'_> {
         let owner_act = self
             .owner_authorship()
             .map(|owner| EraseOwnerAct::new(owner, self.owner_surface()));
+        // An owner deleting their own PERSON: once this delete's own scrub
+        // commits, its writes re-prove the Active binding and the owner
+        // census with this owner's PERSON taken live (L9-52 (b)).
         let deleted = self.safe_delete_gated(
             &id,
             reason,
             gate,
-            &|txn| verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class),
+            &|txn| {
+                if id == self.actor {
+                    verify_own_person_deletion_authority_in_txn(
+                        self.vault,
+                        txn,
+                        self.actor,
+                        self.actor_class,
+                    )
+                } else {
+                    verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class)
+                }
+            },
             check,
             stop_check_after_soft_scrub,
             claim,
@@ -619,8 +645,9 @@ pub(super) fn spends_no_check_in() -> MemoryError {
 ///
 /// # Errors
 ///
-/// A person with no membership grant on the shared vault; as
-/// [`check_in::person_door_check_in_in_txn`].
+/// A person with no membership grant on the shared vault; a `check_in_ref`
+/// a Steward's own-item delete names ([`check_in::named_check_in_at_once`]);
+/// as [`check_in::person_door_check_in_in_txn`].
 fn person_delete_check_in_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -640,6 +667,12 @@ fn person_delete_check_in_in_txn(
         .ok_or_else(not_member)?;
     let role = RolePreset::of_grant_role(role);
     if role == RolePreset::Steward && target.owned_by_in(vault, txn, person)? {
+        // Its own item goes at once and spends no check-in, so one the call
+        // names is refused, as the judge refuses it for every act that goes
+        // at once (REVIEW-9839 P1).
+        if check_in_ref.is_some() {
+            return Err(check_in::named_check_in_at_once());
+        }
         return Ok(DoorCheckIn::Go(CheckInDecision {
             act_class: ActClass::Delete.as_str().to_owned(),
             role: role.as_str().to_owned(),

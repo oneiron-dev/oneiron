@@ -34,6 +34,7 @@ use crate::error::Error;
 use crate::secret_custody::retire_connector_resume_in_txn;
 use crate::store::checkpoint_payload::Subtype;
 use crate::store::checkpoint_payload::retirement::{PayloadDisposition, settle_owner_in_txn};
+use oneiron_contracts::lifecycle::Lifecycle;
 
 /// The owner's erase of call `attempt_id`/`call_seq`'s frozen request, in
 /// `wtxn`: the evidence-only disposition. The row keeps its id, attempt
@@ -78,7 +79,7 @@ pub(crate) fn erase_call_request_in_txn(
     if matches!(record.state, IntentState::Pending | IntentState::Deferred) {
         record.delivery_uncertain |=
             record.recorded_outcome.is_none() || record.state == IntentState::Deferred;
-        record.state = IntentState::Abandoned;
+        record.state.transition_to(IntentState::Abandoned)?;
         record.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(
             IntentEscalationReason::OwnerErased,
         ));

@@ -19,7 +19,8 @@ use super::{
     WorkflowSite, push_recent, strict_misses_after, superseded_by, superseded_reason,
 };
 use crate::Vault;
-use crate::batch::secret_scan::{admitted_from, named_tree};
+use crate::batch::secret_scan::{admitted_from_known, named_tree};
+use crate::code_run::CompareKnown;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning::TypeRef;
@@ -203,11 +204,17 @@ pub fn file_workflow(
 ) -> Result<Filing> {
     let same = serde_json::to_value(program).ok();
     // A filed program holds handles where this one may hold the secrets the
-    // side-row wall lifted (OF-067); it is still the same program.
+    // side-row wall lifted (OF-067), or the values base custody holds, read
+    // once a plan without them misses (FIX
+    // REPLAY-COMPARE-KNOWN-OTHER-CALLERS); it is still the same program.
+    let base_known = || vault.known_values_now();
+    let known = CompareKnown::new(Some(&base_known));
     let mut filed = None;
     for record in site_workflows(vault, site, None, None)? {
         if serde_json::to_value(&record.program).ok() == same
-            || admitted_from(&named_tree(&record.program)?, &named_tree(program)?)?
+            || admitted_from_known(&named_tree(&record.program)?, &named_tree(program)?, || {
+                known.get()
+            })?
         {
             filed = Some(record);
             break;

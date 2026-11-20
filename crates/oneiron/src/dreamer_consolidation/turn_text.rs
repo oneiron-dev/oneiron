@@ -45,6 +45,8 @@ use oneiron_model::llm::{Scope, ScopeResource};
 mod attribution;
 pub(super) mod compaction_span;
 pub(super) mod projection;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::attribution::attribution_hash_for_test;
 
 type SourceRow = (u8, u64, Vec<u8>);
 type BranchRead = (Vec<Option<SourceRow>>, BTreeMap<EntityId, TurnText>);
@@ -172,6 +174,32 @@ impl TurnText {
 
     pub(crate) fn text(&self) -> Option<&str> {
         self.text.as_deref()
+    }
+
+    /// The words this text holds, piece by piece, as it reads: each projected
+    /// MESSAGE's words with its id, in projection order, or the TURN's own
+    /// words alone (`None`). The `"\n"` joins belong to no piece.
+    ///
+    /// # Errors
+    ///
+    /// A layout that does not cut the text.
+    pub(crate) fn pieces(&self) -> Result<Vec<(Option<EntityId>, &str)>> {
+        let Some(text) = self.text.as_deref() else {
+            return Ok(Vec::new());
+        };
+        if self.messages.is_none() {
+            return Ok(vec![(None, text)]);
+        }
+        self.layout
+            .iter()
+            .map(|&(message, offset, len)| {
+                text.get(offset..offset + len)
+                    .map(|words| (Some(message), words))
+                    .ok_or_else(|| {
+                        invalid_consolidation("projected message layout is out of order")
+                    })
+            })
+            .collect()
     }
 
     /// Every MESSAGE row this text was read from: the TURN's exact live

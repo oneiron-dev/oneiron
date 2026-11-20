@@ -42,6 +42,7 @@ pub fn api_error_schema() -> Value {
             },
             "legal_hold": { "$ref": "#/components/schemas/LegalHoldNoticeSchema" },
             "room_join_hold": { "$ref": "#/components/schemas/RoomJoinHoldSchema" },
+            "pending": { "$ref": "#/components/schemas/MemoryPendingSchema" },
         },
     })
 }
@@ -76,6 +77,7 @@ pub fn api_error_envelope_schema() -> Value {
                     },
                     "legal_hold": { "$ref": "#/components/schemas/LegalHoldNoticeSchema" },
                     "room_join_hold": { "$ref": "#/components/schemas/RoomJoinHoldSchema" },
+                    "pending": { "$ref": "#/components/schemas/MemoryPendingSchema" },
                 },
             },
         },
@@ -90,6 +92,7 @@ pub fn openapi_error_components() -> Value {
         "ApiErrorEnvelope": api_error_envelope_schema(),
         "LegalHoldNoticeSchema": crate::api::legal_hold_schema::legal_hold_notice_schema(),
         "RoomJoinHoldSchema": super::room_join_hold_schema::room_join_hold_schema(),
+        "MemoryPendingSchema": super::memory_pending_schema::memory_pending_schema(),
     })
 }
 

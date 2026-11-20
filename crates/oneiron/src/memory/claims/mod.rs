@@ -156,6 +156,11 @@ const DECLARED_CARDINALITY: &[(&str, ClaimCardinality)] = &[
     // many relationships of one word, so a second `relationship.friend`
     // stands beside the first and never supersedes it.
     ("relationship.*", ClaimCardinality::Set),
+    // ARCH-0060 §3: passports stay per (system x UID), N on one EVENT. The
+    // calendar importer supersedes only the passport of its own (system,
+    // UID) (`calendar::passport::supersede_calendar_passport`), so the
+    // owner's approval of one system's passport never closes another's.
+    ("calendar.passport", ClaimCardinality::Set),
 ];
 
 /// Exact rows beat namespace wildcards regardless of table order. A wildcard
