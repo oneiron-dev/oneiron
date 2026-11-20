@@ -1266,6 +1266,24 @@ fn insert_ready_row<R: Read + Seek>(
                 archived_birth_facet(archive, &id)?,
             )
         }
+        // FIX OWNER-RESTORE-REFUSES-TASK-ASK-RECORDS: the owner's restore lands
+        // an ask's records (role 6) through the engine's fact put, at their
+        // archived ids, bodies and births; the put's guard checks each as it
+        // checks a replayed one. Every other import, and a foreign chain's
+        // archive, refuses them at the raw put below.
+        ENTITY_TYPE_TASK
+            if owner_restore.is_some_and(|restore| !restore.foreign_chain)
+                && crate::task_verb::is_ask_record_body(&body) =>
+        {
+            vault.restore_archived_ask_record_in_txn(
+                wtxn,
+                &id,
+                &body,
+                occurred,
+                row.learned_at,
+                archived_birth_facet(archive, &id)?,
+            )
+        }
         _ => {
             // Blind-review P1b (REVIEW-4389): an EVENT/TURN born under a
             // non-default facet is masked with its archived birth facet, so
@@ -2395,6 +2413,9 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
                 .collect()
         }
         ENTITY_TYPE_CONVERSATION => super::project_room_dependency(bytes).into_iter().collect(),
+        // FIX OWNER-RESTORE-REFUSES-TASK-ASK-RECORDS: an ask record lands
+        // after the group, intent or entry it names.
+        ENTITY_TYPE_TASK => crate::task_verb::ask_record_dependencies(bytes),
         ENTITY_TYPE_WORKFLOW => {
             let definition = crate::store::workflow_definition::decode_workflow(bytes)?;
             definition
