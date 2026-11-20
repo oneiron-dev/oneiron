@@ -193,9 +193,12 @@ fn row_key(row: &Value) -> Result<(&str, PolicyRowScope)> {
 
 /// Whether `change` ends or weakens the withholding of `row`, the stored row it
 /// targets: `row` is an active Block or Reword row, read as the manifest
-/// decoder reads it, and `change` removes it or edits it to an action other
-/// than Block. An add, a why draft, an edit that makes a row Block, and any
-/// change of a Warn, RouteToHelp or inactive row withdraw no withholding.
+/// decoder reads it, and `change` removes it, or edits it to an action other
+/// than Block or its own, or edits its text. Rewriting the rubric can disable
+/// the row as surely as a removal (Engine ruling 21 Nov 01:29 = B). An add, a
+/// why draft, an edit that keeps the text and makes the row Block or keeps its
+/// action, and any change of a Warn, RouteToHelp or inactive row withdraw no
+/// withholding.
 fn ends_withholding(row: &Value, change: &PolicyRowChange) -> Result<bool> {
     let Value::Map(entries) = row else {
         return Err(invalid("malformed owner policy row"));
@@ -205,20 +208,25 @@ fn ends_withholding(row: &Value, change: &PolicyRowChange) -> Result<bool> {
         Some(Value::Boolean(active)) => *active,
         Some(_) => return Err(invalid("invalid owner policy row active flag")),
     };
-    let action = match field(entries, POLICY_ROW_ACTION_KEY)? {
+    let stored = match field(entries, POLICY_ROW_ACTION_KEY)? {
         None => OwnerRowAction::Warn,
         Some(action) => action
             .as_str()
             .and_then(super::decode::parse_owner_row_action)
             .ok_or_else(|| invalid("invalid owner policy row action"))?,
     };
-    if !active || !matches!(action, OwnerRowAction::Block | OwnerRowAction::Reword) {
+    if !active || !matches!(stored, OwnerRowAction::Block | OwnerRowAction::Reword) {
         return Ok(false);
     }
     Ok(match change {
         PolicyRowChange::Remove { .. } => true,
-        PolicyRowChange::Edit { action, .. } | PolicyRowChange::EditWithWhy { action, .. } => {
-            *action != PolicyRowAction::Block
+        PolicyRowChange::Edit { text, action, .. }
+        | PolicyRowChange::EditWithWhy { text, action, .. } => {
+            let keeps_text =
+                field(entries, POLICY_ROW_TEXT_KEY)?.and_then(Value::as_str) == Some(text.as_str());
+            let keeps_withholding = *action == PolicyRowAction::Block
+                || super::decode::parse_owner_row_action(action.as_str()) == Some(stored);
+            !(keeps_text && keeps_withholding)
         }
         PolicyRowChange::Add { .. }
         | PolicyRowChange::AddWithWhy { .. }
