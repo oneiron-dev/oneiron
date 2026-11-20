@@ -39,6 +39,12 @@
 //! owner's restore of a proven CLAIM pair. The diary test's source is now a
 //! rooted vault whose owner holds the root owner binding `grant_diary_read`
 //! asks for; on a plain device vault it failed in its fixture at every head.
+//! `owner_restore_brings_a_claim_about_a_granted_claim_pair_link_back`
+//! (REVIEW-9744 P1): the source's owner also puts an ordinary claim about
+//! the link; the owner's restore completes and brings the link and that
+//! claim back. It runs red at 7674fd3a789, which reads only the status
+//! claim's link in the Recorded mode, so the restore aborts at the other
+//! claim, and green at the fix.
 //!
 //! Vaults in tempdirs. The CLAIM-pair source opens through
 //! `test_doors::consolidation::open_dreamer_vault` and lands the link through
@@ -72,8 +78,8 @@ use oneiron::test_doors::derive::{
 };
 use oneiron::test_doors::steward::dreamer;
 use oneiron::{
-    ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig,
-    WriteActor,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EntityId,
+    TimeRange, Vault, VaultConfig, WriteActor,
 };
 use serde_json::json;
 
@@ -312,6 +318,60 @@ fn owner_restore_brings_a_granted_claim_pair_link_back() {
         unrestored_same_as_links(&receipt),
         Some(0),
         "no link stays out"
+    );
+}
+
+#[test]
+fn owner_restore_brings_a_claim_about_a_granted_claim_pair_link_back() {
+    let source = claim_pair_source();
+    let annotation = EntityId::now();
+    let at = source.vault.now_recorded_at();
+    source
+        .vault
+        .put_claim(
+            &annotation,
+            &ClaimBody::new(
+                "relationship.context",
+                ClaimSubject::Edge {
+                    source: source.first,
+                    kind: EdgeKind::SameAs,
+                    target: source.second,
+                },
+                rmpv::Value::from("both name one coffee order"),
+                0.9,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            )
+            .expect("a claim body about the link"),
+            TimeRange { start: at, end: at },
+            at,
+        )
+        .expect("FIXTURE: the source's owner puts a claim about the claim-pair link");
+    let archive = claim_pair_archive(&source);
+    let (_dir, dest) = open_destination();
+    let owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner)
+        .expect("the owner's restore completes");
+    assert!(
+        dest.edge_exists(&source.first, EdgeKind::SameAs, &source.second)
+            .expect("read the restored link"),
+        "the claim-pair link comes back: unrestored {:?}, omissions {:?}",
+        unrestored_same_as_links(&receipt),
+        receipt.destination_omissions
+    );
+    let restored = dest
+        .get_claim(&annotation)
+        .expect("read the restored claim about the link")
+        .expect("the claim about the link comes back");
+    assert_eq!(
+        restored.subject,
+        ClaimSubject::Edge {
+            source: source.first,
+            kind: EdgeKind::SameAs,
+            target: source.second,
+        },
+        "the restored claim is about the restored link"
     );
 }
 
