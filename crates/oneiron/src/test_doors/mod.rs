@@ -8,6 +8,7 @@ pub mod access_request_seed;
 pub mod action_mode_pass;
 pub mod action_replay_custody;
 pub mod advisory_rate_window;
+pub mod affect_state_signals;
 pub mod agent_authoring;
 pub mod agent_definition_scans;
 pub mod agent_health;
