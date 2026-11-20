@@ -18,14 +18,24 @@
 //! * `the_owner_lane_sends_no_text_of_a_kept_note`: a hosted vault's owner-lane export of a NOTE
 //!   answers before the keep and refuses after it, and a frame queued before the keep is withheld
 //!   at release.
+//! * `a_send_queued_before_the_keep_is_withheld_at_release` (REVIEW-9846 P1 1): window bytes that
+//!   insert the row's carrier, queued before the keep and released after it, are withheld at the
+//!   door that sends them; the hub's scrubbed export, which carries the withholding marker,
+//!   still sends.
+//! * `an_edge_naming_a_kept_row_carried_elsewhere_leaves_the_window` (REVIEW-9846 P1 5): a window
+//!   carries an edge to the kept row, whose own carrier rides in another month's window. The
+//!   hub's next export of it takes the edge out and files the marker there too.
+//! * `a_kept_notes_pending_fork_text_leaves_the_window` (REVIEW-9846 P1 3): before the keep, the
+//!   window packs a NOTE's undecided fork text; after it, the export carries no byte of that text
+//!   and no carrier of the NOTE, and files the marker.
 //!
 //! Named limits, not tested here: a whole-vault export run on the device still carries the held
 //! row's bytes (its egress asks off-record and the device's own use limits, not the source
 //! audience hold); the hosted vault's sync ingest asks no use limit, so a carrier a device sent
 //! before it landed the marker still lands on the hosted copy, as it does today.
 //!
-//! All three run red at main f75de13fe4c, whose owner window and owner lane ask no use limit, and
-//! green at the fix.
+//! All six run red at main f75de13fe4c, whose owner window and owner lane ask no use limit, and
+//! green at the fix; the last three also run red at the first head 3629c6dd410.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test owner_window_withholds_use_limited_rows`.
 
 #![cfg(all(feature = "sync", feature = "test-support", oneiron_test_support))]
@@ -35,26 +45,34 @@ mod sync_harness;
 
 use std::sync::Arc;
 
-use loro::VersionVector;
+use loro::{ExportMode, LoroDoc, VersionVector};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::LegalHoldTarget;
 use oneiron::memory::{EraseOptions, EraseReason};
+use oneiron::note::NoteProgramEdit;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
-use oneiron::sync::bridge::Materializer;
+use oneiron::sync::bridge::{Materializer, format_edge_key};
 use oneiron::sync::types::WindowKey;
-use oneiron::sync::window::{self, WindowExport};
+use oneiron::sync::window::{self, UpdateVerdict, WindowExport};
 use oneiron::sync::{WindowManager, documents};
 use oneiron::test_doors::source_audience_binding;
-use oneiron::{EdgeActorClass, EntityId, HostingPrivacyPosture, Vault, VaultConfig, WriteActor};
+use oneiron::{
+    EdgeActorClass, EdgeKind, EntityId, HostingPrivacyPosture, Vad, Vault, VaultConfig, WriteActor,
+};
 
 use crate::sync_harness::{
-    T0, TestNode, WINDOW, make_entity_blob, map_get_bytes, sync_through_doors, test_config,
+    T0, TestNode, WINDOW, make_entity_blob, map_entries, map_get_bytes, sync_through_doors,
+    test_config,
 };
 
 const KEPT_WORDS: &[u8] = b"a kept person";
 const OTHER_WORDS: &[u8] = b"another person";
 const NOTE_TEXT: &str = "Minutes of the harbour board.";
+const FORK_TEXT: &str = "Minutes of the harbour board, with the pilot's name.";
+/// The month after [`WINDOW`]: 2026-04-02 00:00 UTC.
+const NEXT_WINDOW: &str = "2026-04";
+const NEXT_T0: u64 = 1_775_088_000;
 
 fn hosted_config() -> VaultConfig {
     let mut config = test_config();
@@ -344,5 +362,203 @@ fn the_owner_lane_sends_no_text_of_a_kept_note() {
     assert!(
         documents::document_frame_withheld(&source, &frame),
         "a frame queued before the keep is withheld at release"
+    );
+}
+
+fn hosted_vault_with_manager(dir: &tempfile::TempDir) -> (Arc<Vault>, Arc<WindowManager>) {
+    let mut config = VaultConfig::default();
+    config.privacy.posture = HostingPrivacyPosture::Hosted;
+    let vault = Arc::new(Vault::open(dir.path(), config).expect("FIXTURE: open the hosted vault"));
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault
+        .prepare_install_signing()
+        .expect("FIXTURE: load the install signer");
+    let manager = Arc::new(WindowManager::new(
+        vault.clone(),
+        Arc::new(Materializer::new()),
+        "authority",
+    ));
+    (vault, manager)
+}
+
+/// Whether any map of `doc` holds a value that contains `text`'s bytes.
+fn holds_text(doc: &LoroDoc, text: &str) -> bool {
+    let needle = text.as_bytes();
+    let maps: Vec<String> = match doc.get_deep_value() {
+        loro::LoroValue::Map(roots) => roots.iter().map(|(name, _)| name.clone()).collect(),
+        _ => Vec::new(),
+    };
+    maps.iter().any(|name| {
+        map_entries(&doc.get_map(name.as_str()))
+            .values()
+            .any(|value| value.windows(needle.len()).any(|part| part == needle))
+    })
+}
+
+#[test]
+fn a_send_queued_before_the_keep_is_withheld_at_release() {
+    let mut hub = TestNode::with_config("hub", 2, hosted_config());
+    mint_machine_id(&hub.vault);
+    hub.open_window(WINDOW);
+    let kept = EntityId::now();
+    let other = EntityId::now();
+    hub.put_entity_in_window(
+        WINDOW,
+        &kept,
+        &make_entity_blob(ENTITY_TYPE_PERSON, T0, KEPT_WORDS),
+    );
+    hub.put_entity_in_window(
+        WINDOW,
+        &other,
+        &make_entity_blob(ENTITY_TYPE_PERSON, T0 + 1, OTHER_WORDS),
+    );
+    let queued = hub
+        .doc(WINDOW)
+        .export(ExportMode::all_updates())
+        .expect("FIXTURE: the window's updates, as a live send queues them");
+    let manager = Arc::new(WindowManager::new(
+        hub.vault.clone(),
+        Arc::new(Materializer::new()),
+        "authority",
+    ));
+    assert_eq!(
+        window::raw_update_verdict(&manager, WINDOW, &queued),
+        UpdateVerdict::Portable,
+        "FIXTURE: the send releases before the keep"
+    );
+
+    keep_use_limited(&hub.vault, kept);
+
+    assert_eq!(
+        window::raw_update_verdict(&manager, WINDOW, &queued),
+        UpdateVerdict::Withheld,
+        "a send queued before the keep ships no carrier of the kept row after it"
+    );
+    let key = WindowKey::new(WINDOW);
+    let nothing = VersionVector::default().encode();
+    let sent =
+        match window::export_window_updates_since(&hub.vault, &key, hub.doc(WINDOW), &nothing)
+            .expect("the hub's export door answers")
+        {
+            WindowExport::Update(update) => update,
+            WindowExport::Replacement(snapshot) => snapshot,
+        };
+    assert!(
+        withheld_marker(&hub, &kept),
+        "the scrubbed window carries the withholding marker"
+    );
+    assert_eq!(
+        window::raw_update_verdict(&manager, WINDOW, &sent),
+        UpdateVerdict::Portable,
+        "the scrubbed export, which carries the marker and no carrier of the row, still sends"
+    );
+}
+
+#[test]
+fn an_edge_naming_a_kept_row_carried_elsewhere_leaves_the_window() {
+    let mut hub = TestNode::with_config("hub", 2, hosted_config());
+    mint_machine_id(&hub.vault);
+    hub.open_window(WINDOW);
+    hub.open_window(NEXT_WINDOW);
+    let kept = EntityId::now();
+    let other = EntityId::now();
+    hub.put_entity_in_window(
+        NEXT_WINDOW,
+        &kept,
+        &make_entity_blob(ENTITY_TYPE_PERSON, NEXT_T0, KEPT_WORDS),
+    );
+    hub.put_entity_in_window(
+        WINDOW,
+        &other,
+        &make_entity_blob(ENTITY_TYPE_PERSON, T0, OTHER_WORDS),
+    );
+    hub.put_edge_in_window(
+        WINDOW,
+        &other,
+        EdgeKind::Mentions,
+        &kept,
+        0.5,
+        T0 + 1,
+        Vad::NEUTRAL,
+    );
+    let edge = format_edge_key(&other, EdgeKind::Mentions, &kept);
+    assert!(
+        !carries(&hub, &kept) && map_get_bytes(&hub.doc(WINDOW).get_map("edges"), &edge).is_some(),
+        "FIXTURE: the window carries the edge, and the kept row's carrier rides elsewhere"
+    );
+
+    keep_use_limited(&hub.vault, kept);
+    let key = WindowKey::new(WINDOW);
+    let nothing = VersionVector::default().encode();
+    window::export_window_updates_since(&hub.vault, &key, hub.doc(WINDOW), &nothing)
+        .expect("the hub's export door answers");
+
+    assert!(
+        map_get_bytes(&hub.doc(WINDOW).get_map("edges"), &edge).is_none(),
+        "the window no longer carries the edge to the kept row"
+    );
+    assert!(
+        withheld_marker(&hub, &kept),
+        "the window carries a withholding marker for the kept row its edge named"
+    );
+    assert!(
+        carries(&hub, &other),
+        "the edge's other row rides as before"
+    );
+}
+
+#[test]
+fn a_kept_notes_pending_fork_text_leaves_the_window() {
+    let dir = tempfile::tempdir().expect("FIXTURE: hosted vault dir");
+    let (vault, manager) = hosted_vault_with_manager(&dir);
+    let author = || {
+        WriteActor::new(
+            vault
+                .ensure_embedded_owner_actor()
+                .expect("FIXTURE: the vault names its embedded owner actor"),
+            EdgeActorClass::Human,
+        )
+    };
+    let note = vault
+        .create_note("research", NOTE_TEXT, author())
+        .expect("FIXTURE: the hosted vault writes a NOTE");
+    vault
+        .fork_note(
+            note,
+            &NoteProgramEdit::Rewrite {
+                text: FORK_TEXT.to_owned(),
+            },
+            author(),
+        )
+        .expect("FIXTURE: the owner forks the NOTE, undecided");
+    let key = WindowKey::from_timestamp(vault.now_recorded_at());
+    let window = manager.open_window(&key).expect("FIXTURE: open the window");
+    let nothing = VersionVector::default().encode();
+    window::export_window_updates_since(&vault, &key, &window.doc, &nothing)
+        .expect("FIXTURE: the export door answers before the keep");
+    assert!(
+        holds_text(&window.doc, FORK_TEXT),
+        "FIXTURE: before the keep the window packs the undecided fork's text"
+    );
+
+    keep_use_limited(&vault, note);
+    window::export_window_updates_since(&vault, &key, &window.doc, &nothing)
+        .expect("the export door answers after the keep");
+
+    assert!(
+        !holds_text(&window.doc, FORK_TEXT),
+        "the window carries no byte of the kept NOTE's fork text"
+    );
+    assert!(
+        map_get_bytes(&window.doc.get_map("entities"), &note.to_hex()).is_none(),
+        "the window no longer carries the kept NOTE"
+    );
+    assert!(
+        map_get_bytes(
+            &window.doc.get_map("source_audiences"),
+            &format!("withheld/{}", note.to_hex()),
+        )
+        .is_some(),
+        "the window carries a withholding marker for the kept NOTE"
     );
 }
