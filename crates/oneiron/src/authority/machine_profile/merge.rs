@@ -3,8 +3,10 @@
 //! any branch is terminal.
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
+
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
 
 use crate::entity_id::EntityId;
 
@@ -68,9 +70,12 @@ fn merge_chain(left: &MachineChain, right: &MachineChain) -> MachineChain {
         crate::authority::machine_standing::merge_revisions(&left.revisions, &right.revisions);
     // Concurrent owner say-sos that say otherwise conflict, whatever their
     // numeric revisions (mesh PR1b C5, FIX 4610): the higher number never
-    // wins them.
+    // wins them. So do revisions that name different origins: a merge never
+    // drops a machine's restore mark under a higher revision
+    // (RESTORED-COPIES-ENROL-EACH-OTHER; REVIEW-9509 round 2 P1).
     let contest = |mut head: MachineRevision| {
-        head.conflicted |= super::say_so_contested(&head, &revisions);
+        head.conflicted |= super::say_so_contested(&head, &revisions)
+            || crate::authority::restored_join::origins_disagree(&revisions);
         head
     };
     MachineChain {
@@ -126,14 +131,15 @@ pub(in crate::authority) fn merge_machine_chain(
 }
 
 pub(in crate::authority) fn merge_machine_maps(
-    merged: &mut BTreeMap<EntityId, BTreeMap<MachineAdmitter, MachineChain>>,
-    keys: &mut BTreeMap<[u8; 32], BTreeSet<KeyClaim>>,
+    merged: &mut PersistentMap<EntityId, BTreeMap<MachineAdmitter, MachineChain>>,
+    keys: &mut PersistentMap<[u8; 32], PersistentSet<KeyClaim>>,
     right: &FoldState,
 ) {
+    // A machine or key the merge leaves as it was is not written.
     for (machine, chains) in &right.machines {
-        join_chains(merged.entry(*machine).or_default(), chains);
+        merged.modify_or_default(*machine, |held| join_chains(held, chains));
     }
     for (key, claims) in &right.machine_keys {
-        keys.entry(*key).or_default().extend(claims.iter().cloned());
+        keys.modify_or_default(*key, |held| held.extend(claims.iter().cloned()));
     }
 }

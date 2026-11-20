@@ -93,7 +93,9 @@ pub(crate) use self::run_effects::{
 mod run_handover;
 pub use self::run_handover::AgentRunLeaseReap;
 mod run_lineage;
-pub(crate) use run_lineage::delegation_lineage_parent_in_txn;
+pub(crate) use run_lineage::{
+    LineageStart, delegation_lineage_parent_in_txn, settling_lineage_in_txn,
+};
 mod run_objectives;
 mod run_placement;
 mod run_task;
@@ -107,12 +109,18 @@ pub use self::run_task::{
     AGENT_RUN_TASK_SUBKIND, AgentRunExecutorLease, AgentRunFence, AgentRunOutcome,
 };
 #[cfg(oneiron_test_support)]
-pub(crate) use self::run_task::{proven_agent_run_task_writer_in, put_peer_agent_run_task_in_txn};
+pub(crate) use self::run_task::{
+    proven_agent_run_task_writer_in, put_peer_agent_run_task_in_txn,
+    rewrite_peer_agent_run_task_lease_in_txn, rewrite_peer_agent_run_task_parent_context_in_txn,
+};
 mod run_writer_proof;
 mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
 mod skill_default;
-pub(crate) use skill_default::workflow_default;
+pub(crate) use skill_default::{
+    bootstrap_skill_in_force_in_txn, bootstrap_skill_root_in_txn,
+    bootstrap_skill_root_sourced_in_txn, workflow_default,
+};
 mod spend_calibration;
 mod spend_custody;
 #[cfg(feature = "sync")]
@@ -131,7 +139,14 @@ mod workflow;
 mod workflow_host;
 mod workflow_pump;
 mod workflow_record;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::workflow_record::dedupe_key_hash_for_test as workflow_dedupe_key_hash_for_test;
 pub(crate) use workflow::tool_wait::checkpoint as workflow_tool_checkpoint;
+#[cfg(oneiron_test_support)]
+pub(crate) use workflow::tool_wait::{
+    CheckpointRow, test_checkpoint_body_owner, test_checkpoint_key, test_checkpoint_row_bound,
+    test_checkpoint_row_unbound,
+};
 pub use workflow::tool_wait::{
     WorkflowToolAnswer, WorkflowToolCheckpointWriter, WorkflowToolContinuation, WorkflowToolCursor,
     WorkflowToolProgress, WorkflowToolTranscript, WorkflowToolWait,
@@ -174,8 +189,9 @@ pub use self::spend_record::{
 
 pub use self::agent_wait::{AgentWaitChild, AgentWaitSetResult};
 pub(crate) use self::agent_wait::{
-    AgentWaitOpen, AgentWaitPolicy, agent_dispatch_child_wait_accepts_masked, agent_wait_attempt,
-    open_agent_wait, settle_agent_child_waits_in_txn,
+    AgentWaitOpen, AgentWaitPolicy, CHILD_WAIT_UNTIL_JOB, agent_dispatch_child_wait_accepts_masked,
+    agent_wait_attempt, open_agent_wait, rearm_restored_wait_deadlines_in_txn,
+    settle_agent_child_waits_in_txn,
 };
 pub(crate) use self::budget_hold::erase_plan_hold_actor_in_txn;
 pub use self::budget_hold::{
@@ -233,8 +249,6 @@ pub use self::types::{
 
 #[cfg(test)]
 mod kill_spawn_tests;
-// FIX [LIBTEST-QUARANTINE-AGENT-DISPATCH-TESTS]: the lib test target's type check fails here (7 errors: E0061 x3, E0308 x3, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -277,8 +291,6 @@ pub use resident::{
     ResidentWakeMode, resident_attempt_reviews_diary, resident_attempt_wakes_for_room,
 };
 
-// FIX [LIBTEST-QUARANTINE-AGENT-DISPATCH-RESIDENT-TESTS]: the lib test target's type check fails here (6 errors: E0063 x6); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod resident_tests;
 pub(crate) mod tables;

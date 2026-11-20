@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use super::ledger::{LeaseState, llm_usage_units, release_reservations_for_lease};
+use super::ledger::{LeaseOutcome, llm_usage_units, release_reservations_for_lease};
 use super::policy::BudgetPolicyTable;
 use super::settlement::settle_usage_locked;
 use super::state::BudgetState;
@@ -217,10 +217,9 @@ impl BudgetGuard {
             let state = self.lock_state();
             state.check_lease_provenance(lease)?;
             state
-                .leases
-                .get(lease.id())
+                .lease_entry(lease)
                 .ok_or(BudgetDenied::LeaseInvalid)?
-                .reserve_units
+                .reserve_units()
         };
         self.settle_usage(lease, units)
     }
@@ -234,27 +233,17 @@ impl BudgetGuard {
         state.check_lease_provenance(lease)?;
         if let Some(record) = state.leases.get(lease.id())
             && record.dispatched
-            && record.state == LeaseState::Open
         {
             let reserve_units = record.reserve_units;
             return settle_usage_locked(&mut state, lease, reserve_units);
         }
-        let mut aborted = None;
-        {
-            let Some(record) = state.leases.get_mut(lease.id()) else {
-                return Err(BudgetDenied::LeaseInvalid);
-            };
-            match record.state {
-                LeaseState::Open => {
-                    record.state = LeaseState::Aborted;
-                    aborted = Some(record.clone());
-                }
-                LeaseState::Aborted => {}
-                LeaseState::Settled { .. } => return Err(BudgetDenied::LeaseInvalid),
-            }
-        }
-        if let Some(record) = aborted {
+        if let Some(record) = state.leases.remove(lease.id()) {
+            record.close(LeaseOutcome::Aborted);
             release_reservations_for_lease(&mut state, &record);
+        } else if lease.closed.outcome() != Some(LeaseOutcome::Aborted) {
+            // A lease that settled stays settled; a second abort of an
+            // aborted one releases nothing.
+            return Err(BudgetDenied::LeaseInvalid);
         }
         let ladder_events = state.fire_ladder_events();
         let read = state.read();
@@ -269,22 +258,16 @@ impl BudgetGuard {
         self.lock_state().read()
     }
 
-    /// One lease this guard issued, as its meter holds it now; `None` for an
-    /// id it never issued. Read-only: nothing settles, aborts or fires.
+    /// One lease this guard issued, as its meter holds it now; `None` for a
+    /// lease another meter issued or this one never did. Read-only: nothing
+    /// settles, aborts or fires. It takes the lease, not its id: the meter
+    /// keeps only open leases, and a closed one answers through its handle
+    /// (FIX BUDGET-LINE-LEASE-TABLE-UNBOUNDED).
     #[must_use]
-    pub fn lease_observation(&self, lease_id: &str) -> Option<BudgetLeaseState> {
+    pub fn lease_observation(&self, lease: &BudgetLease) -> Option<BudgetLeaseState> {
         let state = self.lock_state();
-        let record = state.leases.get(lease_id)?;
-        Some(match record.state {
-            LeaseState::Open => BudgetLeaseState::Open {
-                reserve_units: record.reserve_units,
-                dispatched: record.dispatched,
-            },
-            LeaseState::Settled { charged_units } => BudgetLeaseState::Settled {
-                used_units: charged_units,
-            },
-            LeaseState::Aborted => BudgetLeaseState::Aborted,
-        })
+        state.check_lease_provenance(lease).ok()?;
+        Some(state.lease_entry(lease)?.observation())
     }
 
     /// The engine-stamped actor a policy-aware guard is bound to, if any.

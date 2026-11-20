@@ -764,12 +764,14 @@ impl PolicyManifestResolution {
         )
     }
 
-    /// Rendering pins follow declared critical classes, not the fail-closed
-    /// write fallback for unknown predicates. Only trusted folded policy can pin.
+    /// Rendering pins follow declared critical classes only: a manifest rule
+    /// must name `predicate`'s class critical. A pack's default for
+    /// predicates no rule names is a legibility floor and never pins, and
+    /// neither does the fail-closed write fallback. Only trusted folded
+    /// policy can pin.
     #[must_use]
     pub(crate) fn pins_predicate(&self, predicate: &str) -> bool {
-        !self.is_fail_closed()
-            && self.axes_for_predicate(predicate).criticality == Some(PolicyCriticality::Critical)
+        !self.is_fail_closed() && self.rule_declares_predicate_critical(predicate)
     }
 
     /// Whether a manifest rule declares `predicate`'s class critical, by
@@ -778,11 +780,16 @@ impl PolicyManifestResolution {
     /// legibility floors and does not stop a write (ARCH-0003 §Criticality).
     #[must_use]
     pub(crate) fn declares_predicate_critical(&self, predicate: &str) -> bool {
-        self.is_fail_closed()
-            || self.packs.iter().any(|pack| {
-                pack.declared_axes(predicate)
-                    .is_some_and(|axes| axes.criticality == Some(PolicyCriticality::Critical))
-            })
+        self.is_fail_closed() || self.rule_declares_predicate_critical(predicate)
+    }
+
+    /// Whether some pack's rules, never its defaults, name `predicate`'s
+    /// class critical, by prefix or exact match.
+    fn rule_declares_predicate_critical(&self, predicate: &str) -> bool {
+        self.packs.iter().any(|pack| {
+            pack.declared_axes(predicate)
+                .is_some_and(|axes| axes.criticality == Some(PolicyCriticality::Critical))
+        })
     }
 
     #[must_use]
@@ -831,6 +838,20 @@ impl PolicyManifestResolution {
         match self.inquiry_policy {
             Some(policy) => crate::inquiry::InquiryPolicyRead::Row(policy),
             None => crate::inquiry::InquiryPolicyRead::NoRow,
+        }
+    }
+
+    /// The erase-request reply row (ARCH-0043 #leaving-a-company) this
+    /// resolution carries. A loaded manifest that fails closed reads as
+    /// unreadable; a vault with no manifest has no row.
+    #[must_use]
+    pub(crate) fn erase_request_reply_policy(&self) -> crate::deletion::EraseRequestReplyRead {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return crate::deletion::EraseRequestReplyRead::Unreadable;
+        }
+        match self.erase_request_reply_policy {
+            Some(policy) => crate::deletion::EraseRequestReplyRead::Row(policy),
+            None => crate::deletion::EraseRequestReplyRead::NoRow,
         }
     }
 

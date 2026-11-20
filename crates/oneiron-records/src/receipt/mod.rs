@@ -1,6 +1,7 @@
 pub use crate::receipt::authority_audit::AuthorityAuditOrder;
 pub use crate::receipt::authority_audit::AuthorityAuditPage;
 pub use crate::receipt::authority_audit::AuthorityAuditRow;
+pub use crate::receipt::authority_audit::CarriedAuthorityAuditBody;
 pub use crate::receipt::authority_audit::ColdAuthorityAuditRow;
 pub use crate::receipt::authority_audit::PendingMembershipExecutionRow;
 pub use crate::receipt::call::call_json_digest;

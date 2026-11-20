@@ -234,12 +234,14 @@ fn a_stale_roster_mark_never_vetoes_the_anchors_keys() {
 }
 
 /// The same graph, as the world-privacy fold counts M: M narrows a world to
-/// itself and then widens it, on both marks. Before the stale-roster window
-/// the live chains' keys disagree, so on an install pinned to the owner's
-/// root the widening only narrows; past it the stale roster mark vetoes
-/// nothing, M counts through the anchor, and the widening holds. Fails
-/// before: the install's counting held the stale roster chain instead, and
-/// its key still vetoed the anchor's (Sol code-S2-R1 S1-F2, Astra A1-F1).
+/// itself and then widens it, on both marks. Carrying reads the roster's head
+/// alone, and the pinned anchor only vetoes it by a removal (Fable design pass
+/// 29, 3.2): before the stale-roster window the roster's mark is live with M's
+/// key, so the widening holds on an install pinned to the owner's root,
+/// though M is not mine there (the anchor's encryption key differs; the
+/// sibling test asserts that). Past the window the roster's mark is stale and
+/// the anchor's live mark admits no carrier, so the widening only narrows, as
+/// any stale machine's does (`a_stale_machine_never_widens_a_world`).
 #[test]
 fn a_stale_roster_mark_never_vetoes_the_anchors_keys_in_a_world() {
     let (owner, next, machine) = (ed_key(193), ed_key(194), ed_key(195));
@@ -272,9 +274,9 @@ fn a_stale_roster_mark_never_vetoes_the_anchors_keys_in_a_world() {
         .world_privacy(world)
         .read
     };
-    assert_eq!(read_at(100), EffectiveRead::OneMachine(m.0));
+    assert_eq!(read_at(100), EffectiveRead::Everywhere);
     assert_eq!(
         read_at(101 + DEFAULT_STALE_ROSTER_WINDOW_SECS),
-        EffectiveRead::Everywhere
+        EffectiveRead::OneMachine(m.0)
     );
 }

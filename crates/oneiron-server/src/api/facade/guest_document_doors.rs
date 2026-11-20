@@ -85,13 +85,17 @@ pub(crate) async fn vault_guests_reshare(
     owner_share(server, auth, "vault.guests.reshare", input).await
 }
 
+/// The recipient's envelope fetch, whose replay reads its rows again through
+/// the fetch's own grant-bound check ([`super::release`]).
+pub(crate) const GUEST_ENVELOPE_FETCH_VERB: &str = "vault.guests.export_envelope";
+
 /// Fetches the actual signed update as the recipient, over HTTP or verb RPC.
 pub(crate) async fn vault_guests_export_envelope(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: GuestDocumentShareRequest,
 ) -> Listed<GuestDocumentEnvelope> {
-    const VERB: &str = "vault.guests.export_envelope";
+    const VERB: &str = GUEST_ENVELOPE_FETCH_VERB;
     let proof = match guest_document_reader(server, auth) {
         Ok(proof) => proof,
         Err(error) => return refused(error),

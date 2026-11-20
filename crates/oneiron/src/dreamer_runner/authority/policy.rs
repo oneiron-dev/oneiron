@@ -46,6 +46,8 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
             Some("dreamer.consolidation")
         }
         super::super::maintenance::CONSOLIDATION_STRENGTH_FACET => Some("dreamer.consolidation"),
+        super::super::maintenance::CONFLICT_SETTLE_FACET => Some("dreamer.consolidation"),
+        super::super::maintenance::PSYCH_PROFILE_FACET => Some("dreamer.consolidation"),
         crate::dreamer_consolidation::DREAMER_GAP_SCAN_ATTEMPT_TYPE => {
             Some("dreamer.consolidation")
         }
@@ -74,6 +76,9 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         coach::COACH_SKILL_DISCOVERY_FACET => Some(coach::COACH_SKILL_DISCOVERY_FACET),
         coach::COACH_PERSON_THRESHOLD_FACET => Some(coach::COACH_PERSON_THRESHOLD_FACET),
         coach::COACH_THINK_THRESHOLD_FACET => Some(coach::COACH_THINK_THRESHOLD_FACET),
+        coach::COACH_RETRIEVAL_SKILL_REVIEW_FACET => {
+            Some(coach::COACH_RETRIEVAL_SKILL_REVIEW_FACET)
+        }
         coach::COACH_READ_HARDENING_FACET => Some(coach::COACH_READ_HARDENING_FACET),
         coach::COACH_TRIPWIRES_FACET => Some(coach::COACH_TRIPWIRES_FACET),
         coach::COACH_TRADEOFF_ESCALATION_FACET => Some(coach::COACH_TRADEOFF_ESCALATION_FACET),

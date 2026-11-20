@@ -6,8 +6,12 @@
 //! reaches the act at all.
 //!
 //! - `GET` lists every enrolled owner key: the machine that holds it, the
-//!   install that carried the act, the owner, whether it is live and whether
-//!   his checkpoint policy may name it now. Empty before any enrollment.
+//!   install that carried the act, the owner, whether it is live, whether
+//!   his checkpoint policy may name it now, what kind of key it is,
+//!   whether this install holds it, every machine whose removal ends it
+//!   while it is live and whether it is the recovery root's authority key,
+//!   so a removal screen can say before the act which keys end and whether
+//!   the recovery kit ends with them. Empty before any enrollment.
 //! - `POST .../challenge` answers the bytes the device's new key signs: the
 //!   vault, the machine, the key and the owner this request proves, fixed
 //!   here; the act's target and zero `seen` follow from them.
@@ -20,6 +24,16 @@
 //!   holds it as a checkpoint root signer (FIX 4921). A managed host's
 //!   server refuses it (409): an enrolled owner key proves the owner acts
 //!   its install carries, and a managed host holds no owner key.
+//! - `POST .../remove` ends one enrolled device key and keeps its machine
+//!   (the owner's ruling AUTH-5). The owner key this install holds signs the
+//!   revocation, so an install that holds none answers 409
+//!   `owner_key_required`. A removal that would end the last owner key held
+//!   on a device answers 409 `last_device_key` and writes nothing, until
+//!   the request carries `confirm`.
+//! - `GET .../changes` lists every enrollment and removal of an enrolled
+//!   owner key, newest first. It is the notice of a key change: every owner
+//!   device holds the log, reads the same list, and shows what it has not
+//!   shown yet.
 //!
 //! The wire form is CALLS "FIX 4920 enrollment HTTP representation": a
 //! machine as 32 hex, a key as 64 hex, a proof and a challenge as hex. The
@@ -34,8 +48,9 @@ use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{
-    ActAuthority, EnrolledOwnerKey, OWNER_KEY_POSSESSION_PROOF_LEN, OwnerKeyEnrollment,
-    OwnerKeyEnrollmentReceipt,
+    ActAuthority, AuthorityKey, CheckpointRootSigner, EnrolledOwnerKey, EnrolledOwnerKeyKind,
+    LastDeviceKeyConfirmation, OWNER_KEY_POSSESSION_PROOF_LEN, OwnerKeyChange, OwnerKeyChangeKind,
+    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, OwnerKeyRemoval, RemainingOwnerKeys,
 };
 use oneiron::error::RecordError;
 use serde::{Deserialize, Serialize};
@@ -44,6 +59,7 @@ use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
+use crate::error::{ApiError, ApiErrorDetails};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
@@ -53,7 +69,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/owner-signing-keys",
-                summary: "Every owner signing key enrolled on the vault's roster (FIX 4920), ascending by key: its enrollment entry, the machine that holds it, the install that carried the act, the owner, whether it is live and whether a checkpoint policy may name it now. Empty before any enrollment.",
+                summary: "Every owner signing key enrolled on the vault's roster (FIX 4920), ascending by key: its enrollment entry, the machine that holds it, the install that carried the act, the owner, whether it is live, whether a checkpoint policy may name it now, its kind (`device` or `recovery_authority`), whether this install holds it, every machine whose removal ends it while it is live (`device_machines`) and whether a counted enrollment marks it the recovery root's authority key (`recovery_authority`). Empty before any enrollment.",
                 row: None,
                 shape: None,
             },
@@ -95,6 +111,29 @@ pub(super) fn owner_table() -> OwnerTable {
             },
             post(enroll_this_install),
         ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/owner-signing-keys/remove",
+                summary: "The owner removes one enrolled device owner key (`public_key`, 64 hex) and keeps its machine. The owner key this install holds signs the revocation; an install that holds none answers 409 `owner_key_required`. A removal that would end the last owner key held on a device answers 409 `last_device_key` and writes nothing until the request carries `confirm`: `last_device_key`. Answers the revocation only once the fold counted it, with what remains and whether the removal also ended the recovery root's authority key (`ends_recovery_root`).",
+                row: None,
+                shape: Some(RestShape::json(
+                    remove_request_body_schema,
+                    removal_reply_schema,
+                )),
+            },
+            post(remove),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/owner-signing-keys/changes",
+                summary: "Every enrollment, confirmation and removal of an enrolled owner key, a device's, the recovery root's or a passkey, that the vault's log holds, newest first: the entry, `enrolled`, `confirmed` (a key only a passkey vouched for now signs in full), `removed`, `removed_by_ended_key` (two removals that crossed ended both keys) or `removed_in_conflict` (a removal that conflicted with another removal: the vault counted neither, and the key ended), the key, its `shape` (`device_key` or `passkey`), the machine its enrollment names, its kind (null for a passkey), the key that signed the entry and when. Every owner device reads the same list, so it is the notice of a key change. Empty before any enrollment.",
+                row: None,
+                shape: None,
+            },
+            get(changes),
+        ),
     ]
 }
 
@@ -118,6 +157,17 @@ struct EnrollRequest {
     proof: String,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RemoveRequest {
+    /// The enrolled owner key to remove, as 64 lower-case hex.
+    public_key: String,
+    /// `last_device_key`: the owner read that this ends the last owner key
+    /// held on a device, and confirmed. Absent otherwise.
+    #[serde(default)]
+    confirm: Option<String>,
+}
+
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ChallengeReply {
     /// The bytes the new key signs, as lower-case hex.
@@ -130,6 +180,25 @@ struct ReceiptReply {
     entry: String,
     machine: String,
     public_key: String,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct RemovalReply {
+    /// The revocation's authority entry, as 64 hex.
+    entry: String,
+    /// The key that ended, as 64 hex.
+    public_key: String,
+    /// The machine its enrollment names, as 32 hex.
+    machine: String,
+    /// The owner key that signed the revocation, as hex.
+    signed_by: String,
+    /// The owner keys still held on a device.
+    remaining_device_keys: usize,
+    /// Whether the recovery root's authority key is live.
+    recovery_root: bool,
+    /// Whether this removal ended the recovery root's authority key, and
+    /// with it the recovery kit: the key was also enrolled as the root's.
+    ends_recovery_root: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -150,12 +219,66 @@ struct KeyReply {
     eligible: bool,
     /// When it was signed, advisory unix seconds.
     at: u64,
+    /// `device`: a device's own key; `recovery_authority`: the recovery
+    /// root's authority key, which this route's removal refuses. The names
+    /// are the enum's own serde names.
+    kind: EnrolledOwnerKeyKind,
+    /// Whether this install holds the key, so it can sign a removal.
+    held_here: bool,
+    /// Every machine a counted enrollment names as holding the key as a
+    /// device's key, each as 32 hex, ascending. While the key is live, the
+    /// removal of one of them ends it, when that removal stands on an
+    /// install that holds an owner key. Empty for a key enrolled only as
+    /// the recovery root's.
+    device_machines: Vec<String>,
+    /// A counted enrollment marks the key the recovery root's authority
+    /// key, whatever `kind` says of the listed one. With a machine in
+    /// `device_machines` the key is both, and the recovery kit ends when
+    /// that machine's removal, or the key's own, ends the key.
+    recovery_authority: bool,
 }
 
 #[derive(Debug, Serialize)]
 struct ListReply {
     /// Ascending by key; empty before any enrollment.
     keys: Vec<KeyReply>,
+}
+
+#[derive(Debug, Serialize)]
+struct ChangeReply {
+    /// The change's authority entry, as 64 hex.
+    entry: String,
+    /// `enrolled`; `confirmed`: a key only a passkey vouched for was vouched
+    /// for again by a key that may confirm it, and now signs in full;
+    /// `removed`; `removed_by_ended_key`: the key ended through a removal
+    /// the vault did not count, because a crossing removal ended that
+    /// removal's own signer; or `removed_in_conflict`: the key ended through
+    /// a removal that conflicted with another removal, which refused a row
+    /// below it while its own signer stands, so the vault counted neither.
+    change: &'static str,
+    /// The key, as hex: 64 for a device's or the recovery root's Ed25519
+    /// key, 66 for a passkey's compressed SEC1 key.
+    public_key: String,
+    /// `device_key` or `passkey`: the key's shape, as the authority audit's
+    /// `detail` names it.
+    shape: &'static str,
+    /// The machine the key's enrollment names, as 32 hex; for a passkey, the
+    /// carrier that served its ceremony.
+    machine: String,
+    /// `device` or `recovery_authority`, as the list's `kind`; null for a
+    /// passkey.
+    kind: Option<EnrolledOwnerKeyKind>,
+    /// The key that signed the entry, as hex: an enrollment's predecessor, a
+    /// confirmation's confirming key, a removal's proof.
+    signed_by: String,
+    /// When it was signed, advisory unix seconds.
+    at: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct ChangesReply {
+    /// Newest first; empty before any enrollment.
+    changes: Vec<ChangeReply>,
 }
 
 /// The OpenAPI schema of `POST /v1/owner/owner-signing-keys/challenge`'s body (FIX 11617): [`ChallengeRequest`].
@@ -178,12 +301,80 @@ pub(crate) fn enroll_receipt_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<ReceiptReply>()
 }
 
+/// The OpenAPI schema of `POST /v1/owner/owner-signing-keys/remove`'s body: [`RemoveRequest`].
+pub(crate) fn remove_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RemoveRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/owner-signing-keys/remove`'s answer: [`RemovalReply`].
+pub(crate) fn removal_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RemovalReply>()
+}
+
+/// The state of the 409 a removal answers when it would end the last owner
+/// key held on a device and the request carries no confirmation, and the
+/// value of `confirm` that gives it.
+const LAST_DEVICE_KEY: &str = "last_device_key";
+
+/// The confirmation a removal request carries in `confirm`.
+pub(super) fn last_device_key_confirmation(
+    confirm: Option<&str>,
+) -> OwnerResult<LastDeviceKeyConfirmation> {
+    match confirm {
+        None => Ok(LastDeviceKeyConfirmation::NotGiven),
+        Some(LAST_DEVICE_KEY) => Ok(LastDeviceKeyConfirmation::Given),
+        Some(_) => Err(OwnerError::Invalid(format!(
+            "confirm must be `{LAST_DEVICE_KEY}` or absent"
+        ))),
+    }
+}
+
+/// What a removal answers when it would end the last owner key held on a
+/// device and the owner has not confirmed (the owner's ruling AUTH-5): 409,
+/// state `last_device_key`, with whether it would also end the recovery
+/// kit's key, and what proves a change of the owner's after it: a recovery
+/// kit's key that stays live still gives the owner's proof, so the vault
+/// keeps asking for it; with none, the vault takes the host's word until a
+/// key is enrolled again. Nothing was written.
+pub(super) fn last_device_key_refusal(remaining: RemainingOwnerKeys) -> ApiError {
+    let ends = if remaining.ends_recovery_root {
+        "this ends the last owner key held on a device, and the recovery kit's key with it"
+    } else {
+        "this ends the last owner key held on a device"
+    };
+    let after = match (remaining.recovery_root, remaining.ends_recovery_root) {
+        (true, false) => {
+            "The recovery kit's key stays enrolled and still proves a change of the owner's, \
+             so the vault keeps asking for an owner key's proof: until a key is enrolled on a \
+             device again, only the recovery kit's key gives it."
+        }
+        (true, true) => {
+            "Another recovery kit's key stays enrolled and still proves a change of the \
+             owner's, so the vault keeps asking for an owner key's proof: until a key is \
+             enrolled on a device again, only that key gives it."
+        }
+        (false, _) => {
+            "After it no owner key proves a change of the owner's: until one is enrolled \
+             again, the vault takes the host's word for them."
+        }
+    };
+    ApiError::new(
+        format!("{ends}. {after} Nothing was written."),
+        ApiErrorDetails::InvalidState {
+            state: Some(LAST_DEVICE_KEY.to_owned()),
+        },
+        [format!(
+            "To go on, send the request again with `confirm`: `{LAST_DEVICE_KEY}`."
+        )],
+    )
+}
+
 /// Policy hook (CALLS "FIX 4920 enrollment HTTP representation"): the hex
 /// digits of a proof, one raw Ed25519 signature.
 const PROOF_HEX_DIGITS: usize = 2 * OWNER_KEY_POSSESSION_PROOF_LEN;
 
 /// A proof as the client sent it: [`PROOF_HEX_DIGITS`] lower-case hex.
-fn parse_proof(value: &str) -> OwnerResult<Vec<u8>> {
+pub(super) fn parse_proof(value: &str) -> OwnerResult<Vec<u8>> {
     let refused = || {
         OwnerError::Invalid(format!(
             "proof must be {PROOF_HEX_DIGITS} lower-case hex: the new key's signature over its \
@@ -215,7 +406,7 @@ fn parse_proof(value: &str) -> OwnerResult<Vec<u8>> {
 /// request; an agent's act, an install that cannot carry it, or an
 /// enrollment the fold does not count is a refusal naming its rule.
 /// Anything else stays the engine's.
-fn refusal(error: oneiron::Error) -> OwnerError {
+pub(super) fn refusal(error: oneiron::Error) -> OwnerError {
     match &error {
         oneiron::Error::Record(RecordError::InvalidAuthorityLogBody(_)) => {
             OwnerError::Invalid(error.to_string())
@@ -229,7 +420,7 @@ fn refusal(error: oneiron::Error) -> OwnerError {
 
 /// What a route answers when this host holds no root key to sign the
 /// enrollment as its predecessor: this enrollment does not happen here.
-fn no_root_signer() -> OwnerError {
+pub(super) fn no_root_signer() -> OwnerError {
     OwnerError::Refused(
         "this host holds no root signing key to authorize an owner key enrollment".to_owned(),
     )
@@ -250,7 +441,38 @@ fn enrol_as_host(
         .map_err(refusal)
 }
 
-fn key_reply(key: &EnrolledOwnerKey) -> KeyReply {
+/// An authority key as lower-case hex: an Ed25519 key's 32 bytes, a P-256
+/// key's compressed encoding.
+fn authority_key_hex(key: &AuthorityKey) -> String {
+    match key {
+        AuthorityKey::Ed25519(bytes) => oneiron_hex::encode(bytes),
+        AuthorityKey::P256(bytes) => oneiron_hex::encode(bytes),
+    }
+}
+
+fn change_reply(change: &OwnerKeyChange) -> ChangeReply {
+    ChangeReply {
+        entry: revision_hex(&change.entry),
+        change: match change.change {
+            OwnerKeyChangeKind::Enrolled => "enrolled",
+            OwnerKeyChangeKind::Confirmed => "confirmed",
+            OwnerKeyChangeKind::Removed => "removed",
+            OwnerKeyChangeKind::RemovedByEndedKey => "removed_by_ended_key",
+            OwnerKeyChangeKind::RemovedInConflict => "removed_in_conflict",
+        },
+        public_key: authority_key_hex(&change.public_key),
+        shape: match change.public_key {
+            AuthorityKey::Ed25519(_) => "device_key",
+            AuthorityKey::P256(_) => "passkey",
+        },
+        machine: change.machine.to_hex(),
+        kind: change.kind,
+        signed_by: authority_key_hex(&change.signed_by),
+        at: change.at,
+    }
+}
+
+fn key_reply(key: &EnrolledOwnerKey, held: &[AuthorityKey]) -> KeyReply {
     KeyReply {
         entry: revision_hex(&key.entry),
         machine: key.machine.to_hex(),
@@ -260,6 +482,14 @@ fn key_reply(key: &EnrolledOwnerKey) -> KeyReply {
         live: key.live,
         eligible: key.eligible,
         at: key.at,
+        kind: key.kind,
+        held_here: held.contains(&AuthorityKey::Ed25519(key.public_key)),
+        device_machines: key
+            .device_machines
+            .iter()
+            .map(oneiron::EntityId::to_hex)
+            .collect(),
+        recovery_authority: key.recovery_authority,
     }
 }
 
@@ -269,8 +499,14 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
     owner(&auth, &server)?;
     let reply = blocking(move || -> OwnerResult<ListReply> {
         let keys = server.vault().enrolled_owner_keys()?;
+        let held: Vec<AuthorityKey> = server
+            .vault()
+            .checkpoint_root_signers()
+            .iter()
+            .map(|signer| signer.as_ref().root())
+            .collect();
         Ok(ListReply {
-            keys: keys.iter().map(key_reply).collect(),
+            keys: keys.iter().map(|key| key_reply(key, &held)).collect(),
         })
     })
     .await?;
@@ -362,6 +598,63 @@ async fn enroll_this_install(
             entry: revision_hex(&receipt.entry),
             machine: receipt.machine.to_hex(),
             public_key: revision_hex(&receipt.public_key),
+        })
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+/// `POST /v1/owner/owner-signing-keys/remove`: the owner removes one enrolled
+/// device owner key and keeps its machine (the owner's ruling AUTH-5). The
+/// owner key this install holds signs the revocation as its primary signer;
+/// an install that holds none answers 409, state `owner_key_required`. A
+/// removal that would end the last owner key held on a device answers 409,
+/// state `last_device_key`, and writes nothing until the request carries
+/// `confirm`. The recovery root's authority key is refused: the recovery
+/// root's door changes it.
+async fn remove(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<RemoveRequest>,
+) -> OwnerReply<RemovalReply> {
+    let owner = owner(&auth, &server)?;
+    let body = payload.read(&server).await?;
+    let removal = blocking(move || -> OwnerResult<OwnerKeyRemoval> {
+        let key = parse_revision("public_key", &body.public_key)?;
+        let confirmation = last_device_key_confirmation(body.confirm.as_deref())?;
+        server
+            .vault()
+            .remove_owner_key(&owner, key, confirmation)
+            .map_err(refusal)
+    })
+    .await?;
+    match removal {
+        OwnerKeyRemoval::Removed { ended, remaining } => Ok(Json(RemovalReply {
+            entry: revision_hex(&ended.entry),
+            public_key: revision_hex(&ended.public_key),
+            machine: ended.machine.to_hex(),
+            signed_by: authority_key_hex(&ended.signed_by),
+            remaining_device_keys: remaining.device_keys,
+            recovery_root: remaining.recovery_root,
+            ends_recovery_root: remaining.ends_recovery_root,
+        })),
+        OwnerKeyRemoval::LastDeviceKey(remaining) => Err(last_device_key_refusal(remaining).into()),
+    }
+}
+
+/// `GET /v1/owner/owner-signing-keys/changes`: every enrollment and removal
+/// of an enrolled owner key, newest first (the owner's ruling AUTH-5). The
+/// list is read from the vault's log, which every owner device holds, so
+/// each device shows the same changes.
+async fn changes(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<ChangesReply> {
+    let owner = owner(&auth, &server)?;
+    let reply = blocking(move || -> OwnerResult<ChangesReply> {
+        let changes = server.vault().owner_key_changes(&owner)?;
+        Ok(ChangesReply {
+            changes: changes.iter().map(change_reply).collect(),
         })
     })
     .await?;

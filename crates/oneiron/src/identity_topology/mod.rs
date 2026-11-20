@@ -83,6 +83,7 @@
 
 mod act_admission;
 mod admission_disposition;
+mod archive_restore;
 mod attribution;
 mod distinct_claim;
 mod event_body_codec;
@@ -111,14 +112,17 @@ pub use act_admission::{
     EngineCause, SEAL_NO_STANDING, SealAuthority, SealStanding, TOPOLOGY_SEAL_REVISION_CONTEXT,
     TopologySeal, TopologySealBy,
 };
-pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict, ProposerStamp};
-pub(crate) use admission_disposition::{SealTrust, core_digest, decision_in_force_by_seal_in_txn};
-// FIX [LIBTEST-QUARANTINE-IDENTITY-TOPOLOGY-ADMISSION-DISPOSITION-ITEMS]: re-exports sealed_by_key_for_test, gated for the lib test target's type check; port it with that item, then drop this gate
-#[cfg(any())]
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use admission_disposition::sealed_by_key_for_test;
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use admission_disposition::signed_validated_row_for_test;
+pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict, ProposerStamp};
+pub(crate) use admission_disposition::{SealTrust, core_digest, decision_in_force_by_seal_in_txn};
+pub(crate) use archive_restore::{
+    archived_topology_decision, current_merge_and_split_events_in_txn,
+    is_inline_merge_or_split_body, is_one_part_merge_or_split_manifest, is_topology_refusal,
+    one_part_merge_or_split_payload, operation_part_root, restored_merge_or_split,
+};
 pub(crate) use attribution::{
     admitted_author_in_txn, author_carrier_actor, drop_unheld_author_marks_in_txn,
     effective_author_in_txn, record_author_attribution_in_txn, redact_actor_in_txn,
@@ -156,6 +160,8 @@ pub use reassignment_map::{
     ReassignmentEntry, ReassignmentMap, ReassignmentStats, ReassignmentTarget,
 };
 pub use stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
+#[cfg(oneiron_test_support)]
+pub(crate) use stored_event::{pins_author_attribution_action, pins_undo_action};
 pub use transition_table::{
     IdentityTopologyRejection, ProposalOutcome, ProposalRuling, ProposalScope, evaluate_transition,
 };
@@ -211,7 +217,5 @@ use wire_keys::{
 pub(crate) use wire_keys::IDENTITY_TOPOLOGY_LOCAL_SEQ_HEADROOM;
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-IDENTITY-TOPOLOGY-TESTS]: the lib test target's type check fails here (4 errors: E0063 x3, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

@@ -207,10 +207,13 @@ impl Vault {
             return Ok(None);
         };
         let public_key = key.verifying_key().to_bytes();
-        Ok(
-            super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key)
-                .then_some((machine, key)),
+        Ok(super::owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
         )
+        .then_some((machine, key)))
     }
 
     /// Signs, appends and folds the act `op` builds in `txn`, naming the
@@ -246,7 +249,7 @@ impl Vault {
             .then(|| self.owner_proof_signer(&fold))
             .flatten();
         let entry =
-            sign_side_entry_with_owner_proof(&fold, &key, seq, parents, op, now, proof.as_deref())?;
+            sign_side_entry_with_owner_proof(&fold, &key, seq, parents, op, now, proof.as_ref())?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
             start: now,

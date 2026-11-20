@@ -7,9 +7,10 @@
 //! owner, with no issuer.
 use serde::{Deserialize, Serialize};
 
+use super::owner_confirm;
 use crate::authority::{
-    ActAuthority, ActSurface, AuthorityHandoffAlarm, HostSlipIssuer, OWNER_KEY_MOVE_NOT_PLANNED,
-    OwnerKeyMovePlan, OwnerKeyMoveSigner,
+    ActAuthority, ActSurface, AuthorityHandoffAlarm, AuthorityKey, HostSlipIssuer,
+    OWNER_KEY_MOVE_NOT_PLANNED, OwnerKeyMovePlan, OwnerKeyMoveSigner,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -22,6 +23,8 @@ use crate::federation::{
 use crate::memory::{MemoryError, MemoryResult, ProducerRows};
 use crate::{EntityId, Vault};
 
+use super::Offer;
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::shared::{
     HandoffAlarmRequest, SharedActExecuteRequest, SharedActRequest, SharedAddOwnerRequest,
@@ -31,8 +34,9 @@ pub use oneiron_verb_wire::verbs::shared::{
     SharedVaultRequest,
 };
 
-/// `vault.shared.propose_delete`'s input: the shared vault, and the approved
-/// check-in of another asker the starting Owner applies, when one is named.
+/// `vault.shared.propose_delete`'s input: the shared vault, the approved
+/// check-in of another asker the starting Owner applies, when one is named,
+/// and the confirm the shared preview returned for this call.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedDeleteProposeRequest {
@@ -43,6 +47,9 @@ pub struct SharedDeleteProposeRequest {
     /// Owner applies it on their own proof, and the act names its asker.
     #[serde(default)]
     pub check_in_ref: Option<String>,
+    /// The confirm `vault.owner_confirm.preview` returned for this call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<String>,
 }
 
 /// `vault.shared.propose_transfer`'s input: the starter, a live Owner, hands
@@ -142,6 +149,17 @@ pub struct InvitationSlip {
 pub struct SharedInvitationAcceptedWithCredential {
     pub receipt: SharedActExecutionReceipt,
     pub credential: MemberSlip,
+}
+
+/// `vault.members.accept_with_inquiry_edge`'s answer: the acceptance receipt
+/// and the company host's counter on the member's inquiry edge, both from
+/// the one writer that gave the seat (L7-04). The counter carries the pact's
+/// scope opening key: it is written to no receipt or log, and the member's
+/// vault applies it on its edge's grant.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedInvitationAcceptedWithInquiryEdge {
+    pub receipt: SharedActExecutionReceipt,
+    pub inquiry_edge_counter: Offer,
 }
 
 impl MemberSlip {
@@ -252,15 +270,18 @@ pub(super) fn check_in_ref(hex: Option<&str>) -> MemoryResult<Option<EntityId>> 
     .transpose()
 }
 
-/// `vault.shared.propose_delete`: start the vault's `delete_vault` act. The
-/// act records the Owner's check-in decision; with `check_in_ref` the Owner
-/// applies an asker's approved check-in for this delete (2j).
+/// `vault.shared.propose_delete`: start the vault's `delete_vault` act,
+/// once the shared confirm of this proposal is admitted. The act records
+/// the Owner's check-in decision; with `check_in_ref` the Owner applies an
+/// asker's approved check-in for this delete (2j).
 pub fn propose_shared_delete(
     vault: &Vault,
     starter: &AuthenticatedOwner,
     input: SharedDeleteProposeRequest,
 ) -> MemoryResult<PendingAuthorityAct> {
     let check_in = check_in_ref(input.check_in_ref.as_deref())?;
+    let ask = owner_confirm::asked("vault.shared.propose_delete", &input)?;
+    owner_confirm::admit(vault, starter, ask, &())?;
     Ok(vault.propose_delete_vault_with_check_in(starter, input.vault_id, check_in)?)
 }
 
@@ -501,7 +522,7 @@ fn owner_key_move_plan_wire(plan: OwnerKeyMovePlan) -> SharedOwnerKeyMovePlan {
         authority_vault_id: oneiron_hex::encode(&plan.vault_id),
         member: plan.member.to_hex(),
         parents: hex_all(&plan.parents),
-        revoked: hex_all(&plan.revoked),
+        revoked: plan.revoked.iter().map(owner_key_hex).collect(),
         signers: plan
             .signers
             .iter()
@@ -515,6 +536,16 @@ fn owner_key_move_plan_wire(plan: OwnerKeyMovePlan) -> SharedOwnerKeyMovePlan {
     }
 }
 
+/// An owner key as a plan's wire names it: its key bytes in lowercase hex,
+/// 64 digits for an Ed25519 key, 66 for a passkey's compressed P-256 key
+/// (row WEB-PASSKEY-OWNER-KEY).
+fn owner_key_hex(key: &AuthorityKey) -> String {
+    match key {
+        AuthorityKey::Ed25519(bytes) => oneiron_hex::encode(bytes),
+        AuthorityKey::P256(bytes) => oneiron_hex::encode(bytes),
+    }
+}
+
 /// The plan the wire `plan` carries; a field that is not its hex is a bad
 /// request.
 fn owner_key_move_plan_from_wire(plan: SharedOwnerKeyMovePlan) -> MemoryResult<OwnerKeyMovePlan> {
@@ -525,11 +556,25 @@ fn owner_key_move_plan_from_wire(plan: SharedOwnerKeyMovePlan) -> MemoryResult<O
     fn bytes32_all(field: &str, texts: &[String]) -> MemoryResult<Vec<[u8; 32]>> {
         texts.iter().map(|text| bytes32(field, text)).collect()
     }
+    fn owner_key(field: &str, text: &str) -> MemoryResult<AuthorityKey> {
+        if let Some(bytes) = oneiron_hex::decode::<32>(text) {
+            return Ok(AuthorityKey::Ed25519(bytes));
+        }
+        oneiron_hex::decode::<33>(text)
+            .map(|bytes| AuthorityKey::P256(bytes.to_vec()))
+            .ok_or_else(|| {
+                MemoryError::bad_request(format!("{field} is not 64 or 66 lowercase hex"))
+            })
+    }
     Ok(OwnerKeyMovePlan {
         vault_id: bytes32("plan.authority_vault_id", &plan.authority_vault_id)?,
         member: person_id("plan.member", &plan.member)?,
         parents: bytes32_all("plan.parents", &plan.parents)?,
-        revoked: bytes32_all("plan.revoked", &plan.revoked)?,
+        revoked: plan
+            .revoked
+            .iter()
+            .map(|text| owner_key("plan.revoked", text))
+            .collect::<MemoryResult<_>>()?,
         signers: plan
             .signers
             .iter()

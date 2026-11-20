@@ -288,6 +288,10 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_MEMBERSHIP_EXECUTION => {
             super::membership_execution::decode_membership_execution(entries)
         }
+        OP_KIND_ROOT_APPOINTMENT => super::root_appointment::decode_root_appointment(entries),
+        OP_KIND_RESTORED_MACHINE_JOIN => {
+            super::restored_machine_join::decode_restored_machine_join(entries)
+        }
         _ => Err(invalid_authority()),
     }
 }

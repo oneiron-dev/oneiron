@@ -104,6 +104,13 @@ pub(in crate::ai_host) fn request_helper_measurements(
                     "the callable helper gate refused"
                 );
             }
+            Err(Error::Artifact(ArtifactError::SkillVersionKept(reason))) => {
+                tracing::debug!(
+                    helper = %helper.to_hex(),
+                    reason = reason.as_str(),
+                    "the callable helper gate refused"
+                );
+            }
             // By kind only: an engine error can quote the vault.
             Err(error) => {
                 tracing::warn!(

@@ -57,6 +57,13 @@ impl FoldIssues {
                     issues.memory_floor = true;
                     continue;
                 }
+                AuthorityFoldIssue::AppointmentRefused { entry, .. } => {
+                    (entry, "appointment_refused")
+                }
+                // An anchor's burn and a rootless roster name no entry.
+                AuthorityFoldIssue::AnchorBurned { .. } | AuthorityFoldIssue::NoRootKey => {
+                    continue;
+                }
             };
             issues.by_entry.entry(*entry).or_default().push(code);
         }
@@ -114,8 +121,10 @@ impl FoldIssues {
         issues
     }
 
-    /// The codes of a cold row: the diagnostics naming its entry, and the
-    /// memory floor's. A cold row has no op, so no confirm conflict.
+    /// The codes of a cold row whose body the adopted image does not carry:
+    /// the diagnostics naming its entry, and the memory floor's. Such a row
+    /// has no op, so no confirm conflict. A cold row whose body the image
+    /// carries takes [`Self::codes`], as a stored row does.
     pub(super) fn cold_codes(&self, hash: &AuthorityEntryHash) -> Vec<String> {
         let mut codes: Vec<String> = self
             .by_entry

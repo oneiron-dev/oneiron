@@ -291,11 +291,14 @@ pub(crate) struct StartCheckIn<'a> {
     pub(crate) applies: Option<EntityId>,
 }
 /// How a start reaches the check-in decision its act records (2j; P24-SHAPE
-/// Q9 = A): judged in the start's own writer, or already reached, and any
-/// applied check-in already spent, by the caller in its own writer.
+/// Q9 = A): judged in the start's own writer; already reached, and any
+/// applied check-in already spent, by the caller in its own writer; or an
+/// Owner's own act on their own proof, whose applied check-in the start's
+/// writer spends (2k2; P25-SHAPE Q1 = A).
 enum StartDecision<'a> {
     Judge(StartCheckIn<'a>),
     Reached(CheckInDecision),
+    Apply(ActClass, Option<&'a crate::check_in::AppliedCheckIn<'a>>),
 }
 /// Which grant holders a holder scan admits.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -592,6 +595,30 @@ impl Vault {
         )
     }
 
+    /// [`Self::start_authority_act`] for an Owner's own act of class
+    /// `class` on their own proof (2k2; P25-SHAPE Q1 = A): with `applied`,
+    /// another asker's approved check-in, the start's own writer spends it
+    /// on the Owner's live proof, so an act that never starts leaves it
+    /// unspent. The act records the decision.
+    pub(crate) fn start_authority_act_applying(
+        &self,
+        starter: &AuthenticatedOwner,
+        vault_id: u64,
+        act: &str,
+        payload: Vec<u8>,
+        class: ActClass,
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> Result<PendingAuthorityAct> {
+        self.start_authority_act_with_policy_selection(
+            starter,
+            vault_id,
+            act,
+            payload,
+            SettingChoice::Stored,
+            Some(StartDecision::Apply(class, applied)),
+        )
+    }
+
     /// Use a host-selected setting for one request without mutating the stored
     /// policy row. `None` means no wait (for example, mandatory self-erasure).
     /// This is a host policy door, not an untrusted client-selected bypass.
@@ -726,6 +753,16 @@ impl Vault {
                 Some(self.start_check_in_in_txn(&mut txn, vault_id, starter_actor, &start, now)?)
             }
             Some(StartDecision::Reached(decision)) => Some(decision),
+            Some(StartDecision::Apply(class, applied)) => {
+                // The Owner applies another asker's check-in on their own
+                // proof, which this writer checks as the spend lands.
+                if applied.is_some() {
+                    starter.revalidate_in_txn(self, &txn)?;
+                }
+                Some(crate::check_in::owner_act_decision_in_txn(
+                    self, &mut txn, class, applied,
+                )?)
+            }
             None => None,
         };
         let id = self.store.clock.entity_id()?.to_hex();
@@ -1074,14 +1111,12 @@ fn reconcile(record: &mut PendingAuthorityAct, holders: &[LiveActHolder], now: u
 
 mod matured;
 mod owner_change_wait;
-mod policy_change;
+pub(crate) mod policy_change;
 pub use matured::PendingActMatured;
 pub use policy_change::{
     NOTIFICATION_PRODUCER_POLICY_CHANGE, SharedActPoliciesView, SharedActPolicyChange,
     SharedActPolicyChangeState,
 };
 
-// FIX [LIBTEST-QUARANTINE-FEDERATION-PENDING-ACT-TESTS]: the lib test target's type check fails here (5 errors: E0639 x2, E0061 x2, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

@@ -227,6 +227,7 @@ pub fn record_event_outcome(
 }
 
 mod conditional;
+pub(in crate::calendar) use conditional::event_outcome_cites;
 use conditional::record_event_outcome_in_txn;
 pub use conditional::record_machine_event_outcome;
 pub(crate) use conditional::{record_event_outcome_as_in_txn, record_lifecycle_outcome_in_txn};

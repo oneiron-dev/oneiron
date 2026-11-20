@@ -344,6 +344,19 @@ async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
     let facet_only =
         crate::mcp::McpConnectorScope::scoped(None, Some(seeded_test_entity_id(0x1704_00d3)));
     let vault_wide = crate::mcp::McpConnectorScope::vault_wide();
+    // A TASK is born under its facet as a facet_of edge (ARCH-0022), whose
+    // end must be a stored FACET: the facet-only credential's facet is one.
+    // The world axis names no row.
+    server
+        .vault()
+        .put_entity(
+            &seeded_test_entity_id(0x1704_00d3),
+            oneiron::registry::ENTITY_TYPE_FACET,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .expect("seed the facet-only credential's facet");
     register_scoped_mcp_actor(
         &server,
         "one-1704-world-only",
@@ -639,10 +652,11 @@ async fn mcp_endpoint_tool_args_are_gated_before_execution() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "args-1",
-            "board.expand",
+            "self.focus.refresh",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor_ref, "read_board"),
-                json!({ "arguments": { "frame_epoch": 3 } }),
+                // Refresh accepts an epoch, but no card key.
+                json!({ "arguments": { "key": "VERBS", "frame_epoch": 3 } }),
             ),
         ),
     )
@@ -777,8 +791,9 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
             oneiron::EdgeActorClass::Human,
         ))
         .expect("read permit");
-    // The permit is class-bound; the member's class-less peer key reads only
-    // through a class-agnostic grant (FIX 9917, FIX 1218), written after it.
+    // The fixture permit is class-agnostic, as a production agent row is, so
+    // the member's class-less peer key matches it; the class-agnostic grant
+    // written after it (FIX 9917, FIX 1218) stays as belt-and-braces.
     put_actor_read_grant(&server.vault, other, None);
     let memory = server.vault.memory(owner, oneiron::EdgeActorClass::Human);
     let mut turns = Vec::new();

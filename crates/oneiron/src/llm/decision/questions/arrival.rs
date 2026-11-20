@@ -282,28 +282,39 @@ fn enqueue_arrivals(
                 .map(|((_, question, root), _)| (question, root)),
         );
         for (question, unit) in roots {
-            let Some(head) = QUESTION_HEAD.get(store, txn, &super::store::HeadKey(question))?
-            else {
-                continue;
-            };
-            let Some(record) = QUESTION_VERSION.get(
-                store,
-                txn,
-                &VersionKey {
-                    id: question,
-                    version: head.version,
-                },
-            )?
-            else {
-                continue;
-            };
-            if !head.paused
-                && record.definition.refresh.on_arrival
-                && record.definition.units.contains(&unit)
-            {
-                PENDING.put(store, txn, &(question, unit), &EntityId::now())?;
-            }
+            queue_arrival_in_txn(store, txn, question, unit)?;
         }
+    }
+    Ok(())
+}
+
+/// Queues an arrival of `unit` for `question` when its head is live, its
+/// version refreshes on arrival and covers `unit`.
+pub(super) fn queue_arrival_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    question: EntityId,
+    unit: EntityId,
+) -> Result<()> {
+    let Some(head) = QUESTION_HEAD.get(store, txn, &super::store::HeadKey(question))? else {
+        return Ok(());
+    };
+    let Some(record) = QUESTION_VERSION.get(
+        store,
+        txn,
+        &VersionKey {
+            id: question,
+            version: head.version,
+        },
+    )?
+    else {
+        return Ok(());
+    };
+    if !head.paused
+        && record.definition.refresh.on_arrival
+        && record.definition.units.contains(&unit)
+    {
+        PENDING.put(store, txn, &(question, unit), &EntityId::now())?;
     }
     Ok(())
 }
@@ -581,7 +592,10 @@ fn judge_fact(
             target,
         } => (source, Some(kind), Some(target)),
     };
-    let actor = ScopedReadActorKey::new(record.principal.to_hex()).expect("canonical principal");
+    // The principal reads with the actor class of its live row, as its ask
+    // was admitted, so a read row that names its class admits it here too
+    // (ARRIVAL-READER-KEY-CLASSLESS).
+    let actor = super::graph_ask::party_read_key_in_txn(store, txn, record.principal)?;
     // FIX 7461: each permission below is the principal's bare read first,
     // then its own live authority.
     let reader = Reader::new(store_home(store), record.principal, actor);

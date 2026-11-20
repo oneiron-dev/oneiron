@@ -43,6 +43,7 @@ mod shallow;
 pub mod test_hooks;
 mod tombstones;
 mod update_inserts;
+mod use_limited;
 mod withdrawn;
 
 pub(in crate::sync) use self::admission::encoded_root_state;
@@ -128,7 +129,8 @@ pub(crate) use self::shallow::{merge_window_heads, strict_window_cut, tip_window
 pub(in crate::sync) use self::tombstones::apply_tombstone_to_indexed_window_doc;
 pub(crate) use self::tombstones::{
     CarrierRemoval, DeleteBearingUpdate, entity_carriers, export_tombstone_commit_delta,
-    mark_removed_carriers_first, publish_pending_tombstones,
+    forget_removed_carrier_records_in_txn, mark_removed_carriers_first, publish_pending_tombstones,
+    suppress_published_carriers_first,
 };
 pub use self::tombstones::{
     apply_tombstone_to_window_doc, rebuild_window_from_updates, replay_pending_tombstones,
@@ -136,6 +138,7 @@ pub use self::tombstones::{
 #[cfg(test)]
 pub(crate) use self::tombstones::{arm_fail_after_carrier_mark, disarm_fail_after_carrier_mark};
 pub use self::update_inserts::UpdateInserts;
+pub(crate) use self::use_limited::withhold_use_limited_carriers;
 pub(crate) use self::withdrawn::replace_withdrawn_carriers;
 
 /// Whether the stored TURN `turn` can ride its base month window, judged in
@@ -372,6 +375,14 @@ impl LoadedWindow {
     /// the flag reads STALE (`[0]`) and the fast-reconnect reader full-opens
     /// the doc rather than shipping an `sv:w:` VV that omits the survivor's
     /// ops. It is never assumed fresh just because a snapshot was persisted.
+    ///
+    /// Erased inserts (L6-05-SNAPSHOT-PERSIST-ERASED-INSERTS): an update a
+    /// bulk import or a residence landing imported into the doc becomes
+    /// durable here, with no update row whose append owes for it. So the
+    /// history this snapshot stores past the window's last stored one
+    /// ([`UpdateInserts::past_stored`]) owes the erasure sweep a compaction of
+    /// the window in the storing transaction when an insert names a row
+    /// hard-deleted here, as an appended update's does.
     pub fn persist_state(&self, vault: &Vault) -> Result<Vec<u8>> {
         let subsumed_update_keys = merge_persisted_state_into_doc(vault, &self.doc, &self.key)?;
 
@@ -381,10 +392,12 @@ impl LoadedWindow {
         // history a pinned export dropped (census L6-05).
         let state = export_scrubbed_window_state(vault, &self.key, &self.doc)?;
         let vv = doc_version_vector(&self.doc);
+        let inserts = UpdateInserts::past_stored(vault, &self.key, &self.doc)?;
 
         vault.with_write_txn_grouped(|wtxn| {
             let (stored, history_free) = state.stored_in_txn(vault, wtxn)?;
             persist_window_doc_in_txn(vault, wtxn, &self.key, stored, &vv, history_free)?;
+            inserts.owe_in_txn(vault, wtxn, &self.key)?;
             if state.history_free {
                 HISTORY_FREE_WINDOW.put(
                     &vault.store,
@@ -705,12 +718,8 @@ pub(in crate::sync) fn apply_pending_window_updates_in_txn(
     Ok(applied)
 }
 
-// FIX [LIBTEST-QUARANTINE-SYNC-WINDOW-HISTORY-FREE-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod history_free_tests;
-// FIX [LIBTEST-QUARANTINE-SYNC-WINDOW-TESTS]: the lib test target's type check fails here (31 errors: E0061 x23, E0277 x5, E0063 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

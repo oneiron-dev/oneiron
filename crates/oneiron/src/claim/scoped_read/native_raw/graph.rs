@@ -34,7 +34,11 @@ impl NativeRawRead<'_> {
         let lane = &self.lane;
         let txn = lane.grant_read_txn()?;
         let (filter, policy) = lane.resolve_retrieval_filter_in(&txn, None)?;
-        let scan = lane.admitted_edges_in(
+        // The centre and its peers under the key's own floor and then each
+        // of its own live Grants alone, as its point reads (FIX-LIST
+        // SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS).
+        let held = lane.held_for(None);
+        let scan = lane.admitted_edges_held_in(
             &txn,
             &policy,
             &filter,
@@ -48,6 +52,7 @@ impl NativeRawRead<'_> {
             usize::MAX,
             usize::MAX,
             false,
+            &held,
         )?;
         let mut kept = Vec::new();
         for edge in scan.edges {
@@ -108,7 +113,8 @@ impl NativeRawRead<'_> {
         let read = self.lane.child_of_tree_projected(
             root,
             max_depth,
-            |_| Ok::<_, Error>(Some(())),
+            None,
+            |_, _| Ok::<_, Error>(Some(())),
             |_, nodes| {
                 let mut rows: Vec<_> = nodes
                     .unwrap_or_default()
@@ -145,7 +151,10 @@ impl NativeRawRead<'_> {
         let lane = &self.lane;
         let txn = lane.grant_read_txn()?;
         let (filter, policy) = lane.resolve_retrieval_filter_in(&txn, None)?;
-        let anchor = lane.admit_entity_in(&txn, &policy, &filter, start)?;
+        // One authority for the start and every parent the walk reads, held
+        // as `edge_peers` holds it.
+        let held = lane.held_for(None);
+        let anchor = lane.admit_entity_held_in(&txn, &policy, &filter, start, &held)?;
         let mut suppressed = anchor.suppression();
         let mut current = *start;
         let mut seen = HashSet::from([current]);
@@ -153,7 +162,7 @@ impl NativeRawRead<'_> {
         let mut cyclic = anchor.visible() && sought == Some(start);
         if anchor.visible() && !cyclic {
             loop {
-                let scan = lane.admitted_edges_in(
+                let scan = lane.admitted_edges_held_in(
                     &txn,
                     &policy,
                     &filter,
@@ -163,6 +172,7 @@ impl NativeRawRead<'_> {
                     usize::MAX,
                     usize::MAX,
                     false,
+                    &held,
                 )?;
                 suppressed += scan.source.suppression() + scan.suppressed;
                 let Some(parent) = scan.edges.into_iter().next().map(|edge| edge.info().target)

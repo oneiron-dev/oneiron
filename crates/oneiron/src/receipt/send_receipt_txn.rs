@@ -48,7 +48,7 @@ pub(crate) fn persist_send_receipt_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     task_ref: EntityId,
-    mut receipt: ReceiptRecord,
+    receipt: ReceiptRecord,
     outcome: SendReceiptOutcome,
     transport_dispatched: bool,
     delivered_idempotency: Option<(EntityId, &str)>,
@@ -60,23 +60,9 @@ pub(crate) fn persist_send_receipt_in_txn(
             return Ok(false);
         }
     }
-    receipt
-        .fields
-        .insert(FIELD_TASK_REF.to_owned(), task_ref.to_hex());
-    receipt.fields.insert(
-        FIELD_TRANSPORT_DISPATCHED.to_owned(),
-        transport_dispatched.to_string(),
-    );
-    let durable = DurableSendReceipt {
-        version: SEND_RECEIPT_RECORD_VERSION,
-        task_ref: task_ref.to_hex(),
-        outcome,
-        transport_dispatched,
-        receipt,
-    };
-    let encoded = rmp_serde::to_vec_named(&durable)
-        .map_err(|_| Error::InvariantViolation("send receipt encode failed"))?;
-    store.append_send_receipt_in_txn(wtxn, &task_ref, &durable.receipt.receipt_id, &encoded)?;
+    let (receipt_id, encoded) =
+        encode_durable_send_receipt(task_ref, receipt, outcome, transport_dispatched)?;
+    store.append_send_receipt_in_txn(wtxn, &task_ref, &receipt_id, &encoded)?;
     if existing.is_some() {
         store.set_send_receipt_in_txn(wtxn, &task_ref, &encoded)?;
     } else {
@@ -93,6 +79,54 @@ pub(crate) fn persist_send_receipt_in_txn(
         )?;
     }
     Ok(true)
+}
+
+/// Appends a drain's terminal receipt to the TASK's audit trail only: a
+/// newer drain already failed the same attempt, so the newer drain's receipt
+/// stays the TASK's latest, and this one is still kept as evidence. Its free
+/// text is admitted as [`persist_admitted_send_receipt_in_txn`] admits it.
+pub(crate) fn append_superseded_send_receipt_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    mut receipt: ReceiptRecord,
+    outcome: SendReceiptOutcome,
+    transport_dispatched: bool,
+) -> Result<()> {
+    let at = (SEND_RECEIPT_PLACE, task_ref.as_bytes().as_slice());
+    receipt.admit_free_text(vault, wtxn, at, &[])?;
+    let (receipt_id, encoded) =
+        encode_durable_send_receipt(task_ref, receipt, outcome, transport_dispatched)?;
+    vault
+        .store
+        .append_send_receipt_in_txn(wtxn, &task_ref, &receipt_id, &encoded)
+}
+
+/// One receipt's durable bytes, as the audit trail and the TASK's latest row
+/// store them, beside its receipt id.
+fn encode_durable_send_receipt(
+    task_ref: EntityId,
+    mut receipt: ReceiptRecord,
+    outcome: SendReceiptOutcome,
+    transport_dispatched: bool,
+) -> Result<(String, Vec<u8>)> {
+    receipt
+        .fields
+        .insert(FIELD_TASK_REF.to_owned(), task_ref.to_hex());
+    receipt.fields.insert(
+        FIELD_TRANSPORT_DISPATCHED.to_owned(),
+        transport_dispatched.to_string(),
+    );
+    let durable = DurableSendReceipt {
+        version: SEND_RECEIPT_RECORD_VERSION,
+        task_ref: task_ref.to_hex(),
+        outcome,
+        transport_dispatched,
+        receipt,
+    };
+    let encoded = rmp_serde::to_vec_named(&durable)
+        .map_err(|_| Error::InvariantViolation("send receipt encode failed"))?;
+    Ok((durable.receipt.receipt_id, encoded))
 }
 
 /// A consistent delivered-winner read for an executor settlement transaction.

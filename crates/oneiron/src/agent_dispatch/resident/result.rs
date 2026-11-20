@@ -238,9 +238,11 @@ impl AgentDispatcher<'_> {
     /// approving TURN in that TURN's room and leaving HEAD where it is. Only
     /// a run whose approval named a TURN has a sub-session, and only a room
     /// its owner alone reads takes the record, so a run that used the
-    /// owner's reach never posts its answer to another reader. The result
-    /// commits first, in its own write: a filing that fails is logged and
-    /// never fails the run's settlement, and a replayed completion files it.
+    /// owner's reach never posts its answer to another reader. The record
+    /// holds no words, only the result's typed refs, so it is labelled
+    /// observed. The result commits first, in its own write: a filing that
+    /// fails is logged and never fails the run's settlement, and a replayed
+    /// completion files it.
     fn file_plan_run_result(
         &self,
         attempt: &AttemptRecord,
@@ -335,7 +337,7 @@ impl AgentDispatcher<'_> {
                 actor: WriteActor::new(owner, EdgeActorClass::Human),
                 thread_audience: None,
             };
-            crate::conversation_dag::append_composed_at_in_txn(self.vault, txn, &input, record)?;
+            crate::conversation_dag::append_observed_at_in_txn(self.vault, txn, &input, record)?;
             Ok(())
         })
     }

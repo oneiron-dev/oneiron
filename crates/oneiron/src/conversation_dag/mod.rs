@@ -33,6 +33,8 @@ mod branch_scope;
 mod participation;
 mod policy;
 mod quote;
+#[cfg(oneiron_test_support)]
+pub(crate) use quote::quote_field_for_test;
 mod quote_birth;
 mod quote_strips;
 mod record_admission;
@@ -40,6 +42,7 @@ mod redacted;
 mod reply;
 pub(crate) mod retained_path;
 mod scopes;
+pub(crate) mod setting_keys;
 mod thread_projection;
 mod types;
 mod writes;
@@ -83,15 +86,13 @@ pub use types::{
     ResolvedScope, ScopePath, ScopeSelector,
 };
 pub(crate) use writes::{
-    append_composed_at_in_txn, append_composed_in_txn, append_in_txn,
+    append_composed_in_txn, append_in_txn, append_observed_at_in_txn,
     append_regenerated_turn_at_in_txn, put_thread_event_in_txn,
 };
 
 #[cfg(test)]
 pub(crate) mod fixtures;
 
-// FIX [LIBTEST-QUARANTINE-CONVERSATION-DAG-TESTS]: the lib test target's type check fails here (168 errors: E0061 x159, E0599 x9); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

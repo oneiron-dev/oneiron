@@ -459,6 +459,10 @@ fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
     bytes.extend_from_slice(&[0; 3]); // document, output contract, patterns dropped
     len(&mut bytes, 0); // owner-policy patterns
     len(&mut bytes, 0); // signatures
+    // The worker always appends the booking anti-abuse rows section, even
+    // when the manifest names no booking row.
+    text(&mut bytes, "booking_anti_abuse_rules");
+    len(&mut bytes, 0); // no booking rows
     Sha256::digest(&bytes).into()
 }
 
@@ -625,7 +629,7 @@ fn checker_hold_falls_to_proposed() -> Result<()> {
     );
 
     // Zero inbox changes: the existing projection classifies it.
-    let groups = vault.inbox_groups(InboxQuery::at(100, 10))?;
+    let groups = vault.inbox_groups(InboxQuery::at(100, 10))?.groups;
     assert_eq!(groups.len(), 1);
     assert_eq!(groups[0].members.len(), 1);
     assert!(

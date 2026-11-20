@@ -191,13 +191,48 @@ pub(crate) fn attempt_holds_in_txn(
     let now = vault.instant_in_txn(txn)?.secs();
     Ok(load_act_in_txn(vault, txn, checkout)?.is_some_and(|lease| {
         live_at(&lease, epoch, holder, now)
-            && lease.bound_attempt
-                == Some(CheckoutAttemptBinding {
-                    attempt,
-                    epoch,
-                    generation: Some(generation),
-                })
+            && reserved_by(&lease, epoch, holder, attempt, generation)
     }))
+}
+
+/// Whether `checkout`'s lease row at `epoch` for `holder` still carries
+/// `attempt`'s reservation at its generation `generation`, in any state: the
+/// standing a teardown that attempt's own end started keeps once the lease
+/// is Settling and no longer live (Engine RULING
+/// EXPORTPROOF-RUNNER-CHECKOUT-END = A).
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn attempt_reserves_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    checkout: CheckoutId,
+    epoch: u64,
+    holder: &str,
+    attempt: AttemptId,
+    generation: u32,
+) -> CheckoutResult<bool> {
+    Ok(load_act_in_txn(vault, txn, checkout)?
+        .is_some_and(|lease| reserved_by(&lease, epoch, holder, attempt, generation)))
+}
+
+/// Whether `lease` is at `epoch` for `holder` and bound to exactly
+/// `attempt` at `generation`.
+fn reserved_by(
+    lease: &CheckoutLeaseAct,
+    epoch: u64,
+    holder: &str,
+    attempt: AttemptId,
+    generation: u32,
+) -> bool {
+    lease.epoch == epoch
+        && lease.holder_ref == holder
+        && lease.bound_attempt
+            == Some(CheckoutAttemptBinding {
+                attempt,
+                epoch,
+                generation: Some(generation),
+            })
 }
 
 /// The attempt-generation fence of a lease-route push (FIX 7130): an

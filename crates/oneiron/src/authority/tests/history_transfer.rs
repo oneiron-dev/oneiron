@@ -65,30 +65,21 @@ fn account_auth_migrates_managed_root_without_widening() {
         },
     };
     let vault = Vault::open(dir.path(), config).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    // The managed host's root: on a hosted vault the host stamps it
+    // `ROLE_CLOUD`, `CloudCustodial`.
+    let issuer = crate::test_fixtures::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .unwrap();
     let actor = vault.ensure_embedded_owner_actor().unwrap();
-    let old = ed_key(140);
     let new = ed_key(141);
-    let key = authority_key_from_ed(&old);
-    let mut genesis = genesis_entry(140, 1);
-    if let AuthorityOp::Genesis { device, .. } = &mut genesis.op {
-        device.roles |= ROLE_CLOUD;
-        device.tier = AuthorityTier::CloudCustodial;
-    }
-    genesis = sign_ed(genesis, &old);
-    let id = genesis_vault_id(&genesis).unwrap();
-    store(&vault, &genesis);
-    let bind = sign_ed(
-        unsigned_entry(
-            Some(id),
-            1,
-            vec![authority_entry_hash(&genesis).unwrap()],
-            bind_op(&key, actor, "human", 1),
-            key.clone(),
-            2,
-        ),
-        &old,
-    );
-    store(&vault, &bind);
+    let key = issuer.public_key();
+    let root = vault.authority_fold().unwrap();
+    assert!(root.roster[&key].roles & ROLE_CLOUD != 0);
+    assert_eq!(root.roster[&key].tier, AuthorityTier::CloudCustodial);
     assert!(
         vault
             .authenticate_owner(
@@ -107,6 +98,12 @@ fn account_auth_migrates_managed_root_without_widening() {
             crate::store::GateDecisionId::now(),
         )
         .unwrap();
+    // The recovery needs the owner's binding, and a hosted fold counts it
+    // only with an owner key's proof: the custodial root alone binds no
+    // person there.
+    vault
+        .bind_host_owner_with_owner_key_for_test(&owner, &issuer, actor)
+        .unwrap();
     vault
         .recover_cloud_account(
             &owner,
@@ -116,30 +113,26 @@ fn account_auth_migrates_managed_root_without_widening() {
                 AuthorityTier::CloudCustodial,
             ),
             key.clone(),
-            |bytes| Ok(old.sign(bytes).to_bytes().to_vec()),
+            |bytes| Ok(issuer.sign_claim_handoff(bytes).to_vec()),
         )
         .unwrap();
     let fold = vault.authority_fold().unwrap();
-    assert_eq!(fold.vault_id, Some(id));
+    assert_eq!(fold.vault_id, root.vault_id);
     assert!(fold.roster[&key].revoked);
     assert!(!fold.roster[&authority_key_from_ed(&new)].revoked);
 }
 
-// FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-HISTORY-TRANSFER-ITEMS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn signed_pre_handoff_rotation_survives_hosted_transfer_and_cannot_be_reissued() {
     let source_dir = tempfile::tempdir().unwrap();
     let target_dir = tempfile::tempdir().unwrap();
     let source = Vault::open(source_dir.path(), VaultConfig::default()).unwrap();
-    let hosted = VaultConfig {
-        privacy: crate::config::VaultPrivacyConfig {
-            posture: crate::HostingPrivacyPosture::Hosted,
-            data_key_custody: crate::config::VaultDataKeyCustody::HostManagedKms {
-                key_ref: "handoff-test".into(),
-            },
+    let mut hosted = VaultConfig::device();
+    hosted.privacy = crate::config::VaultPrivacyConfig {
+        posture: crate::HostingPrivacyPosture::Hosted,
+        data_key_custody: crate::config::VaultDataKeyCustody::HostManagedKms {
+            key_ref: "handoff-test".into(),
         },
-        ..VaultConfig::default()
     };
     let target = Vault::open(target_dir.path(), hosted).unwrap();
     let old = ed_key(115);
@@ -155,11 +148,33 @@ fn signed_pre_handoff_rotation_survives_hosted_transfer_and_cannot_be_reissued()
     let before = source.authority_fold().unwrap();
     assert!(!before.roster.contains_key(&next_key));
     mature_observed_widen(&source, &rotation);
-    let handoff = sign_ed(
+    let handoff_pure = sign_ed(
         unsigned_entry(
             Some(id),
             0,
             vec![authority_entry_hash(&rotation).unwrap()],
+            AuthorityOp::ReRoot {
+                new_device: device(
+                    host.public_key(),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            next_key.clone(),
+            3,
+        ),
+        &next,
+    );
+    let mut parents = vec![
+        authority_entry_hash(&genesis).unwrap(),
+        authority_entry_hash(&rotation).unwrap(),
+    ];
+    parents.sort();
+    let handoff = sign_ed(
+        unsigned_entry(
+            Some(id),
+            0,
+            parents,
             AuthorityOp::ReRoot {
                 new_device: device(
                     host.public_key(),
@@ -247,10 +262,15 @@ fn signed_pre_handoff_rotation_survives_hosted_transfer_and_cannot_be_reissued()
         vec![
             genesis.clone(),
             rotation.clone(),
-            handoff.clone(),
+            handoff_pure.clone(),
             floor.clone(),
         ],
-        vec![floor.clone(), handoff.clone(), rotation.clone(), genesis],
+        vec![
+            floor.clone(),
+            handoff_pure.clone(),
+            rotation.clone(),
+            genesis,
+        ],
     ] {
         let folded = fold_authority_log_for_posture(
             &entries,
@@ -266,7 +286,7 @@ fn signed_pre_handoff_rotation_survives_hosted_transfer_and_cannot_be_reissued()
         assert!(
             folded
                 .valid_entries
-                .contains(&authority_entry_hash(&handoff).unwrap())
+                .contains(&authority_entry_hash(&handoff_pure).unwrap())
         );
         assert!(folded.roster[&old_key].revoked);
         assert!(folded.roster[&next_key].revoked);
@@ -525,8 +545,6 @@ fn a_retired_root_installs_no_second_root() {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-HISTORY-TRANSFER-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 /// engine-crates-03 at the doors: after a handoff, a row the old root signs
 /// is refused by the signed re-root door, by replicated replay and by
 /// signed-history import, so the fork never reaches the log. The first
@@ -569,6 +587,7 @@ fn every_door_refuses_a_row_the_retired_root_signs() {
                 crate::registry::ENTITY_TYPE_AUTHORITY_LOG,
                 TimeRange { start: 2, end: 2 },
                 2,
+                None,
                 &body,
             )
             .commit()
@@ -588,6 +607,38 @@ fn every_door_refuses_a_row_the_retired_root_signs() {
             refused: authority_entry_hash(&forked).unwrap(),
         }]
     );
+}
+
+/// Review of #9572 (OF-166): an import that carries two siblings the retired
+/// root signed is refused at the first, and its evidence names only the
+/// handoff the vault held before the import. The other sibling rolls back
+/// with the import, so it is no handoff this vault holds.
+#[test]
+fn a_refused_import_names_no_sibling_it_brings_as_a_held_handoff() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let old = ed_key(179);
+    let genesis = genesis_entry(179, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    store(&vault, &genesis);
+    let handoff = re_root_entry(id, &genesis, &old, 1, &ed_key(180));
+    vault.apply_signed_re_root(&handoff).unwrap();
+    let first = re_root_entry(id, &genesis, &old, 2, &ed_key(181));
+    let second = re_root_entry(id, &genesis, &old, 3, &ed_key(182));
+    let before = vault.export_signed_authority_history().unwrap();
+
+    let bodies = [&first, &second].map(|entry| encode_authority_log_entry_body(entry).unwrap());
+    assert!(vault.import_signed_authority_history(&bodies).is_err());
+    assert_eq!(vault.export_signed_authority_history().unwrap(), before);
+    let records = vault.authority_handoff_equivocations();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].signer, authority_key_from_ed(&old));
+    assert_eq!(
+        records[0].handoffs,
+        BTreeSet::from([authority_entry_hash(&handoff).unwrap()])
+    );
+    let siblings = [&first, &second].map(|entry| authority_entry_hash(entry).unwrap());
+    assert!(siblings.contains(&records[0].refused));
 }
 
 fn re_root_to_host(
@@ -693,7 +744,28 @@ fn a_key_rotated_out_before_the_handoff_forks_no_root() {
     store(&vault, &genesis);
     store(&vault, &rotation);
     mature_observed_widen(&vault, &rotation);
-    let handoff = re_root_to_host(id, &rotation, &next, 0, &host);
+    let mut parents = vec![
+        authority_entry_hash(&genesis).unwrap(),
+        authority_entry_hash(&rotation).unwrap(),
+    ];
+    parents.sort();
+    let handoff = sign_ed(
+        unsigned_entry(
+            Some(id),
+            0,
+            parents,
+            AuthorityOp::ReRoot {
+                new_device: device(
+                    host.public_key(),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            authority_key_from_ed(&next),
+            3,
+        ),
+        &next,
+    );
     vault.apply_signed_re_root(&handoff).unwrap();
     let forked = re_root_entry(id, &genesis, &old, 2, &fork);
     assert!(vault.apply_signed_re_root(&forked).is_err());

@@ -28,12 +28,20 @@
 //!   keeps its wake on the recording machine, which admits it there. A riding
 //!   wake travels in the base window of its TURN, as `Owed`; only the home
 //!   takes it, when it holds neither that wake nor its admission.
-//!   Once the home decides it, the home writes `Admitted` in its place: the
-//!   terminal row clears the machine that recorded the wake, also through a
-//!   history-free replacement, and that machine never writes its wake over
-//!   it. A machine that is not the home admits no riding wake while a home
-//!   is elected; every other wake, and every wake on a vault with no elected
-//!   home, is admitted where it was recorded, as before.
+//!   The machine that decides a wake writes `Admitted` in its place: the
+//!   home, or the recording machine where it admits the wake itself. The
+//!   terminal row clears the wake wherever it is held, also through a
+//!   history-free replacement, and the recording machine never writes its
+//!   wake over it.
+//! - While another machine is the home, the recording machine admits no wake
+//!   it carried as `Owed`, whether or not the wake still rides. Once such a
+//!   wake stops riding, the machine retracts it and waits for the home's
+//!   answer: a `Released` row lets it admit the wake, whatever rides by then,
+//!   and an `Admitted` row consumes it (`retraction`). A wake that does not
+//!   ride and bears no carried mark is admitted where it was recorded, as is
+//!   every wake on a vault with no elected home and every wake on the home.
+//!   A copy a machine took from a window as the home is admitted by the home
+//!   alone.
 //!
 //! The carried rows trust the vault's own linked machines as the room rows
 //! beside them do; each program still runs under its waking turn's own
@@ -41,6 +49,14 @@
 
 use serde::{Deserialize, Serialize};
 
+pub(crate) use super::carried_row_placement::{
+    RowPlacement, arming_row_placement, wake_row_placement,
+};
+use super::retraction::CarriedState;
+pub(crate) use super::retraction::{
+    RowsOwed, awaits_release_in_txn, mark_carried_wakes, outranking_wake_row_in_txn,
+    owe_retraction_answer_in_txn, retracted_wake_rows_in_txn,
+};
 use super::types::{TurnProgramArming, TurnProgramDisarm, TurnProgramWake};
 use super::{ADMISSION, ARM, DECIDED, DISARMED, WAKE};
 use crate::Vault;
@@ -59,7 +75,7 @@ use oneiron_records::dreamer_runner::program::replica::{encode, refused};
 /// What a carried arming row says.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
-enum ArmingRow {
+pub(super) enum ArmingRow {
     Armed(TurnProgramArming),
     Disarmed {
         actor: EntityId,
@@ -69,7 +85,7 @@ enum ArmingRow {
 }
 
 impl ArmingRow {
-    fn registration(&self) -> EntityId {
+    pub(super) fn registration(&self) -> EntityId {
         match self {
             Self::Armed(arming) => arming.registration,
             Self::Disarmed { registration, .. } => *registration,
@@ -95,13 +111,34 @@ impl ArmingRow {
     }
 }
 
-/// What a carried wake row says.
+/// What a carried wake row says. On one key the rows are ordered `Owed`,
+/// `Retracted`, `Released`, `Admitted`; no machine writes a row over a later
+/// one (`retraction`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
-enum WakeRow {
+pub(super) enum WakeRow {
     /// A riding wake its recording machine still owes the home.
     Owed(TurnProgramWake),
-    /// The home decided the wake: its admission's identity, and no more.
+    /// The recording machine no longer carries the wake and asks the home to
+    /// release it: ids alone, with the wake's actor, so the actor's erase
+    /// finds the row.
+    Retracted {
+        turn: EntityId,
+        registration: EntityId,
+        actor: EntityId,
+        admission: [u8; 32],
+    },
+    /// The home holds no decision of the retracted wake and keeps no copy of
+    /// it (it dropped the one it took, if any): the recording machine admits
+    /// it. Ids alone, with the wake's actor.
+    Released {
+        turn: EntityId,
+        registration: EntityId,
+        actor: EntityId,
+        admission: [u8; 32],
+    },
+    /// A machine decided the wake (the home, or the recording machine where it
+    /// admits the wake itself): its admission's identity, and no more.
     Admitted {
         turn: EntityId,
         registration: EntityId,
@@ -110,24 +147,30 @@ enum WakeRow {
 }
 
 impl WakeRow {
-    fn key(&self) -> (EntityId, EntityId) {
+    pub(super) fn key(&self) -> (EntityId, EntityId) {
         match self {
             Self::Owed(wake) => wake.key(),
-            Self::Admitted {
+            Self::Retracted {
+                turn, registration, ..
+            }
+            | Self::Released {
+                turn, registration, ..
+            }
+            | Self::Admitted {
                 turn, registration, ..
             } => (*turn, *registration),
         }
     }
 }
 
-fn decode_arming(bytes: &[u8]) -> Result<ArmingRow> {
+pub(super) fn decode_arming(bytes: &[u8]) -> Result<ArmingRow> {
     if bytes.len() > MAX_ROW_BYTES {
         return Err(refused("too large"));
     }
     serde_json::from_slice(bytes).map_err(|_| refused("not an arming row"))
 }
 
-fn decode_wake(bytes: &[u8]) -> Result<WakeRow> {
+pub(super) fn decode_wake(bytes: &[u8]) -> Result<WakeRow> {
     if bytes.len() > MAX_ROW_BYTES {
         return Err(refused("too large"));
     }
@@ -135,12 +178,12 @@ fn decode_wake(bytes: &[u8]) -> Result<WakeRow> {
 }
 
 /// The map key an arming row rides under: its registration.
-fn arming_key(registration: EntityId) -> String {
+pub(super) fn arming_key(registration: EntityId) -> String {
     registration.to_hex()
 }
 
 /// The map key a wake row rides under: its turn, then its registration.
-fn wake_key((turn, registration): (EntityId, EntityId)) -> String {
+pub(super) fn wake_key((turn, registration): (EntityId, EntityId)) -> String {
     format!("{}{}", turn.to_hex(), registration.to_hex())
 }
 
@@ -172,7 +215,11 @@ fn arming_rides(arming: &TurnProgramArming) -> bool {
 /// verifies on any machine, its arming held here rides, its row fits, and its
 /// TURN and any stored conversation can pack into base windows in this snapshot.
 /// An occurrence's wake names no TURN and is admitted where it was recorded.
-fn wake_rides_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, wake: &TurnProgramWake) -> Result<bool> {
+pub(super) fn wake_rides_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    wake: &TurnProgramWake,
+) -> Result<bool> {
     if wake.occurrence.is_some()
         || !wake.authority.rides_to_home()
         || !encode(&WakeRow::Owed(wake.clone())).is_ok_and(|row| row.len() <= MAX_ROW_BYTES)
@@ -227,13 +274,32 @@ pub(crate) fn home_here_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<O
 }
 
 /// Whether the drain on this machine passes `wake` by: a riding wake, while
-/// another machine is the elected home, is the home's to admit.
+/// another machine is the elected home, is the home's to admit. So is a wake
+/// this machine carried as owed, whether or not it still rides, until the
+/// home releases it (`retraction`); a released wake is admitted here whatever
+/// rides. A copy this machine took from a window as the home is passed by
+/// on every machine that is not the home, riding or not, also while no home
+/// is elected: only the home admits a copy.
 pub(super) fn wake_is_the_homes_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     wake: &TurnProgramWake,
 ) -> Result<bool> {
-    Ok(home_here_in_txn(vault, txn)? == Some(false) && wake_rides_in_txn(vault, txn, wake)?)
+    let home_here = home_here_in_txn(vault, txn)?;
+    if home_here == Some(true) {
+        return Ok(false);
+    }
+    if super::retraction::imported_in_txn(vault, txn, wake)? {
+        return Ok(true);
+    }
+    if home_here.is_none() {
+        return Ok(false);
+    }
+    match super::retraction::carried_state_in_txn(vault, txn, wake)? {
+        Some(CarriedState::Released) => Ok(false),
+        Some(CarriedState::Owed | CarriedState::Retracted) => Ok(true),
+        None => wake_rides_in_txn(vault, txn, wake),
+    }
 }
 
 /// The checks every carried arming row passes, by its bytes alone: whole,
@@ -258,7 +324,8 @@ pub(crate) fn admit_arming_row(map_key: &str, bytes: &[u8]) -> Result<()> {
 
 /// The checks every carried wake row passes, by its bytes alone: whole and
 /// filed under its own turn and registration; an `Owed` row a turn's,
-/// sealed by an authority that rides and holding no owed status.
+/// sealed by an authority that rides, and holding no hold but its lapsed
+/// slip's, which ends by the wake's own expiry.
 pub(crate) fn admit_wake_row(map_key: &str, bytes: &[u8]) -> Result<()> {
     let row = decode_wake(bytes)?;
     if wake_key(row.key()) != map_key {
@@ -290,10 +357,12 @@ pub(crate) fn arming_row_actor(bytes: &[u8]) -> Option<EntityId> {
     decode_arming(bytes).ok().map(|row| row.actor())
 }
 
-/// The actor a carried `Owed` wake row names; an `Admitted` row names none.
+/// The actor a carried `Owed`, `Retracted` or `Released` wake row names; an
+/// `Admitted` row names none.
 pub(crate) fn wake_row_actor(bytes: &[u8]) -> Option<EntityId> {
     match decode_wake(bytes).ok()? {
         WakeRow::Owed(wake) => Some(wake.authority.actor()),
+        WakeRow::Retracted { actor, .. } | WakeRow::Released { actor, .. } => Some(actor),
         WakeRow::Admitted { .. } => None,
     }
 }
@@ -356,9 +425,9 @@ pub(crate) fn merge_arming_row_in_txn(
 /// wakes on it and neither the wake nor its admission is; before its
 /// arming, its pinned SKILL and its TURN arrive, or while the TURN's ChildOf
 /// edge is deferred here, it is left in the window, and a held row keeps its
-/// hold. An `Admitted` row consumes the riding wake this machine recorded
-/// under its key, on any machine; a row that names an occurrence's wake is
-/// refused.
+/// hold. An `Admitted` row consumes the wake held under its key on any
+/// machine, one recorded there or a copy taken from a window; a row that
+/// names an occurrence's wake is refused.
 pub(crate) fn merge_wake_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -368,8 +437,20 @@ pub(crate) fn merge_wake_row_in_txn(
     if admit_wake_row(map_key, bytes).is_err() {
         return Ok(RowMerge::Refused("malformed"));
     }
-    let wake = match decode_wake(bytes)? {
+    let row = decode_wake(bytes)?;
+    let key = row.key();
+    let wake = match row {
         WakeRow::Owed(wake) => wake,
+        WakeRow::Retracted {
+            actor, admission, ..
+        } => {
+            return super::retraction::merge_retracted_in_txn(vault, txn, key, actor, admission);
+        }
+        WakeRow::Released {
+            actor, admission, ..
+        } => {
+            return super::retraction::merge_released_in_txn(vault, txn, key, actor, admission);
+        }
         WakeRow::Admitted { admission, .. } => {
             return consume_decided_wake_in_txn(vault, txn, map_key, admission);
         }
@@ -381,9 +462,10 @@ pub(crate) fn merge_wake_row_in_txn(
     if vault.carrier_actor_erased_in_txn(txn, &actor)? {
         return Ok(RowMerge::Refused("names an actor erased here"));
     }
-    if WAKE.contains(vault, &*txn, &wake.key())?
+    if WAKE.contains(vault, &*txn, &key)?
         || ADMISSION.contains(vault, &*txn, &wake.admission_id())?
-        || DECIDED.get(vault, &*txn, &wake.key())? == Some(wake.admission_id())
+        || DECIDED.get(vault, &*txn, &key)? == Some(wake.admission_id())
+        || super::retraction::released_here_in_txn(vault, &*txn, actor, key, wake.admission_id())?
     {
         return Ok(RowMerge::Held);
     }
@@ -408,14 +490,16 @@ pub(crate) fn merge_wake_row_in_txn(
     if crate::sync::bridge::has_deferred_child_of_source_in_txn(vault, txn, &wake.turn.turn)? {
         return Ok(RowMerge::Held);
     }
-    WAKE.put(vault, txn, &wake.key(), &wake)?;
-    super::index::index_wake_in_txn(vault, txn, actor, wake.key())?;
+    WAKE.put(vault, txn, &key, &wake)?;
+    super::index::index_wake_in_txn(vault, txn, actor, key)?;
+    super::retraction::mark_imported_in_txn(vault, txn, actor, key)?;
     Ok(RowMerge::Written)
 }
 
 /// Consumes, in the caller's writer, the wake an `Admitted` row decided: the
-/// home that admitted it wrote that terminal row, so this machine never
-/// admits it again, whatever its own home role or the arming's state now (a
+/// machine that admitted it (the home, or the recording machine) wrote that
+/// terminal row, or a machine that imported the decision wrote it again, so
+/// this machine never admits it again, whatever its own home role or the arming's state now (a
 /// machine elected home after the old home decided still holds the wake it
 /// recorded). The decision's identity is kept here (`DECIDED`), with or
 /// without a wake to consume, so no later landing of the turn records the
@@ -455,11 +539,12 @@ fn consume_decided_wake_in_txn(
     Ok(RowMerge::Written)
 }
 
-/// Drops, in the caller's writer, the riding wake this machine recorded
-/// under `map_key` once the window no longer holds it: an erase took it (a
-/// decided wake arrives as an `Admitted` row instead). The home keeps what
-/// it owes; a wake that does not ride was never carried. Answers whether a
-/// wake went.
+/// Drops, in the caller's writer, the wake held under `map_key` that a
+/// window carried, once the window no longer holds it: an erase took it (a
+/// decided wake arrives as an `Admitted` row instead). The wake is one this
+/// machine recorded, or a copy it took from a window as a former home. The
+/// home keeps what it owes; a wake that neither rides nor bears a carried mark was
+/// never carried. Answers whether a wake went.
 pub(crate) fn drop_wake_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -474,7 +559,10 @@ pub(crate) fn drop_wake_row_in_txn(
     let Some(wake) = WAKE.get(vault, &*txn, &key)? else {
         return Ok(false);
     };
-    if !wake_rides_in_txn(vault, txn, &wake)? {
+    // A wake marked as carried was in the window, whether or not it rides now.
+    if super::retraction::carried_state_in_txn(vault, txn, &wake)?.is_none()
+        && !wake_rides_in_txn(vault, txn, &wake)?
+    {
         return Ok(false);
     }
     WAKE.delete(vault, txn, &key)?;
@@ -551,7 +639,8 @@ pub(crate) fn arming_row_outranked_here_in_txn(
 /// state: each riding wake it owes for the turn, unless this machine is the
 /// home, which admits its own. A wake held on its lapsed slip rides with its
 /// hold: one this machine held while it was the home goes to the home
-/// elected since, which admits it at its rebind or its expiry.
+/// elected since, which admits it at its rebind or its expiry. A wake this
+/// machine retracted rides as owed no more, whether or not it rides again.
 pub(crate) fn turn_wake_rows_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -563,7 +652,12 @@ pub(crate) fn turn_wake_rows_in_txn(
     let mut rows = Vec::new();
     for row in WAKE.iter_from(vault, txn, turn.as_bytes())? {
         let (_, wake) = row?;
-        if wake_rides_in_txn(vault, txn, &wake)? {
+        // A retraction is final: its wake rides as owed no more.
+        let retracted = matches!(
+            super::retraction::carried_state_in_txn(vault, txn, &wake)?,
+            Some(CarriedState::Retracted | CarriedState::Released)
+        );
+        if !retracted && wake_rides_in_txn(vault, txn, &wake)? {
             rows.push((wake_key(wake.key()), encode(&WakeRow::Owed(wake))?));
         }
     }
@@ -593,8 +687,9 @@ pub(crate) fn owed_wake_arming_row_in_txn(
 }
 
 /// The `Admitted` rows TURN `turn` owes the window from this machine's own
-/// decisions (FIX 5266): each riding wake of the turn this machine admitted
-/// (never an occurrence's, which is admitted where it was recorded),
+/// decisions (FIX 5266): each wake of the turn this machine admitted whose
+/// authority rides (never an occurrence's, which is admitted where it was
+/// recorded),
 /// whether or not a machine carried it as owed (the home admits its own
 /// turns' wakes, which no `Owed` row ever carried), and each decision it
 /// imported. A machine elected home later then holds every decision, and no
@@ -643,6 +738,12 @@ pub(crate) fn wake_row_decided(bytes: &[u8]) -> bool {
     matches!(decode_wake(bytes), Ok(WakeRow::Admitted { .. }))
 }
 
+/// Whether the carried wake row `bytes` is past `Owed` (retracted, released
+/// or decided), so no machine writes an `Owed` row over it.
+pub(crate) fn wake_row_past_owed(bytes: &[u8]) -> bool {
+    !matches!(decode_wake(bytes), Ok(WakeRow::Owed(_)) | Err(_))
+}
+
 /// The `Admitted` row that replaces the carried `Owed` row `bytes` once this
 /// machine holds its admission; `None` for any other row.
 pub(crate) fn admitted_row_in_txn(
@@ -684,60 +785,4 @@ pub(super) fn admitted_row_for_test(wake: &TurnProgramWake) -> Result<(String, V
             admission: wake.admission_id(),
         })?,
     ))
-}
-
-/// Where a carried row of either map goes in a checkpoint.
-pub(crate) enum RowPlacement {
-    /// In its actor's compartment, held while each dependency is.
-    Owned {
-        owner: EntityId,
-        dependencies: Vec<EntityId>,
-    },
-    /// Ids alone, dropped with each entity it names.
-    Structure { dependencies: Vec<EntityId> },
-    /// A row whose own key differs from the key that files it, which admit
-    /// refuses and no writer files (FIX SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW).
-    KeyMismatch,
-}
-
-/// Where the arming row `bytes`, filed under `map_key`, goes: its actor's,
-/// held while the conversation it listens to is. A key mismatch for an
-/// arming filed under another registration (FIX
-/// SYNC-CHECKPOINT-TURN-PROGRAM-KEY-UNUSED). `None` for bytes that read as
-/// no arming.
-pub(crate) fn arming_row_placement(map_key: &str, bytes: &[u8]) -> Option<RowPlacement> {
-    let row = decode_arming(bytes).ok()?;
-    if arming_key(row.registration()) != map_key {
-        return Some(RowPlacement::KeyMismatch);
-    }
-    Some(match row {
-        ArmingRow::Armed(arming) => RowPlacement::Owned {
-            owner: arming.actor,
-            dependencies: arming.conversation.into_iter().collect(),
-        },
-        ArmingRow::Disarmed { actor, .. } => RowPlacement::Owned {
-            owner: actor,
-            dependencies: Vec::new(),
-        },
-    })
-}
-
-/// Where the wake row `bytes`, filed under `map_key`, goes: an `Owed` row is
-/// its actor's, held while its turn and conversation are; an `Admitted` row
-/// is ids alone, held while its turn is. A key mismatch for a wake filed
-/// under another wake's key. `None` for bytes that read as no wake.
-pub(crate) fn wake_row_placement(map_key: &str, bytes: &[u8]) -> Option<RowPlacement> {
-    let row = decode_wake(bytes).ok()?;
-    if wake_key(row.key()) != map_key {
-        return Some(RowPlacement::KeyMismatch);
-    }
-    Some(match row {
-        WakeRow::Owed(wake) => RowPlacement::Owned {
-            owner: wake.authority.actor(),
-            dependencies: vec![wake.turn.turn, wake.turn.conversation],
-        },
-        WakeRow::Admitted { turn, .. } => RowPlacement::Structure {
-            dependencies: vec![turn],
-        },
-    })
 }

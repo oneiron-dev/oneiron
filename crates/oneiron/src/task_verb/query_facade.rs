@@ -2,8 +2,6 @@
 //! Entry: `Memory::cancel`.
 //! Read/proposal methods live in children; cancellation stays here.
 
-use std::sync::atomic::Ordering;
-
 use rmpv::Value;
 
 use crate::attempt_queue::{
@@ -11,7 +9,7 @@ use crate::attempt_queue::{
     CancelRequestOutcome, CancelStanding, ForceAttemptCancel, ForceCancelAuthority,
     ForceCancelOutcome, InterveneAttempt, LandingTrigger, RequestAttemptCancel,
 };
-use crate::batch::{ApplyOpsGateMode, BatchOp, apply_ops_with_gate_mode};
+use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::context_board::{
     TaskBoardStatus, TasksSectionRows, ack_task_in_txn, cancel_task_in_txn, expand_task,
@@ -25,8 +23,8 @@ use crate::gate::{
     resolve_policy_manifest,
 };
 use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, facade_provenance,
-    verify_actor_binding,
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
+    facade_provenance, verify_actor_binding,
 };
 use crate::run_tree::RunTreeStatus;
 use crate::temporal::TimeRange;
@@ -387,4 +385,64 @@ fn not_the_task_owner() -> MemoryError {
         "only the task's owner dismisses its failure".to_owned(),
         &["A failed task stays on the board until the actor that owns it dismisses it."],
     )
+}
+
+/// An acknowledgement answers the failure its request read. A failure that
+/// settled since (a synced refailure) is one the owner has not seen, so the
+/// dismissal is refused rather than stamped over it.
+fn failure_changed_since_read() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_INVALID_STATE,
+        "the task's failure changed since it was read; read the task again".to_owned(),
+        &["Read the task's current failure before acknowledging it."],
+    )
+}
+
+#[cfg(test)]
+type BeforeAckWriterHook = Box<dyn FnOnce(&crate::Vault)>;
+
+#[cfg(test)]
+std::thread_local! {
+    static BEFORE_ACK_WRITER: std::cell::RefCell<Option<BeforeAckWriterHook>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Runs `hook` once, on this thread, between an acknowledgement's read of a
+/// failed task and the writer that commits it: a test lands a synced
+/// refailure there.
+#[cfg(test)]
+pub(crate) fn set_before_ack_writer_hook(hook: impl FnOnce(&crate::Vault) + 'static) {
+    BEFORE_ACK_WRITER.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[cfg(test)]
+fn run_before_ack_writer_hook(vault: &crate::Vault) {
+    BEFORE_ACK_WRITER.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook(vault);
+        }
+    });
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static BETWEEN_ACK_READS: std::cell::RefCell<Option<BeforeAckWriterHook>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Runs `hook` once, on this thread, between an acknowledgement's two reads
+/// of a task (its settlement and its dismissal status): a test lands a
+/// same-second failure there.
+#[cfg(test)]
+pub(crate) fn set_between_ack_reads_hook(hook: impl FnOnce(&crate::Vault) + 'static) {
+    BETWEEN_ACK_READS.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[cfg(test)]
+fn run_between_ack_reads_hook(vault: &crate::Vault) {
+    BETWEEN_ACK_READS.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook(vault);
+        }
+    });
 }

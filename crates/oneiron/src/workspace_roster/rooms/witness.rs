@@ -15,6 +15,8 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::workspace_roster::JoinSubject;
 use std::collections::BTreeMap;
 
+mod private_thread_reply;
+
 /// What the room guard proved for one witness.
 pub(crate) struct RoomWitness {
     /// The reply topology the witness mints into the TURN's first body and
@@ -199,18 +201,10 @@ pub(crate) fn admit_witness(
         if input.thread_audience.is_some() || regeneration.is_some() {
             return Err(invalid());
         }
-        // CHAT-ORDINARY-ROOM-REPLY-TO-TRUNK (CHAT-THREAD-REPLY-REFUSAL-SCOPE
-        // = B): a turn this write mints lands on the trunk, so one that names
-        // a private thread's TURN as its parent or anchor is refused, never
-        // shown to the whole room. A reply in such a thread is a DAG reply
-        // (`reply_in_thread`). One aimed at a room-wide thread still lands on
-        // the trunk, which every reader of that thread reads anyway.
-        if stored_body.is_none() && names_private_thread_turn_in(vault, txn, input)? {
-            return Err(Error::InvalidConfig(
-                "an ordinary room's witness lands a new turn on its trunk: a reply in one of \
-                 its private threads goes through the conversation DAG's reply door"
-                    .into(),
-            ));
+        // A turn this write mints lands on the trunk: one replying into a
+        // private thread is refused (CHAT-ORDINARY-ROOM-REPLY-TO-TRUNK).
+        if stored_body.is_none() {
+            private_thread_reply::refuse_trunk_reply_into_private_thread_in(vault, txn, input)?;
         }
         // FIX 2027: a quote rides a turn in any room (ARCH-0006a:229), one
         // per message (FIX 2028). Its speaker takes part here, on a seat or a
@@ -651,40 +645,6 @@ pub(crate) fn admit_witness(
     )?;
     super::offer_activity::witness_in_txn(vault, txn, writer, room, input, messages)?;
     Ok(RoomWitness { quoted, thread })
-}
-
-/// Whether a message of `input` names, as its reply parent or its thread
-/// anchor (`room_reply_to`, `room_thread_of`), a live TURN of a private
-/// thread: its body carries a thread binding, and that thread has an
-/// audience now (FIX 5545). A value that names no live TURN, a trunk TURN or
-/// a turn of a room-wide thread names none.
-fn names_private_thread_turn_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    input: &WitnessTurn,
-) -> Result<bool> {
-    let named = input
-        .messages
-        .iter()
-        .filter_map(|message| message.metadata.as_ref())
-        .flat_map(|metadata| {
-            ["room_reply_to", "room_thread_of"]
-                .into_iter()
-                .filter_map(move |field| metadata.get(field)?.as_str())
-        })
-        .filter_map(|value| EntityId::from_hex(value).ok());
-    for turn in named {
-        if let LiveEntityRow::Live {
-            entity_type: crate::registry::ENTITY_TYPE_TURN,
-            body,
-        } = live_entity_row_in_txn(&vault.store, txn, &turn)?
-            && let Some(binding) = thread_binding(&body)?
-            && thread_audience_now_in(vault, txn, binding.room, turn)?.is_some()
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 /// The read a quote's selection passes in the witness's own write snapshot

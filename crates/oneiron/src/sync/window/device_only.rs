@@ -164,7 +164,9 @@ const FLAG_PASSES: usize = 3;
 /// again under the new set. That read and the acceptance hold the vault's
 /// device-only flag lock, which a settings commit takes too, so an edit
 /// committed before the verdict accepts is always seen. No read transaction
-/// is held across the inspection or the send.
+/// is held across the inspection or the send. Bytes that pass are read
+/// again for a row a record use limit keeps here
+/// (`use_limited::use_limit_update_verdict`).
 pub fn raw_update_verdict(
     manager: &Arc<WindowManager>,
     window_key: &str,
@@ -196,33 +198,48 @@ fn raw_update_verdict_with(
     update: &[u8],
     withheld_now: impl Fn(&Vault) -> Result<BTreeSet<EntityId>>,
 ) -> UpdateVerdict {
-    let verdict = (|| -> Result<UpdateVerdict> {
-        let vault = manager.vault();
-        let accepting = vault.device_only_acceptance();
-        let mut flagged = withheld_now(vault)?;
-        if flagged.is_empty() {
-            return Ok(UpdateVerdict::Portable);
-        }
-        drop(accepting);
-        for _ in 0..FLAG_PASSES {
-            let verdict = inspect_raw_update(manager, &flagged, window_key, update)?;
-            if verdict != UpdateVerdict::Portable {
-                return Ok(verdict);
+    let verdict =
+        device_only_update_verdict(manager, window_key, update, withheld_now).and_then(|verdict| {
+            match verdict {
+                UpdateVerdict::Portable => {
+                    super::use_limited::use_limit_update_verdict(manager, window_key, update)
+                }
+                withheld => Ok(withheld),
             }
-            let accepting = vault.device_only_acceptance();
-            let now_flagged = withheld_now(vault)?;
-            if now_flagged.is_subset(&flagged) {
-                return Ok(UpdateVerdict::Portable);
-            }
-            drop(accepting);
-            flagged = now_flagged;
-        }
-        Ok(UpdateVerdict::Uninspectable)
-    })();
+        });
     verdict.unwrap_or_else(|error| {
         tracing::warn!(kind = ?error.kind(), "raw window update not inspectable");
         UpdateVerdict::Uninspectable
     })
+}
+
+fn device_only_update_verdict(
+    manager: &Arc<WindowManager>,
+    window_key: &str,
+    update: &[u8],
+    withheld_now: impl Fn(&Vault) -> Result<BTreeSet<EntityId>>,
+) -> Result<UpdateVerdict> {
+    let vault = manager.vault();
+    let accepting = vault.device_only_acceptance();
+    let mut flagged = withheld_now(vault)?;
+    if flagged.is_empty() {
+        return Ok(UpdateVerdict::Portable);
+    }
+    drop(accepting);
+    for _ in 0..FLAG_PASSES {
+        let verdict = inspect_raw_update(manager, &flagged, window_key, update)?;
+        if verdict != UpdateVerdict::Portable {
+            return Ok(verdict);
+        }
+        let accepting = vault.device_only_acceptance();
+        let now_flagged = withheld_now(vault)?;
+        if now_flagged.is_subset(&flagged) {
+            return Ok(UpdateVerdict::Portable);
+        }
+        drop(accepting);
+        flagged = now_flagged;
+    }
+    Ok(UpdateVerdict::Uninspectable)
 }
 
 /// Recheck a selector's standalone synthetic update at release. Its closed
@@ -253,7 +270,12 @@ pub fn selector_update_verdict_for_peer(
         {
             return Ok(UpdateVerdict::Uninspectable);
         }
-        bytes_verdict(vault, &flagged, &key, &alone, update)
+        match bytes_verdict(vault, &flagged, &key, &alone, update)? {
+            UpdateVerdict::Portable => {
+                super::use_limited::standalone_use_limit_verdict(vault, update)
+            }
+            withheld => Ok(withheld),
+        }
     })()
     .unwrap_or(UpdateVerdict::Uninspectable)
 }
