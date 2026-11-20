@@ -87,11 +87,9 @@ fn profiled_vault(
     Ok(vault)
 }
 
-/// A fresh destination, opened at least one wall-clock second after its
-/// source, as `archive_restore_owner_settle.rs` opens one: its engine-seed
-/// seconds differ from the source's.
-fn open_later_vault() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>> {
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+/// A fresh destination vault for an archive import. The import compares unchanged
+/// engine seeds apart from their seed times, so no wall-clock wait is needed.
+fn open_destination_vault() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let vault = Vault::open(directory.path(), VaultConfig::default())?;
     Ok((directory, vault))
@@ -207,7 +205,7 @@ fn an_owners_archive_with_a_task_restores_its_authority_facts() -> TestResult {
     let (task, fact) = owned_task(&source)?;
     let archive = source.export_whole_vault(true)?.bytes().to_vec();
 
-    let (_dest_directory, dest) = open_later_vault()?;
+    let (_dest_directory, dest) = open_destination_vault()?;
     let owner = owner_proof(&dest)?;
     if let Err(error) = dest.import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner)
     {
@@ -243,7 +241,7 @@ fn a_cancelled_task_stays_cancelled_after_the_owners_restore() -> TestResult {
     );
     let archive = source.export_whole_vault(true)?.bytes().to_vec();
 
-    let (_dest_directory, dest) = open_later_vault()?;
+    let (_dest_directory, dest) = open_destination_vault()?;
     let proof = owner_proof(&dest)?;
     if let Err(error) = dest.import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &proof)
     {
@@ -299,7 +297,7 @@ fn an_import_with_no_owner_refuses_the_owners_task_facts() -> TestResult {
     let (task, fact) = owned_task(&source)?;
     let archive = source.export_whole_vault(true)?.bytes().to_vec();
 
-    let (_dest_directory, dest) = open_later_vault()?;
+    let (_dest_directory, dest) = open_destination_vault()?;
     let refused = dest
         .import_whole_vault_archive(&archive)
         .expect_err("only the owner's restore lands a task authority fact");
@@ -321,7 +319,6 @@ fn a_restored_fact_counts_on_a_second_device_of_a_rooted_vault() -> TestResult {
     oneiron::test_doors::inquiry::cancel_task(&source, task, owner)?;
     let archive = source.export_whole_vault(true)?.bytes().to_vec();
 
-    std::thread::sleep(std::time::Duration::from_millis(1100));
     let dest_directory = tempfile::tempdir()?;
     let dest = Vault::open_owned(dest_directory.path(), VaultConfig::device())?;
     dest.install_device_keystore(Arc::new(MemoryKeystore::default()));
@@ -396,7 +393,6 @@ fn the_owners_restore_counts_a_fact_the_vault_held_from_sync() -> TestResult {
     let raw = source.get_raw(&fact)?.expect("the source's Owner fact row");
     let header = EntityMetadataHeader::parse(&raw).expect("the fact row's header");
 
-    std::thread::sleep(std::time::Duration::from_millis(1100));
     let dest_directory = tempfile::tempdir()?;
     let dest = Vault::open_owned(dest_directory.path(), VaultConfig::device())?;
     dest.install_device_keystore(Arc::new(MemoryKeystore::default()));
@@ -509,7 +505,6 @@ fn a_restored_fact_naming_this_machine_under_another_key_is_twinned() -> TestRes
     let (task, fact) = owned_task(&source)?;
     let owner = source.ensure_embedded_owner_actor()?;
 
-    std::thread::sleep(std::time::Duration::from_millis(1100));
     let dest_directory = tempfile::tempdir()?;
     let dest = Vault::open_owned(dest_directory.path(), VaultConfig::device())?;
     dest.install_device_keystore(Arc::new(MemoryKeystore::default()));

@@ -172,3 +172,130 @@ fn a_task_cancelled_before_the_root_stays_cancelled_on_a_second_device() {
         "the root adopted every fact written before it, so a second pass adopts none"
     );
 }
+
+/// A fact the task door writes unsigned after the root, on a start with no signer
+/// loaded, is adopted on the next profiling open: it counts nowhere else before, and on
+/// a second device after, and a further adoption pass finds nothing left.
+#[test]
+fn a_fact_written_unsigned_after_the_root_is_adopted_on_the_next_profiling_open() {
+    // One keystore held across opens: the adopting reopen must load the same machine's
+    // seed. A fresh empty keystore with `prepare_install_signing` would forget the machine
+    // and join as new.
+    let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
+    let dir = tempfile::tempdir().expect("tempdir");
+    let device_dir = tempfile::tempdir().expect("tempdir");
+    let device =
+        Vault::open(device_dir.path(), VaultConfig::device()).expect("the device's install");
+    device.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+
+    // Root the vault with the signer loaded, enrol the device, then drop the vault so the
+    // same path can reopen.
+    let owner = {
+        let vault = Vault::open_owned(dir.path(), VaultConfig::device()).expect("a new vault");
+        vault.install_device_keystore(Arc::clone(&keystore));
+        assert_eq!(
+            vault
+                .profile_local_open(Some(b"task-fact-post-root-adoption"), true)
+                .expect("the root door"),
+            LocalOpenProfile::RootedAndProfiled,
+        );
+        let owner = vault
+            .ensure_embedded_owner_actor()
+            .expect("the embedded owner");
+        let vault_id = vault
+            .authority_fold()
+            .expect("the vault's fold")
+            .vault_id
+            .expect("a rooted vault");
+        let key = device
+            .machine_encryption_key(vault_id)
+            .expect("the device's encryption key");
+        let request = device
+            .machine_enrolment_request(vault_id, key)
+            .expect("the device's enrolment request");
+        let proof = vault
+            .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+            .expect("the owner's proof");
+        vault
+            .enroll_machine(
+                &proof,
+                ActSurface::ThisInstall,
+                &request,
+                MachineRole::Owned(MachineOwnership::Yours),
+                None,
+            )
+            .expect("the owner enrols the device as his");
+        let history = vault
+            .export_signed_authority_history()
+            .expect("the vault's history");
+        device
+            .import_signed_authority_history(&history)
+            .expect("the device takes the history");
+        owner
+    };
+
+    // Reopen the same path with no keystore and no signer: a start with no signer
+    // loaded. The task door still succeeds, and its Owner fact stores unsigned.
+    let (task, landed) = {
+        let vault =
+            Vault::open(dir.path(), VaultConfig::device()).expect("reopen without a keystore");
+        let task = owner_task(&vault, owner);
+        let here = vault
+            .task_authority_state(task)
+            .expect("the task reads here")
+            .expect("the unproved fact still counts where it was written");
+        assert_eq!(here.owner_ref, owner);
+        let rows = fact_rows(&vault, task);
+        for (row, body) in &rows {
+            land_replicated_fact(&device, *row, task, body);
+        }
+        assert_eq!(
+            device
+                .task_authority_state(task)
+                .expect("the task reads on the device"),
+            None,
+            "the unsigned post-root fact proves nothing on another device"
+        );
+        let landed: Vec<EntityId> = rows.into_iter().map(|(row, _)| row).collect();
+        (task, landed)
+    };
+
+    // Reopen with the same keystore and profile again: the non-rooted branch adopts
+    // what is left. The profile already stands, so this reports carrying, not rooting.
+    {
+        let vault =
+            Vault::open(dir.path(), VaultConfig::device()).expect("reopen with the keystore");
+        vault.install_device_keystore(Arc::clone(&keystore));
+        let profile = vault
+            .profile_local_open(Some(b"task-fact-post-root-adoption"), false)
+            .expect("the profiling open");
+        assert!(
+            matches!(
+                profile,
+                LocalOpenProfile::AlreadyCarrying { wrong_root: false }
+            ),
+            "reopen profiles under the settled root, then adopts: {profile:?}"
+        );
+        assert_eq!(
+            vault
+                .adopt_unsigned_task_facts()
+                .expect("a second adoption pass"),
+            0,
+            "the profiling open adopted the post-root fact, so a second pass adopts none"
+        );
+        // The device already holds the unsigned row: only the twin crosses now.
+        for (row, body) in fact_rows(&vault, task) {
+            if !landed.contains(&row) {
+                land_replicated_fact(&device, row, task, &body);
+            }
+        }
+        let there = device
+            .task_authority_state(task)
+            .expect("the task's authority reads on the device")
+            .expect("the twin of the post-root Owner fact counts on the device");
+        assert_eq!(
+            there.owner_ref, owner,
+            "the adopted fact names the true owner on the device"
+        );
+    }
+}
