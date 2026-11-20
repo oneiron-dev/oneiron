@@ -30,6 +30,8 @@ use root::ResourceOrigin;
 pub(super) mod signals;
 pub(crate) use signals::facet as claim_facet;
 mod slices;
+#[cfg(oneiron_test_support)]
+pub(crate) use slices::fitted_chunk_sizes_for_test;
 pub(super) use slices::{ExtractionSlice, SliceBound};
 mod write;
 use super::provenance::{ConsolidationSink, PromotionCandidate};

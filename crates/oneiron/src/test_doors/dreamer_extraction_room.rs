@@ -2,7 +2,9 @@
 //! DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW): one real Meso wake pass
 //! over one conversation whose TURNs say the given words, with the
 //! extraction model's input window lent or not, keeping every extraction
-//! call's transcript.
+//! call's transcript; the native slices of one witnessed conversation in a
+//! given room, with host material; and the chunk sizes the packing keeps
+//! when a built call carries bytes its estimate leaves out.
 
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -26,6 +28,7 @@ use crate::dreamer_wake::{
 };
 use crate::error::{Error, Result};
 use crate::llm::{HostInferenceBinding, HostInferenceContext};
+use crate::memory::MemoryResult;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallPurpose, ContentPart,
@@ -142,6 +145,68 @@ pub fn meso_extraction_transcripts(
         .expect("transcript backend state")
         .clone();
     Ok(transcripts)
+}
+
+/// The native extraction transcripts over one witnessed conversation whose
+/// TURNs say `words`, with `material` as the wake's admitted host material
+/// and at most `room` transcript bytes a call when given, in call order.
+///
+/// # Errors
+///
+/// Vault setup, or the slicing's own refusal of a room that holds no
+/// listing page.
+pub fn room_slice_transcripts(
+    words: &[&str],
+    material: &[String],
+    room: Option<usize>,
+) -> MemoryResult<Vec<String>> {
+    let directory = tempfile::tempdir().map_err(Error::from)?;
+    drop(super::consolidation::open_dreamer_vault(
+        directory.path(),
+        "owen",
+    )?);
+    let vault = Vault::open_owned(directory.path(), crate::VaultConfig::device())?;
+    crate::test_fixtures::provision_engine_machines(&vault);
+    vault.ensure_embedded_owner_actor()?;
+    let dreamer = super::steward::dreamer(&vault)?;
+    super::steward::stand_steward_grant(&vault, dreamer, &super::steward::STEWARD_VERBS)?;
+    let witnessed = super::extraction_inputs::witness_extraction_turns(&vault, words)?;
+    let (attempt, _) = super::extraction_inputs::enqueue_admitted_extraction_attempt(
+        &vault,
+        &witnessed.turns,
+        1_000,
+    )?;
+    let slices =
+        crate::dreamer_consolidation::extraction_step::native_slice_transcripts_in_room_for_test(
+            &vault,
+            attempt,
+            &witnessed.turns,
+            material,
+            room,
+        )?;
+    Ok(slices
+        .into_iter()
+        .map(|(_, transcript)| transcript)
+        .collect())
+}
+
+/// The chunk sizes the extraction packing keeps for TURN lines of `lines`
+/// bytes, at most `turns_per_child` a call in `room` bytes, when each built
+/// call also carries `unseen` bytes its estimate leaves out (a chunk's bound
+/// relationship lines and the labels they widen).
+#[must_use]
+pub fn fitted_chunk_sizes(
+    lines: &[usize],
+    turns_per_child: usize,
+    room: usize,
+    unseen: usize,
+) -> Vec<usize> {
+    crate::dreamer_consolidation::resources::fitted_chunk_sizes_for_test(
+        lines,
+        turns_per_child,
+        room,
+        unseen,
+    )
 }
 
 /// Answers every call with no candidates, keeping each extraction call's

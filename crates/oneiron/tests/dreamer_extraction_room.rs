@@ -2,13 +2,17 @@
 //! extraction call's input is sized by the extraction model's lent window
 //! less the prompt it carries, not by its TURN count alone. A TURN past the
 //! room is read alone, its words whole; with no window lent, chunks stay by
-//! count.
+//! count. A chunk whose built call passes the room (its bound relationship
+//! lines) is split; host material keeps only the whole texts that fit; and a
+//! room that holds no listing page is refused (review round 1 of #9809).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test dreamer_extraction_room`
 
 #![cfg(oneiron_test_support)]
 
-use oneiron::test_doors::dreamer_extraction_room::meso_extraction_transcripts;
+use oneiron::test_doors::dreamer_extraction_room::{
+    fitted_chunk_sizes, meso_extraction_transcripts, room_slice_transcripts,
+};
 
 /// The shipped prompt's frame (system text and worked examples) is 7,698
 /// bytes; at the shipped estimate of 3 bytes a token, a 6,000-token window
@@ -100,4 +104,61 @@ fn with_no_window_lent_a_chunk_stays_one_call() {
         "with no window, TURNs chunk by count alone"
     );
     assert_each_read_once(&words, &calls);
+}
+
+#[test]
+fn a_chunk_whose_built_call_passes_the_room_is_split() {
+    // Two 5,099-byte TURN lines fit the room together by the estimate; ten
+    // bound relationship lines it leaves out (195 bytes) pass it.
+    assert_eq!(
+        fitted_chunk_sizes(&[5_099, 5_099], TURNS_PER_CHILD, ROOM_BYTES, 195),
+        vec![1, 1],
+        "a built call past the room splits"
+    );
+    assert_eq!(
+        fitted_chunk_sizes(&[5_099, 5_099], TURNS_PER_CHILD, ROOM_BYTES, 0),
+        vec![2],
+        "a built call within the room stays one"
+    );
+    assert_eq!(
+        fitted_chunk_sizes(&[1_200; 8], TURNS_PER_CHILD, ROOM_BYTES, 800),
+        vec![4, 4],
+        "a split keeps the TURNs in order, half each"
+    );
+}
+
+#[test]
+fn host_material_past_the_room_keeps_only_the_whole_texts_that_fit() {
+    let words = ["owen planted tulips", "owen painted the shed"];
+    let kept = "owen keeps his garden plans in a notebook".to_owned();
+    let past = format!("dropped {}", "garden notes ".repeat(1_000));
+    assert!(past.len() > ROOM_BYTES);
+    let calls = room_slice_transcripts(&words, &[kept.clone(), past], Some(ROOM_BYTES))
+        .expect("native slices in a room");
+    assert!(!calls.is_empty(), "the TURNs are read");
+    for call in &calls {
+        assert!(
+            call.len() <= ROOM_BYTES,
+            "a call's transcript fits its room: {} > {ROOM_BYTES}",
+            call.len()
+        );
+        assert!(
+            call.contains(kept.as_str()),
+            "the text that fits rides: {call}"
+        );
+        assert!(
+            !call.contains("dropped "),
+            "the text past the room stays out"
+        );
+    }
+}
+
+#[test]
+fn a_room_that_holds_no_listing_page_is_refused() {
+    let error = room_slice_transcripts(&["owen planted tulips"], &[], Some(0))
+        .expect_err("no room beside the prompt");
+    assert!(
+        format!("{error:?}").contains("larger window"),
+        "the refusal names its bound: {error:?}"
+    );
 }

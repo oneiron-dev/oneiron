@@ -2,6 +2,7 @@
 use super::*;
 use crate::dreamer_consolidation::branch::QueuedBranch;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
+use crate::dreamer_consolidation::extraction_step::render_host_material;
 
 pub(in crate::dreamer_consolidation) struct ExtractionSlice {
     pub(in crate::dreamer_consolidation) turns: Vec<EntityId>,
@@ -71,9 +72,11 @@ impl BranchResources<'_> {
     /// A chunk holds at most `bound.turns` TURNs. With a room (FIX
     /// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW) it also ends before the
     /// turn that would pass it beside what each of its calls carries (the
-    /// host material and the group's widest page). A turn that passes it
+    /// host material and the group's widest page), and a chunk whose built
+    /// call still passes it is split until each fits. A turn that passes it
     /// alone is a chunk of its own, its words whole: labels and spans cite
-    /// them.
+    /// them. The host material keeps only the whole texts that leave each
+    /// turn of the group room, and a room that holds no page is refused.
     pub(in crate::dreamer_consolidation) fn extraction_slices(
         &self,
         turns: &[EntityId],
@@ -104,53 +107,32 @@ impl BranchResources<'_> {
         // turn, so no label names it and nothing cites it. The material does
         // not say which hook added it, so a slice that carries any is
         // low-trust, kept off a thing agent's clean loan.
-        let material = crate::dreamer_consolidation::extraction_step::render_host_material(
-            self.prepared_wake.map_or(
-                &[][..],
-                crate::dreamer_consolidation::PreparedWake::hook_material,
-            ),
+        let hook_material = self.prepared_wake.map_or(
+            &[][..],
+            crate::dreamer_consolidation::PreparedWake::hook_material,
         );
         let mut slices = Vec::new();
         for ((_, entities), group) in groups {
             let known = self.known.slice(&entities);
             let pages = known.pages(|id| self.priors.contains_key(id));
-            let turn_room = bound.room.map(|room| {
-                let widest = pages
-                    .iter()
-                    .map(|page| page.rendered_bytes())
-                    .max()
-                    .unwrap_or_default();
-                room.saturating_sub(material.len().saturating_add(widest))
-            });
+            let (material, turn_room) = match bound.room {
+                None => (render_host_material(hook_material), None),
+                Some(room) => {
+                    let widest = pages
+                        .iter()
+                        .map(|page| page.rendered_bytes())
+                        .max()
+                        .unwrap_or_default();
+                    let material = material_in_room(hook_material, room, widest, &group)?;
+                    let fixed = material.len().saturating_add(widest);
+                    (material, Some(room.saturating_sub(fixed)))
+                }
+            };
             let chunks = room_chunks(&group, bound.turns, turn_room, |(_, facts)| {
                 turn_line_bytes(facts)
             });
-            // What paging costs, measured where it happens (FIX 10354): each
-            // chunk of the group makes one call per page. Sharing one
-            // extraction across a listing's pages waits on these numbers.
-            if pages.len() > 1 {
-                tracing::info!(
-                    target: "oneiron::dreamer",
-                    code = "listing_paged",
-                    pages = pages.len(),
-                    chunks = chunks.len(),
-                    entities = entities.len(),
-                    "a child's listing pages into more than one extraction call"
-                );
-            }
-            for chunk in chunks {
-                if let (Some(turn_room), [(_, facts)]) = (turn_room, chunk) {
-                    let bytes = turn_line_bytes(facts);
-                    if bytes > turn_room {
-                        tracing::warn!(
-                            target: "oneiron::dreamer",
-                            code = "extraction_turn_past_room",
-                            bytes,
-                            room = turn_room,
-                            "a turn alone passes its extraction call's room; it is read whole"
-                        );
-                    }
-                }
+            let chunk_slices = |chunk: &[(EntityId, TurnBodyFacts)]| -> Result<Vec<_>> {
+                let mut built = Vec::new();
                 let ids: BTreeSet<_> = chunk.iter().map(|(id, _)| *id).collect();
                 let parents: BTreeSet<EntityId> = ids
                     .iter()
@@ -242,7 +224,7 @@ impl BranchResources<'_> {
                             .flat_map(TurnText::versions)
                             .map(|(message, _)| message),
                     );
-                    slices.push(ExtractionSlice {
+                    built.push(ExtractionSlice {
                         turns: chunk.iter().map(|(id, _)| *id).collect(),
                         transcript,
                         scope: scope.clone(),
@@ -251,6 +233,37 @@ impl BranchResources<'_> {
                         sources,
                     });
                 }
+                Ok(built)
+            };
+            let fitted = fit_chunks(chunks, bound.room, chunk_slices, |slice| {
+                slice.transcript.len()
+            })?;
+            // What paging costs, measured where it happens (FIX 10354): each
+            // chunk of the group makes one call per page. Sharing one
+            // extraction across a listing's pages waits on these numbers.
+            if pages.len() > 1 {
+                tracing::info!(
+                    target: "oneiron::dreamer",
+                    code = "listing_paged",
+                    pages = pages.len(),
+                    chunks = fitted.len(),
+                    entities = entities.len(),
+                    "a child's listing pages into more than one extraction call"
+                );
+            }
+            for calls in fitted {
+                let widest = calls.iter().map(|slice| slice.transcript.len()).max();
+                let past = widest.zip(bound.room).filter(|(bytes, room)| bytes > room);
+                if let Some((bytes, room)) = past {
+                    tracing::warn!(
+                        target: "oneiron::dreamer",
+                        code = "extraction_turn_past_room",
+                        bytes,
+                        room,
+                        "a turn alone passes its extraction call's room; it is read whole"
+                    );
+                }
+                slices.extend(calls);
             }
         }
         Ok((slices, serial_width))
@@ -314,6 +327,104 @@ fn room_chunks<T>(
         chunks.push(&group[start..]);
     }
     chunks
+}
+
+/// `chunks` built in order by `build`, a chunk whose calls pass `room` by
+/// `bytes` split in two and each half built again, until every call fits or
+/// its chunk holds one item (FIX DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW).
+/// The estimate the chunks were cut by leaves out what only a built call
+/// shows: the relationship lines its turns' words are bound to, and the
+/// labels they widen. Returns each kept chunk's calls, in order.
+fn fit_chunks<'g, T, S>(
+    chunks: Vec<&'g [T]>,
+    room: Option<usize>,
+    mut build: impl FnMut(&'g [T]) -> Result<Vec<S>>,
+    bytes: impl Fn(&S) -> usize,
+) -> Result<Vec<Vec<S>>> {
+    let mut pending: Vec<&'g [T]> = chunks.into_iter().rev().collect();
+    let mut kept = Vec::new();
+    while let Some(chunk) = pending.pop() {
+        let calls = build(chunk)?;
+        let past = room.is_some_and(|room| calls.iter().any(|call| bytes(call) > room));
+        if past && chunk.len() > 1 {
+            let (first, second) = chunk.split_at(chunk.len() / 2);
+            pending.push(second);
+            pending.push(first);
+            continue;
+        }
+        kept.push(calls);
+    }
+    Ok(kept)
+}
+
+/// The host material one group's calls carry in `room` beside its widest
+/// page of `widest` bytes (FIX DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW):
+/// the wake's texts in order, each whole, while they leave the group's
+/// longest turn line room beside them. A text is never cut, and the texts
+/// from the first that does not fit stay out of the group's calls.
+///
+/// # Errors
+///
+/// [`crate::Error::Refused`] when the room holds no page beside the prompt:
+/// no call of the group could carry its listing.
+fn material_in_room(
+    material: &[String],
+    room: usize,
+    widest: usize,
+    group: &[(EntityId, TurnBodyFacts)],
+) -> Result<String> {
+    if widest >= room {
+        return Err(crate::Error::Refused(format!(
+            "the extraction model's lent window leaves {room} bytes beside its prompt, and one \
+             listing page needs {widest}: lend the extraction role a model with a larger window"
+        )));
+    }
+    let longest = group
+        .iter()
+        .map(|(_, facts)| turn_line_bytes(facts))
+        .max()
+        .unwrap_or_default();
+    let share = (room - widest).saturating_sub(longest);
+    let mut used = 0_usize;
+    let kept = material
+        .iter()
+        .take_while(|text| {
+            used = used.saturating_add(render_host_material(std::slice::from_ref(*text)).len());
+            used <= share
+        })
+        .count();
+    if kept < material.len() {
+        tracing::warn!(
+            target: "oneiron::dreamer",
+            code = "host_material_past_room",
+            kept,
+            dropped = material.len() - kept,
+            room,
+            "host material past an extraction call's room stays out of its calls"
+        );
+    }
+    Ok(render_host_material(&material[..kept]))
+}
+
+/// The chunk sizes [`fit_chunks`] keeps for items of `lines` bytes cut by
+/// [`room_chunks`] at most `turns` a chunk in `room`, when each built call
+/// is its items' bytes and `unseen` bytes the estimate leaves out, as a
+/// chunk's bound relationship lines are.
+#[cfg(oneiron_test_support)]
+pub(crate) fn fitted_chunk_sizes_for_test(
+    lines: &[usize],
+    turns: usize,
+    room: usize,
+    unseen: usize,
+) -> Vec<usize> {
+    let chunks = room_chunks(lines, turns, Some(room), |line| *line);
+    let build = |chunk: &[usize]| Ok(vec![(chunk.len(), chunk.iter().sum::<usize>() + unseen)]);
+    fit_chunks(chunks, Some(room), build, |(_, bytes)| *bytes)
+        .unwrap_or_default()
+        .into_iter()
+        .flatten()
+        .map(|(items, _)| items)
+        .collect()
 }
 
 /// Whether a prior head is not the user's own words, by its source or its
