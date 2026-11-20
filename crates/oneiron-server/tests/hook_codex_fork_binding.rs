@@ -12,9 +12,12 @@
 //! log there, and a fork of a session that bound another vault, a pin, more
 //! than one binding or nothing sends it nowhere; its record is one file,
 //! so no write that fails leaves the copied turns' binding alone (REVIEW-9973
-//! round 1). A rollout whose first line is not a whole `session_meta`, with
-//! an object payload, holds turns no start can place: its log goes nowhere
-//! too. A record that is a FIFO never holds a start up.
+//! round 1); a fork of a session that bound a pin goes nowhere, as the
+//! parent's local vault may not be the fork's (round 2). A rollout not
+//! there or empty at the start, or whose first line is not the session's
+//! own whole `session_meta` (an object payload naming the session), holds
+//! turns no start can place: its log goes nowhere too. A record that is a
+//! FIFO never holds a start up.
 //!
 //! The shipped binary runs the hook; the `oneiron` it runs for the bridge
 //! and the import is a stand-in that records its arguments and, as `oneiron
@@ -553,7 +556,7 @@ fn a_codex_start_whose_rollout_begins_with_no_whole_meta_line_sends_its_log_nowh
         .map(|line| format!("{line}\n"))
         .collect::<String>()
     };
-    let cases: [(&str, String); 5] = [
+    let cases: [(&str, String); 6] = [
         (
             "a first line that is a turn",
             turn(PARENT, 1)
@@ -576,6 +579,10 @@ fn a_codex_start_whose_rollout_begins_with_no_whole_meta_line_sends_its_log_nowh
             "a meta line whose parent is empty",
             odd_meta(json!({"id": FORK, "forked_from_id": ""})),
         ),
+        (
+            "a first meta line of another session, the fork's own lost",
+            parent.iter().map(|line| format!("{line}\n")).collect(),
+        ),
     ];
     for (case, text) in cases {
         let bench = Bench::new();
@@ -593,9 +600,11 @@ fn a_codex_start_whose_rollout_begins_with_no_whole_meta_line_sends_its_log_nowh
         bench.assert_sent_nowhere(case);
     }
 
-    // A rollout not written yet, or written empty, when the start ran holds
-    // no turn from before it: the session sends its log to the vault it
-    // bound, as before.
+    // A rollout named but not there, or empty, when the start ran: Codex
+    // writes it, its own meta first, before the hook runs, so the start saw
+    // none of its turns, and the rollout handed over later may hold copied
+    // ones (REVIEW-9973 round 2): its log goes nowhere. On the PR's base and
+    // its round-2 head each is sent to the selected vault.
     for written in [false, true] {
         let bench = Bench::new();
         let origin = answering_vault();
@@ -608,13 +617,37 @@ fn a_codex_start_whose_rollout_begins_with_no_whole_meta_line_sends_its_log_nowh
             said.contains("uses your hosted vault"),
             "binds the vault: {said}"
         );
-        bench.write_rollout(FORK, &new_rollout(FORK));
+        bench.write_rollout(FORK, &fork_rollout(FORK, PARENT, &parent));
         bench.hand_over(FORK);
         let case = if written {
             "a rollout written empty"
         } else {
-            "a rollout not written yet"
+            "a rollout not there"
         };
-        bench.assert_sent(&origin, FORK, case);
+        bench.assert_sent_nowhere(case);
     }
+}
+
+#[test]
+fn a_codex_fork_of_a_pinned_session_started_on_a_pin_sends_its_log_nowhere() {
+    // A `local` record names no vault: the parent's pin and the fork's may
+    // be two local vaults, so the fork's log, the parent's copied turns
+    // first, goes nowhere (REVIEW-9973 round 2). On the PR's base and its
+    // round-2 head the fork's hand-over queues it locally.
+    let bench = Bench::new();
+    let parent = new_rollout(PARENT);
+    bench.write_rollout(PARENT, &parent);
+    let pin = answering_vault();
+    let said = bench.start(PARENT, &["--url", &pin]);
+    assert!(said.contains(&pin), "the parent binds its pin: {said}");
+    let mut fork = fork_rollout(FORK, PARENT, &parent);
+    bench.write_rollout(FORK, &fork);
+    let other_pin = answering_vault();
+    let said = bench.start(FORK, &["--url", &other_pin]);
+    assert!(said.contains(&other_pin), "the fork binds its pin: {said}");
+    fork.extend(turn(FORK, 2));
+    bench.write_rollout(FORK, &fork);
+    bench.hand_over(FORK);
+    bench.assert_sent_nowhere("a fork of a pinned session started on a pin");
+    assert_eq!(bench.record_files(FORK), ["unknown"]);
 }
