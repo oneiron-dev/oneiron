@@ -63,7 +63,9 @@ pub(super) fn core_memory_retract_by_facade(
 /// C). The owner's own key deletes on the owner's path, within its scopes.
 /// The key carries no vault slip, so on a rooted vault no other person
 /// stands by it: the engine's owner refusal there answers
-/// `account_key_unbound`. On a rootless vault the role table judges it.
+/// `account_key_unbound`, and so does the reference admission's refusal of a
+/// target that key cannot read ([`account_key_target_unreadable`]). On a
+/// rootless vault the role table judges a target the key reads.
 pub(super) fn core_memory_delete_by_role(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -101,9 +103,34 @@ pub(super) fn core_memory_delete_by_role(
             Ok(value)
         },
     );
-    let view = deleted
-        .map_err(|refusal| account_key_unbound(server, by_account_key, refusal, "delete"))?;
+    let view = deleted.map_err(|refusal| {
+        if account_key_target_unreadable(server, &memory, by_account_key, &refusal) {
+            return account_key_unbound_refusal("delete");
+        }
+        account_key_unbound(server, by_account_key, refusal, "delete")
+    })?;
     Ok(delete_receipt_view(view, committed.as_ref()))
+}
+
+/// Whether `refusal` is `vault.delete`'s `/entity_ref` reference admission
+/// (FIX-LIST 25699) refusing a target to an account key that is not the
+/// owner's, on a rooted vault. The key carries no vault slip, so its read
+/// lane holds no Scope and reads no row the vault's policy does not grant its
+/// person; the admission then refuses the target before the delete judge,
+/// which on a rooted vault stands no person but the owner by a slip-less key
+/// (FIX-LIST DEL2-DOOR-MEMBER-ACCOUNT-KEY-INVENTED-REFERENCE). The owner's
+/// key reads every row, so its refusal passes unchanged, as does every
+/// refusal on a rootless vault.
+fn account_key_target_unreadable(
+    server: &SyncServer,
+    memory: &oneiron::memory::Memory<'_>,
+    by_account_key: bool,
+    refusal: &oneiron::memory::MemoryError,
+) -> bool {
+    by_account_key
+        && refusal.code == oneiron::memory::MEMORY_CODE_INVENTED_REFERENCE
+        && vault_is_rooted(server)
+        && matches!(memory.is_vault_owner(), Ok(false))
 }
 
 /// An account key's refusal of `act`: the key carries no vault slip, so on a
@@ -118,23 +145,34 @@ fn account_key_unbound(
 ) -> oneiron::memory::MemoryError {
     if by_account_key
         && refusal.code == oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
-        && server
-            .vault()
-            .authority_vault_id()
-            .is_ok_and(|root| root.is_some())
+        && vault_is_rooted(server)
     {
-        let remedy = format!(
-            "Present the person's own paired slip (--principal-ref, --actor-class human) to {act} as that person."
-        );
-        return oneiron::memory::MemoryError::new(
-            oneiron::memory::MEMORY_CODE_FORBIDDEN,
-            format!(
-                "account_key_unbound: this key can't {act} in this vault; use your app login or ask the owner"
-            ),
-            &[remedy.as_str()],
-        );
+        return account_key_unbound_refusal(act);
     }
     refusal
+}
+
+/// The `account_key_unbound` refusal of `act`, naming the person's own slip
+/// as the remedy.
+fn account_key_unbound_refusal(act: &str) -> oneiron::memory::MemoryError {
+    let remedy = format!(
+        "Present the person's own paired slip (--principal-ref, --actor-class human) to {act} as that person."
+    );
+    oneiron::memory::MemoryError::new(
+        oneiron::memory::MEMORY_CODE_FORBIDDEN,
+        format!(
+            "account_key_unbound: this key can't {act} in this vault; use your app login or ask the owner"
+        ),
+        &[remedy.as_str()],
+    )
+}
+
+/// Whether the served vault has an authority root.
+fn vault_is_rooted(server: &SyncServer) -> bool {
+    server
+        .vault()
+        .authority_vault_id()
+        .is_ok_and(|root| root.is_some())
 }
 
 /// The actor a memory verb judges a caller that is not the vault owner on:
