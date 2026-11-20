@@ -29,6 +29,14 @@
 //! as it did before the fix, since that answer restores no one (red with
 //! the candidate read used there too).
 //!
+//! The Dreamer's settle that picks the archived person restores him too,
+//! and the owner's revert of that settle puts the archive back, by the
+//! cleanup's own rule (REVIEW-9779 round 2): his plain read finds no one
+//! again. Red without the fix (the revert leaves the person restored). A
+//! later mention of the person keeps the restore through the revert, and
+//! the revert lists him as left alone (red without the fix: it lists
+//! nothing).
+//!
 //! Each `FIXTURE:` assertion checks the setup, never the fix.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -39,8 +47,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use oneiron::claim::{ScopedRead, ScopedReadActorKey};
+use oneiron::claim::{ClaimSource, ScopedRead, ScopedReadActorKey};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::dreamer_runner::maintenance::MaintenanceTarget;
 use oneiron::dreamer_runner::maintenance::identity::{
     IdentityActNow, IdentityActNowRequest, IdentityAskReason, IdentityAskView, IdentityEffect,
 };
@@ -51,7 +60,9 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::tagging::{HeldTagsOutcome, MentionLink, TaggingMarkerConfig, TaggingMode};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
-use oneiron::test_doors::identity_recheck::run_identity_recheck;
+use oneiron::test_doors::identity_recheck::{
+    run_identity_recheck, settle_identity_asks_of_turn_as_dreamer,
+};
 use oneiron::test_doors::label_writers::{embedded_owner, open_member_vault};
 use oneiron::test_support::test_host_issuer;
 use oneiron::{EntityId, Vault, VaultConfig};
@@ -59,6 +70,8 @@ use oneiron::{EntityId, Vault, VaultConfig};
 const CHECKPOINT: &str = "0123456789abcdef";
 const ROOM: &str = "52525252525252525252525252525252";
 const TURN: &str = "76767676767676767676767676767676";
+/// A later turn of the same room.
+const LATER_TURN: &str = "74747474747474747474747474747474";
 
 /// The person the cleanup archived.
 const ARCHIVED: &str = "Owen Smith";
@@ -126,14 +139,44 @@ fn person(vault: &Vault, name: &str) -> EntityId {
     id
 }
 
+/// A PERSON named `name` that an extraction minted, with the mint evidence
+/// the cleanup's rule reads; its birth writes what [`person`]'s does.
+fn extraction_person(vault: &Vault, name: &str) -> EntityId {
+    let id = EntityId::now();
+    assert!(
+        vault
+            .put_extraction_minted_person(
+                &id,
+                ClaimSource::Generated,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &rmp_serde::to_vec_named(&serde_json::json!({ "name": name })).expect("body"),
+            )
+            .expect("an extraction mint"),
+        "FIXTURE: the extraction mints {name}"
+    );
+    id
+}
+
 /// Witnesses `text` as one turn of `author` whose held tags name `name` in
 /// it as a `PERSON`, saved in the witness write; returns the turn and the
 /// saved link of that one mention.
 fn save_as(vault: &Vault, author: EntityId, text: &str, name: &str) -> (EntityId, MentionLink) {
+    save_in(vault, author, TURN, text, name)
+}
+
+/// [`save_as`] in the turn `turn_ref`.
+fn save_in(
+    vault: &Vault,
+    author: EntityId,
+    turn_ref: &str,
+    text: &str,
+    name: &str,
+) -> (EntityId, MentionLink) {
     let start = text.find(name).expect("the name is in the text");
     let turn = WitnessTurn {
         conversation_ref: ROOM.into(),
-        turn_ref: Some(TURN.to_owned()),
+        turn_ref: Some(turn_ref.to_owned()),
         thread_audience: None,
         project: None,
         occurred_at: NOW,
@@ -174,7 +217,7 @@ fn save_as(vault: &Vault, author: EntityId, text: &str, name: &str) -> (EntityId
         matches!(outcome, HeldTagsOutcome::Completed(_)),
         "FIXTURE: the held tags are saved in the witness write: {outcome:?}"
     );
-    let turn = EntityId::from_hex(TURN).expect("turn id");
+    let turn = EntityId::from_hex(turn_ref).expect("turn id");
     (turn, saved_link(vault, &turn))
 }
 
@@ -476,5 +519,106 @@ fn an_act_now_on_a_name_whose_one_person_is_archived_answers_unknown() {
     assert!(
         vault.archived_entity(&owen).expect("read").is_some(),
         "the act-now restores no one"
+    );
+}
+
+/// Owen Smith, an extraction mint, and Owen Smyth both sound like
+/// "Owan Smyth": the mention names both, and the nightly re-check opens one
+/// ask with no provisional person of its own. Then the cleanup archives the
+/// claimless Owen, and the Dreamer settles the ask as him. Returns Owen and
+/// the ask's key.
+fn the_dreamer_picks_archived_owen(fixture: &Fixture) -> (EntityId, [u8; 32]) {
+    let vault = &fixture.vault;
+    let owen = extraction_person(vault, ARCHIVED);
+    let other = person(vault, "Owen Smyth");
+    let (turn, link) = save_as(vault, fixture.owner, &format!("{MENTION} called."), MENTION);
+    assert_eq!(
+        link.entities().iter().copied().collect::<BTreeSet<_>>(),
+        BTreeSet::from([owen, other]),
+        "FIXTURE: two people who sound alike are both candidates, not a mint: {link:?}"
+    );
+    let asks = run_identity_recheck(vault, NOW).expect("recheck");
+    assert_eq!(
+        asks.len(),
+        1,
+        "FIXTURE: one ask for the one mention: {asks:?}"
+    );
+    assert_eq!(
+        asks[0].provisional, None,
+        "FIXTURE: the ask has no provisional person a settle could absorb"
+    );
+    archive_as_cleanup(vault, &owen).expect("the cleanup archives Owen");
+    let settled = settle_identity_asks_of_turn_as_dreamer(vault, &turn, owen, NOW)
+        .expect("the Dreamer's settle");
+    assert_eq!(settled.len(), 1, "FIXTURE: the Dreamer settles the one ask");
+    assert!(
+        vault.archived_entity(&owen).expect("read").is_none(),
+        "FIXTURE: the Dreamer's pick restored Owen"
+    );
+    (owen, settled[0])
+}
+
+#[test]
+fn the_owners_revert_of_the_dreamers_pick_puts_the_archived_person_back() {
+    let fixture = open();
+    let vault = &fixture.vault;
+    let (owen, key) = the_dreamer_picks_archived_owen(&fixture);
+
+    let reverted = vault
+        .revert_dreamer_maintenance(
+            &fixture.proof,
+            MaintenanceTarget::IdentityAsk(key),
+            NOW + 60,
+        )
+        .expect("the owner's revert");
+
+    assert!(
+        vault.archived_entity(&owen).expect("read").is_some(),
+        "the revert puts Owen back in the cleanup archive, as he stood before the Dreamer's \
+         pick: {reverted:?}"
+    );
+    assert!(
+        reverted.closed.contains(&owen),
+        "the revert names Owen's restore among what it closed: {reverted:?}"
+    );
+    let read = owner_read(vault, fixture.owner);
+    assert!(
+        !read.is_ref_readable(&owen).expect("named read"),
+        "the owner's plain read finds no Owen again"
+    );
+}
+
+#[test]
+fn a_person_a_later_mention_names_stays_restored_through_the_revert() {
+    let fixture = open();
+    let vault = &fixture.vault;
+    let (owen, key) = the_dreamer_picks_archived_owen(&fixture);
+    let (_later, link) = save_in(
+        vault,
+        fixture.owner,
+        LATER_TURN,
+        &format!("{ARCHIVED} called."),
+        ARCHIVED,
+    );
+    assert!(
+        link.entities().contains(&owen),
+        "FIXTURE: the later mention names the restored Owen: {link:?}"
+    );
+
+    let reverted = vault
+        .revert_dreamer_maintenance(
+            &fixture.proof,
+            MaintenanceTarget::IdentityAsk(key),
+            NOW + 60,
+        )
+        .expect("the owner's revert");
+
+    assert!(
+        vault.archived_entity(&owen).expect("read").is_none(),
+        "a later mention keeps Owen restored through the revert: {reverted:?}"
+    );
+    assert!(
+        reverted.left_alone.contains(&owen.to_hex()),
+        "the revert lists Owen's restore as left alone: {reverted:?}"
     );
 }
