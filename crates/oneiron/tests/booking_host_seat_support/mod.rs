@@ -351,6 +351,15 @@ impl Seat {
         self.run_pull(vault, vec![RemoteCalendarChange::Upsert(echo)], now)
     }
 
+    /// The seat's own last write of `uid` byte for byte, as the collection
+    /// stores it: what another seat installed on the same collection, under
+    /// another system name, pulls.
+    pub(crate) fn stored_own_write(&self, uid: &str) -> SeatChange {
+        let href = self.resource_href(uid);
+        let etag = format!("{href}-stored");
+        SeatChange::Stored(remote_upsert(&href, Some(&etag), &self.last_write_ics(uid)))
+    }
+
     /// Pulls back the seat's own last write of one booking as a provider that
     /// rewrites the stored resource returns it: the written VEVENT at
     /// `sequence` (the written one or higher) with a property of the

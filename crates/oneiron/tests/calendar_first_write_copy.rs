@@ -9,7 +9,9 @@
 //!
 //! Each test checks the UID after the pull: it resolves to the native EVENT
 //! or, while the write is in flight, to none. A second EVENT carrying the
-//! copy's passport is the defect.
+//! copy's passport is the defect. The same holds for a second seat that
+//! reads the collection under another system name: its pull of the copy
+//! must wait until the first write binds the UID.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test calendar_first_write_copy`.
 
@@ -27,6 +29,10 @@ use oneiron::{EntityId, TimeRange, Vault};
 
 /// The seat every test writes the native EVENT to.
 const SEAT_SYSTEM: &str = "first-write-seat";
+
+/// A second seat on the collection the native EVENT is written to,
+/// installed under another system name: no write of its own stages the UID.
+const SIBLING_SEAT_SYSTEM: &str = "first-write-sibling-seat";
 
 /// The seed of the native EVENT: clear of the fixture's own seeds.
 const NATIVE_EVENT_SEED: u8 = 0x71;
@@ -92,10 +98,21 @@ fn seat_passport(
     event: EntityId,
     uid: &str,
 ) -> Option<(CalendarPassportDirection, u32)> {
+    system_passport(vault, event, SEAT_SYSTEM, uid)
+}
+
+/// The live passport of the seat installed under `system` on `event` for
+/// `uid`, as `(direction, SEQUENCE)`.
+fn system_passport(
+    vault: &Vault,
+    event: EntityId,
+    system: &str,
+    uid: &str,
+) -> Option<(CalendarPassportDirection, u32)> {
     live_passports_for_event(vault, &event)
         .expect("the EVENT's passports")
         .into_iter()
-        .find(|(_, value)| value.system == SEAT_SYSTEM && value.uid == uid)
+        .find(|(_, value)| value.system == system && value.uid == uid)
         .map(|(_, value)| (value.direction, value.last_sequence))
 }
 
@@ -344,5 +361,102 @@ fn a_first_write_refused_over_an_overlapping_replay_unread_is_proved_by_the_next
         seat_passport(&fixture.vault, native, &uid),
         Some((CalendarPassportDirection::Outbound, stored)),
         "the pull proves the replay's stored copy"
+    );
+}
+
+#[test]
+fn a_sibling_seat_s_pull_of_a_first_write_in_flight_imports_no_second_event() {
+    // Review round 2 of #9903: two seats read one collection under
+    // different system names. The first seat's first write is stored, but
+    // its answer is lost: the write stays in flight. The sibling seat pulls
+    // the stored copy; no write of its own stages the UID, and nothing
+    // resolves the UID yet. The copy waits, owed, and the sibling's pull
+    // after the settlement reads it on the native EVENT.
+    let fixture = Fixture::open(None);
+    let seat = Seat::install(&fixture.vault, SEAT_SYSTEM);
+    let sibling = Seat::install(&fixture.vault, SIBLING_SEAT_SYSTEM);
+    let native = mint_native_event(&fixture.vault);
+
+    let stored = seat.write_with_lost_answer(&fixture.vault, native, NOW + 10);
+    let uid = staged_uid(&fixture.vault, native);
+    sibling
+        .pull(&fixture.vault, &[seat.stored_own_write(&uid)], NOW + 20)
+        .expect("sibling seat pull");
+    assert_no_second_event(
+        &fixture.vault,
+        &uid,
+        native,
+        "the sibling seat's pull while the first write is in flight",
+    );
+
+    let wrote = seat.write(&fixture.vault, native, NOW + 30);
+    assert_eq!(
+        wrote.sequence, stored,
+        "the replay settles the staged write"
+    );
+    sibling
+        .pull(&fixture.vault, &[seat.stored_own_write(&uid)], NOW + 40)
+        .expect("sibling seat pull");
+    assert_no_second_event(
+        &fixture.vault,
+        &uid,
+        native,
+        "the sibling seat's pull after the settlement",
+    );
+    assert_eq!(
+        system_passport(&fixture.vault, native, SIBLING_SEAT_SYSTEM, &uid)
+            .map(|(_, sequence)| sequence),
+        Some(stored),
+        "the sibling seat reads the copy on the native EVENT"
+    );
+}
+
+#[test]
+fn a_sibling_seat_s_pull_of_an_unproven_first_write_imports_no_second_event() {
+    // Review round 2 of #9903: as above, but the first seat's replay is
+    // refused and its reconciliation read fails, so the write's proof stays
+    // owed to the first seat's next pull. The sibling seat's pull of the
+    // stored copy waits, owed, until that pull proves the copy the write's
+    // own; the sibling's next pull reads it on the native EVENT.
+    let fixture = Fixture::open(None);
+    let seat = Seat::install(&fixture.vault, SEAT_SYSTEM);
+    let sibling = Seat::install(&fixture.vault, SIBLING_SEAT_SYSTEM);
+    let native = mint_native_event(&fixture.vault);
+
+    let stored = seat.write_with_lost_answer(&fixture.vault, native, NOW + 10);
+    let uid = staged_uid(&fixture.vault, native);
+    let locator = seat.resource_locator(&uid);
+    seat.replay_refused_unread(&fixture.vault, native, NOW + 20);
+    sibling
+        .pull(&fixture.vault, &[seat.stored_own_write(&uid)], NOW + 30)
+        .expect("sibling seat pull");
+    assert_no_second_event(
+        &fixture.vault,
+        &uid,
+        native,
+        "the sibling seat's pull while the first write's proof is owed",
+    );
+
+    seat.pull_own_write(&fixture.vault, &locator, NOW + 40)
+        .expect("seat pull");
+    assert_eq!(
+        seat_passport(&fixture.vault, native, &uid),
+        Some((CalendarPassportDirection::Outbound, stored)),
+        "the seat's pull proves the write's own stored copy"
+    );
+    sibling
+        .pull(&fixture.vault, &[seat.stored_own_write(&uid)], NOW + 50)
+        .expect("sibling seat pull");
+    assert_no_second_event(
+        &fixture.vault,
+        &uid,
+        native,
+        "the sibling seat's pull after the proof",
+    );
+    assert_eq!(
+        system_passport(&fixture.vault, native, SIBLING_SEAT_SYSTEM, &uid)
+            .map(|(_, sequence)| sequence),
+        Some(stored),
+        "the sibling seat reads the copy on the native EVENT"
     );
 }
