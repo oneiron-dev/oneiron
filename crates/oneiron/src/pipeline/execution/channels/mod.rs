@@ -509,7 +509,7 @@ impl PipelineBuilder<'_> {
 
             // Entity-type authority can narrow each channel before fusion.
             // CLAIM scalar constraints use the decoded post-fusion stage below.
-            for scores in &mut acc.ranked_lists {
+            for (index, scores) in acc.ranked_lists.iter_mut().enumerate() {
                 if self.memory_category {
                     super::super::capabilities::retain_memory_candidates(scores, &self.read, rtxn)?;
                 }
@@ -521,6 +521,15 @@ impl PipelineBuilder<'_> {
                     rtxn,
                     &mut metadata_cache,
                 )?;
+                // Exact phonetic codes have no cut and a PPR walk's results
+                // no admission, so their rows reach these lists unasked: the
+                // call's made_by slice keeps them out of the blend here, once
+                // the lane and the authority above have narrowed the lists,
+                // so the run's gate judges only rows the D19 gate judges
+                // anyway (REVIEW-9842 round 2).
+                if [phonetic_channel_index, ppr_channel_index].contains(&Some(index)) {
+                    self.retain_made_by_slice(rtxn, scores, &mut metadata_cache, &mut claim_gate)?;
+                }
             }
             if acc.ranked_lists.is_empty() {
                 return Ok(RetrievalTxnOutput {
