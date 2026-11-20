@@ -164,7 +164,7 @@ impl RevokeFacts {
                     vault_id: state.vault_id,
                     entry_hash: *hash,
                     kind: Restriction::DeviceRevoke(revoked_key.clone()),
-                    routed: state.anchor_entries.clone(),
+                    routed: state.anchor_entries.to_btree_set(),
                 },
             );
         }
@@ -443,7 +443,7 @@ impl RevokeFacts {
                     vault_id: state.vault_id,
                     entry_hash: *hash,
                     kind,
-                    routed: state.anchor_entries.clone(),
+                    routed: state.anchor_entries.to_btree_set(),
                 },
             );
         }
