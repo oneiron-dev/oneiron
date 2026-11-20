@@ -407,7 +407,9 @@ fn earlier_turns(host: HookHost, event: &Map<String, Value>) -> EarlierTurns {
 /// `session_meta` line first, naming the session it was forked from as
 /// `forked_from_id`, then a copy of that session's turns. A rollout not
 /// named, not there or empty holds no turn yet; one whose first line is not
-/// a whole `session_meta` holds turns the start cannot tell the session of.
+/// a whole `session_meta`, with an object payload whose `forked_from_id` is
+/// absent, null or a session id, as Codex's own meta type reads it, holds
+/// turns the start cannot tell the session of.
 fn codex_rollout_start(event: &Map<String, Value>) -> EarlierTurns {
     let Some(rollout) = event
         .get("transcript_path")
@@ -439,14 +441,18 @@ fn codex_rollout_start(event: &Map<String, Value>) -> EarlierTurns {
     if line.is_empty() {
         return EarlierTurns::None;
     }
-    match serde_json::from_slice::<Value>(&line) {
-        Ok(meta) if meta.get("type").and_then(Value::as_str) == Some("session_meta") => meta
-            .pointer("/payload/forked_from_id")
-            .and_then(Value::as_str)
-            .filter(|parent| !parent.is_empty())
-            .map_or(EarlierTurns::None, |parent| {
-                EarlierTurns::CopiedFrom(parent.to_owned())
-            }),
+    let Ok(meta) = serde_json::from_slice::<Value>(&line) else {
+        return EarlierTurns::Own;
+    };
+    let payload = meta
+        .get("payload")
+        .and_then(Value::as_object)
+        .filter(|_| meta.get("type").and_then(Value::as_str) == Some("session_meta"));
+    match payload.map(|payload| payload.get("forked_from_id")) {
+        Some(None | Some(Value::Null)) => EarlierTurns::None,
+        Some(Some(Value::String(parent))) if !parent.is_empty() => {
+            EarlierTurns::CopiedFrom(parent.clone())
+        }
         _ => EarlierTurns::Own,
     }
 }
