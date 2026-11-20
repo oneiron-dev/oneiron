@@ -30,7 +30,7 @@ pub use structure::{
     ConnectorPreset, NewConnector, NewGroup, NewPicture, NewShape, Preset, ShapeId, StructureEdit,
     StructureReport, structure_patch,
 };
-pub(crate) use text::{BREAK, cell_text, cell_text_cut};
+pub(crate) use text::{BREAK, cell_text_cut};
 pub use transaction::{
     AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets,
     PartChange, StepRefusal, TransactionError, run_transaction,

@@ -568,6 +568,7 @@ impl Memory<'_> {
         // A larger ask is served a page at a time through `after`.
         let limit = super::history::served_room_page_size(self.vault(), request.room, limit)?;
         self.require_offer_audience(request.room, request.branch)?;
+        self.require_offer_list_audience(request.room)?;
         let prefix = match request.branch {
             Some(branch) => format!("{}/{}/", request.room.to_hex(), branch.to_hex()),
             None => format!("{}/", request.room.to_hex()),
@@ -630,6 +631,7 @@ impl Memory<'_> {
     /// that has not aged out. Thread cards stay with their threads.
     pub fn rooms_open_offers(&self, room: EntityId) -> MemoryResult<Vec<OfferCard>> {
         self.require_offer_audience(room, None)?;
+        self.require_offer_list_audience(room)?;
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         let now = vault.store.clock.now_recorded_at();
@@ -684,5 +686,26 @@ impl Memory<'_> {
             return Err(MemoryError::not_found("no room or thread the caller reads"));
         }
         Ok(())
+    }
+
+    /// Refuses a caller outside the room itself, past the row
+    /// [`Self::require_offer_audience`] judges: the current cards are the
+    /// room's structure (L9-52, Engine RULING L9-52-ROOM-STRUCTURE = A), so
+    /// they list only to a caller that reads its roster
+    /// ([`Memory::room_roster_reader`]) or that the room's own admission
+    /// admits ([`Vault::room_structure_admitted`]: the owner, a member, a
+    /// grant that opens its relationship), and a caller the room's doors
+    /// answer as missing finds no room here either. Publishing a card stays
+    /// open to a caller outside the room: a card is how an agent asks to join
+    /// one (OF-530).
+    fn require_offer_list_audience(&self, room: EntityId) -> MemoryResult<()> {
+        if self.room_roster_reader(room)?
+            || self
+                .vault()
+                .room_structure_admitted(&self.own_read_lane(ClaimReadStatus::Recorded)?, &room)?
+        {
+            return Ok(());
+        }
+        Err(MemoryError::not_found("no room or thread the caller reads"))
     }
 }

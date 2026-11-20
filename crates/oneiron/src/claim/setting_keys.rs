@@ -4,7 +4,7 @@
 use super::observed_preference::{
     OBSERVED_PREFERENCE_MIN_OBSERVATIONS, OBSERVED_PREFERENCE_MIN_SESSIONS, ObservedPreferenceCount,
 };
-use crate::setting::{Kind, higher_is_tighter};
+use crate::setting::Kind;
 
 fn count_of(count: usize) -> ObservedPreferenceCount {
     ObservedPreferenceCount(u32::try_from(count).unwrap_or(u32::MAX))
@@ -24,13 +24,13 @@ crate::setting::setting_keys! {
     pub(crate) OBSERVED_PREFERENCE_OBSERVATIONS: ObservedPreferenceCount =
         "claim.observed_preference.min_observations" {
         kind: Kind::new(default_min_observations)
-            .tighter(higher_is_tighter::<ObservedPreferenceCount>),
+            .higher(),
     };
     /// The distinct live SESSIONs an Observed preference about the owner's observations span; at
     /// least 1. A preference about any other person keeps ARCH-0003's two.
     pub(crate) OBSERVED_PREFERENCE_SESSIONS: ObservedPreferenceCount =
         "claim.observed_preference.min_sessions" {
         kind: Kind::new(default_min_sessions)
-            .tighter(higher_is_tighter::<ObservedPreferenceCount>),
+            .higher(),
     };
 }

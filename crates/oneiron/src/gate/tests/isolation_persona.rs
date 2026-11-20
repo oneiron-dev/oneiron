@@ -140,6 +140,7 @@ fn surfaced_inbox_member(vault: &crate::Vault, claim_id: &EntityId) -> Result<In
     let groups = vault.inbox_groups(InboxQuery::at(100, 10))?;
     let hex = claim_id.to_hex();
     Ok(groups
+        .groups
         .iter()
         .flat_map(|group| group.members.iter())
         .find(|member| member.claim_id == hex)
@@ -406,6 +407,7 @@ fn replay_untouched() -> Result<()> {
             crate::registry::ENTITY_TYPE_CLAIM,
             test_time(5),
             5,
+            None,
             &data,
         )
         .commit()?;

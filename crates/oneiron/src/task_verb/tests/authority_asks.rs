@@ -19,6 +19,7 @@ fn grant_scope(vault: &Vault, owner: EntityId, delegate: EntityId, class: &str) 
     .unwrap();
     let reference = bound.digest().to_hex();
     vault.create_standing_grant(&auth, bound).unwrap();
+    super::support::grant_ask_read(vault, &[delegate]).unwrap();
     reference
 }
 
@@ -51,6 +52,7 @@ fn scope_spec(vault: &Vault, key: &str) -> TaskAskSpec {
 fn ask_resolves_live_holders_delegate_first_and_retries_one_intent() {
     let (_dir, vault) = open_vault();
     let asker = own_agent(&vault);
+    super::support::grant_ask_read(&vault, &[asker]).unwrap();
     let delegate_a = consult_peer(&vault, 0x91);
     let delegate_b = consult_peer(&vault, 0x92);
     // Only the vault's owner grants: one owner holds both delegations.
@@ -103,6 +105,7 @@ fn ask_resolves_live_holders_delegate_first_and_retries_one_intent() {
 fn abstention_is_not_winner_late_answers_keep_evidence_and_forged_siblings_do_not_settle() {
     let (_dir, vault) = open_vault();
     let asker = own_agent(&vault);
+    super::support::grant_ask_read(&vault, &[asker]).unwrap();
     let delegate = consult_peer(&vault, 0x95);
     let owner = vault
         .ensure_embedded_owner_actor()
@@ -149,6 +152,7 @@ fn abstention_is_not_winner_late_answers_keep_evidence_and_forged_siblings_do_no
                     reason_ref: result_a,
                 },
                 completed_at: unix_seconds_now(),
+                measured_spend: None,
             },
         )
         .unwrap();
@@ -207,6 +211,7 @@ fn abstention_is_not_winner_late_answers_keep_evidence_and_forged_siblings_do_no
 fn first_landed_answer_wins_over_backdated_later_answer_and_survives_reopen() {
     let (dir, vault) = open_vault();
     let asker = own_agent(&vault);
+    super::support::grant_ask_read(&vault, &[asker]).unwrap();
     let delegate = consult_peer(&vault, 0x97);
     let owner = vault
         .ensure_embedded_owner_actor()
@@ -282,6 +287,7 @@ fn first_landed_answer_wins_over_backdated_later_answer_and_survives_reopen() {
 fn ask_winner_and_membership_survive_replicated_rows_in_either_order() {
     let (_dir, source) = open_vault();
     let asker = own_agent(&source);
+    super::support::grant_ask_read(&source, &[asker]).unwrap();
     let delegate = consult_peer(&source, 0xB1);
     let owner = source
         .ensure_embedded_owner_actor()
@@ -319,6 +325,7 @@ fn ask_winner_and_membership_survive_replicated_rows_in_either_order() {
         consult_peer(&target, 0xB2);
         consult_turn(&target, 0x81);
         consult_turn(&target, 0x86);
+        super::support::grant_ask_read(&target, &[asker]).unwrap();
         let mut ordered = rows.clone();
         if reverse {
             ordered.reverse();
@@ -335,6 +342,7 @@ fn ask_winner_and_membership_survive_replicated_rows_in_either_order() {
                         end: header.occurred_end,
                     },
                     header.learned_at,
+                    None,
                     &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
                 )
                 .commit()
@@ -354,6 +362,7 @@ fn ask_winner_and_membership_survive_replicated_rows_in_either_order() {
 fn ask_facts_are_named_messagepack_and_reject_unknown_or_duplicate_fields() {
     let (_dir, vault) = open_vault();
     let asker = own_agent(&vault);
+    super::support::grant_ask_read(&vault, &[asker]).unwrap();
     let delegate = consult_peer(&vault, 0xB3);
     let owner = vault
         .ensure_embedded_owner_actor()
@@ -391,6 +400,7 @@ fn ask_facts_are_named_messagepack_and_reject_unknown_or_duplicate_fields() {
                 ENTITY_TYPE_TASK,
                 TimeRange { start: 1, end: 1 },
                 1,
+                None,
                 &bad,
             )
             .commit();
@@ -425,6 +435,7 @@ fn assert_first(status: &TaskAskStatus, task: EntityId, actor: EntityId, result:
 fn nonmember_option_consult_replays_without_changing_ask_evidence() {
     let (_dir, vault) = open_vault();
     let asker = own_agent(&vault);
+    super::support::grant_ask_read(&vault, &[asker]).unwrap();
     let delegate = consult_peer(&vault, 0x95);
     let owner = vault
         .ensure_embedded_owner_actor()
@@ -459,6 +470,7 @@ fn nonmember_option_consult_replays_without_changing_ask_evidence() {
             evidence_refs: vec![result],
         },
         completed_at: unix_seconds_now(),
+        measured_spend: None,
     };
     let peer = vault.memory(delegate, EdgeActorClass::Human);
     let first = peer.land_consult_result(forged, &input).unwrap();

@@ -117,7 +117,19 @@ async fn captured_turns_dream_on_session_end_and_land_through_the_promotion_writ
         .await
     );
     let seen = fake.seen();
-    assert_eq!(seen.len(), 1);
+    // Each call's first message, cut short, so a second call names what
+    // asked it (round-4 R24: two calls were seen, of unknown kind).
+    let firsts: Vec<String> = seen
+        .iter()
+        .map(|call| {
+            call.body["messages"][0]["content"]
+                .to_string()
+                .chars()
+                .take(160)
+                .collect()
+        })
+        .collect();
+    assert_eq!(seen.len(), 1, "{firsts:?}");
     assert_eq!(seen[0].body["model"], serde_json::json!("test-model"));
     host.shutdown().await;
     assert_eq!(handle.status().dreamer.reason, Some(IdleReason::Stopped));
@@ -642,6 +654,111 @@ async fn a_failing_steps_retries_share_the_policy_rows_cap() {
         stopped.is_none() && host.handle().status().workflows.failed == 0,
         "{stopped:?}"
     );
+    host.shutdown().await;
+}
+
+/// Engine ruling RUNBUDGET-KNOB = A (ARCH-0026 depletion ladder): a workflow
+/// step held at its spend cap, on a chat seat with a free keyless rung, is
+/// offered `continue_on_local`. The owner's answer resumes it: the step runs
+/// on that rung alone, unmetered, and completes. The paid rung is never sent.
+#[tokio::test]
+async fn a_held_workflow_continued_on_local_runs_on_the_free_rung() {
+    use oneiron::agent_dispatch::{
+        AgentDispatchTarget, AgentDispatcher, DispatchAgent, RunBudgetChoice, run_budget_questions,
+    };
+    let paid = FakeLlm::start(vec![], None).await;
+    let free = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::text("done"))).await;
+    let (_dir, vault) = rooted_vault();
+    let only = saved_agent(&vault, "local-after-cap", "Say one word.");
+    let workflow = EntityId::now();
+    vault
+        .save_workflow(
+            &workflow,
+            &oneiron::agent_def::workflow::WorkflowDefinition::new("local-after-cap", vec![only])
+                .unwrap(),
+            2,
+        )
+        .unwrap();
+    // The first rung bills a customer account, and the owner's policy row
+    // caps workflow steps below one call's reservation (8,000 units; the
+    // step's own line may not be): its admission is refused before anything
+    // is sent. The second rung is free keyless own-server work.
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+        &vault,
+        oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+        EntityId::now(),
+        &serde_json::json!({
+            "schema_version": "1.2", "pack_id": "step-cap", "pack_version": "1",
+            "min_engine_version": "0.0.0", "defaults": {}, "rules": [], "actor_ceilings": [],
+            "budget_policy": [{"purpose": "workflow_step", "cap": 1000}],
+        }),
+    )
+    .unwrap();
+    let mut config = models_toml(&format!(
+        r#"
+[providers.paid]
+kind = "local-openai-compat"
+base_url = "{}"
+[providers.free]
+kind = "local-openai-compat"
+base_url = "{}"
+[roles.generative_reasoner]
+rungs = [{{ model = "paid:big" }}, {{ model = "free:small" }}]
+[dreamer]
+enabled = false
+[workflows]
+retry_backoff_secs = 0
+step_budget_units = 8000
+"#,
+        paid.base_url, free.base_url
+    ));
+    config
+        .providers
+        .get_mut("paid")
+        .expect("the paid provider")
+        .payer = oneiron::llm::run_admission::Payer::CustomerAccount;
+    let host = AiHost::start(vault.clone(), Some(&config), true).await;
+    let dispatcher = AgentDispatcher::new(&vault);
+    dispatcher
+        .dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Workflow(workflow),
+            parent_attempt: None,
+            dedupe_key: Some("local-after-cap".into()),
+            run_id: Some("local-after-cap".into()),
+            now: 10,
+        })
+        .unwrap();
+    assert!(
+        eventually(Duration::from_secs(20), || workflow_is_held_for_budget(
+            &vault
+        ))
+        .await,
+        "the workflow never held at its step line; status {:?}",
+        host.handle().status().workflows
+    );
+    let asked = run_budget_questions(&vault).unwrap();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert!(
+        asked[0].choices.contains(&RunBudgetChoice::ContinueOnLocal),
+        "the free rung is offered: {asked:?}"
+    );
+    assert!(asked[0].local_model.is_some(), "{asked:?}");
+
+    let owner = crate::test_credentials::embedded_owner(&vault);
+    vault
+        .press_run_budget_ask(&owner, asked[0].seq, RunBudgetChoice::ContinueOnLocal, None)
+        .unwrap();
+    assert!(
+        eventually(Duration::from_secs(20), || dispatcher
+            .open_workflow_roots()
+            .is_ok_and(|roots| roots.is_empty()))
+        .await,
+        "the continued workflow never completed; status {:?}",
+        host.handle().status().workflows
+    );
+    assert!(!free.seen().is_empty(), "the step ran on the free rung");
+    assert!(paid.seen().is_empty(), "the paid rung was never sent");
     host.shutdown().await;
 }
 

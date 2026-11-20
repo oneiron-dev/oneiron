@@ -59,14 +59,13 @@ pub(in crate::edit::structure) fn verify(
                 allowed.push(props);
             }
             let at = anchor
-                .map(|slide| {
+                .map_or(Some(0), |slide| {
                     before
                         .slides
                         .iter()
                         .position(|view| view.part == slide)
                         .map(|at| at + 1)
                 })
-                .unwrap_or(Some(0))
                 .ok_or(EditRefusal::Missing("slide"))?;
             let new = after
                 .slides

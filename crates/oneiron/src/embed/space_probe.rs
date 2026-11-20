@@ -13,6 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use heed::RoTxn;
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use super::media::{
@@ -476,7 +477,7 @@ impl Vault {
                         &self.store,
                         &wtxn,
                         &document.id,
-                    )? != Some(*blake3::hash(&document.bytes).as_bytes())
+                    )? != Some(*ContentHash::of(&document.bytes).as_bytes())
                 }
             };
             if moved

@@ -33,6 +33,7 @@ fn paged_index_is_metadata_only_and_first_touch_is_one_granted_item() {
             ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_federation_grant_body(&grant).unwrap(),
         )
         .commit()
@@ -164,6 +165,7 @@ fn a_promotion_snapshot_carries_no_row_its_walk_did_not_name() {
             ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_federation_grant_body(&grant).unwrap(),
         )
         .commit()
@@ -245,6 +247,7 @@ fn a_promotion_never_ships_a_root_the_history_check_refuses() {
             ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_federation_grant_body(&grant).unwrap(),
         )
         .commit()

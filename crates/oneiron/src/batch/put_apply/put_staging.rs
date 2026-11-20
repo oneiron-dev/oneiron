@@ -73,6 +73,12 @@ pub(in crate::batch) fn stage_entity_body_row(
         id,
         Some((entity_type, data)),
     )?;
+    crate::task_verb::speaker_entry_index::reindex_speaker_entry(
+        store,
+        wtxn,
+        id,
+        Some((entity_type, data)),
+    )?;
     store.port_stage_entity_row(wtxn, id, &payload.0)?;
     crate::vault::entity_revision::index_name_phonetic(store, wtxn, id, entity_type, data)?;
     crate::conversation_dag::pin_typed_record(store, wtxn, id, entity_type, data)?;

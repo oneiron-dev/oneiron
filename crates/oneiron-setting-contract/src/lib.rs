@@ -8,10 +8,14 @@
 //! - [`ScopeKind`] and [`SettingScope`], where a row applies, and the read's scope chain;
 //! - [`SettingMode`], [`Restore`], [`SettingSync`], [`ReadBy`] and [`Setter`];
 //! - [`RowKey`], the stored key bytes `name 0x00 item 0x00 mode scope`;
-//! - [`decide`], the pure order in which a read takes its value from the rows it found:
-//!   the narrowest owner pin, else the narrowest value row (the item's own row first), a
-//!   holder's row held inside the owner's, or inside the catalogue default where the owner set
-//!   none, on a key that names a tighter direction, else the catalogue default. A row that does
+//! - [`Order`], how a key says which side of a change is safe, and the meet and comparator each
+//!   order derives ([`each_order!`] for a struct); [`ChangeDirection`], the way a change moved its
+//!   row; [`Quorum`];
+//! - [`decide_met`], the read of a key whose order has a meet: the narrowest owner pin, else the
+//!   vault's value rows, else the default, met with every value row its scope reaches;
+//! - [`decide`], the read of every other key: the narrowest owner pin, else the narrowest value
+//!   row (the item's own row first; a learned key's holder row held inside the owner's, or inside
+//!   the catalogue default where the owner set none), else the catalogue default. A row that does
 //!   not decode never reads as the default.
 //!
 //! The catalogue row (`SettingSpec`), the tables and the doors are the engine's: they name its
@@ -19,19 +23,30 @@
 
 mod decide;
 mod key;
+mod order;
 mod scope;
 mod value;
 
-pub use self::decide::{Decided, FoundFit, FoundRow, decide};
+pub use self::decide::{Decided, FoundFit, FoundRow, Met, decide, decide_met};
 pub use self::key::{RowKey, check_item, check_name};
+pub use self::order::{
+    AbsentEnd, ChainOrder, ChangeDirection, EachOrder, Order, Quorum, SetOrder, absent_meet,
+    absent_no_wider, absent_part_meet, absent_part_no_wider, chain_meet, chain_no_wider, each_meet,
+    each_no_wider, exact_meet, exact_no_wider, higher_meet, higher_no_wider, lower_meet,
+    lower_no_wider, subset_meet, subset_no_wider, superset_meet, superset_no_wider,
+};
 pub use self::scope::{LEARNED_SCOPES, ScopeKind, SettingScope};
-pub use self::value::{EncodedValue, SettingValue, higher_is_tighter, lower_is_tighter};
+pub use self::value::{EncodedValue, SettingValue};
 
 use oneiron_contracts::entity_id::EntityId;
 use serde::{Deserialize, Serialize};
 
-/// Whether a row is a value or the owner's pin. A pin fixes the value in force until the owner
-/// changes it: no holder's row moves it. For a key the engine learns, the value row is its seed.
+/// Whether a row is a value, the owner's pin, or a row a move carried. A pin fixes the value in
+/// force until the owner changes it: no holder's row moves it. For a key the engine learns, the
+/// value row is its seed. A carried row sits on a project that moved, on a key whose rows meet:
+/// the meet of the rows the project read on the lines it left, so the move loosens nothing
+/// (DESIGN 1.5, "A move carries its rows"). It narrows as a value row does; only a move writes
+/// one, and a clear releases it.
 #[derive(
     Debug,
     Clone,
@@ -49,6 +64,7 @@ use serde::{Deserialize, Serialize};
 pub enum SettingMode {
     Value,
     Pin,
+    Carried,
 }
 
 impl SettingMode {
@@ -58,6 +74,7 @@ impl SettingMode {
         match self {
             Self::Value => 0,
             Self::Pin => 1,
+            Self::Carried => 2,
         }
     }
 
@@ -67,6 +84,7 @@ impl SettingMode {
         match tag {
             0 => Some(Self::Value),
             1 => Some(Self::Pin),
+            2 => Some(Self::Carried),
             _ => None,
         }
     }
@@ -83,7 +101,9 @@ pub enum Restore {
     Content,
 }
 
-/// Where a key's value holds. Recorded only: no value leaves its install yet (design stage 7).
+/// Where a key's value holds. From stage 7a-2 an owner's change of a `Vault` key whose value is
+/// closed ([`SettingValue::CLOSED`]) travels as its signed act to every machine of a rooted
+/// vault; an `Install` key's never leaves its install.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SettingSync {
@@ -121,6 +141,12 @@ pub enum Setter {
     /// owner's row, or the catalogue default where the owner set none; a widening asks the user
     /// (AUTH-1 = A). It never pins.
     KeyGrant { grant: EntityId },
+    /// An agent through its live owner Grant that lists the owner's standing approval for the
+    /// key (`settings.widen:<key>`, `settings.widen:<key>@<scope>` or `settings.widen:*@<scope>`):
+    /// the key's holder line with a widening allowance, so its loose move lands without asking
+    /// (owner principle, 16 Nov 00:44: the ask is the default, standing approval the owner's
+    /// opt-out). It never pins, and never sets a row under the owner's pin.
+    Standing { grant: EntityId },
     /// The agent or person the row's scope names, on its own row.
     Subject,
     /// An actor whose request the holders approved, through this check-in.
@@ -128,6 +154,9 @@ pub enum Setter {
     /// The engine itself, on a path of its own: it applies the owner's answer to this ask, or,
     /// with no ask, makes its own path's change (the change's reason names the path).
     Engine { ask: Option<EntityId> },
+    /// The pack door, on a row of the default layer (`SettingScope::Pack`): a pack's tighter
+    /// default, or a looser one the holders accepted (the change's `by` names who accepted it).
+    Pack,
 }
 
 /// The value in force for one key, and the row that decided it.
@@ -137,6 +166,84 @@ pub struct Resolved<T> {
     pub source: SettingSource,
     /// The deciding row's revision; 0 when no row decided.
     pub revision: u64,
+    /// How the signed acts behind the rows the read walked stand (stage 7a-2): the least
+    /// settled of them.
+    pub standing: SettingStanding,
+}
+
+/// How the signed acts on one setting row stand, as this machine folds them (DESIGN 1.6, "Fold
+/// states, and the read's `source`"; stage 7a-2, `Held` and `Pending` stage 7b-3). The order
+/// runs from settled toward quarantined: a read reports the least settled row it walked.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SettingStanding {
+    /// Every head counts in full or as a safe move the log alone shows, or the row has no act:
+    /// the row is what the log gives every machine. The default.
+    #[default]
+    Settled,
+    /// The log proves a head and this install's own counting keeps it back (its holds or
+    /// sequence floors): the head counts as a safe move on this machine only, so another machine
+    /// with the same log may read the row looser. The next act that saw it and counts in full
+    /// ends it.
+    Held,
+    /// An act on the row waits for something a holder must give: the owner's proof of who
+    /// decided it (he is asked on an owner device). It changes nothing until then.
+    Pending,
+    /// The heads differ and no order picks one: on a key with no order the row keeps the last
+    /// value every head descends from; on a key judged by its own comparator, where no head is
+    /// no wider than every other, the key's strictest value. An act that saw them all ends it.
+    Conflict,
+    /// A head's value does not decode or fails its check under this build, or two copies of one
+    /// act disagree: the row reads the key's strictest value (DEC-0005 rule 4).
+    Quarantined,
+}
+
+/// How the acts behind one change of a setting row stood on the machine that wrote the change
+/// (DESIGN 1.6, "Receipts"; stage 7b-3): the change row's `standing`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeStanding {
+    /// Every act the value came from counts in full here.
+    Full,
+    /// An act the value came from counts as a safe move by the log alone (its carrier raced its
+    /// removal): it gave the stricter of its value and what it replaced.
+    Narrowed,
+    /// An act the value came from counts as a safe move on this machine only
+    /// ([`SettingStanding::Held`]).
+    Held,
+    /// An act on the row waits for the owner's proof and changed nothing
+    /// ([`SettingStanding::Pending`]).
+    Pending,
+    /// The heads differ and no order picks one ([`SettingStanding::Conflict`]).
+    Conflict,
+    /// The row reads the key's strictest value ([`SettingStanding::Quarantined`]).
+    Quarantined,
+}
+
+impl ChangeStanding {
+    /// The standing a read of the row reports.
+    #[must_use]
+    pub const fn read_as(self) -> SettingStanding {
+        match self {
+            Self::Full | Self::Narrowed => SettingStanding::Settled,
+            Self::Held => SettingStanding::Held,
+            Self::Pending => SettingStanding::Pending,
+            Self::Conflict => SettingStanding::Conflict,
+            Self::Quarantined => SettingStanding::Quarantined,
+        }
+    }
 }
 
 /// The cell a learned key's fit is learned in (ARCH-0003 `#learning-settings`): the project its
@@ -157,8 +264,12 @@ pub enum SettingSource {
     Pin(SettingScope),
     /// The value row at this scope.
     Row(SettingScope),
+    /// The row a move carried onto this scope (a project that moved).
+    Carried(SettingScope),
     /// A learned key's fit, learned in this cell.
     Fit(FitCell),
+    /// Several rows met, on a key whose order has a meet, to a value none of them holds alone.
+    Met,
     /// No row: the catalogue default.
     Default,
     /// The deciding row at this scope does not decode: the key's strictest value, never the
@@ -168,7 +279,27 @@ pub enum SettingSource {
 
 #[cfg(test)]
 mod tests {
-    use super::{EntityId, Setter};
+    use super::{EntityId, Setter, SettingStanding, SettingValue};
+
+    #[test]
+    fn numbers_and_bools_are_closed_through_an_option_and_text_is_not() {
+        assert!(<u64 as SettingValue>::CLOSED);
+        assert!(<bool as SettingValue>::CLOSED);
+        assert!(<f64 as SettingValue>::CLOSED);
+        assert!(<Option<u32> as SettingValue>::CLOSED);
+        assert!(!<String as SettingValue>::CLOSED);
+        assert!(!<Option<String> as SettingValue>::CLOSED);
+        assert!(!<Vec<String> as SettingValue>::CLOSED);
+    }
+
+    #[test]
+    fn a_standing_is_settled_by_default_and_orders_toward_quarantine() {
+        assert_eq!(SettingStanding::default(), SettingStanding::Settled);
+        assert!(SettingStanding::Settled < SettingStanding::Held);
+        assert!(SettingStanding::Held < SettingStanding::Pending);
+        assert!(SettingStanding::Pending < SettingStanding::Conflict);
+        assert!(SettingStanding::Conflict < SettingStanding::Quarantined);
+    }
 
     #[test]
     fn every_setter_round_trips_as_a_stored_row_writes_it() {
@@ -177,10 +308,12 @@ mod tests {
             Setter::Owner,
             Setter::Holder { grant: id },
             Setter::KeyGrant { grant: id },
+            Setter::Standing { grant: id },
             Setter::Subject,
             Setter::Approved { check_in: id },
             Setter::Engine { ask: Some(id) },
             Setter::Engine { ask: None },
+            Setter::Pack,
         ] {
             let row = rmp_serde::to_vec_named(&setter).expect("a setter encodes");
             assert_eq!(

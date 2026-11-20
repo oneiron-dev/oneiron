@@ -556,12 +556,25 @@ impl Vault {
             if let Some(owner) = owner {
                 super::questions::land_owner_health_outcome_in_txn(self, txn, owner, &held)?;
             }
+            crate::agent_dispatch::apply_run_budget_answer_in_txn(self, txn, &held)?;
+            crate::agent_dispatch::apply_budget_trap_answer_in_txn(self, txn, &held)?;
             Ok(held)
         })?;
         // The answer is durable: every waiter on the ask wakes (FIX 4706).
         self.signal_decision_answer(seq);
         // A graph unit's ask lands its answer on the unit (FIX 11231).
         self.land_question_unit_answer(seq);
+        // A run-budget answer may have resumed its run: the queue's
+        // observers claim it at once.
+        if crate::agent_dispatch::is_run_budget_ask(&answered) {
+            self.store.notify_attempt_observers();
+        }
+        // A budget trap answer may have woken parks: admission claims them
+        // at once.
+        if crate::agent_dispatch::is_budget_trap_ask(&answered) {
+            self.store.notify_attempt_observers();
+            self.store.notify_proactivity_changes();
+        }
         Ok(answered)
     }
 

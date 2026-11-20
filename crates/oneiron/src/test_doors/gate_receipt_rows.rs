@@ -4,7 +4,9 @@
 //! through the one writer with each of its forms, and through its bound half.
 //! For `tests/gate_receipt_closed_outcome.rs` (UC-03 PR 2-1a): a row stored
 //! with a word written before stage 1f. For `tests/gate_owner_answer_words.rs`
-//! (UC-03 PR 5): whether the owner restore group's read takes a row.
+//! (UC-03 PR 5): whether the owner restore group's read takes a row. For
+//! `tests/agent_grant_loop_decisions.rs`: an applied-maintenance receipt
+//! about a claim, a loop decision with no maintenance write.
 
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -62,6 +64,32 @@ pub fn record_full_receipt(
     receipt.details = vec!["first:1".to_owned(), "second:2".to_owned()];
     receipt.notices = GateSystemNoticeRecord::receipt_details("uc03_other", vec!["third:3".into()]);
     receipt.receipt_reasons = vec![GUARD_RECEIPT_REASON.to_owned()];
+    vault.with_write_txn(|txn| vault.store.record_gate_receipt_in_txn(txn, receipt))
+}
+
+/// The reason code of [`record_maintenance_apply_receipt`]'s row: the one
+/// the Dreamer's applied maintenance writer records.
+pub const MAINTENANCE_APPLY_REASON: &str = "gate.dreamer.maintenance_applied";
+
+/// An approved applied-maintenance receipt about `claim`, decided by the
+/// person `owner`, recorded through `Store::record_gate_receipt_in_txn` with
+/// the applied maintenance writer's tag, reason and policy basis, and no
+/// maintenance write: one loop decision a weave's Admissions section reads
+/// (`tests/agent_grant_loop_decisions.rs`). The row it appended.
+pub fn record_maintenance_apply_receipt(
+    vault: &Vault,
+    owner: EntityId,
+    claim: EntityId,
+) -> Result<GateDecisionRecord> {
+    let mut receipt = GateReceipt::new(
+        GateReceiptOutcome::Approved,
+        crate::dreamer_runner::maintenance::MAINTENANCE_APPLY_KIND,
+        MAINTENANCE_APPLY_REASON,
+        ReceiptActor::human(owner),
+        claim.as_bytes().to_vec(),
+        PolicyBasis::NOT_READ,
+    );
+    receipt.about = Some(claim);
     vault.with_write_txn(|txn| vault.store.record_gate_receipt_in_txn(txn, receipt))
 }
 

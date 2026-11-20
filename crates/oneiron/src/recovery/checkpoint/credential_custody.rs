@@ -49,6 +49,7 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use super::{CanonicalRows, CheckpointImage, Custody, Rejected, codec_error};
@@ -83,7 +84,7 @@ impl SourceKeyObservation {
     pub(super) fn matches_rows(&self, rows: &CanonicalRows) -> bool {
         rows.binary_search_by(|(key, _)| key.as_slice().cmp(self.credential.as_bytes()))
             .ok()
-            .is_some_and(|at| blake3::hash(&rows[at].1).as_bytes() == &self.raw_digest)
+            .is_some_and(|at| ContentHash::of(&rows[at].1).as_bytes() == &self.raw_digest)
     }
 }
 
@@ -116,7 +117,7 @@ pub(super) fn source_key_observation_in_txn(
     Some(SourceKeyObservation {
         credential,
         generation,
-        raw_digest: *blake3::hash(raw).as_bytes(),
+        raw_digest: *ContentHash::of(raw).as_bytes(),
         state,
     })
 }

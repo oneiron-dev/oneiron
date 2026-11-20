@@ -14,12 +14,12 @@ doctest = false
 [features]
 # The CDP driver and the container guest it runs in. Without it the crate is
 # the verb shapes and the driver trait only, which is all the engine needs.
-driver = ["dep:base64", "dep:image", "dep:oneiron-container", "dep:tracing", "dep:tungstenite"]
+driver = ["dep:base64", "dep:bytes", "dep:image", "dep:oneiron-container", "dep:tracing", "dep:tungstenite"]
 
 [dependencies]
 base64 = { version = "0.22", optional = true }
 blake3 = { workspace = true }
-bytes = "1.12.1"
+bytes = { version = "1.12.1", optional = true }
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 oneiron-container = { path = "../oneiron-container", optional = true }
 schemars = "=0.8.22"

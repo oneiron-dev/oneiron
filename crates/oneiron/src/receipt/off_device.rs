@@ -27,7 +27,8 @@ use crate::settings::ReadDestination;
 /// admits a receipt.
 const ROW_FIELDS: &[(ReceiptKind, &[&str])] = &[
     // A hook run: its binding and its body's CODE row. The rows its reads
-    // served are its run's own record's (`HOOK_RUN_KEY`).
+    // served, and a verb run's input rows, are its run's own record's
+    // (`HOOK_RUN_KEY`).
     (ReceiptKind::Hook, &["binding", "code"]),
     // A share: its parties, and what it shared.
     (
@@ -153,37 +154,18 @@ const HOOK_RUN_KEY: &str = "run_key";
 /// over this many times the rows the last pass kept.
 const REFILL_GROWTH: usize = 2;
 
-/// Every row `receipt` names, by its family's explicit set: its trigger, the
-/// rows its family's [`ROW_FIELDS`] hold, a share's parties, and the rows a
-/// hook run's reads served. `None` when they cannot be known: a hook receipt
-/// whose run is not kept.
+/// Every row `receipt` names, by its family's explicit set: its trigger (a
+/// verb hook's invocation trigger excepted: it names no row), the rows its
+/// family's [`ROW_FIELDS`] hold, a share's parties, and the rows a hook
+/// run stood on ([`crate::runtime_hooks::hook_run_read_rows`]: its reads,
+/// and a verb run's input rows). `None` when they cannot be known: a hook
+/// receipt whose run is not kept, or whose verb run's input showed a host
+/// verb's free text.
 pub(crate) fn referenced_rows(
     vault: &Vault,
     receipt: &ReceiptRecord,
 ) -> Result<Option<Vec<EntityId>>> {
-    let mut rows: Vec<EntityId> = receipt
-        .trigger_ref
-        .as_deref()
-        .and_then(row_of)
-        .into_iter()
-        .collect();
-    if PARTY_KINDS.contains(&receipt.receipt_kind) {
-        rows.extend(
-            [receipt.actor.as_deref(), receipt.on_behalf_of.as_deref()]
-                .into_iter()
-                .flatten()
-                .filter_map(row_of),
-        );
-    }
-    let names = ROW_FIELDS
-        .iter()
-        .filter(|(kind, _)| *kind == receipt.receipt_kind)
-        .flat_map(|(_, names)| names.iter());
-    for name in names {
-        if let Some(value) = receipt.fields.get(*name) {
-            rows.extend(value.split(',').filter_map(row_of));
-        }
-    }
+    let mut rows = record_rows(receipt);
     if receipt.receipt_kind == ReceiptKind::Share
         && receipt.outcome == "prepared"
         && let Some(sequence) = receipt.receipt_id.strip_prefix("share:export:")
@@ -207,6 +189,50 @@ pub(crate) fn referenced_rows(
         rows.extend(read);
     }
     Ok(Some(rows))
+}
+
+/// The rows `receipt`'s own record names ([`referenced_rows`] less the
+/// rows kept beside it): its trigger (a verb hook's invocation trigger
+/// excepted: it names no row), a share's parties, and the rows its
+/// family's [`ROW_FIELDS`] hold.
+pub(crate) fn record_rows(receipt: &ReceiptRecord) -> Vec<EntityId> {
+    // A verb hook's trigger is its call's invocation id, not a row
+    // (HOOKS-04). A fact hook's trigger is its entity and stays a row.
+    let verb_hook_trigger = is_verb_hook_receipt(receipt);
+    let mut rows: Vec<EntityId> = receipt
+        .trigger_ref
+        .as_deref()
+        .filter(|_| !verb_hook_trigger)
+        .and_then(row_of)
+        .into_iter()
+        .collect();
+    if PARTY_KINDS.contains(&receipt.receipt_kind) {
+        rows.extend(
+            [receipt.actor.as_deref(), receipt.on_behalf_of.as_deref()]
+                .into_iter()
+                .flatten()
+                .filter_map(row_of),
+        );
+    }
+    let names = ROW_FIELDS
+        .iter()
+        .filter(|(kind, _)| *kind == receipt.receipt_kind)
+        .flat_map(|(_, names)| names.iter());
+    for name in names {
+        if let Some(value) = receipt.fields.get(*name) {
+            rows.extend(value.split(',').filter_map(row_of));
+        }
+    }
+    rows
+}
+
+/// Whether `receipt` is a verb hook's: a Hook receipt whose `fields` carry
+/// `verb` and whose `invocation` equals its `trigger_ref`, the call's
+/// invocation id. A fact hook's receipt carries no `verb`.
+pub(crate) fn is_verb_hook_receipt(receipt: &ReceiptRecord) -> bool {
+    receipt.receipt_kind == ReceiptKind::Hook
+        && receipt.fields.contains_key("verb")
+        && receipt.fields.get("invocation") == receipt.trigger_ref.as_ref()
 }
 
 /// The rows a served-form receipt names: the ASSET it served and the
