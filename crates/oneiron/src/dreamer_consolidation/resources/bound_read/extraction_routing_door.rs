@@ -206,7 +206,7 @@ pub(super) fn bound_inputs(
     let read = consolidation::turn_text::dreamer_read(vault)?;
     vault.store.authorization_now()?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
-    let (branch, bound) = consolidation::extraction_pack::check_extraction_operands_in_txn(
+    let (branch, bound, bounds) = consolidation::extraction_pack::check_extraction_operands_in_txn(
         &memory,
         &read,
         &txn,
@@ -217,7 +217,10 @@ pub(super) fn bound_inputs(
     )
     .map_err(|error| bad(format!("routing door refused: {error:?}")))?;
     let checked = consolidation::extraction_pack::check_pack_candidates(
-        operands, &bound, attempt_id, &branch,
+        operands,
+        (&bound, &bounds),
+        attempt_id,
+        &branch,
     )?;
     let scope = bound.scope().clone();
     let known = bound.neighbourhood.clone();

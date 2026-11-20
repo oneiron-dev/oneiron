@@ -241,24 +241,38 @@ pub(in crate::sync::selector) fn filter_window_doc(
         // FIX SELECTOR-SCOPE-SUMMARY-WORDS (OPUS-LEAKS): a row that carries
         // other rows' words (a scope SUMMARY, the TURN that copies one, a
         // merge header) reaches the member only when it reads every one of
-        // those sources at the same gate, as its scoped read admits it.
-        match member_reads_word_sources(vault, &rtxn, &member_access, &id, blob, |source, raw| {
-            source_selected(
+        // those sources at the same gate, as its scoped read admits it. A
+        // tombstone carries no words, so a deleted row skips the walk (FIX
+        // SELECTOR-TOMBSTONE-JUDGED-BY-WORD-SOURCES): its sources may be
+        // erased before it, and its delete must still reach the member that
+        // may hold it. The label gate above and the capture check of the
+        // tombstone pass below still judge it.
+        if !is_tombstoned {
+            match member_reads_word_sources(
                 vault,
                 &rtxn,
-                (source, raw),
-                &grant.authority_scope,
-                selector,
-                scope_position,
-                &facet_scope,
-                &history,
-            )
-        }) {
-            Ok(true) => {}
-            Ok(false) => return,
-            Err(error) => {
-                scope_error = Some(error);
-                return;
+                &member_access,
+                &id,
+                blob,
+                |source, raw| {
+                    source_selected(
+                        vault,
+                        &rtxn,
+                        (source, raw),
+                        &grant.authority_scope,
+                        selector,
+                        scope_position,
+                        &facet_scope,
+                        &history,
+                    )
+                },
+            ) {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(error) => {
+                    scope_error = Some(error);
+                    return;
+                }
             }
         }
         match super::super::scope::settled_position_selected(&id, blob, &scope, scope_position) {

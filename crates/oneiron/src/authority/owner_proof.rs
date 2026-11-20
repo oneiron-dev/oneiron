@@ -571,12 +571,50 @@ impl crate::Vault {
     /// ([`super::log_budget`]) and nothing in any fold. An agent's Grant, a
     /// delegated holder, a narrowed or delegated owner credential, a queued
     /// retry and automatic upkeep author no such write, so their acts are
-    /// carried unproven and never spend another install's reserve.
+    /// carried unproven and never spend another install's reserve. Nor does
+    /// a write whose proof came with a request's slip
+    /// ([`crate::consent::OwnerAuthoredWrite::bound_to_request_slip`]): that
+    /// slip's cut is read for nothing but its liveness (REVIEW-9955 P1).
     pub(crate) fn owner_act_proof_signer(
         &self,
         fold: &AuthorityFold,
         owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
     ) -> Option<OwnerProofSigner<'_>> {
-        owner_authored.and_then(|_| self.owner_proof_signer(fold))
+        owner_authored
+            .filter(|write| !write.bound_to_request_slip())
+            .and_then(|_| self.owner_proof_signer(fold))
+    }
+
+    /// The owner key this install proves its result for the request signed
+    /// as entry `answered` with, on `fold`, the result writer's view (row
+    /// OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, LIMIT-1
+    /// RESULT-NEEDS-EXECUTOR-KEY): the request is the owner's own signed word
+    /// ([`super::log_budget::answers_the_owners_signed_work_in_txn`]), and
+    /// this install, its executor, holds a key that proves now
+    /// ([`Self::owner_proof_signer`]). The proof is this install's own,
+    /// signed over the result's transcript; none is copied from the request.
+    /// A request carried unproven (an agent's Grant, a holder's edit,
+    /// automatic upkeep, a queued retry, or an older install's request) has
+    /// its answer carried unproven, and so does any request answered by an
+    /// executor that holds no such key: those results wait past another
+    /// install's owner reserve, as before.
+    ///
+    /// # Errors
+    /// The store's, reading the request or the door's view.
+    pub(crate) fn result_proof_signer_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        answered: &AuthorityEntryHash,
+    ) -> crate::error::Result<Option<OwnerProofSigner<'_>>> {
+        if !super::log_budget::answers_the_owners_signed_work_in_txn(
+            &self.store,
+            txn,
+            fold,
+            answered,
+        )? {
+            return Ok(None);
+        }
+        Ok(self.owner_proof_signer(fold))
     }
 }
