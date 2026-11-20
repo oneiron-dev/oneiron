@@ -7,8 +7,24 @@ use std::io::{Read, Seek};
 use super::{
     ClaimBody, ClaimLifecycleStatus, CohortRestore, EDGE_KEY_LEN, ENTITY_ID_LEN, EntityId,
     ExportBody, ExportEntity, ExportSecrets, ImportOmissionReason, IndexedArchive, Result, Tag,
-    Vault, decode_claim_body, id_at, invalid, matches_row,
+    Vault, closed_at_source, decode_claim_body, id_at, invalid, matches_row,
 };
+
+/// Which held rows [`keep_cohort_out`] leaves as they are besides the
+/// archived row itself.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum HeldRowMatch {
+    /// Only the archived row as it is.
+    Exact,
+    /// Also the archived row as the link's own history closed it here, after
+    /// this vault took it from an earlier archive ([`closed_here`]).
+    ClosedHere,
+    /// Also the archived row as it was before the source closed it, when the
+    /// gate pends that close here ([`closed_at_source`]): the held row stays
+    /// open, and the archived close is reported under the cohort's reason
+    /// (REVIEW-9687 P1).
+    OpenBeforeSourceClose,
+}
 /// Whether this vault holds provenance on the cohort's subject link that the
 /// cohort does not carry: a claim on the link, of any lifecycle, that is none
 /// of `rows`. That is the vault's own history of a link it holds.
@@ -90,13 +106,13 @@ pub(super) fn closed_here(
         secrets,
     ))
 }
-/// Keeps the cohort queued under `key`, whose subject link is not here or
-/// keeps its own history, as archive data: a row this vault already holds
-/// stays as it is, compared as [`super::restore_cohort`] compares it, and every
-/// other row is marked omitted. With `own_history`, the link's own history
-/// may have closed a row this vault took from an earlier archive, so a held
-/// row is also left as it is when it is the archived row as such a close
-/// leaves it ([`closed_here`]).
+/// Keeps the cohort queued under `key` as archive data: its subject link is
+/// not here, or keeps its own history, or the gate would pend the cohort. A
+/// row this vault already holds stays as it is, compared as
+/// [`super::restore_cohort`] compares it, or as `held_rows` lets it differ,
+/// and every other row is marked omitted. Each row kept out is named in
+/// `kept_out` under `reason`, and so is a held row whose archived close does
+/// not land; that row is here, so it is not marked omitted.
 #[expect(clippy::too_many_arguments)]
 pub(super) fn keep_cohort_out<R: Read + Seek>(
     key: EntityId,
@@ -105,7 +121,7 @@ pub(super) fn keep_cohort_out<R: Read + Seek>(
     archive: &mut IndexedArchive<'_, R>,
     rows: &[(ExportEntity, EntityId, ClaimBody)],
     secrets: ExportSecrets,
-    own_history: bool,
+    held_rows: HeldRowMatch,
     reason: ImportOmissionReason,
 ) -> Result<CohortRestore> {
     let mut unchanged = 0;
@@ -122,11 +138,18 @@ pub(super) fn keep_cohort_out<R: Read + Seek>(
                     return Err(invalid("archive provenance ID collision"));
                 }
                 let held = matches_row(row, &existing, &expected, secrets)
-                    || (own_history && closed_here(row, body, &existing, secrets)?);
-                if !held {
+                    || (held_rows == HeldRowMatch::ClosedHere
+                        && closed_here(row, body, &existing, secrets)?);
+                let close_kept_out = !held
+                    && held_rows == HeldRowMatch::OpenBeforeSourceClose
+                    && closed_at_source(row, body, &existing, secrets)?.is_some();
+                if !held && !close_kept_out {
                     return Err(invalid("archive provenance ID collision"));
                 }
                 unchanged += 1;
+                if close_kept_out {
+                    kept_out.push((*id, reason));
+                }
             }
             None => {
                 archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;

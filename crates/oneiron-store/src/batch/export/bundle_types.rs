@@ -92,7 +92,9 @@ pub enum ImportOmissionReason {
     /// for review (the shipped manifest has none). Only the owner's own
     /// restore carries a permit for it, so through any other door the claim
     /// stays archive data with the rest of its link's provenance history,
-    /// and the link comes back bare.
+    /// and the link comes back bare. A claim this vault already holds open,
+    /// whose archived close the gate would hold the same way, stays here as
+    /// it was and is named under this reason too.
     ProvenanceAutoNotPermitted,
 }
 

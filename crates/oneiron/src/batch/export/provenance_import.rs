@@ -27,7 +27,7 @@ use crate::{
     error::{Error, GateError, Result},
     serialize::{ExportBody, ExportSecrets},
 };
-use cohort_kept_out::{holds_own_history, keep_cohort_out};
+use cohort_kept_out::{HeldRowMatch, holds_own_history, keep_cohort_out};
 use source_close::{SourceClose, closed_at_source};
 
 /// A cohort key's subject edge: source, kind and target.
@@ -243,7 +243,8 @@ pub(super) struct CohortRestore {
     /// The rows it kept as archive data, each with its reason: their subject
     /// link did not come back, or is a `same_as` this vault already held
     /// (`ClaimSubjectEdgeNotRestored`); or the gate would pend them
-    /// (`ProvenanceAutoNotPermitted`).
+    /// (`ProvenanceAutoNotPermitted`). A held row whose archived close the
+    /// gate would pend is named here too: it stays here, open.
     pub(super) kept_out: Vec<(EntityId, ImportOmissionReason)>,
 }
 /// Restores the cohort queued under `key`, its subject edge first.
@@ -320,7 +321,7 @@ pub(super) fn restore<R: Read + Seek>(
                     archive,
                     &rows,
                     secrets,
-                    true,
+                    HeldRowMatch::ClosedHere,
                     ImportOmissionReason::ClaimSubjectEdgeNotRestored,
                 );
             }
@@ -352,7 +353,11 @@ pub(super) fn restore<R: Read + Seek>(
                 )?
                 .is_none()
             {
-                let own_history = holds_own_history(vault, txn, &subject, &rows)?;
+                let held_rows = if holds_own_history(vault, txn, &subject, &rows)? {
+                    HeldRowMatch::ClosedHere
+                } else {
+                    HeldRowMatch::Exact
+                };
                 return keep_cohort_out(
                     key,
                     vault,
@@ -360,7 +365,7 @@ pub(super) fn restore<R: Read + Seek>(
                     archive,
                     &rows,
                     secrets,
-                    own_history,
+                    held_rows,
                     ImportOmissionReason::ClaimSubjectEdgeNotRestored,
                 );
             }
@@ -396,7 +401,7 @@ pub(super) fn restore<R: Read + Seek>(
             archive,
             &rows,
             secrets,
-            true,
+            HeldRowMatch::ClosedHere,
             ImportOmissionReason::ClaimSubjectEdgeNotRestored,
         );
     }
@@ -447,7 +452,9 @@ pub(super) fn restore<R: Read + Seek>(
     // one-restore permit into the writer, brings the cohort back (Engine
     // ANSWER PROVENANCE-RESTORE-UNDER-TRUSTED-MANIFEST = A, 20 Nov 09:26). A
     // cohort the gate pends stays archive data (`ProvenanceAutoNotPermitted`)
-    // and the import goes on: one archived row never aborts it. The savepoint
+    // and the import goes on: one archived row never aborts it. A held row
+    // the source closed since this vault took it stays open, its archived
+    // close named under the same reason (REVIEW-9687 P1). The savepoint
     // drops what the cohort wrote before a later row pended, and the link
     // stays as it came back, so the last edge pass compares its base fields
     // only.
@@ -484,7 +491,7 @@ pub(super) fn restore<R: Read + Seek>(
             archive,
             &rows,
             secrets,
-            false,
+            HeldRowMatch::OpenBeforeSourceClose,
             ImportOmissionReason::ProvenanceAutoNotPermitted,
         );
     };
