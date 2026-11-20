@@ -19,6 +19,12 @@
 //! A claim the audience may read still counts when the gate refuses it, and
 //! a live claim the clamp refuses still counts among the pack's clamped rows.
 //!
+//! Nor does a claim the audience may not read take a place in a fetch's
+//! window (REVIEW-9980 round 1). Dropped only before the blend, hidden
+//! claims that outranked a readable one filled the unnarrowed text scan's
+//! window, or the temporal channel's cut, and the readable claim never
+//! reached the run: the pack read `NoData` where it read `AllActivated`.
+//!
 //! The clamp's contact and Tier-A mark are written through test doors: run
 //! the file with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features --test clamp_before_claim_gate`.
@@ -28,6 +34,7 @@ use oneiron::counterparty_contact::CounterpartyFirstTouch;
 use oneiron::federation::Scope;
 use oneiron::interlocutor::{Interlocutor, InterlocutorSet};
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+use oneiron::temporal::TemporalAnchorMode;
 use oneiron::test_doors::disclosure_word_sources::{
     clamp_admits_claim_revision_with_contact, clamp_admits_with_contact, mark_tier_a,
     seed_cleared_contact,
@@ -36,11 +43,24 @@ use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, DisclosureContext,
     EmptyReason, EntityId, TimeRange, Vault, VaultConfig,
 };
+use oneiron_retrieval::fusion::FUSION_LIST_LENGTH;
 
 /// The word every search asks for, and the only word a claim's text holds.
 const WORD: &str = "quokka";
 /// The contact a clamped pack is assembled for.
 const COUNTERPARTY: &str = "owen@example.com";
+/// More rows than a channel's list holds: its window or cut is 80 rows.
+const OUTRANKING_CLAIMS: usize = FUSION_LIST_LENGTH + 20;
+/// The words of the readable claim the hidden ones outrank: one of the two
+/// the query asks for, in a field as long as theirs.
+const READABLE_TEXT: &str = "cobalt quartz";
+/// The words of each hidden claim, and the query: both words match.
+const OUTRANKING_TEXT: &str = "cobalt zircon";
+const DAY: u64 = 86_400;
+/// The temporal calls' clock and anchor: the anchor window is the day on
+/// each side of `ANCHOR`, and every temporal claim was learned at `ANCHOR`.
+const NOW: u64 = 1_700_000_000;
+const ANCHOR: u64 = NOW - 10 * DAY;
 
 /// An owned vault and one contact, cleared for every axis, present with the
 /// owner: the pack's clamp is the contact's row test.
@@ -95,6 +115,19 @@ fn claim_body(subject: EntityId, approval: ClaimApprovalStatus) -> ClaimBody {
 /// [`WORD`]. With `hidden` it is marked Tier A: the contact may not read it
 /// whatever its status, so not even served as a live (Auto) revision.
 fn put_matching_claim(fixture: &Fixture, approval: ClaimApprovalStatus, hidden: bool) -> EntityId {
+    put_claim(fixture, approval, hidden, WORD, None)
+}
+
+/// [`put_matching_claim`] with the claim's text, and, when `occurred_at` is
+/// given, the time it occurred, learned at [`ANCHOR`]; otherwise it occurred
+/// and was learned now.
+fn put_claim(
+    fixture: &Fixture,
+    approval: ClaimApprovalStatus,
+    hidden: bool,
+    text: &str,
+    occurred_at: Option<u64>,
+) -> EntityId {
     let vault = &fixture.vault;
     let subject = EntityId::now();
     vault
@@ -107,18 +140,27 @@ fn put_matching_claim(fixture: &Fixture, approval: ClaimApprovalStatus, hidden: 
         )
         .expect("FIXTURE: put the subject");
     let claim = EntityId::now();
-    let at = vault.now_recorded_at();
+    let (occurred, learned) = match occurred_at {
+        Some(occurred) => (occurred, ANCHOR),
+        None => {
+            let at = vault.now_recorded_at();
+            (at, at)
+        }
+    };
     vault
         .put_claim(
             &claim,
             &claim_body(subject, approval),
-            TimeRange { start: at, end: at },
-            at,
+            TimeRange {
+                start: occurred,
+                end: occurred,
+            },
+            learned,
         )
         .expect("FIXTURE: put the claim");
     vault
         .batch()
-        .text(&claim, &[("body", WORD)])
+        .text(&claim, &[("body", text)])
         .commit()
         .expect("FIXTURE: index the claim's text");
     if hidden {
@@ -152,8 +194,13 @@ type PackSays = (Option<(EmptyReason, usize)>, usize);
 /// The pack of a text search for [`WORD`] (only claims with `claims_only`),
 /// clamped for the contact when `clamped`; it serves nothing.
 fn pack_says(fixture: &Fixture, claims_only: bool, clamped: bool) -> PackSays {
+    pack_says_for(fixture, WORD, claims_only, clamped)
+}
+
+/// [`pack_says`] for a text search for `query`.
+fn pack_says_for(fixture: &Fixture, query: &str, claims_only: bool, clamped: bool) -> PackSays {
     let vault = &fixture.vault;
-    let mut builder = vault.context_pack().search_text(WORD, 10);
+    let mut builder = vault.context_pack().search_text(query, 10);
     if claims_only {
         builder = builder.filter_types(&[ENTITY_TYPE_CLAIM]);
     }
@@ -257,6 +304,165 @@ fn a_clamped_text_search_counts_a_live_hidden_claim_among_its_clamped_rows() {
         .search_text(WORD, 10)
         .limit(10)
         .disclosure_context(with_contact(vault, fixture.contact))
+        .run_unfinalized_with_telemetry()
+        .expect("the clamped pack");
+    assert!(
+        run.value.results.is_empty(),
+        "the clamped pack serves no row its audience may not read"
+    );
+    assert_eq!(
+        run.clamped_out(),
+        1,
+        "the clamp's withheld rows count the live hidden claim"
+    );
+}
+
+/// The empty reason a pack's [`PackSays`] reads.
+fn reason_of((empty, _): PackSays) -> Option<EmptyReason> {
+    empty.map(|(reason, _)| reason)
+}
+
+/// REVIEW-9980 round 1, text: proposed claims the contact may not read,
+/// matching both words of the query, outrank a readable proposed claim that
+/// matches one. They took the unnarrowed text scan's window and left it
+/// only before the blend, so the readable claim never reached the run's gate.
+#[test]
+fn a_clamped_text_search_reads_alike_with_hidden_claims_that_outrank_a_readable_one() {
+    let fixture = fixture();
+    put_claim(
+        &fixture,
+        ClaimApprovalStatus::Proposed,
+        false,
+        READABLE_TEXT,
+        None,
+    );
+    let without = pack_says_for(&fixture, OUTRANKING_TEXT, false, true);
+    assert_eq!(
+        (reason_of(without), without.1),
+        (Some(EmptyReason::AllActivated), 1),
+        "FIXTURE: the clamped pack reaches the readable claim and its gate refuses it"
+    );
+    for _ in 0..OUTRANKING_CLAIMS {
+        put_claim(
+            &fixture,
+            ClaimApprovalStatus::Proposed,
+            true,
+            OUTRANKING_TEXT,
+            None,
+        );
+    }
+    assert!(
+        pack_says_for(&fixture, OUTRANKING_TEXT, false, false).1 > 1,
+        "FIXTURE: the owner's pack reaches the hidden claims and its gate refuses them"
+    );
+    assert_eq!(
+        pack_says_for(&fixture, OUTRANKING_TEXT, false, true),
+        without,
+        "FAILBEFORE REVIEW-9980-TEXT-WINDOW: hidden claims take no place in the text scan's \
+         window, so the clamped pack reads as it did without them"
+    );
+}
+
+/// The pack of a temporal search over the day on each side of [`ANCHOR`]
+/// (Occurred mode, one row), clamped for the contact when `clamped`.
+fn temporal_pack(fixture: &Fixture, clamped: bool) -> oneiron::ContextPackBuilder<'_> {
+    let vault = &fixture.vault;
+    let builder = vault
+        .context_pack()
+        .with_temporal_now(NOW)
+        .search_temporal_with_sigma(
+            ANCHOR - DAY,
+            ANCHOR + DAY,
+            DAY,
+            TemporalAnchorMode::Occurred,
+            1,
+        )
+        .limit(1);
+    if clamped {
+        builder.disclosure_context(with_contact(vault, fixture.contact))
+    } else {
+        builder
+    }
+}
+
+/// What [`temporal_pack`] says of itself; it serves nothing.
+fn temporal_pack_says(fixture: &Fixture, clamped: bool) -> PackSays {
+    let pack = temporal_pack(fixture, clamped)
+        .include_stats(true)
+        .run()
+        .expect("the temporal pack");
+    assert!(pack.results.is_empty(), "FIXTURE: the pack serves nothing");
+    (
+        pack.empty
+            .as_ref()
+            .map(|empty| (empty.reason, empty.total_in_scope)),
+        pack.stats.claims_suppressed,
+    )
+}
+
+/// REVIEW-9980 round 1, temporal: proposed claims the contact may not read,
+/// at the anchor's midpoint, outrank a readable proposed claim off its
+/// centre. The unnarrowed temporal list cut them in and the readable claim
+/// out, and the clamp dropped them only before the blend.
+#[test]
+fn a_clamped_temporal_search_reads_alike_with_hidden_claims_nearer_its_anchor() {
+    let fixture = fixture();
+    put_claim(
+        &fixture,
+        ClaimApprovalStatus::Proposed,
+        false,
+        READABLE_TEXT,
+        Some(ANCHOR + DAY / 2),
+    );
+    let without = temporal_pack_says(&fixture, true);
+    assert_eq!(
+        (reason_of(without), without.1),
+        (Some(EmptyReason::AllActivated), 1),
+        "FIXTURE: the clamped pack reaches the readable claim and its gate refuses it"
+    );
+    for _ in 0..OUTRANKING_CLAIMS {
+        put_claim(
+            &fixture,
+            ClaimApprovalStatus::Proposed,
+            true,
+            OUTRANKING_TEXT,
+            Some(ANCHOR),
+        );
+    }
+    assert!(
+        temporal_pack_says(&fixture, false).1 > 1,
+        "FIXTURE: the owner's pack cuts in the hidden claims and its gate refuses them"
+    );
+    assert_eq!(
+        temporal_pack_says(&fixture, true),
+        without,
+        "FAILBEFORE REVIEW-9980-TEMPORAL-CUT: hidden claims take no place in the temporal \
+         window or its cut, so the clamped pack reads as it did without them"
+    );
+}
+
+/// Guard: a live claim the contact may not read, inside an unnarrowed
+/// temporal window, is served to no one and still counts among the pack's
+/// clamped rows, as it did when the clamp asked only before the blend.
+#[test]
+fn a_clamped_temporal_search_counts_a_live_hidden_claim_among_its_clamped_rows() {
+    let fixture = fixture();
+    let claim = put_claim(
+        &fixture,
+        ClaimApprovalStatus::Auto,
+        true,
+        WORD,
+        Some(ANCHOR),
+    );
+    let owner: Vec<EntityId> = temporal_pack(&fixture, false)
+        .run()
+        .expect("the owner's pack")
+        .results
+        .iter()
+        .map(|entity| entity.id)
+        .collect();
+    assert_eq!(owner, [claim], "FIXTURE: the owner's pack serves the claim");
+    let run = temporal_pack(&fixture, true)
         .run_unfinalized_with_telemetry()
         .expect("the clamped pack");
     assert!(
