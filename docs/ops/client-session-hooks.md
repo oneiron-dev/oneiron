@@ -109,7 +109,7 @@ opened through no symbolic link:
 
 | Client | Log | Folder |
 |---|---|---|
-| Codex | `rollout-<time>-<session id>.jsonl` | `$CODEX_HOME/sessions`, else `~/.codex/sessions` |
+| Codex | `rollout-<time>-<session id>.jsonl` | `$CODEX_HOME/sessions` (`CODEX_HOME` made absolute, links resolved, as Codex does), else `~/.codex/sessions` |
 | Cursor | `<session id>.jsonl` | `~/.cursor/projects` |
 | Copilot CLI | `<session id>/events.jsonl` | `~/.copilot/session-state` |
 | Copilot in VS Code | `transcripts/<session id>.jsonl` | `User/workspaceStorage` of VS Code or VS Code Insiders, in `~/Library/Application Support` on macOS, else `$XDG_CONFIG_HOME` (`~/.config`) |

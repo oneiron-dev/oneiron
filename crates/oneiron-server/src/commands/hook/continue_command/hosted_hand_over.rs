@@ -8,7 +8,8 @@
 //! as that import names it (FIX HOOK-HOSTED-HAND-OVER-OTHER-HOSTS):
 //!
 //! - Codex: its rollout, `rollout-<time>-<session>.jsonl`, below
-//!   `$CODEX_HOME/sessions`, else `~/.codex/sessions`;
+//!   `$CODEX_HOME/sessions` (`CODEX_HOME` resolved as Codex resolves it),
+//!   else `~/.codex/sessions`;
 //! - Cursor: `<session>.jsonl`, below `~/.cursor/projects`;
 //! - GitHub Copilot: the CLI's `<session>/events.jsonl` below
 //!   `~/.copilot/session-state`, or VS Code's `transcripts/<session>.jsonl`
@@ -142,23 +143,45 @@ fn copilot_log(path: &Path, session: &str) -> anyhow::Result<HostLog> {
 }
 
 /// The rollout's stem, `rollout-<time>-<session>`, when `path` is a Codex
-/// rollout of `session`.
+/// rollout of `session`: `<time>` in Codex's shape ([`ROLLOUT_TIME`]) and
+/// the rest of the name the session id whole, so the rollout of a session
+/// whose id only ends in this one's is never taken for it (REVIEW-9914).
 fn rollout_stem(path: &Path, session: &str) -> Option<String> {
     let stem = path.file_name()?.to_str()?.strip_suffix(".jsonl")?;
-    (stem.starts_with("rollout-") && stem.ends_with(&format!("-{session}")))
-        .then(|| stem.to_owned())
+    let rest = stem.strip_prefix("rollout-")?;
+    let timed = rest
+        .get(..ROLLOUT_TIME.len())?
+        .bytes()
+        .zip(ROLLOUT_TIME.bytes())
+        .all(|(byte, shape)| {
+            if shape == b'0' {
+                byte.is_ascii_digit()
+            } else {
+                byte == shape
+            }
+        });
+    let id = rest.get(ROLLOUT_TIME.len()..)?.strip_prefix('-')?;
+    (timed && id == session).then(|| stem.to_owned())
 }
+
+/// The time in a rollout's name, as Codex writes it,
+/// `[year]-[month]-[day]T[hour]-[minute]-[second]`: each `0` a digit.
+const ROLLOUT_TIME: &str = "0000-00-00T00-00-00";
 
 /// `session`, when `path` is named `<session>.jsonl`.
 fn own_stem(path: &Path, session: &str) -> Option<String> {
     (path.file_name() == Some(OsStr::new(&format!("{session}.jsonl")))).then(|| session.to_owned())
 }
 
-/// Codex's folder of rollouts: `sessions` in `$CODEX_HOME`, else in
-/// `~/.codex`.
+/// Codex's folder of rollouts: `sessions` in `$CODEX_HOME` as Codex
+/// resolves it, absolute with every link resolved, so a relative or linked
+/// `CODEX_HOME` names the folder its rollouts' paths are in (REVIEW-9914);
+/// else in `~/.codex`, which Codex takes as it is.
 fn codex_sessions() -> anyhow::Result<PathBuf> {
     let codex = match std::env::var_os("CODEX_HOME").filter(|dir| !dir.is_empty()) {
-        Some(dir) => PathBuf::from(dir),
+        Some(dir) => std::fs::canonicalize(&dir).map_err(|error| {
+            anyhow::anyhow!("CODEX_HOME {}: {error}", Path::new(&dir).display())
+        })?,
         None => home()?.join(".codex"),
     };
     Ok(codex.join("sessions"))

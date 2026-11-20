@@ -130,7 +130,9 @@ resume or compaction). Each start records its binding in
 vault or no vault, `hosted-<16 hex digits>` for a hosted vault (its origin
 and id, never a credential), and `unknown` when a resumed or compacted
 session had no record yet. Files are owner-only, only ever added, and kept
-30 days.
+30 days after the session's last start or hand-over. Once a record other
+than `local` has been removed that way, a session with no record sends its
+log nowhere: it may be the session whose record went.
 
 - Every start bound your selected hosted vault, and it is still the one
   selected: the `hand-over` sends the session's log and its subagents' logs
