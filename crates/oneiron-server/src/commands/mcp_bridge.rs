@@ -60,7 +60,7 @@ mod call_meta;
 mod link;
 mod wake;
 
-use call_meta::{ClientSession, with_invocation};
+use call_meta::{ClientSession, named_invocation, with_invocation};
 use wake::WakePump;
 
 /// How many requests may be in flight at once. A client that sends more
@@ -72,7 +72,8 @@ const MAX_IN_FLIGHT: usize = 8;
 /// server's MCP routes read (`limits.request_body_bytes` never defaults
 /// under it). A server set to read less refuses a longer one itself, in its
 /// typed envelope. A message too long for the server's socket goes over HTTP
-/// ([`link`]).
+/// ([`link`]). What the bridge adds to a call's `_meta` never takes its body
+/// past this bound: such a call goes as the client wrote it.
 const MAX_FRAME_BYTES: usize = crate::config::REQUEST_BODY_FLOOR_MIN_BYTES as usize;
 
 /// The longest request frame the bridge writes to the server's socket: the
@@ -473,21 +474,23 @@ impl Bridge {
         let until = Instant::now() + deadline;
         let key = pending_call_key(&message);
         let offered = ClientSession::offered(&message);
+        let own = named_invocation(&message);
         let named = self.client_session.name_on_call(&mut message);
         // A call naming its own invocation keeps it; one naming none goes
         // under a pending same call's, else a fresh one.
-        let body = with_invocation(&mut message, || {
+        let added = with_invocation(&mut message, || {
             key.as_ref()
                 .and_then(|key| self.pending_call(key))
                 .unwrap_or_else(mint_invocation)
         })
-        .or_else(|| named.then(|| serde_json::to_vec(&message).ok()).flatten())
-        .unwrap_or_else(|| line.into_bytes());
-        let sent = message
-            .pointer("/params/_meta")
-            .and_then(|meta| meta.get(INVOCATION_META))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+        .or_else(|| named.then(|| serde_json::to_vec(&message).ok()).flatten());
+        // What the bridge adds never takes a call past the least body the
+        // server reads, which the line is within: such a call goes as the
+        // client wrote it, under only the invocation it named itself.
+        let (body, sent) = match added {
+            Some(body) if body.len() <= MAX_FRAME_BYTES => (body, named_invocation(&message)),
+            _ => (line.into_bytes(), own),
+        };
         let reply = self.post(body, until, deadline, tool);
         let id = message.get_mut("id").map(Value::take);
         drop(message);
