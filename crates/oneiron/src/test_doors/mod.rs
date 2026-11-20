@@ -218,6 +218,7 @@ pub mod live_task;
 pub mod live_window_import;
 #[cfg(feature = "sync")]
 pub mod live_window_note_scrub;
+pub mod loop_kept_position;
 pub mod machine_history;
 pub mod machine_names;
 pub mod mail_counterparty;
