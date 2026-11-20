@@ -13,7 +13,9 @@ use super::taxonomy::{
 };
 use crate::Vault;
 use crate::actor_claims::require_actor_entity;
-use crate::edit_distance::delta::{AmendmentDelta, DeltaSource, EndpointRef, amendment_delta};
+use crate::edit_distance::delta::{
+    AmendmentDelta, DeltaSource, EndpointRef, amendment_delta, captured_amendment_delta_in_txn,
+};
 use crate::edit_distance::{RetainedProposal, TextRead, retained_proposal};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -97,6 +99,14 @@ pub fn record_amendment_evidence(vault: &Vault, evidence: &AmendmentEvidence) ->
     };
     super::amendment_writer_hook::run_before_amendment_writer_hook(vault);
     vault.with_write_txn_grouped(|wtxn| {
+        // The receipt stands measured as it was read: an erase, delete or
+        // retention that dropped its Δ since took the rows it keys, and this
+        // write would bring the routing facts back under the skeleton.
+        match captured_amendment_delta_in_txn(vault, &*wtxn, &evidence.receipt_id)? {
+            Some(standing) if standing == delta => {}
+            Some(_) => return Err(invalid("amendment evidence's receipt was measured again")),
+            None => return Err(invalid("amendment evidence cites an unmeasured receipt")),
+        }
         EVIDENCE.put(&vault.store, wtxn, &evidence.receipt_id, &row)?;
         Ok(())
     })
@@ -514,7 +524,18 @@ fn persist_amendment_split(
 
     let receipt_id_owned = receipt_id.to_owned();
     super::amendment_writer_hook::run_before_amendment_writer_hook(vault);
-    vault.with_write_txn_grouped(|wtxn| {
+    let landed = vault.with_write_txn_grouped(|wtxn| {
+        // The split lands only on the Δ and the routing facts it was judged
+        // from. An erase, delete or retention that dropped them since took
+        // every row this write would bring back under the skeleton, and a
+        // receipt measured or routed again is the next pass's to judge.
+        if captured_amendment_delta_in_txn(vault, &*wtxn, &receipt_id_owned)?.as_ref()
+            != Some(delta)
+            || amendment_evidence_in_txn(vault, &*wtxn, &receipt_id_owned)?.as_ref()
+                != Some(evidence)
+        {
+            return Ok(false);
+        }
         // A displaced judge's answers no longer land (FIX 11638): the fence
         // the attempt lane checks before its judgment put.
         if let Some(revision) = judgment.judge.as_deref() {
@@ -548,9 +569,9 @@ fn persist_amendment_split(
                 delete_unclear_in_txn(vault, wtxn, AttributionLane::Amendment, &receipt_id_owned)?;
             }
         }
-        Ok(())
+        Ok(true)
     })?;
-    Ok(Some(judgment))
+    Ok(landed.then_some(judgment))
 }
 
 /// The one world the amended documents stand in (FIX 22064): each source row
