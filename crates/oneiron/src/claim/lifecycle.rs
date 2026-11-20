@@ -100,6 +100,22 @@ impl SupersedeClose<'_> {
     }
 }
 
+/// Why a conditional supersession's write keeps none of its rows: the
+/// write door drops a write that ends in either, so a declined close commits
+/// nothing, as an uncommitted transaction did.
+enum SupersedeWrite {
+    /// The caller's `close` declined the supersession.
+    Declined,
+    /// The supersession's own refusal or a store error.
+    Failed(Error),
+}
+
+impl From<Error> for SupersedeWrite {
+    fn from(error: Error) -> Self {
+        Self::Failed(error)
+    }
+}
+
 impl Vault {
     /// Reads, decodes, and gates a claim for a generic lifecycle transition
     /// (`supersede_claim` / `retract_claim`). Fail-closed:
@@ -506,6 +522,13 @@ impl Vault {
 
     /// The supersession in a write of its own, once `close` agrees in that
     /// write; `Ok(false)` when it declined and nothing was written.
+    ///
+    /// The write goes through the vault's write door, a group of its own on
+    /// the calling thread as a bare transaction was (`close` is the
+    /// caller's code), so the two claims the supersession queues reach the
+    /// live windows' post-commit mirror (FIX
+    /// CLAIM-LIFECYCLE-DOORS-QUEUE-NO-LIVE-WINDOW-ROWS). The door also
+    /// rekeys channel assignments and wakes the host's timers.
     fn supersede_claim_checked(
         &self,
         owner: Option<&crate::consent::AuthenticatedOwner>,
@@ -514,19 +537,21 @@ impl Vault {
         now: u64,
         close: impl FnOnce(&Self, &heed::RwTxn<'_>) -> Result<bool>,
     ) -> Result<bool> {
-        let mut wtxn = self.store.env.write_txn()?;
-        if let Some(owner) = owner {
-            owner.revalidate_in_txn(self, &wtxn)?;
+        let written = self.try_with_write_txn(|wtxn| {
+            if let Some(owner) = owner {
+                owner.revalidate_in_txn(self, &*wtxn)?;
+            }
+            if !close(self, &*wtxn)? {
+                return Err(SupersedeWrite::Declined);
+            }
+            self.supersede_claim_in_txn(wtxn, new_id, old_id, now)?;
+            Ok(())
+        });
+        match written {
+            Ok(()) => Ok(true),
+            Err(SupersedeWrite::Declined) => Ok(false),
+            Err(SupersedeWrite::Failed(error)) => Err(error),
         }
-        if !close(self, &wtxn)? {
-            return Ok(false);
-        }
-        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-        self.supersede_claim_in_txn(&mut wtxn, new_id, old_id, now)?;
-        rekeys.finish(&self.store, &mut wtxn)?;
-        wtxn.commit()?;
-        self.store.notify_proactivity_changes();
-        Ok(true)
     }
 
     /// Supersedes `old_id` with `new_id` INSIDE the caller's write
@@ -695,6 +720,16 @@ impl Vault {
                 None
             }
         };
+        // Applied past the batch door, which is what tells a write's owner of
+        // the rows it wrote: the closed head and the replacement whose
+        // Supersedes edge it carries are queued here for the live windows'
+        // post-commit mirror, as the batch door queues a Put and an edge's
+        // source (FIX CLAIM-LIFECYCLE-DOORS-QUEUE-NO-LIVE-WINDOW-ROWS).
+        crate::batch::queue_committed_rows(
+            self,
+            wtxn,
+            std::collections::BTreeSet::from([*new_id, *old_id]),
+        );
         // A closer the Gate held parks the closed body's row again, and a
         // closed claim is asked nothing: that row closes the same way.
         super::held_question::close_superseded_owner_question_in_txn(&self.store, wtxn, old_id)?;
@@ -764,6 +799,13 @@ impl Vault {
             false,
             true,
         )?;
+        // The two rows this wrote, for the live windows' post-commit mirror
+        // (FIX CLAIM-LIFECYCLE-DOORS-QUEUE-NO-LIVE-WINDOW-ROWS).
+        crate::batch::queue_committed_rows(
+            self,
+            wtxn,
+            std::collections::BTreeSet::from([*new_id, *old_id]),
+        );
         super::supersession_diff::store_in_txn(self, wtxn, *old_id, *new_id, revisions)?;
         Ok(())
     }
@@ -804,34 +846,37 @@ impl Vault {
         self.retract_claim_checked(Some(owner), id, now)
     }
 
+    /// The retraction in a write of its own. It goes through the vault's
+    /// write door, a group of its own on the calling thread as a bare
+    /// transaction was, so the closed claim the retraction queues reaches the
+    /// live windows' post-commit mirror (FIX
+    /// CLAIM-LIFECYCLE-DOORS-QUEUE-NO-LIVE-WINDOW-ROWS). The door also
+    /// rekeys channel assignments and wakes the host's timers.
     fn retract_claim_checked(
         &self,
         owner: Option<&crate::consent::AuthenticatedOwner>,
         id: &EntityId,
         now: u64,
     ) -> Result<()> {
-        let mut wtxn = self.store.env.write_txn()?;
-        if let Some(owner) = owner {
-            owner.revalidate_in_txn(self, &wtxn)?;
-        }
-        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-        // The typed door does not merely AUTHORIZE an expression-preference
-        // retraction; it restores the direct predecessor as part of closing the
-        // head. Retracting one generically performs half of that contract and
-        // leaves the preference chain headless — every superseded revision
-        // still superseded, and nothing active in their place. So the family is
-        // refused here and pointed at the door that owns it.
-        let (target, _) = self.claim_for_lifecycle_in(&wtxn, id)?;
-        if is_expression_preference_predicate(&target.predicate) {
-            return Err(Error::InvalidClaimBody(
-                "expression preference lifecycle is owned by retract_expression_preference",
-            ));
-        }
-        self.retract_claim_in_txn(&mut wtxn, id, now)?;
-        rekeys.finish(&self.store, &mut wtxn)?;
-        wtxn.commit()?;
-        self.store.notify_proactivity_changes();
-        Ok(())
+        self.with_write_txn(|wtxn| {
+            if let Some(owner) = owner {
+                owner.revalidate_in_txn(self, &*wtxn)?;
+            }
+            // The typed door does not merely AUTHORIZE an expression-preference
+            // retraction; it restores the direct predecessor as part of closing the
+            // head. Retracting one generically performs half of that contract and
+            // leaves the preference chain headless — every superseded revision
+            // still superseded, and nothing active in their place. So the family is
+            // refused here and pointed at the door that owns it.
+            let (target, _) = self.claim_for_lifecycle_in(&*wtxn, id)?;
+            if is_expression_preference_predicate(&target.predicate) {
+                return Err(Error::InvalidClaimBody(
+                    "expression preference lifecycle is owned by retract_expression_preference",
+                ));
+            }
+            self.retract_claim_in_txn(wtxn, id, now)?;
+            Ok(())
+        })
     }
 
     /// Transaction-composable [`Vault::retract_claim`]. A pending consent is
@@ -973,8 +1018,8 @@ impl Vault {
         // The lifecycle applies past the batch door, which is what tells a
         // write's owner of the rows it wrote: the closed claim is queued
         // here for the live windows' post-commit mirror. A write with no
-        // post-commit owner drops the queue, as the public retract door's
-        // raw transaction still does (FIX
+        // post-commit owner drops the queue; the public retract door runs in
+        // the write door, which owns one (FIX
         // CLAIM-LIFECYCLE-DOORS-QUEUE-NO-LIVE-WINDOW-ROWS).
         crate::batch::queue_committed_rows(self, wtxn, std::collections::BTreeSet::from([*id]));
         // A retract parked for the holder has nothing left to close.
