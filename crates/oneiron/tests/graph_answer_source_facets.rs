@@ -15,7 +15,7 @@
 //! read only in facets no FACET row holds holds no answer: the vault default
 //! takes only a row read in no facet (review round 1 on #9604). Every other
 //! act that narrows what a room reads does the same: a signed roster write,
-//! a slice move, a delete that unbinds the room (FIX
+//! a slice move, a delete or a purge that unbinds the room (FIX
 //! STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -27,6 +27,7 @@ use std::sync::Arc;
 
 use oneiron::authority::{ActSurface, HostSlipIssuer};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::deletion::DeleteEntityOptions;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::llm::decision::questions::{
     AnswerProposal, GraphAnswerer, GraphAskResult, GraphPrediction, GraphQuestionInput,
@@ -1037,6 +1038,42 @@ fn a_deleted_projects_room_stales_the_answer_only_the_room_placed() -> TestResul
     assert!(
         fixture.answer_stale(Fixture::answer_claim(&first))?,
         "once the delete unbinds the room, the answer it placed in the room's facet is stale"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_hard_deleted_projects_room_stales_the_answer_only_the_room_placed() -> TestResult {
+    let fixture = open()?;
+    let work = fixture.put_row(ENTITY_TYPE_FACET, "work")?;
+    let (project, room) = fixture.project_room(work)?;
+    let message = fixture.message_in_room(room, "The library shuts at six on Sundays.")?;
+    let question = fixture.question(vec![message])?;
+    let first = fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| format!("an answer on a room MESSAGE lands; it refused: {error}"))?;
+    assert_eq!(
+        fixture.answer_facet(&first)?,
+        work,
+        "precondition: the answer lands in the facet the room reads"
+    );
+
+    // The purge unbinds the home room and commits with no batch after it.
+    let purged = fixture
+        .vault
+        .delete_entity_with_options(&project, DeleteEntityOptions { purge: true })
+        .map_err(|error| format!("the project hard-deletes; it refused: {error}"))?;
+    assert!(purged, "precondition: the project hard-deletes");
+    assert!(
+        fixture
+            .vault
+            .get(&message)?
+            .is_some_and(|body| !body.is_empty()),
+        "precondition: the room's MESSAGE outlives the project's purge"
+    );
+    assert!(
+        fixture.answer_stale(Fixture::answer_claim(&first))?,
+        "once the purge unbinds the room, the answer it placed in the room's facet is stale"
     );
     Ok(())
 }
