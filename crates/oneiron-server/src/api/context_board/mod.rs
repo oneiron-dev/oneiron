@@ -19,7 +19,7 @@ pub(crate) use reply::generate_reply;
 mod run_self;
 pub(crate) use run_self::{
     BriefHostFacts, brief_pins_family, describe_self_for_run, fallen_brief_rows,
-    run_brief_fallen_rows, run_brief_people, run_brief_state,
+    run_brief_fallen_rows, run_brief_people, run_brief_people_locality, run_brief_state,
 };
 mod layout;
 mod mcp_self;
