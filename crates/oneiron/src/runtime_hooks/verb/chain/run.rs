@@ -58,6 +58,8 @@ pub(super) struct RunRecord<'c> {
     pub(super) dependencies: Vec<EntityId>,
     /// That input also showed content whose rows no host names.
     pub(super) unattributed: bool,
+    /// Some of that content names no row this vault holds either.
+    pub(super) unnamed_content: bool,
     /// The digest of the grant the input was built under.
     pub(super) grant: String,
     /// How the body was prepared before it ran (FIX 9208).
@@ -65,6 +67,8 @@ pub(super) struct RunRecord<'c> {
     pub(super) reads: Vec<HookReadPin>,
     /// The outcome the body returned, before the engine's own checks.
     pub(super) outcome_json: Option<String>,
+    /// The runtime never started the body on this input.
+    pub(super) input_not_taken: bool,
 }
 
 impl RunRecord<'_> {
@@ -122,7 +126,13 @@ impl<'c> Chain<'c> {
         let args_withheld = self.args_withheld(&seen);
         let mut pins = Vec::new();
         let started = Instant::now();
-        let mut context = HookRunContext::new(binding.selector.budget_ms);
+        let max_budget_ms = session::hook_read(
+            self.storage,
+            "budget cap",
+            crate::runtime_hooks::setting_keys::hook_max_budget_ms(self.vault),
+        )?;
+        let mut context =
+            HookRunContext::new(binding.selector.budget_ms).with_max_budget_ms(max_budget_ms);
         let ran = match self.runtime {
             Err(reason) => Err(Error::InvalidConfig(reason.to_owned())),
             Ok(runtime) => match self
@@ -193,10 +203,12 @@ impl<'c> Chain<'c> {
             args_withheld,
             dependencies: input.dependencies,
             unattributed: input.unattributed,
+            unnamed_content: input.unnamed_content,
             grant: grant.digest(),
             preparation: verdict.preparation.clone(),
             reads: pins,
             outcome_json: verdict.outcome_json.clone(),
+            input_not_taken: context.input_not_taken(),
         };
         // A room does no canonical work: an outcome that needs it is this
         // hook's own, and the call goes on as after a Continue (CALLS-3).

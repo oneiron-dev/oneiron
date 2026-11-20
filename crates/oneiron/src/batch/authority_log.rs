@@ -159,13 +159,16 @@ pub(super) fn evict_authority_log_store_key_squatter(
     Ok(induced_shell_sources)
 }
 
+/// Judges a replicated AUTHORITY_LOG row against this vault's fold and
+/// returns that fold, which the store door's owner reserve reads
+/// ([`crate::authority::DoorFold::Held`]).
 pub(crate) fn validate_replicated_authority_log_for_local_vault(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     data: &[u8],
     posture: crate::HostingPrivacyPosture,
-) -> Result<()> {
+) -> Result<crate::authority::AuthorityAdmissionView> {
     validate_replicated_authority_log_beside_for_local_vault(
         store,
         wtxn,
@@ -181,7 +184,8 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
 /// where this vault's fold with the row alone needs history, the fold with
 /// every row beside it in judges it, as the selector door and the local
 /// append door judge theirs, so history that arrives in two or more rows
-/// together lands at the replicated commit too.
+/// together lands at the replicated commit too. Returns the fold that judged
+/// the row.
 pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -189,7 +193,7 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
     data: &[u8],
     posture: crate::HostingPrivacyPosture,
     beside: crate::store::authority_rows::RowsBeside<'_>,
-) -> Result<()> {
+) -> Result<crate::authority::AuthorityAdmissionView> {
     oneiron_authority::authority::validate_authority_log_entry_body_bytes(data)?;
     let entry = oneiron_authority::authority::decode_authority_log_entry_body(data)?;
     let entry_hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
@@ -255,6 +259,7 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
     if !resident
         && crate::authority::door_refuses_retired_standing(
             store,
+            posture,
             &local_fold,
             &entry_hash,
             &entry,
@@ -265,5 +270,24 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
             "authority row signed by a key a handoff retired",
         )));
     }
-    Ok(())
+    // A hosted vault whose host still serves refuses a ReRoot by a key the
+    // host does not hold, judged against the fold before this row lands. A
+    // host's move signed by the root its earlier move in the same window
+    // named waits above as signer-pending until that move is stored, and
+    // then the fold holds its stamp. A row already stored stays open, as does
+    // a gap-closing row with no fold before it (OF-469).
+    if let Some(re_root) = crate::authority::arriving_re_root(&entry, entry_hash, resident) {
+        match crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, wtxn) {
+            Ok(before) => {
+                re_root.refuse_on(&before).map_err(|_| {
+                    Error::Record(RecordError::InvalidAuthorityLogBody(
+                        "a ReRoot by a key the host does not hold",
+                    ))
+                })?;
+            }
+            Err(error) if crate::authority::is_history_incomplete(&error) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(local_fold)
 }

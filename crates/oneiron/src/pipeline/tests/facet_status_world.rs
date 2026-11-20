@@ -29,7 +29,7 @@ fn unfaceted_scope_is_not_invariant_evidence_contract() -> Result<()> {
 
     // Axis 2 — disclosure: the very same claim's body is unstamped, so it
     // reads the floor band and fails closed at every disclosure surface.
-    let body = crate::claim::decode_claim_body(&facet_claim_body(), false)?;
+    let body = crate::claim::decode_claim_body(&facet_claim_body(&vault), false)?;
     assert_eq!(
         crate::claim::claim_sensitivity_band(&body),
         Some(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND),
@@ -136,6 +136,7 @@ fn claim_status_gate_covers_all_five_channels() -> Result<()> {
             },
             anchor,
             &claim_body_bytes(
+                &vault,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
                 false,

@@ -26,9 +26,8 @@ mod kernel;
 mod ledgers;
 mod lens;
 mod off_device;
-#[cfg(oneiron_test_support)]
-pub(crate) use off_device::referenced_rows;
 pub(crate) use off_device::served_form_rows;
+pub(crate) use off_device::{is_verb_hook_receipt, record_rows, referenced_rows};
 mod pack_attribution;
 mod projection;
 pub mod prompt_stamp;
@@ -43,8 +42,6 @@ mod served_form;
 mod session;
 mod share_doors;
 
-// FIX [LIBTEST-QUARANTINE-RECEIPT-TESTS]: the lib test target's type check fails here (12 errors: E0063 x7, E0061 x4, E0308 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -52,7 +49,8 @@ pub use self::authority_audit::{
     AUTHORITY_AUDIT_COLD_ROWS_IGNORE_KIND_FILTER, AUTHORITY_AUDIT_DEFAULT_LIMIT,
     AUTHORITY_AUDIT_MAX_LIMIT, AUTHORITY_AUDIT_SCAN_PER_ROW, AuthorityAuditEventKind,
     AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditQuery, AuthorityAuditRow,
-    ColdAuthorityAuditRow, PendingMembershipExecutionRow, authority_audit_embedded,
+    CarriedAuthorityAuditBody, ColdAuthorityAuditRow, PendingMembershipExecutionRow,
+    authority_audit_embedded,
 };
 pub(crate) use self::call::unread_call_receipt_actor_in_txn;
 pub use self::call::{
@@ -93,7 +91,10 @@ pub use self::kernel::{
     FIELD_TYPE_REF_NODE, FIELD_TYPE_REF_TREE_VERSION, ReceiptKind, ReceiptQuery, ReceiptRecord,
     ReceiptScan, ReceiptScanContinuation, ReceiptScanPosition, ReceiptView,
 };
-pub use self::ledgers::{attempt_pack_receipt, attempt_pack_receipt_id, outbound_intent_receipt};
+pub use self::ledgers::{
+    attempt_pack_receipt, attempt_pack_receipt_id, outbound_intent_receipt,
+    parse_attempt_pack_receipt_id,
+};
 pub use self::lens::{LensActivationReceipt, LensApproval, LensProposalReceipt, LensSlotDecision};
 pub use self::pack_attribution::{
     ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext,
@@ -150,7 +151,7 @@ pub(crate) use self::kernel::{
     FIELD_TARGET_CLASS, MAX_RECEIPT_QUERY_SCAN, hex_lower, retain_newest_receipt,
 };
 pub(crate) use self::ledgers::durable_send_receipts_lenient;
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) use self::ledgers::persist_send_receipt;
 pub(crate) use self::ledgers::{
     SendReceiptOutcome, attempt_calling_principal_in_txn, delivered_send_receipt_for_task,
@@ -158,8 +159,7 @@ pub(crate) use self::ledgers::{
 };
 #[cfg(test)]
 pub(crate) use self::ledgers::{
-    make_attempt_receipt_legacy_for_tests, overwrite_attempt_pack_receipt_for_test,
-    put_attempt_pack_receipt_for_test,
+    overwrite_attempt_pack_receipt_for_test, put_attempt_pack_receipt_for_test,
 };
 pub(crate) use self::projection::{COMMITMENT_TRIGGER_PREFIX, commitment_trigger_ref};
 pub(crate) use self::record::{
@@ -172,7 +172,8 @@ pub(crate) use self::record::{validate_receipt_record_body, validate_receipt_rec
 #[cfg(test)]
 pub(crate) use self::send_receipt_txn::persist_send_receipt_in_txn;
 pub(crate) use self::send_receipt_txn::{
-    delivered_send_exists_in_txn, persist_admitted_send_receipt_in_txn,
+    append_superseded_send_receipt_in_txn, delivered_send_exists_in_txn,
+    persist_admitted_send_receipt_in_txn,
 };
 
 /// One pre-write check for the two receipt carrier families. Both are judged
@@ -234,6 +235,7 @@ pub(crate) use ledgers::attempt_pack_receipt_page;
 pub(crate) use ledgers::attempt_pack_receipt_in_txn;
 
 mod archive_source;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 pub(crate) use archive_source::{
     archived_receipt_carriers_in_txn, is_receipt_archive_source, receipt_archive_custody_exists,
@@ -249,3 +251,6 @@ pub(crate) use archive_source::{receipt_archive_holder, receipt_archive_matches_
 pub(crate) use self::direct_dispatch::outbound_direct_receipt_accepts_masked;
 pub(crate) use self::dispatch_observation::dispatch_observation_accepts_masked;
 pub(crate) use self::pack_attribution::attempt_pack_attribution_accepts_masked;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dispatch_observation::dispatch_observation_key_pin_for_test;

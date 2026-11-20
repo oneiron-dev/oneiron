@@ -129,6 +129,7 @@ fn owner_birth_is_validated_by_typed_raw_and_replay_doors() -> Result<()> {
                 ENTITY_TYPE_SKILL,
                 TimeRange { start: 2, end: 2 },
                 2,
+                None,
                 &encode_skill_record(&active)?
             )
             .commit()
@@ -145,6 +146,7 @@ fn owner_birth_is_validated_by_typed_raw_and_replay_doors() -> Result<()> {
             ENTITY_TYPE_SKILL,
             TimeRange { start: 3, end: 3 },
             3,
+            None,
             &encode_skill_record(&invalid)?,
         )
         .commit()?;
@@ -172,6 +174,7 @@ fn owner_birth_is_validated_by_typed_raw_and_replay_doors() -> Result<()> {
                 ENTITY_TYPE_SKILL,
                 TimeRange { start: 5, end: 5 },
                 5,
+                None,
                 &encode_skill_record(&wrong_kind)?
             )
             .commit()
@@ -253,6 +256,7 @@ fn owner_birth_is_validated_by_typed_raw_and_replay_doors() -> Result<()> {
             ENTITY_TYPE_SKILL,
             TimeRange { start: 7, end: 7 },
             7,
+            None,
             &encode_skill_record(&active)?,
         )
         .commit()?;
@@ -327,7 +331,7 @@ fn resident_owner_survives_same_batch_delete_separate_delete_and_rematerializati
     assert_eq!(
         vault
             .batch()
-            .put_replicated(&id, ENTITY_TYPE_SKILL, at, 4, &raw)
+            .put_replicated(&id, ENTITY_TYPE_SKILL, at, 4, None, &raw)
             .commit()
             .expect_err("replay cannot reassign deleted id")
             .kind(),
@@ -338,7 +342,14 @@ fn resident_owner_survives_same_batch_delete_separate_delete_and_rematerializati
     assert_eq!(
         vault
             .batch()
-            .put_replicated(&id, ENTITY_TYPE_SKILL, at, 4, &encode_skill_record(&first)?)
+            .put_replicated(
+                &id,
+                ENTITY_TYPE_SKILL,
+                at,
+                4,
+                None,
+                &encode_skill_record(&first)?
+            )
             .commit()
             .expect_err("a deletion here dominates the replay")
             .kind(),

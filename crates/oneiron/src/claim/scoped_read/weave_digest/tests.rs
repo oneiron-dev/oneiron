@@ -34,12 +34,14 @@ fn read_saved(
         WeaveDigestReader::Person(id)
         | WeaveDigestReader::Owner(id)
         | WeaveDigestReader::Agent(id) => id,
+        WeaveDigestReader::Admin(key) => key.actor(),
     };
     let scoped = vault.scoped_read(ScopedReadActorKey::new(id.to_hex()).unwrap());
     let role = match reader {
         WeaveDigestReader::Person(id) => WeaveReader::Person(id),
         WeaveDigestReader::Owner(_) => WeaveReader::Owner(owner),
         WeaveDigestReader::Agent(id) => WeaveReader::Agent(id),
+        WeaveDigestReader::Admin(_) => unreachable!("read_saved never serves an Admin reader"),
     };
     scoped.read_weave_digest(role, due)
 }
@@ -392,6 +394,7 @@ fn erased_upstream_source_scrubs_derived_claim_digest_even_after_regeneration() 
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred: TimeRange { start: 2, end: 2 },
             learned_at: 2,
+            row_version: 0,
             body: encode_claim_body(&claim("new source"))?,
         };
         // The record is a regeneration fixture. The production regeneration
@@ -651,6 +654,7 @@ fn saved_private_claim_cannot_be_authorized_by_a_new_public_revision() -> Result
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred: TimeRange { start: 2, end: 2 },
             learned_at: 2,
+            row_version: 0,
             body: encode_claim_body(&public)?,
         };
         // Controlled revision change in the fixture: scope checks must not
@@ -699,24 +703,21 @@ fn saved_edge_claim_is_withheld_after_exact_pair_revocation_with_readable_endpoi
     am.grant_diary_coreference(a2, b_note).unwrap();
     let b_grant = bm.grant_diary_coreference(a2, b_note).unwrap();
     let claim_id = entity(0xEA);
-    vault.put_claim(
-        &claim_id,
-        &ClaimBody::new(
-            "report.digest",
-            ClaimSubject::Edge {
-                source: a2,
-                kind: EdgeKind::SameAs,
-                target: b_note,
-            },
-            Value::from("pair digest"),
-            1.0,
-            ClaimApprovalStatus::Approved,
-            ClaimLifecycleStatus::Active,
-        )
-        .unwrap(),
-        TimeRange { start: 1, end: 1 },
-        1,
-    )?;
+    let mut digest_body = ClaimBody::new(
+        "report.digest",
+        ClaimSubject::Edge {
+            source: a2,
+            kind: EdgeKind::SameAs,
+            target: b_note,
+        },
+        Value::from("pair digest"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut digest_body);
+    vault.put_claim(&claim_id, &digest_body, TimeRange { start: 1, end: 1 }, 1)?;
     crate::test_util::authorize_readers(&vault, &[&a.to_hex()]);
     let owner =
         vault.authenticate_owner(a, &a.to_hex(), true, crate::store::GateDecisionId::now())?;

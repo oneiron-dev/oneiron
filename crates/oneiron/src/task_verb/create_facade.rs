@@ -249,6 +249,7 @@ impl Memory<'_> {
                     assigned_ref: validated.assignee.and_then(TaskAssignee::entity_ref),
                     actor_generation: None,
                     assigned_generation: None,
+                    answered_heads: None,
                     occurred_at: now,
                 },
             )?;
@@ -441,6 +442,7 @@ impl Memory<'_> {
                 assigned_ref: None,
                 actor_generation: None,
                 assigned_generation: None,
+                answered_heads: None,
                 occurred_at: now,
             },
         )?;
@@ -468,6 +470,7 @@ impl Memory<'_> {
                     assigned_ref: assignee,
                     actor_generation,
                     assigned_generation,
+                    answered_heads: None,
                     occurred_at: now,
                 },
             )?;

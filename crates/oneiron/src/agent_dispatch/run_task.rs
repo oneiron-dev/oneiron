@@ -58,6 +58,9 @@ use std::sync::PoisonError;
 
 use serde::{Deserialize, Serialize};
 
+use super::run_writer_proof::AgentRunWriterProof;
+use super::spend_custody::{CUSTODY_HOLD_WAIT_SECS, CustodySettle};
+use super::spend_record::{SCOPE, SpendScope, SpendScopeId};
 use super::{AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatcher};
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
@@ -267,6 +270,20 @@ pub(super) struct AgentRunTaskBody {
     /// body. Empty for a run that started none, so its TASK reads as before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) effects: Vec<super::run_effects::AgentRunEffectMark>,
+    /// The run's spend across the machines that ran it (FIX 4889): the
+    /// custody machine and one share per machine, numbers only, never a
+    /// body. `None` for a run whose launch is unmetered, and for a TASK
+    /// minted before it, so such a TASK reads as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) spend: Option<AgentRunSpendCarry>,
+    /// The proof of the machine that wrote the run's frozen fields
+    /// ([`AgentRunTaskBody::frozen_digest`]; `super::run_writer_proof`):
+    /// another machine re-creates the run from its frozen payload only while
+    /// it counts. `None` for a TASK minted before it, one written where no
+    /// signer was loaded, and one rewritten over a proof that did not count,
+    /// so such a TASK reads as before and moves to no other machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) writer_proof: Option<AgentRunWriterProof>,
 }
 
 /// The context bound a spawned child that outlived its root (REVIEW-6638)
@@ -301,6 +318,163 @@ impl FrozenContextBound {
     }
 }
 
+/// The spend an agent run's launch reserved, as the machines that ran it
+/// committed it (FIX 4889): numbers only, never a body. The take reserves
+/// the remainder of the launch from it, and the custody machine folds what
+/// the other machines spent into its one counter (PR 2).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub(super) struct AgentRunSpendCarry {
+    /// The machine whose spend tree funded the launch: the one counter the
+    /// run's spend lands on (canon ARCH-0026: single-writer, home-node-owned;
+    /// a move carries no budget).
+    pub(super) custody_node: u64,
+    /// How much of what the other machines committed the custody machine
+    /// has folded into its scope of the run at its takes (PR 2 writes it; 0
+    /// until then): their spend, and what their open children held then,
+    /// folded as spent (REVIEW-7890 round 2), so the custody machine's own
+    /// try never spends into a foreign child's room. The custody machine's
+    /// own share counts those units again. Its settlement folds the rest and
+    /// writes nothing here (REVIEW-7890): the closed scope takes no second
+    /// fold.
+    #[serde(default)]
+    pub(super) custody_folded_units: u64,
+    /// One share per scope a machine ran the run under.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) shares: Vec<AgentRunSpendShare>,
+}
+
+/// What one machine committed of an agent run's launch under one scope (FIX
+/// 4889): the scope's `spent_units` plus its `held_units`, what its open
+/// children hold, as that machine last wrote the run TASK. A child's spend
+/// reaches the scope only when the child settles, and a child carries its
+/// own carve when it moves, so the whole hold counts (REVIEW-7879). A
+/// machine that runs the run under a second scope (a successor try's, once
+/// the first settled) keeps a share for each, so what it spent under the
+/// first stays counted (REVIEW-7879).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub(super) struct AgentRunSpendShare {
+    /// The machine's client id, as `AgentRunExecutorLease.node_id` holds it.
+    pub(super) node: u64,
+    /// The scope the run spends under on that machine.
+    pub(super) scope: SpendScopeId,
+    /// That scope's `spent_units` plus its `held_units`.
+    pub(super) committed_units: u64,
+    /// Of `committed_units`, what the scope's open children hold
+    /// (REVIEW-7890): units set aside, not spent. A hold ends when its child
+    /// settles, as spend or as released units, so the custody machine's
+    /// settlement waits for it ([`AgentRunSpendCarry::custody_settle`]).
+    #[serde(default)]
+    pub(super) held_units: u64,
+}
+
+impl AgentRunSpendShare {
+    /// Sets the share from `scope`, the row it names (REVIEW-7890).
+    fn set_from(&mut self, scope: &SpendScope) {
+        self.committed_units = scope.spent_units.saturating_add(scope.held_units);
+        self.held_units = scope.held_units;
+    }
+}
+
+impl AgentRunSpendCarry {
+    /// What the machines that ran the run committed of its launch (FIX
+    /// 4889): the saturating sum of every share, less what the custody
+    /// machine folded, which its own share counts again. A take that opens a
+    /// new scope may reserve what the launch reserved less this.
+    pub(super) fn committed_units(&self) -> u64 {
+        self.shares
+            .iter()
+            .fold(0_u64, |total, share| {
+                total.saturating_add(share.committed_units)
+            })
+            .saturating_sub(self.custody_folded_units)
+    }
+
+    /// What every machine but the custody machine `node` committed of the
+    /// run that it has not folded into its one counter yet (FIX 4889): their
+    /// shares, spend and holds alike (REVIEW-7890 round 2), less
+    /// `custody_folded_units`. A take folds it whole, so a hold another
+    /// machine's child keeps stays out of the kept scope's room; a
+    /// settlement folds it once no hold is left, or once the wait for one
+    /// ran out. What a folded hold left unspent is not refunded: the scope is
+    /// charged what it folded or what was spent, whichever is more, never
+    /// less than was spent.
+    pub(super) fn unfolded_commit_elsewhere(&self, node: u64) -> u64 {
+        self.shares
+            .iter()
+            .filter(|share| share.node != node)
+            .fold(0_u64, |total, share| {
+                total.saturating_add(share.committed_units)
+            })
+            .saturating_sub(self.custody_folded_units)
+    }
+
+    /// What the shares of every machine but `node` hold for the run's open
+    /// children, as each last stamped it (REVIEW-7890).
+    pub(super) fn held_elsewhere(&self, node: u64) -> u64 {
+        self.shares
+            .iter()
+            .filter(|share| share.node != node)
+            .fold(0_u64, |total, share| total.saturating_add(share.held_units))
+    }
+
+    /// How the custody machine `node` settles at `now` its scope of a run
+    /// that settled while its last executor's lease was held until
+    /// `held_until` (FIX 4889). While any other machine's share still holds
+    /// units for open children (REVIEW-7890 round 2: the last executor's
+    /// children that outlived the run, and those of a machine that lost the
+    /// run, which may still spend before their fence stops them), the scope
+    /// waits: those children settle there, and that machine stamps its
+    /// shares on the settled TASK again. Past [`CUSTODY_HOLD_WAIT_SECS`]
+    /// after `held_until`, a hold still named is stale, as of a machine that
+    /// left: the scope folds it as spent and settles, so its parent stops
+    /// holding the carve.
+    pub(super) fn custody_settle(&self, node: u64, held_until: u64, now: u64) -> CustodySettle {
+        let waits = self.held_elsewhere(node) != 0
+            && now < held_until.saturating_add(CUSTODY_HOLD_WAIT_SECS);
+        if waits {
+            CustodySettle::Waits
+        } else {
+            CustodySettle::Now {
+                fold: self.unfolded_commit_elsewhere(node),
+            }
+        }
+    }
+
+    /// What the machines that ran the run committed of its launch outside
+    /// the scope `scope` on `node` (FIX 4889): [`Self::committed_units`] less
+    /// that scope's own share. A take that keeps that scope lets it commit
+    /// what the launch reserved less this.
+    pub(super) fn committed_except(&self, node: u64, scope: &SpendScopeId) -> u64 {
+        let own = self
+            .shares
+            .iter()
+            .find(|share| share.node == node && share.scope == *scope)
+            .map_or(0, |share| share.committed_units);
+        self.committed_units().saturating_sub(own)
+    }
+
+    /// Sets the share of `scope` on `node` from that scope's row, adding it
+    /// when absent (FIX 4889).
+    pub(super) fn stamp(&mut self, node: u64, scope: &SpendScope) {
+        if let Some(share) = self
+            .shares
+            .iter_mut()
+            .find(|share| share.node == node && share.scope == scope.scope)
+        {
+            share.set_from(scope);
+        } else {
+            let mut share = AgentRunSpendShare {
+                node,
+                scope: scope.scope.clone(),
+                committed_units: 0,
+                held_units: 0,
+            };
+            share.set_from(scope);
+            self.shares.push(share);
+        }
+    }
+}
+
 impl AgentRunTaskBody {
     /// The parent projection this run resolves its context under where the
     /// row of its settled parent is absent (REVIEW-6638): the bound frozen at
@@ -316,6 +490,94 @@ impl AgentRunTaskBody {
                 bound.chat_sections,
             )
         })
+    }
+
+    /// The BLAKE3 digest of the run's frozen fields, the ones its writer
+    /// proof covers (`super::run_writer_proof`): role, schema version,
+    /// subkind, attempt, live try, run id, realized TASK, agent definition,
+    /// requester, dedupe key, queue payload, world, project, the
+    /// outlived-root flag, the frozen parent bound and the creation time,
+    /// each length-prefixed in that order. The lease, the outcome and the
+    /// effect marks change while the run runs, so they are left out.
+    pub(super) fn frozen_digest(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&[self.role, self.schema_version]);
+        absorb(&mut hasher, self.subkind.as_bytes());
+        absorb(&mut hasher, self.attempt_ref.as_bytes());
+        absorb(&mut hasher, self.live_attempt_ref.as_bytes());
+        absorb_option(&mut hasher, self.run_id.as_deref().map(str::as_bytes));
+        absorb_option(
+            &mut hasher,
+            self.realized_task_ref.as_deref().map(str::as_bytes),
+        );
+        absorb(&mut hasher, self.agent_definition_ref.as_bytes());
+        absorb_option(
+            &mut hasher,
+            self.requester_ref.as_deref().map(str::as_bytes),
+        );
+        absorb_option(&mut hasher, self.dedupe_key.as_deref().map(str::as_bytes));
+        absorb(&mut hasher, &self.queue_payload);
+        absorb_option(&mut hasher, self.world_ref.as_deref().map(str::as_bytes));
+        absorb_option(&mut hasher, self.project_ref.as_deref().map(str::as_bytes));
+        hasher.update(&[u8::from(self.outlived_root)]);
+        match &self.parent_context {
+            Some(bound) => {
+                hasher.update(&[1]);
+                for section in [&bound.layers, &bound.memory_sections, &bound.chat_sections] {
+                    absorb_len(&mut hasher, section.len());
+                    for entry in section {
+                        absorb(&mut hasher, entry.as_bytes());
+                    }
+                }
+            }
+            None => {
+                hasher.update(&[0]);
+            }
+        }
+        hasher.update(&self.created_at.to_be_bytes());
+        *hasher.finalize().as_bytes()
+    }
+
+    /// Whether this body, the run TASK `task_ref`'s as read in `txn`,
+    /// carries a writer proof that counts for its frozen fields
+    /// (`super::run_writer_proof::counts_in`).
+    pub(super) fn writer_proven_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        task_ref: EntityId,
+    ) -> bool {
+        super::run_writer_proof::counts_in(
+            vault,
+            txn,
+            task_ref,
+            &self.frozen_digest(),
+            self.writer_proof.as_ref(),
+        )
+    }
+}
+
+/// Feeds `len` to `hasher` as eight big-endian bytes.
+fn absorb_len(hasher: &mut blake3::Hasher, len: usize) {
+    hasher.update(&u64::try_from(len).unwrap_or(u64::MAX).to_be_bytes());
+}
+
+/// Feeds `bytes` to `hasher`, prefixed with its length.
+fn absorb(hasher: &mut blake3::Hasher, bytes: &[u8]) {
+    absorb_len(hasher, bytes.len());
+    hasher.update(bytes);
+}
+
+/// Feeds an optional field to `hasher`: a presence byte, then the bytes.
+fn absorb_option(hasher: &mut blake3::Hasher, bytes: Option<&[u8]>) {
+    match bytes {
+        Some(bytes) => {
+            hasher.update(&[1]);
+            absorb(hasher, bytes);
+        }
+        None => {
+            hasher.update(&[0]);
+        }
     }
 }
 
@@ -497,6 +759,23 @@ fn commit_minted_agent_run_task(
     Ok(())
 }
 
+/// The spend carry a run TASK mints with on `node_id` (FIX 4889):
+/// custody for a metered launch, `None` for an unmetered one. The machine
+/// that dispatches funds the launch from its own tree, so it holds custody;
+/// a promoted child that outlived its root (REVIEW-6638) was funded on the
+/// machine that promotes it.
+fn spend_carry_at_mint(input: &AgentDispatchInput, node_id: u64) -> Option<AgentRunSpendCarry> {
+    let statement = input.launch.as_ref()?;
+    if statement.cap_units.is_none() {
+        return None;
+    }
+    Some(AgentRunSpendCarry {
+        custody_node: node_id,
+        custody_folded_units: 0,
+        shares: Vec::new(),
+    })
+}
+
 /// The write that mints the run TASK of the try `record` under its own id,
 /// from `input`, the dispatch input its payload freezes: `false` when that
 /// run TASK already stands or the run is not one to mint for. A root's
@@ -559,7 +838,7 @@ fn put_agent_run_task_in_txn(
     } else {
         agent_run_lease_held_until(now)
     };
-    let body = AgentRunTaskBody {
+    let mut body = AgentRunTaskBody {
         role: TaskRole::Task.role_byte(),
         schema_version: AGENT_RUN_TASK_SCHEMA_VERSION,
         subkind: AGENT_RUN_TASK_SUBKIND.to_owned(),
@@ -588,7 +867,13 @@ fn put_agent_run_task_in_txn(
         parent_context,
         created_at: record.created_at,
         effects: Vec::new(),
+        spend: spend_carry_at_mint(input, node_id),
+        writer_proof: None,
     };
+    // This machine wrote every frozen field from its own queue row and
+    // dispatch input, so it signs them (`super::run_writer_proof`).
+    body.writer_proof =
+        super::run_writer_proof::sign_in_txn(vault, &*wtxn, task_ref, &body.frozen_digest());
     let encoded = rmp_serde::to_vec_named(&body)
         .map_err(|_| Error::InvariantViolation("agent run task body encode failed"))?;
     // Its birth edge names the dispatch's facet, else the vault default
@@ -929,6 +1214,15 @@ pub(super) fn outlived_root_in(
 /// own retry lineage, which carries the context bound its settled parent
 /// handed it ([`AgentRunTaskBody::into_frozen_parent_projection`]). `None` for
 /// any other try.
+///
+/// The flag and the bound count only on a TASK whose writer proof counts
+/// here ([`AgentRunTaskBody::writer_proven_in`]; Engine ASK
+/// AGENT-RUN-OUTLIVED-ROOT-UNPROVEN-BOUND = A, the handover's rule): a
+/// shared vault's member machine or a federation peer can rewrite the TASK,
+/// and a walk that ended at it would run the try as a root under whatever
+/// bound it names. An unproven one reads as no outlived-root TASK, so the
+/// try is a child whose parent is gone here: it does not run, and its
+/// context and depth walks refuse.
 fn outlived_root_task_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -945,11 +1239,20 @@ fn outlived_root_task_in(
     else {
         return Ok(None);
     };
-    match agent_run_task_body_in(vault, txn, link.task_ref) {
-        Ok(body) => Ok(body.filter(|body| body.outlived_root)),
-        Err(Error::Record(_)) => Ok(None),
-        Err(error) => Err(error),
+    let body = match agent_run_task_body_in(vault, txn, link.task_ref) {
+        Ok(Some(body)) if body.outlived_root => body,
+        Ok(_) | Err(Error::Record(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !body.writer_proven_in(vault, txn, link.task_ref) {
+        tracing::warn!(
+            reason = super::run_handover::RUN_TASK_WRITER_UNPROVEN,
+            task = %link.task_ref.to_hex(),
+            "an outlived-root run TASK has no writer proof that counts here; its try runs as a child whose parent is gone"
+        );
+        return Ok(None);
     }
+    Ok(Some(body))
 }
 
 /// [`outlived_root_in`] of the try `attempt`, read in `txn`; `false` for a
@@ -975,6 +1278,38 @@ pub(super) fn attempt_outlived_root_task_in(
         Some(row) => outlived_root_task_in(vault, txn, &row),
         None => Ok(None),
     }
+}
+
+/// Whether the try `attempt`, one of a run pending in this queue, waits for
+/// a claim the agent pump refuses, read in `txn`: queued or scheduled, and
+/// an orphaned child, a spawned child whose parent this queue holds no row
+/// of and no outlived root here ([`outlived_root_in`]; an unproven
+/// outlived-root TASK counts as none), which `agent_run::agent_run_row`
+/// refuses. Such a try runs nowhere here, so it holds its run no lease: the
+/// lease reaper neither renews this machine's lease for it nor keeps it at a
+/// take (REVIEW-9863). `false` for `None`, a try this queue does not hold or
+/// holds in another state, a root, and a payload that does not read.
+pub(super) fn queued_orphaned_child_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: Option<AttemptId>,
+) -> Result<bool> {
+    let queue = AttemptQueue::new(vault);
+    let Some(row) = attempt
+        .map(|attempt| queue.get_in_txn(txn, attempt))
+        .transpose()?
+        .flatten()
+        .filter(|row| matches!(row.state, AttemptState::Queued | AttemptState::Scheduled))
+    else {
+        return Ok(false);
+    };
+    let Some(parent) = spawning_parent(&row.payload) else {
+        return Ok(false);
+    };
+    if queue.get_in_txn(txn, parent)?.is_some() {
+        return Ok(false);
+    }
+    Ok(!outlived_root_in(vault, txn, &row)?)
 }
 
 /// The run TASK id `attempt` names, read in `txn`, with whether a hard erase
@@ -1059,9 +1394,233 @@ pub(super) fn agent_run_task_body_in(
         .transpose()
 }
 
+/// Test support (`oneiron_test_support`; FIX
+/// AGENT-RUN-HANDOVER-TRUSTS-REPLICATED-PAYLOAD): puts the run TASK a peer
+/// machine of client id `node_id` syncs for a root run it holds, under the
+/// try `attempt`'s run TASK id, in `wtxn`: `payload` frozen, the lease at
+/// the first generation and long expired, born at the store clock's now.
+/// With `outlived`, the run is a child that outlived its root (REVIEW-6638;
+/// FIX AGENT-RUN-OUTLIVED-ROOT-BOUND-FROM-REPLICATED-TASK): its TASK is
+/// flagged `outlived_root` and freezes the bound given, `None` for a parent
+/// that resolved no projection. With `writer`, its machine's proof, the
+/// signature its `key` makes over the frozen fields as they stand with
+/// `signed_payload` in place of `payload`. Answers the run TASK's id.
+///
+/// # Errors
+///
+/// A payload that is no agent dispatch, a vault with no genesis-bound id
+/// for a signed TASK, and storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_peer_agent_run_task_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    payload: &[u8],
+    node_id: u64,
+    outlived: Option<Option<ResolvedContextProjection>>,
+    writer: Option<(EntityId, &ed25519_dalek::SigningKey, &[u8])>,
+) -> Result<EntityId> {
+    let now = vault.now_recorded_at();
+    let input =
+        super::decode_agent_dispatch_input(&decode_dreamer_attempt_payload(payload)?.input)?;
+    let task_ref = agent_run_task_id(attempt)?;
+    let mut body = AgentRunTaskBody {
+        role: TaskRole::Task.role_byte(),
+        schema_version: AGENT_RUN_TASK_SCHEMA_VERSION,
+        subkind: AGENT_RUN_TASK_SUBKIND.to_owned(),
+        attempt_ref: bytes_to_hex_lower(attempt.as_bytes()),
+        live_attempt_ref: bytes_to_hex_lower(attempt.as_bytes()),
+        run_id: None,
+        realized_task_ref: None,
+        agent_definition_ref: input.target.agent_definition_ref()?.to_hex(),
+        requester_ref: input
+            .requester
+            .as_ref()
+            .map(|requester| requester.actor.to_hex()),
+        dedupe_key: None,
+        queue_payload: payload.to_vec(),
+        world_ref: input
+            .scope
+            .as_ref()
+            .and_then(|scope| scope.world)
+            .filter(|world| *world != crate::claim::base_world_id())
+            .map(|world| world.to_hex()),
+        project_ref: input.project_ref.map(|project| project.to_hex()),
+        executor: AgentRunExecutorLease {
+            node_id,
+            generation: AGENT_RUN_LEASE_FIRST_GENERATION,
+            held_until: 0,
+        },
+        outcome: None,
+        outlived_root: outlived.is_some(),
+        parent_context: outlived.flatten().map(FrozenContextBound::of),
+        created_at: now,
+        effects: Vec::new(),
+        spend: None,
+        writer_proof: None,
+    };
+    if let Some((machine, key, signed_payload)) = writer {
+        let genesis = vault
+            .authority_view_readonly_in_txn(&*wtxn)?
+            .vault_id
+            .ok_or(Error::InvariantViolation(
+                "a vault with no genesis-bound id signs no run TASK",
+            ))?;
+        let signed = AgentRunTaskBody {
+            queue_payload: signed_payload.to_vec(),
+            ..body.clone()
+        };
+        body.writer_proof = Some(AgentRunWriterProof::signed(
+            &genesis,
+            machine,
+            key,
+            task_ref,
+            &signed.frozen_digest(),
+        ));
+    }
+    let encoded = rmp_serde::to_vec_named(&body)
+        .map_err(|_| Error::InvariantViolation("agent run task body encode failed"))?;
+    vault
+        .batch_in()
+        .put(
+            &task_ref,
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: body.created_at,
+                end: body.created_at,
+            },
+            now,
+            &encoded,
+        )
+        .apply(wtxn)?;
+    Ok(task_ref)
+}
+
+/// Test support (`oneiron_test_support`): the machine whose writer proof
+/// counts here on the run TASK of the try `attempt`, read in `txn`; `None`
+/// with no such TASK, or no proof that counts.
+///
+/// # Errors
+///
+/// A run TASK that does not read, and storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn proven_agent_run_task_writer_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<Option<EntityId>> {
+    let task_ref = agent_run_task_id(attempt)?;
+    let Some(body) = agent_run_task_body_in(vault, txn, task_ref)? else {
+        return Ok(None);
+    };
+    Ok(body
+        .writer_proof
+        .filter(|_| body.writer_proven_in(vault, txn, task_ref))
+        .map(|proof| proof.machine()))
+}
+
+/// Test support (`oneiron_test_support`; FIX
+/// AGENT-RUN-OUTLIVED-ROOT-BOUND-FROM-REPLICATED-TASK): rewrites the run
+/// TASK of the try `attempt` in `wtxn` as a peer that holds no proof would,
+/// its whole row in one write: its frozen parent bound set to
+/// `parent_context` (`None`: none frozen), its writer proof dropped, every
+/// other field as stored.
+///
+/// # Errors
+///
+/// A try with no run TASK under its own id, a TASK that does not decode,
+/// and storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn rewrite_peer_agent_run_task_parent_context_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    parent_context: Option<ResolvedContextProjection>,
+) -> Result<()> {
+    rewrite_peer_agent_run_task_row_in_txn(vault, wtxn, attempt, |body| {
+        body.parent_context = parent_context.map(FrozenContextBound::of);
+        body.writer_proof = None;
+    })
+}
+
+/// Test support (`oneiron_test_support`; REVIEW-9863): rewrites the
+/// executor lease on the run TASK of the try `attempt` in `wtxn`, its whole
+/// row in one write, as the sync of a peer's lease write lands it: the hold
+/// ends at `held_until`, held by the machine of client id `node_id` (`None`:
+/// the holder stays). Every other field, the writer proof included, stays as
+/// stored: the lease is no frozen field.
+///
+/// # Errors
+///
+/// As [`rewrite_peer_agent_run_task_parent_context_in_txn`].
+#[cfg(oneiron_test_support)]
+pub(crate) fn rewrite_peer_agent_run_task_lease_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    node_id: Option<u64>,
+    held_until: u64,
+) -> Result<()> {
+    rewrite_peer_agent_run_task_row_in_txn(vault, wtxn, attempt, |body| {
+        if let Some(node_id) = node_id {
+            body.executor.node_id = node_id;
+        }
+        body.executor.held_until = held_until;
+    })
+}
+
+/// The whole-row write of the run TASK of the try `attempt` in `wtxn`, as a
+/// peer's sync lands it, with `edit` applied to its stored body.
+#[cfg(oneiron_test_support)]
+fn rewrite_peer_agent_run_task_row_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    edit: impl FnOnce(&mut AgentRunTaskBody),
+) -> Result<()> {
+    let task_ref = agent_run_task_id(attempt)?;
+    let raw = vault
+        .store
+        .port_entity_record(&*wtxn, &task_ref)?
+        .ok_or(Error::EntityNotFound)?;
+    let mut body = decode_agent_run_task_body(raw.entity_type, &raw.body)?;
+    edit(&mut body);
+    let encoded = rmp_serde::to_vec_named(&body)
+        .map_err(|_| Error::InvariantViolation("agent run task body encode failed"))?;
+    let now = vault.now_recorded_at();
+    vault
+        .batch_in()
+        .put(
+            &task_ref,
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: body.created_at,
+                end: body.created_at,
+            },
+            now,
+            &encoded,
+        )
+        .apply(wtxn)?;
+    Ok(())
+}
+
 /// Read-modify-write of one run TASK body in the caller's write; a no-op
 /// update writes nothing, so a renewal not yet due leaves the row
-/// byte-identical.
+/// byte-identical. Every write the run's executor makes stamps its own
+/// share in the same write (FIX 4889): its claim, a renewal (at most once
+/// a half hold, `agent_run_lease_renewal`), the reaper's own renewal, an
+/// effect mark, its settlement, and `release_agent_run_leases` as the
+/// process closes. So a machine that closes leaves an exact share; one
+/// that vanishes leaves the share of its last write, up to half a hold
+/// behind (canon ARCH-0026:440: a deferred cost leak, not a correctness
+/// failure).
+///
+/// An update that changes the frozen fields
+/// ([`AgentRunTaskBody::frozen_digest`]) is signed again by this machine
+/// (`super::run_writer_proof`), but only over a stored proof that counts:
+/// the update keeps the frozen fields it does not set, so a row another
+/// machine rewrote with no proof that counts stays unproven, and no write
+/// here lends it one.
 pub(super) fn update_agent_run_task_body_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -1074,7 +1633,23 @@ pub(super) fn update_agent_run_task_body_in_txn(
         .port_entity_record(&*wtxn, &task_ref)?
         .ok_or(Error::EntityNotFound)?;
     let mut body = decode_agent_run_task_body(raw.entity_type, &raw.body)?;
+    let frozen = body.frozen_digest();
     update(&mut body)?;
+    stamp_own_spend_share_in_txn(vault, &*wtxn, &mut body)?;
+    let refrozen = body.frozen_digest();
+    if refrozen != frozen {
+        body.writer_proof = if super::run_writer_proof::counts_in(
+            vault,
+            &*wtxn,
+            task_ref,
+            &frozen,
+            body.writer_proof.as_ref(),
+        ) {
+            super::run_writer_proof::sign_in_txn(vault, &*wtxn, task_ref, &refrozen)
+        } else {
+            None
+        };
+    }
     let encoded = rmp_serde::to_vec_named(&body)
         .map_err(|_| Error::InvariantViolation("agent run task body encode failed"))?;
     if raw.body == encoded[..] {
@@ -1093,6 +1668,67 @@ pub(super) fn update_agent_run_task_body_in_txn(
             &encoded,
         )
         .apply(wtxn)
+}
+
+/// Stamps this machine's own spend shares on the run TASK `body` in the
+/// caller's snapshot (FIX 4889): the share of the scope the run's live try
+/// spends under here, and again each other share of this machine's whose
+/// scope row it holds (REVIEW-7890: an earlier try's scope, or one a take
+/// kept for a queued try), each as that scope's `spent_units` plus
+/// `held_units`, with the held part apart. So a hold that ended since, as a
+/// child that outlived the run settled, reaches its share. Only a metered
+/// run carries a share, and a carry that is absent leaves the body as it is.
+/// While the run is open only its executor stamps, as another machine's
+/// write could undo the executor's by whole-row LWW. Once it settled, a
+/// machine that is not its executor refreshes the shares it already has
+/// (REVIEW-7890 round 2): its children that outlived its hold of the run
+/// settle there, and the custody machine waits for what they spent. A live
+/// try that does not parse or spends unmetered here adds no share.
+fn stamp_own_spend_share_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    body: &mut AgentRunTaskBody,
+) -> Result<()> {
+    let Some(carry) = body.spend.as_mut() else {
+        return Ok(());
+    };
+    let Some(node) = crate::identity::read_client_id_in_txn(vault, txn)? else {
+        return Ok(());
+    };
+    let executor = node == body.executor.node_id;
+    if !executor && body.outcome.is_none() {
+        return Ok(());
+    }
+    if executor
+        && let Some(live) = attempt_id_from_hex(&body.live_attempt_ref)
+        && let Some(scope) = AgentDispatcher::new(vault).attempt_spend_scope_in_txn(txn, live)?
+    {
+        carry.stamp(node, &scope);
+    }
+    for share in carry.shares.iter_mut().filter(|share| share.node == node) {
+        if let Some(scope) = SCOPE.get(&vault.store, txn, &share.scope.0)? {
+            share.set_from(&scope);
+        }
+    }
+    Ok(())
+}
+
+/// Whether this machine's stamp of its own spend shares would change the run
+/// TASK `body`, read in `txn` (REVIEW-7890): the custody reconcile's read
+/// pass, so its write runs only for a share whose scope moved.
+pub(super) fn own_spend_shares_stale_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    body: &AgentRunTaskBody,
+) -> Result<bool> {
+    let mut stamped = body.clone();
+    stamp_own_spend_share_in_txn(vault, txn, &mut stamped)?;
+    Ok(stamped.spend != body.spend)
+}
+
+/// An attempt id from the 32-hex form a run TASK stores it in.
+pub(super) fn attempt_id_from_hex(hex: &str) -> Option<AttemptId> {
+    AttemptId::from_bytes(&crate::task_verb::decode_hex::<16>(hex)?).ok()
 }
 
 /// What the run TASK `fence` names says of it, read in `txn`. A spawned
@@ -1653,14 +2289,35 @@ pub(super) fn open_agent_runs_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<(EntityId, AgentRunTaskBody)>> {
+    agent_runs_in(vault, txn, false)
+}
+
+/// Every settled agent-run TASK and its body, read in `txn` (FIX 4889): what
+/// the custody reconcile judges. A body this version does not read is passed
+/// over.
+pub(super) fn settled_agent_runs_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(EntityId, AgentRunTaskBody)>> {
+    agent_runs_in(vault, txn, true)
+}
+
+/// Every agent-run TASK and its body, read in `txn`, that carries an outcome
+/// when `settled` and none otherwise. A body this version does not read is
+/// passed over.
+fn agent_runs_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    settled: bool,
+) -> Result<Vec<(EntityId, AgentRunTaskBody)>> {
     let mut runs = Vec::new();
     for task_ref in vault
         .store
         .port_entity_ids_by_type(txn, ENTITY_TYPE_TASK, None)?
     {
         let task_ref = task_ref?;
-        // A run TASK a hard erase took is no run to release or hand over
-        // (REVIEW-6615).
+        // A run TASK a hard erase took is no run to release, hand over or
+        // settle (REVIEW-6615).
         if agent_run_task_erased_in(&vault.store, txn, task_ref)? {
             continue;
         }
@@ -1673,7 +2330,7 @@ pub(super) fn open_agent_runs_in(
         let Ok(body) = decode_agent_run_task_body(raw.entity_type, &raw.body) else {
             continue;
         };
-        if body.outcome.is_none() {
+        if body.outcome.is_some() == settled {
             runs.push((task_ref, body));
         }
     }

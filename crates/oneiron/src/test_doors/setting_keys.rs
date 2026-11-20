@@ -64,6 +64,8 @@ fn window_no_wider(a: &u64, b: &u64) -> bool {
 thread_local! {
     /// How many changes `test.hooked` has seen on this thread.
     static HOOKED_CHANGES: Cell<u64> = const { Cell::new(0) };
+    /// The time the last change `test.hooked`'s hook saw on this thread was stamped with.
+    static HOOKED_LAST_AT: Cell<u64> = const { Cell::new(0) };
     /// How many times `test.after_commit`'s after-commit hook has run on this thread.
     static AFTER_COMMITS: Cell<u64> = const { Cell::new(0) };
     /// The value of `test.after_commit` a fresh read saw when its hook last ran on this thread.
@@ -98,6 +100,13 @@ fn empty_banner() -> String {
     String::new()
 }
 
+fn daily() -> crate::schedule::Trigger {
+    crate::schedule::Trigger::Every {
+        secs: 24 * 60 * 60,
+        first_at: None,
+    }
+}
+
 fn no_mode() -> Option<u64> {
     None
 }
@@ -118,11 +127,50 @@ fn channel(item: &str) -> bool {
     matches!(item, "mail" | "chat")
 }
 
+/// `test.credential_named_members`'s value: members under names the side-row wall's field rule
+/// reads as credential names, each of a shape the value's type fixes (FIX
+/// SETTING-WALL-CREDENTIAL-NAMED-MEMBERS).
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct CredentialNamedMembers {
+    /// A count under a name that ends in `_token`.
+    pub bytes_per_token: Option<u32>,
+    /// Rules by names the owner picks; a name may read as a credential name.
+    pub rules: std::collections::BTreeMap<String, NamedRule>,
+    /// Text under a credential name.
+    pub api_token: Option<String>,
+}
+
+/// One owner-named rule of a [`CredentialNamedMembers`].
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct NamedRule {
+    /// A flag.
+    pub normalize_text: bool,
+    /// A count.
+    pub weight: u32,
+    /// Text under a credential name, inside the rule.
+    pub refresh_token: Option<String>,
+}
+
+impl crate::setting::SettingValue for CredentialNamedMembers {}
+
+fn no_credential_named_members() -> CredentialNamedMembers {
+    CredentialNamedMembers {
+        bytes_per_token: None,
+        rules: std::collections::BTreeMap::new(),
+        api_token: None,
+    }
+}
+
 fn count_change(
     _vault: &crate::Vault,
     _txn: &mut heed::RwTxn<'_>,
-    _change: &SettingChange,
+    change: &SettingChange,
 ) -> Result<()> {
+    HOOKED_LAST_AT.set(change.at);
     HOOKED_CHANGES.set(HOOKED_CHANGES.get() + 1);
     Ok(())
 }
@@ -131,6 +179,12 @@ fn count_change(
 #[must_use]
 pub fn hooked_changes() -> u64 {
     HOOKED_CHANGES.get()
+}
+
+/// The time the last change `test.hooked`'s hook ran for on this thread was stamped with.
+#[must_use]
+pub fn hooked_last_at() -> u64 {
+    HOOKED_LAST_AT.get()
 }
 
 /// `test.after_commit`'s after-commit hook: it reads the key in a read of its own, which sees
@@ -188,10 +242,19 @@ crate::setting::setting_keys! {
         read_by: ReadBy::Members,
         act: ActClass::ReversibleWork,
     };
+    /// A value whose members sit under credential names: a count, owner-named rules and a text.
+    pub TEST_CREDENTIAL_NAMED_MEMBERS: CredentialNamedMembers = "test.credential_named_members" {
+        kind: Kind::new(no_credential_named_members),
+    };
     /// A key whose hook counts its changes.
     pub TEST_HOOKED: u64 = "test.hooked" {
         kind: Kind::new(zero),
         on_change: Some(count_change),
+    };
+    /// The cadence of the test job `test.cadence` (DESIGN 15-setting-primitive, stage 5a-1).
+    pub TEST_JOB_CADENCE: crate::schedule::Trigger = "test.job_cadence" {
+        kind: Kind::new(daily),
+        on_change: Some(crate::schedule::rearm_on_change),
     };
     /// A mode that is off until the owner sets one: an optional value.
     pub TEST_OPTIONAL_MODE: Option<u64> = "test.optional_mode" {

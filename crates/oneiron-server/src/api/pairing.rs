@@ -1,6 +1,6 @@
 //! Pairing-only enrollment and unauthenticated liveness discovery.
 use crate::auth::{parse_signature, parse_slip_id};
-use crate::error::{ApiError, EnvelopedApiError};
+use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::server::SyncServer;
 use axum::{Json, extract::State, http::HeaderMap, http::request::Parts};
 use oneiron::authority::{
@@ -42,35 +42,28 @@ pub(super) async fn create_link(
         // A link the owner makes records them: a holder that can propose has
         // the OpenAI proxy admitted under that owner when it redeems. A named
         // agent's link mints its default read Grant, an owner act from this
-        // request's surface (PAIR-GRANT-DESIGN Q3/Q4).
-        None => match super::owner_routes::owner(&auth, &server).ok() {
-            Some(owner) => {
-                let surface = super::owner_routes::machine_routes::act_surface_admitted(
-                    &server,
-                    &auth,
-                    &parts.headers,
-                    &parts.extensions,
-                );
-                with_issuer(&server, |issuer| {
-                    server.vault().issue_owner_pairing_link_from_surface(
-                        issuer,
-                        &owner,
-                        surface,
-                        request.scope,
-                        request.lifetime_secs,
-                        request.principal,
-                    )
-                })?
-            }
-            None => with_issuer(&server, |issuer| {
-                server.vault().issue_pairing_link_for_principal(
+        // request's surface (PAIR-GRANT-DESIGN Q3/Q4). A link mints a slip,
+        // so only the owner makes one: a full-scope slip someone else holds
+        // is refused (OWNER-GRADE-IS-NOT-OWNERSHIP).
+        None => {
+            let owner = super::owner_routes::owner(&auth, &server)?;
+            let surface = super::owner_routes::machine_routes::act_surface_admitted(
+                &server,
+                &auth,
+                &parts.headers,
+                &parts.extensions,
+            );
+            with_issuer(&server, |issuer| {
+                server.vault().issue_owner_pairing_link_from_surface(
                     issuer,
+                    &owner,
+                    surface,
                     request.scope,
                     request.lifetime_secs,
                     request.principal,
                 )
-            })?,
-        },
+            })?
+        }
         // Only the owner answers for a machine, from any surface where he is
         // authenticated (the mesh ruling, 10-19): the owner proof comes from
         // this request's auth, verified once above, with no second prompt.
@@ -196,6 +189,7 @@ pub(super) async fn oauth_exchange(
         pin: None,
         home: None,
         re_paired: false,
+        answer_held: false,
         comm: oneiron::authority::effective_slip_comm(slip.claims.comm),
         mesh: None,
         mesh_bind: None,
@@ -240,6 +234,11 @@ pub(super) struct MachineEnrolment {
     encryption_suite: u16,
     encryption_key: String,
     machine_proof: String,
+    /// The checkpoint image the joining install was restored from, 64 hex,
+    /// when a restore made it (row RESTORED-COPIES-ENROL-EACH-OTHER): its
+    /// `machine_proof` then signs the restored transcript. Absent otherwise.
+    #[serde(default)]
+    restored_from: Option<String>,
 }
 impl MachineEnrolment {
     /// The request this wire names. The target's anchoring material reads an
@@ -261,6 +260,11 @@ impl MachineEnrolment {
                     .map_err(|_| ApiError::unauthorized())?,
             },
             machine_proof,
+            restored_from: self
+                .restored_from
+                .as_deref()
+                .map(parse_slip_id)
+                .transpose()?,
         })
     }
 }
@@ -279,6 +283,12 @@ pub(super) struct Paired {
     /// only (FIX 8636): its identity and profile stand as they were.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     re_paired: bool,
+    /// The link's machine answer is stored and held: this home carried it
+    /// with no owner key, so the machine is not the owner's until he confirms
+    /// it on an owner device. The token stands. A new machine gets no `home`
+    /// until then.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    answer_held: bool,
     /// Whom the paired slip may message (FIX 3899): the reach the owner set
     /// on the link, `vault` when he set none.
     comm: oneiron::authority::CommReach,
@@ -441,6 +451,7 @@ pub(super) async fn redeem(
         pin: redeemed.pin,
         home,
         re_paired: redeemed.re_paired,
+        answer_held: redeemed.held_answer.is_some(),
         comm: oneiron::authority::effective_slip_comm(redeemed.slip.claims.comm),
         mesh,
         mesh_bind,
@@ -606,17 +617,56 @@ pub(super) fn register_live_paired_mcp(
     registry.register(credential, record).is_ok()
 }
 
+/// Policy hook (FIX-LIST 23279): the HTTP refusal for a default
+/// agent-Grant mint's reason, or `None` when `error` is none. An owner's
+/// link for a named agent mints the agent's default read Grant in the
+/// issue's own writer, and a failed mint refuses the link; the refusal
+/// names the mint's rule, as the grants door answers the same failure
+/// (`owner_routes::owner_error`'s `Refused`), a 409, never this door's
+/// unexplained 401, so the owner can tell a missing carrier from a bad
+/// credential.
+fn grant_mint_refusal(error: &oneiron::Error) -> Option<ApiError> {
+    use oneiron::authority::{
+        AGENT_GRANT_ACT_NO_CARRIER, AGENT_GRANT_ACT_NOT_COUNTED, AGENT_GRANT_ACT_TOO_MANY_HEADS,
+    };
+    let oneiron::Error::Record(oneiron::error::RecordError::AuthorityRefused(reason)) = error
+    else {
+        return None;
+    };
+    if !matches!(
+        *reason,
+        AGENT_GRANT_ACT_NO_CARRIER | AGENT_GRANT_ACT_TOO_MANY_HEADS | AGENT_GRANT_ACT_NOT_COUNTED
+    ) {
+        return None;
+    }
+    Some(ApiError::new(
+        *reason,
+        ApiErrorDetails::InvalidState {
+            state: Some("refused".to_owned()),
+        },
+        std::iter::empty::<String>(),
+    ))
+}
+
 pub(super) fn with_issuer<T>(
     server: &SyncServer,
     operation: impl FnOnce(&HostSlipIssuer) -> oneiron::Result<T>,
 ) -> Result<T, ApiError> {
     // A scope the vault refuses on a link says why, and so does a renewal's
-    // named refusal (FIX 4651); every other failure stays an unexplained 401.
+    // named refusal (FIX 4651) or a default agent-Grant mint's (FIX-LIST
+    // 23279); every other failure stays an unexplained 401.
     let refusal = |error: oneiron::Error| match error.kind() {
         oneiron::ErrorKind::InvalidPairingScope => {
             ApiError::bad_request(error.to_string(), Some("scope.facets"))
         }
-        _ => renewal_error::renewal_refusal(&error).unwrap_or_else(ApiError::unauthorized),
+        // An app backend's verbs wait on the Grant row the owner mints; the
+        // message names vault.agents.grants.mint (APP-BACKEND-LINK-GRANT = A).
+        oneiron::ErrorKind::AppBackendGrantRequired => {
+            ApiError::bad_request(error.to_string(), Some("scope.verbs"))
+        }
+        _ => renewal_error::renewal_refusal(&error)
+            .or_else(|| grant_mint_refusal(&error))
+            .unwrap_or_else(ApiError::unauthorized),
     };
     // The managed issuer, else this install's own self-host root issuer
     // (FIX-LIST 3018); a host holding neither signs nothing.
@@ -644,11 +694,39 @@ pub(super) async fn revoke(
     State(server): State<Arc<SyncServer>>,
     Json(request): Json<RevokeSlip>,
 ) -> Result<Json<serde_json::Value>, EnvelopedApiError> {
-    super::scoped_auth::check_request_owner_act(&parts, &server)?;
-    with_issuer(&server, |issuer| {
-        server
-            .vault()
-            .revoke_capability_slip(issuer, request.slip_id)
-    })?;
+    let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?;
+    // Owner or self (FIX 8216, lead ruling FIX-8216-PAIRING-OWNER-ACT = A):
+    // the vault owner revokes any slip; a full-scope slip someone else holds
+    // is not ownership (OWNER-GRADE-IS-NOT-OWNERSHIP), so its holder revokes
+    // only the slips its own logged mints name. A host slip names no person
+    // and revokes nothing but as the owner its host action names.
+    match super::owner_routes::owner(&auth, &server) {
+        Ok(owner) => with_issuer(&server, |issuer| {
+            server
+                .vault()
+                .revoke_capability_slip_as_owner(issuer, &owner, request.slip_id)
+        })?,
+        Err(refusal) => {
+            // The request's own slip rides into the revoking transaction and
+            // is judged live there (Sol review of #8342, P2).
+            let credential = auth
+                .principal_ref()
+                .and(auth.verified_slip())
+                .ok_or(refusal)?;
+            let issuer = server.host_issuer().ok_or_else(ApiError::unauthorized)?;
+            server
+                .vault()
+                .revoke_capability_slip_held_by(issuer, credential, request.slip_id)
+                // A lapsed credential, or a host that is not this vault's
+                // root, is a 401; another holder's slip is a 403. Any other
+                // error is the engine's own, so a storage fault never tells
+                // a client to drop a good credential (REVIEW2 #8342, P3-1).
+                .map_err(|error| match error.kind() {
+                    oneiron::ErrorKind::AuthorityRefused => ApiError::forbidden_scope("owner"),
+                    oneiron::ErrorKind::InvalidAuthorityLogBody => ApiError::unauthorized(),
+                    _ => super::core_engine_error("slip revoke failed", error),
+                })?
+        }
+    };
     Ok(Json(serde_json::json!({"revoked":true})))
 }

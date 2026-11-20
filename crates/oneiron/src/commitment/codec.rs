@@ -1,5 +1,6 @@
 //! Commitment claim codec: candidate builders and closed-schema helpers.
 
+use oneiron_contracts::msgpack::Entries;
 use rmpv::Value;
 
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
@@ -278,10 +279,9 @@ fn decode_entity_ref(value: &Value) -> Result<EntityId> {
 }
 
 fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
-        .ok_or_else(invalid_commitment_value)
+    Entries::new(entries)
+        .require(key)
+        .map_err(|_| invalid_commitment_value())
 }
 
 fn required_string<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a str> {
@@ -291,22 +291,10 @@ fn required_string<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a s
 }
 
 fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
-    let mut seen = vec![false; keys.len()];
-    for (key, _) in entries {
-        let key = key.as_str().ok_or_else(invalid_commitment_value)?;
-        let Some(index) = keys.iter().position(|known| *known == key) else {
-            return Err(invalid_commitment_value());
-        };
-        if seen[index] {
-            return Err(invalid_commitment_value());
-        }
-        seen[index] = true;
-    }
-    if seen.into_iter().all(|value| value) {
-        Ok(())
-    } else {
-        Err(invalid_commitment_value())
-    }
+    Entries::new(entries)
+        .exact_keys(keys, &[])
+        .map(drop)
+        .map_err(|_| invalid_commitment_value())
 }
 
 pub(super) fn validate_non_empty_bounded(

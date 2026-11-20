@@ -33,6 +33,7 @@ impl FoldIssues {
                 AuthorityFoldIssue::UnsettledHandoff(entry) => (entry, "unsettled_handoff"),
                 AuthorityFoldIssue::SignerNotInAncestry(entry) => (entry, "signer_not_in_ancestry"),
                 AuthorityFoldIssue::NonMonotonicSeq(entry) => (entry, "non_monotonic_seq"),
+                AuthorityFoldIssue::SequenceFork(entry) => (entry, "sequence_fork"),
                 AuthorityFoldIssue::StaleRosterApproval(entry) => (entry, "stale_roster_approval"),
                 AuthorityFoldIssue::WrongVault(entry) => (entry, "wrong_vault"),
                 AuthorityFoldIssue::ConflictingVaultRoot { entry, .. } => {
@@ -54,6 +55,13 @@ impl FoldIssues {
                 }
                 AuthorityFoldIssue::FoldMemoryFloor { .. } => {
                     issues.memory_floor = true;
+                    continue;
+                }
+                AuthorityFoldIssue::AppointmentRefused { entry, .. } => {
+                    (entry, "appointment_refused")
+                }
+                // An anchor's burn and a rootless roster name no entry.
+                AuthorityFoldIssue::AnchorBurned { .. } | AuthorityFoldIssue::NoRootKey => {
                     continue;
                 }
             };
@@ -113,8 +121,10 @@ impl FoldIssues {
         issues
     }
 
-    /// The codes of a cold row: the diagnostics naming its entry, and the
-    /// memory floor's. A cold row has no op, so no confirm conflict.
+    /// The codes of a cold row whose body the adopted image does not carry:
+    /// the diagnostics naming its entry, and the memory floor's. Such a row
+    /// has no op, so no confirm conflict. A cold row whose body the image
+    /// carries takes [`Self::codes`], as a stored row does.
     pub(super) fn cold_codes(&self, hash: &AuthorityEntryHash) -> Vec<String> {
         let mut codes: Vec<String> = self
             .by_entry

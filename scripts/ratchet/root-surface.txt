@@ -8,6 +8,10 @@ ActionResult
 ActiveWorldSelection
 ActorBound
 AdmitImportedClaimInput
+ApiAction
+ApiProtocol
+ApiVerbClassRow
+ApiVerbClassTable
 ApprovedCommitmentWake
 ArchivedEntity
 ArtifactPointerChannel
@@ -326,8 +330,6 @@ FirecrawlRenderer
 FrozenBuildCommand
 FulfillmentSource
 GATE_BUNDLE_CONTENT_KIND
-GATE_BUNDLE_OUTCOME_APPROVED
-GATE_BUNDLE_OUTCOME_DECLINED
 GATE_BUNDLE_REASON_APPROVED
 GATE_BUNDLE_REASON_DECLINED
 GATE_CONSENT_BUNDLE_DOMAIN
@@ -699,6 +701,8 @@ prefilter_turn
 prepare_feedback_preview
 propose_commitment_fulfilled
 provider_confidence_index_presence
+provider_finish_reason
+read_api_actions
 read_watermark
 reject_cleanup_proposal
 release_commitment_with_close

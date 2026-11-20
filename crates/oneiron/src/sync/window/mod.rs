@@ -42,18 +42,21 @@ mod shallow;
 #[doc(hidden)]
 pub mod test_hooks;
 mod tombstones;
+mod update_inserts;
+mod use_limited;
 mod withdrawn;
 
 pub(in crate::sync) use self::admission::encoded_root_state;
 #[cfg(test)]
 pub(in crate::sync) use self::admission::validate_window_update_residence;
+pub use self::admission::{
+    admit_window_update_residence_with_vault, validate_window_update_locality,
+    validate_window_update_residence_with_vault,
+};
 pub(in crate::sync) use self::admission::{
     check_promotion_snapshot, check_window_update_residence_with_vault,
     check_window_update_with_staged_worlds, validate_promotion_snapshot,
     validate_window_update_with_staged_worlds,
-};
-pub use self::admission::{
-    validate_window_update_locality, validate_window_update_residence_with_vault,
 };
 pub use self::device_only::{
     UpdateVerdict, Withhold, export_withheld, export_withheld_for, raw_update_verdict,
@@ -66,16 +69,20 @@ pub(in crate::sync) use self::discard_projection::{
     DiscardInstall, discard_touched_in, install_discard_projection, owed_projections_in,
     projection_floor_in,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::discard_projection::{Projected, project_window_doc};
 pub(crate) use self::discard_projection::{
     forget_unprojected_in_txn, mark_base_windows_owed_in_txn, resync_projected_windows_in_txn,
 };
 pub(crate) use self::egress::export_history_free_window_snapshot;
+pub(crate) use self::egress::require_history_free_window_in_txn;
 pub(crate) use self::egress::scrub_withdrawn_delete_carriers;
 #[cfg(test)]
 use self::egress::window_packing_excludes_entity;
 use self::egress::window_packing_excludes_entity_with;
 pub(in crate::sync) use self::egress::{
-    export_scrubbed_window_snapshot, withdrawn_delete_carriers, withhold_audience_carriers,
+    export_scrubbed_window_snapshot, export_scrubbed_window_state, withdrawn_delete_carriers,
+    withhold_audience_carriers,
 };
 pub use self::egress::{
     history_free_window_required, replay_pending_mirrors, require_history_free_window,
@@ -122,13 +129,16 @@ pub(crate) use self::shallow::{merge_window_heads, strict_window_cut, tip_window
 pub(in crate::sync) use self::tombstones::apply_tombstone_to_indexed_window_doc;
 pub(crate) use self::tombstones::{
     CarrierRemoval, DeleteBearingUpdate, entity_carriers, export_tombstone_commit_delta,
-    mark_removed_carriers_first, publish_pending_tombstones,
+    forget_removed_carrier_records_in_txn, mark_removed_carriers_first, publish_pending_tombstones,
+    suppress_published_carriers_first,
 };
 pub use self::tombstones::{
     apply_tombstone_to_window_doc, rebuild_window_from_updates, replay_pending_tombstones,
 };
 #[cfg(test)]
 pub(crate) use self::tombstones::{arm_fail_after_carrier_mark, disarm_fail_after_carrier_mark};
+pub use self::update_inserts::UpdateInserts;
+pub(crate) use self::use_limited::withhold_use_limited_carriers;
 pub(crate) use self::withdrawn::replace_withdrawn_carriers;
 
 /// Whether the stored TURN `turn` can ride its base month window, judged in
@@ -365,18 +375,30 @@ impl LoadedWindow {
     /// the flag reads STALE (`[0]`) and the fast-reconnect reader full-opens
     /// the doc rather than shipping an `sv:w:` VV that omits the survivor's
     /// ops. It is never assumed fresh just because a snapshot was persisted.
+    ///
+    /// Erased inserts (L6-05-SNAPSHOT-PERSIST-ERASED-INSERTS): an update a
+    /// bulk import or a residence landing imported into the doc becomes
+    /// durable here, with no update row whose append owes for it. So the
+    /// history this snapshot stores past the window's last stored one
+    /// ([`UpdateInserts::past_stored`]) owes the erasure sweep a compaction of
+    /// the window in the storing transaction when an insert names a row
+    /// hard-deleted here, as an appended update's does.
     pub fn persist_state(&self, vault: &Vault) -> Result<Vec<u8>> {
         let subsumed_update_keys = merge_persisted_state_into_doc(vault, &self.doc, &self.key)?;
 
         // Scrub after merging persisted updates: a raw update may carry a
-        // local-only claim even when the live doc was already clean.
-        let state = export_scrubbed_window_snapshot(vault, &self.key, &self.doc)?;
-        let history_free = history_free_window_required(vault, &self.key)?;
+        // local-only claim even when the live doc was already clean. The
+        // export reads the pin; a legal hold read in the writer keeps the
+        // history a pinned export dropped (census L6-05).
+        let state = export_scrubbed_window_state(vault, &self.key, &self.doc)?;
         let vv = doc_version_vector(&self.doc);
+        let inserts = UpdateInserts::past_stored(vault, &self.key, &self.doc)?;
 
         vault.with_write_txn_grouped(|wtxn| {
-            persist_window_doc_in_txn(vault, wtxn, &self.key, &state, &vv)?;
-            if history_free {
+            let (stored, history_free) = state.stored_in_txn(vault, wtxn)?;
+            persist_window_doc_in_txn(vault, wtxn, &self.key, stored, &vv, history_free)?;
+            inserts.owe_in_txn(vault, wtxn, &self.key)?;
+            if state.history_free {
                 HISTORY_FREE_WINDOW.put(
                     &vault.store,
                     wtxn,
@@ -387,11 +409,29 @@ impl LoadedWindow {
             prune_subsumed_window_updates_in_txn(vault, wtxn, &self.key, &subsumed_update_keys)?;
             // svf LAST: freshness is computed against the POST-PRUNE u:w:
             // set, so a surviving post-merge row forces stale (ONE-1151).
-            write_window_svf_in_txn(vault, wtxn, &self.key)
-        })?;
-
-        Ok(state)
+            write_window_svf_in_txn(vault, wtxn, &self.key)?;
+            Ok(stored.to_vec())
+        })
     }
+}
+
+/// The pin guard of [`persist_window_doc_in_txn`], for every writer that
+/// stores a window snapshot (census L6-05): when window `key` is pinned
+/// history-free in `wtxn` and the snapshot was not exported under the pin,
+/// the window owes the erasure sweep a compaction, raised in `wtxn`.
+pub(crate) fn owe_compaction_if_pinned_since_export_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &WindowKey,
+    exported_history_free: bool,
+) -> Result<()> {
+    if exported_history_free
+        || !HISTORY_FREE_WINDOW.contains(&vault.store, wtxn, &key.as_str().to_owned())?
+    {
+        return Ok(());
+    }
+    tracing::warn!("window persist: exported before its pin — compaction owed");
+    crate::deletion::owed_window_compaction::owe_window_compaction_in_txn(vault, wtxn, key)
 }
 
 /// `svf:*` byte meaning "the persisted `sv:*` reflects the FULL durable
@@ -411,13 +451,26 @@ const SVF_FRESH: u8 = 1;
 /// snapshot persist that leaves a surviving `u:w:` row on top of `sv:w:`
 /// would lie "fresh" and the fast-reconnect reader would omit that row's
 /// ops from the VV (ONE-1151 svf-freshness fix).
+///
+/// Pin guard (census L6-05): `exported_history_free` says whether `state` was
+/// exported under the window's history-free pin. The erasure sweep pins a
+/// window a holder keeps and then cuts its rows; a snapshot exported before
+/// the pin and stored after the cut puts back the history the cut dropped.
+/// So the pin is read here, in the caller's transaction: a pinned window
+/// stores a snapshot not exported under it as before, and owes the erasure
+/// sweep a compaction in the same transaction, as a pinned persist whose cut
+/// an import raced does. The next pass cuts it again, and every later export
+/// runs under the pin. A pin is never lifted, so one read before an export
+/// that consults it proves the export pinned.
 pub(crate) fn persist_window_doc_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     key: &WindowKey,
     state: &[u8],
     vv: &[u8],
+    exported_history_free: bool,
 ) -> Result<()> {
+    owe_compaction_if_pinned_since_export_in_txn(vault, wtxn, key, exported_history_free)?;
     // The owner's discard of a world copy takes what it owns from a BASE
     // window's state before that state persists (FIX 14534 part E).
     let state = discard_ingress::project_snapshot_in_txn(vault, wtxn, key, state)?;
@@ -665,12 +718,8 @@ pub(in crate::sync) fn apply_pending_window_updates_in_txn(
     Ok(applied)
 }
 
-// FIX [LIBTEST-QUARANTINE-SYNC-WINDOW-HISTORY-FREE-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod history_free_tests;
-// FIX [LIBTEST-QUARANTINE-SYNC-WINDOW-TESTS]: the lib test target's type check fails here (31 errors: E0061 x23, E0277 x5, E0063 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

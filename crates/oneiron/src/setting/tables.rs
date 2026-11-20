@@ -8,6 +8,15 @@ crate::side_table::side_tables! {
     SETTING: VaultMeta b"setting:row:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical]
         => crate::setting::erase_setting_row_actor_in_txn;
+    /// An agent's setting change that waits on a check-in, kept beside it in the writer that
+    /// opens it, so the owner's confirm sheet reads the row the ask changes, the value it asks
+    /// for and the key's loosening note (RESTRICTION-WAVE-11-CAP-NOTE): the check-in holds only
+    /// the effect digest. The writer that spends the check-in drops it; the asker's erase drops
+    /// every ask of theirs. Key: id16 (the pending check-in).
+    SETTING_ASK: VaultMeta b"setting:ask:v1:" Named
+        // Restore class: live, as the pending check-in it joins is.
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::setting::erase_setting_ask_actor_in_txn;
     /// The same rows for a key whose choice is part of what records mean, so it travels with them
     /// through a restore (`restore: content`). Key: as `SETTING`'s.
     SETTING_CONTENT: VaultMeta b"setting:content:v1:" Named
@@ -21,5 +30,10 @@ crate::side_table::side_tables! {
     /// The last setting change sequence handed out, so a scrubbed row's sequence is never handed
     /// out again under a feed cursor. Key: ().
     SETTING_CHANGE_NEXT: VaultMeta b"setting:change_next:v1" Named
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// One head row per pack of the default layer: the digest of the defaults the pack door last
+    /// weighed, the keys the vault accepted from the pack, and the loose defaults that wait on a
+    /// holder's yes (DESIGN 1.5 "Packs: a default that changes"). Key: the pack's name.
+    SETTING_PACK_HEAD: VaultMeta b"setting:pack_head:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
 }

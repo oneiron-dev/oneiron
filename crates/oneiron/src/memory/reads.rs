@@ -70,6 +70,13 @@ pub struct ClaimView {
     pub claim_scope: ClaimScope,
     /// Original host-stamped Rule A provenance.
     pub made_by: Option<crate::provenance::made_by::MadeBy>,
+    /// The org `made_by`'s actor ran as its house when it made the claim, as
+    /// 32-hex (HOUSE-BIND = A, ARCH-0063 #house-bind, FIX
+    /// SPEAKER-BYLINE-FOR-ORG-CLAIMS): the claim reads "pr2, for <org>". Read
+    /// from the house link receipts at `made_by.at` on each read, never
+    /// stored. `None` for a claim with no birth, or whose maker ran no org then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub for_org: Option<String>,
     /// Validity window start.
     pub valid_from: Option<u64>,
     /// Validity window end.
@@ -168,7 +175,9 @@ impl Memory<'_> {
         entity_ref: &str,
         mode: crate::vault::ReadMode,
     ) -> MemoryResult<ScopedReadResult<Option<EntityView>>> {
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let target = self.read_target(entity_ref, mode)?;
         self.read_named_view(&lane, target)
     }
@@ -179,7 +188,9 @@ impl Memory<'_> {
         refs: &[String],
         mode: crate::vault::ReadMode,
     ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let targets = refs
             .iter()
             .map(|reference| self.read_target(reference, mode))
@@ -215,7 +226,9 @@ impl Memory<'_> {
         refs: &[String],
         whole_body: bool,
     ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let targets = refs
             .iter()
             .map(|reference| match reference.rsplit_once('@') {
@@ -300,7 +313,9 @@ impl Memory<'_> {
             })?),
             None => None,
         };
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let ids = match &filter.subject_ref {
             Some(subject_ref) => {
                 let subject = self.resolve_ref_in_lane(&lane, subject_ref)?;
@@ -378,8 +393,12 @@ impl Memory<'_> {
     }
 
     /// Returns the supersession timeline for one claim, oldest first.
+    /// Its revisions are admitted under the key's live Grants too, so its
+    /// receipt reports what admitted them.
     pub fn claim_history(&self, claim_ref: &str) -> MemoryResult<ScopedReadResult<Vec<ClaimView>>> {
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let id = self.resolve_ref_in_lane(&lane, claim_ref)?;
         let ScopedReadResult {
             value: timeline,
@@ -481,7 +500,9 @@ impl Memory<'_> {
                 "query_bm25 limit must be at least 1",
             ));
         }
-        let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let lane = self
+            .read_lane(ClaimReadStatus::Surfaceable)?
+            .with_live_grant_receipts();
         // The lane admits inside the posting scan, before the rank and the
         // cut, so a row it withholds takes no place a readable match could
         // fill (FIX 9955); each hit keeps the revision the index matched.
@@ -631,7 +652,11 @@ impl Memory<'_> {
             })?),
             None => None,
         };
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        // Its anchor and peers are admitted under the key's live Grants too,
+        // so its receipt reports what admitted them.
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let id = self.resolve_ref_in_lane(&lane, entity_ref)?;
         // Scan inside the ONE read snapshot. Hidden edges are not results:
         // count only edges admitted by both endpoint and exact-pair gates.
@@ -639,7 +664,9 @@ impl Memory<'_> {
         // never materializes its full edge set.
         lane.neighborhood_projected(
             &id,
+            crate::ports::EdgeDirection::Both,
             kind_filter,
+            None,
             opts.min_weight,
             opts.limit,
             |txn, neighbors| {
@@ -705,6 +732,8 @@ impl Memory<'_> {
             serde_json::Value::String(text) => claim.with_label(text),
             other => claim.with_label(&other.to_string()),
         };
+        let made_by = self.collection_view(id)?.and_then(|view| view.made_by);
+        let for_org = self.claim_for_org(made_by.as_ref())?;
         Ok(ClaimView {
             claim: Some(claim),
             claim_ref: id.to_hex(),
@@ -723,12 +752,39 @@ impl Memory<'_> {
             world_ref: body.world.map(|world| world.to_hex()),
             scope,
             claim_scope: ClaimScope::of_body(body),
-            made_by: self.collection_view(id)?.and_then(|view| view.made_by),
+            made_by,
+            for_org,
             valid_from: body.valid_from,
             valid_to: body.valid_to,
             salience: body.salience,
             stale: body.stale,
         })
+    }
+
+    /// [`ClaimView::for_org`]: the org the claim's maker ran as its house at
+    /// its birth's `at`, as the room half reads a turn's speaker
+    /// (`turns_for_org`). Its own snapshot opens after the claim's reads have
+    /// closed theirs (one read snapshot per thread).
+    fn claim_for_org(
+        &self,
+        made_by: Option<&crate::provenance::made_by::MadeBy>,
+    ) -> MemoryResult<Option<String>> {
+        let Some(made_by) = made_by else {
+            return Ok(None);
+        };
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        Ok(crate::workspace_roster::house_org_at_in_txn(
+            self.vault,
+            &txn,
+            made_by.process.actor,
+            made_by.at,
+        )?
+        .map(|org| org.to_hex()))
     }
 
     /// The receipt of a structural write of `id`, whose kind the caller does
@@ -776,6 +832,13 @@ impl Memory<'_> {
         records: Vec<crate::receipt::ReceiptRecord>,
     ) -> Vec<MemoryReceipt> {
         records.into_iter().map(family_receipt).collect()
+    }
+
+    /// One Hook `record` of base's family in the `vault.receipts` shape
+    /// ([`family_receipt`]), as a verb hook chain's receipt tail shows it
+    /// once read again beside the rows it names (review round 2 of #9643).
+    pub(crate) fn tail_receipt(record: crate::receipt::ReceiptRecord) -> MemoryReceipt {
+        family_receipt(record)
     }
 }
 

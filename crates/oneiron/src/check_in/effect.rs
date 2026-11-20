@@ -12,7 +12,10 @@
 //! act that always asks waits (Q3). Then:
 //!
 //! * go: the door runs the effect, and its family receipt records the
-//!   decision ([`CheckInDecision`], Q9; never a pending row);
+//!   decision ([`CheckInDecision`], Q9; never a pending row). An act that
+//!   goes at once spends no check-in, so a `check_in_ref` it names is
+//!   refused ([`named_check_in_at_once`]), never left unspent while the act
+//!   runs;
 //! * wait, with no `check_in_ref`: the pending check-in for this exact
 //!   effect is opened in the door's writer, or the open one found; the door
 //!   commits it, runs nothing and answers `CHECK_IN_PENDING` naming it (Q4);
@@ -25,12 +28,14 @@
 //! 3). An agent reaches these acts through `vault.check_in.open`; PR 3's act
 //! gate admits agents at these doors.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use super::act_class::ActClass;
 use super::chain::{NoAgentVerdict, VerifiedChain};
 use super::mode::CheckInMode;
 use super::pending::{
-    OpenPendingCheckIn, consume_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn,
-    pending_check_in_in_txn,
+    OpenPendingCheckIn, check_pending_check_in_spendable_in_txn, consume_pending_check_in_in_txn,
+    open_keyed_pending_check_in_in_txn, pending_check_in_in_txn,
 };
 use super::policy::CheckInScope;
 use super::resolve::{CheckInRequest, ResolvedMode, WaitReason, resolve_mode};
@@ -80,9 +85,10 @@ pub(crate) enum DoorCheckIn {
 ///
 /// # Errors
 ///
-/// A role that does not hold the power; a `check_in_ref` that names no row,
-/// another person's ask or another act, another effect, or an ask that is
-/// not eligible or already spent; a refused open; storage errors.
+/// A role that does not hold the power; a `check_in_ref` for an act that
+/// goes at once ([`named_check_in_at_once`]); a `check_in_ref` that names no
+/// row, another person's ask or another act, another effect, or an ask that
+/// is not eligible or already spent; a refused open; storage errors.
 pub(crate) fn person_door_check_in_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -98,9 +104,7 @@ pub(crate) fn person_door_check_in_in_txn(
         standing_row: None,
     };
     let mode = match resolve_mode(&request) {
-        ResolvedMode::OwnProof => {
-            return Ok(DoorCheckIn::Go(decision(act, None, "own_proof", None)));
-        }
+        ResolvedMode::OwnProof => return go_at_once(act, check_in_ref, None, "own_proof"),
         ResolvedMode::Propose | ResolvedMode::Absent => {
             return Err(refuse(
                 "the person's role does not hold the power for this act",
@@ -109,19 +113,12 @@ pub(crate) fn person_door_check_in_in_txn(
         ResolvedMode::Mode {
             mode: mode @ CheckInMode::NeverAsk,
             ..
-        } => {
-            return Ok(DoorCheckIn::Go(decision(
-                act,
-                Some(mode),
-                "never_ask",
-                None,
-            )));
-        }
+        } => return go_at_once(act, check_in_ref, Some(mode), "never_ask"),
         // The person's own act is their judgment: they are sure.
         ResolvedMode::Mode {
             mode: mode @ CheckInMode::AskWhenUnsure,
             ..
-        } => return Ok(DoorCheckIn::Go(decision(act, Some(mode), "sure", None))),
+        } => return go_at_once(act, check_in_ref, Some(mode), "sure"),
         ResolvedMode::Mode {
             mode: mode @ CheckInMode::AlwaysAsk,
             ..
@@ -156,8 +153,29 @@ pub(crate) fn person_door_check_in_in_txn(
     }
 }
 
+/// `act` goes at once in `mode` on `basis`, spending no check-in: a
+/// `check_in_ref` the call names is refused.
+fn go_at_once(
+    act: &DoorAct<'_>,
+    check_in_ref: Option<&EntityId>,
+    mode: Option<CheckInMode>,
+    basis: &str,
+) -> Result<DoorCheckIn> {
+    if check_in_ref.is_some() {
+        return Err(named_check_in_at_once());
+    }
+    Ok(DoorCheckIn::Go(decision(act, mode, basis, None)))
+}
+
+/// The refusal (`BAD_REQUEST`) of a `check_in_ref` named for a person's act
+/// that goes at once: it spends no check-in, so the one it names would stay
+/// unspent while the act runs (as REVIEW-9810 P1 found at the delete doors).
+pub(crate) fn named_check_in_at_once() -> Error {
+    refuse("check_in_ref names a waiting act; this act goes at once and spends none")
+}
+
 /// Spends the settled ask `id` for `act`, in the door's writer.
-fn spend_in_txn(
+pub(super) fn spend_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     act: &DoorAct<'_>,
@@ -166,10 +184,14 @@ fn spend_in_txn(
     now: u64,
 ) -> Result<DoorCheckIn> {
     let row = pending_check_in_in_txn(&vault.store, txn, id)?.ok_or(Error::EntityNotFound)?;
+    // An ask of a closed room's owners settles only the closed-room route
+    // (ARCH-0082 #closed-room): reopened, the room's add meets the asker's
+    // own ladder again, which the room's owners did not answer.
     if row.asker != act.person
         || row.verb != act.verb
         || row.act != act.act
         || row.scope != act.scope
+        || row.room.is_some()
     {
         return Err(refuse("the check-in is not this person's ask for this act"));
     }
@@ -338,12 +360,43 @@ pub(crate) fn spend_applied_check_in_in_txn(
     effect_digest: &[u8; 32],
     now: u64,
 ) -> Result<EntityId> {
+    let asker = applied_check_in_asker_in_txn(vault, txn, id, verb, act)?;
+    consume_pending_check_in_in_txn(vault, txn, id, effect_digest, now)?;
+    Ok(asker)
+}
+
+/// The asker of `id`, read in `txn`, when it is an ask for `verb`'s `act`.
+fn applied_check_in_asker_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    verb: &str,
+    act: ActClass,
+) -> Result<EntityId> {
     let row = pending_check_in_in_txn(&vault.store, txn, id)?.ok_or(Error::EntityNotFound)?;
     if row.verb != verb || row.act != act {
         return Err(refuse("the check-in is another act's ask"));
     }
-    consume_pending_check_in_in_txn(vault, txn, id, effect_digest, now)?;
     Ok(row.asker)
+}
+
+/// Checks in `txn`, writing nothing, that [`owner_act_decision_in_txn`]
+/// would spend `applied` for an act of class `act` now: for an Owner's act
+/// whose spend lands in a later writer of its own (the record erase's
+/// linearizing write), so a check-in it could not spend refuses it before
+/// its first write.
+///
+/// # Errors
+///
+/// As [`spend_applied_check_in_in_txn`].
+pub(crate) fn check_applied_check_in_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    applied: &AppliedCheckIn<'_>,
+    act: ActClass,
+) -> Result<()> {
+    applied_check_in_asker_in_txn(vault, txn, &applied.id, applied.verb, act)?;
+    check_pending_check_in_spendable_in_txn(&vault.store, txn, &applied.id, &applied.effect_digest)
 }
 
 /// Another asker's approved check-in an Owner applies to their own act on a
@@ -506,8 +559,9 @@ pub fn step_up_reset_effect_digest(person: &EntityId, factor: StepUpFactor) -> [
 /// effect lands outside the vault's writer (a custody journal; 2k3,
 /// P25-SHAPE Q1 = A): the Owner on their own proof, and with `applied` the
 /// asker's approved check-in, spent in a writer of its own on the Owner's
-/// live proof before the act runs, as the NOTE history purge spends it
-/// (2k2). A refusal after it leaves the approval spent.
+/// live proof before the act runs. A refusal after it leaves the approval
+/// spent; an act that lands in the vault's writer spends it there instead
+/// ([`owner_act_decision_in_txn`]), as the NOTE history purge does (2k2).
 ///
 /// # Errors
 ///
@@ -563,7 +617,8 @@ pub fn custody_reenrol_effect_digest(spec: &TargetSpec) -> [u8; 32] {
 /// `vault.check_in.open` names for `vault.policy.owner.row.change`, and the
 /// one the Owner's change spends (2k4; P25-SHAPE Q1 = A). BLAKE3, key
 /// derived from `oneiron check_in policy row change v1`, over the change's
-/// MessagePack encoding with field names, as the change ledger keeps it.
+/// MessagePack encoding with field names, as the change ledger keeps it
+/// (`purposes::check_in::POLICY_ROW_CHANGE`).
 ///
 /// # Errors
 ///
@@ -571,9 +626,9 @@ pub fn custody_reenrol_effect_digest(spec: &TargetSpec) -> [u8; 32] {
 pub fn policy_row_change_effect_digest(change: &PolicyRowChange) -> Result<[u8; 32]> {
     let encoded = rmp_serde::to_vec_named(change)
         .map_err(|_| Error::InvariantViolation("policy row change encode"))?;
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in policy row change v1");
-    hasher.update(&encoded);
-    Ok(*hasher.finalize().as_bytes())
+    Ok(LegacyDigest::new(purposes::check_in::POLICY_ROW_CHANGE)
+        .raw(&encoded)
+        .finish())
 }
 
 /// The reason code of an agent's act refused at a person's door, naming the
@@ -587,19 +642,14 @@ pub const CHECK_IN_OPEN_ROUTE_REASON: &str = "check_in.route:vault.check_in.open
 /// approved check-in for it spends (2k4; P25-SHAPE Q1 = A). BLAKE3, key
 /// derived from `oneiron check_in mail compliance set v1`, over one byte, 1
 /// to turn it on, the purpose's length as eight big-endian bytes and its
-/// bytes.
+/// bytes (`purposes::check_in::MAIL_COMPLIANCE_SET`).
 #[must_use]
 pub fn mail_compliance_set_effect_digest(enabled: bool, purpose: &str) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in mail compliance set v1");
-    hasher
-        .update(&[u8::from(enabled)])
-        .update(
-            &u64::try_from(purpose.len())
-                .unwrap_or(u64::MAX)
-                .to_be_bytes(),
-        )
-        .update(purpose.as_bytes());
-    *hasher.finalize().as_bytes()
+    LegacyDigest::new(purposes::check_in::MAIL_COMPLIANCE_SET)
+        .raw(&[u8::from(enabled)])
+        .len_u64_be(purpose.len())
+        .raw(purpose.as_bytes())
+        .finish()
 }
 
 /// `text`'s length as one byte (at most 255; custody ids are at most 128)
@@ -614,29 +664,32 @@ fn update_short_text(hasher: &mut blake3::Hasher, text: &str) {
 /// `vault.delete` judges, and the one an approved check-in for it spends
 /// (2k5; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron check_in
 /// record delete v1`, over the record's 16 id bytes and the reason's wire
-/// token, as its length in one byte and its bytes.
+/// token, as its length in one byte and its bytes
+/// (`purposes::check_in::RECORD_DELETE`).
 #[must_use]
 pub fn record_delete_effect_digest(
     record: &EntityId,
     reason: crate::deletion::DeleteReason,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in record delete v1");
-    hasher.update(record.as_bytes());
-    update_short_text(&mut hasher, reason.as_str());
-    *hasher.finalize().as_bytes()
+    let reason = reason.as_str();
+    LegacyDigest::new(purposes::check_in::RECORD_DELETE)
+        .raw(record.as_bytes())
+        .raw(&[u8::try_from(reason.len()).unwrap_or(u8::MAX)])
+        .raw(reason.as_bytes())
+        .finish()
 }
 
 /// The digest of deleting stored embedding space probe `probe`: the effect
 /// an asker's `vault.check_in.open` names for
 /// `vault.embedding_spaces.probes.delete`, and the one the Owner's delete
 /// spends (2k5; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron
-/// check_in embedding space probe delete v1`, over the probe's 16 id bytes.
+/// check_in embedding space probe delete v1`, over the probe's 16 id bytes
+/// (`purposes::check_in::EMBEDDING_SPACE_PROBE_DELETE`).
 #[must_use]
 pub fn embedding_space_probe_delete_effect_digest(probe: &[u8; 16]) -> [u8; 32] {
-    let mut hasher =
-        blake3::Hasher::new_derive_key("oneiron check_in embedding space probe delete v1");
-    hasher.update(probe);
-    *hasher.finalize().as_bytes()
+    LegacyDigest::new(purposes::check_in::EMBEDDING_SPACE_PROBE_DELETE)
+        .raw(probe)
+        .finish()
 }
 
 /// The digest of deleting the cleanup-archived completed attempt `attempt`:
@@ -644,10 +697,10 @@ pub fn embedding_space_probe_delete_effect_digest(probe: &[u8; 16]) -> [u8; 32] 
 /// is judged over (2k5e; P25-SHAPE Q1 = A). The confirm's own expectation
 /// binds the exact queue bytes in the same writer. BLAKE3, key derived from
 /// `oneiron check_in attempt archive delete v1`, over the attempt's 16 id
-/// bytes.
+/// bytes (`purposes::check_in::ATTEMPT_ARCHIVE_DELETE`).
 #[must_use]
 pub fn attempt_archive_delete_effect_digest(attempt: &[u8; 16]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in attempt archive delete v1");
-    hasher.update(attempt);
-    *hasher.finalize().as_bytes()
+    LegacyDigest::new(purposes::check_in::ATTEMPT_ARCHIVE_DELETE)
+        .raw(attempt)
+        .finish()
 }

@@ -20,6 +20,7 @@ use crate::http_listener::ConnectionLimits;
 mod machine_floors;
 mod override_keys;
 
+pub(crate) use machine_floors::REQUEST_BODY_FLOOR_MIN_BYTES;
 use machine_floors::{memory_floor, request_body_floor};
 pub(super) use override_keys::LimitsConfigOverride;
 
@@ -239,8 +240,8 @@ impl Default for LimitsConfig {
             // The door window's family (`DOOR_WINDOW_TIMEOUT`): long enough
             // for a slow link, short against a held-open socket.
             transfer_idle_timeout_ms: 300_000,
-            // Format bounds far above a question or a page of bodies: 128
-            // times the facade's 8 KiB query and 64 times one entity payload.
+            // Format bounds far above a question or a page of bodies: 1 MiB
+            // of query text and 64 times one entity payload.
             retrieval_query_bytes: 1 << 20,
             semantic_query_bytes: 8_388_608,
             projection_body_bytes: 4 << 20,
@@ -465,6 +466,7 @@ impl LimitsConfig {
             organ_memory_bytes,
             organ_mesh_object_bytes,
             organ_mesh_staged_bytes,
+            sandbox_egress_response_bytes,
             deadline_jobs_per_caller,
             backup_handoff_pending_backups,
             backup_handoff_pending_bytes,
@@ -494,6 +496,7 @@ impl LimitsConfig {
             context_edge_hops,
             context_neighbors,
             context_selected_edges,
+            actor_exposed_records,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -761,6 +764,10 @@ impl LimitsConfig {
             (EngineLimit::OrganMemoryBytes, organ_memory_bytes),
             (EngineLimit::OrganMeshObjectBytes, organ_mesh_object_bytes),
             (EngineLimit::OrganMeshStagedBytes, organ_mesh_staged_bytes),
+            (
+                EngineLimit::SandboxEgressResponseBytes,
+                sandbox_egress_response_bytes,
+            ),
             (EngineLimit::DeadlineJobsPerCaller, deadline_jobs_per_caller),
             (
                 EngineLimit::BackupHandoffPendingBackups,
@@ -820,6 +827,7 @@ impl LimitsConfig {
             (EngineLimit::ContextEdgeHops, context_edge_hops),
             (EngineLimit::ContextNeighbors, context_neighbors),
             (EngineLimit::ContextSelectedEdges, context_selected_edges),
+            (EngineLimit::ActorExposedRecords, actor_exposed_records),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);

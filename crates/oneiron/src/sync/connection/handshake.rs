@@ -17,11 +17,12 @@ use super::session::SessionFault;
 use super::{LocalUpdate, LoopExit, SyncConnection};
 
 mod acks;
+mod forbidden_park;
 mod replay;
 mod resync_markers;
 mod upgrade;
 
-pub(super) use self::upgrade::upgrade_request;
+pub(super) use self::upgrade::{upgrade_carries_credential, upgrade_request};
 
 impl SyncConnection {
     /// Queue-overflow check, run between reconnect attempts.
@@ -118,7 +119,8 @@ impl SyncConnection {
     /// owner's residence directives naming this machine run beside it, across
     /// its reconnects, each time the residence upkeep wakes them (OF-534),
     /// and the home handoff's delivery worker beside both (FIX 5661 C2a), and
-    /// the mode that follows the committed home (FIX 8869).
+    /// the mode that follows the committed home (FIX 8869), and the predicted
+    /// level's upkeep on this machine (ARCH-0023b #predicted-residence).
     async fn drive(
         &self,
         client: SyncClient,
@@ -127,11 +129,13 @@ impl SyncConnection {
         // Under the host's admission, set by now (FIX 12036).
         self.collect_left_env_bodies();
         let directives = self.run_residence_directives(client.event_tx.clone());
+        let predicted = self.run_predicted_residence(client.event_tx.clone());
         let home_handoff = self.run_home_handoff(client.event_tx.clone());
         let residence_mode = self.run_residence_mode(client.event_tx.clone());
         tokio::select! {
             result = self.drive_loop(client, shutdown_rx) => result,
             never = directives => match never {},
+            never = predicted => match never {},
             never = home_handoff => match never {},
             never = residence_mode => match never {},
         }
@@ -187,6 +191,10 @@ impl SyncConnection {
         self.running.send_replace(true);
         // Every connection's upkeep, owned here across reconnects (FIX 12785).
         let mut upkeep = super::steady::UpkeepTasks::default();
+        // Whether the home refused this credential the socket, on a dial or a
+        // peer session's probe (MEMBER-SELECTOR-SOCKET): the run never
+        // redials on it, and parks below once its loop has ended.
+        let mut forbidden = false;
 
         loop {
             // A member who left the shared vault this env holds never
@@ -236,6 +244,10 @@ impl SyncConnection {
                     // A home session opens once its first round completed:
                     // the home served this machine's sync (FIX 4748).
                     reach.opened(peer);
+                    // The predicted upkeep asks again after a (re)connect, once the
+                    // authority history it needs is in (Engine ruling L7-46-MERGE A).
+                    self.predicted_connected
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
                     // Reset backoff on successful connect
                     // Note: open_sync_session already emits Synced, so we don't emit Connected here
                     // to avoid regressing status for observers.
@@ -291,7 +303,26 @@ impl SyncConnection {
                             reach.home_returned();
                             home_returned = true;
                         }
+                        // The home refused this credential a peer session's
+                        // probe (MEMBER-SELECTOR-SOCKET): the peer session
+                        // ends, and the run stops as on a home dial's 403.
+                        LoopExit::Forbidden => {
+                            let _ =
+                                event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
+                            forbidden = true;
+                            break;
+                        }
                     }
+                }
+                // The home refused this credential the socket
+                // (MEMBER-SELECTOR-SOCKET): the run never redials on it, and
+                // the home counts neither served nor down, so no peer
+                // session follows.
+                Err(e) if e.is_forbidden() => {
+                    let _ = event_tx.send(SyncEvent::Error(format!("Connection failed: {e}")));
+                    let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
+                    forbidden = true;
+                    break;
                 }
                 Err(e) => {
                     // The first peer is dialed on the first backoff step, not
@@ -351,6 +382,20 @@ impl SyncConnection {
             receipt.close(self.manager.vault());
         }
         client.reset_root_parts();
+        // A refused credential (MEMBER-SELECTOR-SOCKET) parks the run until
+        // its shutdown or a confirmed leave, its sink attached and each
+        // commit queued as it arrives (forbidden_park.rs); the run then ends
+        // as below. A host that renews the credential opens a new connection
+        // on it (device sync, FIX 3377).
+        if forbidden && self.config.auto_reconnect {
+            self.park_forbidden(
+                &mut local_rx,
+                &mut debounce_buffer,
+                &mut shutdown_rx,
+                &mut left_rx,
+            )
+            .await;
+        }
         // Detach before draining: the sink serializes sends with detach, so
         // this receiver's backlog is finite and no update can arrive later.
         self.manager.outbound().detach(attachment);
@@ -629,6 +674,19 @@ impl SyncConnection {
                 })?;
         }
 
+        // Each followed world's tombstone id set (FOLLOWED-WORLD-TIER1-
+        // TOMBSTONE-IDS; ARCH-0023b :500): every delete the home lets this
+        // device read writes its marker here, even of a window the home
+        // refuses to it or that it never held. A fault never fails the
+        // session: the residence upkeep asks again.
+        if peer.is_none()
+            && let Err(error) = client.fetch_followed_tombstones().await
+        {
+            let _ = event_tx.send(SyncEvent::Error(format!(
+                "Followed tombstone fetch failed: {error}"
+            )));
+        }
+
         // A followed world's window asked as a follow waits for the home's
         // answer before the queue replays: a granted window's queued writes
         // go now, a refused one's stay owed, and the socket stays open. A home
@@ -753,7 +811,10 @@ impl SyncConnection {
             && client.config.residence_mode == crate::sync::SyncResidenceMode::All
         {
             let vault = Arc::clone(self.manager.vault());
-            match tokio::task::spawn_blocking(move || vault.declare_full_copy(true)).await {
+            let configured = self.config.client_config.residence_mode;
+            match tokio::task::spawn_blocking(move || vault.mark_first_round_full_copy(configured))
+                .await
+            {
                 Ok(Ok(_)) => {}
                 Ok(Err(error)) => tracing::warn!(
                     kind = ?error.kind(),

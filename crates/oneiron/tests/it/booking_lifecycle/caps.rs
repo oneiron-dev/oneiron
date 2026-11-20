@@ -170,6 +170,7 @@ fn a_weekly_cap_counts_the_whole_visitor_week() {
         },
         constraint: None,
         visitor_tz: "UTC".to_owned(),
+        duration_min: None,
     };
     let solver = CappedSolver {
         fixture: &fixture,

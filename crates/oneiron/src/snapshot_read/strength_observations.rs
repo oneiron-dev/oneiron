@@ -24,6 +24,7 @@ use crate::dreamer_runner::DreamerAttemptBinding;
 use crate::federation::{Scope, grant_scope, holds_system_agent_grant, steward_reach_in};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::request_limits::page_limit_zero_as_one;
 use crate::{EntityId, Result, Vault};
 
 #[doc(hidden)]
@@ -91,11 +92,7 @@ fn observations_page(
         .embedded_owner("vault.consolidation.strength.observations.page")
         .ok();
     let bounds = vault.snapshot_read_settings()?;
-    let limit = input
-        .limit
-        .unwrap_or(bounds.page_rows)
-        .min(bounds.page_rows)
-        .max(1);
+    let limit = page_limit_zero_as_one(input.limit, bounds.page_rows, bounds.page_rows).rows;
     let after = observation_cursor_key(input.cursor.as_deref())?;
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
     let _pins = read.prepare_point_read::<MemoryError>()?;
@@ -232,8 +229,9 @@ fn observation_record_reached_in_txn(
 }
 
 /// Whether the observed claim's own row reads for this caller: the scope
-/// reaches its record and the scoped read finds it live.
-fn observed_claim_reads_in_txn(
+/// reaches its record and the scoped read finds it live. The open conflicts
+/// page judges a marker and each member by it too.
+pub(crate) fn observed_claim_reads_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     read: &ScopedRead<'_>,

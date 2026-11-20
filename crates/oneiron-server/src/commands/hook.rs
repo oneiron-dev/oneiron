@@ -6,21 +6,37 @@
 //! - `session-start` binds a vault ([`bind`]), prints one line naming it,
 //!   and recalls a short block for the project ([`recall`]).
 //! - `prompt` recalls a short block for the prompt from the bound vault.
-//! - `hand-over` queues the session's log for the running `serve` to import.
+//! - `hand-over` queues the session's log for the running `serve` to import,
+//!   or sends a Claude Code log to the selected hosted vault every start of
+//!   the session bound and recorded ([`hand_over`], [`session_binding`]).
 //! - `bind` binds a vault as `session-start` does and prints it as JSON, for
 //!   a plugin that runs inside its host (Hermes's memory provider).
+//!
+//! Every host's event is read for the same fields. The host decides how the
+//! session and prompt hooks print what they say ([`context_reply`]) and
+//! which import reads the log a hand-over queues ([`import_source`]).
 //!
 //! A hook never blocks the host: whatever fails, it exits 0. It never reads
 //! a credential itself; `oneiron mcp` reads the credential file: the
 //! agent's `--credential-file` for a pinned or local vault, and the one the
 //! hosted selection names, in its own auth mode, for the hosted vault it
 //! selected (`oneiron hosted`, [`hosted_command`]).
+//!
+//! `oneiron continue --cloud` ([`continue_command`]) lives here too: it
+//! reads the same hosted selection and calls its verbs through the same
+//! bridge the recall speaks to.
 
 mod bind;
+mod continue_command;
 mod hosted_command;
 mod hosted_selection;
+mod hosted_sign_in;
 mod recall;
+mod session_binding;
 
+pub use self::continue_command::continue_work;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::continue_command::test_support as continue_test_support;
 pub use self::hosted_command::hosted;
 
 use std::io::{Read as _, Write as _};
@@ -28,11 +44,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+use oneiron::ingest::history::HistorySource;
 use serde_json::{Map, Value};
 
+use self::bind::HandOverTarget;
 use self::hosted_selection::{HostedDiscovery, HostedVault};
 use self::recall::RecallAuth;
-use crate::cli::{HookArgs, HookBindArgs, HookEvent, HookHandOverArgs, HookRecallArgs};
+use crate::cli::{HookArgs, HookBindArgs, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs};
 
 /// The most of the host's event read from stdin.
 const MAX_EVENT_BYTES: u64 = 1 << 20;
@@ -40,22 +58,75 @@ const MAX_EVENT_BYTES: u64 = 1 << 20;
 const GIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub fn hook(args: HookArgs) {
-    // Every host's events read the same fields; the host names whose they are.
+    let host = args.host;
     let said = match args.event {
-        HookEvent::SessionStart(args) => session_start(&args),
-        HookEvent::Prompt(args) => prompt(&args),
+        HookEvent::SessionStart(args) => context_reply(host, &session_start(host, &args)),
+        HookEvent::Prompt(args) => context_reply(host, &prompt(host, &args)),
         HookEvent::HandOver(args) => {
-            hand_over(&args);
-            Vec::new()
+            hand_over(host, &args);
+            None
         }
-        HookEvent::Bind(args) => vec![bind_json(&args)],
+        HookEvent::Bind(args) => Some(bind_json(&args)),
     };
-    if !said.is_empty() {
-        let _ = writeln!(std::io::stdout().lock(), "{}", said.join("\n"));
+    if let Some(said) = said {
+        let _ = writeln!(std::io::stdout().lock(), "{said}");
     }
 }
 
-fn session_start(args: &HookRecallArgs) -> Vec<String> {
+/// What a session or prompt hook prints for `host` to add to the session's
+/// context: the lines as plain text where the host reads text (Claude Code,
+/// Codex), else one JSON object holding them in the host's own field.
+/// `None` when there is nothing to say, which every host reads as no action.
+fn context_reply(host: HookHost, said: &[String]) -> Option<String> {
+    if said.is_empty() {
+        return None;
+    }
+    let text = said.join("\n");
+    Some(match host {
+        HookHost::ClaudeCode | HookHost::Codex | HookHost::Hermes => text,
+        // Cursor's `sessionStart` output (cursor.com/docs/hooks).
+        HookHost::Cursor => serde_json::json!({ "additional_context": text }).to_string(),
+        // Copilot's `sessionStart` output, for both event-name formats
+        // (docs.github.com/en/copilot/reference/hooks-reference).
+        HookHost::Copilot => serde_json::json!({ "additionalContext": text }).to_string(),
+    })
+}
+
+/// The `oneiron import` source that reads `host`'s session log.
+const fn import_source(host: HookHost) -> HistorySource {
+    match host {
+        // Hermes asks only `bind`; a hand-over under its name reads a Claude
+        // Code log, as every hand-over did before hosts had their own.
+        HookHost::ClaudeCode | HookHost::Hermes => HistorySource::ClaudeCode,
+        HookHost::Codex => HistorySource::Codex,
+        HookHost::Cursor | HookHost::Copilot => HistorySource::HookTranscript,
+    }
+}
+
+/// The session's project folder: the event's `cwd`, else the first of its
+/// `workspace_roots` (Cursor's `sessionStart` names no `cwd`, and runs a
+/// plugin's hook in the plugin's own folder), else this process's working
+/// directory.
+fn project_dir(event: &Map<String, Value>) -> Option<PathBuf> {
+    let folder = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_str)
+            .filter(|folder| !folder.is_empty())
+            .map(PathBuf::from)
+    };
+    folder(event.get("cwd"))
+        .or_else(|| {
+            folder(
+                event
+                    .get("workspace_roots")
+                    .and_then(Value::as_array)
+                    .and_then(|roots| roots.first()),
+            )
+        })
+        .or_else(|| std::env::current_dir().ok())
+}
+
+fn session_start(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
     let Some(event) = read_event() else {
         return Vec::new();
     };
@@ -67,6 +138,13 @@ fn session_start(args: &HookRecallArgs) -> Vec<String> {
         args.common.settings_file.as_deref(),
         deadline,
     );
+    // A Claude Code session's hand-over sends its log only to the vault
+    // every start of it bound.
+    if import_source(host) == HistorySource::ClaudeCode
+        && let Some(session) = session_id(&event)
+    {
+        session_binding::record(session, bound.hosted.as_ref(), resumed(&event));
+    }
     let mut said = bound.lines;
     let Some(url) = bound.url else {
         return said;
@@ -75,17 +153,13 @@ fn session_start(args: &HookRecallArgs) -> Vec<String> {
         return said;
     };
     let query = args.query.clone().unwrap_or_else(|| {
-        let cwd = event
-            .get("cwd")
-            .and_then(Value::as_str)
-            .filter(|cwd| !cwd.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| std::env::current_dir().ok());
-        cwd.map_or_else(String::new, |cwd| project_name(&cwd, deadline))
+        project_dir(&event)
+            .map_or_else(String::new, |dir| project_name(&dir, deadline))
             .replace(['-', '_'], " ")
     });
     if !query.trim().is_empty() {
         let recall = recall::Recall {
+            host,
             oneiron: &oneiron,
             url: &url,
             auth,
@@ -118,7 +192,7 @@ fn bind_json(args: &HookBindArgs) -> String {
         .to_string()
 }
 
-fn prompt(args: &HookRecallArgs) -> Vec<String> {
+fn prompt(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
     let Some(event) = read_event() else {
         return Vec::new();
     };
@@ -150,6 +224,7 @@ fn prompt(args: &HookRecallArgs) -> Vec<String> {
     };
     let oneiron = oneiron(args.common.oneiron.as_deref());
     let recall = recall::Recall {
+        host,
         oneiron: &oneiron,
         url: &url,
         auth,
@@ -175,12 +250,21 @@ fn recall_auth<'a>(
     }
 }
 
-/// `oneiron import claude-code <log> --queue`: one small file in the queue
-/// of the config named, else of the running local vault, else of the
-/// default config, under the settings file named, else the running vault's
-/// own when the import takes that vault's config. Its output is not the
+/// `oneiron import <source> <log> --queue`, by the source that reads the
+/// host's logs ([`import_source`]): one small file in the queue of the
+/// config named, else of the running local vault, else of the default
+/// config, under the settings file named, else the running vault's own when
+/// the import takes that vault's config. With no config named, a Claude
+/// Code log goes by what the session's starts bound
+/// ([`bind::hand_over_target`]): to the selected hosted vault where every
+/// start bound that one and it is still selected, through
+/// `vault.imports.hook_transcript` as the selection's own credential, when
+/// the log is the event's own session's, with nothing queued here; nowhere
+/// where they bound a hosted vault no longer selected, or more than one
+/// vault. A send that fails is sent again whole by the session's next
+/// hand-over, and the import lands only what is new. Its output is not the
 /// host's.
-fn hand_over(args: &HookHandOverArgs) {
+fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     let Some(event) = read_event() else {
         return;
     };
@@ -191,16 +275,42 @@ fn hand_over(args: &HookHandOverArgs) {
     else {
         return;
     };
-    let mut command = oneiron_spawn::command(oneiron(args.common.oneiron.as_deref()));
+    let oneiron = oneiron(args.common.oneiron.as_deref());
+    let deadline = deadline(args.common.timeout);
+    // The hosted vault takes only a Claude Code log, and a config named here
+    // is a local queue's.
+    let may_send = args.config.is_none() && import_source(host) == HistorySource::ClaudeCode;
+    let session = session_id(&event).filter(|_| may_send);
+    let running = match (session, bind::hand_over_target(session)) {
+        (Some(session), HandOverTarget::Hosted(vault)) => {
+            let policy_ref = format!("policy:{}-hooks", host.as_str());
+            let _ = continue_command::hand_over_hosted(
+                &oneiron,
+                &vault,
+                session,
+                Path::new(transcript),
+                policy_ref,
+                deadline,
+            );
+            return;
+        }
+        (_, HandOverTarget::Hosted(_) | HandOverTarget::Withheld) => return,
+        (_, HandOverTarget::Local(running)) => running.unwrap_or_default(),
+    };
+    let mut command = oneiron_spawn::command(oneiron);
     command
-        .args(["import", "claude-code", transcript, "--queue"])
+        .args([
+            "import",
+            import_source(host).source_id(),
+            transcript,
+            "--queue",
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     // A named file stands over a found one. The running vault's settings
     // file goes over its own config alone, never over another config named
     // here (FIX 5602).
-    let running = bind::running_config().unwrap_or_default();
     let its_own = args
         .config
         .as_deref()
@@ -216,7 +326,6 @@ fn hand_over(args: &HookHandOverArgs) {
     if let Some(settings_file) = settings_file {
         command.arg("--settings-file").arg(settings_file);
     }
-    let deadline = deadline(args.common.timeout);
     if let Ok(mut child) = command.spawn()
         && wait_until(&mut child, deadline).is_none()
     {
@@ -241,6 +350,24 @@ fn read_event() -> Option<Map<String, Value>> {
         Value::Object(event) => Some(event),
         _ => Some(Map::new()),
     }
+}
+
+/// The session the host's event names (`session_id`), when it names one.
+fn session_id(event: &Map<String, Value>) -> Option<&str> {
+    event
+        .get("session_id")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty())
+}
+
+/// Whether a session start goes on from turns that ran before it: Claude
+/// Code's `source` is not `startup` or `clear` (a resume, a compaction), or
+/// is not named.
+fn resumed(event: &Map<String, Value>) -> bool {
+    !matches!(
+        event.get("source").and_then(Value::as_str),
+        Some("startup" | "clear")
+    )
 }
 
 /// The git repository's folder name, else the working directory's.

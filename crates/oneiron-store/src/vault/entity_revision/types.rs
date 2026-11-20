@@ -47,11 +47,8 @@ impl RevisionRef {
         if value.len() != 32 || !value.is_ascii() {
             return Err(oneiron_base::error::Error::InvalidKey);
         }
-        let mut bytes = [0; 16];
-        for (index, byte) in bytes.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
-                .map_err(|_| oneiron_base::error::Error::InvalidKey)?;
-        }
+        let bytes = oneiron_hex::decode_any_case::<16>(value)
+            .ok_or(oneiron_base::error::Error::InvalidKey)?;
         Ok(Self(bytes))
     }
 }
@@ -64,6 +61,48 @@ pub enum ReadMode {
     Live,
     Indexed,
     Pinned(RevisionRef),
+}
+
+/// A point in the vault's memory history (L3-39): the memory timeline's
+/// sequence when it was handed out (every move of one write transaction takes
+/// that transaction's one sequence), and the store's recording-clock instant
+/// then. A position, not a content hash: an erase leaves no hash of its row
+/// in one. A graph-FS memory fork names one by its hex form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MemoryFrontier {
+    /// The sequence of the last committed live-revision move at the
+    /// frontier: every move at or below it stands there.
+    pub sequence: u64,
+    /// The recording clock (Unix seconds, the clock edges and learned times
+    /// are stamped with) when the frontier was handed out.
+    pub recorded_at: u64,
+}
+
+impl MemoryFrontier {
+    /// Stable wire form: 32 lowercase hex characters, `sequence` then
+    /// `recorded_at`, each eight bytes big-endian.
+    pub fn to_hex(self) -> String {
+        format!("{:016x}{:016x}", self.sequence, self.recorded_at)
+    }
+
+    /// Parses exactly the form [`Self::to_hex`] writes. Uppercase is refused,
+    /// so one frontier has one spelling.
+    pub fn from_hex(value: &str) -> Result<Self> {
+        if value.len() != 32
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(oneiron_base::error::Error::InvalidKey);
+        }
+        let half = |part: &str| {
+            u64::from_str_radix(part, 16).map_err(|_| oneiron_base::error::Error::InvalidKey)
+        };
+        Ok(Self {
+            sequence: half(&value[..16])?,
+            recorded_at: half(&value[16..])?,
+        })
+    }
 }
 
 /// Refresh receipts name only revisions actually published into the index.

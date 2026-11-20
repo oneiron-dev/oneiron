@@ -7,11 +7,15 @@ use oneiron_setting_contract::{
 };
 
 use super::learned::{LoadedFit, SettingFitView, fit_view, fits_in_txn};
+use super::pack::{
+    LayerDefault, ProposedDefaultView, layer_default_in_txn, proposed_defaults_in_txn,
+};
 use super::{
     EncodedValue, Kind, LearnedRange, ReadBy, Resolved, Restore, ScopeKind, SetBy, Setter, Setting,
     SettingMode, SettingScope, SettingSource, SettingSpec, SettingValue,
 };
 use crate::Vault;
+use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -74,9 +78,40 @@ pub(super) struct Loaded {
     pub(super) revision: u64,
 }
 
-/// The rows of `spec` on `chain` for `item`: at each scope its pin and its value row, the item's
-/// and the item-less ones. A row that does not decode is kept, valueless and counted as the
-/// owner's, so it decides as unreadable wherever it would have decided.
+/// The chain a read of `spec` walks from the places `known`: every project line the reader
+/// names on a key whose rows meet ([`SettingScope::chain_of_lines`]), else one scope per kind
+/// ([`SettingScope::chain`]): the walk of a key that reads one row is unchanged.
+pub(super) fn chain_of(spec: &SettingSpec, known: &[SettingScope]) -> Result<Vec<SettingScope>> {
+    if spec.reads_met() {
+        SettingScope::chain_of_lines(known, spec.scopes)
+    } else {
+        SettingScope::chain(known, spec.scopes)
+    }
+}
+
+/// The modes of the rows a read of `spec` loads at each scope: the pin and the value row, and on
+/// a key whose rows meet the row a move carried. A key that reads one row has no carried row.
+pub(super) fn modes_of(spec: &SettingSpec) -> &'static [SettingMode] {
+    if spec.reads_met() {
+        &[SettingMode::Pin, SettingMode::Value, SettingMode::Carried]
+    } else {
+        &[SettingMode::Pin, SettingMode::Value]
+    }
+}
+
+/// The source a deciding row at `scope` names.
+fn source_of(mode: SettingMode, scope: &SettingScope) -> SettingSource {
+    match mode {
+        SettingMode::Pin => SettingSource::Pin(scope.clone()),
+        SettingMode::Value => SettingSource::Row(scope.clone()),
+        SettingMode::Carried => SettingSource::Carried(scope.clone()),
+    }
+}
+
+/// The rows of `spec` on `chain` for `item`: at each scope its pin and its value row (and its
+/// carried row, [`modes_of`]), the item's and the item-less ones. A row that does not decode is
+/// kept, valueless and counted as the owner's, so it decides as unreadable wherever it would have
+/// decided.
 pub(super) fn load_in_txn(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
@@ -92,7 +127,7 @@ pub(super) fn load_in_txn(
     let mut loaded = Vec::new();
     for (at, scope) in chain.iter().enumerate() {
         for row_item in &items {
-            for mode in [SettingMode::Pin, SettingMode::Value] {
+            for &mode in modes_of(spec) {
                 let key = RowKey {
                     name: spec.name.to_owned(),
                     item: row_item.map(str::to_owned),
@@ -171,10 +206,7 @@ pub(super) fn walk_met<V: Clone + PartialEq>(
                 let loaded = &loaded[index];
                 Walked::Row {
                     value,
-                    source: match by.mode {
-                        SettingMode::Pin => SettingSource::Pin(loaded.scope.clone()),
-                        SettingMode::Value => SettingSource::Row(loaded.scope.clone()),
-                    },
+                    source: source_of(by.mode, &loaded.scope),
                     revision: loaded.revision,
                 }
             }
@@ -189,8 +221,8 @@ pub(super) fn walk_met<V: Clone + PartialEq>(
 }
 
 /// The walk of a key that reads one row, over loaded rows and a learned key's fits, with values
-/// decoded by `decode`; `default` is the catalogue default, and with `no_wider` (a learned key's
-/// comparator) a holder's cap where the owner set no row.
+/// decoded by `decode`; `default` is the default layer's value, and with `no_wider` (a learned
+/// key's comparator) a holder's cap where the owner set no row.
 pub(super) fn walk<V: Clone>(
     loaded: &[Loaded],
     fits: &[LoadedFit],
@@ -236,10 +268,7 @@ pub(super) fn walk<V: Clone>(
         Decided::Unreadable(at) => Walked::Unreadable(chain[at].clone()),
         Decided::Pin(row) | Decided::Row(row) => {
             let loaded = &loaded[index_of(row)];
-            let source = match row.mode {
-                SettingMode::Pin => SettingSource::Pin(loaded.scope.clone()),
-                SettingMode::Value => SettingSource::Row(loaded.scope.clone()),
-            };
+            let source = source_of(row.mode, &loaded.scope);
             match &row.value {
                 Some(value) => Walked::Row {
                     value: value.clone(),
@@ -255,8 +284,9 @@ pub(super) fn walk<V: Clone>(
 impl<T: SettingValue> Setting<T> {
     /// The value in force for this key in `txn`, where the reader knows the places `known`
     /// (narrowest first or in any order; never the vault, which is always last), for `item` of
-    /// a family key. A missing row reads the catalogue default; an unreadable deciding row reads
-    /// the key's strictest value.
+    /// a family key. With no deciding row it reads the default the vault accepted (the default
+    /// layer); an unreadable deciding row, or a lost accepted default, reads the key's strictest
+    /// value.
     ///
     /// # Errors
     ///
@@ -270,6 +300,41 @@ impl<T: SettingValue> Setting<T> {
         item: Option<&str>,
     ) -> Result<Resolved<T>> {
         self.read_in_dbs_txn(&vault.store, txn, known, item)
+    }
+
+    /// Whether the row that decides [`Self::read_in_txn`] with no item is the owner's: a pin, or
+    /// a value row the owner set, the engine wrote, or an agent wrote spending a check-in the
+    /// owner approved (`StoredRow::by_owner`), or a row a move carried, which the engine wrote.
+    /// The default, a learned fit, a meet, an unreadable row, and a row a holder or a subject set
+    /// are not.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_in_txn`].
+    pub(crate) fn decided_by_owner_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        known: &[SettingScope],
+    ) -> Result<bool> {
+        let chain = SettingScope::chain(known, self.spec.scopes)?;
+        let (_, source, _) = in_force_in_txn(&vault.store, txn, self.spec, &chain, None)?;
+        let (scope, mode) = match source {
+            SettingSource::Pin(scope) => (scope, SettingMode::Pin),
+            SettingSource::Row(scope) => (scope, SettingMode::Value),
+            // A carried row is the engine's, so it counts as the owner's (`setting::carry`).
+            SettingSource::Carried(scope) => (scope, SettingMode::Carried),
+            // A meet of several rows: no one row decides it, so none is the owner's own.
+            SettingSource::Fit(_)
+            | SettingSource::Met
+            | SettingSource::Default
+            | SettingSource::Unreadable(_) => {
+                return Ok(false);
+            }
+        };
+        Ok(load_in_txn(&vault.store, txn, self.spec, &chain, None)?
+            .iter()
+            .any(|row| row.scope == scope && row.found.mode == mode && row.found.by_owner))
     }
 
     /// [`Self::read_in_txn`] below the vault: the same walk over the setting tables of `dbs`
@@ -287,9 +352,10 @@ impl<T: SettingValue> Setting<T> {
         item: Option<&str>,
     ) -> Result<Resolved<T>> {
         self.spec.check_item(item)?;
-        let chain = SettingScope::chain(known, self.spec.scopes)?;
+        let chain = chain_of(self.spec, known)?;
         let loaded = load_in_txn(dbs, txn, self.spec, &chain, item)?;
-        let default = self.kind.default_typed();
+        let layer = layer_default_in_txn(dbs, txn, self.spec)?;
+        let default = Kind::<T>::decode(&layer.value).unwrap_or_else(|| self.kind.default_typed());
         let walked = match self.kind.meet_typed().filter(|_| self.spec.reads_met()) {
             Some(meet) => walk_met(&loaded, &chain, Kind::<T>::decode, &meet, &default),
             None => {
@@ -314,7 +380,9 @@ impl<T: SettingValue> Setting<T> {
             },
             Walked::Default => Resolved {
                 value: default,
-                source: SettingSource::Default,
+                source: layer
+                    .lost
+                    .map_or(SettingSource::Default, SettingSource::Unreadable),
                 revision: 0,
             },
             Walked::Unreadable(scope) => Resolved {
@@ -360,6 +428,26 @@ impl<T: SettingValue> Setting<T> {
             value,
             in_force,
         })
+    }
+
+    /// The items of this family key that hold a stored row, each once, in item order. A caller
+    /// that must see every item reads each one with [`Self::read_in_txn`].
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn items_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<String>> {
+        let mut items: Vec<String> = Vec::new();
+        let prefix = RowKey::name_prefix(self.spec.name);
+        for row in table_of(self.spec).iter_raw_from(&vault.store, txn, &prefix)? {
+            let (key, _) = row?;
+            if let Some(item) = RowKey::decode(&key).and_then(|key| key.item)
+                && items.last() != Some(&item)
+            {
+                items.push(item);
+            }
+        }
+        Ok(items)
     }
 }
 
@@ -409,7 +497,7 @@ pub(super) fn view_in_txn(
     item: Option<&str>,
 ) -> Result<SettingView> {
     spec.check_item(item)?;
-    let chain = SettingScope::chain(known, spec.scopes)?;
+    let chain = chain_of(spec, known)?;
     let (value, source, revision) = in_force_in_txn(store, txn, spec, &chain, item)?;
     Ok(SettingView {
         key: spec.name.to_owned(),
@@ -431,18 +519,21 @@ pub(super) fn in_force_in_txn(
 ) -> Result<(EncodedValue, SettingSource, u64)> {
     let loaded = load_in_txn(dbs, txn, spec, chain, item)?;
     let fits = fits_in_txn(dbs, txn, spec, chain)?;
-    in_force_of(spec, &loaded, &fits, chain)
+    let layer = layer_default_in_txn(dbs, txn, spec)?;
+    in_force_of(spec, &loaded, &fits, chain, &layer)
 }
 
-/// The value in force for `spec` over `chain`, from rows already loaded: [`in_force_in_txn`]'s
-/// walk, for a caller that weighs the rows as a change would leave them.
+/// The value in force for `spec` over `chain`, from rows already loaded and the default layer's
+/// answer `layer`: [`in_force_in_txn`]'s walk, for a caller that weighs the rows as a change
+/// would leave them.
 pub(super) fn in_force_of(
     spec: &SettingSpec,
     loaded: &[Loaded],
     fits: &[LoadedFit],
     chain: &[SettingScope],
+    layer: &LayerDefault,
 ) -> Result<(EncodedValue, SettingSource, u64)> {
-    let default = spec.kind.default_value()?;
+    let default = layer.value.clone();
     let meet =
         |a: &EncodedValue, b: &EncodedValue| spec.kind.meet(a, b).unwrap_or_else(|| a.clone());
     let cap = |a: &EncodedValue, b: &EncodedValue| spec.kind.no_wider(a, b).unwrap_or(false);
@@ -466,7 +557,14 @@ pub(super) fn in_force_of(
             source,
             revision,
         } => (value, source, revision),
-        Walked::Default => (default, SettingSource::Default, 0),
+        Walked::Default => (
+            default,
+            layer
+                .lost
+                .clone()
+                .map_or(SettingSource::Default, SettingSource::Unreadable),
+            0,
+        ),
         Walked::Unreadable(scope) => (
             spec.kind.strictest_value()?.ok_or(Error::CorruptedIndex(
                 "a setting row does not decode and its key names no strictest value",
@@ -489,6 +587,10 @@ pub(super) fn rows_in_txn(
         let Some(key) = RowKey::decode(&key) else {
             continue;
         };
+        // A pack's row is the default layer: the entry's `accepted_default`, not a stored choice.
+        if key.scope.kind() == ScopeKind::Pack {
+            continue;
+        }
         let stored = rmp_serde::from_slice::<StoredRow>(&bytes).ok();
         rows.push(SettingRowView {
             item: key.item,
@@ -513,6 +615,29 @@ pub(super) fn rows_in_txn(
 pub(crate) enum SettingReader {
     Owner,
     Actor(EntityId),
+}
+
+/// Who asks a door for a read, as [`super::SettingCaller`] asks for a change.
+#[derive(Debug, Clone)]
+pub(crate) enum SettingReadCaller {
+    /// The owner, by a proof the read revalidates in the snapshot it reads: a proof that no
+    /// longer holds there (a co-owner's slip revoked since the door took it) reads nothing.
+    Owner(AuthenticatedOwner),
+    /// An agent whose binding the caller verified.
+    Agent(EntityId),
+}
+
+impl SettingReadCaller {
+    /// Who reads in `txn`: the owner only while its proof holds in `txn`.
+    fn reader_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<SettingReader> {
+        Ok(match self {
+            Self::Owner(owner) => {
+                owner.revalidate_in_txn(vault, txn)?;
+                SettingReader::Owner
+            }
+            Self::Agent(agent) => SettingReader::Actor(*agent),
+        })
+    }
 }
 
 /// Whether `reader` may read `spec`'s rows at `scope` (all its rows when `None`), in `txn`: the
@@ -585,8 +710,15 @@ pub struct SettingCatalogueEntry {
     pub doc: String,
     /// The value's JSON Schema.
     pub schema: serde_json::Value,
-    /// The catalogue default, as JSON.
+    /// The build's default, as JSON: what the `engine` pack proposes for the key.
     pub default: serde_json::Value,
+    /// The default the vault accepted (the default layer, DESIGN 1.5), as JSON: what a read with
+    /// no deciding row starts from. `null` when the accepted row is lost: the key then reads
+    /// strictest.
+    pub accepted_default: serde_json::Value,
+    /// A pack's default for the key that waits on the owner's yes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposed_default: Option<ProposedDefaultView>,
     /// Who sets it without asking: `owner`, `subject`, or the `engine.controls` grant verb of
     /// its class.
     pub set_by: String,
@@ -626,21 +758,23 @@ pub(crate) struct SettingListFilter {
 }
 
 impl Vault {
-    /// The value in force for `key` (and `item`) at the places `at`, when `reader` may read it.
+    /// The value in force for `key` (and `item`) at the places `at`, when `caller` may read it.
     ///
     /// # Errors
     ///
     /// `InvalidConfig` for an unknown key, a place or item it does not admit, or a reader who may
-    /// not read it; storage errors.
+    /// not read it; a gate error for an owner proof that does not hold in this read; storage
+    /// errors.
     pub(crate) fn setting_view_for(
         &self,
-        reader: SettingReader,
+        caller: &SettingReadCaller,
         key: &str,
         item: Option<&str>,
         at: &[SettingScope],
     ) -> Result<SettingView> {
         let spec = super::spec_named(key)?;
         let txn = self.store.env.read_txn()?;
+        let reader = caller.reader_in_txn(self, &txn)?;
         let own = match reader {
             SettingReader::Owner => None,
             SettingReader::Actor(actor) => at.iter().find(|scope| names_subject(scope, actor)),
@@ -654,17 +788,20 @@ impl Vault {
         view_in_txn(&self.store, &txn, spec, at, item)
     }
 
-    /// Every catalogue key `filter` takes that `reader` may read, wholly or for its own rows.
+    /// Every catalogue key `filter` takes that `caller` may read, wholly or for its own rows.
     ///
     /// # Errors
     ///
-    /// A place no key admits only skips that key's value; storage errors.
+    /// A place no key admits only skips that key's value; a gate error for an owner proof that
+    /// does not hold in this read; storage errors.
     pub(crate) fn setting_catalogue_for(
         &self,
-        reader: SettingReader,
+        caller: &SettingReadCaller,
         filter: &SettingListFilter,
     ) -> Result<Vec<SettingCatalogueEntry>> {
         let txn = self.store.env.read_txn()?;
+        let reader = caller.reader_in_txn(self, &txn)?;
+        let mut proposed = proposed_defaults_in_txn(&self.store, &txn)?;
         let mut entries = Vec::new();
         for spec in super::catalogue() {
             if filter
@@ -698,6 +835,16 @@ impl Vault {
             } else {
                 None
             };
+            // A lost accepted default (or one whose key names no strictest value) shows null.
+            let accepted_default = layer_default_in_txn(&self.store, &txn, spec)
+                .ok()
+                .filter(|layer| layer.lost.is_none())
+                .and_then(|layer| spec.kind.to_json(&layer.value))
+                .unwrap_or(serde_json::Value::Null);
+            let proposed_default = proposed
+                .iter()
+                .position(|(key, _)| key == spec.name)
+                .map(|at| proposed.swap_remove(at).1);
             entries.push(SettingCatalogueEntry {
                 key: spec.name.to_owned(),
                 doc: spec.doc.trim().to_owned(),
@@ -708,6 +855,8 @@ impl Vault {
                     .ok()
                     .and_then(|value| spec.kind.to_json(&value))
                     .unwrap_or(serde_json::Value::Null),
+                accepted_default,
+                proposed_default,
                 set_by: match spec.set_by {
                     SetBy::Owner => "owner".to_owned(),
                     SetBy::Subject => "subject".to_owned(),

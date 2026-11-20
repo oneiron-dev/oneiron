@@ -377,7 +377,7 @@ fn seed_prior(
     Ok(format!("{predicate} = {}", serde_json::json!(value)))
 }
 
-fn text_response(reply: serde_json::Value) -> LlmResponse {
+pub(super) fn text_response(reply: serde_json::Value) -> LlmResponse {
     LlmResponse {
         message: LlmMessage {
             role: LlmMessageRole::Assistant,
@@ -406,22 +406,22 @@ fn text_response(reply: serde_json::Value) -> LlmResponse {
     }
 }
 
-fn encode(value: &Value) -> Result<Vec<u8>> {
+pub(super) fn encode(value: &Value) -> Result<Vec<u8>> {
     let mut encoded = Vec::new();
     rmpv::encode::write_value(&mut encoded, value)
         .map_err(|_| Error::InvalidConfig("fixture body encoding".into()))?;
     Ok(encoded)
 }
 
-fn occurred(at: u64) -> TimeRange {
+pub(super) fn occurred(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
 }
 
-fn allow_fixture_extraction(_: &LlmRequest) -> bool {
+pub(super) fn allow_fixture_extraction(_: &LlmRequest) -> bool {
     true
 }
 
-fn authorize_fixture_inference(vault: &Vault) -> Result<()> {
+pub(super) fn authorize_fixture_inference(vault: &Vault) -> Result<()> {
     let mut policy = vault.purpose_default_table()?;
     policy.extraction_max_locality = ModelLocality::OwnServer;
     policy

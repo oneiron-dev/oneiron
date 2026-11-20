@@ -37,10 +37,8 @@ fn a_wall_clock_stepped_back_across_a_reopen_never_readmits_an_evicted_proof() {
     let start = 1_900_000_000;
     let clock = crate::ports::ManualClock::new(start);
     let open = || {
-        let config = crate::VaultConfig {
-            store_clock: clock.bundle(),
-            ..crate::VaultConfig::default()
-        };
+        let mut config = crate::VaultConfig::device();
+        config.store_clock = clock.bundle();
         Vault::open(dir.path(), config).unwrap()
     };
     let vault = open();
@@ -113,11 +111,10 @@ impl Holder {
         use ed25519_dalek::Signer;
         let dir = crate::test_support::restore_tempdir();
         let clock = crate::ports::ManualClock::new(start);
-        let config = crate::VaultConfig {
-            store_clock: clock.bundle(),
-            ..crate::VaultConfig::default()
-        };
+        let mut config = crate::VaultConfig::device();
+        config.store_clock = clock.bundle();
         let vault = Vault::open_owned(dir.path(), config).unwrap();
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let issuer = HostSlipIssuer::from_secret(b"clock-recovery-issuer").unwrap();
         vault.ensure_host_root_slip(&issuer).unwrap();
         let key = ed25519_dalek::SigningKey::from_bytes(&[95; 32]);
@@ -420,6 +417,7 @@ fn a_vault_without_the_mark_recovers_unless_a_proof_admitted_in_the_jump_evicted
 /// A restore made for the vault's place, published after the vault admitted
 /// a proof and recovered its proof clock, would know neither: that proof
 /// would get in again. The swap refuses it and nothing moves.
+#[cfg(unix)]
 #[test]
 fn a_restore_made_before_a_clock_recovery_is_refused_at_its_swap() {
     let start = 1_900_000_000;
@@ -430,14 +428,18 @@ fn a_restore_made_before_a_clock_recovery_is_refused_at_its_swap() {
     let image = root.path().join("image");
     holder
         .vault
+        .ensure_vault_key()
+        .expect("mint the vault data key");
+    holder
+        .vault
         .snapshot_checkpoint(&image, start + 50)
         .unwrap();
-    let config = crate::VaultConfig {
-        store_clock: holder.clock.bundle(),
-        ..crate::VaultConfig::default()
-    };
+    let mut config = crate::VaultConfig::device();
+    config.store_clock = holder.clock.bundle();
+    let checkpoint_key = holder.vault.checkpoint_key().unwrap();
     let (replacement, _) = Vault::restore_checkpoint_replacing(
         &image,
+        &checkpoint_key,
         &root.path().join("staged"),
         config,
         &holder.vault,
@@ -456,7 +458,7 @@ fn a_restore_made_before_a_clock_recovery_is_refused_at_its_swap() {
     );
 
     let swapped = std::cell::Cell::new(false);
-    let refused = holder.vault.swap_in_replacement(&replacement, || {
+    let refused = holder.vault.swap_in_replacement(&replacement, |_, _| {
         swapped.set(true);
         Ok(())
     });

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Test fixtures for oneiron door tests and the E2E seeding script: fixture vault copies, a fake clock, a scripted model provider, a hashing embedder, a free-port server spawn, fault injection, a receipt reader and the test lint"
+description = "Test fixtures for oneiron door tests and the E2E seeding script: fixture vault copies, a fake clock, a scripted model provider, a hashing embedder, a free-port server spawn, fault injection and a receipt reader"
 repository.workspace = true
 # Test support only: a dev-dependency of the crates whose tests use it, never
 # a dependency of a shipped crate or binary.
@@ -15,16 +15,28 @@ doctest = false
 
 [dependencies]
 oneiron = { version = "0.1.0", path = "../oneiron" }
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore", features = ["test-keystore"] }
 oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
 blake3 = { workspace = true }
 futures-core = { workspace = true }
 serde_json = { workspace = true }
+# The same pinned revision as the oneiron crate: a Dreamer pass runs on an
+# engine-sized stack segment (`dreamer::block_on`).
+stacker = { git = "https://github.com/rust-lang/stacker", rev = "d3ac2df79a409c681329006e9b31c96ab9c5fcae" }
 tempfile = "3"
 toml = "0.9"
+# Reads the custody member of a whole-vault archive (the canary scan): the
+# oneiron crate's version and features.
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+# Encodes a custody record through the custody codec's key map
+# (tests/canary.rs).
+rmpv = { workspace = true }
 
 [lints]
 workspace = true

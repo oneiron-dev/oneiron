@@ -26,15 +26,27 @@ use std::time::{Duration, Instant};
 use ed25519_dalek::SigningKey;
 use oneiron::authority::{CapabilitySlip, holder_proof};
 use oneiron::federation::{Scope, ScopeAxis};
+use oneiron::sync::transport;
 use oneiron_remote::unix_seconds_now;
 use serde_json::{Value, json};
 
 const SECRET: &str = "mcp-stdio-issuer-key-not-a-bearer";
 const TEXT: &str = "The Vellichor ferry to Ost Marren leaves pier nine at a quarter past six.";
 
-/// The bridge's limits on one client message and one server answer.
-const FRAME_LIMIT: usize = 2 * 1024 * 1024;
+/// The bridge's limits on one client message (the least body the server's
+/// MCP routes read) and one server answer.
+const FRAME_LIMIT: usize = 64 * 1024 * 1024;
 const REPLY_LIMIT: usize = 16 * 1024 * 1024;
+/// The server's default bound on one inbound socket frame: its sync frame
+/// floor in base64, plus a window pad's header and a window frame's lead.
+const SOCKET_FRAME_LIMIT: usize = transport::MAX_DECODED_PAYLOAD_BYTES.div_ceil(3) * 4
+    + transport::WINDOW_PAD_HEADER_BYTES
+    + 3
+    + transport::MAX_WINDOW_KEY_LEN;
+/// The longest app payload the server's socket decodes behind a frame's tag
+/// byte, under [`SOCKET_FRAME_LIMIT`]: the bridge sends no longer request on
+/// its socket.
+const SOCKET_PAYLOAD_LIMIT: usize = transport::MAX_DECODED_PAYLOAD_BYTES;
 
 /// A running `oneiron serve`; dropping it kills the process.
 struct Server(Child);
@@ -1170,6 +1182,118 @@ fn the_bridge_bounds_every_request_and_keeps_its_credential_from_curl() {
         !env.contains(&seed) && !env.contains(&token),
         "a credential reached curl"
     );
+}
+
+/// A message past the bridge's old 2 MiB cap and within the server's request
+/// floor reaches the server: over the socket while the socket decodes it,
+/// its body read up to the request floor there as over HTTP; and over HTTP
+/// past the socket's payload bound (under its frame bound, as past it),
+/// which the server would answer by closing the socket under every request
+/// in flight. The socket carries the next call. FIX
+/// MCP-BRIDGE-FRAME-CAP-BELOW-SERVER-BODY-LIMIT; review round 1 of #9786.
+#[test]
+fn a_message_within_the_request_floor_reaches_the_server_on_either_carrier() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = init_vault(dir.path());
+    let credential_file = dir.path().join("codex.cred");
+    stdout(oneiron(
+        &[
+            "token",
+            "agent",
+            "--name",
+            "codex",
+            "--tier",
+            "read-only",
+            "--out",
+            credential_file.to_str().unwrap(),
+        ],
+        &config,
+    ));
+    let port = free_port();
+    let origin = format!("http://127.0.0.1:{port}");
+    let _server = serve(&config, port, &dir.path().join("serve.log"));
+    let curl_dir = argv_recording_curl(dir.path(), &dir.path().join("curl-argv.log"));
+    let stderr = dir.path().join("mcp.stderr");
+    let mut bridge = Bridge::spawn(&origin, &credential_file, &curl_dir, &stderr);
+    // `tools/list` reads no params, so the pad changes only the length.
+    let socket_sized = 3 * 1024 * 1024;
+    // Past the socket's payload bound and under its frame bound (9 MiB vs
+    // about 10.7 MiB): the frame alone would pass the socket's codec.
+    let past_payload = SOCKET_PAYLOAD_LIMIT + 1024 * 1024;
+    let past_frame = SOCKET_FRAME_LIMIT + 1024 * 1024;
+    for (id, pad) in [(1, socket_sized), (2, past_payload), (3, past_frame)] {
+        let listed = bridge.call(id, "tools/list", json!({ "pad": "x".repeat(pad) }));
+        assert!(
+            listed["result"]["tools"].is_array(),
+            "a {pad}-byte pad: {}",
+            head(&listed)
+        );
+    }
+    let listed = bridge.call(4, "tools/list", json!({}));
+    assert!(listed["result"]["tools"].is_array(), "{}", head(&listed));
+    bridge.close();
+    let stderr = std::fs::read_to_string(&stderr).unwrap();
+    assert!(
+        !stderr.contains("holding one pooled HTTP connection instead"),
+        "the server's socket carried the session: {stderr}"
+    );
+}
+
+/// A tool call as long as the least request floor, naming no invocation,
+/// reaches its tool on a vault set to that floor: the invocation the bridge
+/// would add to its `_meta` takes the body past the floor, so the bridge
+/// sends the call as the client wrote it. Review round 2 of #9786.
+#[test]
+fn a_call_as_long_as_the_request_floor_goes_as_the_client_wrote_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = init_vault(dir.path());
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&config)
+        .unwrap();
+    writeln!(file, "\n[limits]\nrequest_body_bytes = {FRAME_LIMIT}").unwrap();
+    drop(file);
+    let credential_file = dir.path().join("claude-code.cred");
+    stdout(oneiron(
+        &[
+            "token",
+            "agent",
+            "--name",
+            "claude-code",
+            "--tier",
+            "full-access",
+            "--out",
+            credential_file.to_str().unwrap(),
+        ],
+        &config,
+    ));
+    let port = free_port();
+    let origin = format!("http://127.0.0.1:{port}");
+    let _server = serve(&config, port, &dir.path().join("serve.log"));
+    let curl_dir = argv_recording_curl(dir.path(), &dir.path().join("curl-argv.log"));
+    let stderr = dir.path().join("mcp.stderr");
+    let mut bridge = Bridge::spawn(&origin, &credential_file, &curl_dir, &stderr);
+    let version = schema_version(&mut bridge);
+    let query = json!({ "spec": { "query": "Vellichor ferry pier nine", "limit": 10 } });
+    let (id, mut params) = tool_call(2, "vault.recall", &version, query);
+    params["_meta"] = json!({ "pad": "" });
+    let line = |params: &Value| {
+        json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params })
+            .to_string()
+            .len()
+    };
+    let unpadded = line(&params);
+    params["_meta"]["pad"] = Value::String("x".repeat(FRAME_LIMIT - unpadded));
+    assert_eq!(line(&params), FRAME_LIMIT);
+    let recalled = bridge.call(id, "tools/call", params);
+    assert!(recalled.get("error").is_none(), "{}", head(&recalled));
+    assert_ne!(
+        recalled["result"]["isError"],
+        json!(true),
+        "{}",
+        head(&recalled)
+    );
+    bridge.close();
 }
 
 /// On the stopped vault: a task of `writer`'s whose realization failed, and a

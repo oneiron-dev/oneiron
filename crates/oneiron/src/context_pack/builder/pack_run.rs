@@ -133,6 +133,9 @@ pub struct UnfinalizedContextPack<'a> {
     pub(super) replay_config: Option<serde_json::Value>,
     pub(super) critical: PackCriticalAccounting,
     pub(super) world_share: Option<PackWorldShare>,
+    /// The hop limit the run's walk expanded neighbors with: the scoped
+    /// filter keeps a neighbor within it (review round 2 of #9849).
+    pub(super) edge_hops: u32,
 }
 
 impl UnfinalizedContextPack<'_> {
@@ -176,7 +179,12 @@ impl UnfinalizedContextPack<'_> {
         read: &crate::claim::ScopedRead<'_>,
         disclosure: Option<&DisclosureContext>,
     ) -> Result<crate::claim::ScopedReadReceipt> {
-        read.filter_context_pack_critical_under(&mut self.value, &self.critical, disclosure)
+        read.filter_context_pack_critical_under(
+            &mut self.value,
+            &self.critical,
+            disclosure,
+            self.edge_hops,
+        )
     }
 
     /// [`Self::filter_scoped_under`], which also records in `producers` the
@@ -192,6 +200,7 @@ impl UnfinalizedContextPack<'_> {
             &mut self.value,
             &self.critical,
             disclosure,
+            self.edge_hops,
             producers,
         )
     }
@@ -207,13 +216,19 @@ impl UnfinalizedContextPack<'_> {
         results: usize,
         neighbors: usize,
     ) -> bool {
-        crate::pipeline::select_context_pack_rows(
+        let cut_critical = crate::pipeline::select_context_pack_rows(
             &mut self.value.results,
             &mut self.value.neighbors,
             budget,
             (results, neighbors),
             self.world_share.as_ref(),
-        )
+        );
+        let kept_rows = &self.value.results;
+        self.value
+            .stats
+            .working_set
+            .settle(|id| kept_rows.iter().any(|entity| entity.id == *id));
+        cut_critical
     }
 
     /// Resolves the pack's instruction files afresh over the units it now

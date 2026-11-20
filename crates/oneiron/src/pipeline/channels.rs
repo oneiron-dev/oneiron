@@ -65,6 +65,8 @@ pub(super) struct TemporalCandidateCollectionContext<'a> {
     /// The last round's radius, when the collector should say whether a
     /// window that wide could add a row.
     pub(super) widest: Option<u64>,
+    /// The reader the scans ask too ([`ReadableRows::new_asked_by_scans`]).
+    pub(super) scans: Option<&'a ReadableRows<'a, 'a>>,
 }
 
 #[derive(Clone, Copy)]
@@ -76,6 +78,8 @@ pub(super) struct TemporalIndexCollectionContext<'a> {
     pub(super) deadline: Option<&'a RetrievalDeadline>,
     /// The widest window's bounds, if the collector should probe it.
     pub(super) widest: Option<(u64, u64)>,
+    /// The reader the scans ask too ([`ReadableRows::new_asked_by_scans`]).
+    pub(super) scans: Option<&'a ReadableRows<'a, 'a>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -89,17 +93,37 @@ fn checkpoint(deadline: Option<&RetrievalDeadline>) -> Result<()> {
     deadline.map_or(Ok(()), RetrievalDeadline::checkpoint)
 }
 
+/// Whether a scan gives `id` a place under its cap: every row, or, with a
+/// reader the scans ask ([`ReadableRows::new_asked_by_scans`]), each row it
+/// reads.
+fn scan_takes(
+    scans: Option<&ReadableRows<'_, '_>>,
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    scans.map_or(Ok(true), |reader| reader.reads(store, rtxn, id))
+}
+
 /// The phonetic channel. Under a deadline it checks in before each code's
 /// posting and every few hundred ids inside one, so a stage past its share
 /// stops there instead of reading a posting that can name much of the vault.
+/// The sound match takes its cut among the rows `admission` admits.
 pub(super) fn execute_phonetic(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     codes: &[String],
+    params: &RetrievalParams,
     deadline: Option<&RetrievalDeadline>,
+    admission: &mut crate::ports::SoundMatchAdmission<'_>,
 ) -> Result<Vec<ScoredEntity>> {
     crate::ports::RetrievalIndexRead::port_retrieval_phonetic_search_with_deadline(
-        store, rtxn, codes, deadline,
+        store,
+        rtxn,
+        codes,
+        params,
+        deadline,
+        Some(admission),
     )
 }
 
@@ -204,6 +228,7 @@ pub(super) fn temporal_window(
                 per_scan_cap,
                 deadline,
                 widest,
+                scans: reader.filter(|reader| reader.asked_by_scans()),
             };
             let scoring = TemporalScoringContext {
                 sigma,
@@ -343,6 +368,7 @@ pub(super) fn collect_temporal_candidates(
         cap: per_scan_cap,
         deadline,
         widest: widest(config.anchor_start, config.anchor_end),
+        scans: collection.scans,
     };
     let learned_collection = TemporalIndexCollectionContext {
         window_start: learned_window_start,
@@ -351,6 +377,7 @@ pub(super) fn collect_temporal_candidates(
         cap: per_scan_cap,
         deadline,
         widest: widest(learned_anchor_start, learned_anchor_end),
+        scans: collection.scans,
     };
 
     let mut can_grow = match config.anchor_mode {
@@ -385,7 +412,8 @@ pub(super) fn collect_temporal_candidates(
         // final result limit, anything outside this top-k cannot enter the
         // final top-k after exact scoring. The buffer fills to twice the cap
         // before it drops back to the cap, so a spanner costs amortized
-        // constant work however large the cap is.
+        // constant work however large the cap is. A spanner the scans' reader
+        // refuses takes no place in it.
         let mut spanners = Vec::<TemporalCandidateScore>::new();
         let trim_threshold = per_scan_cap.saturating_mul(2);
         let mut spanning = 0_usize;
@@ -410,6 +438,9 @@ pub(super) fn collect_temporal_candidates(
                     end,
                 )
             }) {
+                continue;
+            }
+            if !scan_takes(collection.scans, store, rtxn, &id)? {
                 continue;
             }
             spanners.push(score_temporal_candidate(id, meta, config, scoring));
@@ -574,6 +605,7 @@ fn collect_query_occurred_candidates(
         anchor_mid,
         cap,
         deadline,
+        scans,
         ..
     } = collection;
     if cap == 0 || window_start > window_end {
@@ -616,7 +648,8 @@ fn collect_query_occurred_candidates(
             meta.occurred_end,
             query_range.0,
             query_range.1,
-        ) {
+        ) || !scan_takes(scans, store, rtxn, &time.id)?
+        {
             continue;
         }
         if time.timestamp >= anchor_mid {
@@ -659,6 +692,8 @@ pub(super) fn collect_index_candidates(
         window_end,
         anchor_mid,
         cap,
+        deadline,
+        scans,
         ..
     } = collection;
     if cap == 0 || window_start > window_end {
@@ -667,6 +702,27 @@ pub(super) fn collect_index_candidates(
 
     let mut rows =
         Vec::<TemporalIndexRow>::with_capacity(cap.saturating_mul(2).min(MAX_TEMPORAL_SEEK_BUFFER));
+
+    // A reader the scans ask makes each scan read on past the rows it
+    // refuses, up to the window's edge, so the scan then checks the deadline
+    // and counts each row it reads, raising one check past its threshold
+    // row, as the spanner scan does. Without one it stops at `cap` rows, as
+    // before.
+    let scan = if matches!(axis, TimeAxis::Learned) {
+        EngineScan::LearnedRangeRows
+    } else {
+        EngineScan::OccurredRangeRows
+    };
+    let mut scanned = scans
+        .map(|_| ScanCount::start(store, rtxn, scan, &[]))
+        .transpose()?;
+    let mut takes = |id: &EntityId| -> Result<bool> {
+        if let Some(scanned) = scanned.as_mut() {
+            scanned.row();
+            checkpoint(deadline)?;
+        }
+        scan_takes(scans, store, rtxn, id)
+    };
 
     let mut forward = store.port_entity_timeline(
         rtxn,
@@ -681,7 +737,9 @@ pub(super) fn collect_index_candidates(
         let Some(row) = next_temporal_index_row(&mut forward)? else {
             break;
         };
-        rows.push(row);
+        if takes(&row.id)? {
+            rows.push(row);
+        }
     }
     let forward_full = rows.len() >= cap;
 
@@ -695,10 +753,13 @@ pub(super) fn collect_index_candidates(
             ..Default::default()
         },
     )?;
-    let mut backward_rows = collect_temporal_index_rows(&mut backward, cap)?;
+    let mut backward_rows = collect_temporal_index_rows(&mut backward, cap, &mut takes)?;
     let backward_full = backward_rows.len() >= cap;
-    normalize_backward_boundary_bucket(store, axis, rtxn, &mut backward_rows)?;
+    normalize_backward_boundary_bucket(store, axis, rtxn, &mut backward_rows, &mut takes)?;
     rows.extend(backward_rows);
+    if let Some(scanned) = scanned {
+        scanned.defer(store);
+    }
 
     rows.sort_unstable_by(|a, b| compare_temporal_index_rows(a, b, anchor_mid));
     for row in rows.into_iter().take(cap) {
@@ -728,7 +789,12 @@ where
     }))
 }
 
-fn collect_temporal_index_rows<I>(iter: &mut I, cap: usize) -> Result<Vec<TemporalIndexRow>>
+/// The first `cap` rows of `iter` that `takes` gives a place.
+fn collect_temporal_index_rows<I>(
+    iter: &mut I,
+    cap: usize,
+    mut takes: impl FnMut(&EntityId) -> Result<bool>,
+) -> Result<Vec<TemporalIndexRow>>
 where
     I: Iterator<Item = Result<EntityTime>>,
 {
@@ -738,7 +804,9 @@ where
         let Some(row) = next_temporal_index_row(iter)? else {
             return Ok(rows);
         };
-        rows.push(row);
+        if takes(&row.id)? {
+            rows.push(row);
+        }
     }
 
     Ok(rows)
@@ -749,6 +817,7 @@ fn normalize_backward_boundary_bucket(
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
     rows: &mut Vec<TemporalIndexRow>,
+    mut takes: impl FnMut(&EntityId) -> Result<bool>,
 ) -> Result<()> {
     let Some(boundary_timestamp) = rows.last().map(|row| row.timestamp) else {
         return Ok(());
@@ -779,7 +848,9 @@ fn normalize_backward_boundary_bucket(
         let Some(row) = next_temporal_index_row(&mut boundary_iter)? else {
             break;
         };
-        boundary_rows.push(row);
+        if takes(&row.id)? {
+            boundary_rows.push(row);
+        }
     }
     for row in original_boundary_rows {
         if !boundary_rows.iter().any(|candidate| candidate.id == row.id) {

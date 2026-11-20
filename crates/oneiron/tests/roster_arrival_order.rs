@@ -1,0 +1,1015 @@
+//! A roster key's rows fold to the same roster on every install, whatever
+//! order they arrive in ([ARRIVAL-FLOOR-SIBLING-DIVERGENCE], root FIX-LIST).
+//!
+//! Each stored row keeps the highest sequence its signer had reached on this
+//! install before the row arrived, and a row below that mark is refused. When
+//! one key signs two sibling rows, neither names the other, so an install
+//! that receives the higher one first refused the lower one: two installs
+//! that hold the same rows held different rosters. An agent enrolment then
+//! counted on one install and not on the other, and a revocation beside a
+//! later enrolment left the revoked key live on the install that received
+//! the revocation last. Now a roster row is judged on its signer's causal
+//! order alone, so both installs hold the same roster. A roster row also
+//! vouches for its own signer's rows below it in its ancestry that the floor
+//! refuses, so a revocation on a withdrawal (Sol review F1) or on an actor
+//! binding (Astra review round 2, F3) that reached the install past the
+//! floor lands there too. A restriction it names keeps its floor: a machine
+//! mark that reached an install past the floor stays held there, though a
+//! handoff names it (Astra review F2); a tip the install received before
+//! the floor moved still vouches for one in flight below it, as before; when
+//! a roster row's vouch clears the refused row that held such a tip back,
+//! the tip vouches too (Astra review round 3, F2), and the install folds as
+//! one that received every row in order. A
+//! row that its own ancestry already
+//! shows its signer past is still refused on every install (the control). A
+//! revocation, a re-root or an enrolment on a row of another signer that
+//! reached an install past that signer's floor holds there as on the install
+//! that received every row in order (root FIX-LIST
+//! [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]; the enrolment since #8449, which
+//! takes each row's floor from the rows rather than their arrival order).
+
+use std::collections::BTreeSet;
+
+use ed25519_dalek::{Signer, SigningKey};
+use oneiron::authority::{
+    AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityConfirmAction,
+    AuthorityConfirmKind, AuthorityEntryHash, AuthorityFold, AuthorityFoldIssue, AuthorityKey,
+    AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier, AuthorityVaultId,
+    DeviceAuthority, GenesisRecoveryStep, MACHINE_ENCRYPTION_KEY_LEN,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
+    MachineProfile, MachineRole, ROLE_ADMIN, ROLE_AGENT, ROLE_OWNER, authority_entry_hash,
+    authority_transcript, genesis_vault_id, machine_profile_proof_transcript,
+};
+use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+
+const AT: TimeRange = TimeRange { start: 2, end: 2 };
+
+fn key_of(signing: &SigningKey) -> AuthorityKey {
+    AuthorityKey::Ed25519(signing.verifying_key().to_bytes())
+}
+
+fn device(key: AuthorityKey, roles: u16) -> DeviceAuthority {
+    DeviceAuthority {
+        key,
+        transport_key_binding: [7; 32],
+        attestation: AuthorityAttestation {
+            kind: "SoftwareArgon2id".to_owned(),
+            evidence: vec![1, 2, 3],
+        },
+        tier: AuthorityTier::Software,
+        roles,
+    }
+}
+
+fn signed(
+    vault_id: Option<AuthorityVaultId>,
+    seq: u64,
+    parent: Option<&AuthorityLogEntry>,
+    op: AuthorityOp,
+    signer: &SigningKey,
+) -> AuthorityLogEntry {
+    let key = key_of(signer);
+    let mut entry = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id,
+        seq,
+        parent_hashes: parent
+            .map(|parent| vec![authority_entry_hash(parent).expect("parent hash")])
+            .unwrap_or_default(),
+        op,
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: seq + 1,
+    };
+    let transcript = authority_transcript(&entry).expect("transcript");
+    entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
+    entry
+}
+
+/// The owner's genesis and the vault it founds.
+fn genesis(owner: &SigningKey, nonce: u8) -> (AuthorityLogEntry, AuthorityVaultId) {
+    let genesis = signed(
+        None,
+        0,
+        None,
+        AuthorityOp::Genesis {
+            device: device(key_of(owner), ROLE_OWNER | ROLE_ADMIN),
+            genesis_nonce: [nonce; 32],
+            recovery: GenesisRecoveryStep::Saved([1; 32]),
+        },
+        owner,
+    );
+    let vault_id = genesis_vault_id(&genesis).expect("vault id");
+    (genesis, vault_id)
+}
+
+/// `signer` enrols the agent key `enrolled` on `parent` at `seq`.
+fn enrolment(
+    vault_id: AuthorityVaultId,
+    parent: &AuthorityLogEntry,
+    signer: &SigningKey,
+    seq: u64,
+    enrolled: &SigningKey,
+) -> AuthorityLogEntry {
+    signed(
+        Some(vault_id),
+        seq,
+        Some(parent),
+        AuthorityOp::EnrollDevice {
+            device: device(key_of(enrolled), ROLE_AGENT),
+        },
+        signer,
+    )
+}
+
+/// `signer` signs `op` on `parent` at `seq` with `cosigner` as its one
+/// cosign: the row `signed` builds gets the cosign key, and both keys sign
+/// the transcript that names it, as an agent-primary row with an owner
+/// cosign must.
+fn cosigned(
+    vault_id: AuthorityVaultId,
+    seq: u64,
+    parent: &AuthorityLogEntry,
+    op: AuthorityOp,
+    signer: &SigningKey,
+    cosigner: &SigningKey,
+) -> AuthorityLogEntry {
+    let mut entry = signed(Some(vault_id), seq, Some(parent), op, signer);
+    let cosign_key = key_of(cosigner);
+    entry.cosigns = vec![AuthoritySignature {
+        suite: cosign_key.suite(),
+        public_key: cosign_key,
+        signature: vec![0; 64],
+    }];
+    let transcript = authority_transcript(&entry).expect("transcript");
+    entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
+    entry.cosigns[0].signature = cosigner.sign(&transcript).to_bytes().to_vec();
+    entry
+}
+
+/// The owner's "yours" mark of `machine`, whose install key is
+/// `machine_key`: its first revision, signed by an owner roster key with no
+/// carrier, as a roster revision is.
+fn yours_mark(
+    vault_id: AuthorityVaultId,
+    machine: EntityId,
+    machine_key: &SigningKey,
+) -> AuthorityOp {
+    let machine_key_bytes = machine_key.verifying_key().to_bytes();
+    let device_class = MachineDeviceClass::Computer;
+    let encryption_key = MachineEncryptionKey {
+        suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+        key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
+    };
+    let machine_proof = machine_key
+        .sign(&machine_profile_proof_transcript(
+            &vault_id,
+            machine,
+            &machine_key_bytes,
+            device_class,
+            &encryption_key,
+        ))
+        .to_bytes();
+    AuthorityOp::MachineProfile(MachineProfile {
+        machine,
+        owner: EntityId::now(),
+        machine_key: machine_key_bytes,
+        device_class,
+        encryption_key,
+        role: MachineRole::Owned(MachineOwnership::Yours),
+        revision: 1,
+        machine_proof,
+        seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
+        restored_from: None,
+    })
+}
+
+fn hash_of(entry: &AuthorityLogEntry) -> AuthorityEntryHash {
+    authority_entry_hash(entry).expect("row hash")
+}
+
+/// One install: a fresh vault that receives `rows` one at a time, in the
+/// order given, each through the authority write door on its own, as rows
+/// that sync delivers in that order arrive. Returns each put's outcome and
+/// the install's fold.
+struct Install {
+    _dir: tempfile::TempDir,
+    puts: Vec<String>,
+    fold: AuthorityFold,
+}
+
+fn install_receiving(rows: &[&AuthorityLogEntry]) -> Install {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
+    let puts = rows
+        .iter()
+        .map(|row| match vault.put_authority_log_entry(row, AT, 2) {
+            Ok(_) => "stored".to_owned(),
+            Err(error) => format!("refused: {:?}", error.kind()),
+        })
+        .collect();
+    let fold = vault.authority_fold().expect("the install folds its log");
+    Install {
+        _dir: dir,
+        puts,
+        fold,
+    }
+}
+
+fn applied(fold: &AuthorityFold) -> BTreeSet<AuthorityEntryHash> {
+    fold.valid_entries.iter().copied().collect()
+}
+
+fn is_live(fold: &AuthorityFold, key: &AuthorityKey) -> bool {
+    fold.roster
+        .get(key)
+        .is_some_and(|device| !device.revoked && device.roles != 0)
+}
+
+/// The finding's case: one roster key signs two agent enrolments on the
+/// same parent, at sequences 1 and 2. Install I receives them in that order,
+/// install J in the other. Both must hold both agents, and apply the same
+/// rows.
+#[test]
+fn sibling_enrolments_hold_the_same_roster_in_either_arrival_order() {
+    let owner = SigningKey::from_bytes(&[211; 32]);
+    let first_agent = SigningKey::from_bytes(&[212; 32]);
+    let second_agent = SigningKey::from_bytes(&[213; 32]);
+    let (genesis, vault_id) = genesis(&owner, 214);
+    let lower = enrolment(vault_id, &genesis, &owner, 1, &first_agent);
+    let higher = enrolment(vault_id, &genesis, &owner, 2, &second_agent);
+
+    let in_order = install_receiving(&[&genesis, &lower, &higher]);
+    let reversed = install_receiving(&[&genesis, &higher, &lower]);
+
+    for (name, install) in [("I (1 then 2)", &in_order), ("J (2 then 1)", &reversed)] {
+        assert!(
+            is_live(&install.fold, &key_of(&first_agent))
+                && is_live(&install.fold, &key_of(&second_agent)),
+            "install {name} must hold both agents the owner enrolled; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+    }
+    let all = [&genesis, &lower, &higher]
+        .into_iter()
+        .map(hash_of)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        applied(&in_order.fold),
+        all,
+        "install I applies all three rows"
+    );
+    assert_eq!(
+        applied(&reversed.fold),
+        all,
+        "install J applies the same rows as install I; puts {:?}, issues {:?}",
+        reversed.puts,
+        reversed.fold.issues
+    );
+}
+
+/// A revocation beside a later enrolment of the same key: the owner enrols
+/// agent U (sequence 1), then on that row revokes U (2) and, as a sibling of
+/// the revocation, enrols agent W (3). The install that receives the
+/// enrolment of W before the revocation must still hold U revoked: a
+/// revocation lost to arrival order leaves a revoked key live there.
+#[test]
+fn a_revocation_beside_a_later_enrolment_holds_in_either_arrival_order() {
+    let owner = SigningKey::from_bytes(&[221; 32]);
+    let revoked_agent = SigningKey::from_bytes(&[222; 32]);
+    let later_agent = SigningKey::from_bytes(&[223; 32]);
+    let (genesis, vault_id) = genesis(&owner, 224);
+    let enrol_revoked = enrolment(vault_id, &genesis, &owner, 1, &revoked_agent);
+    let revocation = signed(
+        Some(vault_id),
+        2,
+        Some(&enrol_revoked),
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&revoked_agent),
+        },
+        &owner,
+    );
+    let enrol_later = enrolment(vault_id, &enrol_revoked, &owner, 3, &later_agent);
+
+    let in_order = install_receiving(&[&genesis, &enrol_revoked, &revocation, &enrol_later]);
+    let reversed = install_receiving(&[&genesis, &enrol_revoked, &enrol_later, &revocation]);
+
+    for (name, install) in [
+        ("I (revocation first)", &in_order),
+        ("J (revocation last)", &reversed),
+    ] {
+        assert!(
+            !is_live(&install.fold, &key_of(&revoked_agent)),
+            "install {name} must hold the revoked agent revoked; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+        assert!(
+            is_live(&install.fold, &key_of(&later_agent)),
+            "install {name} holds the later agent; issues {:?}",
+            install.fold.issues
+        );
+        assert!(
+            applied(&install.fold).contains(&hash_of(&revocation)),
+            "install {name} applies the revocation; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+    }
+    assert_eq!(
+        applied(&in_order.fold),
+        applied(&reversed.fold),
+        "both installs apply the same rows"
+    );
+}
+
+/// A revocation on a row of its own signer that the floor refuses (Sol
+/// review F1): the owner enrols agent U (sequence 1), on that row withdraws
+/// a slip (2), and on the withdrawal revokes U (3); as a sibling of the
+/// withdrawal it enrols agent W (4). Install J receives W's enrolment first,
+/// so the withdrawal and the revocation both reach it below the owner's
+/// floor. The revocation names the withdrawal, its own signer's row below
+/// it, so it vouches for it: U must stay revoked on both installs.
+#[test]
+fn a_revocation_on_a_withdrawal_past_the_floor_holds_in_either_arrival_order() {
+    let owner = SigningKey::from_bytes(&[241; 32]);
+    let revoked_agent = SigningKey::from_bytes(&[242; 32]);
+    let later_agent = SigningKey::from_bytes(&[243; 32]);
+    let (genesis, vault_id) = genesis(&owner, 244);
+    let enrol_revoked = enrolment(vault_id, &genesis, &owner, 1, &revoked_agent);
+    let withdrawal = signed(
+        Some(vault_id),
+        2,
+        Some(&enrol_revoked),
+        AuthorityOp::SlipRevoke { slip_id: [245; 32] },
+        &owner,
+    );
+    let revocation = signed(
+        Some(vault_id),
+        3,
+        Some(&withdrawal),
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&revoked_agent),
+        },
+        &owner,
+    );
+    let enrol_later = enrolment(vault_id, &enrol_revoked, &owner, 4, &later_agent);
+
+    let in_order = install_receiving(&[
+        &genesis,
+        &enrol_revoked,
+        &withdrawal,
+        &revocation,
+        &enrol_later,
+    ]);
+    let reversed = install_receiving(&[
+        &genesis,
+        &enrol_revoked,
+        &enrol_later,
+        &withdrawal,
+        &revocation,
+    ]);
+
+    for (name, install) in [
+        ("I (withdrawal and revocation first)", &in_order),
+        ("J (withdrawal and revocation last)", &reversed),
+    ] {
+        assert!(
+            !is_live(&install.fold, &key_of(&revoked_agent)),
+            "install {name} must hold the revoked agent revoked; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+        assert!(
+            is_live(&install.fold, &key_of(&later_agent)),
+            "install {name} holds the later agent; issues {:?}",
+            install.fold.issues
+        );
+    }
+    let all = [
+        &genesis,
+        &enrol_revoked,
+        &withdrawal,
+        &revocation,
+        &enrol_later,
+    ]
+    .into_iter()
+    .map(hash_of)
+    .collect::<BTreeSet<_>>();
+    assert_eq!(
+        applied(&in_order.fold),
+        all,
+        "install I applies all five rows"
+    );
+    assert_eq!(
+        applied(&reversed.fold),
+        all,
+        "install J applies the same rows as install I; puts {:?}, issues {:?}",
+        reversed.puts,
+        reversed.fold.issues
+    );
+}
+
+/// A restriction a roster row names keeps its floor (Astra review F2): the
+/// owner marks machine M "yours" (sequence 1), on the mark hands the vault
+/// to a fresh owner key (2), and as a sibling of the mark enrols agent U
+/// (3). The mark sits below the owner's floor, U's enrolment, whatever order
+/// its rows arrive in, and lands restriction only: no install counts M as
+/// the owner's, though the handoff names the mark. Install I receives the
+/// mark before U's enrolment, install J after. Both settle the handoff.
+#[test]
+fn a_handoff_on_a_mark_past_the_floor_leaves_the_machine_held() {
+    let owner = SigningKey::from_bytes(&[251; 32]);
+    let successor = SigningKey::from_bytes(&[252; 32]);
+    let agent = SigningKey::from_bytes(&[253; 32]);
+    let machine_key = SigningKey::from_bytes(&[254; 32]);
+    let machine = EntityId::now();
+    let (genesis, vault_id) = genesis(&owner, 255);
+    let mark = signed(
+        Some(vault_id),
+        1,
+        Some(&genesis),
+        yours_mark(vault_id, machine, &machine_key),
+        &owner,
+    );
+    let handoff = signed(
+        Some(vault_id),
+        2,
+        Some(&mark),
+        AuthorityOp::ReRoot {
+            new_device: device(key_of(&successor), ROLE_OWNER | ROLE_ADMIN),
+        },
+        &owner,
+    );
+    let enrol_agent = enrolment(vault_id, &genesis, &owner, 3, &agent);
+
+    let in_order = install_receiving(&[&genesis, &mark, &enrol_agent, &handoff]);
+    let reversed = install_receiving(&[&genesis, &enrol_agent, &mark, &handoff]);
+
+    for (name, install) in [("I (mark first)", &in_order), ("J (mark late)", &reversed)] {
+        assert!(
+            applied(&install.fold).contains(&hash_of(&handoff))
+                && is_live(&install.fold, &key_of(&successor)),
+            "install {name} settles the handoff to the successor; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+    }
+    for (name, install) in [("I (mark first)", &in_order), ("J (mark late)", &reversed)] {
+        assert!(
+            install.fold.trusted_machine(machine).is_none(),
+            "the mark sits below the owner's floor on install {name}: the handoff on it must \
+             not make it count the machine as the owner's; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+    }
+}
+
+/// A revocation on a row of its own signer that is no withdrawal and that
+/// sits below its floor (Astra review round 2, F3, there a slip's consume):
+/// the owner enrols agent U (sequence 1), on that row binds U to an actor
+/// (2), and on the binding revokes U (3); as a sibling of the binding it
+/// enrols agent W (4). Install J receives W's enrolment first, so the
+/// binding and the revocation both reach it below the owner's floor. The
+/// revocation names the binding, its own signer's row below it, so it
+/// vouches for it: U must stay revoked on both installs, which hold the
+/// same rows.
+#[test]
+fn a_revocation_on_a_binding_past_the_floor_holds_in_either_arrival_order() {
+    let owner = SigningKey::from_bytes(&[231; 32]);
+    let revoked_agent = SigningKey::from_bytes(&[232; 32]);
+    let later_agent = SigningKey::from_bytes(&[233; 32]);
+    let (genesis, vault_id) = genesis(&owner, 234);
+    let enrol_revoked = enrolment(vault_id, &genesis, &owner, 1, &revoked_agent);
+    let binding = signed(
+        Some(vault_id),
+        2,
+        Some(&enrol_revoked),
+        AuthorityOp::BindActor {
+            authority_key: key_of(&revoked_agent),
+            actor_ref: EntityId::now(),
+            actor_class: "agent".to_owned(),
+            epoch: 1,
+        },
+        &owner,
+    );
+    let revocation = signed(
+        Some(vault_id),
+        3,
+        Some(&binding),
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&revoked_agent),
+        },
+        &owner,
+    );
+    let enrol_later = enrolment(vault_id, &enrol_revoked, &owner, 4, &later_agent);
+
+    let in_order = install_receiving(&[
+        &genesis,
+        &enrol_revoked,
+        &binding,
+        &revocation,
+        &enrol_later,
+    ]);
+    let reversed = install_receiving(&[
+        &genesis,
+        &enrol_revoked,
+        &enrol_later,
+        &binding,
+        &revocation,
+    ]);
+
+    for (name, install) in [
+        ("I (binding and revocation first)", &in_order),
+        ("J (binding and revocation last)", &reversed),
+    ] {
+        assert!(
+            !is_live(&install.fold, &key_of(&revoked_agent)),
+            "install {name} must hold the revoked agent revoked; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+        assert!(
+            is_live(&install.fold, &key_of(&later_agent)),
+            "install {name} holds the later agent; issues {:?}",
+            install.fold.issues
+        );
+    }
+    let all = [
+        &genesis,
+        &enrol_revoked,
+        &binding,
+        &revocation,
+        &enrol_later,
+    ]
+    .into_iter()
+    .map(hash_of)
+    .collect::<BTreeSet<_>>();
+    assert_eq!(
+        applied(&in_order.fold),
+        all,
+        "install I applies all five rows; issues {:?}",
+        in_order.fold.issues
+    );
+    assert_eq!(
+        applied(&reversed.fold),
+        all,
+        "install J applies the same rows as install I; puts {:?}, issues {:?}",
+        reversed.puts,
+        reversed.fold.issues
+    );
+}
+
+/// The control: a row that names, among its own ancestors, a row of its
+/// signer at a higher sequence goes back on its signer's own order, which
+/// every install can see from the rows alone. Every install refuses it, the
+/// same way, before and after the fix.
+#[test]
+fn a_row_below_its_signers_sequence_in_its_own_ancestry_stays_refused() {
+    let owner = SigningKey::from_bytes(&[231; 32]);
+    let first_agent = SigningKey::from_bytes(&[232; 32]);
+    let second_agent = SigningKey::from_bytes(&[233; 32]);
+    let (genesis, vault_id) = genesis(&owner, 234);
+    let higher = enrolment(vault_id, &genesis, &owner, 2, &first_agent);
+    let backward = enrolment(vault_id, &higher, &owner, 1, &second_agent);
+
+    let install = install_receiving(&[&genesis, &higher, &backward]);
+
+    assert!(
+        is_live(&install.fold, &key_of(&first_agent)),
+        "the forward enrolment lands; issues {:?}",
+        install.fold.issues
+    );
+    assert!(
+        !is_live(&install.fold, &key_of(&second_agent))
+            && !applied(&install.fold).contains(&hash_of(&backward)),
+        "a row below its signer's own sequence in its ancestry is refused; puts {:?}, issues {:?}",
+        install.puts,
+        install.fold.issues
+    );
+    assert!(
+        install.fold.issues.iter().any(|issue| matches!(
+            issue,
+            AuthorityFoldIssue::NonMonotonicSeq(hash) if *hash == hash_of(&backward)
+        )),
+        "the refusal names the backward row as non-monotonic; issues {:?}",
+        install.fold.issues
+    );
+}
+
+/// A roster row's vouch lets a later tip vouch in turn (Astra review round
+/// 3, F2): the owner binds an actor (sequence 1), enrols agent W beside it
+/// (2), marks machine M "yours" on the binding (3), confirms on the mark (4)
+/// and enrols agent U on the confirmation (5); beside them all it enrols
+/// agent X (6). Install J receives W's enrolment, then the confirmation
+/// before its missing ancestors, then X's enrolment, so the binding, the
+/// mark and U's enrolment reach it past the owner's floor. The binding,
+/// the mark and the confirmation sit below the owner's floor, X's enrolment,
+/// on every install: the binding and the confirmation count in full as forks
+/// (Engine RULING SEQ-FLOOR-SHAPE-S), and the mark lands restriction only.
+/// J must hold the rows and the agents that install I, which received every
+/// row in order, holds, and neither counts the machine as the owner's.
+#[test]
+fn a_mark_below_a_vouched_binding_folds_as_on_the_in_order_install() {
+    let owner = SigningKey::from_bytes(&[221; 32]);
+    let beside_agent = SigningKey::from_bytes(&[222; 32]);
+    let upper_agent = SigningKey::from_bytes(&[223; 32]);
+    let later_agent = SigningKey::from_bytes(&[224; 32]);
+    let machine_key = SigningKey::from_bytes(&[225; 32]);
+    let machine = EntityId::now();
+    let (genesis, vault_id) = genesis(&owner, 226);
+    let binding = signed(
+        Some(vault_id),
+        1,
+        Some(&genesis),
+        AuthorityOp::BindActor {
+            authority_key: key_of(&owner),
+            actor_ref: EntityId::now(),
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+        &owner,
+    );
+    let enrol_beside = enrolment(vault_id, &genesis, &owner, 2, &beside_agent);
+    let mark = signed(
+        Some(vault_id),
+        3,
+        Some(&binding),
+        yours_mark(vault_id, machine, &machine_key),
+        &owner,
+    );
+    let confirmation = signed(
+        Some(vault_id),
+        4,
+        Some(&mark),
+        AuthorityOp::FederationConfirm(AuthorityConfirmAction {
+            kind: AuthorityConfirmKind::Accept,
+            confirm_id: [51; 32],
+            peer_vault_id: [77; 32],
+            epoch: 1,
+            nonce: [68; 16],
+        }),
+        &owner,
+    );
+    let enrol_upper = enrolment(vault_id, &confirmation, &owner, 5, &upper_agent);
+    let enrol_later = enrolment(vault_id, &genesis, &owner, 6, &later_agent);
+
+    let in_order = install_receiving(&[
+        &genesis,
+        &binding,
+        &enrol_beside,
+        &mark,
+        &confirmation,
+        &enrol_upper,
+        &enrol_later,
+    ]);
+    let late = install_receiving(&[
+        &genesis,
+        &enrol_beside,
+        &confirmation,
+        &enrol_later,
+        &binding,
+        &mark,
+        &enrol_upper,
+    ]);
+
+    let all = [
+        &genesis,
+        &binding,
+        &enrol_beside,
+        &mark,
+        &confirmation,
+        &enrol_upper,
+        &enrol_later,
+    ]
+    .into_iter()
+    .map(hash_of)
+    .collect::<BTreeSet<_>>();
+    assert_eq!(
+        applied(&in_order.fold),
+        all,
+        "install I applies all seven rows; puts {:?}, issues {:?}",
+        in_order.puts,
+        in_order.fold.issues
+    );
+    for (name, install) in [("I (in order)", &in_order), ("J (late)", &late)] {
+        assert!(
+            is_live(&install.fold, &key_of(&upper_agent))
+                && is_live(&install.fold, &key_of(&beside_agent))
+                && is_live(&install.fold, &key_of(&later_agent)),
+            "install {name} holds the three agents; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+        assert!(
+            install.fold.trusted_machine(machine).is_none(),
+            "the mark sits below the owner's floor on install {name} and lands restriction \
+             only; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+    }
+    assert_eq!(
+        applied(&late.fold),
+        all,
+        "install J applies the same rows as install I; puts {:?}, issues {:?}",
+        late.puts,
+        late.fold.issues
+    );
+}
+
+/// A revocation on another signer's binding past the floor (Sol's
+/// [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]): the owner enrols agents B and
+/// U; B, with the owner's cosign, binds itself (sequence 1) and, as a
+/// sibling, binds U (sequence 10); on the lower binding the owner revokes U.
+/// Install J receives the higher binding first, so the lower one reaches it
+/// past B's floor. U must stay revoked there as on install I, which
+/// received the rows in order.
+#[test]
+fn a_revocation_on_another_signers_binding_past_the_floor_holds_in_either_arrival_order() {
+    let owner = SigningKey::from_bytes(&[161; 32]);
+    let binder = SigningKey::from_bytes(&[162; 32]);
+    let revoked_agent = SigningKey::from_bytes(&[163; 32]);
+    let (genesis, vault_id) = genesis(&owner, 164);
+    let enrol_binder = enrolment(vault_id, &genesis, &owner, 1, &binder);
+    let enrol_revoked = enrolment(vault_id, &enrol_binder, &owner, 2, &revoked_agent);
+    let binding = cosigned(
+        vault_id,
+        1,
+        &enrol_revoked,
+        AuthorityOp::BindActor {
+            authority_key: key_of(&binder),
+            actor_ref: EntityId::now(),
+            actor_class: "agent".to_owned(),
+            epoch: 1,
+        },
+        &binder,
+        &owner,
+    );
+    let higher_binding = cosigned(
+        vault_id,
+        10,
+        &enrol_revoked,
+        AuthorityOp::BindActor {
+            authority_key: key_of(&revoked_agent),
+            actor_ref: EntityId::now(),
+            actor_class: "agent".to_owned(),
+            epoch: 1,
+        },
+        &binder,
+        &owner,
+    );
+    let revocation = signed(
+        Some(vault_id),
+        3,
+        Some(&binding),
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&revoked_agent),
+        },
+        &owner,
+    );
+
+    let in_order = install_receiving(&[
+        &genesis,
+        &enrol_binder,
+        &enrol_revoked,
+        &binding,
+        &revocation,
+        &higher_binding,
+    ]);
+    let reversed = install_receiving(&[
+        &genesis,
+        &enrol_binder,
+        &enrol_revoked,
+        &higher_binding,
+        &binding,
+        &revocation,
+    ]);
+
+    let installs = [
+        ("I (binding first)", &in_order),
+        ("J (binding last)", &reversed),
+    ];
+    for (name, install) in installs {
+        assert!(
+            !is_live(&install.fold, &key_of(&revoked_agent)),
+            "install {name} must hold the revoked agent revoked; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+        assert!(
+            is_live(&install.fold, &key_of(&binder)),
+            "install {name} holds the binding agent live; issues {:?}",
+            install.fold.issues
+        );
+    }
+    assert!(
+        applied(&in_order.fold).contains(&hash_of(&binding))
+            && applied(&in_order.fold).contains(&hash_of(&revocation)),
+        "install I applies the binding and the revocation; puts {:?}, issues {:?}",
+        in_order.puts,
+        in_order.fold.issues
+    );
+}
+
+/// A re-root on another signer's row past the floor: the same rows as the
+/// test above, with the owner handing the vault to a fresh owner key on B's
+/// lower binding in place of the revocation. Both installs must settle the
+/// handoff: every key from before it revoked, the successor live.
+#[test]
+fn a_reroot_on_another_signers_row_past_the_floor_holds_in_either_arrival_order() {
+    let owner = SigningKey::from_bytes(&[171; 32]);
+    let binder = SigningKey::from_bytes(&[172; 32]);
+    let agent = SigningKey::from_bytes(&[173; 32]);
+    let successor = SigningKey::from_bytes(&[174; 32]);
+    let (genesis, vault_id) = genesis(&owner, 175);
+    let enrol_binder = enrolment(vault_id, &genesis, &owner, 1, &binder);
+    let enrol_agent = enrolment(vault_id, &enrol_binder, &owner, 2, &agent);
+    let binding = cosigned(
+        vault_id,
+        1,
+        &enrol_agent,
+        AuthorityOp::BindActor {
+            authority_key: key_of(&binder),
+            actor_ref: EntityId::now(),
+            actor_class: "agent".to_owned(),
+            epoch: 1,
+        },
+        &binder,
+        &owner,
+    );
+    let higher_binding = cosigned(
+        vault_id,
+        10,
+        &enrol_agent,
+        AuthorityOp::BindActor {
+            authority_key: key_of(&agent),
+            actor_ref: EntityId::now(),
+            actor_class: "agent".to_owned(),
+            epoch: 1,
+        },
+        &binder,
+        &owner,
+    );
+    let handoff = signed(
+        Some(vault_id),
+        3,
+        Some(&binding),
+        AuthorityOp::ReRoot {
+            new_device: device(key_of(&successor), ROLE_OWNER | ROLE_ADMIN),
+        },
+        &owner,
+    );
+
+    let in_order = install_receiving(&[
+        &genesis,
+        &enrol_binder,
+        &enrol_agent,
+        &binding,
+        &handoff,
+        &higher_binding,
+    ]);
+    let reversed = install_receiving(&[
+        &genesis,
+        &enrol_binder,
+        &enrol_agent,
+        &higher_binding,
+        &binding,
+        &handoff,
+    ]);
+
+    let installs = [
+        ("I (binding first)", &in_order),
+        ("J (binding last)", &reversed),
+    ];
+    for (name, install) in installs {
+        for (label, key) in [("owner", &owner), ("binder", &binder), ("agent", &agent)] {
+            assert!(
+                !is_live(&install.fold, &key_of(key)),
+                "install {name} must hold the pre-handoff {label} revoked; puts {:?}, issues {:?}",
+                install.puts,
+                install.fold.issues
+            );
+        }
+        assert!(
+            is_live(&install.fold, &key_of(&successor)),
+            "install {name} holds the successor live; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+        assert!(
+            applied(&install.fold).contains(&hash_of(&binding))
+                && applied(&install.fold).contains(&hash_of(&handoff)),
+            "install {name} applies B's lower binding and the handoff on it; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+    }
+}
+
+/// An enrolment on another signer's binding past the floor (the residual of
+/// [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]): the same rows as the
+/// revocation test above, with the owner enrolling agent W on B's lower
+/// binding in place of the revocation. Install J receives the higher
+/// binding first, so the lower one reaches it past B's floor. W must be live
+/// there as on install I, and both installs apply the same rows.
+#[test]
+fn an_enrolment_on_another_signers_binding_past_the_floor_holds_in_either_arrival_order() {
+    let owner = SigningKey::from_bytes(&[181; 32]);
+    let binder = SigningKey::from_bytes(&[182; 32]);
+    let agent = SigningKey::from_bytes(&[183; 32]);
+    let enrolled = SigningKey::from_bytes(&[184; 32]);
+    let (genesis, vault_id) = genesis(&owner, 185);
+    let enrol_binder = enrolment(vault_id, &genesis, &owner, 1, &binder);
+    let enrol_agent = enrolment(vault_id, &enrol_binder, &owner, 2, &agent);
+    let binding = cosigned(
+        vault_id,
+        1,
+        &enrol_agent,
+        AuthorityOp::BindActor {
+            authority_key: key_of(&binder),
+            actor_ref: EntityId::now(),
+            actor_class: "agent".to_owned(),
+            epoch: 1,
+        },
+        &binder,
+        &owner,
+    );
+    let higher_binding = cosigned(
+        vault_id,
+        10,
+        &enrol_agent,
+        AuthorityOp::BindActor {
+            authority_key: key_of(&agent),
+            actor_ref: EntityId::now(),
+            actor_class: "agent".to_owned(),
+            epoch: 1,
+        },
+        &binder,
+        &owner,
+    );
+    let enrol_on_binding = enrolment(vault_id, &binding, &owner, 3, &enrolled);
+
+    let in_order = install_receiving(&[
+        &genesis,
+        &enrol_binder,
+        &enrol_agent,
+        &binding,
+        &enrol_on_binding,
+        &higher_binding,
+    ]);
+    let reversed = install_receiving(&[
+        &genesis,
+        &enrol_binder,
+        &enrol_agent,
+        &higher_binding,
+        &binding,
+        &enrol_on_binding,
+    ]);
+
+    let installs = [
+        ("I (binding first)", &in_order),
+        ("J (binding last)", &reversed),
+    ];
+    for (name, install) in installs {
+        assert!(
+            is_live(&install.fold, &key_of(&enrolled)),
+            "install {name} holds the agent the owner enrolled on B's lower binding; puts {:?}, \
+             issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+    }
+    let all = [
+        &genesis,
+        &enrol_binder,
+        &enrol_agent,
+        &binding,
+        &enrol_on_binding,
+        &higher_binding,
+    ]
+    .into_iter()
+    .map(hash_of)
+    .collect::<BTreeSet<_>>();
+    assert_eq!(
+        applied(&in_order.fold),
+        all,
+        "install I applies all six rows; issues {:?}",
+        in_order.fold.issues
+    );
+    assert_eq!(
+        applied(&reversed.fold),
+        all,
+        "install J applies the same rows as install I; puts {:?}, issues {:?}",
+        reversed.puts,
+        reversed.fold.issues
+    );
+}

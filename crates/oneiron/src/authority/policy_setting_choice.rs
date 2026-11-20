@@ -1,7 +1,8 @@
 //! Folds every signed act on a vault setting (FIX 4624, FIX 5660): the
-//! owner's dreamer wake policy, inference defaults and room-thread admin
-//! switches, and each agent's free-time policy, set by the owner or by an
-//! agent whose Grant names it.
+//! owner's catalogue settings and the settings whose own doors still sign
+//! (the dreamer wake policy, inference defaults, room-thread admin switches,
+//! ...), and each agent's free-time policy, set by the owner or by an agent
+//! whose Grant names it.
 //!
 //! The setting itself is a local row of the install that changed it; the
 //! signed act is the account every machine the owner admits folds and
@@ -20,7 +21,9 @@
 //! none (contract §4, [`super::carried_act`]).
 //!
 //! The doors ([`Vault::record_policy_setting_op_in_txn`]) sign the act in
-//! the setting's own write, best effort ([`super::carried_act`]).
+//! the setting's own write, best effort ([`super::carried_act`]): the
+//! setting primitive's `set_setting` for an owner's change that names its
+//! act surface, and each older setting's own door.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -30,8 +33,8 @@ use crate::error::Result;
 
 use super::machine_standing::InstallCounted;
 use super::owner_choice::{
-    FoldedOwnerChoice, OwnerChoiceOp, OwnerChoiceState, folded_owner_choices, owner_choice_landing,
-    refused_owner_choices,
+    FoldedOwnerChoice, OwnerChoiceLanding, OwnerChoiceOp, OwnerChoiceState, folded_owner_choices,
+    owner_choice_landing, refused_owner_choices,
 };
 use super::*;
 
@@ -90,12 +93,15 @@ pub(super) fn apply_policy_setting(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let op = OwnerChoiceOp {
         act: &set.act,
         machine: set.machine,
         choice: set.value.as_ref(),
         context: POLICY_SETTING_REVISION_CONTEXT,
+        needs_proof_off_the_line,
+        persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
         state,
@@ -106,8 +112,11 @@ pub(super) fn apply_policy_setting(
         counting,
         restriction_only,
     )?;
+    // A waiting act is no agent's act in force: the owner's confirm is his
+    // own act (row CARRIER-OWNER-PROOF).
+    let waits = matches!(landing, OwnerChoiceLanding::Waiting { .. });
     state.policy_settings.land(landing);
-    if let Some(agent) = super::carried_act::AgentCarriedAct::of(&set.act, entry.ts) {
+    if !waits && let Some(agent) = super::carried_act::AgentCarriedAct::of(&set.act, entry.ts) {
         state.agent_carried_acts.insert(hash, agent);
     }
     Ok(())
@@ -122,7 +131,7 @@ pub(super) fn folded_policy_settings(
 ) -> FoldedPolicySettings {
     FoldedPolicySettings {
         targets: folded_owner_choices(state, &state.policy_settings, pin, counted),
-        refused: refused_owner_choices(&state.policy_settings).clone(),
+        refused: refused_owner_choices(&state.policy_settings).to_btree_set(),
     }
 }
 
@@ -132,7 +141,9 @@ pub(crate) struct PolicySettingAct {
     /// The act, its `seen` read by [`Vault::policy_setting_revision_in_txn`]
     /// in the same write.
     pub(crate) act: OwnerAct,
-    pub(crate) setting: PolicySetting,
+    /// The setting's wire name: a catalogue key's name, or a
+    /// [`PolicySetting`]'s [`PolicySetting::wire`] text.
+    pub(crate) setting: String,
     /// BLAKE3 over the value the act replaced, as JSON.
     pub(crate) prior: [u8; 32],
     /// BLAKE3 over the value it left, as JSON; `None` for a clear.

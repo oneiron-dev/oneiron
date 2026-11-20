@@ -11,8 +11,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/decide.rs` | src | m | 2 struct · 1 enum · 1 fn | Decided, FoundFit, FoundRow | Which stored row a read takes its value from: one order for every key |
+| `src/decide.rs` | src | m | 2 struct · 2 enum · 2 fn | Decided, FoundFit, FoundRow, Met | Which stored row a read takes its value from: one order for every key |
 | `src/key.rs` | src | s | 1 struct · 6 fn | RowKey | The stored key of one setting row: `name 0x00 item 0x00 mode scope` |
-| `src/lib.rs` | src | s | 2 struct · 6 enum · 2 fn · 4 re-export | FitCell, ReadBy, Resolved, Restore, Setter, SettingMode, SettingSource, SettingSync | The Setting vocabulary below the engine (DESIGN 15-setting-primitive section 1.2): a Setting is a stored… |
-| `src/scope.rs` | src | s | 2 enum · 9 fn · 1 const | ScopeKind, SettingScope | Where a stored row applies, and the chain of scopes a read walks |
-| `src/value.rs` | src | s | 1 struct · 1 trait · 5 fn | EncodedValue, SettingValue | The contract every stored setting value meets |
+| `src/lib.rs` | src | s | 2 struct · 6 enum · 2 fn · 5 re-export | FitCell, ReadBy, Resolved, Restore, Setter, SettingMode, SettingSource, SettingSync | The Setting vocabulary below the engine (DESIGN 15-setting-primitive section 1.2): a Setting is a stored… |
+| `src/order.rs` | src | m | 4 enum · 3 trait · 21 fn | AbsentEnd, ChainOrder, ChangeDirection, EachOrder, Order, Quorum, SetOrder | How a key says which side of a change is safe (DESIGN 15-setting-primitive section 1.5, "The order"): one… |
+| `src/scope.rs` | src | m | 2 enum · 9 fn · 2 const | ScopeKind, SettingScope | Where a stored row applies, and the chain of scopes a read walks |
+| `src/value.rs` | src | s | 1 struct · 1 trait · 3 fn | EncodedValue, SettingValue | The contract every stored setting value meets |
+| `tests/scope_kind_register.rs` | test | s | — | — | `ScopeKind` is a Register (`#[derive(Register)]`, ratchet metric 8): the names it stores and sends are the… |

@@ -35,19 +35,11 @@ impl<'vault> ScopedRead<'vault> {
         })
     }
 
-    /// The same final retrieval predicate for direct hits and graph nodes.
-    pub(super) fn is_entity_retrievable_with_policy_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        policy: &PolicyManifestResolution,
-        filter: &ResolvedRetrievalFilter,
-        id: &EntityId,
-    ) -> Result<bool> {
-        self.is_entity_retrievable_held_in(txn, policy, filter, id, &HeldAuthority::default())
-    }
-
-    /// [`Self::is_entity_retrievable_with_policy_in`] under the authority one
-    /// serving txn holds for all its rows (FIX 7462).
+    /// The same final retrieval predicate for direct hits and graph nodes,
+    /// under the authority one serving txn holds for all its rows (FIX 7462).
+    /// Every caller holds the key's own floor and its live Grants
+    /// (`held_for`), never the unknown request (FIX-LIST
+    /// SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS).
     pub(super) fn is_entity_retrievable_held_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -62,6 +54,17 @@ impl<'vault> ScopedRead<'vault> {
         let Some(row) = self.entity_record_in(txn, id)? else {
             return Ok(false);
         };
+        // A secret is a value used under a door or a lease, never a fact
+        // retrieved (ARCH-0069:8): a retrieval drops a custody row, so one
+        // sealed row neither fails the whole read nor tells the reader that a
+        // secret was just registered (FIX RECALL-CUSTODY-ROW-FAILS-WHOLE-READ).
+        // A graph read anchored at a custody id reads it as absent, and no
+        // receipt counts it (`note::countable_read_suppression`). A named read
+        // of the row (point, version, hydrate) still meets the row gate's loud
+        // seal.
+        if row.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+            return Ok(false);
+        }
         if !self.is_entity_raw_readable_held_in(
             txn,
             policy,
@@ -69,6 +72,20 @@ impl<'vault> ScopedRead<'vault> {
             &row.encode(),
             filter,
             authority,
+        )? {
+            return Ok(false);
+        }
+        // A room's row and its turns are the room's structure: a hit shows
+        // only to a reader the room itself admits, as every door that serves
+        // it does (L9-52, Engine RULING L9-52-ROOM-STRUCTURE = A).
+        if matches!(
+            row.entity_type,
+            crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_CONVERSATION
+        ) && !self.vault.room_structure_admitted_held_in(
+            self,
+            txn,
+            id,
+            authority.room_verdicts(),
         )? {
             return Ok(false);
         }
@@ -137,7 +154,8 @@ impl<'vault> ScopedRead<'vault> {
 impl crate::ports::PprNodeVisibility for RetrievalVisibility<'_, '_> {
     fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
         // The held authority is the walk's transaction's; a node checked in
-        // any other transaction loads its own.
+        // any other transaction loads its own, asking what the walk asked
+        // (FIX 7528).
         if std::ptr::eq(txn, self.txn) {
             return self.scoped.is_entity_retrievable_held_in(
                 txn,
@@ -147,7 +165,12 @@ impl crate::ports::PprNodeVisibility for RetrievalVisibility<'_, '_> {
                 &self.held,
             );
         }
-        self.scoped
-            .is_entity_retrievable_with_policy_in(txn, &self.policy, &self.filter, id)
+        self.scoped.is_entity_retrievable_held_in(
+            txn,
+            &self.policy,
+            &self.filter,
+            id,
+            &self.held.for_another_txn(),
+        )
     }
 }

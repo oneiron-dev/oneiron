@@ -190,12 +190,18 @@ pub(crate) async fn write_core_batch(
     input: CoreBatchWriteInput,
     door: &'static str,
 ) -> MemoryResult<CoreBatchWriteReceipt> {
-    let commit = if auth.is_owner_grade() {
+    // Only the vault's owner commits as the owner: a self-hosted root or the
+    // dev mode acting as him, or a slip the owner door proves is his own. A
+    // full-scope slip another holder carries is a scope, not ownership, so
+    // its batch commits below owner (OWNER-GRADE-IS-NOT-OWNERSHIP), and its
+    // TURNs are not the platform's: one proof decides both.
+    let is_owner = crate::api::owner_routes::owner(auth, server).is_ok();
+    let commit = if is_owner {
         CoreBatchCommit::Owner
     } else {
         CoreBatchCommit::BelowOwner
     };
-    let announcement = crate::api::announcement_authority(server, auth);
+    let announcement = crate::api::owner_announcement_authority(is_owner);
     let writer = credential_writer(server, auth);
     let vault = Arc::clone(&server.vault);
     let auth = auth.clone();
@@ -220,7 +226,9 @@ pub(crate) async fn write_core_batch(
 /// grants no read, the read its target key gives, which judges what it may
 /// write to without asking the read verb (`Vault::credential_target_key`),
 /// where its connection sits; unbound when that leaves no bounds to judge.
-/// An owner-grade caller whose read is refused writes unbound, as before.
+/// An owner-grade caller whose read is refused writes unbound, as before,
+/// except a hosted operator's root, which keeps its typed support-grant
+/// refusal instead (FIX 2222): it acts as nobody and never writes unbound.
 /// Every other refusal of the read is the error. It is built before any
 /// write opens, so no read snapshot opens inside a writer.
 pub(crate) fn core_write_lane<'a>(
@@ -231,6 +239,15 @@ pub(crate) fn core_write_lane<'a>(
         Ok(read) => return Ok(CoreWriteLane::Read(read)),
         Err(refused) => refused,
     };
+    // A hosted operator's root acts as nobody (FIX 2222): it keeps the
+    // typed support-grant refusal its read got, ahead of the owner-grade
+    // unbound path below. Every other answer of the host resolver keeps
+    // its own path (FIX 8139).
+    if let Some(Err(error @ oneiron::Error::HostActionRequiresSupportGrant)) =
+        crate::api::host_action::host_action_of(vault, auth)
+    {
+        return Err(crate::api::host_action::host_action_refusal(error));
+    }
     if auth.is_owner_grade() {
         return Ok(CoreWriteLane::Unbound);
     }

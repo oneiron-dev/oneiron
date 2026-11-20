@@ -295,12 +295,14 @@ fn base_leak_sweep_every_reader_family_sees_no_overlay_rows() -> Result<()> {
 /// in the store that the validators would have refused — which is exactly the
 /// state the census below has to be honest about.
 fn plant_raw_claim_row(vault: &Vault, id: &EntityId, body: &[u8]) -> Result<()> {
-    let mut raw = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + body.len());
-    raw.push(crate::registry::ENTITY_TYPE_CLAIM);
-    raw.extend_from_slice(&1_u64.to_be_bytes()); // occurred.start
-    raw.extend_from_slice(&1_u64.to_be_bytes()); // occurred.end
-    raw.extend_from_slice(&1_u64.to_be_bytes()); // learned_at
-    raw.extend_from_slice(body);
+    // The full 33-byte header: occurred start/end, learned_at, row_version.
+    let raw = crate::test_util::entity_record(
+        crate::registry::ENTITY_TYPE_CLAIM,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        1,
+        body,
+    );
     vault.with_write_txn(|wtxn| {
         vault.store.entities.put(wtxn, id.as_bytes(), &raw)?;
         let type_key = crate::store::Store::encode_type_key(crate::registry::ENTITY_TYPE_CLAIM, id);
@@ -545,8 +547,7 @@ fn off_record_turns_stay_unextractable_after_mode_flip() -> Result<()> {
 }
 
 fn telemetry_config() -> VaultConfig {
-    VaultConfig {
-        retrieval_telemetry_capture: true,
-        ..VaultConfig::default()
-    }
+    let mut config = VaultConfig::default();
+    config.retrieval_telemetry_capture = true;
+    config
 }

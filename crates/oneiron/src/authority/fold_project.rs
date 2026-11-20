@@ -18,7 +18,9 @@ pub(super) struct Settled<'a> {
     /// Already filtered to the settled branches.
     pub(super) revoke_facts: &'a RevokeFacts,
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
+    pub(super) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    pub(super) crossed_revocations: BTreeSet<AuthorityEntryHash>,
     pub(super) unsettled: bool,
     pub(super) counted_ancestor_pairs: u64,
     pub(super) issues: Vec<AuthorityFoldIssue>,
@@ -97,7 +99,9 @@ pub(super) fn project_once(
         by_hash,
         revoke_facts,
         retired_keys,
+        handoff_or_appointment_retired_keys,
         closed_handoffs,
+        crossed_revocations,
         unsettled,
         counted_ancestor_pairs,
         mut issues,
@@ -123,9 +127,19 @@ pub(super) fn project_once(
                 device.revoked = true;
             }
         }
+        if !state
+            .roster
+            .values()
+            .any(|device| !device.revoked && device.roles & ROLE_OWNER != 0)
+        {
+            issues.push(AuthorityFoldIssue::NoRootKey);
+        }
     }
     let machines = merged.as_ref().map_or_else(BTreeMap::new, |state| {
         super::machine_claims::folded_machines(state, unsettled)
+    });
+    let held_machine_answers = merged.as_ref().map_or_else(BTreeMap::new, |state| {
+        super::owner_proof::listed_held_answers(state, &machines)
     });
     // A key is judged in this install's final trust set: the pin while the
     // fold holds its root, as the install sets it, else the roster.
@@ -185,57 +199,74 @@ pub(super) fn project_once(
         valid_entries,
         roster: merged
             .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.roster.clone()),
+            .map_or_else(BTreeMap::new, |state| state.roster.to_btree_map()),
         retired_keys,
+        handoff_or_appointment_retired_keys,
         host_custody: merged
             .as_ref()
             .map_or_else(BTreeSet::new, super::machine_profile::host_custody_closure),
+        passkey_limited_keys: merged.as_ref().map_or_else(BTreeSet::new, |state| {
+            state
+                .roster
+                .keys()
+                .filter(|key| state.passkey_limited(key))
+                .cloned()
+                .collect()
+        }),
         closed_handoffs,
+        crossed_revocations,
         genesis_fragile: merged.as_ref().is_some_and(|state| {
             state.genesis_recovery_dismissed && !state.recovery_redundancy_established
         }),
         federation_pacts: merged
             .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.federation_pacts.clone()),
-        federation_confirms: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.federation_confirms.clone()),
-        critical_write_confirms: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.critical_write_confirms.clone()),
+            .map_or_else(BTreeMap::new, |state| state.federation_pacts.to_btree_map()),
+        federation_confirms: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+            state.federation_confirms.to_btree_map()
+        }),
+        critical_write_confirms: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+            state.critical_write_confirms.to_btree_map()
+        }),
         consumed_critical_write_confirm_nonces: merged
             .as_ref()
             .map_or_else(BTreeSet::new, |state| {
-                state.consumed_critical_write_confirm_nonces.clone()
+                state.consumed_critical_write_confirm_nonces.to_btree_set()
             }),
         conflicted_critical_write_confirms: merged.as_ref().map_or_else(BTreeSet::new, |state| {
-            state.conflicted_critical_write_confirms.clone()
+            state.conflicted_critical_write_confirms.to_btree_set()
         }),
         federation_grant_bindings: merged.as_ref().map_or_else(BTreeMap::new, |state| {
-            state.federation_grant_bindings.clone()
+            crate::authority::fold_state::to_btree_set_map(&state.federation_grant_bindings)
         }),
         actor_bindings,
         machines,
-        pinned_root: None,
-        root_anchors: merged
+        held_machine_answers,
+        restored_enrolments: merged
             .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.root_anchors.clone()),
+            .map_or_else(BTreeMap::new, super::restored_join::listed),
+        waiting_owner_choices: merged.as_ref().map_or_else(BTreeSet::new, |state| {
+            super::owner_proof::asking_owner_choices(state)
+        }),
+        pinned_root: None,
+        root_anchors: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+            crate::authority::fold_state::to_btree_set_map(&state.root_anchors)
+        }),
         anchor_entries: merged
             .as_ref()
-            .map_or_else(BTreeSet::new, |state| state.anchor_entries.clone()),
+            .map_or_else(BTreeSet::new, |state| state.anchor_entries.to_btree_set()),
         accepted_roster_marks,
         worlds: merged.as_ref().map_or_else(BTreeMap::new, |state| {
             super::world_privacy::folded_worlds(state, context.pin, context.machine_standing)
         }),
-        refused_world_edits: merged
-            .as_ref()
-            .map_or_else(BTreeSet::new, |state| state.refused_world_edits.clone()),
+        refused_world_edits: merged.as_ref().map_or_else(BTreeSet::new, |state| {
+            state.refused_world_edits.to_btree_set()
+        }),
         grant_travel: merged.as_ref().map_or_else(BTreeMap::new, |state| {
             super::grant_travel::folded_grants(state, context.pin, context.machine_standing)
         }),
-        refused_grant_travel: merged
-            .as_ref()
-            .map_or_else(BTreeSet::new, |state| state.refused_grant_travel.clone()),
+        refused_grant_travel: merged.as_ref().map_or_else(BTreeSet::new, |state| {
+            state.refused_grant_travel.to_btree_set()
+        }),
         checkpoint_policy: merged.as_ref().map_or_else(Default::default, |state| {
             super::checkpoint_choice::folded_checkpoint_policy(
                 state,
@@ -277,9 +308,9 @@ pub(super) fn project_once(
                 context.machine_standing,
             )
         }),
-        agent_carried_acts: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.agent_carried_acts.clone()),
+        agent_carried_acts: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+            state.agent_carried_acts.to_btree_map()
+        }),
         agent_world_undo,
         home_candidacy: merged.as_ref().map_or_else(BTreeMap::new, |state| {
             super::home_candidacy::folded_home_candidacies(state)
@@ -294,9 +325,9 @@ pub(super) fn project_once(
             super::install_fold::held_back(state, context.pin, context.machine_standing)
         }),
         world_keys,
-        refused_world_keys: merged
-            .as_ref()
-            .map_or_else(BTreeSet::new, |state| state.refused_world_keys.clone()),
+        refused_world_keys: merged.as_ref().map_or_else(BTreeSet::new, |state| {
+            state.refused_world_keys.to_btree_set()
+        }),
         verified_device_revocations: merged.as_ref().map_or_else(BTreeSet::new, |state| {
             revoke_facts.device_revocations(state.vault_id)
         }),

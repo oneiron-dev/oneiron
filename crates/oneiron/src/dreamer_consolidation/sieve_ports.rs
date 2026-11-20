@@ -7,7 +7,10 @@
 //! roles the executor resolves exactly as before: extraction for novelty and
 //! a child's slices, the verdict role for typing. Every port returns its
 //! durable outcomes with each step's request hash and usage, so replay,
-//! traps and charges run as they did. No dedicated runtime is required.
+//! traps and charges run as they did. In the default child port a slice
+//! whose turns' saved tags hold the tagger's relations takes the engine's
+//! relation reply in place of the model call (JointIE, L2-03:
+//! `relation_extraction`); every other slice calls the extraction role.
 
 use std::collections::BTreeMap;
 use std::future::{Future, poll_fn};
@@ -22,6 +25,7 @@ use super::executor::{ConsolidationExecutor, Decider, ExtractionPrompt, ScopedRe
 use super::extracted_people::MintNamespace;
 use super::failure_rules::{FailureRules, Stage};
 use super::provenance::KeptDecision;
+use super::resources::PagePastRoom;
 use super::roles::{DREAMER_EXTRACTION_ROLE, RoleCall};
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
@@ -33,8 +37,9 @@ use crate::model_decision::{DecisionQuestion, EvidenceVersion};
 use crate::model_step_context::{DurableStepContext, StepEffectBinding, StepOutcome};
 use crate::model_step_error::{DurableStepError, DurableStepResult};
 use oneiron_model::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole,
-    LlmRequest, LlmResponse, LlmUsage, ModelTierRef, ResponseFormat, Scope, TierPrecedence,
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, LlmUsage, ModelTierRef, ResponseFormat, Scope,
+    TierPrecedence,
 };
 
 /// A port's work: a future on the caller's own async path.
@@ -237,6 +242,8 @@ pub(in crate::dreamer_consolidation) struct SliceCall<'a> {
     pub(in crate::dreamer_consolidation) labels: &'a CallLabelMap,
     pub(in crate::dreamer_consolidation) scope: &'a Scope,
     pub(in crate::dreamer_consolidation) sources: &'a [EntityId],
+    /// Set when its page fills the lent window's room: no model call.
+    pub(in crate::dreamer_consolidation) page_past_room: Option<PagePastRoom>,
 }
 
 /// One slice's extraction step: its request hash and its outcome.
@@ -414,11 +421,34 @@ async fn read_rung(rung: SieveRungCall<'_>) -> SieveRungRead {
 
 /// A child's slices on its extraction role: each slice's request with the
 /// child's failure rules bound, sealed for the role and checked against its
-/// citations, all run side by side up to `width`.
+/// citations, all run side by side up to `width`. A slice the tagger's
+/// relations cover takes the engine's relation reply through the same
+/// checked step instead, and calls no model (JointIE, L2-03).
 async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult<Vec<SliceStep>> {
     let vault = child.step.vault;
     let mut requests = Vec::with_capacity(child.slices.len());
+    let mut authored = Vec::with_capacity(child.slices.len());
     for slice in &child.slices {
+        if let Some(reply) =
+            super::relation_extraction::relation_reply(vault, slice.labels, &child.citations)?
+        {
+            let request = reply.request(
+                slice.transcript,
+                slice.labels,
+                slice.scope,
+                &child.namespace,
+            );
+            requests.push((request.canonical_hash()?, request));
+            authored.push(Some(reply.backend()));
+            continue;
+        }
+        // A slice whose listing page fills the extraction model's lent
+        // window is refused before any request goes out; a relation reply
+        // above calls no model, so it ran (FIX
+        // DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW).
+        if let Some(past) = slice.page_past_room {
+            return Err(DurableStepError::Engine(past.refusal()));
+        }
         let mut request = ConsolidationExecutor::extraction_request(
             &child.call,
             child.prompt,
@@ -435,6 +465,7 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
             .into_request();
         super::roles::bind_reasoning(vault, child.call.backend, &mut request)?;
         requests.push((request.canonical_hash()?, request));
+        authored.push(None);
     }
     // Each slice's reply check reads the citations its candidates would
     // carry into verification against the branch's own pinned text: a range
@@ -461,10 +492,15 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
         .iter()
         .zip(&checks)
         .zip(&backends)
-        .map(|(((_, request), check), backend)| {
+        .zip(&authored)
+        .map(|((((_, request), check), backend), authored)| {
+            let backend: &dyn LlmBackend = match authored {
+                Some(authored) => authored,
+                None => backend.get(),
+            };
             call_as_step_checked_with_unsaved_usage(
                 child.step,
-                backend.get(),
+                backend,
                 child.guard,
                 request.clone(),
                 check,

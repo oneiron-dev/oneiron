@@ -40,6 +40,8 @@ Claude Code ──SessionStart──▶ oneiron hook session-start ──▶ bin
 Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
             ──▶ oneiron import claude-code <log> --queue   (writes one small file)
                                    serve, every 5 s ──▶ imports the queued log
+            or, to a selected hosted vault (below):
+            ──▶ oneiron mcp ──▶ the hosted vault: vault.imports.hook_transcript
 ```
 
 - **Recall** goes through `oneiron mcp` with the hooks' own read-only
@@ -110,13 +112,56 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
    running vault and binds the newest that answers, within the same
    `--timeout`. With no config there is no
    vault to start: the line says to set one up with `oneiron init`.
+   When `oneiron user-service install` wrote your user service
+   ([below](#the-user-service)), the hook asks your own supervisor to start
+   it instead, and binds it once it answers; the line says its user service
+   started it. If the supervisor refuses the start, the hook starts the
+   vault itself and says why.
 
 `prompt` binds the same way, by the same choice of steps 1 to 3, but never
 starts a server and prints no line of its own. A pinned or selected vault that does not answer one probe gets no recall, so a
 vault that is down costs a prompt at most 2 seconds. `hand-over` queues into the queue of `--config` if you give it;
 else, with a pin, of the running local vault at the pin; with no pin, of the
 newest running local vault; else of the default config. A pin is never
-swapped for another vault.
+swapped for another vault. A Claude Code session's `hand-over` goes by what
+every `session-start` of that session bound (its first start, and each
+resume or compaction). Each start records its binding in
+`hook-sessions/<session id>/` in the run folder: `local` for a pin, a local
+vault or no vault, `hosted-<16 hex digits>` for a hosted vault (its origin
+and id, never a credential), and `unknown` when a resumed or compacted
+session had no record yet. Files are owner-only, only ever added, and kept
+30 days.
+
+- Every start bound your selected hosted vault, and it is still the one
+  selected: the `hand-over` sends the session's log and its subagents' logs
+  (every `agent-*.jsonl` under `<session>/subagents/`, a workflow run's
+  folder included) to that vault through `vault.imports.hook_transcript`, as
+  the credential the selection names, in its own mode, and queues nothing
+  here. It sends only the log of the event's own session
+  (`<session id>.jsonl`).
+- The starts bound a hosted vault that is no longer the one selected, or
+  more than one vault (you selected another vault and resumed, say): the log
+  goes nowhere, not to the vault selected now and not to a local queue, since
+  it holds turns from a vault the other never served. Move it yourself with
+  `oneiron continue --cloud --transcript <log>` or
+  `oneiron import claude-code <log>`.
+- Every start bound a pin, a local vault or no vault, or no start recorded
+  anything (the session started before this record): the log queues locally
+  as above.
+
+The logs are read below Claude Code's `projects` folder, every folder and log
+there opened through no symbolic link, as `serve` reads a queued log. Each
+call fits the carrier of the selection's sign-in: the owner's socket frame
+(about 8 MiB encoded), else the 64 MiB line `oneiron mcp` reads, and at most
+64 MiB inflated. Subagents' logs that do not fit one call with the session's
+log go in further calls, each with the session's log again, which the import
+lands once. A session's log too long for one call is not sent at all; import
+it on the machine it ran on with `oneiron import claude-code <log>`. A send
+the hosted vault does not take (it does not answer, or the credential has no
+Grant naming the verb) is dropped without a word; the session's next
+hand-over sends the whole log again, and the import lands only what is new.
+The hosted vault takes only a Claude Code log: a Codex, Cursor or Copilot
+session queues locally as before.
 
 A pin in `hook.toml` counts only when no one but you can write it: your own
 regular file, not a link, with no write bit for others and, on macOS, no ACL
@@ -126,15 +171,59 @@ credential where they point.
 Starting a server never creates a vault: the hook starts one only when the
 config's `vault_path` holds an initialized vault.
 
+### The user service
+
+Optional. A user service keeps the local vault running between sessions and
+after login, under your own supervisor, so step 2 finds it running in every
+session. The engine has one writer per vault, and the service is it.
+
+```bash
+oneiron user-service install [--config <file>] [--settings-file <file>]
+oneiron user-service remove
+oneiron user-service status
+```
+
+- `install` writes the unit and starts it. On Linux that is the systemd user
+  unit `oneiron.service` in `$XDG_CONFIG_HOME/systemd/user/` (else
+  `~/.config/systemd/user/`), made from the shipped
+  `deploy/systemd/oneiron.service` without its `PrivateTmp=` line (a user
+  manager makes a private `/tmp` only inside a user namespace, which some
+  distributions refuse) and with `Type=exec` for its `Type=notify` (the
+  server reports ready only on a socket systemd passed it, and this service
+  binds its address itself); then `systemctl --user daemon-reload`, `enable`
+  and `restart`. On macOS it is the launchd agent `com.oneiron.server` in
+  `~/Library/LaunchAgents/`, with the shipped agent's label, `RunAtLoad`,
+  `KeepAlive` and logs in `~/Library/Logs/`, but no `Sockets`: the server
+  binds its configured address itself; then `launchctl bootout` and
+  `bootstrap` in your `gui/<uid>` domain. The service runs the `serve` step 4
+  runs: this binary (or `--oneiron <file>`), `serve --config <config>
+  [--settings-file <file>] --vault-path <vault> --host 127.0.0.1`, with the
+  config every command reads when none is named unless you give `--config`,
+  and the vault folder `install` found initialized, made absolute: a relative
+  `vault_path` is read from the folder you run `install` in, and the service
+  starts in another. Run again, it writes the unit anew and restarts the
+  service.
+- `install` refuses when there is no initialized vault to run; when a unit
+  it did not write is at that path (it never overwrites one: each unit it
+  writes carries the line `Written by oneiron user-service install.`); and,
+  the first time, when a `serve` it did not start already runs that vault.
+  Stop that server first.
+- `remove` stops the service (`systemctl --user disable --now`, or
+  `launchctl bootout`) and deletes the unit `install` wrote, never another.
+- Each prints one JSON line, `{"installed", "path", "supervisor"}`.
+
 ### The hosted selection
 
 `oneiron hosted` records the hosted vaults you signed in to on this machine
 and the one selected, in `hosted.json` in your oneiron config folder, beside
 `hook.toml`. The surface you signed in on (the cloud console, the app) runs
-these commands to export its selection; you can run them too. Each prints
-where the selection stands as one JSON line.
+these commands to export its selection; you can run them too. With a terminal
+alone, `login` signs you in itself. Each prints where the selection stands as
+one JSON line.
 
 ```bash
+# Sign in here: the vault's own sign-in, in a browser; you allow it in your inbox.
+oneiron hosted login --origin https://<vault-origin>
 # A paired slip: its own vault id is read from the slip.
 oneiron hosted login --origin https://<vault-origin> --credential-file <file>
 # Your owner sign-in: the surface that wrote the headers file names the vault.
@@ -150,13 +239,39 @@ oneiron hosted status
   default), and then selects it. A slip names its own vault, which must match
   `--vault-id` when you give one. Nothing is recorded when the origin refuses
   or does not answer; the bridge's own refusal is printed on stderr.
+- `login` with no credential file signs in through the hosted vault's own
+  OAuth sign-in, as a native app. It prints a link and opens it in your
+  browser; the page shows a match code, and you allow the request in your
+  Oneiron inbox when the code there is the same. The browser then comes back
+  to a one-time listener on this machine's loopback (`--sign-in-timeout-secs`,
+  600 by default; other traffic to the listener does not extend it), and
+  `login` keeps the sign-in in
+  `hosted-oauth-<origin hash>.json` beside `hosted.json`, readable by you
+  alone. It asks for the `read` tier, and the vault lists it in your consent
+  registry, where one tap revokes it. Its access token lasts an hour and
+  refreshes on use; the refresh token lasts 30 days from its last use.
+  `oneiron mcp --auth-mode oauth --oauth-token-file <file>` reaches the vault
+  with it, over HTTP. The browser must run on the machine that runs `login`.
+  An origin has one spelling (scheme and host in lower case, no default
+  port), so `HTTPS://Vault.example/` is `https://vault.example`. Run again for
+  the same origin, `login` keeps the new sign-in apart until the vault admits
+  it for the vault named; only then does it take the old one's place, and the
+  old one is revoked. A recorded login also revokes and removes an OAuth
+  sign-in the vault's earlier record kept in another file, and drops the
+  record of another vault that named the origin's file (the origin answers
+  for that vault no more). A login that is not recorded leaves the old
+  sign-in as it was.
+  A vault that serves no OAuth sign-in (no https `oauth_resource_indicator`
+  in its server config) answers 404, and `login` says so.
 - `select` takes a recorded vault id, or its first characters when no other
   recorded id begins with them; `--none` selects none. `logout` forgets one
-  recorded vault, or every one. Neither deletes a credential file: the
-  surface that wrote it keeps it.
+  recorded vault, or every one. Neither deletes a credential file another
+  surface wrote: that surface keeps it. `logout` revokes an OAuth sign-in
+  `login` made at its vault, and removes its file, after any refresh in
+  flight has written its tokens; the `.lock` file beside it stays.
 - `status` prints `state` (`not_logged_in`, `no_selection`, `selected` or
   `unavailable`), the selected vault id and every recorded vault: its
-  `origin`, `vault_id`, `auth_mode` (`slip` or `owner`), `credential_file` and
+  `origin`, `vault_id`, `auth_mode` (`slip`, `owner` or `oauth`), `credential_file` and
   `verified_at_ms`, when its origin last admitted the credential (a record,
   never an expiry). It names credential files, never what is in them.
 
@@ -341,7 +456,11 @@ What the hooks already imported stays in your vault, like any import.
   6,000 characters in all, after its one line. Each probe of a vault waits
   at most 2 seconds. `prompt` has the same limits. Claude Code caps a hook's
   added context at 10,000 characters.
-- `hand-over` takes well under a second: it writes one small file. Claude
+- `hand-over` takes well under a second: it writes one small file. To a
+  hosted vault it sends the whole log, gzip-compressed, in as few calls as
+  the sign-in's carrier takes (above), all ending by the same `--timeout`,
+  writing the calls included; a log too long for one call is not sent, and
+  lands only through `oneiron import claude-code <log>`. Claude
   Code gives `SessionEnd` hooks 1.5 seconds unless a hook sets its own
   `timeout`; the `timeout` of 5 above raises that budget to 5 seconds.
 - `serve` looks at the queue every 5 seconds and imports what waits there.

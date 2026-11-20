@@ -3,8 +3,10 @@
 
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
+
 use crate::skill_hub::pack_catalog::HookActorClass;
-use crate::{EdgeActorClass, EntityId, Result};
+use crate::{EdgeActorClass, EntityId, Error, Result};
 
 use super::filter;
 use super::grant::HookGrant;
@@ -101,6 +103,30 @@ impl HookBodyUsage {
 /// runtime did not measure.
 const HOOK_USAGE_UNAVAILABLE: &str = "unavailable";
 
+/// The longest body budget, in milliseconds, a hook selector may name when
+/// the owner sets no cap: today's bound, kept as the default.
+pub const DEFAULT_HOOK_MAX_BUDGET_MS: u32 = 60_000;
+
+/// The `runtime_hooks.hook.max_budget_ms` value: the longest body budget, in
+/// milliseconds, a hook selector may name. An accounting deadline, never a
+/// stop; at least 1; a higher value is a loosening.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(transparent)]
+pub struct HookMaxBudgetMs(pub u32);
+
+impl crate::setting::SettingValue for HookMaxBudgetMs {
+    fn check(self) -> Result<Self> {
+        if self.0 == 0 {
+            return Err(Error::InvalidConfig(
+                "a hook's longest budget is at least one millisecond".into(),
+            ));
+        }
+        Ok(self)
+    }
+}
+
 /// One hook run's clock (FIX 8842). Its caller makes it once, before the
 /// body runs, and reads its overrun once the run has ended. Its deadline,
 /// `budget_ms` after its start, is an accounting deadline, never a stop: an
@@ -114,6 +140,7 @@ const HOOK_USAGE_UNAVAILABLE: &str = "unavailable";
 pub struct HookRunContext {
     started: Instant,
     budget_ms: u32,
+    max_budget_ms: u32,
     deadline: Instant,
     /// Time spent in read and verdict callbacks so far.
     callbacks: Duration,
@@ -123,6 +150,9 @@ pub struct HookRunContext {
     /// How the runtime prepared the body it ran (FIX 9208): `None` until a
     /// runtime that prepares reports it.
     preparation: Option<HookPreparation>,
+    /// Whether the runtime never started the body because it could not
+    /// take the input ([`Self::report_input_not_taken`]).
+    input_not_taken: bool,
 }
 
 impl HookRunContext {
@@ -133,18 +163,34 @@ impl HookRunContext {
         Self {
             started,
             budget_ms,
+            max_budget_ms: DEFAULT_HOOK_MAX_BUDGET_MS,
             deadline: started + Duration::from_millis(u64::from(budget_ms)),
             callbacks: Duration::ZERO,
             read_overruns: 0,
             verdict_overruns: 0,
             usage: HookBodyUsage::NOT_RUN,
             preparation: None,
+            input_not_taken: false,
         }
     }
 
     #[must_use]
     pub const fn budget_ms(&self) -> u32 {
         self.budget_ms
+    }
+
+    /// The longest budget this run admits, from the vault's
+    /// `runtime_hooks.hook.max_budget_ms` key; [`Self::new`] sets the default.
+    #[must_use]
+    pub const fn max_budget_ms(&self) -> u32 {
+        self.max_budget_ms
+    }
+
+    /// This run, admitting budgets up to `max_budget_ms`.
+    #[must_use]
+    pub const fn with_max_budget_ms(mut self, max_budget_ms: u32) -> Self {
+        self.max_budget_ms = max_budget_ms;
+        self
     }
 
     /// The run's accounting deadline: advisory context for a callback (a
@@ -210,6 +256,21 @@ impl HookRunContext {
     #[must_use]
     pub const fn preparation(&self) -> Option<&HookPreparation> {
         self.preparation.as_ref()
+    }
+
+    /// The runtime never started the body because it could not take the
+    /// input: larger than its memory holds, so the body never judged it.
+    /// The post chain's skill-answer refusal reads it
+    /// ([SKILL-POST-HOOK-INPUT-BODY-CHANNEL]).
+    pub fn report_input_not_taken(&mut self) {
+        self.input_not_taken = true;
+    }
+
+    /// Whether the runtime never started the body because it could not
+    /// take the input, so the body never judged it.
+    #[must_use]
+    pub const fn input_not_taken(&self) -> bool {
+        self.input_not_taken
     }
 
     /// The run's overrun, read once its body has ended (its worker joined,

@@ -2,24 +2,27 @@
 
 use serde::{Deserialize, Serialize};
 
-use oneiron_authority::authority::{Direction, Permitted};
+use oneiron_authority::authority::{ActSurface, Direction, Permitted};
 use oneiron_contracts::fingerprint::{Fingerprinter, purposes};
 use oneiron_setting_contract::{ChangeDirection, FoundRow, Order, Quorum, RowKey};
 
 use super::change::record_change_in_txn;
 use super::learned::{checked_weight, fits_in_txn};
+use super::pack::layer_default_in_txn;
 use super::read::{
     Loaded, StoredRow, in_force_of, key_line_grant_in_txn, load_in_txn, names_subject, table_of,
 };
+use super::signed_act::sign_owner_change_in_txn;
 use super::{
-    EncodedValue, Restore, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec,
-    set_line, spec_named,
+    EncodedValue, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, set_line,
+    spec_named, widen_line, widen_line_at, widen_scope_line,
 };
 use crate::Vault;
-use crate::batch::secret_scan::admit_typed;
+use crate::batch::secret_scan::{FieldRule, admit_typed_with_rule};
 use crate::check_in::{
-    CheckInMode, CheckInScope, NoAgentVerdict, OpenPendingCheckIn, VerifiedChain, WaitReason,
-    consume_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn, pending_check_in_in_txn,
+    CheckInMode, CheckInScope, HolderAnswer, NoAgentVerdict, OpenPendingCheckIn, PendingState,
+    VerifiedChain, WaitReason, consume_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn,
+    pending_check_in_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -98,6 +101,11 @@ pub struct SetSetting {
     /// A learned key's seed: its weight in runs, finite and above zero (ARCH-0003
     /// `#learning-settings`). Only a value row of a learned key carries one, and it must.
     pub weight_runs: Option<f64>,
+    /// Where the owner said so (DESIGN 1.2 "The change stream"): an owner's applied change that
+    /// names it is signed as one `PolicySettingSet` in the same write, last and best effort
+    /// (stage 7a-1). Only the owner's change names one. The host names it from where the
+    /// owner's request reached it, never from the request's input.
+    pub surface: Option<ActSurface>,
 }
 
 impl SetSetting {
@@ -115,6 +123,7 @@ impl SetSetting {
             why: None,
             check_in_ref: None,
             weight_runs: None,
+            surface: None,
         }
     }
 }
@@ -142,7 +151,8 @@ impl Vault {
     /// Changes one setting row in one write: the catalogue, the side-row wall on the value, the
     /// value's check, the move rule (DESIGN 1.5, stage 6.0) judged live in this write, the change
     /// row with the move's direction, and the key's hook. Once the write commits, an applied
-    /// change runs the key's `after_commit`.
+    /// change runs the key's `after_commit`. A key that names a write turn takes it before the
+    /// write opens and holds it until then.
     ///
     /// The move rule. The key's order gives the move's direction against the rows this write
     /// sees: on a key whose rows meet, a value row below the vault is judged against the row it
@@ -153,36 +163,57 @@ impl Vault {
     /// - an agent holder of the key (its own Grant line `settings.set:<key>`, a live
     ///   `engine.controls` grant for its class, or its own row of a key its subject sets): no
     ///   widening, so it tightens at once and its loosening asks the user (AUTH-1 = A);
+    /// - an agent with the owner's standing approval for the key or the row's scope (its own
+    ///   Grant line [`super::widen_line`], [`super::widen_line_at`] or
+    ///   [`super::widen_scope_line`]): any move of a value row, so its widening lands without
+    ///   asking, receipted [`Setter::Standing`] (owner principle, 16 Nov 00:44);
     /// - a person, on their own row of a key their subject sets, any move; on another key whose
     ///   rows meet, a narrowing of their own row;
     /// - an agent that is the subject of a row of a key whose rows meet: a narrowing of that row.
     ///
-    /// Over a row the owner (or the engine) set, a non-owner makes no widening: it tightens the
-    /// owner's row and asks to loosen it. On a key that reads one row a non-owner also stays
-    /// clear of the owner's pin and the owner's row, and a learned key's holder keeps inside the
-    /// owner's cap. A move the rule does
-    /// not admit waits for an agent on a check-in under its own live owner Grant that lists
+    /// Over a row the owner (or the engine) set, a non-owner other than one with standing
+    /// approval makes no widening: it tightens the owner's row and asks to loosen it. On a key
+    /// that reads one row a non-owner also stays clear of the owner's pin and, without standing
+    /// approval, of the owner's row, and a learned key's holder keeps inside the owner's cap. A
+    /// move the rule does not admit waits for an agent on a check-in under its own live owner
+    /// Grant that lists
     /// `vault.settings.set`: the door opens it and answers [`SetSettingOutcome::Pending`]; the
     /// same change again, naming the approved check-in, applies once over the row it was asked
     /// over. A person's is refused.
     ///
     /// The value passes the side-row wall before it is checked and stored, as an authored row
     /// does: a secret goes to custody and the row keeps its handle; any other hit refuses the
-    /// change. A value equal to the row's writes nothing.
+    /// change. A value equal to the row's writes nothing, but for the owner's over a row the owner
+    /// did not set: that writes, and the row becomes the owner's, so a non-owner's later move
+    /// meets the owner's row.
+    ///
+    /// An owner's change that names its act surface is signed: last in the write, after the key's
+    /// hook, one `PolicySettingSet` on the key's target, best effort, and the change row names the
+    /// entry (stage 7a-1, [`super::signed_act`]).
     ///
     /// # Errors
     ///
     /// `InvalidConfig` for an unknown key, an item or scope the key does not admit, a value of
     /// another shape or one its check refuses, a moved row, a reason over 1,000 bytes, a
     /// check-in that is not this change's or that was asked over another row, an agent with no
-    /// Grant listing the verb, a person's move the rule does not admit, an engine pin, or a loose
-    /// move of a key whose quorum is all; an owner or person proof that no longer holds; the
-    /// side-row wall's refusal; storage errors.
+    /// Grant listing the verb, a person's move the rule does not admit, an engine pin, a loose
+    /// move of a key whose quorum is all, or an act surface named by a caller other than the
+    /// owner; an owner or person proof that no longer holds; the side-row wall's refusal; storage
+    /// errors.
     pub fn set_setting(
         &self,
         caller: SettingCaller<'_>,
         request: SetSetting,
     ) -> Result<SetSettingOutcome> {
+        // Taken before the write opens, never inside it: a holder of the turn may be waiting on
+        // the writer. An unknown key takes none; the write refuses it.
+        let _turn = match spec_named(&request.key)
+            .ok()
+            .and_then(|spec| spec.write_turn)
+        {
+            Some(turn) => Some((turn.take)(self)?),
+            None => None,
+        };
         self.with_write_txn_grouped_after_commit(
             |txn| self.set_setting_in_txn(txn, caller, &request),
             |outcome| {
@@ -232,15 +263,28 @@ impl Vault {
             mode: request.mode,
             scope: request.scope.clone(),
         };
+        // A row no reader decodes is never stored: a scope id of a reserved pattern encodes to
+        // key bytes `RowKey::decode` refuses (FIX SETTING-SCOPE-RESERVED-ID-NOT-ROUND-TRIPPED).
+        // A clear still runs, so it removes such a row stored before.
+        if request.value.is_some() && RowKey::decode(&key.encode()).as_ref() != Some(&key) {
+            return Err(Error::InvalidConfig(format!(
+                "`{}` has no row at a {} scope whose id no reader decodes",
+                spec.name,
+                request.scope.kind().as_str()
+            )));
+        }
         let value = match request.value.clone() {
             Some(mut json) => {
                 // The side-row wall reads the value before it is encoded (SETTING-ROWS-SIDE-ROW-
-                // WALL = A): a secret goes to custody and the value keeps its handle.
-                admit_typed(
+                // WALL = A): a secret goes to custody and the value keeps its handle. The key's
+                // type fixes each member's shape, so the field rule lifts only text under a
+                // credential name (FIX SETTING-WALL-CREDENTIAL-NAMED-MEMBERS).
+                admit_typed_with_rule(
                     self,
                     txn,
-                    (wall_place(spec), key.encode().as_slice()),
+                    (wall_place(spec).as_str(), key.encode().as_slice()),
                     &mut json,
+                    FieldRule::TextOnly,
                 )?;
                 Some(spec.kind.from_json(json)?)
             }
@@ -256,12 +300,10 @@ impl Vault {
     }
 }
 
-/// Where the side-row wall says it found a secret in a setting value (OF-067).
-const fn wall_place(spec: &SettingSpec) -> &'static str {
-    match spec.restore {
-        Restore::Live => "side:SETTING",
-        Restore::Content => "side:SETTING_CONTENT",
-    }
+/// Where the side-row wall says it found a secret in a setting value (OF-067): `side:` and the
+/// declared name of the table the key's rows live in.
+fn wall_place(spec: &SettingSpec) -> String {
+    format!("side:{}", table_of(spec).decl().name)
 }
 
 /// Runs the `after_commit` of each key whose change applied with a sequence, once per change,
@@ -305,6 +347,17 @@ fn set_in_txn(
     request: &SetSetting,
 ) -> Result<SetSettingOutcome> {
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    if request.surface.is_some() && !matches!(caller, SettingCaller::Owner(_)) {
+        return Err(Error::InvalidConfig(
+            "only the owner's change names where the owner said so: an act surface is the owner's"
+                .into(),
+        ));
+    }
+    if change.key.mode == SettingMode::Carried && change.value.is_some() {
+        return Err(Error::InvalidConfig(
+            "only a move writes a carried row; a set may only clear one".into(),
+        ));
+    }
     if change.key.mode == SettingMode::Pin && matches!(caller, SettingCaller::Engine(_)) {
         return Err(Error::InvalidConfig(
             "the engine sets a value row, never a pin: a pin is the owner's".into(),
@@ -352,10 +405,19 @@ fn set_in_txn(
     let readable = !matches!(prior, Some(None));
     let prior_row = prior.flatten();
     let prior_row_by_owner = prior_row.as_ref().is_some_and(StoredRow::by_owner);
+    // The owner's equal value over a row the owner did not set (a holder's, a subject's, the
+    // engine's, an approved check-in's) writes, and the row becomes the owner's: a later move of a
+    // non-owner then meets the owner's row (FIX SETTING-OWNER-EQUAL-VALUE-OVER-HOLDER-ROW = A).
+    let owner_takes_row = matches!(caller, SettingCaller::Owner(_))
+        && prior_row
+            .as_ref()
+            .is_some_and(|row| !matches!(row.setter, Setter::Owner));
     let prior_weight = prior_row.as_ref().and_then(|row| row.weight_runs);
     let prior_value = prior_row.map(|row| row.value);
-    let unchanged =
-        readable && prior_value.as_ref() == change.value && prior_weight == change.weight_runs;
+    let unchanged = readable
+        && !owner_takes_row
+        && prior_value.as_ref() == change.value
+        && prior_weight == change.weight_runs;
     let by_owner = matches!(caller, SettingCaller::Owner(_) | SettingCaller::Engine(_));
     // Which way the change moves its row, against the rows this write sees (A3: the key's
     // comparator gives the direction). A change that leaves the row as it is moves nothing.
@@ -367,10 +429,11 @@ fn set_in_txn(
         ChangeDirection::Unordered
     };
     // Over a row the owner set, a non-owner makes no widening (DESIGN 1.2 step 4: its value
-    // stays inside the owner's row): it tightens the owner's row, and asks to loosen it.
+    // stays inside the owner's row): it tightens the owner's row, and asks to loosen it. The
+    // owner's standing approval for the key or the scope is the owner's yes to that widening.
     let owners_row = prior_row_by_owner && !by_owner;
     let reading = reading.map(|(setter, permitted)| {
-        if owners_row {
+        if owners_row && !matches!(setter, Setter::Standing { .. }) {
             (setter, permitted.limited_by(Permitted::NoWidening))
         } else {
             (setter, permitted)
@@ -386,8 +449,12 @@ fn set_in_txn(
                 spend_in_txn(
                     vault,
                     txn,
-                    change,
-                    prior_bytes.as_deref(),
+                    &Spend {
+                        change,
+                        replaced: prior_bytes.as_deref(),
+                        over_owners_row: prior_row_by_owner,
+                        moved,
+                    },
                     agent,
                     &check_in,
                     now,
@@ -444,6 +511,8 @@ fn set_in_txn(
             why: request.why.clone(),
             weight_runs: change.weight_runs,
             direction: Some(direction),
+            surface: request.surface,
+            signed: None,
         },
     )?;
     let revision = match change.value {
@@ -467,6 +536,10 @@ fn set_in_txn(
     if let Some(on_change) = change.spec.on_change {
         on_change(vault, txn, &recorded)?;
     }
+    // The signed record goes last, best effort, after every mandatory write (FIX 4624).
+    if let (SettingCaller::Owner(_), Some(owner), Some(surface)) = (caller, by, request.surface) {
+        sign_owner_change_in_txn(vault, txn, change.spec, owner, surface, &recorded);
+    }
     Ok(SetSettingOutcome::Applied {
         sequence: Some(recorded.sequence),
         revision,
@@ -488,9 +561,9 @@ const fn authority_direction(direction: ChangeDirection) -> Direction {
 /// `prior` is the slot's readable value before it, and `by_owner` whether the row the change
 /// leaves counts as the owner's.
 /// - A neutral key's every move is neutral; a key with no order has no safe move.
-/// - On a key whose rows meet, a value row below the vault is a bound, judged against the row it
-///   replaces: an added row only narrows, a changed one is compared with its prior value, and a
-///   clear drops a bound.
+/// - On a key whose rows meet, a value row below the vault, or a row a move carried, is a bound,
+///   judged against the row it replaces: an added row only narrows, a changed one is compared
+///   with its prior value, and a clear drops a bound.
 /// - Any other slot (a vault value row, a pin, every row of a key that reads one row) is judged on
 ///   what its readers read: the walk at the slot's scope before the change against the walk with
 ///   the slot as the change leaves it.
@@ -509,7 +582,7 @@ fn direction_in_txn(
     }
     let no_wider = |a: &EncodedValue, b: &EncodedValue| spec.kind.no_wider(a, b).unwrap_or(false);
     if spec.reads_met()
-        && change.key.mode == SettingMode::Value
+        && matches!(change.key.mode, SettingMode::Value | SettingMode::Carried)
         && change.key.scope != SettingScope::Vault
     {
         return Ok(match (change.value, prior) {
@@ -540,8 +613,9 @@ fn direction_in_txn(
             revision: 0,
         });
     }
-    let (before, _, _) = in_force_of(spec, &loaded, &fits, &chain)?;
-    let (after, _, _) = in_force_of(spec, &after, &fits, &chain)?;
+    let layer = layer_default_in_txn(&vault.store, txn, spec)?;
+    let (before, _, _) = in_force_of(spec, &loaded, &fits, &chain, &layer)?;
+    let (after, _, _) = in_force_of(spec, &after, &fits, &chain, &layer)?;
     Ok(ChangeDirection::of(&after, &before, no_wider))
 }
 
@@ -562,13 +636,18 @@ fn is_slot(row: &Loaded, change: &Change<'_>) -> bool {
 }
 
 /// What `agent` may do to `change`'s row, and in which capacity: A0's reading of the actor, or
-/// `None` when it may do nothing without asking.
+/// `None` when it may do nothing without asking. This is the one place the agent-holder rule
+/// lives.
+/// - With the owner's standing approval for the key or the row's scope
+///   ([`standing_grant_in_txn`]): any move, so its widening lands without asking (owner
+///   principle, 16 Nov 00:44: the ask is the default, and standing approval the owner's opt-out).
 /// - A holder of the key (its own Grant line `settings.set:<key>`, a live `engine.controls`
 ///   Grant for the key's class, or its own row of a key its subject sets) makes no widening: its
 ///   loose move asks the user (AUTH-1 = A).
 /// - The row's own subject, on a key whose rows meet, narrows only.
-/// - Neither, or a pin: nothing. On a key that reads one row a holder also keeps clear of the
-///   owner's rows ([`one_row_bounds_in_txn`]).
+/// - Neither, or a pin: nothing. On a key that reads one row every agent keeps clear of the
+///   owner's pin, and one without standing approval of the owner's rows too
+///   ([`one_row_bounds_in_txn`]).
 fn agent_reading_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -578,6 +657,12 @@ fn agent_reading_in_txn(
     let spec = change.spec;
     if change.key.mode == SettingMode::Pin {
         return Ok(None);
+    }
+    if let Some(grant) = standing_grant_in_txn(vault, txn, agent, change)? {
+        return Ok(
+            one_row_bounds_in_txn(vault, txn, change, StandingApproval::Given)?
+                .then_some((Setter::Standing { grant }, Permitted::AnyMove)),
+        );
     }
     let holder = match key_line_grant_in_txn(vault, txn, agent, &set_line(spec.name))? {
         Some(grant) => Some(Setter::KeyGrant { grant }),
@@ -596,7 +681,43 @@ fn agent_reading_in_txn(
         }
         None => return Ok(None),
     };
-    Ok(one_row_bounds_in_txn(vault, txn, change)?.then_some(reading))
+    Ok(one_row_bounds_in_txn(vault, txn, change, StandingApproval::Absent)?.then_some(reading))
+}
+
+/// The live owner Grant through which `agent` holds the owner's standing approval for
+/// `change`'s row: the key's line ([`widen_line`]), the key's line at the row's scope
+/// ([`widen_line_at`]), or the line of every key at that scope ([`widen_scope_line`]), the
+/// first found in that order. Each is the vault-wide line rule of [`key_line_grant_in_txn`],
+/// checked live in this write, so a revoked Grant ends it at once.
+fn standing_grant_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    agent: EntityId,
+    change: &Change<'_>,
+) -> Result<Option<EntityId>> {
+    let name = change.spec.name;
+    let scope = &change.key.scope;
+    let lines = [
+        Some(widen_line(name)),
+        widen_line_at(name, scope),
+        widen_scope_line(scope),
+    ];
+    for line in lines.into_iter().flatten() {
+        if let Some(grant) = key_line_grant_in_txn(vault, txn, agent, &line)? {
+            return Ok(Some(grant));
+        }
+    }
+    Ok(None)
+}
+
+/// Whether a non-owner's change carries the owner's standing approval, for the bounds of a key
+/// that reads one row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StandingApproval {
+    /// No standing approval: the owner's rows and a learned key's cap bind it.
+    Absent,
+    /// The owner's standing approval: only the owner's pin binds it.
+    Given,
 }
 
 /// What `person` may do to `change`'s row: only a value row at their own `Person` scope. On a
@@ -616,19 +737,23 @@ fn person_reading_in_txn(
         SetBy::Owner | SetBy::Class(_) if change.spec.reads_met() => Permitted::NarrowingOnly,
         SetBy::Owner | SetBy::Class(_) => return Ok(None),
     };
-    Ok(one_row_bounds_in_txn(vault, txn, change)?.then_some((Setter::Subject, permitted)))
+    Ok(
+        one_row_bounds_in_txn(vault, txn, change, StandingApproval::Absent)?
+            .then_some((Setter::Subject, permitted)),
+    )
 }
 
 /// Whether a non-owner's `change` stays clear of the owner's rows where the move rule cannot
 /// judge it (DESIGN 1.2 step 4). On a key whose rows meet, always: a value row there only
 /// narrows what it meets, and the rule judges every move. On a key that reads one row: no owner's
-/// pin on the chain, no row the owner set in the slot, and on a learned key with an order a value
-/// inside the owner's nearest value row at that scope or wider, else inside the catalogue default
-/// (stage 3's holder rule).
+/// pin on the chain; and without the owner's standing approval, no row the owner set in the slot,
+/// and on a learned key with an order a value inside the owner's nearest value row at that scope
+/// or wider, else inside the default the vault accepted (stage 3's holder rule).
 fn one_row_bounds_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     change: &Change<'_>,
+    standing: StandingApproval,
 ) -> Result<bool> {
     let spec = change.spec;
     if spec.reads_met() {
@@ -637,9 +762,19 @@ fn one_row_bounds_in_txn(
     let chain = slot_chain(change)?;
     let item = change.key.item.as_deref();
     let loaded = load_in_txn(&vault.store, txn, spec, &chain, item)?;
-    if loaded.iter().any(|row| {
-        row.found.by_owner && (row.found.mode == SettingMode::Pin || is_slot(row, change))
-    }) {
+    if loaded
+        .iter()
+        .any(|row| row.found.by_owner && row.found.mode == SettingMode::Pin)
+    {
+        return Ok(false);
+    }
+    if standing == StandingApproval::Given {
+        return Ok(true);
+    }
+    if loaded
+        .iter()
+        .any(|row| row.found.by_owner && is_slot(row, change))
+    {
         return Ok(false);
     }
     let Some(value) = change
@@ -661,7 +796,7 @@ fn one_row_bounds_in_txn(
             .unwrap_or(false),
         None => spec
             .kind
-            .no_wider(value, &spec.kind.default_value()?)
+            .no_wider(value, &layer_default_in_txn(&vault.store, txn, spec)?.value)
             .unwrap_or(false),
     })
 }
@@ -747,22 +882,33 @@ fn open_request_in_txn(
         &VerifiedChain::new(&NoAgentVerdict),
         now,
     )?;
+    super::ask::keep_ask_in_txn(vault, txn, &row.id, agent, change.key, change.value)?;
     Ok(SetSettingOutcome::Pending {
         check_in: row.id.to_hex(),
     })
 }
 
-/// Spends the approved check-in `id` for `agent`'s `change` over the row `replaced`, in the
-/// door's writer.
+/// The change an approved check-in spends on: the change, the stored row it replaces, whether
+/// the owner set that row, and which way the change moves it.
+struct Spend<'a, 'b> {
+    change: &'a Change<'b>,
+    replaced: Option<&'a [u8]>,
+    over_owners_row: bool,
+    moved: Direction,
+}
+
+/// Spends the approved check-in `id` for `agent`'s change, in the door's writer: the ask must be
+/// this agent's for this change over the row it replaces, and its yes must come from someone who
+/// could make the change themselves ([`approver_may_make_in_txn`]).
 fn spend_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    change: &Change<'_>,
-    replaced: Option<&[u8]>,
+    spend: &Spend<'_, '_>,
     agent: EntityId,
     id: &EntityId,
     now: u64,
 ) -> Result<()> {
+    let change = spend.change;
     let row = pending_check_in_in_txn(&vault.store, txn, id)?.ok_or(Error::EntityNotFound)?;
     if row.asker != agent
         || row.verb != SET_VERB
@@ -773,6 +919,55 @@ fn spend_in_txn(
             "the check-in is not this agent's ask for this setting change".into(),
         ));
     }
-    consume_pending_check_in_in_txn(vault, txn, id, &effect_digest(change, replaced), now)?;
-    Ok(())
+    if row.eligible_basis().is_some() && !approver_may_make_in_txn(vault, txn, &row.state, spend)? {
+        return Err(Error::InvalidConfig(format!(
+            "the yes on this check-in came from someone who cannot make this change of `{}`: an \
+             agent's change spends the yes of the vault's owner, or of a live person who may make \
+             it on their own row, read now",
+            change.spec.name
+        )));
+    }
+    consume_pending_check_in_in_txn(vault, txn, id, &effect_digest(change, spend.replaced), now)?;
+    super::ask::drop_ask_in_txn(vault, txn, id)
+}
+
+/// Whether the yes in `state` came from someone who could make `spend`'s change themselves, read
+/// live in this write. ARCH-0082 `#ladder`: a holder answers only what it could do itself without
+/// asking; DESIGN 1.2 step 3: "when a holder answers, the same door runs under the holder's
+/// proof". The ladder rechecks only a holder's grant and own check-in for the verb, and the ask
+/// keeps only the effect's digest, so the setting door's own rule is read here: a live owner of
+/// the vault now makes any change; another live person makes what their own reading admits
+/// ([`person_reading_in_txn`]), inside the owner's row as every non-owner is. Any other yes does
+/// not spend: a person who is not, or is no longer, an owner on an owner-set key, a pin or the
+/// owner's row; a yes whose answerer was erased; and any eligibility that is no one's yes.
+fn approver_may_make_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    state: &PendingState,
+    spend: &Spend<'_, '_>,
+) -> Result<bool> {
+    let PendingState::Answered {
+        answer: HolderAnswer::Approve,
+        by: Some(by),
+        ..
+    } = state
+    else {
+        return Ok(false);
+    };
+    if crate::policy_model::owners_in_txn(vault, txn)?.contains(by) {
+        return Ok(true);
+    }
+    if !crate::consent::person_is_live_in_txn(vault, txn, by)? {
+        return Ok(false);
+    }
+    Ok(
+        person_reading_in_txn(vault, txn, spend.change, *by)?.is_some_and(|(_, permitted)| {
+            let permitted = if spend.over_owners_row {
+                permitted.limited_by(Permitted::NoWidening)
+            } else {
+                permitted
+            };
+            permitted.admit(spend.moved).is_some()
+        }),
+    )
 }

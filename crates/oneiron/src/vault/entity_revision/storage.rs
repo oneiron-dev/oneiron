@@ -51,13 +51,16 @@ pub(super) fn state(
     STATE.get(store, txn, id)
 }
 
+/// Every move of a row's live revision passes here, so this is where the
+/// memory timeline records it (L3-39).
 pub(super) fn put_state(
     store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
     value: &RevisionState,
 ) -> Result<()> {
-    STATE.put(store, txn, id, value)
+    STATE.put(store, txn, id, value)?;
+    super::timeline::record_live_revision_in_txn(store, txn, id, value.live)
 }
 
 /// All top-level string leaves are independent text containers. The raw
@@ -112,8 +115,7 @@ pub(super) fn write_doc_row(doc: &LoroDoc, raw: &[u8]) -> Result<()> {
         }
     }
     for (name, text) in fields {
-        doc.get_text(format!("field:{name}"))
-            .update(&text, Default::default())
+        crate::text_diff::set_text_or_replace_span(&doc.get_text(format!("field:{name}")), &text)
             .map_err(|_| Error::InvariantViolation("entity text update"))?;
         names
             .insert(&name, true)
@@ -454,11 +456,66 @@ fn raw_for_revision(
     }
 }
 
+/// Text fields published from a live revision by the idle pass or a room.
+/// Claims keep their index text (`claim::claim_index_text`), not generic
+/// string leaves; a claim that is not surfaceable must not publish.
+pub(crate) fn publication_text_fields(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    live: RevisionRef,
+    entity_type: u8,
+    body: &[u8],
+) -> Result<Option<Vec<(String, String)>>> {
+    let fields = if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+        let claim = crate::write_envelope::claim_body::decode_claim_body(body, true)?;
+        if !crate::claim::claim_surfaceable(&claim) {
+            return Ok(None);
+        }
+        let text = crate::claim::claim_index_text(&claim.predicate, &claim.value);
+        if text.is_empty() {
+            Vec::new()
+        } else {
+            vec![("val".to_owned(), text)]
+        }
+    } else {
+        revision_text_fields(store, txn, id, live, body)?
+    };
+    Ok(Some(fields))
+}
+
+/// Reads fields only for a room row whose live revision still needs to
+/// publish. Births and metadata-only restages need no replacement index.
+pub(crate) fn room_restage_text_fields(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<Vec<(String, String)>>> {
+    let Some(current) = state(store, txn, id)? else {
+        return Ok(None);
+    };
+    if current.live == current.indexed {
+        return Ok(None);
+    }
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+        .ok_or(Error::CorruptedIndex("revision without entity"))?;
+    let live = raw_for_revision(store, txn, id, &raw, None)?;
+    publication_text_fields(
+        store,
+        txn,
+        id,
+        current.live,
+        live[0],
+        &live[ENTITY_METADATA_HEADER_LEN..],
+    )
+}
+
 /// Publishes the revision a room holds pending for `id`. A room indexes what
-/// it stages at once and runs no idle pass, so once it indexes a row it put,
-/// the row's indexed revision is its live one; base keeps its deferred
-/// interval. True when the body is not the one indexed before, so an index
-/// of the row that the room did not restage describes another body.
+/// it stages at once and runs no idle pass: a Put-only restage derives its
+/// text from the live body before publication, while explicit text or vector
+/// writes publish through their own apply. Base keeps its deferred interval.
+/// True when the body is not the one indexed before, so an index of the row
+/// that the room did not restage describes another body.
 pub(crate) fn publish_room_revision(
     store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
@@ -606,6 +663,26 @@ pub(crate) fn entity_owns_revision_in_txn(
     Ok(reference(id, &raw) == revision || FRONTIER.contains(store, txn, &(*id, revision.0))?)
 }
 
+/// Drops `id`'s retained frontier of `revision`, so this store no longer
+/// holds that revision's bytes, as a shallow document adopted by sync lacks
+/// them: the test door of the graph-FS memory fork's `history_not_held`
+/// (L3-39).
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn forget_retained_revision(
+    vault: &Vault,
+    id: &EntityId,
+    revision: RevisionRef,
+) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        FRONTIER.delete(&vault.store, txn, &(*id, revision.0))?;
+        Ok(())
+    })
+}
+
 pub(crate) fn read_entity_revision_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -622,6 +699,61 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
     id: &EntityId,
     mode: ReadMode,
 ) -> Result<Option<Vec<u8>>> {
+    read_revision_from_store_in_txn(vault, store, txn, id, mode, ArchivedRead::Refused)
+}
+
+/// [`read_entity_revision_in_txn`] that also serves a record the vault
+/// cleanup archived. The archive is a local visibility marker that keeps
+/// the record's body and indexes
+/// (`Vault::archive_cleanup_candidate_in_txn`), and the entity linker
+/// sees it (ARCH-0055 §10, resolution sees the archive). The archive's own
+/// deletion mark is read through as the owner's export reads it
+/// ([`crate::ports::raw_exportable_in_txn`]); every other refusal stands: an
+/// unpublished chunk, a deletion shell, a removal, a stale mark, a
+/// legal-hold use limit, and words a deletion withdrew or whose recorded
+/// sources no longer stand.
+pub(crate) fn read_entity_revision_including_archived_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    mode: ReadMode,
+) -> Result<Option<Vec<u8>>> {
+    read_revision_from_store_in_txn(vault, &vault.store, txn, id, mode, ArchivedRead::Served)
+}
+
+/// Whether a revision read serves a record the vault cleanup archived.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArchivedRead {
+    Refused,
+    Served,
+}
+
+impl ArchivedRead {
+    /// Whether the stored row `raw` of `id` may serve: by the raw doors' rule,
+    /// which refuses an archived row as deleted, or, when an archived record
+    /// serves, by the export's, which reads through the archive alone.
+    fn readable_in_txn(
+        self,
+        store: &impl ManifestDbs,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        match self {
+            Self::Refused => crate::ports::raw_readable_in_txn(store, txn, id, raw),
+            Self::Served => crate::ports::raw_exportable_in_txn(store, txn, id, raw),
+        }
+    }
+}
+
+fn read_revision_from_store_in_txn(
+    vault: &Vault,
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    mode: ReadMode,
+    archived: ArchivedRead,
+) -> Result<Option<Vec<u8>>> {
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(None);
     };
@@ -636,7 +768,7 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
         ));
     }
     if crate::origin::lfs::unpublished_lfs_chunk_in_txn(&vault.store, txn, id, header.entity_type)?
-        || vault.archive_tombstone_in_txn(txn, id)?.is_some()
+        || (archived == ArchivedRead::Refused && vault.archive_tombstone_in_txn(txn, id)?.is_some())
         || (raw.len() == ENTITY_METADATA_HEADER_LEN
             && vault
                 .store
@@ -645,7 +777,7 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
         // stand, never serve, at any selected version. A shell's current
         // header carries none.
         || ((raw.len() > ENTITY_METADATA_HEADER_LEN || mode != ReadMode::Live)
-            && !crate::ports::raw_readable_in_txn(store, txn, id, &raw)?)
+            && !archived.readable_in_txn(store, txn, id, &raw)?)
     {
         return Ok(None);
     }
@@ -679,15 +811,22 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
         && let Some(row) =
             super::turn_text::turn_row_for_text_revision_in_txn(vault, store, txn, id, target)?
     {
-        return read_entity_revision_from_store_in_txn(
+        return read_revision_from_store_in_txn(
             vault,
             store,
             txn,
             id,
             ReadMode::Pinned(row),
+            archived,
         );
     }
-    raw_for_revision(store, txn, id, &raw, Some(target)).map(admit)
+    let row = raw_for_revision(store, txn, id, &raw, Some(target))?;
+    // A retained revision names its own subjects: the content about a kept
+    // PERSON stays from use at every version, not only at the current row's.
+    if crate::store::legal_hold::kept_person_content_row_in_txn(store, txn, id, &row)? {
+        return Ok(None);
+    }
+    Ok(admit(row))
 }
 
 /// Whether the revision the ledger indexes `id` at is a retained state of its
@@ -714,15 +853,42 @@ pub(crate) fn indexed_revision_is_document_state_in_txn(
     ))
 }
 
+/// The content hash a live read issues `id`'s short reference with, for its
+/// stored row `raw`: the hash of the row the read serves
+/// ([`raw_for_revision`]), a document-backed row's document projection and
+/// never its stored pointer. `None` for a NOTE, whose live read hashes its
+/// stored core, and for a row no live read serves (its document is not
+/// live); the stored row's hash stands for those.
+///
+/// # Errors
+///
+/// Storage and corruption errors reading the row's document.
+pub(crate) fn live_read_short_content_hash_in_txn(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<Option<u8>> {
+    if raw.first() == Some(&crate::registry::ENTITY_TYPE_NOTE) {
+        return Ok(None);
+    }
+    let live = match raw_for_revision(store, txn, id, raw, None) {
+        Ok(live) => live,
+        Err(Error::EntityNotFound) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    crate::store::revision_content_hash_in_txn(store, txn, id, &live).map(Some)
+}
+
 /// Moves `id`'s short-id rows to the content hash a live read issues its
 /// short reference with, in the writer's transaction (FIX
 /// SUMMARY-SHORT-REF-INDEX). A live read hashes the row it serves
 /// ([`raw_for_revision`]): a document-backed row's document projection.
 /// A document birth may reorder its fields (the text field follows the
 /// record's other fields) and an edit changes its text, while the batch
-/// writer indexed the body the row was put with. A row with no short id or
-/// no live document is left as it is, and so is a NOTE: its live read
-/// hashes its stored core.
+/// writer indexed the body the row was put with. A row with no short id is
+/// left as it is, and so is one [`live_read_short_content_hash_in_txn`]
+/// gives no hash for.
 ///
 /// # Errors
 ///
@@ -740,16 +906,9 @@ pub(crate) fn refresh_live_short_id_in_txn(
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(());
     };
-    if raw.first() == Some(&crate::registry::ENTITY_TYPE_NOTE) {
+    let Some(content_hash) = live_read_short_content_hash_in_txn(store, txn, id, &raw)? else {
         return Ok(());
-    }
-    // A row no live read serves (its document is not live) issues no ref.
-    let live = match raw_for_revision(store, txn, id, &raw, None) {
-        Ok(live) => live,
-        Err(Error::EntityNotFound) => return Ok(()),
-        Err(error) => return Err(error),
     };
-    let content_hash = crate::store::revision_content_hash_in_txn(store, txn, id, &live)?;
     if content_hash == old_content_hash {
         return Ok(());
     }
@@ -820,7 +979,7 @@ pub(crate) fn remove_entity_revisions(
         IDENTITY.delete(store, txn, revision)?;
     }
     FRONTIER.delete_from(store, txn, id.as_bytes())?;
-    Ok(())
+    super::timeline::remove_timeline_in_txn(store, txn, id)
 }
 
 impl Vault {
@@ -833,6 +992,25 @@ impl Vault {
         // The live revision of a file-plane ASSET reads as its body, as
         // `get_raw` reads it (FIX 3677).
         Ok(Some(self.materialized_revision_in_txn(&txn, id, raw)?))
+    }
+
+    /// The live revision of `id`, as [`revision_for_body_hash_in_txn`] names
+    /// it when the live body matches: its revision state's live entry, else
+    /// the reference its stored row names. `None` when no row is stored.
+    pub(crate) fn live_revision_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<RevisionRef>> {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?
+        else {
+            return Ok(None);
+        };
+        let current = state(&self.store, txn, id)?;
+        Ok(Some(current.map_or_else(
+            || reference(id, &raw),
+            |current| current.live,
+        )))
     }
 
     /// Returns the current exact revision and retains its Loro frontier.
@@ -850,4 +1028,125 @@ fn unix_millis_at(now: std::time::SystemTime) -> u64 {
         .as_millis()
         .try_into()
         .unwrap_or(u64::MAX)
+}
+
+/// Puts a revision state for the checkpoint-pins door: `id`'s ledger row
+/// with fixed refs and time.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_entity_revision_state_in_txn(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    live: [u8; 16],
+    indexed: [u8; 16],
+    changed_at_ms: u64,
+    has_doc: bool,
+) -> Result<()> {
+    STATE.put(
+        store,
+        txn,
+        id,
+        &RevisionState {
+            live: RevisionRef(live),
+            indexed: RevisionRef(indexed),
+            changed_at_ms,
+            has_doc,
+        },
+    )
+}
+
+/// Puts a revision document for the checkpoint-pins door: `id`'s Loro
+/// snapshot bytes, built with a fixed peer and fixed commit times.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_entity_revision_doc_in_txn(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    bytes: &[u8],
+) -> Result<()> {
+    DOC.put(store, txn, id, &bytes.to_vec())
+}
+
+/// Puts a retained frontier for the checkpoint-pins door: `revision`'s
+/// entry of `id`'s ledger.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_entity_revision_frontier_in_txn(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    revision: [u8; 16],
+    value: &[u8],
+) -> Result<()> {
+    FRONTIER.put(store, txn, &(*id, revision), &value.to_vec())
+}
+
+/// The revision ref of `bytes` held by `id`, as `reference` derives it,
+/// for the checkpoint-pins door's frontier and identity rows.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_revision_reference(id: &EntityId, bytes: &[u8]) -> [u8; 16] {
+    reference(id, bytes).0
+}
+
+/// A document frontier entry holding `frontier`, for the checkpoint-pins
+/// door's frontier rows.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_frontier_document_value(frontier: &[u8]) -> Vec<u8> {
+    FrontierEntry::Document(frontier).encode()
+}
+
+/// One raw row into `doc`, as `write_doc_row` writes it but committing at
+/// `at`, so two processes build the same bytes.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_write_doc_row(doc: &LoroDoc, raw: &[u8], at: i64) -> Result<()> {
+    let fields = text_fields(
+        raw.get(ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("entity revision header"))?,
+    );
+    let names = doc.get_map("text_fields");
+    let mut previous = Vec::new();
+    names.for_each(|name, _| previous.push(name.to_owned()));
+    for name in previous {
+        if !fields.iter().any(|(current, _)| current == &name) {
+            doc.get_text(format!("field:{name}"))
+                .update("", Default::default())
+                .map_err(|_| Error::InvariantViolation("entity text update"))?;
+            names
+                .delete(&name)
+                .map_err(|_| Error::InvariantViolation("entity text field delete"))?;
+        }
+    }
+    for (name, text) in fields {
+        crate::text_diff::set_text_or_replace_span(&doc.get_text(format!("field:{name}")), &text)
+            .map_err(|_| Error::InvariantViolation("entity text update"))?;
+        names
+            .insert(&name, true)
+            .map_err(|_| Error::InvariantViolation("entity text field insert"))?;
+    }
+    doc.get_map("record")
+        .insert("raw", raw)
+        .map_err(|_| Error::InvariantViolation("entity revision insert"))?;
+    doc.commit_with(loro::CommitOptions::new().timestamp(at));
+    Ok(())
+}
+
+/// Builds a revision document's snapshot bytes for the checkpoint-pins
+/// door: `raws` written under `peer` with every commit at `at`, with the
+/// frontiers `retain_frontier` would keep.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_revision_doc_bytes(
+    peer: u64,
+    raws: &[Vec<u8>],
+    at: i64,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(peer)
+        .map_err(|_| Error::InvariantViolation("entity revision pins peer"))?;
+    for raw in raws {
+        pins_write_doc_row(&doc, raw, at)?;
+    }
+    let frontiers = doc.oplog_frontiers().encode();
+    let bytes = doc
+        .export(ExportMode::Snapshot)
+        .map_err(|_| Error::InvariantViolation("entity revision pins export"))?;
+    Ok((bytes, frontiers))
 }

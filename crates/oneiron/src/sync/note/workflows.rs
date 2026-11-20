@@ -21,6 +21,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::note::NoteVerdict;
 use crate::side_table::{self, HexId, Named, Raw, SideKey, SideTable};
 use crate::sync::SyncSelector;
+use oneiron_store::entity_doc::side_keys::HexPair;
 use serde::{Deserialize, Serialize};
 
 /// Recorded NOTE forks awaiting review/decision (owned by `note::proposals`;
@@ -34,27 +35,17 @@ const NOTE_RECEIPT: SideTable<EntityId, NoteLandingReceipt, Named> =
 const NOTE_PROPOSAL_BUNDLE: SideTable<EntityId, NoteReviewBundle, Named> =
     SideTable::new(&side_table::NOTE_PROPOSAL_BUNDLE);
 /// Loro snapshot bytes of a proposal (non-live) NOTE document head, keyed by
-/// [`NoteForkKey`] (owned by `note::documents`; see [`NOTE_FORK`]).
-const NOTE_PROPOSAL_DOC: SideTable<NoteForkKey, Vec<u8>, Raw> =
+/// `hex32(note) ":" hex32(fork)` (owned by `note::documents`; see [`NOTE_FORK`]).
+const NOTE_PROPOSAL_DOC: SideTable<HexPair, Vec<u8>, Raw> =
     SideTable::new(&side_table::NOTE_PROPOSAL_DOC);
 
-/// `hex32(note) ":" hex32(fork)` — the [`NOTE_PROPOSAL_DOC`] key shape
-/// (mirrors `note::side_keys::HexPair`, not visible from this module tree).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct NoteForkKey(HexId, HexId);
-
-impl SideKey for NoteForkKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        self.0.encode_into(out);
-        out.push(b':');
-        self.1.encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (a, rest) = bytes.split_at_checked(32)?;
-        let b = rest.strip_prefix(b":")?;
-        Some(Self(HexId::decode_key(a)?, HexId::decode_key(b)?))
-    }
+/// One [`NOTE_PROPOSAL_DOC`] key for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn note_fork_key_pin_for_test(
+    note: crate::EntityId,
+    fork: crate::EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&HexPair(HexId(note), HexId(fork)))
 }
 
 /// A review bundle as a window carries it.
@@ -107,10 +98,12 @@ pub(super) struct Judge<'a, 't> {
 
 impl Judge<'_, '_> {
     /// Whether the export drops `note`, a NOTE whose core its window holds:
-    /// blocked, or kept on this device by a device-only world.
+    /// blocked, kept on this device by a device-only world, or withheld here
+    /// (a record use limit, or a hold another machine's marker filed).
     pub(super) fn drops(&self, note: &EntityId) -> Result<bool> {
         Ok(blocked(self.vault, self.txn, self.tombstones, note)?
-            || held(self.vault, self.txn, self.flagged, note)?)
+            || held(self.vault, self.txn, self.flagged, note)?
+            || withheld_here(self.vault, self.txn, note)?)
     }
 
     /// Whether the rows of `note`, a NOTE whose core rides another window,
@@ -314,7 +307,7 @@ impl Stored {
                 Some(row) if row == waiting && !row.decided => members.push(row),
                 _ => return Ok(false),
             }
-            let key = NoteForkKey(HexId(note), HexId(waiting.fork));
+            let key = HexPair(HexId(note), HexId(waiting.fork));
             let Some(raw) = NOTE_PROPOSAL_DOC.get(&judge.vault.store, judge.txn, &key)? else {
                 return Ok(false);
             };
@@ -472,7 +465,7 @@ impl State {
         let mut key_prefix = Vec::with_capacity(33);
         HexId(note).encode_into(&mut key_prefix);
         key_prefix.push(b':');
-        for (NoteForkKey(_, HexId(fork)), raw) in
+        for (HexPair(_, HexId(fork)), raw) in
             NOTE_PROPOSAL_DOC.scan_from(&judge.vault.store, judge.txn, &key_prefix)?
         {
             if stored

@@ -7,6 +7,7 @@
   "host_door": true,
   "host_door_lists": true,
   "host_door_caller": true,
+  "host_door_surface": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {

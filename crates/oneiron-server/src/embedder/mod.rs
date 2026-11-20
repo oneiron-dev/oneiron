@@ -16,10 +16,13 @@ mod endpoint;
 pub(crate) use endpoint::reported_mark;
 pub(crate) use endpoint::{PodRelease, VaultRelease};
 mod remote;
+mod slot_build;
+pub(crate) use admitted::BACKGROUND_EMBEDDING_LINE;
 pub(crate) use local::checkpoint::CheckpointEmbedder;
 pub(crate) use local::model_manager;
 pub(crate) use local::prepare as prepare_local;
 pub(crate) use remote::build_remote_rung;
+pub(crate) use slot_build::{build_slot, build_slot_with_broker};
 mod local;
 pub(crate) mod serve;
 
@@ -246,6 +249,9 @@ pub(crate) struct EmbedderSlot {
     /// The vault's credential-broker context, which a `key_secret` endpoint
     /// and remote rung send through.
     broker: Option<crate::models::BrokerContext>,
+    /// The line every paid request of the slot's doors spends on once the
+    /// served vault binds it ([`Self::bind_background_line`]).
+    background: Arc<admitted::BackgroundLine>,
 }
 
 impl EmbedderSlot {
@@ -278,6 +284,7 @@ impl EmbedderSlot {
             refusal: Mutex::new(None),
             ref_warning: Arc::new(Mutex::new(None)),
             broker: broker.cloned(),
+            background: Arc::default(),
         };
         if config.provider == EmbedderProvider::Endpoint {
             let embedder = endpoint::HttpEmbedder::with_broker(config, broker)?;
@@ -290,6 +297,37 @@ impl EmbedderSlot {
         &self.config
     }
 
+    /// Binds the slot's paid doors to `vault`'s background line: from now
+    /// on every paid embedding request of the primary endpoint, its pods and
+    /// its remote rung spends on it (ARCH-0053 `#embedding-admission-built`).
+    ///
+    /// # Errors
+    ///
+    /// The resolution of the vault's system principal, the line's actor.
+    pub(crate) fn bind_background_line(&self, vault: &Arc<oneiron::Vault>) -> oneiron::Result<()> {
+        self.background.bind(vault)
+    }
+
+    /// Pays every paid embedding request of the slot's doors from `meter`,
+    /// the host's own line, instead of the vault's background line
+    /// ([`crate::server::SyncServer::with_embedding_line`]).
+    pub(crate) fn push_host_line(&self, meter: oneiron::BudgetGuard) {
+        self.background.push_host_line(meter);
+    }
+
+    /// Sends `texts` through the paid door of a third-party remote rung on
+    /// the slot's line, `post` standing in for the request. For
+    /// `test_doors::embedding_line`.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn send_as_remote_rung(
+        &self,
+        receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
+        texts: &[&str],
+        post: &mut dyn FnMut() -> oneiron::Result<Vec<Vec<f32>>>,
+    ) -> oneiron::Result<Vec<Vec<f32>>> {
+        admitted::send_on_line(&self.background, receipts, texts, post)
+    }
+
     pub(crate) fn provider(&self) -> EmbedderProvider {
         self.config.provider
     }
@@ -297,6 +335,15 @@ impl EmbedderSlot {
     /// The provider, if it is serving.
     pub(crate) fn ready(&self) -> Option<&Arc<dyn QueryEmbedder>> {
         self.ready.get()
+    }
+
+    /// The GPU pool the serving endpoint provider's document batches route
+    /// through ([`route_batches_through`]); `None` for any other provider.
+    pub(crate) fn batch_pool(&self) -> Option<crate::runtime::GpuPool> {
+        self.ready()
+            .and_then(|ready| ready.as_endpoint())
+            .and_then(endpoint::HttpEmbedder::batch_pool)
+            .cloned()
     }
 
     /// The provider once the vault has admitted it, for a caller that embeds
@@ -518,6 +565,7 @@ impl EmbedderSlot {
             Arc::clone(&self.rung_hold),
             receipts,
             self.broker.as_ref(),
+            &self.background,
         )
     }
 
@@ -663,75 +711,6 @@ fn engine_locality(config: crate::config::EmbedderLocality) -> EmbedderLocality 
         crate::config::EmbedderLocality::OwnerServer => EmbedderLocality::OwnerServer,
         crate::config::EmbedderLocality::ThirdParty => EmbedderLocality::ThirdParty,
     }
-}
-
-/// Builds the slot for a resolved serve configuration, probing an endpoint
-/// provider before the listener binds.
-///
-/// A reachable remote that serves the wrong model or the wrong width stops
-/// `serve`: filling one vault from two embedding spaces is not recoverable, so
-/// it is refused before anything is written. An UNREACHABLE remote is logged and
-/// started anyway — the vault answers lexical and graph reads meanwhile, which
-/// is the two-tier write rule, not a degraded mode. Every embedding request an
-/// endpoint sends is a paid call, its rows written to `receipts`: the primary
-/// endpoint's probe, queries and batches, and the remote rung's probe like its
-/// batches.
-pub(crate) fn build_slot(
-    config: Option<&EmbedderConfig>,
-    receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
-) -> anyhow::Result<Option<EmbedderSlot>> {
-    build_slot_with_broker(config, receipts, None)
-}
-
-/// [`build_slot`], with the vault's credential-broker context a `key_secret`
-/// endpoint and remote rung send through, request by request.
-pub(crate) fn build_slot_with_broker(
-    config: Option<&EmbedderConfig>,
-    receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
-    broker: Option<&crate::models::BrokerContext>,
-) -> anyhow::Result<Option<EmbedderSlot>> {
-    let Some(config) = config else {
-        return Ok(None);
-    };
-    let Some(slot) = EmbedderSlot::with_broker(config, broker)? else {
-        tracing::info!("embedder provider is none; the vault serves at rung 0");
-        return Ok(None);
-    };
-    if let Some(ready) = slot.ready()
-        && let Some(http) = ready.as_endpoint()
-    {
-        admitted::pay_primary(http, config, Arc::clone(&receipts))?;
-        match endpoint::probe_endpoint(http) {
-            Ok(endpoint::ProbeOutcome::Ready) => {
-                tracing::info!("endpoint embedder probe succeeded");
-            }
-            // The probe's reason is the endpoint's own words; it stays out of the log.
-            Ok(endpoint::ProbeOutcome::Unreachable(_reason)) => {
-                tracing::warn!(
-                    reason = "endpoint_unreachable",
-                    "endpoint embedder is unreachable; starting at rung 0 and retrying in the worker"
-                );
-            }
-            Err(error) => anyhow::bail!("{error}"),
-        }
-    }
-    if let Some(remote) = &config.remote {
-        let http = endpoint::HttpEmbedder::with_broker(&remote.endpoint_config(config), broker)?;
-        http.pay_through(Arc::new(admitted::AdmittedRequests::unmetered(
-            remote,
-            oneiron::embed::Embedder::locality(&*http),
-            receipts,
-        )?));
-        // Unreachable routes can fall back locally; a reachable wrong model cannot.
-        endpoint::probe_endpoint(&http)?;
-    }
-    tracing::info!(
-        provider = slot.provider().as_str(),
-        model_id = %slot.config().model_id,
-        dimensions = slot.config().dimensions,
-        "embedder slot configured"
-    );
-    Ok(Some(slot))
 }
 
 /// Sends the endpoint provider's document batches through leases on the

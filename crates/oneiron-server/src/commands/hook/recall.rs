@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use crate::cli::HookEffort;
+use crate::cli::{HookEffort, HookHost};
 use crate::commands::mcp_bridge::{INVOCATION_META, mint_invocation};
 
 /// One hit's longest text, in characters.
@@ -31,9 +31,14 @@ pub(super) enum RecallAuth<'a> {
     /// The vault's owner, by the upgrade headers the surface he signed in
     /// on wrote (`oneiron mcp --auth-mode owner`).
     Owner(&'a Path),
+    /// An OAuth agent of the vault, by the sign-in `oneiron hosted login`
+    /// wrote (`oneiron mcp --auth-mode oauth`).
+    OAuth(&'a Path),
 }
 
 pub(super) struct Recall<'a> {
+    /// The harness the session runs in, which the call's consent names.
+    pub(super) host: HookHost,
     pub(super) oneiron: &'a Path,
     pub(super) url: &'a str,
     pub(super) auth: RecallAuth<'a>,
@@ -169,8 +174,11 @@ impl Recall<'_> {
             json!({
                 "schema_version": version,
                 "consent": {
-                    "policy_ref": "policy:claude-code-hooks",
-                    "purpose": "recall context for a new Claude Code session",
+                    "policy_ref": format!("policy:{}-hooks", self.host.as_str()),
+                    "purpose": format!(
+                        "recall context for a new {} session",
+                        self.host.product_name()
+                    ),
                 },
                 "arguments": arguments,
             }),
@@ -200,9 +208,28 @@ pub(super) fn admits(
     answered
 }
 
+/// A JSON-RPC error answer to one bridge request: the server's refusal, or
+/// the bridge's own when the request got no MCP answer from the server.
+#[derive(Debug)]
+pub(super) struct RpcRefusal {
+    method: String,
+    /// The error's `data.kind`, when it names one.
+    pub(super) kind: Option<String>,
+    said: String,
+}
+
+impl std::fmt::Display for RpcRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} failed: {}", self.method, self.said)
+    }
+}
+
+impl std::error::Error for RpcRefusal {}
+
 /// One `oneiron mcp` process in a process group of its own, so giving up
-/// also ends the `curl` it started.
-struct Bridge {
+/// also ends the `curl` it started. `oneiron continue --cloud` calls its
+/// verbs through one too.
+pub(super) struct Bridge {
     child: Child,
     stdin: Option<ChildStdin>,
     lines: Receiver<Vec<u8>>,
@@ -212,7 +239,7 @@ struct Bridge {
 impl Bridge {
     /// `oneiron mcp` at `url` as `auth`, its stderr to `stderr`, answering
     /// until `deadline`.
-    fn start(
+    pub(super) fn start(
         oneiron: &Path,
         url: &str,
         auth: RecallAuth<'_>,
@@ -233,6 +260,11 @@ impl Bridge {
                 for name in SLIP_ENV {
                     command.env_remove(name);
                 }
+            }
+            RecallAuth::OAuth(sign_in) => {
+                command
+                    .args(["--auth-mode", "oauth", "--oauth-token-file"])
+                    .arg(sign_in);
             }
         }
         let mut child = command
@@ -269,7 +301,7 @@ impl Bridge {
 
     /// The MCP handshake: `initialize`, which the server answers only for a
     /// caller it admitted, then `notifications/initialized`.
-    fn initialize(&mut self) -> anyhow::Result<Value> {
+    pub(super) fn initialize(&mut self) -> anyhow::Result<Value> {
         let initialized = self.call(
             1,
             "initialize",
@@ -283,19 +315,37 @@ impl Bridge {
         Ok(initialized)
     }
 
+    /// Writes `message` to the bridge as one line, by the deadline. The
+    /// write runs on a thread of its own, so a bridge that stopped reading
+    /// (suspended, say) never holds the caller past the deadline: the line
+    /// is then not sent whole, its stdin stays with that thread, and
+    /// [`Bridge::close`] ends the bridge, which ends the write.
     fn send(&mut self, message: &Value) -> anyhow::Result<()> {
-        let stdin = self
+        let mut stdin = self
             .stdin
-            .as_mut()
+            .take()
             .ok_or_else(|| anyhow::anyhow!("bridge stdin closed"))?;
         let mut line = serde_json::to_vec(message)?;
         line.push(b'\n');
-        stdin.write_all(&line)?;
-        stdin.flush()?;
+        let (done, written) = mpsc::channel();
+        crate::engine_thread("hook-bridge-stdin".into()).spawn(move || {
+            let wrote = stdin.write_all(&line).and_then(|()| stdin.flush());
+            let _ = done.send((stdin, wrote));
+        })?;
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        let (stdin, wrote) = written.recv_timeout(left).map_err(|_| {
+            anyhow::anyhow!("the bridge took no request before the deadline; it was not sent")
+        })?;
+        wrote?;
+        self.stdin = Some(stdin);
         Ok(())
     }
 
-    fn call(&mut self, id: u64, method: &str, params: Value) -> anyhow::Result<Value> {
+    /// The answer to one request; a JSON-RPC error names the server's
+    /// reason, which never quotes a credential, as an [`RpcRefusal`]. No
+    /// answer before the deadline, or a bridge that ended first, is the
+    /// channel's [`mpsc::RecvTimeoutError`].
+    pub(super) fn call(&mut self, id: u64, method: &str, params: Value) -> anyhow::Result<Value> {
         self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))?;
         loop {
             let left = self.deadline.saturating_duration_since(Instant::now());
@@ -304,7 +354,22 @@ impl Bridge {
                 continue;
             };
             if answer.get("id") == Some(&json!(id)) {
-                anyhow::ensure!(answer.get("error").is_none(), "{method} failed");
+                if let Some(error) = answer.get("error") {
+                    let said = error
+                        .pointer("/data/human_message")
+                        .or_else(|| error.get("message"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("no reason given");
+                    return Err(RpcRefusal {
+                        method: method.to_owned(),
+                        kind: error
+                            .pointer("/data/kind")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        said: said.to_owned(),
+                    }
+                    .into());
+                }
                 return Ok(answer
                     .get("result")
                     .filter(|result| !result.is_null())
@@ -314,7 +379,7 @@ impl Bridge {
         }
     }
 
-    fn close(mut self) {
+    pub(super) fn close(mut self) {
         drop(self.stdin.take());
         let wait = self
             .deadline

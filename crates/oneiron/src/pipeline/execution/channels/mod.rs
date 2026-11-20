@@ -17,6 +17,7 @@ use self::admit::ChannelAccumulator;
 use self::post_blend::{PostBlend, PostBlendInputs};
 use self::ppr_expand::{PprExpandInputs, PprExpandState};
 use self::ppr_visibility::pipeline_ppr_visibility;
+pub(in crate::pipeline) use self::rerank::RerankedBlock;
 use self::rerank::{RerankApplied, RerankLadderInputs};
 use self::text::TextChannelInputs;
 use self::trace_assembly::TraceInputs;
@@ -31,7 +32,7 @@ use super::super::budget::{
 };
 use super::super::builder::PipelineBuilder;
 use super::super::capabilities::{memory_candidate_count, partition_capabilities};
-use super::super::channels::{execute_phonetic, fusion_fetch_limit};
+use super::super::channels::fusion_fetch_limit;
 use super::super::corpus_filter::CorpusFilter;
 use super::super::criticality::critical_candidate_ids;
 use super::super::filters::{apply_claim_status_gate, apply_relationship_filter};
@@ -67,7 +68,7 @@ struct SnapshotInputs<'a> {
 struct StagePlan(usize);
 
 impl StagePlan {
-    fn new(planned: [bool; 6]) -> Self {
+    fn new(planned: [bool; 7]) -> Self {
         Self(planned.into_iter().filter(|planned| *planned).count())
     }
     /// The stages left, this one included; counts this one down.
@@ -253,6 +254,7 @@ impl PipelineBuilder<'_> {
                 hyde_expansion.is_some(),
                 self.text_search.is_some(),
                 self.phonetic_search.is_some(),
+                self.phonetic_vector_search.is_some(),
                 self.temporal_search.is_some(),
                 self.ppr_search.is_some(),
             ]);
@@ -363,7 +365,7 @@ impl PipelineBuilder<'_> {
             if let Some(codes) = &self.phonetic_search
                 && let Some(phonetic_results) =
                     self.run_stage(RetrievalSignal::Phonetic, stages.next(), || {
-                        execute_phonetic(&self.read, rtxn, codes, self.deadline)
+                        self.scoped_phonetic_results(rtxn, codes, filter_config, &claim_gate)
                     })?
             {
                 diagnostics.succeeded.push(RetrievalSignal::Phonetic);
@@ -375,6 +377,27 @@ impl PipelineBuilder<'_> {
                     filter_config,
                     &mut metadata_cache,
                 )?);
+            }
+
+            // The learned rung: its own ranked list of the phonetic channel, scored over its
+            // hits as a dense list is, never mixed raw with the code rung's.
+            if let Some(query) = &self.phonetic_vector_search
+                && let Some(learned_results) =
+                    self.run_stage(RetrievalSignal::Phonetic, stages.next(), || {
+                        self.phonetic_vector_results(rtxn, query, filter_config, &claim_gate)
+                    })?
+            {
+                if !diagnostics.succeeded.contains(&RetrievalSignal::Phonetic) {
+                    diagnostics.succeeded.push(RetrievalSignal::Phonetic);
+                }
+                acc.admit_channel(
+                    RetrievalSignal::Phonetic,
+                    learned_results,
+                    &self.read,
+                    rtxn,
+                    filter_config,
+                    &mut metadata_cache,
+                )?;
             }
 
             if let Some(config) = &self.temporal_search
@@ -411,6 +434,10 @@ impl PipelineBuilder<'_> {
                     // ARCH-0039 Layer 2: seed specificity applies ONLY to
                     // search_ppr — seeds are weighted 1/ln(1 + passage_count)
                     // instead of uniform 1/n.
+                    // The walk alone, for `oneiron-bench ppr-walk-share`
+                    // (UNBUILT3-06): a span no subscriber listens to costs a
+                    // level check and changes no output.
+                    let _walk = tracing::trace_span!("ppr_search_walk").entered();
                     match pipeline_ppr_visibility(self, filter_config, &claim_gate) {
                         Some(visibility) => {
                             crate::ppr::ppr_query_scoped_in_txn_with_diagnostics_and_deadline(
@@ -482,7 +509,7 @@ impl PipelineBuilder<'_> {
 
             // Entity-type authority can narrow each channel before fusion.
             // CLAIM scalar constraints use the decoded post-fusion stage below.
-            for scores in &mut acc.ranked_lists {
+            for (index, scores) in acc.ranked_lists.iter_mut().enumerate() {
                 if self.memory_category {
                     super::super::capabilities::retain_memory_candidates(scores, &self.read, rtxn)?;
                 }
@@ -494,6 +521,15 @@ impl PipelineBuilder<'_> {
                     rtxn,
                     &mut metadata_cache,
                 )?;
+                // Exact phonetic codes have no cut and a PPR walk's results
+                // no admission, so their rows reach these lists unasked: the
+                // call's made_by slice keeps them out of the blend here, once
+                // the lane and the authority above have narrowed the lists,
+                // so the run's gate judges only rows the D19 gate judges
+                // anyway (REVIEW-9842 round 2).
+                if [phonetic_channel_index, ppr_channel_index].contains(&Some(index)) {
+                    self.retain_made_by_slice(rtxn, scores, &mut metadata_cache, &mut claim_gate)?;
+                }
             }
             if acc.ranked_lists.is_empty() {
                 return Ok(RetrievalTxnOutput {
@@ -523,7 +559,7 @@ impl PipelineBuilder<'_> {
                     media_evidence: Default::default(),
                     blend_components: HashMap::new(),
                     access_factors: HashMap::new(),
-                    rerank_merged_components: None,
+                    rerank_components: None,
                     retrieval_trace: None,
                     replay_inputs: capture_replay_enabled.then(|| {
                         capture_replay_inputs(
@@ -740,9 +776,10 @@ impl PipelineBuilder<'_> {
             )?;
 
             let RerankApplied {
-                merged_components: rerank_merged_components,
+                rerank_components,
                 reranked_trace_scores,
                 words_revisions,
+                block: mut reranked_block,
             } = self.apply_rerank_ladder(
                 rtxn,
                 &mut scores,
@@ -751,7 +788,6 @@ impl PipelineBuilder<'_> {
                 RerankLadderInputs {
                     ladder_scores: rerank_ladder_scores.as_ref(),
                     blend_access_factors: &blend_access_factors,
-                    blend_components: &blend_components,
                     filter_config,
                     rerank_query,
                     capture_retrieval_trace,
@@ -798,6 +834,7 @@ impl PipelineBuilder<'_> {
                     &mut claim_gate,
                 )?
             };
+            reranked_block.follow_turn_fold(&cited_messages);
 
             let capabilities = self.prepare_pack_candidates(
                 rtxn,
@@ -806,6 +843,7 @@ impl PipelineBuilder<'_> {
                 &acc.media_evidence,
                 &mut empty_reason,
                 overrides.skip_ret01_abstain,
+                &reranked_block,
             )?;
 
             // OF-023 hold-both: an observed claim never sits above a stated
@@ -888,9 +926,14 @@ impl PipelineBuilder<'_> {
             }
             // Only admitted final candidates participate. This selection cannot
             // surface hidden bridge nodes, undo filters, or multiply scores twice.
+            // It selects across the whole list, but orders within the
+            // reranked block and within the rest (RERANK-GROUP-ORDER = A).
             if let Some(diversity) = community_diversity {
                 keep_critical_through(&mut scores, &critical, |scores| {
-                    diversity.apply(scores, self.result_limit, &self.ppr_community)
+                    let before = scores.clone();
+                    diversity.apply(scores, self.result_limit, &self.ppr_community)?;
+                    reranked_block.keep_group_places(&before, scores);
+                    Ok(())
                 })?;
             }
             let text_exhausted = text_exhausted && scores.len() <= self.result_limit;
@@ -945,7 +988,7 @@ impl PipelineBuilder<'_> {
                         fused_trace_scores,
                         blended_trace_scores,
                         reranked_trace_scores: reranked_trace_scores.as_deref(),
-                        rerank_merged_components: rerank_merged_components.as_ref(),
+                        rerank_components: rerank_components.as_ref(),
                         blend_components: &blend_components,
                         blend_access_factors: &blend_access_factors,
                         community_trace_identity,
@@ -1059,7 +1102,7 @@ impl PipelineBuilder<'_> {
                 media_evidence: acc.media_evidence,
                 blend_components,
                 access_factors: blend_access_factors,
-                rerank_merged_components,
+                rerank_components,
                 retrieval_trace,
                 replay_inputs,
                 ppr_expand_executed,
@@ -1162,6 +1205,10 @@ impl PipelineBuilder<'_> {
             })
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the reranked block joins the pack candidates' inputs"
+    )]
     fn prepare_pack_candidates(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -1170,6 +1217,7 @@ impl PipelineBuilder<'_> {
         media_evidence: &super::super::budget::MediaEvidence,
         empty_reason: &mut Option<EmptyReason>,
         skip_ret01_abstain: bool,
+        reranked_block: &RerankedBlock,
     ) -> Result<Vec<super::super::types::ScoredEntity>> {
         if self.implicit_anchor_only(scores, signal_components) {
             scores.clear();
@@ -1185,6 +1233,7 @@ impl PipelineBuilder<'_> {
                 signal_components,
                 self.skill_executor.as_deref(),
                 self.skill_reliability_query.as_ref(),
+                reranked_block,
             )?
         } else {
             Vec::new()

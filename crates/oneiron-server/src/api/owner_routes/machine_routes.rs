@@ -11,6 +11,15 @@
 //! Each change names the machine's revision the surface showed the owner
 //! (`seen`, from `GET /machines/answer`); a stale one is a conflict, never a
 //! silent overwrite.
+//!
+//! The `/machines/held` routes are in [`held`].
+//!
+//! `GET /machines` lists every machine with the name it is shown by, and
+//! `POST /machines/name` sets or clears the owner's own name for one (FIX
+//! [DEVICE-DISPLAY-NAME]). Each runs its SDK row (`vault.machines.list`,
+//! `vault.machines.name.set`) inside the row's verb hooks, as the owner in
+//! person. A name is display only: it is outside the signed profile, and no
+//! revision, role or reach moves with it.
 
 use std::sync::Arc;
 
@@ -20,19 +29,45 @@ use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{
-    ActSurface, FoldedMachine, MachineOwnership, MachineRole, OwnerDeviceRenewalProof, PeerMachine,
+    ActSurface, AuthorityFold, MachineOwnership, MachineRemoval, MachineRole,
+    OwnerDeviceRenewalProof, PeerMachine, RemainingOwnerKeys,
 };
+use oneiron::task_verb::sdk::{self, EmptyRequest, MachineNameSetRequest};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
+use super::owner_key_enrollment_routes::{last_device_key_confirmation, last_device_key_refusal};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, hooked_owner, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
-use crate::owner::{OwnerError, OwnerResult, entity_id};
+use crate::owner::{OwnerError, OwnerResult, entity_id, hooked_row, memory_refusal};
 use crate::server::SyncServer;
+
+pub(super) mod held;
 
 pub(super) fn owner_table() -> OwnerTable {
     vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/machines",
+                summary: "Every machine of the vault, this install first (FIX DEVICE-DISPLAY-NAME): `machines`, each with its class, role, whether it stands live, its revision (`seen` for an answer or a removal) and the name it is shown by, with `name_source` (`owner`, `reported`, `model` or `class`).",
+                row: Some("vault.machines.list"),
+                shape: None,
+            },
+            get(list_machines),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/machines/name",
+                summary: "The owner sets or clears his own one-line name for one of his machines (`machine`, 32 hex; `name`, or null or blank to clear it). Display only: its revision, role and reach do not move. Answers the machine as the list shows it now and the act's Gate receipt.",
+                row: Some("vault.machines.name.set"),
+                shape: None,
+            },
+            post(set_name),
+        ),
         (
             OwnerRoute {
                 method: "get",
@@ -60,7 +95,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/machines/remove",
-                summary: "The owner removes one of his machines, terminally; a stale seen is a conflict.",
+                summary: "The owner removes one of his machines, terminally; a stale seen is a conflict. A removal that stands on an install that holds an owner key also ends the owner keys whose enrollment names the machine (`ended_owner_keys`); otherwise the reply lists them as still live (`live_owner_keys`). `ends_recovery_root` says whether one of the ended keys was also the recovery root's authority key. Removing an already removed machine again ends the owner keys that still name it, each enrolled where its removal was not yet known, and writes no second removal. A removal that would end the last owner key held on a device answers 409 `last_device_key` and writes nothing until the request carries `confirm`: `last_device_key`.",
                 row: None,
                 shape: Some(RestShape::json(
                     remove_machine_body_schema,
@@ -68,6 +103,42 @@ pub(super) fn owner_table() -> OwnerTable {
                 )),
             },
             post(remove),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/machines/held",
+                summary: "The carried machine answers that wait for the owner's confirm, each with its carrier and whether he dismissed it here, the owner choices that wait, and whether this install can confirm.",
+                row: None,
+                shape: None,
+            },
+            get(held::get_held),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/machines/held/confirm",
+                summary: "The owner confirms the held machine answers he names, on an install that holds his key: all of them stand or nothing is written; a named entry that no longer asks or a stale seen is a conflict, and an entry that names other keys than its machine stands under is refused.",
+                row: None,
+                shape: Some(RestShape::json(
+                    held::held_confirm_body_schema,
+                    held::held_answers_schema,
+                )),
+            },
+            post(held::confirm_held),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/machines/held/dismiss",
+                summary: "The owner dismisses the ask of the held machine answers he names, on this install alone: each stays held, and his other devices still ask; a named entry that no longer asks is a conflict.",
+                row: None,
+                shape: Some(RestShape::json(
+                    held::held_entries_body_schema,
+                    held::held_answers_schema,
+                )),
+            },
+            post(held::dismiss_held),
         ),
     ]
 }
@@ -169,6 +240,10 @@ struct RemoveMachine {
     /// As for an answer.
     #[serde(default)]
     seen: Option<String>,
+    /// `last_device_key`: the owner read that removing this machine ends the
+    /// last owner key held on a device, and confirmed. Absent otherwise.
+    #[serde(default)]
+    confirm: Option<String>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -183,6 +258,48 @@ struct MachineAnswer {
     revision: String,
     /// The machine whose install key carried the owner's latest standing
     /// answer, as hex; none for a bootstrap or anchor revision.
+    carrier: Option<String>,
+    /// The carried answers about this machine that wait for the owner's
+    /// confirm on an owner device: each needed an owner key's proof and
+    /// carried none, so it stands for nothing and `role` above is unchanged
+    /// by it. An answer or a removal this install just carried with no owner
+    /// key is listed here. Absent when none waits.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    held: Vec<HeldMachineAnswer>,
+    /// The owner keys a removal ended with the machine, each as 64 hex: the
+    /// device keys whose enrollment names it. Absent on any other answer,
+    /// and when the removal ended none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    ended_owner_keys: Vec<String>,
+    /// The owner keys the machine still holds live after a removal, each as
+    /// 64 hex: a removal held for the owner's proof, and one this install
+    /// carried with no owner key, ends none. The owner removes them on an
+    /// owner device. Absent on any other answer, and when none is left.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    live_owner_keys: Vec<String>,
+    /// Whether a removal ended the recovery root's authority key, and with
+    /// it the recovery kit: one of `ended_owner_keys` was also enrolled as
+    /// the root's. Absent on any other answer, and when it ended no such
+    /// key.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    ends_recovery_root: bool,
+}
+
+/// One answer about a machine that waits for the owner's confirm.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct HeldMachineAnswer {
+    /// The held answer's log entry, as 64 hex.
+    entry: String,
+    /// The role it asks for, as `role` names them.
+    role: &'static str,
+    /// The machine key it names, 64 lower hex: the key the owner checks
+    /// against the one the machine itself shows. The machine's proof binds
+    /// its encryption key to this key.
+    machine_key: String,
+    /// Whether it names other keys than the machine stands under. The
+    /// confirm route refuses such an answer.
+    replaces_keys: bool,
+    /// The machine whose install key carried it, as hex.
     carrier: Option<String>,
 }
 
@@ -199,21 +316,43 @@ fn role_name(role: MachineRole) -> &'static str {
     }
 }
 
-fn answer_of(machine: oneiron::EntityId, folded: Option<&FoldedMachine>) -> MachineAnswer {
+/// One machine's answer as `fold` holds it, with the answers about it that
+/// still wait for the owner's confirm.
+fn answer_of(machine: oneiron::EntityId, fold: &AuthorityFold) -> MachineAnswer {
+    let folded = fold.machine(machine);
     let roster = folded.and_then(|folded| folded.roster.as_ref());
+    let held = fold
+        .held_machine_answers()
+        .get(&machine)
+        .into_iter()
+        .flatten()
+        .map(|(entry, answer)| HeldMachineAnswer {
+            entry: revision_hex(entry),
+            role: role_name(answer.profile.role),
+            machine_key: revision_hex(&answer.profile.machine_key),
+            replaces_keys: fold.replaces_standing_keys(&answer.profile),
+            carrier: answer.carrier().map(|carrier| carrier.to_hex()),
+        })
+        .collect();
     MachineAnswer {
         machine: machine.to_hex(),
         role: roster.map(|roster| role_name(roster.profile.role)),
-        revision: revision_hex(&folded.map_or([0; 32], FoldedMachine::answer_revision)),
+        revision: revision_hex(&folded.map_or([0; 32], |folded| {
+            folded.answer_revision(fold.pinned_root.as_ref())
+        })),
         carrier: roster
             .and_then(oneiron::authority::MachineRevision::carrier)
             .map(|carrier| carrier.to_hex()),
+        held,
+        ended_owner_keys: Vec::new(),
+        live_owner_keys: Vec::new(),
+        ends_recovery_root: false,
     }
 }
 
 /// `GET /v1/owner/machines/answer?machine=<id>`: one machine's answer and its
-/// revision. A machine no revision names answers role null and the zero
-/// revision.
+/// revision, and the answers about it that wait for the owner's confirm. A
+/// machine no revision names answers role null and the zero revision.
 async fn get_answer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -224,7 +363,7 @@ async fn get_answer(
     let answer = blocking(move || -> OwnerResult<MachineAnswer> {
         let machine = entity_id("machine", &query.machine)?;
         let fold = server.vault().authority_fold()?;
-        Ok(answer_of(machine, fold.machine(machine)))
+        Ok(answer_of(machine, &fold))
     })
     .await?;
     Ok(Json(answer))
@@ -247,6 +386,9 @@ pub(crate) fn machine_answer_schema() -> serde_json::Value {
 
 /// `POST /v1/owner/machines/answer`: the owner marks or re-marks one of his
 /// machines. A role change between linked roles takes no carrier power away.
+/// On an install that holds no owner key, an answer that needs the owner's
+/// proof is stored and held: the reply lists it under `held` and the role is
+/// unchanged, until he confirms it on an owner device.
 async fn set_answer(
     auth: CoreAuth,
     headers: HeaderMap,
@@ -264,14 +406,14 @@ async fn set_answer(
             .as_deref()
             .map(|seen| parse_revision("seen", seen))
             .transpose()?;
-        let folded = server.vault().set_machine_role(
+        server.vault().set_machine_role(
             &owner,
             surface,
             machine,
             MachineRole::Owned(request.answer),
             seen,
         )?;
-        Ok(answer_of(machine, Some(&folded)))
+        Ok(answer_of(machine, &server.vault().authority_fold()?))
     })
     .await?;
     Ok(Json(answer))
@@ -280,7 +422,20 @@ async fn set_answer(
 /// `POST /v1/owner/machines/remove`: the owner removes one of his machines.
 /// Removal is terminal, and it is the one answer that takes the machine's
 /// carrier power away: an act it carried that the removal saw keeps its
-/// effect.
+/// effect. A removal held for the owner's proof removes nothing yet, so the
+/// machine's mesh pairing and grants stay until he confirms it.
+///
+/// A removal that stands on an install that holds an owner key also ends
+/// every live owner key whose enrollment names the machine, in the same
+/// transaction (the owner's ruling AUTH-5): the reply lists them under
+/// `ended_owner_keys`. A held removal, and one on an install that holds no
+/// owner key, ends none and lists them under `live_owner_keys`. A machine
+/// that is already removed takes no second removal: the request then ends
+/// the live owner keys that still name it (each enrolled on a branch its
+/// removal never saw) and answers the machine as it stands. A removal
+/// that would end the last owner key held on a device answers 409, state
+/// `last_device_key`, and writes nothing until the request carries
+/// `confirm`.
 async fn remove(
     auth: CoreAuth,
     headers: HeaderMap,
@@ -291,32 +446,88 @@ async fn remove(
     let owner = owner(&auth, &server)?;
     let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = payload.read(&server).await?;
-    let answer = blocking(move || -> OwnerResult<MachineAnswer> {
-        let machine = entity_id("machine", &request.machine)?;
-        let seen = request
-            .seen
-            .as_deref()
-            .map(|seen| parse_revision("seen", seen))
-            .transpose()?;
-        let folded = server.vault().set_machine_role(
-            &owner,
-            surface,
-            machine,
-            MachineRole::Removed,
-            seen,
-        )?;
-        // The removed MACHINE's mesh pairing and grants are revoked in the
-        // log as well (FIX 3374, L02 04:5x); its binding admits nothing
-        // already, so a revocation that fails is logged.
-        crate::api::pairing::with_host_issuer(&server, |issuer| {
-            if let Some(issuer) = issuer
-                && let Err(error) = server.vault().revoke_removed_machine_mesh(issuer, machine)
-            {
-                tracing::warn!(%error, "machine removal: its mesh grants were not revoked");
+    let removal = blocking(
+        move || -> OwnerResult<Result<MachineAnswer, RemainingOwnerKeys>> {
+            let machine = entity_id("machine", &request.machine)?;
+            let seen = request
+                .seen
+                .as_deref()
+                .map(|seen| parse_revision("seen", seen))
+                .transpose()?;
+            let confirmation = last_device_key_confirmation(request.confirm.as_deref())?;
+            let receipt =
+                match server
+                    .vault()
+                    .remove_machine(&owner, surface, machine, seen, confirmation)?
+                {
+                    MachineRemoval::Written(receipt) => receipt,
+                    MachineRemoval::LastDeviceKey(remaining) => return Ok(Err(remaining)),
+                };
+            if receipt.landing.held().is_none() {
+                revoke_removed_mesh(&server, machine);
             }
-        });
-        Ok(answer_of(machine, Some(&folded)))
+            let mut answer = answer_of(machine, &server.vault().authority_fold()?);
+            answer.ended_owner_keys = receipt.ended_keys.iter().map(revision_hex).collect();
+            answer.live_owner_keys = receipt.live_keys.iter().map(revision_hex).collect();
+            answer.ends_recovery_root = receipt.remaining.ends_recovery_root;
+            Ok(Ok(answer))
+        },
+    )
+    .await?;
+    match removal {
+        Ok(answer) => Ok(Json(answer)),
+        Err(remaining) => Err(last_device_key_refusal(remaining).into()),
+    }
+}
+
+/// The removed MACHINE's mesh pairing and grants are revoked in the log as
+/// well (FIX 3374, L02 04:5x); its binding admits nothing already, so a
+/// revocation that fails is logged.
+fn revoke_removed_mesh(server: &SyncServer, machine: oneiron::EntityId) {
+    crate::api::pairing::with_host_issuer(server, |issuer| {
+        if let Some(issuer) = issuer
+            && let Err(error) = server.vault().revoke_removed_machine_mesh(issuer, machine)
+        {
+            tracing::warn!(%error, "machine removal: its mesh grants were not revoked");
+        }
+    });
+}
+
+/// `GET /v1/owner/machines`: every machine of the vault, with the name each
+/// is shown by.
+async fn list_machines(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
+    let response = blocking(move || {
+        let vault = server.vault();
+        hooked_row(vault, actor, "vault.machines.list", EmptyRequest {}, |_| {
+            sdk::list_machines_as(vault, &owner).map_err(memory_refusal)
+        })
     })
     .await?;
-    Ok(Json(answer))
+    Ok(Json(response))
+}
+
+/// `POST /v1/owner/machines/name`: the owner's own name for one of his
+/// machines, set or cleared.
+async fn set_name(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<MachineNameSetRequest>,
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let response = blocking(move || {
+        let vault = server.vault();
+        hooked_row(
+            vault,
+            actor,
+            "vault.machines.name.set",
+            request,
+            |request: MachineNameSetRequest| {
+                sdk::set_machine_name_as(vault, &owner, request).map_err(memory_refusal)
+            },
+        )
+    })
+    .await?;
+    Ok(Json(response))
 }

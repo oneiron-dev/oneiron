@@ -19,6 +19,36 @@ pub(crate) const MACHINE_ID: SideTable<(), Vec<u8>, Raw> =
 /// Cached Ed25519 verifying key of the machine key (FIX 5472). Key: `()`.
 pub(crate) const MACHINE_PK: SideTable<(), Vec<u8>, Raw> =
     SideTable::new(&side_table::IDENTITY_MACHINE_PK);
+/// The image this install was restored from (row
+/// RESTORED-COPIES-ENROL-EACH-OTHER). Key: `()`.
+const RESTORED_FROM: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::IDENTITY_RESTORED_FROM);
+
+/// The checkpoint image this install was restored from, or `None` for an
+/// install no identity-dropping restore made (row
+/// RESTORED-COPIES-ENROL-EACH-OTHER).
+pub(crate) fn read_restored_from_image_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<[u8; 32]>> {
+    RESTORED_FROM
+        .get(&vault.store, txn, &())?
+        .map(|raw| {
+            <[u8; 32]>::try_from(raw.as_slice())
+                .map_err(|_| Error::CorruptedIndex("restored-from image row"))
+        })
+        .transpose()
+}
+
+/// Marks this install as born of a restore of `image`, over any mark it
+/// had: an archived vault's activation, which lands no image of its own.
+pub(crate) fn put_restored_from_image_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    image: &[u8; 32],
+) -> Result<()> {
+    RESTORED_FROM.put(store, wtxn, &(), &image.to_vec())
+}
 
 /// [`CLIENT_ID`]'s value: u64 LE, nonzero (ONE-1155 — 0 collides with Loro's
 /// unset peer id). A wrong-length row and an 8-byte zero row are distinct

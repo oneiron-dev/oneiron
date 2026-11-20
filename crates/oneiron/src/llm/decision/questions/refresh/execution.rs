@@ -13,6 +13,7 @@ use super::{
     validate_proposal,
 };
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::claim::ClaimLifecycleStatus;
 use crate::llm::decision::{DecisionReceipt, TypedDecision};
 use crate::side_table::SideKey;
 use crate::{EntityId, Error, Result, Vault};
@@ -56,12 +57,28 @@ pub(super) fn refresh_with(
                     _ => return Ok(Vec::new()),
                 };
                 backfill_marker = QUESTION_BACKFILL_AT.get_bytes(&vault.store, &txn, &key)?;
-                let answered: std::collections::BTreeSet<EntityId> = QUESTION_ANSWER
-                    .scan_from(&vault.store, &txn, &family_prefix(question, b"answer"))?
-                    .into_iter()
-                    .filter(|(_, answer)| answer.decision.receipt.question_version == head.version)
-                    .map(|(_, answer)| answer.unit)
-                    .collect();
+                // A unit counts as answered while an answer of the head
+                // version stands. One whose claim is marked stale or closed no
+                // longer does, so the backfill answers its unit again, as a
+                // standing backfill never reuses such a claim; a claim that
+                // no longer reads keeps its unit counted, as before.
+                let mut answered = std::collections::BTreeSet::new();
+                for (_, answer) in QUESTION_ANSWER.scan_from(
+                    &vault.store,
+                    &txn,
+                    &family_prefix(question, b"answer"),
+                )? {
+                    if answer.decision.receipt.question_version != head.version
+                        || vault
+                            .get_claim_in_txn(&txn, &answer.claim)?
+                            .is_some_and(|claim| {
+                                claim.stale || claim.lifecycle != ClaimLifecycleStatus::Active
+                            })
+                    {
+                        continue;
+                    }
+                    answered.insert(answer.unit);
+                }
                 // An explicit recipe answers its joins whose unit is still
                 // unanswered, each variant once; without one, every unit.
                 if joins.is_empty() {

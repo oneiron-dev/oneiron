@@ -12,7 +12,6 @@ use super::{
         decode_family, family_prefix, secret_scan_before_put,
     },
 };
-use crate::claim::ScopedReadActorKey;
 use crate::gate::PolicyManifestResolution;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
@@ -207,19 +206,136 @@ pub fn close_due_outcome_windows(vault: &Vault, now: u64) -> Result<usize> {
 }
 
 /// The closed windows of `principal`'s standing question, across its
-/// versions; none when the question is not theirs.
+/// versions, that still read as they closed; none when the question is not
+/// theirs. Each is judged again in the read's snapshot under the lane its
+/// version was saved under (FIX STORED-OUTCOME-READS-SKIP-SAVED-LANE): a
+/// window that closed observed reads while a stored label of its answer
+/// still stands ([`super::outcomes::standing_labels_in_txn`]), and one that
+/// closed in silence while that silence still stands ([`silence_stands`]).
+/// So a window closed past that lane, or before its principal lost a read of
+/// a row it rests on, reads no more. A window that closed unknown recorded
+/// nothing learned, and reads as it closed. The record keeps how the window
+/// closed: a fact recorded after the close that labels its answer changes
+/// neither an unknown nor a silence close.
 pub fn closed_outcome_windows(
     vault: &Vault,
     principal: EntityId,
     question: EntityId,
 ) -> Result<Vec<OutcomeWindowClose>> {
-    let txn = vault.store.env.read_txn()?;
-    super::store::owned_head(vault, &txn, principal, question)?;
-    Ok(QUESTION_WINDOW
-        .scan_from(&vault.store, &txn, &family_prefix(question, b"window"))?
+    Ok(standing_windows(vault, principal, question)?
         .into_iter()
-        .map(|(_, close)| close)
+        .map(|window| window.close)
         .collect())
+}
+
+/// One closed window that still reads as it closed, beside the row sets it
+/// rests on: a reader that reads any one of them whole reads the window.
+pub(super) struct StandingWindow {
+    pub(super) close: OutcomeWindowClose,
+    /// For a window that closed observed, the rows each standing label of its
+    /// answer was derived from; for any other, the question, its answer and
+    /// the answer's unit.
+    pub(super) rests_on: Vec<Vec<EntityId>>,
+}
+
+/// [`closed_outcome_windows`], each window beside the row sets it rests on.
+pub(super) fn standing_windows(
+    vault: &Vault,
+    principal: EntityId,
+    question: EntityId,
+) -> Result<Vec<StandingWindow>> {
+    let txn = vault.store.env.read_txn()?;
+    standing_windows_in_txn(vault, &txn, principal, question)
+}
+
+/// [`standing_windows`] in the caller's snapshot `txn`, so a reader that
+/// judges each window's rows does it at the instant it read the windows
+/// (FIX QUESTION-OUTCOMES-REPLY-SPANS-SNAPSHOTS).
+pub(super) fn standing_windows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    question: EntityId,
+) -> Result<Vec<StandingWindow>> {
+    super::store::owned_head(vault, txn, principal, question)?;
+    let answers = super::outcomes::stored_answers(vault, txn, question)?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+    let labels = super::outcomes::standing_labels_in_txn(
+        vault,
+        txn,
+        &policy,
+        principal,
+        question,
+        &answers,
+        &BTreeSet::new(),
+    )?;
+    let mut standing = Vec::new();
+    for (_, close) in
+        QUESTION_WINDOW.scan_from(&vault.store, txn, &family_prefix(question, b"window"))?
+    {
+        let answer = answers.iter().find(|answer| answer.claim == close.answer);
+        let rests_on: Vec<Vec<EntityId>> = match close.outcome {
+            WindowOutcome::Observed => labels
+                .iter()
+                .filter(|label| label.label.answer == close.answer)
+                .map(|label| label.derived_from.clone())
+                .collect(),
+            WindowOutcome::Silence(_) => {
+                silence_rests_on(vault, txn, &policy, principal, question, &close, answer)?
+            }
+            WindowOutcome::Unknown => vec![answer.map_or_else(
+                || vec![question, close.answer],
+                |answer| vec![question, answer.claim, answer.unit],
+            )],
+        };
+        if !rests_on.is_empty() {
+            standing.push(StandingWindow { close, rests_on });
+        }
+    }
+    Ok(standing)
+}
+
+/// The rows a window that closed in silence on `answer` rests on: the
+/// question, the answer and its unit while that silence still stands under
+/// the lane `close`'s version, which must be `principal`'s, was saved under
+/// ([`silence_stands`]); none once it does not, or once the answer or the
+/// version is gone.
+fn silence_rests_on(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    policy: &PolicyManifestResolution,
+    principal: EntityId,
+    question: EntityId,
+    close: &OutcomeWindowClose,
+    answer: Option<&AnswerRecord>,
+) -> Result<Vec<Vec<EntityId>>> {
+    let Some(answer) = answer else {
+        return Ok(Vec::new());
+    };
+    let Some(record) = QUESTION_VERSION.get(
+        &vault.store,
+        txn,
+        &VersionKey {
+            id: question,
+            version: close.question_version,
+        },
+    )?
+    else {
+        return Ok(Vec::new());
+    };
+    if record.principal != principal
+        || !silence_stands(
+            &vault.store,
+            txn,
+            policy,
+            SavedLaneJudge::Vault(vault),
+            &record,
+            answer,
+        )?
+    {
+        return Ok(Vec::new());
+    }
+    Ok(vec![vec![question, answer.claim, answer.unit]])
 }
 
 /// How `answer`'s lapsed window closes: observed when a stored fact still
@@ -314,7 +430,9 @@ pub(super) fn silence_stands(
     {
         return Ok(false);
     }
-    let actor = ScopedReadActorKey::new(record.principal.to_hex()).expect("canonical principal");
+    // The principal's key carries its live class, as at a fact's label
+    // (ARRIVAL-READER-KEY-CLASSLESS).
+    let actor = super::graph_ask::party_read_key_in_txn(store, txn, record.principal)?;
     // FIX 7461: the principal's bare read first, then its own live authority.
     let reader = Reader::new(store_home(store), record.principal, actor);
     Ok(reader.readable_in_txn(txn, policy, &answer.unit)?

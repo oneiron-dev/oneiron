@@ -4,8 +4,6 @@ use crate::booking::{
 };
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
-// FIX [LIBTEST-QUARANTINE-BOOKING-PUBLICATION-REGRESSIONS-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -33,7 +31,14 @@ mod tests {
         assert!(
             vault
                 .batch()
-                .put_replicated(&id(8), crate::registry::ENTITY_TYPE_CLAIM, time, 1, &bytes)
+                .put_replicated(
+                    &id(8),
+                    crate::registry::ENTITY_TYPE_CLAIM,
+                    time,
+                    1,
+                    None,
+                    &bytes
+                )
                 .commit()
                 .is_err()
         );
@@ -250,6 +255,7 @@ fn public_hold_writer_rechecks_retraction_expiry_and_exact_configuration() {
             constraint: None,
             lease: HoldLeaseSpec::Ordinary,
             idempotency_key: None,
+            cap_override: None,
         };
         assert!(
             crate::booking::lifecycle::execute_hold(&vault, &spec, write_now, Some(&authority))
@@ -298,6 +304,7 @@ fn public_attempt_dedupe_cannot_alias_a_literal_non_public_key() {
         constraint: None,
         lease: HoldLeaseSpec::Ordinary,
         idempotency_key: Some("same-key".to_owned()),
+        cap_override: None,
     };
     let public_id = enqueue_booking_verb_with_publication(
         &vault,
@@ -417,6 +424,7 @@ fn publication_put_rejects_corrupt_existing_claim_but_allows_erased_shell() -> R
                     crate::registry::ENTITY_TYPE_CLAIM,
                     TimeRange { start: 1, end: 1 },
                     1,
+                    None,
                     &bytes,
                 )
                 .commit()
@@ -452,6 +460,7 @@ fn publication_put_rejects_malformed_incoming_claim_on_erased_shell() -> Result<
                 crate::registry::ENTITY_TYPE_CLAIM,
                 TimeRange { start: 1, end: 1 },
                 1,
+                None,
                 &malformed,
             )
             .commit()
@@ -476,7 +485,14 @@ fn assert_publication_slot_rejects_raw_overwrites(
         for replicated in [false, true] {
             let batch = vault.batch();
             let batch = if replicated {
-                batch.put_replicated(&claim, crate::registry::ENTITY_TYPE_CLAIM, time, 1, &bytes)
+                batch.put_replicated(
+                    &claim,
+                    crate::registry::ENTITY_TYPE_CLAIM,
+                    time,
+                    1,
+                    None,
+                    &bytes,
+                )
             } else {
                 batch.put(&claim, crate::registry::ENTITY_TYPE_CLAIM, time, 1, &bytes)
             };
@@ -492,6 +508,7 @@ fn assert_publication_slot_rejects_raw_overwrites(
                 crate::registry::ENTITY_TYPE_ASSET,
                 time,
                 1,
+                None,
                 b"replace",
             )
         } else {
@@ -581,6 +598,7 @@ fn publication_slots_stay_owner_only_after_head_change_soft_delete_and_reopen() 
                 crate::registry::ENTITY_TYPE_CLAIM,
                 TimeRange { start: 1, end: 1 },
                 1,
+                None,
                 &bytes,
             )
             .commit()

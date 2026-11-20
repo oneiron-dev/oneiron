@@ -52,7 +52,7 @@ fn safe_delete_requires_named_reason_and_returns_receipt() {
         .into_iter()
         .find(|decision| decision.decision_id.to_hex() == request_id)
         .expect("deletion decision keyed by redaction request id");
-    assert_eq!(decision.outcome, "allow");
+    assert_eq!(decision.outcome, "approved");
     assert_eq!(decision.content_kind, "deletion");
     assert_eq!(decision.actor_class, "human");
     assert_eq!(decision.actor_ref.as_deref(), Some(actor_hex.as_str()));
@@ -90,15 +90,11 @@ fn erasing_a_message_drops_its_turn_vector_before_any_worker_runs() {
         crate::DeleteReason::UserDelete,
     ] {
         let dir = tempfile::tempdir().expect("tempdir");
-        let vault = crate::Vault::open(
-            dir.path(),
-            VaultConfig {
-                embedding_model: Some("test/model@v1".to_owned()),
-                dimensions: ERASED_MEANING.len(),
-                ..VaultConfig::default()
-            },
-        )
-        .expect("open vault");
+        let mut config = VaultConfig::device();
+        config.embedding_model = Some("test/model@v1".to_owned());
+        config.dimensions = ERASED_MEANING.len();
+        let vault = crate::Vault::open(dir.path(), config).expect("open vault");
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let alice = put_owner(&vault);
         let owner = crate::WriteActor::new(alice, EdgeActorClass::Human);
         crate::conversation_dag::fixtures::grant(&vault, owner, true);
@@ -125,6 +121,9 @@ fn erasing_a_message_drops_its_turn_vector_before_any_worker_runs() {
                     witness_message(1, WitnessAuthor::User, "We met for lunch at noon."),
                 ],
                 occurred_at: 500,
+                thread_audience: None,
+                project: None,
+                assertions: Default::default(),
             })
             .expect("witness turn");
         let id_of = |short_id: &str| {
@@ -215,12 +214,11 @@ fn a_vectorless_handle_still_erases_the_turn_vector_of_an_erased_message() {
         crate::DeleteReason::UserDelete,
     ] {
         let dir = tempfile::tempdir().expect("tempdir");
-        let model = VaultConfig {
-            embedding_model: Some("test/model@v1".to_owned()),
-            dimensions: ERASED_MEANING.len(),
-            ..VaultConfig::default()
-        };
+        let mut model = VaultConfig::device();
+        model.embedding_model = Some("test/model@v1".to_owned());
+        model.dimensions = ERASED_MEANING.len();
         let mut vault = crate::Vault::open(dir.path(), model.clone()).expect("open vault");
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let alice = put_owner(&vault);
         let owner = crate::WriteActor::new(alice, EdgeActorClass::Human);
         crate::conversation_dag::fixtures::grant(&vault, owner, true);
@@ -248,6 +246,9 @@ fn a_vectorless_handle_still_erases_the_turn_vector_of_an_erased_message() {
                         witness_message(1, WitnessAuthor::User, "We met for lunch at noon."),
                     ],
                     occurred_at: 500,
+                    thread_audience: None,
+                    project: None,
+                    assertions: Default::default(),
                 })
                 .expect("witness turn");
             let id_of = |short_id: &str| {
@@ -473,6 +474,7 @@ fn safe_delete_live_tombstone_reaches_attached_outbound_channel() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault =
         Arc::new(crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let actor = put_owner(&vault);
     let victim = put_person(&vault, 0xC2);
     let manager = Arc::new(WindowManager::new(
@@ -481,12 +483,13 @@ fn safe_delete_live_tombstone_reaches_attached_outbound_channel() {
         "facade-live-route",
     ));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    manager.outbound().attach(tx);
     let window = manager
         .open_window(&WindowKey::from_timestamp(1))
         .expect("open deletion window");
     let receiver_base = crate::sync::loro_support::export_snapshot(&window.doc)
         .expect("receiver starts from the sender's pre-delete state");
+    // FIX 3787/5133: cold-open recovery routes live, so attach after it; first receive is the tombstone.
+    manager.outbound().attach(tx);
 
     facade_for(&vault, actor)
         .safe_delete(&victim.to_hex(), SafeDeleteReason::UserHardDelete)
@@ -665,7 +668,7 @@ fn a_failed_first_txn_pending_tombstone_rolls_back_the_soft_erase() {
         // "no artifacts at all" assertion stays absolute — a control delete in
         // the same vault would leave a legitimate receipt and pt: row.
         let (control_dir, control_vault) = open_nonpublishing_delete_vault();
-        let control_owner = put_person(&control_vault, 0x50);
+        let control_owner = put_owner(&control_vault);
         let control_subject = put_person(&control_vault, 0x51);
         root_vault_binding(&control_vault, 0x52, control_owner, "human");
         facade_for(&control_vault, control_owner)
@@ -679,7 +682,7 @@ fn a_failed_first_txn_pending_tombstone_rolls_back_the_soft_erase() {
         drop(control_dir);
 
         let (_dir, vault) = open_nonpublishing_delete_vault();
-        let owner = put_person(&vault, 0x53);
+        let owner = put_owner(&vault);
         let subject = put_person(&vault, 0x54);
         // The soft erase deletes the vector row too, so a surviving vector is
         // independent evidence that the scrub itself rolled back — not merely
@@ -847,7 +850,7 @@ fn a_raced_to_nothing_scrub_leaves_authority_unsettled_for_the_purge() {
     for reason in [SafeDeleteReason::GdprDelete, SafeDeleteReason::PolicyDelete] {
         let case = format!("{reason:?}");
         let (_dir, vault) = open_nonpublishing_delete_vault();
-        let owner = put_person(&vault, 0x57);
+        let owner = put_owner(&vault);
         let revoke = root_binding_with_pending_revocation(&vault, 0x58, owner);
         let subject = EntityId::from_bytes([0x59; 16]).expect("subject id");
         vault
@@ -968,6 +971,7 @@ fn napi_schedule_outbound_forwards_timezone_context() {
         trigger_ref: "session:napi".to_owned(),
         job_ref: None,
         occurred_at: Some(3_600),
+        mention: None,
     };
     let receipt = facade
         .schedule_outbound_with_context(

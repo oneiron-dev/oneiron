@@ -87,6 +87,23 @@ impl Vault {
         let envelope_hash = envelope.hash()?;
         let now = self.store.clock.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
+            // The resolution is signed now, a live act: a deleted holder's
+            // slip signs none (RULING DELETED-ACTOR-SLIP-AUTH = A; Astra
+            // review of #8289, finding 2). A resolution that arrives as
+            // history is its fold's to judge, and so is a slip that does not
+            // decode.
+            if let Ok(slip) = crate::authority::CapabilitySlip::from_token(&resolution.slip_wire)
+                && crate::authority::slip_holder_is_deleted_in_txn(
+                    &self.store,
+                    txn,
+                    &slip.claims.holder_ref,
+                )?
+            {
+                return Err(RecordError::InvalidProjectBody(
+                    "project resolution slip's holder is deleted",
+                )
+                .into());
+            }
             {
                 let reader = ProjectReader::new(&self.store, txn, self.privacy_posture())?
                     .ok_or_else(invalid)?;
@@ -208,6 +225,7 @@ impl Vault {
             next.leader = authority.leader.clone();
             next.board = authority.board.clone();
             next.roster = authority.roster.iter().flatten().cloned().collect();
+            next.room_facets = authority.room_facets.clone();
             self.sign_owner_project_in_txn(
                 txn,
                 owner,
@@ -239,7 +257,10 @@ impl Vault {
                 end: signed_at,
             };
             // The sealed row passed the owner's door above; it lands as
-            // history does, and its chain is captured with it.
+            // history does, and its chain is captured with it. A seal that
+            // changes the parents moves the project, and its settings carry
+            // the rows of the lines it leaves (stage 6.0).
+            let lines_before = self.lines_before_move_in_txn(txn, id, &next.parents)?;
             self.batch_in()
                 .put_engine_history(&id, kind, at, signed_at, &encode(&next)?)
                 .put_engine_history(
@@ -250,6 +271,9 @@ impl Vault {
                     &envelope.canonical_bytes()?,
                 )
                 .apply(txn)?;
+            if let Some(before) = lines_before {
+                crate::setting::carry_settings_in_txn(self, txn, id, &before)?;
+            }
             // The owner's act commits only a seal the fold installs: a
             // signature or slip it refuses fails here, not on a later read.
             // The new state can install without its seal, so both must.

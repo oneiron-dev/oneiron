@@ -242,6 +242,12 @@ fn open_uncontended(canonical: &Path, options: &OpenOptions) -> Result<SharedVau
     if let Some(device_class) = options.device_class {
         config.machine_device_class = device_class;
     }
+    if let Some(name) = options.machine_reported_name.clone() {
+        config.machine_reported_name = Some(name);
+    }
+    if let Some(model) = options.machine_reported_model.clone() {
+        config.machine_reported_model = Some(model);
+    }
     let vault = Vault::open_owned(canonical, config).map_err(map_lease_error)?;
     // Signing doors (delete receipts) need this install's keys from the keystore.
     vault.install_default_keystore(canonical);
@@ -399,6 +405,9 @@ pub(crate) struct EmbeddedClient {
     /// every read runs under ([`Self::with_read_credential`], FIX 647);
     /// `None` reads as the bound actor's own verbs do.
     read_proof: Option<oneiron::authority::VerifiedSlip>,
+    /// Whether this handle answers asks as this install's owner device
+    /// ([`Self::as_owner_device`], UC-05 PR 2b).
+    answers_as_owner_device: bool,
     /// Only the native host's original open handle can retrieve these snapshots.
     limit_questions: Option<Arc<NativeLimitQuestions>>,
 }
@@ -424,6 +433,7 @@ impl EmbeddedClient {
             off_record_session: None,
             host_open: None,
             read_proof: None,
+            answers_as_owner_device: false,
             limit_questions,
         })
     }
@@ -450,6 +460,7 @@ impl EmbeddedClient {
             off_record_session: None,
             host_open,
             read_proof: None,
+            answers_as_owner_device: false,
             limit_questions: None,
         })
     }
@@ -477,6 +488,8 @@ impl EmbeddedClient {
             off_record_session: None,
             host_open: self.host_open.clone(),
             read_proof: self.read_proof.clone(),
+            // Another actor's words are not the owner's in person.
+            answers_as_owner_device: false,
             limit_questions: None,
         })
     }
@@ -523,6 +536,11 @@ impl EmbeddedClient {
             Some(proof) => memory.with_read_proof(proof),
             None => memory,
         };
+        let memory = if self.answers_as_owner_device {
+            memory.answering_as_owner_device()
+        } else {
+            memory
+        };
         match self.off_record_session.as_deref() {
             Some(session) => memory.in_off_record_session(session),
             None => memory,
@@ -553,6 +571,29 @@ impl EmbeddedClient {
         let proof = verify_read_credential(self.shared.vault(), key)?;
         Ok(Self {
             read_proof: Some(proof),
+            limit_questions: None,
+            ..self.clone()
+        })
+    }
+
+    /// The same handle answering asks as this install's owner device (UC-05
+    /// PR 2b): each ask word it gives carries the proof the owner key this
+    /// install holds mints for that word
+    /// ([`oneiron::Vault::authenticate_owner_device`]). A room turn's
+    /// handle and an agent's or system actor's refuse here. Each word of a
+    /// person who is no live owner of the vault refuses `consent owner not
+    /// authenticated`, as each word refuses `owner_key_required` where this
+    /// install holds no owner key.
+    pub(crate) fn as_owner_device(&self) -> Result<Self, MemoryError> {
+        self.ensure_dispatch_pid()?;
+        if self.actor_class != EdgeActorClass::Human || self.room_turn.is_some() {
+            return Err(crate::error::bad_request(
+                "only the owner's own handle answers as the owner device",
+                &["Take the owner-device handle from the handle the vault was opened with."],
+            ));
+        }
+        Ok(Self {
+            answers_as_owner_device: true,
             limit_questions: None,
             ..self.clone()
         })

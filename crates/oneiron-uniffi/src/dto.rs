@@ -41,6 +41,16 @@ pub struct OpenOptions {
     /// Embedding width for the opened directory; omitted uses the engine
     /// default.
     pub dimensions: Option<u32>,
+    /// The name this install reports for itself in the owner's machine list,
+    /// as the host declares it; display only, never read off the operating
+    /// system; FIX [DEVICE-DISPLAY-NAME].
+    #[uniffi(default = None)]
+    pub machine_reported_name: Option<String>,
+    /// The model this install reports for itself, as the host declares it;
+    /// display only, never read off the operating system; FIX
+    /// [DEVICE-DISPLAY-NAME].
+    #[uniffi(default = None)]
+    pub machine_reported_model: Option<String>,
 }
 
 /// What `pair` returns: the server origin, the credential `connect` takes,
@@ -346,6 +356,10 @@ pub struct ClaimView {
     pub claim_scope: crate::ClaimScope,
     /// Host-stamped provenance, with unreadable input refs withheld.
     pub made_by: Option<crate::MadeBy>,
+    /// The org the maker ran as its house when it made the claim, as 32-hex:
+    /// the claim reads "pr2, for <org>" (HOUSE-BIND = A). Read, never stored.
+    #[uniffi(default = None)]
+    pub for_org: Option<String>,
     /// Typed claim record ref, when available.
     pub claim: Option<crate::RecordRef>,
     /// Validity window start (Unix seconds).
@@ -939,7 +953,8 @@ pub struct RetrievalMeta {
     pub partial: bool,
     /// Time phrases read from the query and what recall did with each.
     pub temporal_hints: Vec<TemporalHint>,
-    /// The request's `limit` was past the ceiling and was served at it.
+    /// Whether this door lowered the requested result count; recall serves
+    /// the whole limit, so this is always false.
     pub limit_clamped: bool,
 }
 

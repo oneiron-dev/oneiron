@@ -10,7 +10,10 @@ mod stored_answer;
 use serde_json::Value;
 
 use self::connector_wait::connector_call_answer;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::consent::consent_request_digest_for_test;
 use crate::EntityId;
+use crate::code_run::CompareKnown;
 use crate::code_run::payload::{decode_self_dispatch_outcome, self_call_request_value};
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord};
 use crate::code_run::storage::ExecutorStorage;
@@ -48,7 +51,51 @@ pub(crate) fn resumed_write_meets_recorded_row(
         0,
         0,
     )?;
-    Ok(records_call(&row, again))
+    records_call(&row, again, &CompareKnown::new(None))
+}
+
+/// Test door (FIX RECEIPT-RECORDS-CALL-HELD-INPUT): records `first` as the
+/// bridge records a write, stores that row as its receipt through `vault`,
+/// whose side-row wall admits it, and reads it back. Answers whether `again`,
+/// the step's write made again after a resume, meets the stored row by the
+/// compare `kept_write_answer` makes and by the one a step's close makes
+/// (`refuse_a_step_that_dropped_a_write`), and the input text the row kept.
+/// `between` runs once the row reads back, before the write is made again:
+/// a change custody takes in that time.
+#[cfg(oneiron_test_support)]
+pub(crate) fn resumed_write_meets_stored_receipt(
+    vault: &crate::Vault,
+    first: &SelfAgentVerbCall,
+    again: &SelfAgentVerbCall,
+    between: impl FnOnce(&crate::Vault) -> Result<()>,
+) -> Result<(bool, bool, String)> {
+    let mark = never_ran_mark(VERB_HOOK_STOPPED);
+    let run_id = EntityId::now();
+    let mut receipt = CodeRunReplayRecord::new(run_id, CodeRunDeterminism::new(0, [0; 32]));
+    let first = SelfCall::AgentVerb(first.clone());
+    receipt
+        .bridge_calls
+        .push(CodeRunBridgeCall::record(0, &first, &mark, 0, 0)?);
+    vault.put_code_run_replay_record(&receipt)?;
+    let stored = vault
+        .get_code_run_replay_record(&run_id)?
+        .ok_or(Error::InvariantViolation(
+            "the stored receipt did not read back",
+        ))?;
+    let row = stored
+        .bridge_calls
+        .first()
+        .ok_or(Error::InvariantViolation("the stored receipt kept no row"))?;
+    let kept_input = recorded_call(row).map_or_else(String::new, |(_, input)| input.to_owned());
+    between(vault)?;
+    let made = CodeRunBridgeCall::record(0, &SelfCall::AgentVerb(again.clone()), &mark, 0, 0)?;
+    let vault_known = || vault.known_values_now();
+    let known = CompareKnown::new(Some(&vault_known));
+    Ok((
+        records_call(row, again, &known)?,
+        meets(&stored, &made, &known)?,
+        kept_input,
+    ))
 }
 
 impl HostSelfDispatcher<'_> {
@@ -369,13 +416,18 @@ impl HostSelfDispatcher<'_> {
         }
         // A receipt an erase took the request words of meets the write by
         // that request's identity alone, and answers with what it kept
-        // (FIX 6534): `response_erased` for an erased answer.
+        // (FIX 6534): `response_erased` for an erased answer. Either reads
+        // the values base custody holds, as the side-row wall stored the
+        // receipt (FIX RECEIPT-RECORDS-CALL-HELD-INPUT).
+        let base_known = || self.base_known_values();
+        let known = CompareKnown::new(Some(&base_known));
         let recorded = if row.request_erased() {
-            row.request_identity_is(&self_call_request_value(&SelfCall::AgentVerb(
-                call.clone(),
-            ))?)?
+            row.request_identity_is(
+                &self_call_request_value(&SelfCall::AgentVerb(call.clone()))?,
+                &known,
+            )?
         } else {
-            records_call(row, &call)
+            records_call(row, &call, &known)?
         };
         if !recorded {
             return Err(Error::InvariantViolation(
@@ -474,11 +526,16 @@ impl HostSelfDispatcher<'_> {
                     ordinal,
                 )?)
         };
+        // A receipt the side-row wall placed a value of base custody in is
+        // read with base custody's values (FIX
+        // RECEIPT-RECORDS-CALL-HELD-INPUT).
+        let base_known = || self.base_known_values();
+        let known = CompareKnown::new(Some(&base_known));
         for (ordinal, made) in (0_u64..).zip(site.earlier.iter().filter(is_write)) {
             let Some(receipt) = receipt_at(ordinal)? else {
                 continue;
             };
-            if meets(&receipt, made) {
+            if meets(&receipt, made, &known)? {
                 continue;
             }
             return match decode_self_dispatch_outcome(&made.outcome) {

@@ -2,9 +2,12 @@
 //! memo, saved intents, the Hook receipts and the run index (ARCH-0080 §4
 //! Delivery, Crash-safe outcomes; §6 receipt; §8 golden set).
 
+mod archive_restore;
 mod cursor;
 mod erase;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+use oneiron_store::receipt_ref::ReceiptRef;
 use serde::{Deserialize, Serialize};
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -17,7 +20,7 @@ use crate::{EntityId, Error, Result, Vault};
 use super::body::{HookBudgetOverrun, HookPreparation, HookSettledCallRef};
 use super::grant::HookGrant;
 use super::lineage::LineageLink;
-use super::source::{FactEntry, FactKind, FactSource};
+use super::source::{FactEntry, FactKind, FactPosition, FactSource};
 
 pub(crate) use cursor::sync_binding_cursor_in_txn;
 pub(super) use cursor::{
@@ -88,30 +91,73 @@ struct HookDerivationEnvelope {
     params_hash: String,
 }
 
+/// The params digest of `binding`: hex of the binding's selector JSON, then
+/// its id. The run key's envelope carries it and a run's memo stores it as
+/// its derivation's selector hash, so it keeps its bytes (K, PLAN-UC-04
+/// stage 6.3).
+fn selector_params_hash(binding_id: EntityId, binding: &PackHookBinding) -> Result<String> {
+    let selector = serde_json::to_vec(&binding.selector)
+        .map_err(|_| Error::InvariantViolation("hook selector encode"))?;
+    Ok(hex_lower(
+        &LegacyDigest::new(purposes::runtime_hooks::RUN_PARAMS)
+            .raw(&selector)
+            .raw(binding_id.as_bytes())
+            .finish(),
+    ))
+}
+
 /// The run key for `binding` on `fact`.
 pub(super) fn run_key(
     binding_id: EntityId,
     binding: &PackHookBinding,
     fact: &FactEntry,
 ) -> Result<RunKey> {
-    let selector = serde_json::to_vec(&binding.selector)
-        .map_err(|_| Error::InvariantViolation("hook selector encode"))?;
-    let mut params = blake3::Hasher::new();
-    params.update(&selector);
-    params.update(binding_id.as_bytes());
+    run_key_for(binding_id, binding, &fact.input_hash, fact.position)
+}
+
+/// The run key for `binding` on the fact at `position` whose input hash is
+/// `input_hash`. It keys the run's memo, intent, receipt and index rows, so
+/// it keeps its bytes (K, PLAN-UC-04 stage 6.3).
+fn run_key_for(
+    binding_id: EntityId,
+    binding: &PackHookBinding,
+    input_hash: &[u8; 32],
+    position: FactPosition,
+) -> Result<RunKey> {
     let envelope = HookDerivationEnvelope {
-        content_hash: hex_lower(&fact.input_hash),
+        content_hash: hex_lower(input_hash),
         model_id: HOOK_MODEL_ID.to_owned(),
         version: format!("{}+{}", binding.hook_version, binding.body_hash),
-        params_hash: params.finalize().to_hex().to_string(),
+        params_hash: selector_params_hash(binding_id, binding)?,
     };
     let envelope = serde_json::to_vec(&envelope)
         .map_err(|_| Error::InvariantViolation("hook envelope encode"))?;
-    let mut key = blake3::Hasher::new_derive_key("oneiron.hook-run-key.v1");
-    key.update(&envelope);
-    key.update(&[fact.position.source().tag()]);
-    key.update(&fact.position.bytes());
-    Ok(*key.finalize().as_bytes())
+    Ok(LegacyDigest::new(purposes::runtime_hooks::RUN_KEY)
+        .raw(&envelope)
+        .raw(&[position.source().tag()])
+        .raw(&position.bytes())
+        .finish())
+}
+
+/// The run key for `binding` on the fact at `position` whose input hash is
+/// `input_hash`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn run_key_for_test(
+    binding_id: EntityId,
+    binding: &PackHookBinding,
+    input_hash: [u8; 32],
+    position: FactPosition,
+) -> Result<RunKey> {
+    run_key_for(binding_id, binding, &input_hash, position)
+}
+
+/// The params digest of `binding`, as a run's memo stores it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn selector_params_hash_for_test(
+    binding_id: EntityId,
+    binding: &PackHookBinding,
+) -> Result<String> {
+    selector_params_hash(binding_id, binding)
 }
 
 /// One read a run made, pinned by what it answered.
@@ -236,11 +282,7 @@ impl HookRunDerivation {
         verdict_evidence: &[EntityId],
         runtime_identity: Option<String>,
     ) -> Result<Self> {
-        let selector = serde_json::to_vec(&binding.selector)
-            .map_err(|_| Error::InvariantViolation("hook selector encode"))?;
-        let mut params = blake3::Hasher::new();
-        params.update(&selector);
-        params.update(binding_id.as_bytes());
+        let selector_hash = selector_params_hash(binding_id, binding)?;
         let mut dependencies = vec![HookDependency {
             id: entry.entity,
             revision: entry.revision,
@@ -289,7 +331,7 @@ impl HookRunDerivation {
             event_revision: entry.revision,
             event_body_hash: entry.body_hash,
             hook_version: binding.hook_version.clone(),
-            selector_hash: params.finalize().to_hex().to_string(),
+            selector_hash,
             grant_hash: grant.digest(),
             verdict_evidence: verdict_evidence.to_vec(),
             runtime_identity,
@@ -497,28 +539,69 @@ pub(super) fn memo_in_txn(
 
 /// The id of the receipt a run writes.
 pub(super) fn receipt_id(key: &RunKey) -> String {
-    format!("hook:{}", hex_lower(key))
+    ReceiptRef::hook(*key).to_string()
 }
 
-/// The rows the run a Hook receipt names (`run_key`, 64 hex) read: a fact
-/// run's memo's reads and the rows each of its verdicts' evidence resolved
-/// to (FIX 5459), every verdict's included, whether or not its pin fit the
-/// byte bound (FIX 5764), else a verb run's saved record's reads. `None`
-/// when the key names no kept run, or a fact run heard a verdict without its
-/// evidence rows. The receipt family screens a Hook receipt on them for a
-/// caller off this device (FIX 1119).
+/// The rows the run a Hook receipt names (`run_key`, 64 hex) stands on: a
+/// fact run's memo's reads and the rows each of its verdicts' evidence
+/// resolved to (FIX 5459), every verdict's included, whether or not its pin
+/// fit the byte bound (FIX 5764); else a verb run's saved record's reads,
+/// the rows whose content its input showed, and each row this vault holds
+/// that the call's args and result named as its hook saw them (review round
+/// 2 of #9535): its body can copy any of them into the receipt's `note` or
+/// `reason`. `None` when the key names no kept run, a fact run heard a
+/// verdict without its evidence rows, or a verb run's input showed content
+/// that names no row this vault holds: a host verb's free text, a pack item
+/// whose refs did not resolve, or a read result with a value outside a row
+/// object that names its held rows (VERB-HOOK-RECEIPT-UNNAMED-SOURCE-PROVENANCE;
+/// a run saved before that field, only the host's free text). The receipt
+/// family screens a Hook receipt on them for a caller off this device (FIX
+/// 1119) and for a credential-bound reader (HOOKS-04); a verb hook's input
+/// tail on them too (review round 1 of #9643).
 pub(crate) fn hook_run_read_rows(vault: &Vault, run_key: &str) -> Result<Option<Vec<EntityId>>> {
     let rtxn = vault.store.env.read_txn()?;
-    hook_run_read_rows_in(&vault.store, &rtxn, run_key)
+    let holds =
+        |row: &EntityId| -> Result<bool> { Ok(vault.entity_header_in_txn(&rtxn, row)?.is_some()) };
+    hook_run_read_rows_in(&vault.store, &rtxn, run_key, holds)
+}
+
+/// The Hook receipt the run `run_key` keeps and every row it names
+/// ([`crate::receipt::referenced_rows`]: its record's binding and CODE, and
+/// the rows its run stood on), read in one snapshot, as a verb hook's
+/// receipt tail shows it (review round 2 of #9643): a payload read before an
+/// erase scrubbed it still names the erased row. `None` when the run keeps
+/// no receipt; its rows `None` when they cannot be known.
+pub(super) fn hook_receipt_with_rows(
+    vault: &Vault,
+    run_key: &str,
+) -> Result<Option<(ReceiptRecord, Option<Vec<EntityId>>)>> {
+    let Some(key) = crate::deletion::parse_hex::<32>(run_key) else {
+        return Ok(None);
+    };
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(receipt) = RECEIPTS.get(&vault.store, &rtxn, &key)? else {
+        return Ok(None);
+    };
+    let holds =
+        |row: &EntityId| -> Result<bool> { Ok(vault.entity_header_in_txn(&rtxn, row)?.is_some()) };
+    let rows = hook_run_read_rows_in(&vault.store, &rtxn, run_key, holds)?.map(|read| {
+        let mut rows = crate::receipt::record_rows(&receipt);
+        rows.extend(read);
+        rows
+    });
+    Ok(Some((receipt, rows)))
 }
 
 /// [`hook_run_read_rows`] read in `dbs` within `rtxn`, an explicit read
 /// target: the vault's store here, and a room's composed view for a reader of
-/// the Hook receipts a room keeps (WILL L11-01 S01-2c).
+/// the Hook receipts a room keeps (WILL L11-01 S01-2c). A row a verb run's
+/// call named counts when `holds` answers true for it: a 32-hex value that
+/// names no row (a nonce, a foreign id) withholds nothing.
 fn hook_run_read_rows_in(
     dbs: &impl SideTableDbs,
     rtxn: &heed::RoTxn<'_>,
     run_key: &str,
+    holds: impl Fn(&EntityId) -> Result<bool>,
 ) -> Result<Option<Vec<EntityId>>> {
     let Some(key) = crate::deletion::parse_hex::<32>(run_key) else {
         return Ok(None);
@@ -529,7 +612,23 @@ fn hook_run_read_rows_in(
         Some(memo) if !memo.verdict_evidence_known => return Ok(None),
         Some(memo) => (memo.reads, memo.derivation.verdict_evidence),
         None => match super::verb::VERB_RUNS.get(dbs, rtxn, &key)? {
-            Some(run) => (run.reads, Vec::new()),
+            // An erased run's payload is gone from its record and its
+            // receipt alike (FIX 10080).
+            Some(run) if run.history_erased => (run.reads, Vec::new()),
+            Some(run)
+                if run.unattributed && (run.unnamed_content || run.verb.starts_with("host.")) =>
+            {
+                return Ok(None);
+            }
+            Some(run) => {
+                let mut input = run.dependencies;
+                for row in run.named_rows {
+                    if holds(&row)? {
+                        input.push(row);
+                    }
+                }
+                (run.reads, input)
+            }
             None => return Ok(None),
         },
     };

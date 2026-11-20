@@ -1,5 +1,5 @@
 ---
-name: host
+name: hooks.host
 description: Host compaction pins, quiet wake, and budget follow-up
 version: 1.0.0
 license: Apache-2.0

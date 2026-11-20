@@ -50,6 +50,13 @@
 //! [`MACHINE_MINTED_CLAIM_SOURCES`] class is eligible. Ordinary PERSON rows,
 //! replaced revisions, and missing or unreadable evidence are never candidates.
 //!
+//! An attempt mints a PERSON before the claims about it land, in a separate
+//! write. A mint an attempt makes goes through
+//! `Vault::put_attempt_minted_person_in_txn`, which also records the first
+//! try of that attempt's retry lineage, and the PERSON is no candidate while
+//! a try of that lineage is pending (FIX
+//! CLEANUP-ARCHIVES-MINTED-PERSON-BETWEEN-TRIES).
+//!
 //! # Posture: automatic from birth, propose-first by the owner's choice
 //!
 //! The default posture is [`CleanupPosture::AutoWithDigest`] (owner
@@ -115,6 +122,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::attempt_id::AttemptId;
 
+mod agent_decide;
 mod attempt_delete_authority;
 mod attempt_delete_receipts;
 mod attempt_delete_wire;
@@ -135,10 +143,12 @@ mod run_record;
 mod run_revert;
 mod run_snapshot;
 mod scan;
+pub(crate) mod setting_keys;
 pub mod surface;
 mod tripwire;
 mod visibility;
 
+pub use self::agent_decide::decide_cleanup_proposal_wire;
 pub use self::attempt_delete_wire::{
     AttemptArchiveDeleteConfirmRequest, AttemptArchiveDeleteExpectation,
     AttemptArchiveDeletePreviewRequest, AttemptArchiveDeletePreviewView,
@@ -183,8 +193,9 @@ pub(crate) use self::attempt_delete_receipts::{
 };
 pub(crate) use self::codec_receipts::{cleanup_digests_in_txn, cleanup_receipts};
 pub(crate) use self::erase::{erase_attempt_references_in_txn, erase_in_txn};
+pub(crate) use self::person_provenance::{PersonArchive, candidate_claim_subjects};
 pub(crate) use self::proposals_archive::cleanup_proposals_in_txn;
-pub(crate) use self::tripwire::zero_live_members_in_txn;
+pub(crate) use self::tripwire::{person_mint_unclaimed_in_txn, zero_live_members_in_txn};
 pub(crate) use visibility::is_archived_in_txn;
 
 use self::cleanup_types::{
@@ -195,15 +206,13 @@ use self::cleanup_types::{
     live_slots,
 };
 use self::codec_receipts::{
-    candidate_slot, candidate_value, decode_proposal, decode_row, encode_row, field, fresh_row_id,
-    id_list, id_value_list, put_digest_in_txn, put_proposal_in_txn,
+    candidate_slot, candidate_value, decode_proposal, decode_row, field, fresh_row_id, id_list,
+    id_value_list, put_digest_in_txn, put_proposal_in_txn,
 };
 use self::tripwire::{
     CLEANUP_CHECKS, apply_archives_in_txn, cleanup_posture_in_txn, run_cleanup_candidates_in_txn,
 };
 
-// FIX [LIBTEST-QUARANTINE-VAULT-CLEANUP-QODO-TESTS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod qodo_tests;
 #[cfg(test)]
@@ -233,14 +242,40 @@ use crate::vault::LiveEntityRow;
 #[cfg(test)]
 use uuid::Uuid;
 
-// FIX [LIBTEST-QUARANTINE-VAULT-CLEANUP-RETENTION-TESTS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod retention_tests;
 
 mod attempt_retention;
+#[cfg(oneiron_test_support)]
+pub(crate) use attempt_retention::task_attempt_key_pin_for_test;
 pub(crate) mod tables;
 pub(crate) use attempt_retention::{
     attempt_is_archived, forget_archived_attempt_in_txn, refresh_archived_attempt_in_rows,
     refresh_archived_attempt_in_txn, restore_task_attempts,
 };
+
+/// The receipt-row decoder (`codec_receipts::decode_row`) for the trailing-bytes test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn receipt_row_decode_for_test(
+    raw: &[u8],
+) -> crate::Result<Vec<(rmpv::Value, rmpv::Value)>> {
+    codec_receipts::decode_row(raw, "vault cleanup test row")
+}
+
+/// Whether `raw` decodes as a cleanup proposal, for the duplicate-key test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn cleanup_proposal_decodes_for_test(raw: &[u8]) -> bool {
+    codec_receipts::decode_proposal(EntityId::from_bytes_unchecked([1; 16]), raw).is_ok()
+}
+
+/// How many ids `raw` names as a cleanup proposal, for the duplicate-key test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn cleanup_proposal_named_id_count_for_test(raw: &[u8]) -> usize {
+    erase::named_ids(entity_rows::Listing::Proposal, raw).len()
+}
+
+/// The proposal schema version, for the duplicate-key test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn cleanup_proposal_schema_version_for_test() -> u64 {
+    PROPOSAL_SCHEMA_VERSION
+}

@@ -145,6 +145,7 @@ pub(super) fn apply_origin_cut(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     if state
         .origin_cut
@@ -162,6 +163,8 @@ pub(super) fn apply_origin_cut(
         machine: cut.machine,
         choice: Some(&choice),
         context: ORIGIN_CUT_REVISION_CONTEXT,
+        needs_proof_off_the_line,
+        persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
         state,
@@ -276,7 +279,12 @@ impl Vault {
         for repo in repos {
             let target = origin_cut_target(repo)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
-            if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+            if !super::owner_act_signer_admits(
+                fold.machine(machine),
+                &fold.roster,
+                &public_key,
+                fold.pinned_root.as_ref(),
+            ) {
                 return Err(authority_refused(NO_CARRIER));
             }
             let seen = fold.origin_cuts.revision(target);
@@ -292,7 +300,7 @@ impl Vault {
             }
             let act = OwnerAct::by_owner(actor, OwnerActKind::OriginCut, target, surface, seen);
             let now = self.instant_in_txn(txn)?.secs();
-            let entry = sign_side_entry(
+            let entry = sign_side_entry_with_owner_proof(
                 &fold,
                 &key,
                 seq,
@@ -305,6 +313,7 @@ impl Vault {
                     writer,
                 }),
                 now,
+                self.owner_proof_signer(&fold).as_ref(),
             )?;
             acts.push((target, authority_entry_hash(&entry)?));
             let at = TimeRange {
@@ -315,6 +324,7 @@ impl Vault {
         }
         let after = self.authority_view_readonly_in_txn(txn)?;
         for (repo, act) in acts {
+            after.refuse_waiting_choice(&act)?;
             let live = after
                 .origin_cuts
                 .repos

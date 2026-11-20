@@ -2,7 +2,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor};
 
 use super::bound::{ActorBound, GrantBound};
 use super::codec::GRANTS;
@@ -22,6 +22,7 @@ use super::support::{
 };
 use crate::error::GateError;
 
+mod after_own_scrub;
 mod code_wait_rebind;
 mod decision_slot;
 mod grants;
@@ -81,6 +82,11 @@ pub struct AuthenticatedOwner {
     /// ([`Vault::authenticate_host_action_owner`], FIX 2222). Every
     /// revalidation then also requires that action to still hold.
     host_action: Option<Box<crate::authority::HostActionGuard>>,
+    /// The owner key this install holds that proved this owner for one ask
+    /// word ([`Vault::authenticate_owner_device`], UC-05 PR 2b). Every
+    /// revalidation then also requires the authority fold to still trust it
+    /// as the owner's.
+    owner_key: Option<crate::authority::AuthorityKey>,
 }
 
 impl AuthenticatedOwner {
@@ -232,7 +238,10 @@ impl AuthenticatedOwner {
     /// belongs to `vault`, its person is live, and a credential it carried is
     /// still live and still an owner's, or a person credential it carried is
     /// still live, all in the acting transaction. Every other door takes
-    /// [`Self::revalidate_in_txn`].
+    /// [`Self::revalidate_in_txn`]. Its twin at the publication of the
+    /// owner's delete of their own PERSON is
+    /// [`Self::revalidate_after_own_scrub_in_txn`]: a check added here goes
+    /// there too.
     pub(crate) fn revalidate_person_in_txn(
         &self,
         vault: &Vault,
@@ -249,14 +258,7 @@ impl AuthenticatedOwner {
             // revoked or a binding withdrawn while the request waited for the
             // writer commits nothing. Off a self-hosted vault the typed
             // refusal stands as it is.
-            action.holds_in(vault, txn).map_err(|error| match error {
-                Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(_)) => {
-                    Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                        "the host action this owner was authenticated from no longer holds",
-                    ))
-                }
-                other => other,
-            })?;
+            action.holds_in(vault, txn).map_err(host_action_lapse)?;
         }
         if let Some(credential) = &self.credential {
             // Rechecked in the caller's transaction: a capability revoked, or
@@ -279,6 +281,20 @@ impl AuthenticatedOwner {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "person credential is no longer live",
             )));
+        }
+        if let Some(key) = &self.owner_key {
+            // Rechecked in the caller's transaction (UC-05 PR 2b): an owner
+            // key revoked, or taken into the host's custody, while the word
+            // waited for the writer commits nothing.
+            let hosted = vault.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
+            if !vault
+                .authority_view_readonly_in_txn(txn)?
+                .proves_owner_acts(key, hosted)
+            {
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    "the owner key this owner proved with no longer proves the owner's acts",
+                )));
+            }
         }
         self.request_credential_holds_in_txn(vault, txn)?;
         Ok(self.actor)
@@ -344,6 +360,25 @@ impl AuthenticatedOwner {
             .is_some_and(|credential| credential.claims().delegation.is_some())
     }
 
+    /// Whether this is a person's own proof, carried by their person
+    /// credential ([`Vault::bind_person_credential`]): it carries no owner
+    /// authority, even an owner's (FIX 4707).
+    pub(crate) const fn is_person_tier(&self) -> bool {
+        self.person_credential.is_some()
+    }
+
+    /// Whether the owner authenticated on this install itself: no transport
+    /// bound a capability, a person's or a request's credential to the proof,
+    /// and no host authenticated it from a host action. The root appointment
+    /// door takes only such a proof (OWNER-ANCHOR-ROOT-RECOVERY, PLAN v3
+    /// section 7).
+    pub(crate) fn is_unbound(&self) -> bool {
+        self.credential.is_none()
+            && self.person_credential.is_none()
+            && self.request_credential.is_none()
+            && self.host_action.is_none()
+    }
+
     /// The slip a transport bound this proof to: the owner's credential, or
     /// a person's ([`Vault::bind_person_credential`]).
     fn carried_slip(&self) -> Option<&crate::authority::VerifiedSlip> {
@@ -358,6 +393,20 @@ impl AuthenticatedOwner {
             principal_ref: self.principal_ref.clone(),
             decision_id: self.decision_id,
         }
+    }
+}
+
+/// A host action's recheck refusal as the owner door gives it: a lapse (a
+/// root revoked, a binding withdrawn, an owner no longer live) is the
+/// owner's refusal; off a self-hosted vault the typed refusal stands as it is.
+fn host_action_lapse(error: Error) -> Error {
+    match error {
+        Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(_)) => {
+            Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "the host action this owner was authenticated from no longer holds",
+            ))
+        }
+        other => other,
     }
 }
 
@@ -535,26 +584,18 @@ impl Vault {
         if let Some(stamp) = answered_by {
             return self.append_consent_gate_decision_in_txn(wtxn, stamp, receipt, None);
         }
-        let record = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id: receipt.decision_id(),
-            created_at: crate::ports::recorded_at_in_txn(&self.store, wtxn)?,
-            outcome: receipt.gate_outcome().to_owned(),
-            reason_codes: vec![receipt.reason_code().to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
-            actor_class: "system".to_owned(),
-            actor_ref: None,
-            content_kind: CONSENT_CONTENT_KIND.to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
-            diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
-            read_frontier_hash: [0_u8; 32],
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store.append_gate_decision_in_txn(wtxn, &record)
+        let mut gate_receipt = GateReceipt::new(
+            receipt.gate_outcome(),
+            CONSENT_CONTENT_KIND,
+            receipt.reason_code(),
+            ReceiptActor::Engine,
+            crate::consent::consent_receipt_diff_handle(receipt),
+            PolicyBasis::NOT_READ,
+        );
+        gate_receipt.id = Some(receipt.decision_id());
+        gate_receipt.grant_ref = crate::consent::consent_receipt_grant_ref(receipt);
+        self.store.record_gate_receipt_in_txn(wtxn, gate_receipt)?;
+        Ok(())
     }
 
     /// Projects a [`ConsentReceipt`] into the existing Gate receipt family.
@@ -569,22 +610,23 @@ impl Vault {
         receipt: &ConsentReceipt,
         owner_reason: Option<(&str, &str)>,
     ) -> Result<()> {
-        let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
-        let record = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id: receipt.decision_id(),
-            created_at: mutation_recorded_at,
-            outcome: receipt.gate_outcome().to_owned(),
-            reason_codes: {
-                let mut codes = vec![receipt.reason_code().to_owned()];
-                if let Some((rule_id, _)) = owner_reason {
-                    codes.push(format!("gate.consent.owner_reason.{rule_id}"));
-                }
-                codes
-            },
-            receipt_reasons: Vec::new(),
-            system_notices: owner_reason.map_or_else(Vec::new, |(rule_id, reason)| {
-                vec![crate::store::GateSystemNoticeRecord {
+        let mut gate_receipt = GateReceipt::new(
+            receipt.gate_outcome(),
+            CONSENT_CONTENT_KIND,
+            receipt.reason_code(),
+            ReceiptActor::human(stamp.actor),
+            crate::consent::consent_receipt_diff_handle(receipt),
+            PolicyBasis::NOT_READ,
+        );
+        gate_receipt.id = Some(receipt.decision_id());
+        gate_receipt.grant_ref = crate::consent::consent_receipt_grant_ref(receipt);
+        if let Some((rule_id, reason)) = owner_reason {
+            gate_receipt
+                .reasons
+                .push(format!("gate.consent.owner_reason.{rule_id}"));
+            gate_receipt
+                .notices
+                .push(crate::store::GateSystemNoticeRecord {
                     notice_type: "owner_reason".to_owned(),
                     channel: "receipt".to_owned(),
                     voice: "neutral".to_owned(),
@@ -595,20 +637,10 @@ impl Vault {
                     policy_plane: None,
                     policy_version: None,
                     docs_url: None,
-                }]
-            }),
-            actor_class: CONSENT_ACTOR_CLASS.to_owned(),
-            actor_ref: Some(stamp.actor.to_hex()),
-            content_kind: CONSENT_CONTENT_KIND.to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
-            diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
-            read_frontier_hash: [0_u8; 32],
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store.append_gate_decision_in_txn(wtxn, &record)
+                });
+        }
+        self.store.record_gate_receipt_in_txn(wtxn, gate_receipt)?;
+        Ok(())
     }
 }
 

@@ -23,22 +23,27 @@
 //! cold rows: entries the adopted image covers that this vault does not
 //! store. They merge into the same entity-id order and cursor as the stored
 //! rows and count toward the same limit and scan budget. A cold row holds
-//! only what the image's row summary holds (hash, signer key, sequence,
-//! parents), the image's id and the current fold's verdict: no clock, op kind
-//! or subject, since the summary has none to report. "Cold" means covered by
-//! the adopted image and not stored here. It proves membership under the
+//! what the image's row summary holds (hash, signer key, sequence, parents),
+//! the image's id and the current fold's verdict. Where the image carries
+//! the entry's signed body, the cold row also names what that body says,
+//! each field as a stored row of the entry names it (FIX
+//! [KEY-CHANGE-RECEIPT-COLD-ROWS]): an owner key's enrolment and removal
+//! name their key and machine, as the key changes list does from the same
+//! body. A cold row names no stored clock, and one whose body the image does
+//! not carry names no op kind or subject either. "Cold" means covered by the
+//! adopted image and not stored here. It proves membership under the
 //! attested image only; it does not claim a custodian holding the signed
 //! bytes is online, an archive was fetched or the covered history was
 //! replayed independently.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 
 use super::kernel::hex_lower;
 use crate::Vault;
 use crate::authority::{
-    AuthorityCheckpointRow, AuthorityFold, VerifiedAuthorityCheckpoint,
-    cached_adopted_authority_checkpoint_in_txn,
+    AuthorityCheckpointRow, AuthorityFold, RestoredJoinEnrolment, VerifiedAuthorityCheckpoint,
+    adopted_evidence_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -46,6 +51,7 @@ use crate::error::{Error, Result};
 use crate::memory::Memory;
 use crate::ports::{EntityRecord, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+use crate::request_limits::page_limit_zero_as_one;
 use oneiron_authority::authority::{
     AuthorityKey, AuthorityLogEntry, AuthorityOp, FederationLifecycleKind, FullCopyMark,
     OwnerWorkKind, authority_entry_hash, authority_log_entity_id_from_hash,
@@ -67,10 +73,12 @@ pub const AUTHORITY_AUDIT_MAX_LIMIT: usize = 500;
 /// `next_after`.
 pub const AUTHORITY_AUDIT_SCAN_PER_ROW: usize = 16;
 /// Whether a page lists cold rows whatever the query's `kinds` names. A cold
-/// row has no op kind to match (the adopted image's row summary names none,
-/// and an unknown kind is never reported as `other`), so the filter applies
-/// to stored rows only (OF-469 slice E call "audit cold rows"). `false` would
-/// list cold rows only when `kinds` is empty.
+/// row whose body the adopted image does not carry has no op kind to match
+/// (the image's row summary names none, and an unknown kind is never
+/// reported as `other`), so the filter applies to stored rows only (OF-469
+/// slice E call "audit cold rows"), and every cold row is listed alike,
+/// whether or not its carried body names a kind. `false` would list cold
+/// rows only when `kinds` is empty.
 pub const AUTHORITY_AUDIT_COLD_ROWS_IGNORE_KIND_FILTER: bool = true;
 
 #[doc(hidden)]
@@ -80,8 +88,8 @@ pub use oneiron_verb_wire::receipt::authority_audit::{
 
 #[doc(hidden)]
 pub use oneiron_records::receipt::authority_audit::{
-    AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditRow, ColdAuthorityAuditRow,
-    PendingMembershipExecutionRow,
+    AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditRow, CarriedAuthorityAuditBody,
+    ColdAuthorityAuditRow, PendingMembershipExecutionRow,
 };
 
 impl Vault {
@@ -98,17 +106,24 @@ impl Vault {
         owner: &AuthenticatedOwner,
         query: &AuthorityAuditQuery,
     ) -> Result<AuthorityAuditPage> {
-        let limit = query
-            .limit
-            .unwrap_or(AUTHORITY_AUDIT_DEFAULT_LIMIT)
-            .clamp(1, AUTHORITY_AUDIT_MAX_LIMIT);
+        let limit = page_limit_zero_as_one(
+            query.limit,
+            AUTHORITY_AUDIT_DEFAULT_LIMIT,
+            AUTHORITY_AUDIT_MAX_LIMIT,
+        )
+        .rows;
         let scan_cap = limit.saturating_mul(AUTHORITY_AUDIT_SCAN_PER_ROW);
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let issues = FoldIssues::of(&fold);
-        let adopted = cached_adopted_authority_checkpoint_in_txn(&self.store, &txn)?;
-        let mut covered = covered_after(adopted.as_deref(), query.after);
+        let adopted = adopted_evidence_in_txn(&self.store, &txn)?;
+        let mut covered = covered_after(
+            adopted
+                .as_deref()
+                .map(|evidence| (evidence.checkpoint(), evidence.bodies())),
+            query.after,
+        );
         let mut next_cold = covered.next().transpose()?;
         let mut stored =
             self.store
@@ -141,7 +156,7 @@ impl Vault {
                     next_cold = covered.next().transpose()?;
                     last = Some(cold.id);
                     if lists_cold_rows(&query.kinds) {
-                        cold_attested.push(project_cold_row(cold, &fold, &issues));
+                        cold_attested.push(project_cold_row(self, &txn, cold, &fold, &issues)?);
                     }
                 }
                 Examined::Stored(id) => {
@@ -165,13 +180,19 @@ impl Vault {
                         if let Some(cold) = covered_here
                             && lists_cold_rows(&query.kinds)
                         {
-                            cold_attested.push(project_cold_row(cold, &fold, &issues));
+                            cold_attested.push(project_cold_row(self, &txn, cold, &fold, &issues)?);
                         }
                         continue;
                     }
                     let entry = decode_authority_log_entry_body(&record.body)?;
                     let mut row = project_row(id, &record, &entry, &fold, &issues)?;
-                    agent_grant_act::pair_marked_withdrawal(self, &txn, &entry.op, &mut row)?;
+                    agent_grant_act::pair_marked_withdrawal(
+                        self,
+                        &txn,
+                        &entry.op,
+                        row.fold_valid,
+                        &mut row.detail,
+                    )?;
                     if query.kinds.is_empty() || query.kinds.contains(&row.event_kind) {
                         rows.push(row);
                     }
@@ -207,21 +228,27 @@ enum Examined<'a> {
     Cold(Covered<'a>),
 }
 
-/// A row the adopted image covers, with the entity id its hash derives.
+/// A row the adopted image covers, with the entity id its hash derives and
+/// the signed body the image carries of it, decoded.
 #[derive(Clone, Copy)]
 struct Covered<'a> {
     id: EntityId,
     hash: &'a AuthorityEntryHash,
     row: &'a AuthorityCheckpointRow,
+    body: Option<&'a AuthorityLogEntry>,
     checkpoint: &'a VerifiedAuthorityCheckpoint,
 }
 
-/// The adopted image's covered rows past `after`, ascending by entity id;
-/// none when nothing was adopted. An entry's id is its hash's first 16 bytes,
-/// so hash order is id order, and the first row past the cursor is the first
-/// hash above `after` padded with `0xff`.
+/// The adopted image's covered rows past `after`, ascending by entity id,
+/// each with its carried body from `adopted`'s decoded bodies; none when
+/// nothing was adopted. An entry's id is its hash's first 16 bytes, so hash
+/// order is id order, and the first row past the cursor is the first hash
+/// above `after` padded with `0xff`.
 fn covered_after<'a>(
-    adopted: Option<&'a VerifiedAuthorityCheckpoint>,
+    adopted: Option<(
+        &'a VerifiedAuthorityCheckpoint,
+        &'a BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    )>,
     after: Option<EntityId>,
 ) -> impl Iterator<Item = Result<Covered<'a>>> {
     let start = after.map_or(Bound::Unbounded, |after| {
@@ -229,7 +256,7 @@ fn covered_after<'a>(
         floor[..after.as_bytes().len()].copy_from_slice(after.as_bytes());
         Bound::Excluded(floor)
     });
-    adopted.into_iter().flat_map(move |checkpoint| {
+    adopted.into_iter().flat_map(move |(checkpoint, bodies)| {
         checkpoint
             .image()
             .rows
@@ -239,6 +266,7 @@ fn covered_after<'a>(
                     id: authority_log_entity_id_from_hash(hash)?,
                     hash,
                     row,
+                    body: bodies.get(hash),
                     checkpoint,
                 })
             })
@@ -363,9 +391,42 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
         ),
         AuthorityOp::Genesis { .. } => (Other, "genesis", OpFields::default()),
         AuthorityOp::EnrollDevice { .. } => (Other, "enroll_device", OpFields::default()),
-        AuthorityOp::OwnerKeyEnroll(_) => (Other, "owner_key_enroll", OpFields::default()),
+        // A key change names its key, its machine and its shape (pass 27
+        // section 4.4; row WEB-PASSKEY-OWNER-KEY): the subject is the
+        // enrolled key, the holder the machine that holds it (for a passkey,
+        // the carrier that served its ceremony), the detail `device_key` or
+        // `passkey`. The proof that vouched is the row's signer key. A
+        // confirmation of a key only a passkey vouched for (lead ruling
+        // WEBPASSKEY-BLIND-SIGNATURE = B) is the same op, so it reads as a
+        // second row for that key, its signer the confirming key.
+        AuthorityOp::OwnerKeyEnroll(enroll) => (
+            Other,
+            "owner_key_enroll",
+            OpFields {
+                detail: Some(
+                    if enroll.is_passkey() {
+                        "passkey"
+                    } else {
+                        "device_key"
+                    }
+                    .to_owned(),
+                ),
+                subject_ref: Some(key_hex(&enroll.device.key)),
+                holder_ref: Some(enroll.machine.to_hex()),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::FrontierJoin(_) => (Other, "frontier_join", OpFields::default()),
-        AuthorityOp::RevokeDevice { .. } => (Other, "revoke_device", OpFields::default()),
+        // The key the revocation ends (the owner's ruling AUTH-5): the row's
+        // signer and cosigners name the proof that vouched for it.
+        AuthorityOp::RevokeDevice { revoked_key } => (
+            Other,
+            "revoke_device",
+            OpFields {
+                subject_ref: Some(key_hex(revoked_key)),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::RotateKey { .. } => (Other, "rotate_key", OpFields::default()),
         AuthorityOp::ReRoot { .. } => (Other, "re_root", OpFields::default()),
         AuthorityOp::BindActor { .. } => (Other, "bind_actor", OpFields::default()),
@@ -373,6 +434,32 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
         AuthorityOp::RevokeActor { .. } => (Other, "revoke_actor", OpFields::default()),
         AuthorityOp::MachineProfile(_) => (Other, "machine_profile", OpFields::default()),
         AuthorityOp::OwnerRoot(_) => (Other, "owner_root", OpFields::default()),
+        // The appointed successor root key, and the root whose anchor
+        // appoints it (OWNER-ANCHOR-ROOT-RECOVERY).
+        AuthorityOp::RootAppointment(appointment) => (
+            Other,
+            "root_appointment",
+            OpFields {
+                detail: Some(hex_lower(&appointment.root.0)),
+                subject_ref: Some(key_hex(&appointment.successor.key)),
+                ..OpFields::default()
+            },
+        ),
+        // The owner's word that no other machine is left: its subject is the
+        // machine it joins, its detail the held enrolment it names (row
+        // RESTORED-COPIES-ENROL-EACH-OTHER).
+        AuthorityOp::RestoredMachineJoin(join) => (
+            Other,
+            "restored_machine_join",
+            OpFields {
+                detail: match &join.enrolment {
+                    RestoredJoinEnrolment::Held(enrolment) => Some(hex_lower(enrolment)),
+                    RestoredJoinEnrolment::Inline(_) => Some("inline enrolment".to_owned()),
+                },
+                subject_ref: Some(join.act.target.to_hex()),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::WorldPrivacy(_) => (Other, "world_privacy", OpFields::default()),
         AuthorityOp::WorldKeyWraps(_) => (Other, "world_key_wraps", OpFields::default()),
         AuthorityOp::OwnerHandover(action) => (
@@ -602,12 +689,32 @@ fn lists_cold_rows(kinds: &BTreeSet<AuthorityAuditEventKind>) -> bool {
     AUTHORITY_AUDIT_COLD_ROWS_IGNORE_KIND_FILTER || kinds.is_empty()
 }
 
+/// The cold row of `cold`. Where the image carries its body, the row names
+/// what the body says as a stored row of the entry would, the mark of a
+/// withdrawn mint and the op's own issue codes included.
 fn project_cold_row(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     cold: Covered<'_>,
     fold: &AuthorityFold,
     issues: &FoldIssues,
-) -> ColdAuthorityAuditRow {
-    ColdAuthorityAuditRow {
+) -> Result<ColdAuthorityAuditRow> {
+    let fold_valid = fold.valid_entries.contains(cold.hash);
+    let (carried_body, issue_codes) = match cold.body {
+        Some(entry) => {
+            let mut body = project_body(entry);
+            agent_grant_act::pair_marked_withdrawal(
+                vault,
+                txn,
+                &entry.op,
+                fold_valid,
+                &mut body.detail,
+            )?;
+            (Some(body), issues.codes(cold.hash, &entry.op))
+        }
+        None => (None, issues.cold_codes(cold.hash)),
+    };
+    Ok(ColdAuthorityAuditRow {
         entry_ref: cold.id,
         entry_hash: hex_lower(cold.hash),
         checkpoint: hex_lower(&cold.checkpoint.id()),
@@ -619,37 +726,26 @@ fn project_cold_row(
             .iter()
             .map(|parent| hex_lower(parent))
             .collect(),
-        fold_valid: fold.valid_entries.contains(cold.hash),
-        issue_codes: issues.cold_codes(cold.hash),
-    }
+        carried_body,
+        fold_valid,
+        issue_codes,
+    })
 }
 
-fn project_row(
-    id: EntityId,
-    record: &EntityRecord,
-    entry: &AuthorityLogEntry,
-    fold: &AuthorityFold,
-    issues: &FoldIssues,
-) -> Result<AuthorityAuditRow> {
-    let hash = authority_entry_hash(entry)?;
+/// What `entry`'s signed body says, as a stored row and a cold row whose
+/// body the image carries both name it.
+fn project_body(entry: &AuthorityLogEntry) -> CarriedAuthorityAuditBody {
     let (event_kind, source_op, fields) = classify(&entry.op);
-    Ok(AuthorityAuditRow {
-        entry_ref: id,
-        entry_hash: hex_lower(&hash),
+    CarriedAuthorityAuditBody {
         event_kind,
         source_op: source_op.to_owned(),
         detail: fields.detail,
-        occurred_start: record.occurred.start,
-        occurred_end: record.occurred.end,
-        learned_at: record.learned_at,
         advisory_ts: entry.ts,
-        signer_key: key_hex(&entry.signer.public_key),
         cosigner_keys: entry
             .cosigns
             .iter()
             .map(|cosign| key_hex(&cosign.public_key))
             .collect(),
-        seq: entry.seq,
         vault_ref: entry.vault_id.as_ref().map(|id| hex_lower(id)),
         subject_ref: fields.subject_ref,
         grant_ref: fields.grant_ref,
@@ -661,6 +757,59 @@ fn project_row(
         peer_vault_ref: fields.peer_vault_ref,
         epoch: fields.epoch,
         expires_at: fields.expires_at,
+    }
+}
+
+fn project_row(
+    id: EntityId,
+    record: &EntityRecord,
+    entry: &AuthorityLogEntry,
+    fold: &AuthorityFold,
+    issues: &FoldIssues,
+) -> Result<AuthorityAuditRow> {
+    let hash = authority_entry_hash(entry)?;
+    let CarriedAuthorityAuditBody {
+        event_kind,
+        source_op,
+        detail,
+        advisory_ts,
+        cosigner_keys,
+        vault_ref,
+        subject_ref,
+        grant_ref,
+        receipt_ref,
+        affected_grants,
+        claim_ref,
+        holder_ref,
+        parent_ref,
+        peer_vault_ref,
+        epoch,
+        expires_at,
+    } = project_body(entry);
+    Ok(AuthorityAuditRow {
+        entry_ref: id,
+        entry_hash: hex_lower(&hash),
+        event_kind,
+        source_op,
+        detail,
+        occurred_start: record.occurred.start,
+        occurred_end: record.occurred.end,
+        learned_at: record.learned_at,
+        advisory_ts,
+        signer_key: key_hex(&entry.signer.public_key),
+        cosigner_keys,
+        seq: entry.seq,
+        vault_ref,
+        subject_ref,
+        grant_ref,
+        receipt_ref,
+        affected_grants,
+        claim_ref,
+        holder_ref,
+        parent_ref,
+        peer_vault_ref,
+        epoch,
+        expires_at,
         fold_valid: fold.valid_entries.contains(&hash),
         issue_codes: issues.codes(&hash, &entry.op),
     })

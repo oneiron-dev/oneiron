@@ -12,9 +12,9 @@ mod materialize;
 mod mirror;
 mod scrub;
 mod workflows;
-pub(crate) use scrub::{
-    deleted, deleted_elsewhere, deleted_elsewhere_under_lock, scrub_missed_note_deletes,
-};
+#[cfg(oneiron_test_support)]
+pub(crate) use scrub::{arm_scrub_entry_hook, seed_waiting_bundle};
+pub(crate) use scrub::{deleted, deleted_elsewhere, scrub_missed_note_deletes};
 
 pub(crate) use materialize::apply;
 pub(crate) use mirror::{copy_judged, copy_selected, refresh, refresh_for};
@@ -33,7 +33,7 @@ const FORMAT: &[u8] = b"proposal-values-v3";
 #[doc(hidden)]
 use oneiron_records::sync::note::REDACTED;
 
-const MAPS: [&str; 5] = [
+pub(in crate::sync) const MAPS: [&str; 5] = [
     "documents",
     "document_heads",
     "head_move_receipts",
@@ -117,6 +117,63 @@ fn held(
 ) -> Result<bool> {
     crate::settings::device_only_withholds(&vault.store, txn, flagged, note)
 }
+/// Whether `note` is withheld here: a record use limit keeps it for storage
+/// only on this vault (a privacy erase a customer hold refused, C6, or a
+/// cooperative review restriction), or the vault it came from withheld it
+/// after it travelled, so it reads to no one here (`HeldBack::Withheld`, as
+/// a device holds such a NOTE back; REVIEW-9846 round 2). No window gains
+/// its core from this vault's store, no workflow of it is packed, and it
+/// rides as no other NOTE's attachment. Unlike a blocked NOTE its carrier is
+/// not removed here: the withholding pass takes a use-limited one out under
+/// a marker (`window::withhold_use_limited_carriers`), so a receiver holds it
+/// back rather than deleting it (Engine ANSWER
+/// SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B).
+fn withheld_here(vault: &Vault, txn: &heed::RoTxn<'_>, note: &EntityId) -> Result<bool> {
+    Ok(
+        crate::store::legal_hold::use_limit_in_txn(&vault.store, txn, note)?.is_some()
+            || crate::source_audience::held_back_in(vault, txn, note)?
+                == Some(crate::source_audience::HeldBack::Withheld),
+    )
+}
+/// Whether this vault withholds any NOTE ([`withheld_here`]): it holds a
+/// record use limit or a row held back.
+fn any_withheld(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(
+        crate::store::legal_hold::any_record_use_limit_in_txn(&vault.store, txn)?
+            || crate::source_audience::any_held_in(vault, txn)?,
+    )
+}
+/// The NOTEs whose workflow rows `doc` carries, as a core or as a bundle's
+/// attachment; none for a document with no NOTE maps.
+///
+/// # Errors
+///
+/// Codec failures of the document's NOTE maps.
+pub(crate) fn workflow_notes(doc: &LoroDoc) -> Result<BTreeSet<EntityId>> {
+    if !is_native(doc) {
+        return Ok(BTreeSet::new());
+    }
+    Ok(codec::read(doc)?.notes())
+}
+/// Takes every workflow row of each of `notes` out of `doc` (its proposal
+/// documents, head, forks, receipts and place in a bundle), as a dropped
+/// NOTE's go. The caller commits. Whether anything went.
+///
+/// # Errors
+///
+/// Codec failures of the document's NOTE maps.
+pub(crate) fn drop_workflows(doc: &LoroDoc, notes: &BTreeSet<EntityId>) -> Result<bool> {
+    if notes.is_empty() || !is_native(doc) {
+        return Ok(false);
+    }
+    let mut state = codec::read(doc)?;
+    if state.notes().is_disjoint(notes) {
+        return Ok(false);
+    }
+    state.drop_deleted(notes);
+    state.validate()?;
+    state.write(doc)
+}
 /// Whether no export of the document `tombstones` indexes carries `note`: it
 /// is tombstoned there, deleted here, off the record, or an erased shell.
 pub(crate) fn blocked(
@@ -193,3 +250,6 @@ impl State {
         Ok(())
     }
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use workflows::note_fork_key_pin_for_test;

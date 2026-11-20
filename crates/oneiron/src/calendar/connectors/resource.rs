@@ -1,6 +1,9 @@
 //! One UID is one remote resource: master plus every live detached exception.
 use super::{outbound::ingest_error, remote::render_component, seat::CalendarConnectorError};
-use crate::calendar::{claims::*, passport::admitted_passports_for_event_in_txn};
+use crate::calendar::{
+    claims::*,
+    passport::{admitted_passports_for_event_in_txn, live_passports_for_event},
+};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::derived_domains::CALENDAR_CONNECTOR_SOURCE_BLOB;
 use crate::{EntityId, Vault};
@@ -23,6 +26,33 @@ pub(super) fn master_for(
         }
     }
     Ok(master.unwrap_or(event))
+}
+
+/// The RECURRENCE-ID the render gives `member` of `master`'s resource now:
+/// none for the master, and for a series exception the original start its
+/// live exception claim names. Only a write staged before its outbox row
+/// recorded the RECURRENCE-IDs its bytes carry reads it
+/// ([`super::outbound::CalendarWriteOutboxRow::recurrence_ids`]): a claim
+/// another source retracts after the staging no longer names the member.
+pub(super) fn recurrence_identity(
+    vault: &Vault,
+    master: EntityId,
+    member: EntityId,
+) -> Result<Option<u64>, CalendarConnectorError> {
+    if member == master {
+        return Ok(None);
+    }
+    for id in vault.claims_for_subject(&member)? {
+        if let Some(body) = vault.get_claim(&id)?
+            && body.lifecycle == ClaimLifecycleStatus::Active
+            && body.predicate == PREDICATE_CALENDAR_SERIES_EXCEPTION
+        {
+            return Ok(Some(
+                decode_series_exception_value(&body.value)?.original_start_utc,
+            ));
+        }
+    }
+    Ok(None)
 }
 pub(super) fn members(
     vault: &Vault,
@@ -94,6 +124,14 @@ pub(super) struct RenderedResource {
     /// of these bytes gives each all-day member this zone, and so does the
     /// settled write.
     pub(super) resource_zone: Option<String>,
+    /// The members whose rendered VEVENT reads cancelled (`STATUS:CANCELLED`).
+    /// The settled write marks each one's passport `written_cancelled`, so the
+    /// seat's later report of the cancellation is the owner's own write coming
+    /// back, not a host cancel that moves deposit money.
+    pub(super) cancelled_members: Vec<EntityId>,
+    /// The RECURRENCE-ID (UTC) each detached member's rendered VEVENT
+    /// carries, parsed from these bytes; a member not listed carries none.
+    pub(super) recurrence_ids: Vec<(EntityId, u64)>,
 }
 
 /// Renders the resource for `uid` from the EVENT claims, over `source`.
@@ -236,6 +274,22 @@ pub(super) fn render(
     if parsed.events.len() != member_ids.len() {
         return Err(ingest_error("rendered resource does not match its members"));
     }
+    let cancelled_members = member_ids
+        .iter()
+        .zip(&parsed.events)
+        .filter(|(_, event)| event.cancelled)
+        .map(|(member, _)| *member)
+        .collect();
+    let recurrence_ids = member_ids
+        .iter()
+        .zip(&parsed.events)
+        .filter_map(|(member, event)| {
+            event
+                .properties
+                .recurrence_id_utc
+                .map(|original| (*member, original))
+        })
+        .collect();
     let component_hashes = member_ids
         .into_iter()
         .zip(parsed.events.into_iter().map(|event| event.content_hash))
@@ -244,6 +298,8 @@ pub(super) fn render(
         ics,
         component_hashes,
         resource_zone: source_zone.or(collection_zone),
+        cancelled_members,
+        recurrence_ids,
     })
 }
 
@@ -499,7 +555,17 @@ pub(super) fn archived_source(
     {
         return Ok(Some(bytes));
     }
-    for id in vault.claims_for_subject(&master)? {
+    // The revision each key's ingest diff reads goes first: while a revision
+    // waits for review, its admitted head stays live beside it. Another live
+    // passport for the UID still supplies the archive when that one cites
+    // none (a raw admission carries no source).
+    let current: Vec<EntityId> = live_passports_for_event(vault, &master)?
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    let mut candidates = vault.claims_for_subject(&master)?;
+    candidates.sort_by_key(|id| !current.contains(id));
+    for id in candidates {
         let Some(body) = vault.get_claim(&id)? else {
             continue;
         };

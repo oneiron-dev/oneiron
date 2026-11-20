@@ -54,6 +54,26 @@ impl Memory<'_> {
             .with_read_filter(self.read_filter.as_ref()))
     }
 
+    /// [`Self::read_lane`], its key also held, in every snapshot that serves
+    /// a row, to the live agent Grants that name this handle's actor, each
+    /// alone ([`ScopedReadActorKey::bound_by_live_agent_grants`]): a read that
+    /// stays inside the actor's own owner Grants whatever else admits the
+    /// row, as a credential-backed read already does (Astra review of #8340,
+    /// F2). It only narrows.
+    pub(crate) fn read_lane_within_own_agent_grants(
+        &self,
+        claims: ClaimReadStatus,
+    ) -> MemoryResult<ScopedRead<'_>> {
+        let key = self
+            .actor_read_key()?
+            .bound_by_live_agent_grants(self.actor);
+        Ok(self
+            .vault
+            .scoped_read(self.in_room_turn(key)?)
+            .with_claim_status(claims)
+            .with_read_filter(self.read_filter.as_ref()))
+    }
+
     /// Opens only a bound brief view. A view-only slip cannot enter any
     /// general read verb; its holder need not be enrolled in this vault.
     pub(crate) fn shared_brief_read_lane(
@@ -344,18 +364,31 @@ impl Memory<'_> {
                     )
                 });
         }
-        let key = if owner {
-            ScopedReadActorKey::vault_owner(self.actor)
-        } else {
-            ScopedReadActorKey::with_actor_class(
-                self.actor.to_hex(),
-                self.actor_class.gate_actor_class(),
-            )
-            .ok_or_else(|| {
-                MemoryError::bad_request("bound actor cannot be used as a scoped read key")
-            })?
-            .require_access_grants(Some(self.actor))
-        };
+        if owner {
+            return Ok(ScopedReadActorKey::vault_owner(self.actor));
+        }
+        let key = ScopedReadActorKey::with_actor_class(
+            self.actor.to_hex(),
+            self.actor_class.gate_actor_class(),
+        )
+        .ok_or_else(|| MemoryError::bad_request("bound actor cannot be used as a scoped read key"))?
+        .require_access_grants(Some(self.actor));
+        // A transport caller with no slip is a credential too: the
+        // conversation home binds it as it binds a proof-backed key
+        // (credential_key.rs; RULING SECREAD-HOME-READ-DOORS = B).
+        if self.credential
+            && !self
+                .vault
+                .own_agent_credential_in(
+                    txn,
+                    &self.actor,
+                    Some(self.actor_class.gate_actor_class()),
+                    false,
+                )
+                .map_err(MemoryError::from)?
+        {
+            return Ok(key.homed_unnamed());
+        }
         Ok(key)
     }
 
@@ -801,6 +834,11 @@ impl Memory<'_> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> MemoryResult<Option<crate::provenance::made_by::MadeBy>> {
+        // A reaction claim's birth names its writer, so it goes only to a
+        // reader who may read its reactor (FIX REACTION-CLAIM-VALUE-REACTOR-ID).
+        if !lane.serves_birth_of_in(txn, id)? {
+            return Ok(None);
+        }
         let Some(birth) = crate::provenance::birth::row_birth_in_txn(&lane.store_read(), txn, id)?
         else {
             return Ok(None);

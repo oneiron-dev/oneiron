@@ -186,7 +186,9 @@ pub(super) fn run(
             match upstream.prepare(vault, settled) {
                 Ok(()) => {}
                 Err(
-                    Error::Artifact(ArtifactError::InvalidSkillBody(_)) | Error::InvalidConfig(_),
+                    Error::Artifact(ArtifactError::InvalidSkillBody(_))
+                    | Error::Artifact(ArtifactError::SkillVersionKept(_))
+                    | Error::InvalidConfig(_),
                 ) => {
                     report.promote_refused += 1;
                     continue;
@@ -241,7 +243,9 @@ pub(super) fn run(
                 Ok(Ruling::Unscored) => report.promote_unscored += 1,
                 Ok(Ruling::Refused)
                 | Err(
-                    Error::Artifact(ArtifactError::InvalidSkillBody(_)) | Error::InvalidConfig(_),
+                    Error::Artifact(ArtifactError::InvalidSkillBody(_))
+                    | Error::Artifact(ArtifactError::SkillVersionKept(_))
+                    | Error::InvalidConfig(_),
                 ) => {
                     report.promote_refused += 1;
                 }
