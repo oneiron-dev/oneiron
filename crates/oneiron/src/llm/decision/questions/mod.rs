@@ -95,6 +95,7 @@ pub use route_calibration::{
 #[cfg(oneiron_test_support)]
 pub(crate) use saved_reader::{saved_reader, saved_source_key_in_txn};
 pub(crate) use saved_reader::{wake_artifact_reads, wake_lane};
+pub(crate) use standing::mark_answers_stale_in_left_facets_in_txn;
 pub use standing::{
     StandingAnswer, admit_standing_answer, backfill_standing_answer, prepare_standing_answer,
     standing_source_frontier,
