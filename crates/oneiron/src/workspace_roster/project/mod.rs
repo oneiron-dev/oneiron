@@ -1366,6 +1366,9 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
                 &encode(&body)?,
             )
             .apply(txn)?;
+        // The root starts with its row of each `born` setting key, as every new project does
+        // (stage 7c-2).
+        crate::setting::write_born_rows_in_txn(vault, txn, id)?;
         Ok(())
     })?;
     // A vault from before revisions were kept: capture every stored chain once.

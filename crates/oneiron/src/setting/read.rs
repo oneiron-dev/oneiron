@@ -293,63 +293,56 @@ fn walk_met_rows<V: Clone + PartialEq>(
     default: &V,
 ) -> Walked<V> {
     let found = decoded(loaded, decode);
-    let walked = match decide_met(&found, chain.len().saturating_sub(1), meet, default) {
-        Met::Unreadable(at) => Walked::Unreadable(chain[at].clone()),
-        Met::Value { value, by, rows } => match by {
-            Some(by) => {
-                let index = found
-                    .iter()
-                    .position(|row| std::ptr::eq(row, by))
-                    .unwrap_or_default();
-                let loaded = &loaded[index];
-                Walked::Row {
-                    value,
-                    source: source_of(by.mode, &loaded.scope),
-                    revision: loaded.revision,
-                }
-            }
-            None if rows == 0 || value == *default => Walked::Default,
-            None => Walked::Row {
-                value,
-                source: SettingSource::Met,
-                revision: 0,
-            },
-        },
+    let (value, by, rows) = match decide_met(&found, chain.len().saturating_sub(1), meet, default) {
+        Met::Unreadable(at) => return Walked::Unreadable(chain[at].clone()),
+        Met::Value { value, by, rows } => (value, by, rows),
     };
-    seeded_when_no_one_decided(walked, loaded, &found, meet)
+    let loaded_of = |row: &FoundRow<V>| {
+        found
+            .iter()
+            .position(|found| std::ptr::eq(found, row))
+            .map(|index| &loaded[index])
+    };
+    let holder = by.and_then(loaded_of);
+    let deciding: Vec<&Loaded> = deciding_met(&found, meet)
+        .into_iter()
+        .filter_map(loaded_of)
+        .collect();
+    provenance_of(value, holder, &deciding, rows, default)
 }
 
-/// `walked` as [`SettingSource::Seeded`] when every row that decided it ([`deciding_met`]) is a
-/// copy of a pack's default: at the scope of the row its value comes from, else at the narrowest
-/// deciding row's. One row someone set among the deciders keeps the source as it is (DESIGN 1.6,
-/// "Explicit against seeded"; the test of `gate/project_depth/explicit.rs:53-85`).
-fn seeded_when_no_one_decided<V: Clone + PartialEq>(
-    walked: Walked<V>,
-    loaded: &[Loaded],
-    found: &[FoundRow<V>],
-    meet: &dyn Fn(&V, &V) -> V,
+/// The read of a met `value` by who decided it (DESIGN 1.6, "Explicit against seeded"; the test
+/// of `gate/project_depth/explicit.rs:53-85`). `holder` is the narrowest row that holds the value,
+/// `deciding` the rows that decided it ([`deciding_met`], narrowest first), `rows` how many rows
+/// took part, and `default` the accepted default the empty vault slot gives.
+/// - A row someone set among the deciders makes the read explicit. It names the row that holds
+///   the value when someone set that row; else (a copy of a pack's default holds it, or the
+///   accepted default does) the narrowest decider someone set, with that row's revision. A
+///   value no row and no default holds stays [`SettingSource::Met`].
+/// - With no such row the read is seeded: [`SettingSource::Seeded`] at the holder's scope, else at
+///   the narrowest decider's; the accepted default, or no row at all, stays
+///   [`SettingSource::Default`].
+fn provenance_of<V: PartialEq>(
+    value: V,
+    holder: Option<&Loaded>,
+    deciding: &[&Loaded],
+    rows: usize,
+    default: &V,
 ) -> Walked<V> {
-    let (value, source, revision) = match walked {
-        Walked::Row {
-            value,
-            source,
-            revision,
-        } => (value, source, revision),
-        other => return other,
-    };
-    let deciding: Vec<&Loaded> = deciding_met(found, meet)
-        .into_iter()
-        .filter_map(|row| found.iter().position(|found| std::ptr::eq(found, row)))
-        .map(|index| &loaded[index])
-        .collect();
-    let source = match deciding.first() {
-        Some(narrowest) if deciding.iter().all(|row| row.seeded) => match source {
-            SettingSource::Row(scope) | SettingSource::Carried(scope) => {
-                SettingSource::Seeded(scope)
+    let named = |row: &Loaded| (source_of(row.found.mode, &row.scope), row.revision);
+    let explicit = deciding.iter().copied().find(|row| !row.seeded);
+    let (source, revision) = match (holder, explicit) {
+        (Some(holder), Some(_)) if !holder.seeded => named(holder),
+        (Some(_), Some(explicit)) => named(explicit),
+        (None, Some(explicit)) if value == *default => named(explicit),
+        (None, Some(_)) => (SettingSource::Met, 0),
+        (Some(holder), None) => (SettingSource::Seeded(holder.scope.clone()), holder.revision),
+        (None, None) => match deciding.first() {
+            Some(narrowest) if rows > 0 && value != *default => {
+                (SettingSource::Seeded(narrowest.scope.clone()), 0)
             }
-            _ => SettingSource::Seeded(narrowest.scope.clone()),
+            _ => return Walked::Default,
         },
-        _ => source,
     };
     Walked::Row {
         value,

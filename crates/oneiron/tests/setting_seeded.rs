@@ -1,12 +1,15 @@
 //! DESIGN 15-setting-primitive, stage 7c-2: seeded and born (section 1.6, "Explicit against
 //! seeded", "The no-op test is on the slot's own row", `born`, "What the empty slot gives").
-//! - a new project starts with its row of a `born` key, copied from the key it names: a copy of
-//!   the pack's default reads `seeded`, a copy of the owner's row reads as a row;
+//! - a new project, the vault's root among them, starts with its row of a `born` key, copied
+//!   from the key it names: a copy of the pack's default reads `seeded`, a copy of the owner's
+//!   row reads as a row;
 //! - the owner's set of the same value over a seeded row writes the act; the row becomes the
 //!   owner's, the read says `row`, and the change row shows prior equal to value;
-//! - a project with no row reads the strictest value, never the wider one;
+//! - a project with no row reads the strictest value, never the wider one; so a clear of its row
+//!   narrows, and a first row after that widens;
 //! - a wider row someone set decides only when it makes the value stricter, and one row someone
-//!   set among the deciders makes the read explicit, even when a seeded row holds the value;
+//!   set among the deciders makes the read explicit and names it, even when a seeded row or the
+//!   accepted default holds the value;
 //! - a move carries a seeded row as seeded, and a row someone set as theirs.
 //!
 //! Test keys: `test.born_depth` (lower is stricter, default 10, strictest 0, vault and project;
@@ -20,7 +23,10 @@ use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::Memory;
-use oneiron::setting::{SetSetting, SetSettingOutcome, Setter, SettingCaller, SettingScope};
+use oneiron::setting::{
+    ChangeDirection, SetSetting, SetSettingOutcome, Setter, SettingCaller, SettingChange,
+    SettingScope,
+};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::setting::{carry_settings_between, setting_change};
@@ -122,6 +128,14 @@ fn applied_sequence(outcome: &SetSettingOutcome) -> Option<u64> {
     *sequence
 }
 
+/// The change row `outcome` wrote.
+fn change_of(fx: &Fixture, outcome: &SetSettingOutcome) -> SettingChange {
+    let sequence = applied_sequence(outcome).expect("the change writes");
+    setting_change(&fx.vault, sequence)
+        .expect("the change stream reads")
+        .expect("the change stands")
+}
+
 #[test]
 fn a_new_project_starts_with_its_row_copied_from_the_default_and_reads_seeded() {
     let fx = Fixture::open();
@@ -138,6 +152,20 @@ fn a_new_project_starts_with_its_row_copied_from_the_default_and_reads_seeded() 
         "a read that names no project: {vault}"
     );
     assert_eq!(vault["source"], json!({ "from": "default" }), "{vault}");
+}
+
+#[test]
+fn the_vaults_root_project_starts_with_its_row_too() {
+    let fx = Fixture::open();
+    let root = fx.vault.root_project().expect("the vault's root project");
+
+    let read = fx.get(BORN, &[root]);
+    assert_eq!(
+        read["value"],
+        json!(7),
+        "the root is born like any project: {read}"
+    );
+    assert_eq!(read["source"], source("seeded", project(root)), "{read}");
 }
 
 #[test]
@@ -239,6 +267,52 @@ fn a_wider_row_someone_set_decides_only_when_it_makes_the_value_stricter() {
 }
 
 #[test]
+fn a_clear_of_a_born_things_row_narrows_and_a_first_row_after_it_widens() {
+    let fx = Fixture::open();
+    let made = fx.new_project(None);
+
+    let cleared = fx.owner_sets(SetSetting {
+        scope: SettingScope::Project(made),
+        value: None,
+        ..SetSetting::vault_value(BORN, json!(0))
+    });
+    let change = change_of(&fx, &cleared);
+    assert_eq!(
+        change.direction,
+        Some(ChangeDirection::Tighter),
+        "the thing reads the strictest value once its row is gone: {change:?}"
+    );
+
+    let first = fx.owner_sets_at(BORN, SettingScope::Project(made), json!(7));
+    let change = change_of(&fx, &first);
+    assert_eq!(change.prior, None, "the slot had no row: {change:?}");
+    assert_eq!(
+        change.direction,
+        Some(ChangeDirection::Looser),
+        "a row on a thing with none widens it from the strictest value: {change:?}"
+    );
+}
+
+#[test]
+fn an_owners_row_looser_than_the_default_keeps_the_read_explicit() {
+    let fx = Fixture::open();
+    let made = fx.new_project(None);
+    fx.owner_sets_at(BORN, SettingScope::Project(made), json!(11));
+
+    let read = fx.get(BORN, &[made]);
+    assert_eq!(
+        read["value"],
+        json!(10),
+        "the accepted default narrows: {read}"
+    );
+    assert_eq!(
+        read["source"],
+        source("row", project(made)),
+        "the owner's row decided first, so the read is explicit: {read}"
+    );
+}
+
+#[test]
 fn an_owners_row_below_keeps_the_read_explicit_when_a_seeded_parent_row_is_stricter() {
     let fx = Fixture::open();
     let parent = fx.new_project(None);
@@ -253,8 +327,8 @@ fn an_owners_row_below_keeps_the_read_explicit_when_a_seeded_parent_row_is_stric
     );
     assert_eq!(
         read["source"],
-        source("row", project(parent)),
-        "the owner's row on the child decided first, so the read is explicit: {read}"
+        source("row", project(child)),
+        "the owner's row on the child decided first, so the read is explicit and names it: {read}"
     );
 
     let seeded = fx.new_project(Some(parent));

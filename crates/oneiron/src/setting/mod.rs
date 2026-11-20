@@ -67,7 +67,6 @@ pub use self::beside::SettingTravel;
 pub(crate) use self::beside::is_beside_value_body;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::beside::{beside_row_json, beside_row_of, land_beside_row};
-#[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::born::write_born_rows_in_txn;
 pub(crate) use self::carry::carry_between_in_txn;
 pub(crate) use self::carry::carry_settings_in_txn;

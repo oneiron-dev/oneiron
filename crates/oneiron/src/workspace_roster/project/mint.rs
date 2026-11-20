@@ -324,6 +324,8 @@ impl Vault {
                 &encode(&project)?,
             )
             .apply(txn)?;
+        // A new project starts with its row of each `born` setting key (stage 7c-2).
+        crate::setting::write_born_rows_in_txn(self, txn, id)?;
         self.require_owner_head_in_txn(txn, id, &project)?;
         // A house mind the roster seats joins the new home room through the
         // three consents, filed by the owner who tapped (OF-417).

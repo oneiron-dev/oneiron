@@ -5,8 +5,8 @@
 //! - a project with no row of a born key reads the strictest value, source unreadable at the
 //!   project, standing pending; its own row reads settled;
 //! - every born key in the catalogue starts at a project, from a vault key with no item that is
-//!   not learned and not born itself, whose default its own type decodes, and names a strictest
-//!   value.
+//!   not learned and not born itself, whose default its own type decodes and that names a
+//!   strictest value, and names a strictest value itself.
 //!
 //! Its read door and the `born` field are new in this stage, so this file runs on the head only;
 //! the red/green runs of the read are in `setting_seeded`.
@@ -123,6 +123,11 @@ fn every_born_key_starts_at_a_project_from_a_vault_key_whose_default_it_decodes(
         assert!(source.born.is_none(), "`{from}` is not born itself");
         assert!(source.item.is_none(), "`{from}` is no family");
         assert!(!source.is_learned(), "`{from}` is not learned");
+        assert!(
+            source.kind.strictest_value().expect("encodes").is_some(),
+            "`{from}` names a strictest value, so a row of it that does not read leaves the \
+             birth pending and never fails the project's creation"
+        );
         let default = source.kind.default_value().expect("the default encodes");
         assert!(
             spec.kind.decodes(&default),

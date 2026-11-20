@@ -6,6 +6,7 @@ use oneiron_authority::authority::{ActSurface, Direction, Permitted};
 use oneiron_contracts::fingerprint::{Fingerprinter, purposes};
 use oneiron_setting_contract::{ChangeDirection, FoundRow, Order, Quorum, RowKey};
 
+use super::born::is_born_value_slot;
 use super::change::record_change_in_txn;
 use super::learned::{checked_weight, fits_in_txn};
 use super::pack::layer_default_in_txn;
@@ -606,9 +607,11 @@ const fn authority_direction(direction: ChangeDirection) -> Direction {
 /// - On a key whose rows meet, a value row below the vault, or a row a move carried, is a bound,
 ///   judged against the row it replaces: an added row only narrows, a changed one is compared
 ///   with its prior value, and a clear drops a bound.
-/// - Any other slot (a vault value row, a pin, every row of a key that reads one row) is judged on
-///   what its readers read: the walk at the slot's scope before the change against the walk with
-///   the slot as the change leaves it.
+/// - Any other slot (a vault value row, a pin, every row of a key that reads one row, and a born
+///   thing's own value row) is judged on what its readers read: the walk at the slot's scope
+///   before the change against the walk with the slot as the change leaves it. A born thing's
+///   empty value slot reads the strictest value, not "no bound" (DESIGN 1.6, "What the empty slot
+///   gives"), so a first row there can widen and a clear can narrow.
 fn direction_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -626,6 +629,7 @@ fn direction_in_txn(
     if spec.reads_met()
         && matches!(change.key.mode, SettingMode::Value | SettingMode::Carried)
         && change.key.scope != SettingScope::Vault
+        && !is_born_value_slot(spec, &change.key)
     {
         return Ok(match (change.value, prior) {
             (Some(_), None) => ChangeDirection::Tighter,

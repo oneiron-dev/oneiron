@@ -549,6 +549,8 @@ impl Vault {
                     self.batch_in()
                         .put_engine_history(&project_id, kind, at, now, &encode(&project)?)
                         .apply(txn)?;
+                    // A new project starts with its row of each `born` setting key (stage 7c-2).
+                    crate::setting::write_born_rows_in_txn(self, txn, project_id)?;
                     self.require_owner_head_in_txn(txn, project_id, &project)?;
                     // A house mind the roster seats joins the new home room
                     // through the three consents, filed by the owner (OF-417).
@@ -598,6 +600,8 @@ impl Vault {
                     self.batch_in()
                         .put_engine_history(&project_id, kind, at, now, &encode(&project)?)
                         .apply(txn)?;
+                    // A new project starts with its row of each `born` setting key (stage 7c-2).
+                    crate::setting::write_born_rows_in_txn(self, txn, project_id)?;
                     self.require_owner_head_in_txn(txn, project_id, &project)?;
                     // The house mind joins here too, as on the carded path.
                     let caller = crate::WriteActor::new(

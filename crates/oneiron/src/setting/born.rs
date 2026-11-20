@@ -57,13 +57,17 @@ pub(super) fn missing_born_row(
 /// Writes the birth row of every `born` key on the new `project`, in the write that creates it
 /// (module doc): the source key's value in force at the vault, as the engine's row, seeded when the
 /// source reads its default. A row already there stays (a thing is born once). A source that does
-/// not read (an unreadable row, a value the born key does not decode) writes nothing, so the
-/// project reads the strictest value, pending. The row is the thing's start, no move: like a pack's
-/// first default it writes no change row. Returns how many rows it wrote.
+/// not read (an unreadable row, a lost default, a value the born key does not decode) writes
+/// nothing, so the project reads the strictest value, pending: the catalogue holds every born
+/// key's source to a strictest value (`tests/setting_born_pending.rs`), so its read comes back
+/// unreadable and never fails the creation. The row is the thing's start, no move: like a pack's
+/// first default it writes no change row. Every door that creates a project on this install calls
+/// it: the project write door, a subproject, an owner's project, a card's mint, a thread's
+/// conversion and the vault's root. Returns how many rows it wrote.
 ///
 /// # Errors
 ///
-/// Storage errors.
+/// Storage errors, and a corrupted index when a source key names no strictest value.
 pub(crate) fn write_born_rows_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
