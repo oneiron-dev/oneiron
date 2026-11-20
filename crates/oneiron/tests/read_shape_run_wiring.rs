@@ -4,8 +4,9 @@
 //! run's reads count toward its pick, as its search runs do), and the run's
 //! spend scope records the tokens it settled on its stamp, for the reward's
 //! token cost term: a retried try and its retry each record their own tokens
-//! under the one scope they share, and a run's stamp takes the tokens a child
-//! settles into its scope after the run ended.
+//! under the one scope they share, a reader's tokens go to the try that
+//! spawned it whichever try runs when it settles, and a run's stamp takes the
+//! tokens a child settles into its scope after the run ended.
 //!
 //! On the PR 1 head this file does not compile: there is no
 //! `Memory::with_dispatch_attempt`, no `BriefReadShape` and no
@@ -31,7 +32,7 @@ use oneiron::llm::ModelId;
 use oneiron::llm::run_admission::{DeclaredMaximum, LeaseUnit, MaximumShown};
 use oneiron::memory::graph_fs_doors::{GraphFsGrepRequest, GraphFsLsRequest, GraphFsMountRequest};
 use oneiron::store::{ReadShape, ReadShapePick, ReadShapeTier, RetrievalAction};
-use oneiron::test_doors::spend::reserve_child_scope;
+use oneiron::test_doors::spend::{reserve_child_scope, settle_spawned_child};
 use oneiron::{EntityId, Vault, VaultConfig};
 
 const KIND: &str = "test.read_shape_wiring";
@@ -314,6 +315,130 @@ fn a_retried_try_and_its_retry_each_record_their_own_tokens() {
         Some(100),
         "the retry's settlement leaves the retried try's tokens"
     );
+}
+
+#[test]
+fn a_reader_s_tokens_reach_the_try_that_spawned_it_whichever_try_runs() {
+    let (_dir, vault, _owner) = capturing_vault();
+    let dispatcher = AgentDispatcher::new(&vault);
+    let root = token_root(&dispatcher, "owen-read-shape-reader-retry", 2_000);
+    let model = ModelId::new("test/model-a@r1").expect("model id");
+    let queue = AttemptQueue::new(&vault);
+
+    let first = enqueue(&vault);
+    let scope = reserve_child_scope(&vault, &root, &first, 1_000, 13).expect("carve");
+    let ClaimOutcome::Claimed(claimed) = queue
+        .claim_kind(
+            KIND,
+            ClaimAttempt {
+                lease_owner: WORKER.to_owned(),
+                now: NOW + 1,
+            },
+        )
+        .expect("claim")
+    else {
+        panic!("the first try is claimable");
+    };
+    assert_eq!(claimed.id, first);
+    vault
+        .stamp_read_shape(first, &model, MOUNT_EXPLORE)
+        .expect("the first try's stamp");
+    dispatcher
+        .charge(&scope.scope, 100)
+        .expect("the first try spends");
+    // The first try spawns two readers under the run's scope; both outlive it.
+    let early_reader = enqueue(&vault);
+    let late_reader = enqueue(&vault);
+    let early_scope =
+        reserve_child_scope(&vault, &scope.scope, &early_reader, 200, 13).expect("carve");
+    let late_scope =
+        reserve_child_scope(&vault, &scope.scope, &late_reader, 200, 13).expect("carve");
+
+    let RetryOutcome::Retried(retry) = queue
+        .retry(RetryAttempt {
+            id: first,
+            lease_owner: WORKER.to_owned(),
+            attempt_count: claimed.attempt_count,
+            backoff_until: NOW + 1,
+            last_error: Some("the first try failed".to_owned()),
+            now: NOW + 1,
+        })
+        .expect("retry")
+    else {
+        panic!("a retry schedules a new try");
+    };
+    dispatcher
+        .record_retried_read_shape_units(&first)
+        .expect("the retried try's tokens");
+    assert_eq!(stamped_units(&vault, first), Some(100));
+    vault
+        .stamp_read_shape(
+            retry.id,
+            &model,
+            ReadShapePick {
+                shape: ReadShape::Verbs,
+                tier: ReadShapeTier::Seed,
+            },
+        )
+        .expect("the retry's stamp");
+
+    // The first try's reader settles while the retry runs: its tokens are
+    // the first try's, and the retry's own tokens leave them out.
+    dispatcher
+        .charge(&early_scope.scope, 50)
+        .expect("the early reader spends");
+    settle_spawned_child(&vault, &early_reader, first, 14)
+        .expect("settle the early reader")
+        .expect("the reader was metered");
+    assert_eq!(
+        stamped_units(&vault, first),
+        Some(150),
+        "the retried try takes its reader's tokens while its retry runs"
+    );
+    dispatcher
+        .charge(&scope.scope, 200)
+        .expect("the retry spends");
+    let retry_reader = enqueue(&vault);
+    let retry_reader_scope =
+        reserve_child_scope(&vault, &scope.scope, &retry_reader, 200, 14).expect("carve");
+    let settled = dispatcher
+        .settle_child(&retry.id, 15)
+        .expect("settle the retry")
+        .expect("the run was metered");
+    assert_eq!(settled.spent_units, 350);
+    assert_eq!(
+        stamped_units(&vault, retry.id),
+        Some(200),
+        "the retry records its own tokens, not the first try's reader's"
+    );
+
+    // The first try's other reader settles after the run ended.
+    dispatcher
+        .charge(&late_scope.scope, 30)
+        .expect("the late reader spends");
+    settle_spawned_child(&vault, &late_reader, first, 16)
+        .expect("settle the late reader")
+        .expect("the reader was metered");
+    assert_eq!(
+        stamped_units(&vault, first),
+        Some(180),
+        "the retried try takes its reader's tokens after the run ended"
+    );
+    assert_eq!(
+        stamped_units(&vault, retry.id),
+        Some(200),
+        "the run's last try leaves out an earlier try's late reader"
+    );
+
+    // The retry's own reader settles after it: the retry takes its tokens.
+    dispatcher
+        .charge(&retry_reader_scope.scope, 20)
+        .expect("the retry's reader spends");
+    settle_spawned_child(&vault, &retry_reader, retry.id, 17)
+        .expect("settle the retry's reader")
+        .expect("the reader was metered");
+    assert_eq!(stamped_units(&vault, retry.id), Some(220));
+    assert_eq!(stamped_units(&vault, first), Some(180));
 }
 
 #[test]

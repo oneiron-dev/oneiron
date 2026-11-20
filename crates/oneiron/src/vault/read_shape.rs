@@ -32,24 +32,39 @@ impl Vault {
     /// Stamps `attempt` with `pick` for `model` unless it already holds a
     /// stamp, and returns the stamp in force: a re-leased attempt keeps the
     /// shape its first wake picked. The stamp keeps what the attempt's spend
-    /// scope has settled so far: a retry spends under the scope of the try it
-    /// retries, and those units are not its run's.
+    /// scope has settled so far, and its reader children's part of that, in
+    /// the one transaction that writes it: a retry spends under the scope of
+    /// the try it retries, and those units are not its run's.
     ///
     /// # Errors
     ///
     /// [`crate::Error::InvalidConfig`] for an unknown attempt, or a model
-    /// other than the attempt's executor stamp or its earlier read-shape stamp.
+    /// other than the attempt's executor stamp or its earlier read-shape stamp;
+    /// [`crate::Error::ConcurrentWrite`] inside an active write transaction.
     pub fn stamp_read_shape(
         &self,
         attempt: AttemptId,
         model: &ModelId,
         pick: ReadShapePick,
     ) -> Result<ReadShapeStamp> {
-        let scope_units = crate::agent_dispatch::AgentDispatcher::new(self)
-            .attempt_scope_spent_units(attempt)?
-            .unwrap_or(0);
-        self.store
-            .stamp_read_shape(attempt, model, pick, scope_units)
+        if crate::store::active_write_txn_depth() > 0 {
+            return Err(crate::Error::ConcurrentWrite(
+                "read shape stamp skipped inside active write transaction",
+            ));
+        }
+        let mut txn = self.store.env.write_txn()?;
+        let at_wake = crate::agent_dispatch::AgentDispatcher::new(self)
+            .read_shape_scope_units_in_txn(&txn, attempt)?;
+        let stamp = crate::store::read_shape_policy::stamp_read_shape_in_txn(
+            &self.store,
+            &mut txn,
+            attempt,
+            model,
+            pick,
+            at_wake,
+        )?;
+        txn.commit()?;
+        Ok(stamp)
     }
 
     /// Picks the shape `attempt`'s run reads through as it wakes on `model`,

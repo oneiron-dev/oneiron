@@ -732,6 +732,7 @@ impl AgentDispatcher<'_> {
                     &self.vault.store,
                     txn,
                     *child,
+                    &id.0,
                     scope.spent_units,
                 )
         {
@@ -781,16 +782,85 @@ impl AgentDispatcher<'_> {
         Ok(settlement)
     }
 
-    /// What `attempt`'s spend scope has settled so far: a retry's is the
-    /// scope of the try it retries. `None`: the attempt launched unmetered.
-    pub(crate) fn attempt_scope_spent_units(&self, attempt: AttemptId) -> Result<Option<u64>> {
-        let txn = self.vault.store.env.read_txn()?;
-        let Some(id) = self.scope_for_attempt_in_txn(&txn, attempt)? else {
-            return Ok(None);
+    /// What `attempt`'s spend scope holds now, in `txn`: its settled total
+    /// and its reader children's part of it (census L9-37). A retry's scope
+    /// is the scope of the try it retries; an attempt that launched
+    /// unmetered, or spends another unit, holds none.
+    pub(crate) fn read_shape_scope_units_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt: AttemptId,
+    ) -> Result<crate::store::read_shape_policy::ScopeUnitsAtWake> {
+        let Some(id) = self.scope_for_attempt_in_txn(txn, attempt)? else {
+            return Ok(Default::default());
         };
-        Ok(SCOPE
-            .get(&self.vault.store, &txn, &id.0)?
-            .map(|scope| scope.spent_units))
+        let Some(scope) = SCOPE.get(&self.vault.store, txn, &id.0)? else {
+            return Ok(Default::default());
+        };
+        if scope.unit != crate::llm::run_admission::LeaseUnit::tokens() {
+            return Ok(Default::default());
+        }
+        Ok(crate::store::read_shape_policy::ScopeUnitsAtWake {
+            scope_units: scope.spent_units,
+            reader_units: crate::store::read_shape_policy::scope_reader_units_in_txn(
+                &self.vault.store,
+                txn,
+                &id.0,
+            )?,
+        })
+    }
+
+    /// [`Self::settle_child_in_txn`] for a reader child `spawner`'s run
+    /// spawned (census L9-37): a reader can outlive the try that spawned it,
+    /// and a retry spends under that try's scope, so its tokens are recorded
+    /// on the spawner's read-shape stamp and left out of every run's own
+    /// tokens under the scope, whichever try runs when it settles. They are
+    /// recorded first, in the same transaction, so a closed scope's revision
+    /// during the settlement already leaves them out. A failed record never
+    /// stops the settlement.
+    pub(crate) fn settle_spawned_child_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        child: &AttemptId,
+        spawner: AttemptId,
+        now: u64,
+    ) -> Result<Option<SpendSettlement>> {
+        if let Err(error) = self.record_spawned_read_shape_units_in_txn(txn, child, spawner) {
+            tracing::warn!(?error, attempt = ?child, "a reader's read-shape units were not recorded");
+        }
+        self.settle_child_in_txn(txn, child, now)
+    }
+
+    /// Records what open reader child `child` will settle into its parent
+    /// scope on `spawner`'s read-shape stamp; nothing for a child that settled
+    /// already, has no parent scope or spends another unit.
+    fn record_spawned_read_shape_units_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        child: &AttemptId,
+        spawner: AttemptId,
+    ) -> Result<()> {
+        let Some(id) = self.scope_for_attempt_in_txn(txn, *child)? else {
+            return Ok(());
+        };
+        let Some(scope) = SCOPE.get(&self.vault.store, txn, &id.0)? else {
+            return Ok(());
+        };
+        let Some(parent) = scope.parent else {
+            return Ok(());
+        };
+        if scope.state == SpendState::Closed
+            || scope.unit != crate::llm::run_admission::LeaseUnit::tokens()
+        {
+            return Ok(());
+        }
+        crate::store::read_shape_policy::record_reader_read_shape_units_in_txn(
+            &self.vault.store,
+            txn,
+            &parent.0,
+            spawner,
+            scope.spent_units,
+        )
     }
 
     /// Records a retried try's tokens on its read-shape stamp (census L9-37):
@@ -813,6 +883,7 @@ impl AgentDispatcher<'_> {
             &self.vault.store,
             &mut txn,
             *attempt,
+            &id.0,
             scope.spent_units,
         )?;
         txn.commit()?;
