@@ -7,7 +7,7 @@
 //! world. The arm grades the scoped text channel alone: BM25 under the
 //! agent's world scope through the native credential read, with no vectors
 //! and no recency blend, under the eval clock; every claim of a corpus is
-//! stamped at the corpus's first session, so claim-age decay reorders no
+//! stamped at the corpus's earliest session, so claim-age decay reorders no
 //! hit. So a change to what the agent's term statistics count (#10062:
 //! document frequency counts only postings of rows the reader may read)
 //! moves its numbers, and an unscoped arm's do not. The run is graded on the readable records alone (see
