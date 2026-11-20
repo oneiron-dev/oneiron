@@ -10,7 +10,8 @@
 //! and only while the key's own actor is a live owner of this vault in the
 //! read's snapshot (`policy_model::is_live_vault_owner_in_txn`). The owner's
 //! key keeps everything the lane's key bounds its read by: its destination,
-//! worlds, room turn, channel, relationship principal and owner exemption;
+//! worlds, room turn, channel, relationship principal, owner exemption and
+//! conversation home with its named room;
 //! the lane keeps its audience, peers, session view, room ceiling and claim
 //! status; the request a read asked is met as the Grant alternative meets
 //! it. It never stands for a key that supplies a proof, carries a Scope, is
@@ -187,11 +188,14 @@ impl<'v> ScopedRead<'v> {
 impl ScopedReadActorKey {
     /// The key of `owner`, this key's own reader, held to this key's bounds:
     /// the owner's floor, with this key's destination, worlds, room turn,
-    /// channel, grant gate and its principal, owner exemption and saved
+    /// channel, grant gate and its principal, owner exemption, saved
     /// credentials (a rebuilt saved lane's, FIX
-    /// OWN-DEVICE-GRANT-NOT-RECHECKED). The lane's owner alternative reads
-    /// under it, and so does a question's reader beside a key rebuilt under a
-    /// saved lane's floor basis (blind review round 2 on #8065).
+    /// OWN-DEVICE-GRANT-NOT-RECHECKED), and its conversation home with the
+    /// room it reads inside and stands in, so the owner's key reads no
+    /// stamped claim the home withheld (round 2 review P1 of #9590). The
+    /// lane's owner alternative reads under it, and so does a question's
+    /// reader beside a key rebuilt under a saved lane's floor basis (blind
+    /// review round 2 on #8065).
     pub(crate) fn bounded_owner_key(&self, owner: EntityId) -> Self {
         let mut owner_key = Self::vault_owner(owner).for_destination(self.destination());
         owner_key.principal_ref = self.principal_ref;
@@ -205,6 +209,11 @@ impl ScopedReadActorKey {
         owner_key
             .saved_credentials
             .clone_from(&self.saved_credentials);
+        owner_key.room_facets = self.room_facets;
+        owner_key.standing_room = self.standing_room;
+        if self.is_homed_unnamed() {
+            owner_key = owner_key.homed_unnamed();
+        }
         owner_key
     }
 }

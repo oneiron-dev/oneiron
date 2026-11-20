@@ -1087,6 +1087,7 @@ impl ScopedReadActorKey {
             grant_gate,
             grant_principal: self.principal_ref.filter(|_| self.enforce_access_grants),
             actor_class: self.actor_class.clone(),
+            classless: self.actor_class.is_none(),
         }
     }
 
@@ -1097,31 +1098,35 @@ impl ScopedReadActorKey {
     /// principal's row ([`KeyClassOrigin::PrincipalRow`]) takes `class`.
     /// Any other key of another class has no meet with it, a caller's own
     /// key with no proof among them (Sol F1 on #8134): the answer reads
-    /// nothing, as [`Self::read_nothing`] keys it. A lane that kept no
-    /// class (`class` is `None`: its live key named none, or its basis was
-    /// saved before the class was kept) leaves this key's own class, as
-    /// every rebuild read before the class was kept: taking no class would
-    /// free a key built from its principal's row from each row bound to the
-    /// row's class, and the lane's frozen Scope would stand as read
-    /// authority its live key lacked (Astra F1/F2 on #8134). `None` only for
-    /// a blank actor ref, which no key holds.
+    /// nothing, as [`Self::read_nothing`] keys it. A lane whose live key
+    /// named no class (`classless`) is saved under no class: such a key built
+    /// from its principal's row reads with none, as that live key did, and
+    /// any other key that names one reads nothing (round 2 review P1 of
+    /// #9590). A lane saved before the class was kept (`class` is `None`,
+    /// `classless` unset) leaves this key's own class, as every rebuild read
+    /// before the class was kept: taking no class there would free a key
+    /// built from its principal's row from each row bound to the row's
+    /// class, and that lane's frozen Scope would stand as read authority its
+    /// live key lacked (Astra F1/F2 on #8134). `None` only for a blank actor
+    /// ref, which no key holds.
     #[must_use]
     pub(super) fn within_saved_actor_class(
         self,
         class: Option<&str>,
+        classless: bool,
         origin: KeyClassOrigin,
     ) -> Option<Self> {
-        let Some(class) = class else {
+        if class.is_none() && !classless {
             return Some(self);
-        };
-        if self.actor_class.as_deref() == Some(class) {
+        }
+        if self.actor_class.as_deref() == class {
             return Some(self);
         }
         if self.proof.is_some() || origin == KeyClassOrigin::Caller {
             return Self::read_nothing(self.actor_ref, self.actor_class.unwrap_or_default());
         }
         Some(Self {
-            actor_class: Some(class.to_owned()),
+            actor_class: class.map(str::to_owned),
             ..self
         })
     }
