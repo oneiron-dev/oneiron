@@ -5957,7 +5957,7 @@
      "path": "src/authority/owner_proof.rs",
      "purpose": "An owner act's proof (row CARRIER-OWNER-PROOF; the lead's rulings 15 Nov 12:1x and 13:2x, FIX…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 2
      }
     },
@@ -17396,7 +17396,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 37,
       "fn": 1
      }
     },
@@ -19406,7 +19406,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AdmittedLiveFork",
@@ -19420,7 +19420,7 @@
       "const": 2,
       "crate-vis": 1,
       "enum": 1,
-      "fn": 15,
+      "fn": 17,
       "struct": 3
      }
     },
@@ -26619,14 +26619,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "MemoriesCut",
       "MemoriesSection"
      ],
      "path": "src/context_board/memories.rs",
      "purpose": "MEMORIES section — what retrieval pulled: typed rows, the slot budget, the companion echo, and the…",
      "surface": {
       "const": 1,
+      "fn": 4,
       "re-export": 1,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -29518,6 +29520,7 @@
      "purpose": "The owner's standing answer to a filed courtesy ask (ARCH-0043 #leaving-a-company: \"The reply to an erase…",
      "surface": {
       "const": 3,
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -45811,7 +45814,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 73
+      "crate-vis": 74
      }
     },
     {
@@ -45887,7 +45890,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/manifest_fold/fold.rs",
@@ -58398,7 +58401,7 @@
      "path": "src/memory/support/transactions.rs",
      "purpose": "Write plumbing: owner authorship, host origin, claim envelopes and actor-verified write txns",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 4
      }
     },
@@ -69165,7 +69168,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/receipt/authority_audit.rs",
@@ -69194,6 +69197,16 @@
      "purpose": "An act on a vault setting and an owner's whole-vault export in the audit (FIX 4624, FIX 5660)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/authority_audit/cold_rows.rs",
+     "purpose": "The cold rows of an audit page (OF-469): the entries the adopted image covers past the page's cursor, in…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -76980,7 +76993,7 @@
      "path": "src/share/revoke.rs",
      "purpose": "Stopping a share (OF-491, FIX 1610)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -88414,6 +88427,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/ingest/dropped_carriers.rs",
+     "purpose": "The peer carriers the ingest dropped for a record a refused privacy erase keeps (C6) or a cooperative review…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -88480,7 +88503,7 @@
      "path": "src/sync/ingest/mod.rs",
      "purpose": "One ingest entry per replicated container: every entities-map value and every tombstone takes the same…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "re-export": 1
      }
     },
@@ -96107,7 +96130,7 @@
      "path": "src/test_doors/host_root_row_signature.rs",
      "purpose": "Fixture door for the owner reserve's revoked owner key test (OWNER-RESERVE-REVOKED-OWNER-KEY = A): the host…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -96204,7 +96227,7 @@
      "path": "src/test_doors/inquiry.rs",
      "purpose": "Door for `tests/inquiry_records.rs` (INQUIRE-1 PR 1): the writers of the member's log and the asking side's…",
      "surface": {
-      "fn": 10
+      "fn": 11
      }
     },
     {
@@ -96523,7 +96546,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 350,
+      "mod": 353,
       "re-export": 3
      }
     },
@@ -97707,6 +97730,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/stored_workspace_roster_rows.rs",
+     "purpose": "Stored workspace rows in the shape written before one-vault mode, for `tests/workspace_one_vault_mode.rs`",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/stretch_pack_finalize.rs",
      "purpose": "Door for `oneiron-server/tests/off_record_room_context_pack.rs` (census row L6-12): a context pack assembled…",
      "surface": {
@@ -97995,6 +98028,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/work_talk_replay.rs",
+     "purpose": "A replicated-shape CONVERSATION put for the work-talk tests (L7-05 Astra T3)",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "StoredFinding"
      ],
@@ -98004,6 +98047,16 @@
       "const": 1,
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/workspace_onboarding_halt.rs",
+     "purpose": "A workspace onboarding stopped after a named step, for the test that resumes it once the one-vault setting…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -103500,7 +103553,7 @@
      "path": "src/workspace_roster/codec.rs",
      "purpose": "Roster reads, journal records, and canonical onboarding encodings",
      "surface": {
-      "crate-vis": 50
+      "crate-vis": 51
      }
     },
     {
@@ -103679,9 +103732,28 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 52,
+      "crate-vis": 54,
       "mod": 1,
-      "re-export": 30
+      "re-export": 32
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OneVaultMode",
+      "OneVaultPolicy",
+      "OneVaultSetting",
+      "OneVaultSource"
+     ],
+     "path": "src/workspace_roster/one_vault.rs",
+     "purpose": "The `one_vault` policy row (federation.md #one-vault-mode): one versioned row in the vault's policy manifest…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 6,
+      "struct": 2
      }
     },
     {
@@ -105186,6 +105258,20 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WorkTalkBinding"
+     ],
+     "path": "src/workspace_roster/work_talk.rs",
+     "purpose": "Company-homed work talk under one-vault mode (federation.md #one-vault-mode)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -109317,6 +109403,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_step_claim_citation.rs",
+     "purpose": "A bound extraction step keeps a candidate that cites a listed claim, as the native reply may",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -109330,6 +109424,14 @@
      "notable": [],
      "path": "tests/extraction_step_listing.rs",
      "purpose": "The bound extraction step shows the listing its native slice shows, names its layout, and skips an unbound…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_step_relationship_label.rs",
+     "purpose": "A lent extraction step reads the relationship a candidate names back to its id, as the native reply reader…",
      "surface": {}
     },
     {
@@ -110681,7 +110783,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/inquiry_edge_at_join.rs",
@@ -112146,6 +112248,14 @@
      "notable": [],
      "path": "tests/membership_index.rs",
      "purpose": "The per-participant membership index serves every roster check (ARCH-0052 :215, ASTRA-1406b): each check…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/memories_projection_cut_count.rs",
+     "purpose": "FIX MEMORIES-SLOT-BUDGET-CUT-UNCOUNTED: the MEMORIES projection drops every optional row past its slot's cap…",
      "surface": {}
     },
     {
@@ -114497,6 +114607,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/saved_outcome_source_reader.rs",
+     "purpose": "A saved question's outcome derivation reads through the lane its source reader rebuilds (FIX…",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -115108,6 +115226,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/source_audience_psych_profile_sources.rs",
+     "purpose": "FIX SOURCE-AUDIENCE-WALK-MISSES-PSYCH-PROFILE-SOURCES: a PSYCH_PROFILE's words are the CLAIMs it cites…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/source_audience_turn_message_lineage.rs",
      "purpose": "FIX SOURCE-AUDIENCE-TURN-MESSAGE-LINEAGE: a witnessed TURN's words are its MESSAGE rows', so the read judge…",
      "surface": {}
@@ -115398,6 +115524,14 @@
      "notable": [],
      "path": "tests/sync_discard_whole_row_binding.rs",
      "purpose": "A whole window row is bound to its key (FIX SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW; Engine RULING…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/sync_ingest_drops_a_use_limited_carrier.rs",
+     "purpose": "A hosted vault drops a device's carrier for a row a refused privacy erase keeps for storage only, and lands…",
      "surface": {}
     },
     {
@@ -116270,6 +116404,22 @@
      "notable": [],
      "path": "tests/workspace_connector_routes.rs",
      "purpose": "The workspace connector core (L3-17, PR 1): `google.sheets` is one module on it, and keeps its four tools…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/workspace_one_vault_mode.rs",
+     "purpose": "One-vault mode reads and the joining notice through public engine doors, and one test door that stops an…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/workspace_work_talk.rs",
+     "purpose": "One-vault work talk in the company vault, through public engine doors",
      "surface": {}
     },
     {
@@ -117563,7 +117713,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -117878,7 +118028,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 440,
+     "files": 441,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -117934,7 +118084,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 360,
+     "files": 363,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -118102,7 +118252,7 @@
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
     },
     "workspace_roster": {
-     "files": 147,
+     "files": 149,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -118118,8 +118268,8 @@
    },
    "over_bar": 307,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8292,
-   "test_files": 2056
+   "source_files": 8299,
+   "test_files": 2064
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -118923,6 +119073,7 @@
      "path": "src/authority/log_entry_op.rs",
      "purpose": "The authority op vocabulary and the signed log-entry envelope",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 12,
       "struct": 1
@@ -124783,6 +124934,76 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/library_session_doors/find.rs",
+     "purpose": "The `library_find` door's tests: the refusal before the store, the forwarded filters, the seed candidates…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/library_session_doors/main.rs",
+     "purpose": "Holds the browser workflow library's find, retire, retired and run session doors (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/library_session_doors/retire.rs",
+     "purpose": "The `library_retire` door's tests: the forwarded reason and the returned card, the missing card's answer…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/library_session_doors/retired.rs",
+     "purpose": "The `library_retired` door's tests: the normalized explicit site, the open page's site by default, and the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/library_session_doors/run.rs",
+     "purpose": "The `library_run` door's nine tests (FIX [BROWSER-LIBRARY-SESSION-DOORS-HELD-BY-NO-TEST]): refusals before a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/library_session_doors/scripted_chromium.rs",
+     "purpose": "The scripted Chromium peer: one fixture page behind NUL-framed CDP",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/library_session_doors/session_fixture.rs",
+     "purpose": "Attaches the real browser session without starting a guest or allowing egress",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/library_session_doors/workflow_store.rs",
+     "purpose": "Records what the session forwards; it does not filter, sort or apply vault policy",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/program_origin_and_filled_checks.rs",
      "purpose": "These tests hold the plain origin and check-filling rules (FIX…",
      "surface": {}
@@ -125020,7 +125241,7 @@
    "over_bar": 0,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
    "source_files": 89,
-   "test_files": 10
+   "test_files": 18
   },
   "oneiron-code-check": {
    "files": [
@@ -131451,6 +131672,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "BoundClaimEvidence",
       "BoundEvidenceRange",
       "BoundExtractionCandidate",
       "BoundExtractionPerson",
@@ -131466,7 +131688,7 @@
      "surface": {
       "enum": 1,
       "fn": 2,
-      "struct": 8
+      "struct": 9
      }
     },
     {
@@ -131504,11 +131726,19 @@
      "path": "src/extraction_selection.rs",
      "purpose": "Groups extraction operands and selects their verified evidence unions",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 5,
       "struct": 5
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/extraction_selection/tests.rs",
+     "purpose": "Tests the union rule that reads what the checking read says about corrections",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -131664,10 +131894,10 @@
      "purpose": "Routes ready extraction groups against admitted priors and judge sets"
     },
     "extraction_selection": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Groups extraction operands and selects their verified evidence unions"
     },
     "psych_profile": {
@@ -131702,7 +131932,7 @@
    "over_bar": 0,
    "purpose": "oneiron-dreamer — the Dreamer's maintenance jobs outside the engine (untangle 6.9c, S69-RUN = A)",
    "source_files": 18,
-   "test_files": 5
+   "test_files": 6
   },
   "oneiron-driver": {
    "files": [
@@ -155432,7 +155662,7 @@
      "path": "src/ai_host/compaction/live_fork.rs",
      "purpose": "The agent's own compaction from its live context (FIX 4465 C)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -155454,7 +155684,7 @@
      "path": "src/ai_host/compaction/pass_door.rs",
      "purpose": "Doors for `tests/compaction_seat_exact_model.rs` (FIX-LIST SELF-WRITER-HOUSE-FALLBACK-SEAT-EXACT-REFUSED)…",
      "surface": {
-      "fn": 2,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -179002,6 +179232,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/context_pack_owner_narrowed_slip.rs",
+     "purpose": "The owner's own narrowed slip is the owner's credential on the context pack…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/context_pack_packet_id.rs",
      "purpose": "CROSS-ARCH-0002b #ep-6-2-3 `packetId` on the context call (Engine RULING L10-02-SURFACE = A: rehydration is…",
      "surface": {}
@@ -179866,6 +180104,14 @@
      "notable": [],
      "path": "tests/library_draft_task_type.rs",
      "purpose": "FIX 10508: a `self.browser.library.draft` call whose caller records its task type and names its checks gives…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/live_fork_refuses_erased_prefix_source.rs",
+     "purpose": "A live compaction fork never resends a row erased since its call went out (FIX-LIST…",
      "surface": {}
     },
     {
@@ -182058,7 +182304,7 @@
    "over_bar": 68,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2058,
-   "test_files": 524
+   "test_files": 526
   },
   "oneiron-setting-contract": {
    "files": [
@@ -208718,6 +208964,7 @@
       "EmptyRequest",
       "InboxListRequest",
       "InboxMarkRequest",
+      "OneVaultAcknowledgeRequest",
       "ProjectCardRequest",
       "ProjectConversationRequest",
       "ProjectGoalDismissRequest",
@@ -208733,6 +208980,7 @@
       "TaskRequest",
       "TaskWaveReceipt",
       "TaskWaveRequest",
+      "WorkTalkOpenRequest",
       "WorkspaceRefRequest"
      ],
      "path": "src/verbs/mod.rs",
@@ -208741,7 +208989,7 @@
       "enum": 1,
       "mod": 112,
       "re-export": 112,
-      "struct": 25
+      "struct": 27
      }
     },
     {
