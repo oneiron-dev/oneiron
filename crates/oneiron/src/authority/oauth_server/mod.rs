@@ -16,11 +16,13 @@
 //! nothing for one whose grant no longer stands. Clients never hold a slip or a key
 //! (ARCH-0028:91).
 //!
-//! A sign-in may name several resources (RFC 8707 §2): `oneiron hosted login` names the vault's
-//! `/mcp` and its `/git`, the smart-HTTP and LFS door a push goes through (lead ruling
-//! CONTINUE-PUSH-NON-SLIP-SELECTION = B, Sat 21 Nov 04:3x). Its family keeps each, and its
-//! access tokens resolve on each and on no other; a stock connector names `/mcp` alone, so its
-//! tokens reach nothing else.
+//! A sign-in may name several resources (RFC 8707 §2): the vault's `/mcp`, and its `/git`, the
+//! smart-HTTP and LFS door a push goes through (lead ruling CONTINUE-PUSH-NON-SLIP-SELECTION =
+//! B, Sat 21 Nov 04:3x). Its family keeps each, and its access tokens resolve on each and on no
+//! other. A stock connector and `oneiron hosted login` name `/mcp` alone, so their tokens reach
+//! nothing else; the step-up of `oneiron continue --cloud` names `/mcp` and `/git` at `full`
+//! (CONTINUE-PUSH-GIT-TIER = C, 05:4x; CONTINUE-STEP-UP-MCP-WRITE = A, 06:1x), and only that
+//! command reads it.
 //!
 //! Codes, tokens and the authorize page's poll secret are 32 random bytes. No row, log or
 //! receipt holds one: each table keys them by a BLAKE3 hash keyed from the host issuer's secret,

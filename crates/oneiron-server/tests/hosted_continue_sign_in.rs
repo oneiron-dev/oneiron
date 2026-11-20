@@ -69,6 +69,10 @@ const PURPOSE: &str =
 const REPO: &str = "demo";
 /// How long the test waits for the binary at each step.
 const STEP_TIMEOUT: Duration = Duration::from_secs(120);
+/// The hand-off ref the push case lands on: a conversation's, as `continue`
+/// names it.
+#[cfg(oneiron_test_support)]
+const PUSHED_REF: &str = "refs/heads/oneiron/continue/7c1e4b2a9d0f4e6b8a3c5d7e9f1a2b3c";
 
 /// The served vault, rooted and profiled as `oneiron init` leaves a serving
 /// install, with [`REPO`] served and bound as a CODE anchor.
@@ -676,5 +680,68 @@ fn logout_signs_out_the_continue_sign_in() {
         let (status, body) = refresh_at_vault(&served, &held).await;
         assert_eq!(status, 400, "{body}");
         assert_eq!(body["error"], "invalid_grant", "{body}");
+    });
+}
+
+/// The continue sign-in pushes through `continue --cloud`'s own push (its
+/// bearer alone on each request, Git-LFS door included) once the owner has
+/// granted its agent `git_push` on the repo: refused 403 before, landed
+/// after. The recall sign-in pushes nothing there. Its door is this PR's,
+/// so the case runs green only.
+#[cfg(oneiron_test_support)]
+#[test]
+fn the_continue_sign_in_pushes_after_the_git_push_grant() {
+    use oneiron_server::test_doors::continue_command::push_hand_off_signed_in;
+
+    run_on_engine_stack("hosted-continue-push", || async {
+        let served = Served::start().await;
+        let scratch = Scratch::new();
+        let recall = scratch.login(&served).await;
+        let stepped_up = scratch.login_push(&served).await;
+        assert_eq!(
+            stepped_up.agent, recall.agent,
+            "the step-up acts as the agent the owner already admitted"
+        );
+        scratch.work_repo();
+        let push = |sign_in: PathBuf| {
+            let (work, origin) = (scratch.path("work"), served.origin.clone());
+            tokio::task::spawn_blocking(move || {
+                push_hand_off_signed_in(&work, &origin, REPO, &sign_in, PUSHED_REF)
+            })
+        };
+
+        let refused = push(scratch.recall_file()).await.expect("join");
+        let said = refused.expect_err("the recall sign-in pushes nothing");
+        assert!(said.contains("401"), "{said}");
+        let refused = push(scratch.continue_file()).await.expect("join");
+        let said = refused.expect_err("no git_push Grant yet");
+        assert!(
+            said.contains("403") && said.contains("git_push_capability_required"),
+            "{said}"
+        );
+
+        oneiron::verbs::mint_git_push_grant_as(
+            &served.vault,
+            &served.owner,
+            ActSurface::ThisInstall,
+            oneiron::verbs::GitPushGrantMintInput {
+                member: stepped_up.agent,
+                repos: std::collections::BTreeSet::from([served.push_repo]),
+                expires_at: None,
+            },
+        )
+        .expect("the owner grants the agent git_push on the repo");
+        let commit = push(scratch.continue_file())
+            .await
+            .expect("join")
+            .expect("the continue sign-in pushes after the Grant");
+        let bare = oneiron::origin::smart_http::origin_repo_dir(&served.vault, REPO)
+            .expect("the served repo dir");
+        let landed = git(&bare, &["rev-parse", "--verify", "--quiet", PUSHED_REF]);
+        assert_eq!(
+            String::from_utf8_lossy(&landed.stdout).trim(),
+            commit,
+            "the hand-off commit landed on its ref"
+        );
     });
 }
