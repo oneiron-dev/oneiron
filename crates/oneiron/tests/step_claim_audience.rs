@@ -3,6 +3,12 @@
 //! relationship files a claim inside that relationship, which a member
 //! outside it does not read. On main the claim was stamped `rel: all`.
 //!
+//! A second test (built with `--cfg oneiron_test_support`, for its archive
+//! door) checks a step whose context subject is a PERSON the vault cleanup
+//! archived (ARCH-0073 §6; FIX DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON,
+//! review round 1 of #9767): the owner-gone fence lets the step finish, and
+//! its `dreamer.step` claim, a new mention of her, restores her.
+//!
 //! Runs on public paths: `cargo test -p oneiron --all-features --test
 //! step_claim_audience`. On the testkit: a copy of the empty fixture vault,
 //! and a scripted model that answers each prompt by its digest.
@@ -231,6 +237,93 @@ fn a_step_claim_from_a_relationship_bound_call_stays_inside_the_relationship() {
             .expect("step claim")
             .rel,
         None
+    );
+    backend.finish();
+}
+
+/// ARCH-0073 §6, "a re-mention restores the archived record" (FIX
+/// DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON, review round 1 of #9767): the vault
+/// cleanup archives the PERSON a durable step names as its context subject. The owner-gone fence
+/// lets an archived owner through, so the step finishes and files its `dreamer.step` claim about
+/// her; that claim is a new mention of her, and its own write restores her.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_step_claim_about_an_archived_person_restores_her() {
+    let copy = FixtureVault::empty(&fixture_cache!())
+        .expect("the empty fixture")
+        .copy()
+        .expect("a private copy");
+    let vault = copy.open().expect("vault");
+    let actor = person(&vault);
+    let subject = person(&vault);
+    oneiron::test_doors::cleanup_archive::archive_as_cleanup(&vault, &subject)
+        .expect("FIXTURE: the cleanup archives her");
+    assert!(
+        vault
+            .archived_entity(&subject)
+            .expect("archive read")
+            .is_some(),
+        "FIXTURE: the cleanup's archive marker stands on her"
+    );
+    let attempt = match DreamerRunnerStore::new(&vault)
+        .enqueue(EnqueueDreamerAttempt {
+            attempt_type: "step-archived-person-test".to_owned(),
+            input: rmpv::Value::from("input"),
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: Some("run-test".to_owned()),
+            now: 10,
+        })
+        .expect("attempt")
+    {
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => status.attempt.id,
+        other => panic!("unexpected enqueue outcome: {other:?}"),
+    };
+    let ctx = DurableStepContext {
+        vault: &vault,
+        attempt_id: attempt,
+        run_id: Some("run-test".to_owned()),
+        envelope_actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        subject,
+        deadline: None,
+        now_ms: 10_000,
+        spend_scope: None,
+        wake_pass_bound: false,
+    };
+    let guard =
+        BudgetGuard::with_reserve_units("step-test", 10_000, 500, BudgetExhaustionPolicy::Suspend);
+    let words = request(Scope::default(), "words about her");
+    let backend = ScriptedBackend::new(vec![
+        Step::text(
+            "about-her",
+            ScriptedBackend::digest_of(&words),
+            "an answer about her",
+        )
+        .buffered()
+        .usage(100, 50),
+    ])
+    .expect("the script");
+    let before = step_claims(&vault);
+    assert!(
+        matches!(
+            block_on(call_as_step(&ctx, &backend, &guard, words)).expect("the step"),
+            StepOutcome::Finished { .. }
+        ),
+        "FIXTURE: the step finishes"
+    );
+    let filed: Vec<EntityId> = step_claims(&vault).difference(&before).copied().collect();
+    assert_eq!(
+        filed.len(),
+        1,
+        "FIXTURE: the step files one claim about her"
+    );
+    assert!(
+        vault
+            .archived_entity(&subject)
+            .expect("archive read")
+            .is_none(),
+        "the step claim is a new mention of her: it restored her, and she bears no archive marker"
     );
     backend.finish();
 }
