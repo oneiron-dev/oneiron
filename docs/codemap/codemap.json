@@ -8622,6 +8622,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/document_import/unseated_rooms.rs",
+     "purpose": "Archived rooms this vault cannot seat (fix list rows ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM-REFUSED and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -27967,7 +27977,7 @@
      "path": "src/conversation/body.rs",
      "purpose": "Forward-compatible room body codec and the all-writer membership guard",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 4,
       "re-export": 1
      }
@@ -105967,6 +105977,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/archive_import_rooms_not_seated_here.rs",
+     "purpose": "Fix list rows ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM-REFUSED and ARCHIVE-IMPORT-ROOM-PINS-OR-CLOSED-REFUSED…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/archive_judge.rs",
      "purpose": "The output archive's judge (ARM05 P3; ARCH-0053 #output-archive: an output's cell is a typed judgment over…",
      "surface": {}
@@ -115126,7 +115144,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 208,
+     "files": 209,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116766,8 +116784,8 @@
    },
    "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8231,
-   "test_files": 1980
+   "source_files": 8232,
+   "test_files": 1981
   },
   "oneiron-agent-runtime": {
    "files": [
