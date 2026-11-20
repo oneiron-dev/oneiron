@@ -182,6 +182,7 @@ pub(crate) fn push(
         .arg("-C")
         .arg(top)
         .args(["pack-objects", "--stdout", "--revs", "--delta-base-offset"])
+        .env(STORED_OBJECTS.0, STORED_OBJECTS.1)
         .arg(if std::io::stderr().is_terminal() {
             "--progress"
         } else {
@@ -222,6 +223,11 @@ pub(crate) fn push(
     pushed(&report, git_ref)
 }
 
+/// Git reads each object as stored, never through a `refs/replace/` stand-in
+/// of this repo: the pack, the Git-LFS pointers read beside it and the custody
+/// repo's pre-receive (which reads with `--no-replace-objects`) then all name
+/// the same bytes.
+const STORED_OBJECTS: (&str, &str) = ("GIT_NO_REPLACE_OBJECTS", "1");
 /// The receive-pack advertisement's content type.
 const ADVERTISEMENT_TYPE: &str = "application/x-git-receive-pack-advertisement";
 /// The receive-pack request's content type.

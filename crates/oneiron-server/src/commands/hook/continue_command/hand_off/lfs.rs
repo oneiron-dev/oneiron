@@ -6,13 +6,17 @@
 //! pointers the push adds go up through the custody repo's own Git-LFS door:
 //! an upload batch call for at most [`BATCH_OBJECTS`] of them at a time, then,
 //! for each object the vault asks for, its bytes from this repo's git-lfs
-//! store and the verify call the answer names.
+//! store and the verify call the answer names. The upload's success is the
+//! vault's word that it holds those bytes: it checks their size and digest
+//! before it answers, a duplicate's too.
 //!
 //! The pointers are the ones the custody repo's pre-receive frames: each blob
 //! the tip diff adds or changes (`git diff-tree --diff-filter=AMT`) from the
 //! ref's old commit, or from the empty tree for a new ref or for an old commit
 //! this repo lacks, that reads as a pointer by the landing's own grammar
-//! ([`LfsPushedPointer::from_pointer_content`]).
+//! ([`LfsPushedPointer::from_pointer_content`]). Git reads each object as
+//! stored, as pack-objects and that pre-receive do, never through a local
+//! `refs/replace/` stand-in ([`STORED_OBJECTS`]).
 //!
 //! Every request carries the slip and a fresh holder proof, as receive-pack's
 //! do, and goes to the custody repo's base only: an object's address is built
@@ -21,6 +25,10 @@
 //! only says which objects to send and which to verify.
 
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
+use std::fs::{File, OpenOptions};
+use std::os::unix::ffi::OsStrExt as _;
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -32,7 +40,7 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 
-use super::{answered, git, run_git, run_git_fed};
+use super::{STORED_OBJECTS, answered, git, run_git, run_git_fed};
 
 /// Objects one batch call names: the count Git-LFS servers commonly take, and
 /// the engine's own batch client's.
@@ -58,8 +66,9 @@ pub(super) struct LfsDoor<'a> {
 /// ref's old commit as this repo holds it; `None` for a new ref or one this
 /// repo lacks) that the custody repo at `door` does not hold yet. Every object
 /// the vault asks for is found on this machine before the first byte goes, so
-/// one that is missing stops the push before any upload, naming its path.
-/// Each git run and each request ends by `deadline`.
+/// one that is missing, or is no regular file, stops the push before any
+/// upload, naming its path; each is opened again for its upload. Each git run
+/// and each request ends by `deadline`.
 pub(super) fn send_objects(
     top: &Path,
     old: Option<&str>,
@@ -79,14 +88,11 @@ pub(super) fn send_objects(
         return Ok(());
     }
     let store = object_store(top, deadline)?;
-    let files = asked
-        .into_iter()
-        .map(|(pointer, verify)| -> anyhow::Result<_> {
-            Ok((local_object(&store, pointer)?, pointer, verify))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    for (file, pointer, verify) in files {
-        door.upload(&file, pointer, deadline)?;
+    for (pointer, _) in &asked {
+        local_object(&store, pointer)?;
+    }
+    for (pointer, verify) in asked {
+        door.upload(local_object(&store, pointer)?, pointer, deadline)?;
         if verify {
             door.verify(pointer, deadline)?;
         }
@@ -154,14 +160,13 @@ impl LfsDoor<'_> {
         Ok(asked)
     }
 
-    /// Sends the bytes of `pointer`'s object, from `file`.
+    /// Sends the bytes of `pointer`'s object, from `object`.
     fn upload(
         &self,
-        file: &Path,
+        object: File,
         pointer: &LfsPushedPointer,
         deadline: Instant,
     ) -> anyhow::Result<()> {
-        let object = std::fs::File::open(file)?;
         let answer = (self.proven)(
             self.client
                 .put(self.object_address(pointer))
@@ -177,9 +182,13 @@ impl LfsDoor<'_> {
         Ok(())
     }
 
-    /// Asks the vault to verify the object of `pointer` it was just sent: its
-    /// answer says `ok` only when it holds those bytes, so any other answer
-    /// stops the push, naming the path.
+    /// Makes the verify call the batch answer named for `pointer`'s object,
+    /// as git-lfs does: an answer that is no success stops the push, naming
+    /// the path. Its `ok` is not read. The vault answers it for an object it
+    /// withholds from this machine as for an absent one (FIX 8182), so it
+    /// cannot tell a lost upload from a stored object; the upload's success
+    /// already said the vault holds those bytes, and the landing still
+    /// refuses a pointer whose object the vault lacks.
     fn verify(&self, pointer: &LfsPushedPointer, deadline: Instant) -> anyhow::Result<()> {
         let body = serde_json::to_vec(&ObjectRef {
             oid: pointer.oid.to_hex(),
@@ -194,16 +203,12 @@ impl LfsDoor<'_> {
                 .body(body),
         )?
         .send()?;
-        let named = path_of(pointer);
-        let answer = answered(answer, LFS_JSON_MEDIA_TYPE)
-            .map_err(|error| error.context(format!("verifying the Git-LFS object of {named}")))?;
-        let verdict: VerifyAnswer = serde_json::from_slice(&answer).map_err(|_| {
-            anyhow::anyhow!("the custody repo's verify answer for {named} did not decode")
+        answered(answer, LFS_JSON_MEDIA_TYPE).map_err(|error| {
+            error.context(format!(
+                "verifying the Git-LFS object of {}",
+                path_of(pointer)
+            ))
         })?;
-        anyhow::ensure!(
-            verdict.ok,
-            "the custody repo does not hold the Git-LFS object of {named} it was just sent"
-        );
         Ok(())
     }
 
@@ -344,26 +349,28 @@ fn batch_object<'r>(rest: &'r [u8], oid: &str) -> anyhow::Result<(&'r [u8], &'r 
 
 /// This repo's git-lfs store: `lfs.storage` when the repo's config names
 /// one, below the git directory when it is relative, else the git
-/// directory's `lfs`, as git-lfs reads it.
+/// directory's `lfs`, as git-lfs reads it. The value is read NUL-ended and
+/// kept byte for byte: a path may end in a space.
 fn object_store(top: &Path, deadline: Instant) -> anyhow::Result<PathBuf> {
     let common = top.join(git(top, ["rev-parse", "--git-common-dir"], &[], deadline)?);
     let named = run_git(
         top,
-        ["config", "--type=path", "--get", "lfs.storage"],
+        ["config", "-z", "--type=path", "--get", "lfs.storage"],
         &[],
         deadline,
     )?;
-    let named = String::from_utf8_lossy(&named.stdout).trim().to_owned();
+    let named = named.stdout.strip_suffix(b"\0").unwrap_or(&named.stdout);
     Ok(if named.is_empty() {
         common.join("lfs")
     } else {
-        common.join(named)
+        common.join(OsStr::from_bytes(named))
     })
 }
 
-/// The file of `pointer`'s object in `store`, when it holds the size the
-/// pointer names.
-fn local_object(store: &Path, pointer: &LfsPushedPointer) -> anyhow::Result<PathBuf> {
+/// `pointer`'s object in `store`, open to read, when it is a regular file of
+/// the size the pointer names. It is opened without waiting, so a FIFO or a
+/// device at its path is refused, never waited on.
+fn local_object(store: &Path, pointer: &LfsPushedPointer) -> anyhow::Result<File> {
     let oid = pointer.oid.to_hex();
     let file = store
         .join("objects")
@@ -371,31 +378,43 @@ fn local_object(store: &Path, pointer: &LfsPushedPointer) -> anyhow::Result<Path
         .join(&oid[2..4])
         .join(&oid);
     let named = path_of(pointer);
-    let size = match std::fs::metadata(&file) {
-        Ok(found) => found.len(),
+    let object = match OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(&file)
+    {
+        Ok(object) => object,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => anyhow::bail!(
             "the Git-LFS object of {named} ({oid}) is not on this machine, and the vault does \
              not hold it: fetch it (`git lfs fetch`) or leave the file out of the work"
         ),
         Err(error) => return Err(error.into()),
     };
+    let found = object.metadata()?;
+    anyhow::ensure!(
+        found.is_file(),
+        "this machine's Git-LFS object of {named} ({oid}) is not a regular file"
+    );
+    let size = found.len();
     anyhow::ensure!(
         size == pointer.size_bytes,
         "this machine's Git-LFS object of {named} holds {size} bytes, not the {} its pointer names",
         pointer.size_bytes
     );
-    Ok(file)
+    Ok(object)
 }
 
-/// `git -C top <args>` with `input` on its stdin, its stdout as written; a
-/// failure names git's own words. It ends by `deadline`.
+/// `git -C top <args>` with `input` on its stdin, reading objects as stored
+/// ([`STORED_OBJECTS`]), its stdout as written; a failure names git's own
+/// words. It ends by `deadline`.
 fn git_output<const N: usize>(
     top: &Path,
     args: [&str; N],
     input: Option<Vec<u8>>,
     deadline: Instant,
 ) -> anyhow::Result<Vec<u8>> {
-    let ran = run_git_fed(top, args, &[], input, deadline)?;
+    let (name, value) = STORED_OBJECTS;
+    let ran = run_git_fed(top, args, &[(name.into(), value.into())], input, deadline)?;
     anyhow::ensure!(
         ran.status.success(),
         "git: {}",
@@ -457,12 +476,6 @@ struct AnswerObject {
 struct AnswerActions {
     upload: Option<IgnoredAny>,
     verify: Option<IgnoredAny>,
-}
-
-/// A verify call's answer: whether the vault holds the object.
-#[derive(Deserialize)]
-struct VerifyAnswer {
-    ok: bool,
 }
 
 /// Why a batch answer refused one object.
