@@ -8,12 +8,19 @@
 //! Grant alone (RULING GRANT-COMBINE Q1 = A): a Grant that reads the person
 //! but not the fact shows none, and neither do two Grants, one reading only
 //! the PERSON row and one only CLAIM rows. A revoked Grant drops the person.
+//! Nor does a second Grant lend a row a fact was written from: a line that
+//! stands on the owner's stated intent, which quotes a MESSAGE, shows only
+//! where one Grant reads the person, the intent and that MESSAGE (review
+//! round 1 of #9929).
 //!
-//! Public paths, plus two test doors that land the Dreamer's `about` lines
-//! (`oneiron::test_doors::derive::{about_facts, commit}`, as
-//! `derive_artifact.rs` lands them): the embedded owner's door, the agent's
-//! own `Vault::memory` handle and its read key, and `Vault::put_entity` for
-//! the message a new person's identity cites.
+//! Public paths, plus three test doors: two that land the Dreamer's `about`
+//! lines (`oneiron::test_doors::derive::{about_facts, commit}`, as
+//! `derive_artifact.rs` lands them) and the owner's proof
+//! (`oneiron::test_doors::steward::owner`) his stated intent is written on.
+//! The rest: the embedded owner's door, the agent's own `Vault::memory`
+//! handle and its read key, `Vault::record_owner_intent`, and
+//! `Vault::put_entity` for the MESSAGEs a new person's identity and the
+//! owner's intent cite.
 //!
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test agent_grant_people_about`
 #![cfg(oneiron_test_support)]
@@ -22,7 +29,7 @@ use oneiron::memory::{MEMORY_CODE_NOT_FOUND, Memory};
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::derive::{About, Derived, Named, about_facts, commit};
-use oneiron::test_doors::steward::dreamer;
+use oneiron::test_doors::steward::{dreamer, owner as owner_proof};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_testkit::door;
 use serde_json::{Value, json};
@@ -32,6 +39,9 @@ const NAME: &str = "Owen Marsh";
 
 /// The person's `about` line, at every band its fact takes a line.
 const LINE: &str = "Owen keeps the reading group's lantern list.";
+
+/// The intent the owner states, in the words of the MESSAGE it quotes.
+const INTENT: &str = "I'll bring the lantern list to the reading group on Thursday.";
 
 /// Runs `verb` as `caller`, panicking with its refusal.
 fn call(caller: &Memory<'_>, verb: &str, input: Value) -> Value {
@@ -57,20 +67,86 @@ fn bands(types: &[u8]) -> Value {
 }
 
 /// A vault this process owns with an identity agent that holds no Grant yet,
-/// whose model channel may be told every name, and a person the owner
-/// created, with one fact the owner remembered about that person and the
-/// Dreamer's `about` line written from it. The vault closes before its
-/// directory goes.
+/// whose model channel may be told every name, and a person with one fact
+/// about that person and the Dreamer's `about` line written from it: a
+/// person the owner created, with a fact he remembered about them
+/// ([`Fixture::open`]), or the owner's own person, with an intent he stated
+/// quoting a MESSAGE ([`Fixture::open_owner_intent`]). The vault closes
+/// before its directory goes.
 struct Fixture {
     vault: Vault,
     agent: EntityId,
     person: EntityId,
     claim: EntityId,
+    /// The MESSAGE the fact quotes, for the owner's intent.
+    quoted: Option<EntityId>,
+    /// The person's name as the owner's roster reads it.
+    name: Value,
     _dir: tempfile::TempDir,
 }
 
+/// The person a fixture's line is about, its one fact, and the MESSAGE that
+/// fact quotes, if it quotes one.
+type Fact = (EntityId, EntityId, Option<EntityId>);
+
 impl Fixture {
+    /// A person the owner created, with a project note he remembered about
+    /// them.
     fn open() -> Self {
+        let fixture = Self::with_fact(|vault, owner| {
+            let evidence = message(
+                vault,
+                &format!("{NAME} introduced themself at the reading group"),
+            );
+            let created = call(
+                owner,
+                "vault.people.create",
+                json!({
+                    "identity": {"name": NAME},
+                    "identity_evidence_refs": [evidence.to_hex()],
+                    "occurred_at": vault.now_recorded_at(),
+                }),
+            );
+            let person = id_at(&created, "/person/id_hex");
+            let remembered = call(
+                owner,
+                "vault.remember",
+                json!({
+                    "predicate": "project.note",
+                    "subject_ref": person.to_hex(),
+                    "value": "Owen keeps the lantern list for the reading group.",
+                    "confidence": 0.9,
+                    "source": "user_stated",
+                }),
+            );
+            (person, id_at(&remembered, "/claim/id"), None)
+        });
+        assert_eq!(
+            fixture.name, NAME,
+            "FIXTURE: the owner reads the name of the person he created"
+        );
+        fixture
+    }
+
+    /// The owner's own person, with an intent he stated in his own words,
+    /// citing the MESSAGE they came from: the intent's words are that
+    /// MESSAGE's, so a reader reads the intent only where it reads the
+    /// MESSAGE too.
+    fn open_owner_intent() -> Self {
+        Self::with_fact(|vault, _| {
+            let person = vault.ensure_embedded_owner_actor().expect("the owner");
+            let quoted = message(vault, INTENT);
+            let proof = owner_proof(vault).expect("the owner's proof");
+            let intent = vault
+                .record_owner_intent(&proof, INTENT, None, Some(quoted))
+                .expect("the owner states his intent");
+            (person, intent, Some(quoted))
+        })
+    }
+
+    /// The vault, the agent and the fact `fact` writes as the owner, with
+    /// the Dreamer's `about` line written from that fact.
+    fn with_fact(fact: impl FnOnce(&Vault, &Memory<'_>) -> Fact) -> Self {
         let dir = tempfile::tempdir().expect("temporary vault directory");
         let vault = Vault::open_owned(dir.path(), VaultConfig::device()).expect("fresh vault");
         oneiron_testkit::dreamer::attach_test_host(&vault).expect("the test host");
@@ -99,32 +175,7 @@ impl Fixture {
             json!({"connection": format!("agent:{}", agent.to_hex()), "ceiling": "restricted"}),
         );
 
-        let evidence = message(
-            &vault,
-            &format!("{NAME} introduced themself at the reading group"),
-        );
-        let created = call(
-            &owner,
-            "vault.people.create",
-            json!({
-                "identity": {"name": NAME},
-                "identity_evidence_refs": [evidence.to_hex()],
-                "occurred_at": vault.now_recorded_at(),
-            }),
-        );
-        let person = id_at(&created, "/person/id_hex");
-        let remembered = call(
-            &owner,
-            "vault.remember",
-            json!({
-                "predicate": "project.note",
-                "subject_ref": person.to_hex(),
-                "value": "Owen keeps the lantern list for the reading group.",
-                "confidence": 0.9,
-                "source": "user_stated",
-            }),
-        );
-        let claim = id_at(&remembered, "/claim/id");
+        let (person, claim, quoted) = fact(&vault, &owner);
 
         let dreamer = dreamer(&vault).expect("the Dreamer");
         let (digest, line_bands) = about_facts(&vault, dreamer, EdgeActorClass::System, person)
@@ -154,14 +205,16 @@ impl Fixture {
             "FIXTURE: the Dreamer's about lines land: {:?}",
             item.reasons
         );
-        let fixture = Self {
+        let mut fixture = Self {
             vault,
             agent,
             person,
             claim,
+            quoted,
+            name: Value::Null,
             _dir: dir,
         };
-        fixture.assert_owner_sees_the_line();
+        fixture.name = fixture.assert_owner_sees_the_line();
         fixture
     }
 
@@ -239,15 +292,15 @@ impl Fixture {
         panic!("the roster never ended");
     }
 
-    /// The owner's roster shows the person, by name, with its line, on list
-    /// and get alike.
-    fn assert_owner_sees_the_line(&self) {
+    /// The owner's roster shows the person, by a name, with its line, on
+    /// list and get alike; the name it shows.
+    fn assert_owner_sees_the_line(&self) -> Value {
         let owner = self.owner();
         let row = self
             .roster_row(&owner)
             .expect("FIXTURE: the owner's roster lists the person");
-        assert_eq!(
-            row["name"], NAME,
+        assert!(
+            row["name"].as_str().is_some_and(|name| !name.is_empty()),
             "FIXTURE: the owner reads the name: {row:#}"
         );
         assert_eq!(
@@ -256,17 +309,18 @@ impl Fixture {
         );
         let got = call(&owner, "vault.people.get", json!({"pr": row["handle"]}));
         assert_eq!(got, row, "FIXTURE: the owner's get answers the listed row");
+        row["name"].clone()
     }
 
-    /// The agent's roster lists the person by name, on list and get alike,
-    /// and its `about` is `about`.
+    /// The agent's roster lists the person by the name the owner reads, on
+    /// list and get alike, and its `about` is `about`.
     fn assert_agent_row(&self, about: &Value, why: &str) {
         let reader = self.reader();
         let row = self
             .roster_row(&reader)
             .unwrap_or_else(|| panic!("FIXTURE: the agent's roster lists the person ({why})"));
         assert_eq!(
-            row["name"], NAME,
+            row["name"], self.name,
             "FIXTURE: the agent may be told the name, so the name does not hide the line \
              ({why}): {row:#}"
         );
@@ -369,5 +423,34 @@ fn two_grants_never_lend_each_other_the_person_or_the_fact_of_an_about_line() {
         &Value::Null,
         "one Grant reads only the person and the other only the fact: no one Grant reads the \
          whole line, so it shows none",
+    );
+}
+
+#[test]
+fn a_second_grant_never_lends_a_row_the_fact_of_an_about_line_was_written_from() {
+    let fixture = Fixture::open_owner_intent();
+    let quoted = fixture
+        .quoted
+        .expect("FIXTURE: the owner's intent quotes a MESSAGE");
+    fixture.mint(&[ENTITY_TYPE_PERSON, ENTITY_TYPE_CLAIM]);
+    fixture.mint(&[ENTITY_TYPE_MESSAGE]);
+    assert!(
+        fixture.agent_reads(fixture.person)
+            && fixture.agent_reads(fixture.claim)
+            && fixture.agent_reads(quoted),
+        "FIXTURE: one Grant admits the person and the intent, the other the MESSAGE the intent \
+         quotes"
+    );
+    fixture.assert_agent_row(
+        &Value::Null,
+        "the Grant that reads the person and the intent does not read the MESSAGE the intent \
+         quotes, and the other Grant never lends it: no one Grant reads the whole line, so it \
+         shows none",
+    );
+    fixture.mint(&[ENTITY_TYPE_PERSON, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE]);
+    fixture.assert_agent_row(
+        &json!(LINE),
+        "a third Grant reads the person, the intent and the MESSAGE it quotes, yet the agent's \
+         roster shows no about line",
     );
 }
