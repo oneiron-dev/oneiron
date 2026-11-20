@@ -653,27 +653,13 @@ impl<'v> ScopedRead<'v> {
         }
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        // A work-talk binding is row authority for a reader who holds no
-        // read scope of its own (L7-05, ANSWER L7-05-BINDING-READ = A): a
-        // bound reader with no Grant is floored to deny-all, so the binding
-        // is judged here, before the scope gates refuse the row. It lifts
-        // only those two gates, and only for a reader with no explicit
-        // credential or Grant Scope under a policy that has not failed
-        // closed; every later gate still binds, and the record stage below
-        // judges the binding again with the row's scope.
-        let scope_refuses =
-            filter.deny_all || !filter.read_scope().bands.contains(&header.entity_type);
-        let work_talk_bound = scope_refuses
-            && !policy.is_fail_closed()
-            && !policy.diagnostics().loaded_manifest_forces_fail_closed()
-            && grant.or(self.actor_key.authority_scope()).is_none()
-            && self.work_talk_row_readable_in(rtxn, id, header.entity_type);
-        if self
-            .vault
-            .store
-            .validate_entity_type(header.entity_type)
-            .is_err()
-            || (scope_refuses && !work_talk_bound)
+        if filter.deny_all
+            || self
+                .vault
+                .store
+                .validate_entity_type(header.entity_type)
+                .is_err()
+            || !filter.read_scope().bands.contains(&header.entity_type)
         {
             return Ok(false);
         }
