@@ -192,6 +192,22 @@ pub(crate) fn logical_identity_topology_event_for_store_in_txn(
     id: &EntityId,
     raw: StoredIdentityOpEvent,
 ) -> Result<Option<StoredIdentityOpEvent>> {
+    logical_identity_topology_event_with(id, raw, |part| {
+        Ok(store
+            .port_entity_record(rtxn, part)?
+            .map(|row| (row.entity_type, row.body)))
+    })
+}
+
+/// [`logical_identity_topology_event_for_store_in_txn`] over the rows
+/// `row` reads by id, as (entity type, body): this vault's store, or the
+/// rows of a whole-vault archive (RESTORE-KEEPS-MERGES-AND-SPLITS). Every
+/// check is the same either way.
+pub(crate) fn logical_identity_topology_event_with(
+    id: &EntityId,
+    raw: StoredIdentityOpEvent,
+    mut row: impl FnMut(&EntityId) -> Result<Option<(u8, Vec<u8>)>>,
+) -> Result<Option<StoredIdentityOpEvent>> {
     let manifest = match &raw.action {
         StoredIdentityOpAction::OperationPart { .. } => return Ok(None),
         StoredIdentityOpAction::OperationManifest {
@@ -207,13 +223,13 @@ pub(crate) fn logical_identity_topology_event_for_store_in_txn(
     };
     let mut payload = Vec::new();
     for index in 0..parts {
-        let Some(row) = store.port_entity_record(rtxn, &operation_part_id(id, index)?)? else {
+        let Some((entity_type, body)) = row(&operation_part_id(id, index)?)? else {
             return Ok(None);
         };
-        if row.entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        if entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
             return Ok(None);
         }
-        let Ok(part) = decode_identity_topology_event_body(&row.body) else {
+        let Ok(part) = decode_identity_topology_event_body(&body) else {
             return Ok(None);
         };
         let StoredIdentityOpAction::OperationPart {

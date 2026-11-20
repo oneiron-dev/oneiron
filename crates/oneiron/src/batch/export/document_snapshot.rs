@@ -668,6 +668,7 @@ impl Vault {
         // record whose family names a carrier left out is named in the
         // manifest instead.
         let mut side_table_omissions = Vec::new();
+        let mut current_identity_topology_events = Vec::new();
         if cut == ExportCut::Archive {
             let include_vault_wide =
                 only.is_none() && (owner_export || locality == CallerLocality::OnDevice);
@@ -700,6 +701,14 @@ impl Vault {
                         rows,
                     })
                     .collect();
+                // RESTORE-KEEPS-MERGES-AND-SPLITS: the merges and splits this
+                // snapshot's effective ledger holds current, for the owner's
+                // restore to decide again; only those whose record the
+                // archive carries, so none it keeps out is named here
+                // (REVIEW-9756 round 2 P1-3).
+                current_identity_topology_events =
+                    crate::identity_topology::current_merge_and_split_events_in_txn(self, &rtxn)?;
+                current_identity_topology_events.retain(|event| included.contains(event));
             }
         }
         // FIX 11844: a custody secret only the fold knows here is named for
@@ -747,6 +756,7 @@ impl Vault {
                     fold_only_secrets,
                     embedding_setup,
                     side_table_omissions,
+                    current_identity_topology_events,
                     sources: sources.into_iter().collect(),
                     signer,
                 },
