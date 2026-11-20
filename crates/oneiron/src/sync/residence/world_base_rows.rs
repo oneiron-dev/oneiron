@@ -139,6 +139,14 @@ fn discard_window_rows(
                     &exclusive,
                     keep.clone(),
                 )?;
+                // The unclear rows filed under the receipts of the Gate
+                // decisions it made skeletons go with them (FIX
+                // [GATE-RECEIPT-UNCLEAR-ROW-OUTLIVES-RECORD-REMOVAL]).
+                crate::skill_attribution::delete_gate_receipt_unclear_in_txn(
+                    vault,
+                    txn,
+                    &step.discarded_gate_decisions,
+                )?;
                 for id in &step.removed {
                     mark_discarded_in_txn(&vault.store, txn, *id, world)?;
                 }
