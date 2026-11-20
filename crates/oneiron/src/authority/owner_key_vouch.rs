@@ -32,8 +32,6 @@
 //! same request answers the first enrollment's receipt, since two owner
 //! devices may answer one ask.
 
-use std::sync::Arc;
-
 use base64::Engine as _;
 use oneiron_base::msgpack_shape::{ShapeBudget, over_budget};
 use oneiron_contracts::fingerprint::ContentHash;
@@ -441,8 +439,8 @@ impl Vault {
         match self.enrol_owner_signing_key_on_entry_fold_as(
             authority,
             request.enrollment(),
-            signer.root(),
-            |entry_fold, transcript| signer.sign_owner_proof(self, entry_fold, transcript),
+            signer.root.clone(),
+            |entry_fold, transcript| signer.signer.sign_owner_proof(self, entry_fold, transcript),
         ) {
             // Another answer to the same request enrolled the key after this
             // one read the roster: its receipt answers this one too.
@@ -476,16 +474,16 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         fold: &AuthorityFold,
         actor: EntityId,
-    ) -> Result<Option<Arc<dyn CheckpointRootSigner>>> {
+    ) -> Result<Option<HeldRootSigner>> {
         let hosted = self.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
         let enrolled = self.enrolled_owner_keys_in_txn(txn)?;
         Ok(self
             .held_checkpoint_root_signers()
             .into_iter()
-            .find(|signer| {
-                fold.offers_owner_proof(signer.as_ref(), hosted)
-                    && key_is_the_owners(fold, &enrolled, &signer.root(), actor)
-                    && signer.proves_now(self, fold)
+            .find(|held| {
+                fold.offers_owner_proof(&held.root, held.host_root, hosted)
+                    && key_is_the_owners(fold, &enrolled, &held.root, actor)
+                    && held.signer.proves_now(self, fold)
             }))
     }
 

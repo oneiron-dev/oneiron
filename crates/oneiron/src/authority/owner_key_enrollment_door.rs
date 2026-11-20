@@ -25,7 +25,6 @@
 //! carrier is never a roster key.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 
 use ed25519_dalek::Signer;
 
@@ -1521,20 +1520,21 @@ impl Vault {
             // Under the Hosted posture no host root this install holds is
             // offered as the owner's proof, a self-host root a move carried
             // here included (HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A).
-            let proof = if fold.offers_owner_proof(issuer, hosted) {
-                None
-            } else {
-                let proof = self.owner_proof_signer(&fold).ok_or(Error::Record(
-                    RecordError::OwnerKeyMoveRefused {
-                        member: person,
-                        step: OwnerKeyMoveStep::Unavailable,
-                        act: None,
-                    },
-                ))?;
-                let proof_key = proof.key();
-                keys.sort_by_key(|key| *key == proof_key);
-                Some(proof)
-            };
+            let proof =
+                if fold.offers_owner_proof(&issuer.public_key(), issuer.is_host_root(), hosted) {
+                    None
+                } else {
+                    let proof = self.owner_proof_signer(&fold).ok_or(Error::Record(
+                        RecordError::OwnerKeyMoveRefused {
+                            member: person,
+                            step: OwnerKeyMoveStep::Unavailable,
+                            act: None,
+                        },
+                    ))?;
+                    let proof_key = proof.key();
+                    keys.sort_by_key(|key| *key == proof_key);
+                    Some(proof)
+                };
             for revoked_key in keys {
                 let signer = match &proof {
                     Some(proof) => EntrySigner::HostWithOwnerProof(issuer, proof),
