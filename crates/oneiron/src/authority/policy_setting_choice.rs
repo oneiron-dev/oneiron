@@ -183,7 +183,9 @@ pub(super) fn apply_policy_setting(
 /// ([`choice_landing`] with no owner), its choice the entry's own hash. A row
 /// that leaves out a live act of its target, which it would replace, makes
 /// the entry invalid. Every row is judged against the state before the
-/// entry, and only then do they all land.
+/// entry, and only then do they all land. `needs_proof_off_the_line` is the
+/// owner key's line's mark on the entry ([`super::owner_key_line`]), which
+/// marks no setting copy yet (FIX SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
 pub(super) fn apply_setting_copy(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -191,6 +193,7 @@ pub(super) fn apply_setting_copy(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let mut landings = Vec::with_capacity(copy.rows.len());
     for row in &copy.rows {
@@ -217,6 +220,7 @@ pub(super) fn apply_setting_copy(
             machine: copy.machine,
             choice: Some(&hash),
             context: POLICY_SETTING_REVISION_CONTEXT,
+            needs_proof_off_the_line,
             persons_own_narrowing: false,
         };
         landings.push(choice_landing(
