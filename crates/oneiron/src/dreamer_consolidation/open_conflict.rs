@@ -263,6 +263,7 @@ fn write_open_marker_in_txn(
         SourceLineage::of(ClaimSource::Generated).with(meet),
     );
     vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
+    let subject = candidate.subject();
     vault
         .batch_in()
         .claim_candidate(
@@ -276,6 +277,9 @@ fn write_open_marker_in_txn(
             now,
         )
         .apply_recording_gate_decisions(txn)?;
+    // A marker about a PERSON under a cleanup archive is a new mention of
+    // her: she is restored in the marker's own transaction (ARCH-0073 §6).
+    vault.restore_mentioned_subject_in_txn(txn, subject)?;
     // The marker's id is the attempt's: a retry keeps its first birth.
     if let Some(birth) = &birth {
         crate::provenance::birth::stamp_birth_if_absent_in_txn(&vault.store, txn, &id, birth)?;
