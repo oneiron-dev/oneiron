@@ -271,6 +271,8 @@ pub mod pending_write_tray;
 #[cfg(feature = "sync")]
 pub mod predicted_residence;
 pub mod profiles_other_machine;
+#[cfg(feature = "sync")]
+pub mod project_replicated_revision;
 pub mod provenance_body_checkpoint;
 pub mod psych_profile;
 pub mod question_saved_lane;
