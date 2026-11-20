@@ -13,7 +13,10 @@
 //! (FIX STANDING-ANSWER-STAYS-IN-LEFT-FACET, Engine ruling A, 19 Nov 13:29),
 //! and the refresh it queues lands where the room reads the row now. A row
 //! read only in facets no FACET row holds holds no answer: the vault default
-//! takes only a row read in no facet (review round 1 on #9604).
+//! takes only a row read in no facet (review round 1 on #9604). Every other
+//! act that narrows what a room reads does the same: a signed roster write,
+//! a slice move, a delete that unbinds the room (FIX
+//! STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test graph_answer_source_facets`.
@@ -42,9 +45,11 @@ use oneiron::registry::{
 };
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::coach::define_agent;
-use oneiron::test_doors::room_facet_set::{create_owner_project, set_room_facets};
+use oneiron::test_doors::room_facet_set::{
+    create_owner_project, set_room_facets, with_room_facets,
+};
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
-use oneiron::workspace_roster::ProjectRecord;
+use oneiron::workspace_roster::{ProjectRecord, ProjectWriteProof};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use serde_json::json;
 
@@ -365,6 +370,61 @@ impl Fixture {
             project,
             facets,
         )?;
+        Ok(())
+    }
+
+    /// Signs `body`, carrying room facet set `room`, as the vault host over
+    /// `project`'s current head, with a fresh slip from the host root: the
+    /// writer's proof a roster write carries.
+    fn sign_as_host(
+        &self,
+        project: EntityId,
+        body: &mut ProjectRecord,
+        room: Option<BTreeSet<EntityId>>,
+    ) -> TestResult {
+        let mut claims = self.vault.ensure_host_root_slip(&self.issuer)?.claims;
+        claims.slip_id = *blake3::hash(EntityId::now().as_bytes()).as_bytes();
+        claims.parent_id = None;
+        claims.holder_ref = "host".into();
+        let slip = self.vault.mint_capability_slip(&self.issuer, claims)?;
+        let anchor = self
+            .vault
+            .project(project)?
+            .ok_or("the project reads")?
+            .anchor()?;
+        let signed_at = slip.claims.issued_at;
+        let version = with_room_facets(body, room);
+        let challenge = body
+            .authority_at(version)
+            .write_challenge(project, version, signed_at, &anchor)?;
+        body.write_proof = Some(ProjectWriteProof {
+            slip_wire: slip.to_token()?,
+            holder_signature: self.issuer.binding_proof(&slip, &challenge)?,
+            signed_at,
+            anchor,
+            version,
+        });
+        Ok(())
+    }
+
+    /// `project`'s stored state, signed by the host with room facet set
+    /// `room` and `edit` applied, written through the owner's
+    /// `vault.projects.roster.write`.
+    fn write_roster(
+        &self,
+        project: EntityId,
+        room: Option<BTreeSet<EntityId>>,
+        edit: impl FnOnce(&mut ProjectRecord),
+    ) -> TestResult {
+        let mut body = self.vault.project(project)?.ok_or("the project reads")?;
+        edit(&mut body);
+        self.sign_as_host(project, &mut body, room)?;
+        let written = self
+            .vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .projects_write_roster(project, &body)
+            .map_err(|error| format!("the roster write lands; it refused: {error:?}"))?;
+        assert!(written.installed, "precondition: the roster write installs");
         Ok(())
     }
 }
@@ -836,6 +896,147 @@ fn an_agents_fresh_answer_lands_in_a_facet_its_grant_reads() -> TestResult {
     assert!(
         fixture.agent_reads(agent, Fixture::answer_claim(&again)),
         "the agent reads its fresh answer back"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_roster_write_that_narrows_the_room_marks_its_left_facet_answer_stale() -> TestResult {
+    let fixture = open()?;
+    let work = fixture.put_row(ENTITY_TYPE_FACET, "work")?;
+    let health = fixture.put_row(ENTITY_TYPE_FACET, "health")?;
+    let (project, room) = fixture.project_room_reading(&BTreeSet::from([work, health]))?;
+    let (slice, other) = (work.max(health), work.min(health));
+    let message = fixture.message_in_room(room, "The ward round starts at nine.")?;
+    let question = fixture.question(vec![message])?;
+    let shared = fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| format!("an answer on a room MESSAGE lands; it refused: {error}"))?;
+    let earlier = Fixture::answer_claim(&shared);
+    assert_eq!(
+        fixture.answer_facet(&shared)?,
+        other,
+        "precondition: an answer on a row read in two facets lands at the lower"
+    );
+
+    // A writer signs a set without the lower facet into the project's next
+    // state, through the roster write door rather than the owner's set door.
+    fixture.write_roster(project, Some(BTreeSet::from([slice])), |_| {})?;
+    assert!(
+        fixture.answer_stale(earlier)?,
+        "once a roster write leaves the room off the facet its answer sits in, that answer is \
+         stale"
+    );
+    let narrowed = fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| {
+            format!("an answer on the unchanged MESSAGE lands again; it refused: {error}")
+        })?;
+    assert_eq!(
+        fixture.answer_facet(&narrowed)?,
+        slice,
+        "the next answer lands where the room reads the MESSAGE now"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_roster_write_that_keeps_the_answers_facet_leaves_it_standing() -> TestResult {
+    let fixture = open()?;
+    let mut facets = [
+        fixture.put_row(ENTITY_TYPE_FACET, "work")?,
+        fixture.put_row(ENTITY_TYPE_FACET, "health")?,
+        fixture.put_row(ENTITY_TYPE_FACET, "home")?,
+    ];
+    facets.sort();
+    let [low, _middle, slice] = facets;
+    let (project, room) = fixture.project_room_reading(&BTreeSet::from([low, slice]))?;
+    let message = fixture.message_in_room(room, "The pharmacy opens at eight.")?;
+    let question = fixture.question(vec![message])?;
+    let answer = fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| format!("an answer on a room MESSAGE lands; it refused: {error}"))?;
+    assert_eq!(
+        fixture.answer_facet(&answer)?,
+        low,
+        "precondition: the answer lands at the lowest facet the room reads"
+    );
+
+    fixture.write_roster(project, Some(BTreeSet::from(facets)), |_| {})?;
+    assert!(
+        !fixture.answer_stale(Fixture::answer_claim(&answer))?,
+        "a roster write that widens the room to a third facet keeps the answer it still reads"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_slice_move_marks_the_answer_in_its_old_facet_stale() -> TestResult {
+    let fixture = open()?;
+    let work = fixture.put_row(ENTITY_TYPE_FACET, "work")?;
+    let health = fixture.put_row(ENTITY_TYPE_FACET, "health")?;
+    let (project, room) = fixture.project_room(work)?;
+    let message = fixture.message_in_room(room, "The night bus leaves at one.")?;
+    let question = fixture.question(vec![message])?;
+    let first = fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| format!("an answer on a room MESSAGE lands; it refused: {error}"))?;
+    assert_eq!(
+        fixture.answer_facet(&first)?,
+        work,
+        "precondition: the answer lands in the slice's facet the room reads"
+    );
+
+    // With no set, the room reads its slice's facet; the host moves it.
+    fixture.write_roster(project, None, |body| body.slice.facet = Some(health))?;
+    assert!(
+        fixture.answer_stale(Fixture::answer_claim(&first))?,
+        "once the slice moves off the facet its answer sits in, that answer is stale"
+    );
+    let moved = fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| {
+            format!("an answer on the unchanged MESSAGE lands again; it refused: {error}")
+        })?;
+    assert_eq!(
+        fixture.answer_facet(&moved)?,
+        health,
+        "the next answer lands in the facet the room reads now"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_deleted_projects_room_stales_the_answer_only_the_room_placed() -> TestResult {
+    let fixture = open()?;
+    let work = fixture.put_row(ENTITY_TYPE_FACET, "work")?;
+    let (project, room) = fixture.project_room(work)?;
+    let message = fixture.message_in_room(room, "The office closes for the holidays.")?;
+    let question = fixture.question(vec![message])?;
+    let first = fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| format!("an answer on a room MESSAGE lands; it refused: {error}"))?;
+    assert_eq!(
+        fixture.answer_facet(&first)?,
+        work,
+        "precondition: the answer lands in the facet the room reads"
+    );
+
+    // The delete unbinds the home room: its MESSAGE stays, read in no room.
+    assert!(
+        fixture.vault.delete_entity(&project)?,
+        "precondition: the project deletes"
+    );
+    assert!(
+        fixture
+            .vault
+            .get(&message)?
+            .is_some_and(|body| !body.is_empty()),
+        "precondition: the room's MESSAGE outlives the project"
+    );
+    assert!(
+        fixture.answer_stale(Fixture::answer_claim(&first))?,
+        "once the delete unbinds the room, the answer it placed in the room's facet is stale"
     );
     Ok(())
 }
