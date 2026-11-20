@@ -289,8 +289,8 @@ impl SyncConnection {
     }
 
     /// Subscribes the target's entity documents through the document registry. A document this
-    /// machine holds no row for waits for its window; any other subscribe failure is the stage's
-    /// fault once the other documents ran.
+    /// machine holds no row for waits for its window; any other failure, its marker's included,
+    /// is the stage's fault once the other documents ran.
     fn fetch_predicted_documents(
         &self,
         target: &PredictedResidenceSet,
@@ -308,17 +308,26 @@ impl SyncConnection {
         let mut stage = Ok(());
         for id in &target.documents {
             let marker = HexId(*id);
-            if read_rows(vault, |txn| {
+            match read_rows(vault, |txn| {
                 PREDICTED_DOCUMENT.contains(&vault.store, txn, &marker)
-            })? {
-                continue;
-            }
-            match self.manager.documents().subscribe_entity(*id, &selector) {
-                Ok(()) => {
-                    write_rows(vault, |txn| {
-                        PREDICTED_DOCUMENT.put(&vault.store, txn, &marker, &())
-                    })?;
+            }) {
+                Ok(false) => {}
+                Ok(true) => continue,
+                Err(fault) => {
+                    stage = first_fault(stage, Err(fault));
+                    continue;
                 }
+            }
+            // The marker lands with the subscription row, so eviction can always find what
+            // this pass subscribed.
+            let subscribed =
+                self.manager
+                    .documents()
+                    .subscribe_entity_with(*id, &selector, |txn| {
+                        PREDICTED_DOCUMENT.put(&vault.store, txn, &marker, &())
+                    });
+            match subscribed {
+                Ok(()) => {}
                 Err(error) if admission_denied(&error) => {
                     tracing::warn!(%error, document = %id.to_hex(), "predicted document not subscribed");
                 }

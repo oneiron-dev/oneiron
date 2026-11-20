@@ -637,7 +637,6 @@ fn a_dropped_window_is_demoted_never_deleted() {
             .sync_state_put(&format!("rp:w:{window}"), &[1])
             .expect("the promotion marker");
         // A second prediction leaves the window out, strictly after the first.
-        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
         let second = predicted_set(&[], &[]);
         let second_body = serve(&predicted, &second);
         let prediction = append_prediction(
@@ -789,7 +788,6 @@ fn a_followed_world_is_neither_fetched_nor_evicted_by_prediction() {
                 .sync_state_put(&format!("pr:w:{window}"), &[])
                 .expect("the prediction marker");
             // A second prediction drops the window and the document, strictly after the first.
-            tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
             let second = predicted_set(&[], &[]);
             serve(&predicted, &second);
             append_prediction(
@@ -1055,7 +1053,6 @@ fn a_prediction_without_its_live_parent_is_refused() {
                     .expect("the first level applies"),
                 1
             );
-            tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
             let live = issue(
                 &device,
                 ResidenceAct::SyncPredicted {
@@ -1125,7 +1122,6 @@ fn a_prediction_without_its_live_parent_is_refused() {
                 &set,
             )
             .expect("the older prediction");
-            tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
             let newer = append_prediction(
                 &device.vault,
                 &issuer(),
@@ -1212,7 +1208,6 @@ fn a_document_fault_still_evicts_and_leaves_no_subscription() {
                 .expect("the promotion marker");
             // A second prediction drops the window and names a WORLD row and a TURN as
             // documents, strictly after the first.
-            tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
             let second = predicted_set(&[], &[device.granted, turn]);
             let second_body = serve(&predicted, &second);
             let prediction = append_prediction(
