@@ -208,20 +208,45 @@ pub(crate) fn core_memory_timeline_response(
     let timeline = result.value;
     let mut narrowing = result.receipt;
     let projected = read
-        .memory_timeline_parts_with_receipt(&timeline.records, Some(&narrowing.applied.as_filter()))
+        .memory_timeline_projection_with_receipt(
+            &timeline.records,
+            Some(&narrowing.applied.as_filter()),
+        )
         .map_err(|error| core_engine_error("core memory timeline projection failed", error))?;
     narrowing.restrict_with(&projected.receipt);
-    let mut parts: std::collections::BTreeMap<_, _> = timeline
+    // A deleted record's shell shows only where the projection's snapshot
+    // still admits it, as well as the applied scope (FIX
+    // TIMELINE-SHELL-TWO-SNAPSHOT-CAP).
+    let mut parts = std::collections::BTreeMap::new();
+    let mut shells = std::collections::BTreeSet::new();
+    let mut anchor_counted = false;
+    for (id, part) in timeline
         .records
         .iter()
         .map(|record| record.id)
         .zip(projected.value)
-        .filter_map(|(id, body)| body.map(|body| (id, body)))
-        .collect();
+    {
+        match part {
+            oneiron::claim::TimelineRecordProjection::Body {
+                entity_type,
+                learned_at,
+                body,
+            } => {
+                parts.insert(id, (entity_type, learned_at, body));
+            }
+            oneiron::claim::TimelineRecordProjection::Shell => {
+                shells.insert(id);
+            }
+            oneiron::claim::TimelineRecordProjection::Withheld { counted } => {
+                anchor_counted |= counted && id == timeline.anchor;
+            }
+        }
+    }
     let mut records = Vec::with_capacity(timeline.records.len());
     let deleted_anchor_visible = timeline.records.iter().any(|record| {
         record.id == timeline.anchor
             && record.state == oneiron::MemoryTimelineRecordState::Deleted
+            && shells.contains(&record.id)
             && !narrowing.applied.deny_all
             && record.entity_type.is_some_and(|kind| {
                 narrowing
@@ -232,7 +257,17 @@ pub(crate) fn core_memory_timeline_response(
             })
     });
     if !parts.contains_key(&timeline.anchor) && !deleted_anchor_visible {
-        narrowing.add_suppressed(parts.len());
+        // An anchor the projection refuses ends the read as an anchor the
+        // timeline's own snapshot refuses does: only the anchor counts (one
+        // withheld row where the projection counted it, or where the applied
+        // scope drops its shell), so the receipt cannot size its chain from
+        // either snapshot's linked rows (review round 1 of #10031).
+        narrowing.suppressed_count =
+            usize::from(anchor_counted || shells.contains(&timeline.anchor));
+        narrowing
+            .narrowed_axes
+            .retain(|axis| axis != "row_authority");
+        narrowing.record_axes();
         return Ok(CoreMemoryTimelineResponse {
             narrowing,
             anchor_id: timeline.anchor.to_hex(),
@@ -241,6 +276,12 @@ pub(crate) fn core_memory_timeline_response(
     }
     for record in timeline.records {
         let item = if record.state == oneiron::MemoryTimelineRecordState::Deleted {
+            // A shell the projection refused is counted there where it is
+            // one withheld row; one gone from the store counts nothing
+            // (review round 1 of #10031).
+            if !shells.contains(&record.id) {
+                continue;
+            }
             if narrowing.applied.deny_all
                 || record.entity_type.is_none_or(|kind| {
                     narrowing
