@@ -76,6 +76,9 @@
 //! The bias shows up as a number that moved, which is the only form in which it
 //! is visible at all.
 
+mod amendment_writer_hook;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::amendment_writer_hook::set_before_amendment_writer_hook;
 mod audit;
 mod causes;
 #[cfg(oneiron_test_support)]

@@ -95,6 +95,7 @@ pub fn record_amendment_evidence(vault: &Vault, evidence: &AmendmentEvidence) ->
         skill_covered_step: evidence.skill_covered_step,
         at: evidence.at,
     };
+    super::amendment_writer_hook::run_before_amendment_writer_hook(vault);
     vault.with_write_txn_grouped(|wtxn| {
         EVIDENCE.put(&vault.store, wtxn, &evidence.receipt_id, &row)?;
         Ok(())
@@ -512,6 +513,7 @@ fn persist_amendment_split(
     });
 
     let receipt_id_owned = receipt_id.to_owned();
+    super::amendment_writer_hook::run_before_amendment_writer_hook(vault);
     vault.with_write_txn_grouped(|wtxn| {
         // A displaced judge's answers no longer land (FIX 11638): the fence
         // the attempt lane checks before its judgment put.

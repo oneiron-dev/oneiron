@@ -13,6 +13,11 @@
 //! skeleton no longer names. With the fix none is left, and an erase of
 //! another claim leaves this receipt's rows as they were.
 //!
+//! An erase that commits after the evidence door or the judge has read the
+//! receipt's Δ, and before its writer opens, leaves nothing either: the
+//! writer finds the Δ gone and lands nothing under the skeleton (REVIEW-10051
+//! P1-1). The race is set up through a test door that runs the erase there.
+//!
 //! The cause rows have no public read that shows a row whose judgment is
 //! gone, so they are counted through a test door:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -256,5 +261,61 @@ fn an_erase_of_another_claim_keeps_the_amended_receipts_attribution() {
         rows_kept(&seeded.vault, &receipt),
         vec!["evidence", "judgment", "preference", "cause"],
         "an erase of another claim leaves this receipt's rows as they were"
+    );
+}
+
+/// The owner's erase of `target`, run by the next amendment attribution
+/// writer after its reads and before it opens.
+fn erase_before_next_writer(target: EntityId) {
+    door::before_next_amendment_writer(Box::new(move |vault: &Vault| {
+        vault
+            .delete_entity_with_reason(&target, DeleteReason::UserHardDelete)
+            .expect("the owner's erase, racing the writer");
+    }));
+}
+
+/// The decider-preference routing facts for the amendment under `receipt`.
+fn preference_evidence(seeded: &Seeded, receipt: &str) -> AmendmentEvidence {
+    AmendmentEvidence::new(receipt, seeded.machine, SCOPE)
+        .at(seeded.now)
+        .with_cause(AmendmentCause::DeciderPreference)
+}
+
+#[test]
+fn an_erase_that_overtakes_the_judges_reads_leaves_no_attribution_under_its_receipt() {
+    let seeded = seed();
+    let (target, receipt) = owner_amended_claim(&seeded);
+    record_amendment_evidence(&seeded.vault, &preference_evidence(&seeded, &receipt))
+        .expect("FIXTURE: the amendment evidence");
+    erase_before_next_writer(target);
+
+    judge_amendment(&seeded.vault, &receipt).expect("the judging pass");
+
+    let kept = rows_kept(&seeded.vault, &receipt);
+    assert!(
+        kept.is_empty(),
+        "a judge whose reads the erase overtook lands nothing under the skeleton's receipt: \
+         {kept:?}"
+    );
+}
+
+#[test]
+fn an_erase_that_overtakes_the_evidence_doors_reads_leaves_no_evidence() {
+    let seeded = seed();
+    let (target, receipt) = owner_amended_claim(&seeded);
+    erase_before_next_writer(target);
+
+    let recorded =
+        record_amendment_evidence(&seeded.vault, &preference_evidence(&seeded, &receipt));
+
+    let kept = rows_kept(&seeded.vault, &receipt);
+    assert!(
+        kept.is_empty(),
+        "an evidence write whose reads the erase overtook lands nothing under the skeleton's \
+         receipt: {kept:?}"
+    );
+    assert!(
+        recorded.is_err(),
+        "the evidence door refuses a receipt whose Δ the erase took: {recorded:?}"
     );
 }
