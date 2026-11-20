@@ -255,13 +255,39 @@ impl Vault {
         }
     }
 
+    /// Whether the credential `id` minted still bounds a narrowed saved read
+    /// lane (OF-506) in this snapshot: live as
+    /// [`Self::capability_slip_id_is_live_in_txn`] judges it, except that
+    /// only its read Scope must still lie inside its current membership
+    /// grant (`member_slip_read_scope_is_current_in_txn`, round 2 review P1
+    /// of #9583): a saved lane only reads.
+    ///
+    /// # Errors
+    /// A store, fold or clock failure judging it.
+    pub(crate) fn saved_read_credential_is_live_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &[u8; 32],
+    ) -> Result<bool> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let now = self.instant_in_txn(txn)?;
+        if !fold.slip_is_live_at(id, now) {
+            return Ok(false);
+        }
+        match fold.slips.mints.get(id) {
+            Some(mint) => self.mint_bounds_saved_read_in_txn(txn, &mint.action.claims, now.secs()),
+            None => Ok(false),
+        }
+    }
+
     /// Whether the credential `id` minted still stands, whatever its own
     /// lifetime: its mint unrevoked in this snapshot's fold, and its grant,
-    /// invitation and delegation still standing as they bound it (FIX 5952).
-    /// A saved lane that reads as its principal's own judges this at each
-    /// rebuild and each read (FIX OWN-DEVICE-GRANT-NOT-RECHECKED): a paired
-    /// device's renewal lets the old credential run out (FIX 3377), so its
-    /// expiry ends no saved work, while the grant's withdrawal does.
+    /// invitation and delegation still standing as they bound it (FIX 5952),
+    /// its read Scope inside its current membership grant. A saved lane
+    /// that reads as its principal's own judges this at each rebuild and
+    /// each read (FIX OWN-DEVICE-GRANT-NOT-RECHECKED): a paired device's
+    /// renewal lets the old credential run out (FIX 3377), so its expiry
+    /// ends no saved work, while the grant's withdrawal does.
     ///
     /// # Errors
     /// A store, fold or clock failure judging it.
@@ -277,11 +303,24 @@ impl Vault {
         match fold.slips.mints.get(id) {
             Some(mint) => {
                 let now = self.instant_in_txn(txn)?.secs();
-                Ok(self.slip_refs_stand_in_txn(txn, &mint.action.claims, now)?
-                    && self.member_slip_scope_is_current_in_txn(txn, &mint.action.claims)?)
+                self.mint_bounds_saved_read_in_txn(txn, &mint.action.claims, now)
             }
             None => Ok(false),
         }
+    }
+
+    /// Whether a saved read lane's credential minted with `claims` is still
+    /// bound as it was at `now`: its grant, invitation and delegation stand
+    /// (FIX 5952), and its read Scope lies inside its current membership
+    /// grant (round 2 review P1 of #9583).
+    fn mint_bounds_saved_read_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+        now: u64,
+    ) -> Result<bool> {
+        Ok(self.slip_refs_stand_in_txn(txn, claims, now)?
+            && self.member_slip_read_scope_is_current_in_txn(txn, claims)?)
     }
 
     /// Read-only holder verification for repeatable credential checks. One-shot

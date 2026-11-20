@@ -65,7 +65,8 @@ use oneiron_records::claim::scoped_read::frozen::{GUEST_LANE_NOT_SAVED, keep_cov
 pub(crate) enum SavedCredential {
     /// A narrowed lane's credential: it holds while it is live, that is
     /// unexpired, unrevoked and its grant, invitation and delegation
-    /// standing (`Vault::capability_slip_id_is_live_in_txn`), and, when a
+    /// standing, its read Scope inside its current membership grant
+    /// (`Vault::saved_read_credential_is_live_in_txn`), and, when a
     /// caveat set it an earlier end than its mint's, before that end, as
     /// its live proof was held to it (FIX SAVED-LANE-OUTLIVES-CAVEAT-EXPIRY).
     Live {
@@ -117,7 +118,7 @@ impl SavedCredential {
                 {
                     return Ok(false);
                 }
-                vault.capability_slip_id_is_live_in_txn(txn, &id)
+                vault.saved_read_credential_is_live_in_txn(txn, &id)
             }
             Self::Standing(id) => vault.capability_slip_id_stands_in_txn(txn, &id),
         }
@@ -358,9 +359,10 @@ impl FrozenReadLane {
     /// [`Error::InvalidConfig`] for a lane whose bound has no frozen form,
     /// so dropping it would widen the saved read: a room turn, an audience
     /// or peer reads, a narrowed guest credential, whose grant's current
-    /// Scope binds only through its proof, or a key bound by two
-    /// credentials, as a frozen lane keeps one. A store failure reading the
-    /// owner binding or the live-owner census.
+    /// Scope binds only through its proof (a key homed in no conversation of
+    /// this vault is no such bound: the lane keeps its home), or a key bound
+    /// by two credentials, as a frozen lane keeps one. A store failure
+    /// reading the owner binding or the live-owner census.
     pub fn freeze(lane: &ScopedRead<'_>) -> Result<Self> {
         let key = &lane.actor_key;
         if key.room_turn.is_some() || lane.audience.is_some() || !lane.peer_reads.is_empty() {
@@ -414,13 +416,20 @@ impl FrozenReadLane {
                 Some(proof) => keeps_top_scope(key, proof),
                 None => !key.saved_credentials.is_empty() && key.authority_scope().is_some(),
             };
-        let narrows = scope_narrows
+        let narrows_beyond_home = scope_narrows
             || !records.is_empty()
             || channel_refused
             || worlds.is_some()
             || key.room_facets.is_some()
-            || key.grant_alternatives().is_some()
-            || key.is_homed_unnamed();
+            || key.grant_alternatives().is_some();
+        // A key homed in no conversation of this vault narrows too, so its
+        // lane never freezes as its principal's own (RULING
+        // SECREAD-HOME-READ-DOORS = B). The lane keeps that home whole
+        // (`home_unnamed`), so the home alone never refuses a lane whose
+        // credential names a grant: a delegate holding the owner's
+        // transferred credential saves its work, home kept (FIX
+        // HOMED-GRANT-CREDENTIAL-LANE-NOT-SAVED).
+        let narrows = narrows_beyond_home || key.is_homed_unnamed();
         // A key under the access gate keeps its grant basis, whose
         // principal's rebuilt key would admit the unscoped rows it refused
         // (Sol F3 on #8061), the owner's floor under that gate among them
@@ -478,7 +487,7 @@ impl FrozenReadLane {
                 ..Self::principal()
             });
         }
-        if names_grant && narrows {
+        if names_grant && narrows_beyond_home {
             return Err(Error::InvalidConfig(GUEST_LANE_NOT_SAVED.into()));
         }
         // A key agent Grants bind keeps each Grant's alternative, never their
