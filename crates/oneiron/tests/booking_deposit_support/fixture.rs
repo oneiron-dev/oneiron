@@ -92,6 +92,54 @@ impl Fixture {
     pub(crate) fn open(deposit: Option<DepositTerms>) -> Self {
         let dir = tempfile::tempdir().expect("temp dir");
         let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+        Self::seed(dir, vault, deposit)
+    }
+
+    /// [`Fixture::open`] with its vault in `dir/vault`, opened with `config`
+    /// (a test's store clock): a machine whose directory a test copies to
+    /// make more machines ([`Fixture::into_machines`]).
+    pub(crate) fn open_in(
+        dir: tempfile::TempDir,
+        config: VaultConfig,
+        deposit: Option<DepositTerms>,
+    ) -> Self {
+        let path = dir.path().join(MACHINE_VAULT_DIR);
+        std::fs::create_dir_all(&path).expect("vault dir");
+        let vault = Vault::open(&path, config).expect("open vault");
+        Self::seed(dir, vault, deposit)
+    }
+
+    /// Closes this machine (opened by [`Fixture::open_in`]) and opens two
+    /// machines on copies of its directory, each with `config()`: the same
+    /// vault on two machines, every row this one held on both, as sync and a
+    /// copy of the node-local tables would leave them.
+    pub(crate) fn into_machines(self, config: impl Fn() -> VaultConfig) -> (Self, Self) {
+        let Self {
+            _dir: dir,
+            vault,
+            page,
+            booker,
+            config: event_config,
+        } = self;
+        drop(vault);
+        let open = || {
+            let copy = tempfile::tempdir().expect("temp dir");
+            copy_dir(dir.path(), copy.path());
+            let vault = Vault::open(copy.path().join(MACHINE_VAULT_DIR), config())
+                .expect("open the copied vault");
+            Self {
+                _dir: copy,
+                vault,
+                page,
+                booker,
+                config: event_config.clone(),
+            }
+        };
+        (open(), open())
+    }
+
+    /// Seeds `vault`, in `dir`, as [`Fixture::open`] describes.
+    fn seed(dir: tempfile::TempDir, vault: Vault, deposit: Option<DepositTerms>) -> Self {
         let page = test_id(PAGE_SEED);
         vault
             .put_entity(&page, ENTITY_TYPE_ASSET, at(1), 1, b"booking page")
@@ -285,6 +333,25 @@ impl Fixture {
         )? {
             BookingVerbReceipt::Cancelled(_) => Ok(()),
             other => panic!("expected a cancel receipt, got {other:?}"),
+        }
+    }
+}
+
+/// The vault's directory inside a machine's directory ([`Fixture::open_in`]).
+const MACHINE_VAULT_DIR: &str = "vault";
+
+/// Copies the closed machine directory `from` into `to`, file by file, the
+/// LMDB lock file with the data, as `tests/room_pins_concurrent_merge.rs`
+/// copies its seed vault.
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
+    for entry in std::fs::read_dir(from).expect("read the machine dir") {
+        let entry = entry.expect("a machine dir entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("its file type").is_dir() {
+            std::fs::create_dir_all(&target).expect("copy a dir");
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).expect("copy a file");
         }
     }
 }
