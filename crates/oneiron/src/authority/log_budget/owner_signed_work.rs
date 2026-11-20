@@ -38,8 +38,9 @@ pub(super) fn answered_row(
     }
 }
 
-/// Whether the request `hash` this install's result answers is the owner's
-/// own signed word, the one source a result's owner key proof may rest on
+/// Whether the request or residence directive `hash` this install's result
+/// answers is the owner's own signed word, the one source a result's owner
+/// key proof may rest on
 /// (row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, LIMIT-1
 /// RESULT-NEEDS-EXECUTOR-KEY): a slip issuer `fold` holds as a live owner,
 /// retired by no handoff, signs or cosigns the row ([`an_owner_key_signs`]),

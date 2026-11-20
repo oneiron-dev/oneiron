@@ -580,8 +580,9 @@ impl crate::Vault {
         owner_authored.and_then(|_| self.owner_proof_signer(fold))
     }
 
-    /// The owner key this install proves its result for the request signed
-    /// as entry `answered` with, on `fold`, the result writer's view (row
+    /// The owner key this install proves its result for the request or
+    /// residence directive signed as entry `answered` with, on `fold`, the
+    /// result writer's view (row
     /// OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, LIMIT-1
     /// RESULT-NEEDS-EXECUTOR-KEY): the request is the owner's own signed word
     /// ([`super::log_budget::answers_the_owners_signed_work_in_txn`]), and
