@@ -38,6 +38,12 @@
 //! installed while the home is down retires no queued send ([`QueuedSends::Keep`], FIX 4748).
 //! Preparation refused before that transaction leaves every mirror marker in place. The caller
 //! attaches observers last.
+//!
+//! That transaction drops every byte of the old window's stored snapshot and pending updates,
+//! their history too, which no operation of the candidate's lineage keeps. So a legal hold that
+//! keeps a row they hold, or the world of a pad they hold, refuses the install with nothing
+//! written (OF-470, FIX L6-05-REPLACEMENT-OLD-LINEAGE-HOLD), as it refuses a re-bootstrap's: once
+//! before any work, and again in that transaction.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -45,7 +51,8 @@ use loro::json::{JsonOpContent, MapOp};
 use loro::{ContainerID, ContainerType, LoroDoc, LoroValue, ValueOrContainer, VersionVector};
 
 use super::super::loro_support::{
-    TombstoneIndex, doc_version_vector, map_delete, map_for_each_tombstone_value, map_insert_bytes,
+    TombstoneIndex, doc_from_snapshot, doc_version_vector, import_doc, map_delete,
+    map_for_each_tombstone_value, map_insert_bytes,
 };
 use super::super::types::WindowKey;
 use super::egress::{
@@ -62,7 +69,10 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
 use crate::ports::{DeletionMarker, TombstoneStoreRead, WindowAddress, WindowDeletionRows};
+use crate::store::legal_hold::{HoldActor, is_hold_refusal};
+use crate::store::window_rows::WindowUpdateKey;
 use crate::sync::bridge::Materializer;
+use crate::sync::carrier_holds::CarrierInventory;
 use crate::sync::transport::{MAX_WINDOW_PAD_PAYLOAD_BYTES, is_window_admission_read_fault};
 use crate::sync::window_rows::{OFF_RECORD_PROMOTE_PICKUP, WINDOW_UPDATE};
 
@@ -77,7 +87,8 @@ fn rejected() -> Error {
 /// does not. The snapshot passes the admission an update does, with the same staged `evidence`
 /// for a world window. Returns the bare candidate: the caller attaches observers and installs it,
 /// and no other holder may write `old` meanwhile. Nothing is persisted when the snapshot is
-/// refused.
+/// refused, nor while a legal hold keeps a row the window's stored snapshot or pending updates
+/// hold, which the install drops (OF-470).
 pub fn prepare_replacement(
     vault: &Vault,
     materializer: &Materializer,
@@ -211,6 +222,10 @@ pub(in crate::sync) fn prepare_bounded_replacement(
         bound,
         super::validate_window_update_with_staged_worlds,
     )?;
+    // A legal hold on a row the old window's stored carriers hold refuses the install before any
+    // work: the forward pass below writes the candidate's rows to LMDB.
+    let read = StoredCarriers::read(vault, key)?;
+    read.reject_held(vault)?;
 
     // The work happens on a detached copy of the old window: what this prepares there (queued
     // sends, scrubs, pending mirrors) feeds the carry-over and never leaves through the live
@@ -316,22 +331,21 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     }
     conflicts.retain(|conflict| !holds_value(&candidate, conflict));
     let vv = doc_version_vector(&candidate);
-    let stale_updates: Vec<_> = {
-        let rtxn = vault.store.env.read_txn()?;
-        vault
-            .store
-            .port_window_updates(&rtxn, WindowAddress::new(key.as_str()), |update, _| update)?
-            .filter_map(Result::ok)
-            .collect()
-    };
+    let old_carriers = read.read_again(vault, key)?;
     let _position_bodies = positions.as_ref().map(|_| vault.pin_all_result_bodies());
     vault.with_write_txn_grouped(|wtxn| {
+        // The hold is read in the transaction that drops the old carriers, so one placed since
+        // the check above is seen (OF-470).
+        old_carriers.unchanged_in_txn(vault, key, wtxn)?;
+        old_carriers
+            .holds
+            .reject_held_in_txn(&vault.store, wtxn, &HoldActor::UNATTRIBUTED)?;
         let (stored, history_free) = state.stored_in_txn(vault, wtxn)?;
         persist_window_doc_in_txn(vault, wtxn, key, stored, &vv, history_free)?;
         // The old generation's pending updates and the queued sends it took in depend on history
         // the candidate does not hold; their effects are in it as its own operations. A peer's
         // copy keeps the queued sends for the home, which has not taken them (FIX 4748).
-        for update in &stale_updates {
+        for update in &old_carriers.updates {
             WINDOW_UPDATE.delete(&vault.store, wtxn, update)?;
         }
         if queued == QueuedSends::Retire {
@@ -357,6 +371,133 @@ pub(in crate::sync) fn prepare_bounded_replacement(
         doc: candidate,
         conflicts,
     })
+}
+
+/// The old window's stored carriers as a replacement read them: its snapshot and each pending
+/// update whose key decodes, the rows the install retires, and every row id and pad they hold,
+/// their history's too. The install drops every byte of them (OF-470).
+struct StoredCarriers {
+    snapshot: Option<Vec<u8>>,
+    updates: Vec<WindowUpdateKey>,
+    /// The key bytes of `updates`, as the install's transaction reads them again.
+    keys: BTreeSet<Vec<u8>>,
+    holds: CarrierInventory,
+}
+
+/// Window `key`'s stored snapshot and each pending update whose key decodes, with its bytes, read
+/// in one transaction.
+type StoredRows = (Option<Vec<u8>>, Vec<(WindowUpdateKey, Vec<u8>)>);
+
+impl StoredCarriers {
+    /// Reads window `key`'s stored carriers and takes their inventory.
+    fn read(vault: &Vault, key: &WindowKey) -> Result<Self> {
+        let (snapshot, rows) = Self::read_rows(vault, key)?;
+        Self::of_rows(key, snapshot, rows)
+    }
+
+    /// Reads window `key`'s stored carriers again, keeping this inventory while they are the
+    /// ones it was taken of.
+    fn read_again(self, vault: &Vault, key: &WindowKey) -> Result<Self> {
+        let (snapshot, rows) = Self::read_rows(vault, key)?;
+        if snapshot == self.snapshot && update_keys(rows.iter().map(|(row, _)| row)) == self.keys {
+            return Ok(self);
+        }
+        Self::of_rows(key, snapshot, rows)
+    }
+
+    fn read_rows(vault: &Vault, key: &WindowKey) -> Result<StoredRows> {
+        let rtxn = vault.store.env.read_txn()?;
+        let address = WindowAddress::new(key.as_str());
+        let snapshot = vault
+            .store
+            .port_window_doc_with_raw(&rtxn, address, |raw| Ok(raw.to_vec()))?;
+        let rows = vault
+            .store
+            .port_window_updates(&rtxn, address, |row, bytes| (row, bytes.to_vec()))?
+            .filter_map(Result::ok)
+            .collect();
+        Ok((snapshot, rows))
+    }
+
+    /// The carriers `snapshot` and `rows`, their inventory taken of the document they make, as a
+    /// window load makes it.
+    fn of_rows(
+        key: &WindowKey,
+        snapshot: Option<Vec<u8>>,
+        rows: Vec<(WindowUpdateKey, Vec<u8>)>,
+    ) -> Result<Self> {
+        let holds = if snapshot.is_none() && rows.is_empty() {
+            CarrierInventory::default()
+        } else {
+            let doc = match &snapshot {
+                Some(bytes) => doc_from_snapshot(bytes)?,
+                None => crate::sync::schema::create_window_doc("", key),
+            };
+            for (_, bytes) in &rows {
+                import_doc(&doc, bytes)?;
+            }
+            CarrierInventory::of_window(&doc)
+        };
+        let updates: Vec<_> = rows.into_iter().map(|(row, _)| row).collect();
+        Ok(Self {
+            snapshot,
+            keys: update_keys(updates.iter()),
+            updates,
+            holds,
+        })
+    }
+
+    /// Refuses while a legal hold keeps a row or pad world these carriers hold, read in a
+    /// snapshot of its own. A held refusal is in its hold log before this returns: once the read
+    /// snapshot ended, it takes a writer of its own (FIX 2433).
+    fn reject_held(&self, vault: &Vault) -> Result<()> {
+        let refusals = vault.store.begin_refusal_attempt();
+        let checked = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(Error::from)
+            .and_then(|rtxn| {
+                self.holds
+                    .reject_held_in_txn(&vault.store, &rtxn, &HoldActor::UNATTRIBUTED)
+            });
+        let refusals = refusals.finish();
+        if checked.as_ref().is_err_and(is_hold_refusal) {
+            refusals.settle_now();
+        }
+        checked
+    }
+
+    /// Refuses when `txn` holds other carriers of window `key` than these: their inventory would
+    /// miss what those hold.
+    fn unchanged_in_txn(
+        &self,
+        vault: &Vault,
+        key: &WindowKey,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<()> {
+        let address = WindowAddress::new(key.as_str());
+        let snapshot =
+            vault
+                .store
+                .port_window_doc_with_raw(txn, address, |raw| Ok(raw.to_vec()))?;
+        let rows: Vec<_> = vault
+            .store
+            .port_window_updates(txn, address, |row, _| row)?
+            .filter_map(Result::ok)
+            .collect();
+        if snapshot != self.snapshot || update_keys(rows.iter()) != self.keys {
+            return Err(Error::ConcurrentWrite(
+                "window carriers changed during replacement",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// The key bytes of `rows`.
+fn update_keys<'a>(rows: impl Iterator<Item = &'a WindowUpdateKey>) -> BTreeSet<Vec<u8>> {
+    rows.map(|row| WINDOW_UPDATE.key_bytes(row)).collect()
 }
 
 /// The replacement of a private world's sealed mirror `old` by `snapshot`, a mirror a bundle
