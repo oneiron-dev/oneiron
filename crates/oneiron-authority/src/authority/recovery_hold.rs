@@ -188,23 +188,14 @@ impl RecoveryHoldAnswer {
         Ok(())
     }
 
-    /// The entry the answer rides: one signer and no cosign. An Ed25519
-    /// signer for either answer; a P-256 signer, an owner's passkey, for a
-    /// `Cancel` alone (row RECOVERY-HOLD-PASSKEY-ANSWER): a Cancel only
-    /// stops the attempt, while an `ItIsMe` lands the hold's revocations of
-    /// other owner keys at once, and a passkey revokes no other owner key
-    /// (Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B). Whether the signer
-    /// may answer (a live non-successor owner key, or R for a `Cancel`) is
-    /// the fold's judgement.
+    /// The entry the answer rides: one Ed25519 signer and no cosign, for
+    /// either answer. Whether the signer may answer (a live non-successor
+    /// owner key, or R for a `Cancel`) is the fold's judgement.
     pub fn validate_entry(&self, entry: &AuthorityLogEntry) -> Result<()> {
-        let signer_admitted = match (entry.signer.suite, &entry.signer.public_key) {
-            (AuthoritySignatureSuite::Ed25519, AuthorityKey::Ed25519(_)) => true,
-            (AuthoritySignatureSuite::P256, AuthorityKey::P256(_)) => {
-                self.answer == RecoveryHoldAnswerKind::Cancel
-            }
-            _ => false,
-        };
-        if !signer_admitted || !entry.cosigns.is_empty() {
+        if entry.signer.suite != AuthoritySignatureSuite::Ed25519
+            || !matches!(entry.signer.public_key, AuthorityKey::Ed25519(_))
+            || !entry.cosigns.is_empty()
+        {
             return Err(invalid_authority());
         }
         Ok(())
