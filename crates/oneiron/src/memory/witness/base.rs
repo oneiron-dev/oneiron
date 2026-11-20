@@ -456,6 +456,15 @@ impl Memory<'_> {
                 plan.conversation_id,
             )?;
         }
+        // L7-05: a work-talk conversation admits its two bound writers only;
+        // a third writer is refused here. The binding needs no settle step:
+        // work-talk turns are ordinary company content.
+        let _work_talk = crate::workspace_roster::admit_work_talk_witness(
+            self.vault,
+            wtxn,
+            plan.conversation_id,
+            self.actor,
+        )?;
         Ok(BaseGuards::Clear {
             mint_conversation: current_conversation.is_none(),
             person_author,

@@ -499,11 +499,12 @@ pub(crate) fn room_roster_in(
 /// the room itself, a person's through its own pen
 /// ([`crate::workspace_roster::room_join_audience_in`], OF-417); one of the
 /// two actors a leader chat binds, while both still lead their projects
-/// ([`crate::workspace_roster::leader_chat_reader_in`], FIX 3121); or the
-/// room's host, its owner or a delegate (OF-530). A join, leader or host
-/// standing opens the room's reads and takes no seat: the roster, and with
-/// it the audience every disclosure meets, stays the members alone, and the
-/// caller's own grants still bound each read.
+/// ([`crate::workspace_roster::leader_chat_reader_in`], FIX 3121); one of
+/// the two actors a work-talk conversation binds (L7-05); or the room's
+/// host, its owner or a delegate (OF-530). A join, leader, work-talk or
+/// host standing opens the room's reads and takes no seat: the roster, and
+/// with it the audience every disclosure meets, stays the members alone,
+/// and the caller's own grants still bound each read.
 pub(crate) fn room_reader_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -514,11 +515,33 @@ pub(crate) fn room_reader_in(
     if members.contains(&caller)
         || crate::workspace_roster::room_join_audience_in(vault, txn, room, caller)?
         || crate::workspace_roster::leader_chat_reader_in(vault, txn, room, caller)?
+        || work_talk_reader_in(vault, txn, room, caller)?
     {
         return Ok(true);
     }
     let host = crate::WriteActor::new(caller, crate::EdgeActorClass::Human);
     Ok(crate::conversation::room_host_in_txn(vault, txn, room, host)?.is_some())
+}
+
+/// Whether `caller` is one of the two actors a work-talk conversation binds
+/// (L7-05): the member's workspace actor or the brought companion's actor.
+/// It takes no seat and mints no grant. `false` for any other room or
+/// caller, and for a field that does not stand (undecodable, or without its
+/// local registration: a replicated forgery), so the room's other standings
+/// still decide. The binding is immutable, so no live revalidation applies.
+fn work_talk_reader_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: EntityId,
+) -> crate::Result<bool> {
+    match crate::workspace_roster::work_talk_binding_in_txn(vault, txn, room) {
+        Ok(binding) => Ok(binding.is_some_and(|binding| {
+            caller == binding.member_actor || caller == binding.companion_actor
+        })),
+        Err(crate::Error::Record(crate::error::RecordError::ConversationDenied)) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// Whether `caller` stands in `room` as `txn` reads it: [`room_reader_in`]

@@ -137,10 +137,20 @@ impl Memory<'_> {
         let mut lands_new: Vec<bool> = Vec::new();
         before_txn();
 
+        // L7-05: a base landing names its conversation, so a work-talk
+        // binding there admits its writers instead of the Content grant; an
+        // overlay landing stages no base row and names none. Held tags
+        // settle in the same write and may save or restore rows outside the
+        // talk, so a held-tag witness keeps the full Content check: the
+        // binding admits plain turns only (a third writer is still refused
+        // by the base guards).
+        let work_talk = (matches!(sink, WitnessSink::Base(_)) && held.is_none())
+            .then_some(plan.conversation_id);
         let answer = self.with_witness_write_txn_as_after_commit(
             callback,
             admit,
             room_speech,
+            work_talk,
             |wtxn| {
                 let landed = {
                     let write = WitnessWrite {

@@ -334,8 +334,11 @@ pub(super) fn roster_member_value(row: &RosterMemberRow) -> Value {
         ),
         (Value::from("identity_ref"), optional_ref(row.identity_ref)),
     ];
-    // Written only when set, so a member who was not told keeps the row
-    // shape stored before one-vault mode.
+    // Each written only when set, so a member who was not told and brought no
+    // companion keeps the row shape stored before one-vault mode.
+    if row.companion_brought {
+        entries.push((Value::from("companion_brought"), Value::from(true)));
+    }
     if let Some(told) = row.one_vault_told {
         entries.push((Value::from("one_vault_told"), Value::from(told)));
     }
@@ -353,6 +356,16 @@ pub(super) fn decode_roster_member_row(bytes: &[u8]) -> Result<RosterMemberRow> 
         companion_person_ref: optional_entity(&entries, "companion_person_ref")?,
         companion_actor_ref: optional_entity(&entries, "companion_actor_ref")?,
         companion_facet_ref: optional_entity(&entries, "companion_facet_ref")?,
+        // Absent unless the member brought the companion, and on every row
+        // stored before work talk.
+        companion_brought: optional_key(&entries, "companion_brought")
+            .map(|value| {
+                value
+                    .as_bool()
+                    .ok_or_else(|| invalid("roster member companion_brought must be a bool"))
+            })
+            .transpose()?
+            .unwrap_or(false),
         identity_ref: optional_entity(&entries, "identity_ref")?,
         // Absent on a member who was not told, and on every row stored
         // before one-vault mode.

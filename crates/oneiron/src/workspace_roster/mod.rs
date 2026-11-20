@@ -97,6 +97,7 @@ mod sharing;
 pub mod spend_scope;
 mod steps;
 mod work_companion;
+mod work_talk;
 
 use codec::*;
 use companion_bind::*;
@@ -139,6 +140,10 @@ pub use self::sharing::{
     RoomSharingView,
 };
 pub use self::work_companion::WorkCompanionPolicy;
+pub use self::work_talk::WorkTalkBinding;
+pub(crate) use self::work_talk::{
+    WORK_TALK_FIELD, admit_work_talk_witness, work_talk_binding_in_txn,
+};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::{
     codec::member_intent_key_pin_for_test, records::roster_member_key_pin_for_test,

@@ -654,13 +654,27 @@ impl<'v> ScopedRead<'v> {
         }
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if filter.deny_all
-            || self
-                .vault
-                .store
-                .validate_entity_type(header.entity_type)
-                .is_err()
-            || !filter.read_scope().bands.contains(&header.entity_type)
+        // A work-talk binding is row authority for a reader who holds no
+        // read scope of its own (L7-05, ANSWER L7-05-BINDING-READ = A): a
+        // bound reader with no Grant is floored to deny-all, so the binding
+        // is judged here, before the scope gates refuse the row. It lifts
+        // only those two gates, and only for a reader with no explicit
+        // credential or Grant Scope under a policy that has not failed
+        // closed; every later gate still binds, and the record stage below
+        // judges the binding again with the row's scope.
+        let scope_refuses =
+            filter.deny_all || !filter.read_scope().bands.contains(&header.entity_type);
+        let work_talk_bound = scope_refuses
+            && !policy.is_fail_closed()
+            && !policy.diagnostics().loaded_manifest_forces_fail_closed()
+            && grant.or(self.actor_key.authority_scope()).is_none()
+            && self.work_talk_row_readable_in(rtxn, id, header.entity_type);
+        if self
+            .vault
+            .store
+            .validate_entity_type(header.entity_type)
+            .is_err()
+            || (scope_refuses && !work_talk_bound)
         {
             return Ok(false);
         }
@@ -755,15 +769,27 @@ impl<'v> ScopedRead<'v> {
                     allowed && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?
                 );
             }
-            match grant {
-                None => crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope),
-                Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(
-                    policy,
-                    &self.actor_key,
-                    &scope,
-                    Some(grant),
-                ),
-            }
+            // A work-talk binding supplies row authority, never an escape
+            // from a failed policy or an explicit credential/Grant ceiling.
+            let explicit_scope = grant.or(self.actor_key.authority_scope());
+            let bound = !policy.is_fail_closed()
+                && !policy.diagnostics().loaded_manifest_forces_fail_closed()
+                && explicit_scope.is_none_or(|ceiling| {
+                    ceiling.admits("read", &scope, &crate::federation::Scope::top())
+                })
+                && self.work_talk_row_readable_in(rtxn, id, header.entity_type);
+            bound
+                || match grant {
+                    None => {
+                        crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope)
+                    }
+                    Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(
+                        policy,
+                        &self.actor_key,
+                        &scope,
+                        Some(grant),
+                    ),
+                }
         };
         Ok(admitted && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?)
     }
