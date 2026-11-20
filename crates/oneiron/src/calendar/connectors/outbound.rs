@@ -146,6 +146,17 @@ pub struct CalendarWriteOutboxRow {
     /// later report of that cancellation echoes this write and moves no
     /// deposit money (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
     pub cancelled_members: Vec<EntityId>,
+    /// The write marker the staged resource carries (`X-ONEIRON-OUTBOX`, a
+    /// VCALENDAR property): fresh for each staged write and the same on each
+    /// replay of it, so a stored copy that carries another marker is another
+    /// writer's (BK-ECHO-MARK-TAKES-HOST-CANCEL-AT-STAGED-SEQUENCE). `None` on
+    /// a row staged before writes carried one.
+    pub write_marker: Option<[u8; 16]>,
+    /// A replay refused on its precondition whose read proved the stored copy
+    /// neither this write's nor another writer's: the seat's next pull of the
+    /// resource proves it before admitting it
+    /// (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY).
+    pub stored_copy_unproven: bool,
     /// The precondition the write carries.
     pub expected_etag: Option<String>,
     /// The resource the write targets, when one is known.
@@ -257,7 +268,7 @@ pub fn write_calendar_event(
     let mut prior_instance = None;
     if let Some(mut row) = read_outbox_row(vault, &outbox_id)? {
         ensure_outbox_matches(vault, &row, seat, transport, event_ref, &uid)?;
-        open_outbox(vault, operation, transport, &uid, &mut row)?;
+        open_outbox(vault, operation, transport.provider_key(), &uid, &mut row)?;
         prior_instance = row.carrier.as_ref().map(|carrier| carrier.instance);
         match row.state {
             CalendarWriteOutboxState::Prepared => {
@@ -269,16 +280,19 @@ pub fn write_calendar_event(
                     &seat.config.secret_ref,
                     &seat.config.calendar_ref,
                 )?;
-                let ics = render_owner_vevent(
-                    vault,
-                    &event_ref,
-                    &uid,
-                    row.sequence,
-                    now,
-                    source.as_deref(),
-                    collection_zone.as_deref(),
-                )?
-                .ics;
+                let ics = with_write_marker(
+                    render_owner_vevent(
+                        vault,
+                        &event_ref,
+                        &uid,
+                        row.sequence,
+                        now,
+                        source.as_deref(),
+                        collection_zone.as_deref(),
+                    )?
+                    .ics,
+                    row.write_marker,
+                )?;
                 let rendered_hash = ics_content_hash(&ics, &uid)?;
                 if rendered_hash != row.content_hash {
                     return Err(CalendarConnectorError::Outbox {
@@ -349,7 +363,8 @@ pub fn write_calendar_event(
         source.as_deref(),
         collection_zone.as_deref(),
     )?;
-    let ics = rendered.ics;
+    let write_marker = vault.store.clock.ulid()?;
+    let ics = with_write_marker(rendered.ics, Some(write_marker))?;
     let content_hash = ics_content_hash(&ics, &uid)?;
     let expected_etag = object.as_ref().and_then(|row| row.etag.clone());
     let href = object.as_ref().and_then(|row| row.href.clone());
@@ -367,6 +382,8 @@ pub fn write_calendar_event(
         component_hashes: rendered.component_hashes,
         resource_zone: rendered.resource_zone,
         cancelled_members: rendered.cancelled_members,
+        write_marker: Some(write_marker),
+        stored_copy_unproven: false,
         expected_etag: expected_etag.clone(),
         href: href.clone(),
         receipt: None,
@@ -469,11 +486,29 @@ fn issue_prepared_upsert(
                 // replay's stored copy, when it is this write's own, marked
                 // the passports it cancels: no pull admits that copy
                 // unmarked in between
-                // (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+                // (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS). A
+                // replay whose read proved nothing (a failed or empty pull)
+                // leaves the proof to the seat's next pull of the resource
+                // (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY).
                 {
                     let _turn = crate::calendar::ingest::admission_turn(vault)?;
-                    if replay && let Some(stored) = stored.as_ref() {
-                        mark_stored_cancelled_write(vault, operation, transport, row, stored, now)?;
+                    if replay && !row.cancelled_members.is_empty() {
+                        let copy = match stored.as_ref() {
+                            Some(stored) => stored_copy_of(vault, row, stored)?,
+                            None => StoredCopy::Unread,
+                        };
+                        match copy {
+                            StoredCopy::Own(members) => publish_own_stored_copy(
+                                vault,
+                                operation,
+                                transport.provider_key(),
+                                row,
+                                &members,
+                                now,
+                            )?,
+                            StoredCopy::Unread => row.stored_copy_unproven = true,
+                            StoredCopy::Foreign => {}
+                        }
                     }
                     row.state = CalendarWriteOutboxState::ReconcileRequired;
                     row.updated_at = now;
@@ -644,14 +679,8 @@ fn finish_remote_applied_write_in_txn(
         &operation.registration().seat,
         &row.uid,
     );
-    // Fix list row 19192 (reviews of #6397): the zone that heads the staged
-    // bytes, or none, is event content, which a read of those bytes gives
-    // each all-day member as its `calendar.tz`. The passport below makes the
-    // next read of the bytes an echo that admits nothing, so the zone lands
-    // here first, under this seat's own property source, and a zone of that
-    // source the bytes no longer carry goes.
-    let zone_prefix = crate::calendar::ingest::property_claims::source_prefix(&row.system);
-    let zone_record = format!("{zone_prefix}{source_record_id}");
+    // Each member's staged zone lands before its passport makes the next
+    // read of the bytes an echo ([`land_staged_zone_in_txn`]).
     for &(member, content_hash) in &row.component_hashes {
         // Direction remains approval-blind, while the UID-index gate below
         // still requires an admitted passport for a non-local UID.
@@ -661,38 +690,24 @@ fn finish_remote_applied_write_in_txn(
                 value.source.is_some() && value.last_sequence >= receipt.sequence
             })
         {
+            // The newer version keeps its content, but the receipt proves
+            // the write landed: an Inbound passport turns TwoWay, so the
+            // seat's later cancel is a host cancel of a calendar the booking
+            // was written to (BK-ECHO-NEWER-RESTORE-DROPS-WRITTEN-DIRECTION).
+            if let Some((_, prior)) = current.as_ref()
+                && prior.direction == CalendarPassportDirection::Inbound
+            {
+                let next = CalendarPassportValue {
+                    direction: CalendarPassportDirection::TwoWay,
+                    last_seen_at: now,
+                    ..prior.clone()
+                };
+                admit_seat_passport_in_txn(vault, txn, member, &source_record_id, &next, now)?;
+            }
             continue;
         }
-        if super::resource::all_day_in_txn(vault, txn, &member)? {
-            crate::calendar::ingest::property_claims::reconcile_zone_in_txn(
-                vault,
-                txn,
-                member,
-                row.resource_zone.as_deref(),
-                &zone_prefix,
-                now,
-                |txn, predicate, value| {
-                    admit_screened_in_txn(
-                        vault,
-                        txn,
-                        member,
-                        &CalendarInboundBody::default(),
-                        &zone_record,
-                        predicate,
-                        value,
-                        now,
-                    )
-                },
-            )?;
-        }
-        let direction = if current
-            .as_ref()
-            .is_some_and(|(_, value)| value.direction.is_inbound_bearing())
-        {
-            CalendarPassportDirection::TwoWay
-        } else {
-            CalendarPassportDirection::Outbound
-        };
+        land_staged_zone_in_txn(vault, txn, row, member, &source_record_id, now)?;
+        let direction = written_direction(current.as_ref().map(|(_, value)| value.direction));
         // A member written cancelled marks its passport, so the seat's later
         // cancelled versions of it (a provider that rewrites the stored
         // resource) read as this write, not a host cancel
@@ -727,19 +742,7 @@ fn finish_remote_applied_write_in_txn(
                 && value.deferred_cancel_seen_at == next.deferred_cancel_seen_at
         });
         if !already_applied {
-            let new_id = admit_screened_in_txn(
-                vault,
-                txn,
-                member,
-                &CalendarInboundBody::default(),
-                &source_record_id,
-                PREDICATE_CALENDAR_PASSPORT,
-                encode_passport_value(&next),
-                now,
-            )?;
-            // A pending receipt passport closes the admitted head only once
-            // it is approved; the head keeps its authority until then.
-            revise_passport_in_txn(vault, txn, &member, &row.system, &row.uid, &new_id, now)?;
+            admit_seat_passport_in_txn(vault, txn, member, &source_record_id, &next, now)?;
         }
     }
     if row.uid == local_uid(&event_ref)
@@ -776,89 +779,343 @@ fn written_cancel_marks(prior: Option<&CalendarPassportValue>) -> bool {
     })
 }
 
-/// A replayed write of members cancelled that the provider refused on its
-/// precondition may be the write itself, stored on an earlier call whose
-/// answer was lost: the precondition then fails on the ETag the stored copy
-/// took. That copy is this write's when it holds exactly the staged members,
-/// each at the staged SEQUENCE or above (a provider that rewrites a stored
-/// copy keeps or raises it) and cancelled exactly where the write cancelled
-/// it. Each such member's passport is then marked as the write's receipt
-/// would mark it ([`written_cancel_marks`]), so the seat's later report of
-/// the copy reads as this write and moves no deposit money; its held
-/// sighting, the copy coming back, goes. A copy that differs is another
-/// writer's, and nothing is marked
+/// The VCALENDAR property a write's marker rides in. A calendar's own
+/// property: no VEVENT hash reads it, and a render over an archived source
+/// copies only that source's VEVENTs, so a stored copy's marker never rides
+/// into the next write (BK-ECHO-MARK-TAKES-HOST-CANCEL-AT-STAGED-SEQUENCE).
+const WRITE_MARKER_PROPERTY: &str = "X-ONEIRON-OUTBOX";
+
+/// `ics`, a rendered resource, with `marker` heading its VCALENDAR as
+/// [`WRITE_MARKER_PROPERTY`], in lower-case hex; `ics` unchanged for a row
+/// staged before writes carried a marker.
+fn with_write_marker(
+    ics: Vec<u8>,
+    marker: Option<[u8; 16]>,
+) -> Result<Vec<u8>, CalendarConnectorError> {
+    const OPEN: &[u8] = b"BEGIN:VCALENDAR\r\n";
+    let Some(marker) = marker else {
+        return Ok(ics);
+    };
+    let body = ics
+        .strip_prefix(OPEN)
+        .ok_or_else(|| ingest_error("rendered resource does not open a VCALENDAR"))?;
+    let line = format!(
+        "{WRITE_MARKER_PROPERTY}:{}\r\n",
+        oneiron_hex::encode(&marker)
+    );
+    let mut out = Vec::with_capacity(ics.len() + line.len());
+    out.extend_from_slice(OPEN);
+    out.extend_from_slice(line.as_bytes());
+    out.extend_from_slice(body);
+    Ok(out)
+}
+
+/// The write marker a stored copy carries.
+enum StoredWriteMarker {
+    /// None: a writer, provider or client that drops unknown properties.
+    Absent,
+    /// One marker, however often it is repeated.
+    One([u8; 16]),
+    /// Two different markers, or one that is no marker.
+    Conflicting,
+}
+
+/// The [`WRITE_MARKER_PROPERTY`] values of the VCALENDAR in `ics` that
+/// carries `uid`.
+fn stored_write_marker(ics: &[u8], uid: &str) -> StoredWriteMarker {
+    let values =
+        crate::calendar::ics::ics_calendar_property_values(ics, uid, WRITE_MARKER_PROPERTY)
+            .unwrap_or_default();
+    let mut markers = values
+        .iter()
+        .map(|value| oneiron_hex::decode_any_case::<16>(value.trim()));
+    match markers.next() {
+        None => StoredWriteMarker::Absent,
+        Some(Some(first)) if markers.all(|next| next == Some(first)) => {
+            StoredWriteMarker::One(first)
+        }
+        Some(_) => StoredWriteMarker::Conflicting,
+    }
+}
+
+/// What the resource a replayed write of members cancelled read back after
+/// its precondition refusal is.
+enum StoredCopy {
+    /// The write's own copy, stored on an earlier call whose answer was
+    /// lost: its members as the provider holds them.
+    Own(Vec<StoredMember>),
+    /// Another writer's version of the resource.
+    Foreign,
+    /// Nothing usable: the read failed, found no copy, or did not parse.
+    Unread,
+}
+
+/// One member of a stored copy, as the provider holds it.
+struct StoredMember {
+    member: EntityId,
+    sequence: u32,
+    content_hash: [u8; 32],
+}
+
+/// Whether `stored` is the write of `row`, a replayed write of members
+/// cancelled that the provider refused on its precondition, stored on an
+/// earlier call whose answer was lost: the precondition then fails on the
+/// ETag the stored copy took. That copy holds exactly the staged members
+/// under the staged UID, each at the staged SEQUENCE or above (a provider
+/// that rewrites a stored copy keeps or raises it) and cancelled exactly
+/// where the write cancelled it; else it is another writer's
 /// (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
 ///
-/// The caller holds the vault's calendar admission turn, so no pull admits
-/// the copy between this mark and the outbox leaving flight.
-fn mark_stored_cancelled_write(
+/// A copy carrying a write marker other than this write's is another
+/// writer's too: a host's client that cancels an earlier write keeps that
+/// write's marker (BK-ECHO-MARK-TAKES-HOST-CANCEL-AT-STAGED-SEQUENCE). A copy
+/// with no marker, from a provider or client that drops unknown properties,
+/// reads as this write's: nothing tells it from the host's own cancel at the
+/// staged SEQUENCE, and the owner's own write must never refund a deposit as
+/// a host cancel (ASK BK-ECHO-UNMARKED-SAME-SHAPE-COPY).
+fn stored_copy_of(
     vault: &Vault,
-    operation: &CalendarConnectorOperation,
-    transport: &dyn CalendarRemoteTransport,
     row: &CalendarWriteOutboxRow,
     stored: &RemoteCalendarObject,
-    now: u64,
-) -> Result<(), CalendarConnectorError> {
-    if row.cancelled_members.is_empty() {
-        return Ok(());
-    }
+) -> Result<StoredCopy, CalendarConnectorError> {
     let Ok(feed) = super::remote::parse_remote_resource(stored) else {
-        return Ok(());
+        return Ok(StoredCopy::Unread);
     };
     if feed.events.len() != row.component_hashes.len() {
-        return Ok(());
+        return Ok(StoredCopy::Foreign);
     }
+    let mut members = Vec::with_capacity(feed.events.len());
     for parsed in &feed.events {
         let Some(member) = crate::calendar::ingest::connector_event_ref(vault, parsed)? else {
-            return Ok(());
+            return Ok(StoredCopy::Foreign);
         };
-        if parsed.sequence < row.sequence
+        if parsed.uid != row.uid
+            || parsed.sequence < row.sequence
             || !row
                 .component_hashes
                 .iter()
                 .any(|(staged, _)| *staged == member)
             || parsed.cancelled != row.cancelled_members.contains(&member)
         {
-            return Ok(());
+            return Ok(StoredCopy::Foreign);
         }
+        members.push(StoredMember {
+            member,
+            sequence: parsed.sequence,
+            content_hash: parsed.content_hash,
+        });
     }
-    let source_record_id = write_source_record_id(
-        transport.provider_key(),
-        &operation.registration().seat,
-        &row.uid,
-    );
+    let foreign_marker = match (row.write_marker, stored_write_marker(&stored.ics, &row.uid)) {
+        (Some(staged), StoredWriteMarker::One(marker)) => marker != staged,
+        (Some(_), StoredWriteMarker::Conflicting) => true,
+        _ => false,
+    };
+    Ok(if foreign_marker {
+        StoredCopy::Foreign
+    } else {
+        StoredCopy::Own(members)
+    })
+}
+
+/// Publishes the stored copy of `row`, a replayed write of members
+/// cancelled, that proved the write's own ([`stored_copy_of`]), as the
+/// write's lost receipt would have. Each staged member's passport on this
+/// seat records the written direction
+/// (BK-ECHO-NEWER-RESTORE-DROPS-WRITTEN-DIRECTION), and each member written
+/// cancelled is marked `written_cancelled` ([`written_cancel_marks`]) and
+/// loses its held sighting, the copy coming back, so the seat's later report
+/// of the copy reads as this write and moves no deposit money
+/// (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+///
+/// The writer reads each passport again: one a pull admitted from a version
+/// newer than the copy (a host who restored the booking after the read)
+/// keeps all but its direction, so a host cancel after it still moves money
+/// (BK-ECHO-MARK-OVER-NEWER-LIVE-RESTORE). A member with no passport on this
+/// seat takes the one the receipt would have written.
+///
+/// The caller holds the vault's calendar admission turn, so no pull admits
+/// the copy between this publication and the outbox leaving flight.
+fn publish_own_stored_copy(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+    provider: &str,
+    row: &CalendarWriteOutboxRow,
+    members: &[StoredMember],
+    now: u64,
+) -> Result<(), CalendarConnectorError> {
+    let source_record_id =
+        write_source_record_id(provider, &operation.registration().seat, &row.uid);
     vault.try_with_write_txn_grouped(|txn| {
-        for member in &row.cancelled_members {
-            let Some((_, current)) =
-                live_passport_for_in_txn(vault, txn, member, &row.system, &row.uid)?
-            else {
+        let mut created = false;
+        for &(member, content_hash) in &row.component_hashes {
+            let Some(stored) = members.iter().find(|stored| stored.member == member) else {
                 continue;
             };
-            if !written_cancel_marks(Some(&current))
-                || (current.written_cancelled && current.deferred_cancel_seen_at.is_none())
-            {
-                continue;
-            }
-            let next = CalendarPassportValue {
-                last_seen_at: now,
-                written_cancelled: true,
-                deferred_cancel_seen_at: None,
-                ..current
+            let written = row.cancelled_members.contains(&member);
+            let next = match live_passport_for_in_txn(vault, txn, &member, &row.system, &row.uid)? {
+                Some((_, prior)) => {
+                    let newer = prior.source.is_some()
+                        && (prior.last_sequence > stored.sequence
+                            || (prior.last_sequence == stored.sequence
+                                && prior.content_hash != stored.content_hash));
+                    let marks = written && !newer && written_cancel_marks(Some(&prior));
+                    let next = CalendarPassportValue {
+                        direction: written_direction(Some(prior.direction)),
+                        written_cancelled: prior.written_cancelled || marks,
+                        deferred_cancel_seen_at: prior.deferred_cancel_seen_at.filter(|_| !marks),
+                        ..prior.clone()
+                    };
+                    if next == prior {
+                        continue;
+                    }
+                    CalendarPassportValue {
+                        last_seen_at: now,
+                        ..next
+                    }
+                }
+                None => {
+                    crate::calendar::claims::require_event_subject_in_txn(vault, txn, &member)?;
+                    land_staged_zone_in_txn(vault, txn, row, member, &source_record_id, now)?;
+                    created = true;
+                    CalendarPassportValue {
+                        system: row.system.clone(),
+                        uid: row.uid.clone(),
+                        last_sequence: row.sequence,
+                        content_hash,
+                        source: None,
+                        direction: CalendarPassportDirection::Outbound,
+                        last_seen_at: now,
+                        presence: CalendarPassportPresence::Live,
+                        cancelled_since: None,
+                        written_cancelled: written,
+                        deferred_cancel_seen_at: None,
+                    }
+                }
             };
-            let new_id = admit_screened_in_txn(
-                vault,
-                txn,
-                *member,
-                &CalendarInboundBody::default(),
-                &source_record_id,
-                PREDICATE_CALENDAR_PASSPORT,
-                encode_passport_value(&next),
-                now,
-            )?;
-            revise_passport_in_txn(vault, txn, member, &row.system, &row.uid, &new_id, now)?;
+            admit_seat_passport_in_txn(vault, txn, member, &source_record_id, &next, now)?;
+        }
+        if created
+            && (row.uid == local_uid(&row.event_ref)
+                || carries_admitted_uid_in_txn(vault, txn, &row.event_ref, &row.uid)?)
+        {
+            index_passport_uid_in_txn(vault, txn, &row.uid, &row.event_ref)?;
         }
         Ok::<(), CalendarConnectorError>(())
     })
+}
+
+/// Proves a pulled resource of `uid` while this seat's replayed cancelled
+/// write of it waits on a proof its refusal's read could not give
+/// ([`CalendarWriteOutboxRow::stored_copy_unproven`]), before the pull
+/// admits it, as that read would have proved it: the write's own copy is
+/// published as its lost receipt would have ([`publish_own_stored_copy`]),
+/// and another writer's version (a host cancel, or a live version that ends
+/// the write's cancellation) is admitted as the seat's own change, a held
+/// sighting dating it. Either way the proof is owed no longer
+/// (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY).
+///
+/// The caller holds the vault's calendar admission turn.
+pub(super) fn prove_unproven_replay(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+    provider: &str,
+    object: &RemoteCalendarObject,
+    uid: &str,
+    now: u64,
+) -> Result<(), CalendarConnectorError> {
+    let Some(mut row) = self::collection::unproven_replay(vault, operation, uid)? else {
+        return Ok(());
+    };
+    open_outbox(vault, operation, provider, uid, &mut row)?;
+    match stored_copy_of(vault, &row, object)? {
+        StoredCopy::Own(members) => {
+            publish_own_stored_copy(vault, operation, provider, &row, &members, now)?;
+        }
+        StoredCopy::Foreign => {}
+        StoredCopy::Unread => return Ok(()),
+    }
+    row.stored_copy_unproven = false;
+    row.updated_at = now;
+    write_outbox_row(vault, operation, &mut row, None)?;
+    Ok(())
+}
+
+/// The direction a seat's passport takes once a write to the seat landed:
+/// an inbound-bearing one turns TwoWay, any other, or none, Outbound.
+fn written_direction(prior: Option<CalendarPassportDirection>) -> CalendarPassportDirection {
+    if prior.is_some_and(CalendarPassportDirection::is_inbound_bearing) {
+        CalendarPassportDirection::TwoWay
+    } else {
+        CalendarPassportDirection::Outbound
+    }
+}
+
+/// Admits `next` as `member`'s passport on this seat, a write's own record
+/// (`source_record_id`), and revises the seat's head to it. A pending
+/// passport closes the admitted head only once it is approved; the head
+/// keeps its authority until then.
+fn admit_seat_passport_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    member: EntityId,
+    source_record_id: &str,
+    next: &CalendarPassportValue,
+    now: u64,
+) -> Result<(), CalendarConnectorError> {
+    let new_id = admit_screened_in_txn(
+        vault,
+        txn,
+        member,
+        &CalendarInboundBody::default(),
+        source_record_id,
+        PREDICATE_CALENDAR_PASSPORT,
+        encode_passport_value(next),
+        now,
+    )?;
+    revise_passport_in_txn(vault, txn, &member, &next.system, &next.uid, &new_id, now)?;
+    Ok(())
+}
+
+/// Fix list row 19192 (reviews of #6397): the zone that heads the staged
+/// bytes of `row`, or none, is event content, which a read of those bytes
+/// gives each all-day member as its `calendar.tz`. A written passport makes
+/// the next read of the bytes an echo that admits nothing, so the zone of an
+/// all-day `member` lands first, under this seat's own property source, and
+/// a zone of that source the bytes no longer carry goes.
+fn land_staged_zone_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &CalendarWriteOutboxRow,
+    member: EntityId,
+    source_record_id: &str,
+    now: u64,
+) -> Result<(), CalendarConnectorError> {
+    if !super::resource::all_day_in_txn(vault, txn, &member)? {
+        return Ok(());
+    }
+    let zone_prefix = crate::calendar::ingest::property_claims::source_prefix(&row.system);
+    let zone_record = format!("{zone_prefix}{source_record_id}");
+    crate::calendar::ingest::property_claims::reconcile_zone_in_txn(
+        vault,
+        txn,
+        member,
+        row.resource_zone.as_deref(),
+        &zone_prefix,
+        now,
+        |txn, predicate, value| {
+            admit_screened_in_txn(
+                vault,
+                txn,
+                member,
+                &CalendarInboundBody::default(),
+                &zone_record,
+                predicate,
+                value,
+                now,
+            )
+        },
+    )?;
+    Ok(())
 }
 
 /// The stored form of a write-outbox row. `EntityId` and `[u8; 32]` travel as
@@ -880,6 +1137,10 @@ pub(super) struct StoredOutboxRow {
     resource_zone: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     cancelled_members: Vec<[u8; 16]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    write_marker: Option<[u8; 16]>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    stored_copy_unproven: bool,
     expected_etag: Option<String>,
     href: Option<String>,
     receipt: Option<RemoteWriteReceipt>,
@@ -912,6 +1173,8 @@ impl StoredOutboxRow {
                 .iter()
                 .map(|member| *member.as_bytes())
                 .collect(),
+            write_marker: row.write_marker,
+            stored_copy_unproven: row.stored_copy_unproven,
             expected_etag: literal::projection(&row.expected_etag)?,
             href: literal::projection(&row.href)?,
             receipt: literal::projection(&row.receipt)?,
@@ -954,6 +1217,8 @@ impl StoredOutboxRow {
                         .map_err(|_| ingest_error("outbox cancelled member carries no entity id"))
                 })
                 .collect::<Result<_, CalendarConnectorError>>()?,
+            write_marker: self.write_marker,
+            stored_copy_unproven: self.stored_copy_unproven,
             expected_etag: self.expected_etag,
             href: self.href,
             receipt: self.receipt,
@@ -1000,21 +1265,35 @@ pub(super) fn read_outbox_row(
     Ok(Some(stored.into_row()?))
 }
 
+/// The digest a row's sealed values are bound to. A write marker is bound
+/// too, after the fields a row staged before writes carried one is bound
+/// to, so that row still opens.
 fn outbox_digest(row: &CalendarWriteOutboxRow) -> crate::Result<[u8; 32]> {
-    literal::digest(&(
-        row.action,
-        row.event_ref,
-        row.sequence,
-        row.content_hash,
-        &row.component_hashes,
-        row.staged_at,
-    ))
+    match row.write_marker {
+        None => literal::digest(&(
+            row.action,
+            row.event_ref,
+            row.sequence,
+            row.content_hash,
+            &row.component_hashes,
+            row.staged_at,
+        )),
+        Some(marker) => literal::digest(&(
+            row.action,
+            row.event_ref,
+            row.sequence,
+            row.content_hash,
+            &row.component_hashes,
+            row.staged_at,
+            marker,
+        )),
+    }
 }
 
 fn open_outbox(
     vault: &Vault,
     operation: &CalendarConnectorOperation,
-    transport: &dyn CalendarRemoteTransport,
+    provider: &str,
     uid: &str,
     row: &mut CalendarWriteOutboxRow,
 ) -> Result<(), CalendarConnectorError> {
@@ -1039,7 +1318,7 @@ fn open_outbox(
     {
         return Err(literal::invalid().into());
     }
-    row.provider = transport.provider_key().into();
+    row.provider = provider.into();
     row.system = seat.config.system.clone();
     row.calendar_ref = seat.config.calendar_ref.clone();
     row.uid = held_uid;

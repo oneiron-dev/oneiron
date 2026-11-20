@@ -160,6 +160,42 @@ pub(crate) fn cancelled_members_in_flight(
         .collect()
 }
 
+/// This seat's outbox row of a replayed upsert of `uid` whose precondition
+/// refusal's read proved its stored copy neither its own nor another
+/// writer's, so the seat's next pull of the resource proves it
+/// (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY). Its sealed values are
+/// not opened.
+///
+/// # Errors
+///
+/// Scope and storage failures, and a stored row that does not decode.
+pub(super) fn unproven_replay(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+    uid: &str,
+) -> Result<Option<super::CalendarWriteOutboxRow>, CalendarConnectorError> {
+    let seat = &operation.registration().seat;
+    let scope = operation.literal_scope()?;
+    let outbox_id = derive_outbox_id(
+        &scope,
+        &seat.config.system,
+        &seat.config.calendar_ref,
+        uid,
+        CalendarWriteAction::Upsert,
+    );
+    // Drop the table reader before the caller opens the row's custody.
+    let stored = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        OUTBOX.get(&vault.store, &txn, &OutboxKey(outbox_id))?
+    };
+    stored
+        .filter(|row| {
+            row.state == CalendarWriteOutboxState::ReconcileRequired && row.stored_copy_unproven
+        })
+        .map(super::StoredOutboxRow::into_row)
+        .transpose()
+}
+
 /// This seat's outbox row of an upsert of `uid` while it is prepared or
 /// remotely applied: staged, and its passports not yet settled.
 fn upsert_in_flight(

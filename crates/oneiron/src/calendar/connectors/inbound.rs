@@ -3,7 +3,7 @@
 use super::door::CalendarConnectorOperation;
 use super::outbound::{
     CalendarRemoteObjectRow, cancelled_members_in_flight, ingest_error, omission_observed,
-    write_remote_object,
+    prove_unproven_replay, write_remote_object,
 };
 use super::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
@@ -190,6 +190,10 @@ fn apply_remote_change(
                 .first()
                 .ok_or_else(|| ingest_error("remote resource has no event"))?;
             let source = pull_source_record_id(provider, seat, &primary.uid);
+            // A replayed cancelled write whose refusal's read proved nothing
+            // is proved by this read first, so its own copy never lands
+            // unmarked (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY).
+            prove_unproven_replay(vault, operation, provider, object, &primary.uid, now)?;
             // A cancelled version of a member a write of this UID still in
             // flight writes cancelled may be that write coming back before
             // its settlement marks the member's passport, and would read as a
