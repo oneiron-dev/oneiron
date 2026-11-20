@@ -21,6 +21,15 @@
 //! not compile on main today. The feed is a scripted ICS fetcher, as in
 //! `tests/it/calendar_ics_ingest_adapter.rs`. Only public paths, so main plus
 //! this file builds for the red run.
+//!
+//! The scripted feed polls outside the installed-feed door, so every claim it
+//! imports lands Proposed, and a booking reads only surfaceable heads. The
+//! host's installed feed runs under the owner's standing consent (CAL-02),
+//! which lands its imports Approved. So where a test needs the feed's
+//! cancellation to count, the fixture's owner approves the feed's own
+//! `calendar.status` imports after each poll (FIX
+//! BK-CANCELLED-ELSEWHERE-PROOF-RED-ON-MAIN: without it, the omission never
+//! made the booking read cancelled, at the head or at any red pin).
 #![cfg(feature = "test-support")]
 
 use std::sync::Mutex;
@@ -35,18 +44,22 @@ use oneiron::booking::{
     SlotOracle, SolveRequest, SolveResult, VaultActiveHoldSource, WeeklyWallWindow,
     enqueue_booking_verb, run_booking_lifecycle_once,
 };
-use oneiron::calendar::CalendarError;
+use oneiron::calendar::claims::PREDICATE_CALENDAR_STATUS;
 use oneiron::calendar::ingest::{
     IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse, run_ics_feed_poll,
+    run_ics_feed_poll_with_screener,
 };
 use oneiron::calendar::passport::{live_passports_for_event, resolve_event_by_uid};
+use oneiron::calendar::{
+    CalendarBodyScreener, CalendarError, CalendarInboundBody, CalendarScreenVerdict,
+};
 use oneiron::outbound::{
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
 };
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::{
-    CalendarSel, DreamerHomeNodeCandidate, DreamerRunnerStore, EntityId, TimeRange, Vault,
-    VaultConfig,
+    CalendarSel, ClaimApprovalStatus, ClaimLifecycleStatus, DreamerHomeNodeCandidate,
+    DreamerRunnerStore, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
 };
 
 /// Monday 2 March 2026, 00:00 UTC.
@@ -89,6 +102,7 @@ struct Fixture {
     vault: Vault,
     page: EntityId,
     booker: EntityId,
+    owner: EntityId,
 }
 
 impl Fixture {
@@ -103,6 +117,11 @@ impl Fixture {
         vault
             .provision_engine_machine_identities(&issuer)
             .expect("engine machine identities");
+        // The vault's owner, bound under the host root, approves the feed's
+        // imports as an installed feed's standing consent does.
+        let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+        oneiron::test_support::bind_host_owner(&vault, &issuer, owner)
+            .expect("bind the owner under the host root");
         vault
             .put_entity(
                 &test_id(ACTOR_SEED),
@@ -140,6 +159,7 @@ impl Fixture {
             vault,
             page,
             booker,
+            owner,
         }
     }
 
@@ -195,17 +215,67 @@ impl Fixture {
 
     /// One complete poll of the host's calendar feed carrying `events`.
     fn poll_host_feed(&self, events: &[FeedEvent<'_>], etag: &str, now: u64) {
-        let fetcher = ScriptedFeed(Mutex::new(Some(IcsFetchResponse::Complete {
-            etag: Some(etag.to_owned()),
-            body: feed(events),
-        })));
-        let config = IcsFeedPollConfig {
-            secret_ref: format!("ics-feed:{HOST_FEED_SYSTEM}"),
-            system: HOST_FEED_SYSTEM.to_owned(),
-            cadence_min_seconds: 300,
-            cadence_max_seconds: 900,
-        };
-        run_ics_feed_poll(&self.vault, &fetcher, &config, now, 7).expect("host feed poll");
+        self.poll_host_feed_body(feed(events), etag, now);
+    }
+
+    /// One complete poll of the host's calendar feed answering `body`.
+    fn poll_host_feed_body(&self, body: Vec<u8>, etag: &str, now: u64) {
+        run_ics_feed_poll(
+            &self.vault,
+            &scripted_feed(body, etag),
+            &host_feed_config(),
+            now,
+            7,
+        )
+        .expect("host feed poll");
+    }
+
+    /// [`Self::poll_host_feed_body`] with the inbound safeguard on and
+    /// [`RefusingScreener`] screening each body the poll admits; the poll's
+    /// own result.
+    fn poll_host_feed_screened(
+        &self,
+        body: Vec<u8>,
+        etag: &str,
+        now: u64,
+    ) -> Result<(), CalendarError> {
+        run_ics_feed_poll_with_screener(
+            &self.vault,
+            &scripted_feed(body, etag),
+            Some(&RefusingScreener),
+            true,
+            &host_feed_config(),
+            now,
+            7,
+        )
+        .map(|_| ())
+    }
+
+    /// The owner approves every proposed `calendar.status` import on
+    /// `event`, as the standing consent to an installed feed lands it (CAL-02):
+    /// a booking reads only surfaceable heads, so a status the feed imported
+    /// counts once it is approved.
+    fn approve_feed_status(&self, event: &EntityId) {
+        let owner = WriteActor::new(self.owner, EdgeActorClass::Human);
+        for id in self
+            .vault
+            .claims_for_subject(event)
+            .expect("claims on the EVENT")
+        {
+            let body = self
+                .vault
+                .get_claim(&id)
+                .expect("read claim")
+                .expect("claim");
+            if body.predicate == PREDICATE_CALENDAR_STATUS
+                && body.approval == ClaimApprovalStatus::Proposed
+                && body.lifecycle == ClaimLifecycleStatus::Active
+            {
+                self.vault
+                    .approve_machine_claim_as(id, owner)
+                    .expect("the owner approves the feed's status import");
+            }
+        }
     }
 
     /// The booking's outbound passport SEQUENCE: its one live head of the
@@ -251,6 +321,42 @@ struct FeedEvent<'a> {
     sequence: u32,
     slot: TimeRange,
     summary: &'a str,
+}
+
+/// The host's calendar feed as its poll names it.
+fn host_feed_config() -> IcsFeedPollConfig {
+    IcsFeedPollConfig {
+        secret_ref: format!("ics-feed:{HOST_FEED_SYSTEM}"),
+        system: HOST_FEED_SYSTEM.to_owned(),
+        cadence_min_seconds: 300,
+        cadence_max_seconds: 900,
+    }
+}
+
+/// A fetcher answering one complete `body` under `etag`.
+fn scripted_feed(body: Vec<u8>, etag: &str) -> ScriptedFeed {
+    ScriptedFeed(Mutex::new(Some(IcsFetchResponse::Complete {
+        etag: Some(etag.to_owned()),
+        body,
+    })))
+}
+
+/// The text [`RefusingScreener`] fails on.
+const UNSCREENABLE_MARKER: &str = "the screener fails on this text";
+
+/// A screen that refuses a body: it fails on a description carrying
+/// [`UNSCREENABLE_MARKER`] and clears any other.
+struct RefusingScreener;
+
+impl CalendarBodyScreener for RefusingScreener {
+    fn screen(&self, body: &CalendarInboundBody) -> oneiron::Result<CalendarScreenVerdict> {
+        if body.description.contains(UNSCREENABLE_MARKER) {
+            return Err(oneiron::Error::InvalidConfig(
+                "the fixture screener fails on this body".to_owned(),
+            ));
+        }
+        Ok(CalendarScreenVerdict::Clear)
+    }
 }
 
 /// A fetcher that answers one scripted response.
@@ -315,6 +421,25 @@ fn feed(events: &[FeedEvent<'_>]) -> Vec<u8> {
     }
     out.push_str("END:VCALENDAR\r\n");
     out.into_bytes()
+}
+
+/// [`feed`] with each VEVENT cancelled (`STATUS:CANCELLED`).
+fn cancelled_feed(events: &[FeedEvent<'_>]) -> Vec<u8> {
+    String::from_utf8(feed(events))
+        .expect("the fixture feed is UTF-8")
+        .replace("END:VEVENT\r\n", "STATUS:CANCELLED\r\nEND:VEVENT\r\n")
+        .into_bytes()
+}
+
+/// [`feed`] with each VEVENT described as `description`.
+fn described_feed(events: &[FeedEvent<'_>], description: &str) -> Vec<u8> {
+    String::from_utf8(feed(events))
+        .expect("the fixture feed is UTF-8")
+        .replace(
+            "END:VEVENT\r\n",
+            &format!("DESCRIPTION:{description}\r\nEND:VEVENT\r\n"),
+        )
+        .into_bytes()
 }
 
 struct LifecycleSolver<'a> {
@@ -566,9 +691,11 @@ fn a_booking_the_feed_left_out_moves_as_a_booking_when_it_returns_at_another_slo
         end: MONDAY + 16 * 3_600 + u64::from(DEFAULT_INTRO_DURATION_MIN) * 60,
     };
 
-    // The host's complete feed leaves the booking out. A token reschedule
-    // refuses it as cancelled before it reads the target slot.
+    // The host's complete feed leaves the booking out, and the owner's
+    // consent lands the omission's cancellation. A token reschedule refuses
+    // it as cancelled before it reads the target slot.
     fixture.poll_host_feed(&[], "v2", NOW + 120);
+    fixture.approve_feed_status(&event);
     let refused = fixture.run(
         BookingVerbRequest::Reschedule(RescheduleSpec {
             token: booked.reschedule_token.clone(),
@@ -620,6 +747,170 @@ fn a_booking_the_feed_left_out_moves_as_a_booking_when_it_returns_at_another_slo
             "sequence": 1,
         })],
         "one revised invite to the booker is queued for the move's SEQUENCE"
+    );
+}
+
+/// Review round 1 of #9677: a booking the host's feed cancelled and then left
+/// out stays cancelled by that cancellation. The omission never replaces it,
+/// so when the feed carries the booking again, live at another slot, the
+/// cancellation still stands: the EVENT keeps its booked slot, the booking
+/// takes no revision and a token reschedule still refuses it as cancelled.
+/// Had the omission replaced the cancellation, that live VEVENT would end it
+/// and move a booking the host cancelled.
+#[test]
+fn a_booking_the_feed_cancelled_then_left_out_stays_cancelled_when_it_returns_at_another_slot() {
+    let fixture = Fixture::open();
+    let (booked, booked_slot) =
+        book_seen_by_the_host_feed(&fixture, b"feed-cancel-omission-return");
+    let event = booked.calendar.event_ref;
+    // 16:00, outside the host's working hours: no solve offers it.
+    let moved = TimeRange {
+        start: MONDAY + 16 * 3_600,
+        end: MONDAY + 16 * 3_600 + u64::from(DEFAULT_INTRO_DURATION_MIN) * 60,
+    };
+
+    // The host's feed cancels the booking, then leaves it out; the owner's
+    // consent lands what each poll imported.
+    fixture.poll_host_feed_body(
+        cancelled_feed(&[FeedEvent {
+            uid: &booked.calendar.uid,
+            sequence: 1,
+            slot: booked_slot,
+            summary: "intro-call",
+        }]),
+        "v2",
+        NOW + 120,
+    );
+    fixture.approve_feed_status(&event);
+    fixture.poll_host_feed(&[], "v3", NOW + 150);
+    fixture.approve_feed_status(&event);
+
+    // The host's feed carries it again, live and moved to 16:00.
+    fixture.poll_host_feed(
+        &[FeedEvent {
+            uid: &booked.calendar.uid,
+            sequence: 2,
+            slot: moved,
+            summary: "intro-call",
+        }],
+        "v4",
+        NOW + 180,
+    );
+
+    assert_eq!(
+        fixture.booking_sequence(&event),
+        0,
+        "the cancelled booking takes no revision"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .get_occurred(&event)
+            .expect("booking occurrence"),
+        inclusive(booked_slot),
+        "the cancelled booking's EVENT keeps its booked slot"
+    );
+    assert!(
+        fixture.queued_revision_invites().is_empty(),
+        "no revised invite is queued for a cancelled booking"
+    );
+    let refused = fixture.run(
+        BookingVerbRequest::Reschedule(RescheduleSpec {
+            token: booked.reschedule_token.clone(),
+            new_slot: moved,
+            visitor_tz: "UTC".to_owned(),
+            constraint: None,
+            idempotency_key: None,
+        }),
+        NOW + 210,
+    );
+    assert!(
+        matches!(
+            &refused,
+            Err(BookingError::InvalidConstraint(detail)) if detail.contains("cancelled")
+        ),
+        "the host's cancellation still stands; got {refused:?}"
+    );
+}
+
+/// Review round 2 of #9677: a booking moves only on a VEVENT its admission
+/// takes. A booking the host's complete feed left out reads cancelled by
+/// omission. When the feed carries it again at another slot, in a body the
+/// inbound screen refuses, the poll fails before the booking moves: the EVENT
+/// keeps its booked slot, the booking takes no revision, no revised invite is
+/// queued and the omission's cancellation stands. The round 1 head moved the
+/// booking, ended the omission and queued the invite before the admission's
+/// screen refused the same body.
+#[test]
+fn a_returning_booking_the_screen_refuses_stays_cancelled_at_its_booked_slot() {
+    let fixture = Fixture::open();
+    let (booked, booked_slot) =
+        book_seen_by_the_host_feed(&fixture, b"feed-omission-screen-refused");
+    let event = booked.calendar.event_ref;
+    // 16:00, outside the host's working hours: no solve offers it.
+    let moved = TimeRange {
+        start: MONDAY + 16 * 3_600,
+        end: MONDAY + 16 * 3_600 + u64::from(DEFAULT_INTRO_DURATION_MIN) * 60,
+    };
+
+    // The host's complete feed leaves the booking out, and the owner's
+    // consent lands the omission's cancellation.
+    fixture.poll_host_feed(&[], "v2", NOW + 120);
+    fixture.approve_feed_status(&event);
+
+    // The host's feed carries it again, moved to 16:00, in a body the screen
+    // refuses.
+    let returned = fixture.poll_host_feed_screened(
+        described_feed(
+            &[FeedEvent {
+                uid: &booked.calendar.uid,
+                sequence: 1,
+                slot: moved,
+                summary: "intro-call",
+            }],
+            UNSCREENABLE_MARKER,
+        ),
+        "v3",
+        NOW + 180,
+    );
+    assert!(
+        returned.is_err(),
+        "the screen refuses the returning VEVENT, so the poll fails; got {returned:?}"
+    );
+
+    assert_eq!(
+        fixture.booking_sequence(&event),
+        0,
+        "the booking takes no revision on a VEVENT that was never admitted"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .get_occurred(&event)
+            .expect("booking occurrence"),
+        inclusive(booked_slot),
+        "the booking's EVENT keeps its booked slot"
+    );
+    assert!(
+        fixture.queued_revision_invites().is_empty(),
+        "no revised invite is queued"
+    );
+    let refused = fixture.run(
+        BookingVerbRequest::Reschedule(RescheduleSpec {
+            token: booked.reschedule_token.clone(),
+            new_slot: moved,
+            visitor_tz: "UTC".to_owned(),
+            constraint: None,
+            idempotency_key: None,
+        }),
+        NOW + 210,
+    );
+    assert!(
+        matches!(
+            &refused,
+            Err(BookingError::InvalidConstraint(detail)) if detail.contains("cancelled")
+        ),
+        "the omission's cancellation still stands; got {refused:?}"
     );
 }
 

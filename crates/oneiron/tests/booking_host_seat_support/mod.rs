@@ -47,7 +47,7 @@ const CONNECTOR_SEAT_KEY: &str = "calendar.connector_seat";
 const MONDAY: u64 = 1_772_409_600;
 
 /// The vault's owner, authenticated: the seats here are the owner's (smoke :692).
-fn seat_owner(vault: &Vault) -> (EntityId, AuthenticatedOwner) {
+pub(crate) fn seat_owner(vault: &Vault) -> (EntityId, AuthenticatedOwner) {
     let id = vault
         .ensure_embedded_owner_actor()
         .expect("the vault's owner");
