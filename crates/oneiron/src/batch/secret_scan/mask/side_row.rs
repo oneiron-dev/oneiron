@@ -45,7 +45,7 @@ use super::super::{
 };
 use super::admit::Lifted;
 use super::held_template::{MapOrder, held_row_meets};
-pub(crate) use super::text::TextReplacements;
+pub(crate) use super::text::{TextReplacements, tracked_replacements};
 use super::wipe::{PlanParts, PlanTree, replace_wiped, wipe_value};
 use super::{HANDLE_OPEN, Masker, STAND_IN, credential_member};
 use crate::Vault;
@@ -462,6 +462,25 @@ pub(crate) fn admit_seeded_parts(
     };
     let scope = Scope::of(dbs, wtxn)?;
     Ok(admitted(scope, wtxn, origins, parts, seed, |_| true, pass)?.is_some())
+}
+
+/// [`admit_seeded_parts`], tracked (FIX 6144): the same pass, which also
+/// keeps where each handle went in each text it masked, for a writer that
+/// puts the handles into its own copy of those texts at their spans (a
+/// NOTE's live body). `None` when the parts are written as given.
+pub(crate) fn admit_tracked_seeded_parts(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    origins: &[(EntityId, &str)],
+    parts: &mut [SidePart],
+    seed: &mut Lifted,
+) -> Result<Option<TextReplacements>> {
+    let pass = Pass {
+        tracked: true,
+        ..Pass::default()
+    };
+    let scope = Scope::of(dbs, wtxn)?;
+    admitted(scope, wtxn, origins, parts, seed, |_| true, pass)
 }
 
 /// [`admit_seeded_parts`] as its plan alone (FIX 21363), for a replay that

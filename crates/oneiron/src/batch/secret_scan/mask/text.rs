@@ -18,6 +18,20 @@ use crate::store::known_value_index::{KnownSpan, KnownValues};
 /// the span its handle took in the masked text.
 pub(crate) type TextReplacements = HashMap<[u8; 32], Vec<(Range<usize>, Range<usize>)>>;
 
+/// The replacements a tracked pass made in `text`, under the key it filed
+/// them by: `None` when the pass left `text` as given.
+pub(crate) fn tracked_replacements<'a>(
+    replaced: &'a TextReplacements,
+    text: &str,
+) -> Option<&'a [(Range<usize>, Range<usize>)]> {
+    replaced.get(&replacements_key(text)).map(Vec::as_slice)
+}
+
+/// The key a tracked pass files a text's replacements by.
+fn replacements_key(text: &str) -> [u8; 32] {
+    *blake3::hash(text.as_bytes()).as_bytes()
+}
+
 /// What one span of a text is: a value custody holds, by its handle, or a
 /// shape the door's text rules place, by its reason.
 enum TextHit {
@@ -94,7 +108,7 @@ impl Masker {
         }
         out.push_str(&text[from..]);
         if let Some(traced) = &mut self.traced {
-            traced.insert(*blake3::hash(text.as_bytes()).as_bytes(), replaced);
+            traced.insert(replacements_key(text), replaced);
         }
         Ok(Some(out))
     }
