@@ -206,6 +206,7 @@ pub(super) fn fold_entry_state(
             conversation_training_vault:
                 super::conversation_training_vault::ConversationTrainingVaultState::default(),
             policy_settings: super::policy_setting_choice::PolicySettingChoiceState::default(),
+            setting_copy_names: BTreeMap::new(),
             refused_export_acts: BTreeSet::new(),
             agent_carried_acts: BTreeMap::new(),
             home_candidacy: super::home_candidacy::HomeCandidacyState::default(),

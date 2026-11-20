@@ -95,7 +95,8 @@ use super::{
 };
 use crate::Vault;
 use crate::authority::{
-    ChoiceCount, ChoiceCounts, SettingSlotAct, SettingSlotFold, SettingSlotHead, SettingSlotRow,
+    ChoiceCount, ChoiceCounts, NameCounts, SettingSlotAct, SettingSlotFold, SettingSlotHead,
+    SettingSlotRow,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -300,15 +301,19 @@ pub(super) fn json_bytes(spec: &SettingSpec, value: &EncodedValue) -> Result<Vec
 /// last act every head descends from, judged the same way: an act no count names), and of each
 /// act that waits (stage 7b-3). So a pass reads the row again when a head's count moves and its
 /// revision does not (a removal it raced arrives, a hold ends), when the conflict's act loses its
-/// standing, and when a proposal arrives or its ask ends.
+/// standing, and when a proposal arrives or its ask ends. A row whose acts a copy among them
+/// names records each named act too, by what it counts for on its own row (`name_counts`; row
+/// SETTING-COPY-NAME-IGNORES-COUNT), so a pass reads the copy again when one of those counts
+/// moves and the row's own revision does not.
 fn basis_of(
     revision: [u8; 32],
-    counts: &ChoiceCounts,
+    (counts, name_counts): (&ChoiceCounts, &NameCounts),
     (conflict, in_force): (bool, Option<AuthorityEntryHash>),
     asking: &BTreeSet<AuthorityEntryHash>,
 ) -> [u8; 32] {
     if !conflict
         && asking.is_empty()
+        && name_counts.is_empty()
         && counts
             .values()
             .all(|counted| counted.count == ChoiceCount::Full)
@@ -318,13 +323,7 @@ fn basis_of(
     let mut basis = Fingerprinter::new(purposes::setting::PROJECTION_BASIS);
     basis.part(&revision).u64(counts.len() as u64);
     for (act, counted) in counts {
-        let count = match counted.count {
-            ChoiceCount::Full => 0,
-            ChoiceCount::Safe { held: false } => 1,
-            ChoiceCount::Safe { held: true } => 2,
-            ChoiceCount::Disputed => 3,
-        };
-        basis.part(act).u64(count);
+        basis.part(act).u64(count_tag(counted.count));
     }
     if conflict {
         basis.u64(1).part(&in_force.unwrap_or([0; 32]));
@@ -335,18 +334,43 @@ fn basis_of(
             basis.part(act);
         }
     }
+    if !name_counts.is_empty() {
+        basis.part(b"name_counts").u64(name_counts.len() as u64);
+        for (row, counts) in name_counts {
+            basis.part(row.as_bytes()).u64(counts.len() as u64);
+            for (act, counted) in counts {
+                basis.part(act).u64(count_tag(counted.count));
+            }
+        }
+    }
     basis.finish().into_bytes()
 }
 
+/// A count as [`basis_of`] records it.
+fn count_tag(count: ChoiceCount) -> u64 {
+    match count {
+        ChoiceCount::Full => 0,
+        ChoiceCount::Safe { held: false } => 1,
+        ChoiceCount::Safe { held: true } => 2,
+        ChoiceCount::Disputed => 3,
+    }
+}
+
 /// How the acts a reader of one row meets stand by their counts and proposals alone (stage
-/// 7b-3): a proposal that still asks, else a head held back by this install's own counting, else
-/// a safe move the log alone shows, else every act in full. A conflict or a quarantine the
-/// combine finds outranks it.
+/// 7b-3), the acts the copies among them name included (row SETTING-COPY-NAME-IGNORES-COUNT): a
+/// proposal that still asks, else an act held back by this install's own counting, else a safe
+/// move the log alone shows, else every act in full. A conflict or a quarantine the combine finds
+/// outranks it.
 fn counted_standing(fold: &SettingSlotFold) -> ChangeStanding {
     if !fold.asking.is_empty() {
         return ChangeStanding::Pending;
     }
-    let counts = || fold.counts.values().map(|counted| counted.count);
+    let counts = || {
+        fold.counts
+            .values()
+            .chain(fold.name_counts.values().flat_map(|counts| counts.values()))
+            .map(|counted| counted.count)
+    };
     if counts().any(|count| count == ChoiceCount::Safe { held: true }) {
         ChangeStanding::Held
     } else if counts().any(|count| count != ChoiceCount::Full) {
@@ -475,13 +499,15 @@ fn head_of(head: &SettingSlotHead) -> std::result::Result<Head, Inert> {
 /// leave no bound. [`Short::Unreadable`] for a value this build cannot decode or whose check
 /// refuses it, a value beside the act that does not match its digest or was erased, and a copy
 /// whose acts read so on a key that names no strictest value; [`Inert::Awaiting`] for a value
-/// beside the act that has not reached this install.
+/// beside the act that has not reached this install. `name_counts` and `depth` read a copy
+/// ([`copy_value_in_txn`]).
 fn value_of(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    reads: &BesideReads,
+    (reads, name_counts): (&BesideReads, &NameCounts),
     spec: &SettingSpec,
     head: &Head,
+    depth: usize,
 ) -> Result<std::result::Result<Option<EncodedValue>, Short>> {
     match &head.body {
         HeadBody::Inline(None) => Ok(Ok(None)),
@@ -489,7 +515,9 @@ fn value_of(
             Ok(inline_value(spec, bytes).map_err(|()| Short::Unreadable))
         }
         HeadBody::Beside(digest) => beside_of(vault, txn, reads, spec, &head.slot, *digest),
-        HeadBody::Copy(names) => copy_value_in_txn(vault, txn, reads, spec, names, 0),
+        HeadBody::Copy(names) => {
+            copy_value_in_txn(vault, txn, (reads, name_counts), spec, names, depth)
+        }
     }
 }
 
@@ -521,18 +549,20 @@ fn inline_value(spec: &SettingSpec, bytes: &[u8]) -> std::result::Result<Option<
 /// install refused, cannot read or holds no row of reading the key's strictest value. `None`
 /// when no name leaves a bound; [`Short::Unreadable`] where the key names no strictest value for
 /// such a name, or two values do not meet; [`Inert::Awaiting`] where a named act's value beside
-/// it has not reached this install (stage 7c-1). `depth` counts the copies followed so far.
+/// it has not reached this install (stage 7c-1). Each name reads by what its act counts for on
+/// its own row (`name_counts`, [`name_value_in_txn`]). `depth` counts the copies followed so far.
 fn copy_value_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    reads: &BesideReads,
+    (reads, name_counts): (&BesideReads, &NameCounts),
     spec: &SettingSpec,
     names: &[SettingCopyName],
     depth: usize,
 ) -> Result<std::result::Result<Option<EncodedValue>, Short>> {
     let mut met: Option<EncodedValue> = None;
     for name in names {
-        let value = match name_value_in_txn(vault, txn, reads, spec, name, depth)? {
+        let read = name_value_in_txn(vault, txn, (reads, name_counts), spec, name, depth)?;
+        let value = match read {
             Ok(Some(value)) => value,
             Ok(None) => continue,
             Err(Short::Unreadable) => match spec.kind.strictest_value()? {
@@ -552,16 +582,20 @@ fn copy_value_in_txn(
     Ok(Ok(met))
 }
 
-/// What the entry `name` names gives the row it names, under `spec`: a setting act's value
-/// (`None` for a clear), or an earlier copy's ([`copy_value_in_txn`]).
-/// [`Short::Unreadable`] where this install refused the entry, does not hold it, holds no row of
-/// it on that slot, or cannot decode its value (a value beside the act that does not match its
-/// digest or was erased included), and past [`COPY_DEPTH_MAX`] copies; [`Inert::Awaiting`]
-/// where its value beside it has not reached this install (stage 7c-1).
+/// What the entry `name` names gives the row it names, under `spec`, by what it counts for on
+/// that row here (row SETTING-COPY-NAME-IGNORES-COUNT), as a walk of that row reads it
+/// ([`Walk::gives`]): where it counts in full, its own value (`None` for a clear, an earlier
+/// copy's for a copy, [`copy_value_in_txn`]); where it counts as a safe move, no more than what
+/// it replaced gives. [`Short::Unreadable`] where this install refused the entry, holds no count
+/// of it on that row (it does not hold it, or holds it only as a proposal), holds no row of it on
+/// that slot, or cannot decode a value on the way (a value beside an act that does not match its
+/// digest or was erased included), where an act on the way is disputed, and past
+/// [`COPY_DEPTH_MAX`] copies; [`Inert::Awaiting`] where a value beside an act on the way has not
+/// reached this install (stage 7c-1).
 fn name_value_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    reads: &BesideReads,
+    (reads, name_counts): (&BesideReads, &NameCounts),
     spec: &SettingSpec,
     name: &SettingCopyName,
     depth: usize,
@@ -569,24 +603,42 @@ fn name_value_in_txn(
     if depth >= COPY_DEPTH_MAX || vault.policy_setting_act_refused_in_txn(txn, name.act)? {
         return Ok(Err(Short::Unreadable));
     }
-    let head = vault.setting_slot_head_in_txn(txn, setting_slot_target(&name.slot)?, name.act)?;
-    if let Some(set) = &head.set {
-        let named = set.slot.as_ref().is_some_and(|slot| *slot == name.slot);
-        if !named || set.act.act != OwnerActKind::PolicySetting {
-            return Ok(Err(Short::Unreadable));
-        }
-        return match (set.value, &set.inline) {
-            (None, _) => Ok(Ok(None)),
-            (Some(_), Some(bytes)) => Ok(inline_value(spec, bytes).map_err(|()| Short::Unreadable)),
-            (Some(digest), None) => beside_of(vault, txn, reads, spec, &name.slot, digest),
-        };
-    }
-    if let Some(copy) = &head.copy
-        && copy.slot == name.slot
-    {
-        return copy_value_in_txn(vault, txn, reads, spec, &copy.names, depth + 1);
-    }
-    Ok(Err(Short::Unreadable))
+    let target = setting_slot_target(&name.slot)?;
+    let Some((counts, named)) = name_counts
+        .get(&target)
+        .and_then(|counts| Some((counts, counts.get(&name.act)?)))
+    else {
+        return Ok(Err(Short::Unreadable));
+    };
+    // A key with no order has no safe move to read: only an act that counts in full gives its
+    // value, and the rule is never used for it (a move copies only keys whose order has a meet).
+    let rule = match rule_of(spec) {
+        Some(rule) => rule,
+        None if named.count == ChoiceCount::Full => Rule::Meet,
+        None => return Ok(Err(Short::Unreadable)),
+    };
+    let empty = if is_vault_value_row(&name.slot) {
+        Some(layer_default_in_txn(&vault.store, txn, spec)?.value)
+    } else {
+        None
+    };
+    let mut walk = Walk {
+        vault,
+        txn,
+        reads,
+        name_counts,
+        spec,
+        target,
+        slot: &name.slot,
+        counts,
+        rule,
+        strictest: spec.kind.strictest_value()?,
+        empty,
+        given: BTreeMap::new(),
+        conflict: Cell::new(false),
+        depth: depth + 1,
+    };
+    walk.gives(name.act)
 }
 
 /// The row the acts give, and how they stand.
@@ -613,6 +665,16 @@ enum Rule {
     /// where it is no wider than what it replaced, else what it replaced; of several heads the
     /// one no wider than every other stands, else the key's strictest value.
     Comparator,
+}
+
+/// The rule a walk of a row of `spec`'s key reads by; `None` where its order has neither a meet
+/// nor its own comparator.
+fn rule_of(spec: &SettingSpec) -> Option<Rule> {
+    match spec.kind.order() {
+        order if order.has_meet() => Some(Rule::Meet),
+        Order::Custom => Some(Rule::Comparator),
+        _ => None,
+    }
 }
 
 /// Combines the live heads of one row (module doc), each read by what it counts for here
@@ -652,12 +714,7 @@ fn combine(
         return Ok(Ok(quarantined()));
     }
     let counted = counted_standing(fold);
-    let rule = match spec.kind.order() {
-        order if order.has_meet() => Some(Rule::Meet),
-        Order::Custom => Some(Rule::Comparator),
-        _ => None,
-    };
-    if let Some(rule) = rule {
+    if let Some(rule) = rule_of(spec) {
         let empty = if is_vault_value_row(&newest.slot) {
             Some(layer_default_in_txn(&vault.store, txn, spec)?.value)
         } else {
@@ -667,6 +724,7 @@ fn combine(
             vault,
             txn,
             reads,
+            name_counts: &fold.name_counts,
             spec,
             target,
             slot: &newest.slot,
@@ -676,6 +734,7 @@ fn combine(
             empty,
             given: BTreeMap::new(),
             conflict: Cell::new(false),
+            depth: 0,
         };
         let mut given = Vec::with_capacity(heads.len());
         let mut inert = None;
@@ -710,7 +769,7 @@ fn combine(
     }
     let mut inert = None;
     for head in heads {
-        match value_of(vault, txn, reads, spec, head)? {
+        match value_of(vault, txn, (reads, &fold.name_counts), spec, head, 0)? {
             Ok(_) => {}
             Err(Short::Unreadable) => return Ok(Ok(quarantined())),
             Err(Short::Inert(why)) => inert = inert.or(Some(why)),
@@ -742,7 +801,8 @@ fn combine(
         Ok(_) => return Ok(Err(Inert::ForGood)),
         Err(why) => return Ok(Err(why)),
     };
-    Ok(match value_of(vault, txn, reads, spec, &agreed)? {
+    let read = value_of(vault, txn, (reads, &fold.name_counts), spec, &agreed, 0)?;
+    Ok(match read {
         Ok(value) => Ok({
             let deciding = agreed.credit();
             Projected {
@@ -772,13 +832,16 @@ enum Short {
 /// for here ([`ChoiceCount`]). An act that counts in full gives its own value; a safe move gives
 /// the stricter of its own value and what the acts it replaced give, each read the same way, so
 /// it can narrow and never widens ([`Rule`]). `None` is no row: a clear's, or the empty slot's,
-/// which an act that replaced nothing replaced.
+/// which an act that replaced nothing replaced. A copy's names are read by walks of their own
+/// rows ([`name_value_in_txn`]).
 struct Walk<'v, 't> {
     vault: &'v Vault,
     txn: &'v heed::RoTxn<'t>,
     /// The rows beside acts the walk read.
     reads: &'v BesideReads,
-    spec: &'static SettingSpec,
+    /// What each act the copies the walk meets name counts for on its own row.
+    name_counts: &'v NameCounts,
+    spec: &'v SettingSpec,
     target: EntityId,
     slot: &'v RowKey,
     counts: &'v ChoiceCounts,
@@ -794,6 +857,9 @@ struct Walk<'v, 't> {
     given: BTreeMap<AuthorityEntryHash, Option<EncodedValue>>,
     /// Whether the comparator found heads none of which is no wider than every other.
     conflict: Cell<bool>,
+    /// The copies followed to reach this row ([`COPY_DEPTH_MAX`]): zero on the row a pass
+    /// projects, one more on each row a copy names.
+    depth: usize,
 }
 
 impl Walk<'_, '_> {
@@ -813,6 +879,11 @@ impl Walk<'_, '_> {
                 self.given.insert(next, None);
                 continue;
             };
+            // What a disputed act says cannot be read (the row's own walk never meets one: the
+            // combine quarantines the row first).
+            if counted.count == ChoiceCount::Disputed {
+                return Ok(Err(Short::Unreadable));
+            }
             let safe = counted.count != ChoiceCount::Full;
             if safe && !expanded {
                 stack.push((next, true));
@@ -860,10 +931,22 @@ impl Walk<'_, '_> {
             act,
         )?) {
             Ok(head) if head.slot == *self.slot => head,
-            Ok(_) => return Ok(Err(Short::Inert(Inert::ForGood))),
-            Err(why) => return Ok(Err(Short::Inert(why))),
+            Ok(_) => return Ok(Err(self.short_of(Inert::ForGood))),
+            Err(why) => return Ok(Err(self.short_of(why))),
         };
-        value_of(self.vault, self.txn, self.reads, self.spec, &head)
+        let reads = (self.reads, self.name_counts);
+        value_of(self.vault, self.txn, reads, self.spec, &head, self.depth)
+    }
+
+    /// How an act on the way that leaves its row as it is (`why`) ends the walk: as `why` on the
+    /// row a pass projects; on a row a copy names, as a name this install cannot read
+    /// ([`name_value_in_txn`]), unless its value beside it has not come yet.
+    fn short_of(&self, why: Inert) -> Short {
+        match why {
+            Inert::Awaiting => Short::Inert(Inert::Awaiting),
+            why if self.depth == 0 => Short::Inert(why),
+            _ => Short::Unreadable,
+        }
     }
 
     /// What the heads or replaced acts `given` give the row together, by the walk's rule: their
@@ -1002,7 +1085,7 @@ pub(super) fn project_target_in_txn(
     let in_force = fold.in_force.as_ref().map(|head| head.act);
     let basis = basis_of(
         fold.revision,
-        &fold.counts,
+        (&fold.counts, &fold.name_counts),
         (fold.conflict, in_force),
         &fold.asking,
     );
@@ -1447,7 +1530,8 @@ impl Vault {
             let mut moved = Vec::new();
             for target in self.policy_setting_revisions_in_txn(&txn)? {
                 let fallback = (target.conflict, target.in_force);
-                let basis = basis_of(target.revision, &target.counts, fallback, &target.asking);
+                let counts = (&target.counts, &target.name_counts);
+                let basis = basis_of(target.revision, counts, fallback, &target.asking);
                 let moved_here =
                     match PROJECTIONS.get(&self.store, &txn, &target_key(target.target))? {
                         Some(projection) => moved_since(self, &txn, &projection, basis)?,

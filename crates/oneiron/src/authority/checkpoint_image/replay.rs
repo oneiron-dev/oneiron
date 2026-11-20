@@ -280,6 +280,7 @@ fold_state_fields!(
     conversation_training,
     conversation_training_vault,
     policy_settings,
+    setting_copy_names,
     refused_export_acts,
     agent_carried_acts,
     home_candidacy,

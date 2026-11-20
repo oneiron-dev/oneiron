@@ -502,6 +502,12 @@ pub(crate) struct CountedChoice {
 /// What each choice a reader of one frontier meets counts for, by its hash.
 pub(crate) type ChoiceCounts = BTreeMap<AuthorityEntryHash, CountedChoice>;
 
+/// What each act the copies a reader of one row meets name counts for on its own row here, keyed
+/// by that row's target (a move's setting copy, stage 7a-4; row SETTING-COPY-NAME-IGNORES-COUNT):
+/// each named act, live or superseded, and for one that does not count in full each act it
+/// replaced, followed back ([`counts_from`]); the acts the copies among them name too.
+pub(crate) type NameCounts = BTreeMap<EntityId, ChoiceCounts>;
+
 fn count_of<P>(
     standing: &Standing<'_>,
     hash: &AuthorityEntryHash,
@@ -527,8 +533,19 @@ fn count_of<P>(
 /// that does not count in full, each choice it replaced, judged the same way, until every path
 /// ends at a choice that counts in full or replaced nothing.
 fn choice_counts<P>(standing: &Standing<'_>, frontier: &ChoiceFrontier<P>) -> ChoiceCounts {
+    counts_from(standing, frontier, frontier.live.keys().copied())
+}
+
+/// What each choice of `frontier` a reader that starts at `from` meets counts for here, live or
+/// superseded: each of `from`, and for one that does not count in full, each choice it replaced,
+/// judged the same way ([`choice_counts`]). A hash the frontier does not hold has no count.
+fn counts_from<P>(
+    standing: &Standing<'_>,
+    frontier: &ChoiceFrontier<P>,
+    from: impl IntoIterator<Item = AuthorityEntryHash>,
+) -> ChoiceCounts {
     let mut counts = BTreeMap::new();
-    let mut stack: Vec<_> = frontier.live.keys().copied().collect();
+    let mut stack: Vec<_> = from.into_iter().collect();
     while let Some(hash) = stack.pop() {
         if counts.contains_key(&hash) {
             continue;
@@ -712,6 +729,63 @@ pub(super) fn owner_choice_counts<P>(
         .frontiers
         .iter()
         .map(|(target, frontier)| (*target, choice_counts(&standing, frontier)))
+        .collect()
+}
+
+/// For each target, the [`NameCounts`] of the copies a reader of it meets: each act of `counts`
+/// on it that `names` holds as a copy with a row there, the acts that row names, and so on for
+/// each copy met on the way. A target whose reader meets no copy has no entry, and no copy folded
+/// makes no entry at all.
+pub(super) fn owner_choice_name_counts<P>(
+    state: &FoldState,
+    register: &OwnerChoiceState<P>,
+    (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
+    counts: &BTreeMap<EntityId, ChoiceCounts>,
+    names: &super::policy_setting_choice::SettingCopyNames,
+) -> BTreeMap<EntityId, NameCounts> {
+    if names.is_empty() {
+        return BTreeMap::new();
+    }
+    let standing = Standing::new(state, pin, counted);
+    let named_on = |act: AuthorityEntryHash, target: EntityId| {
+        names
+            .get(&act)
+            .and_then(|rows| rows.get(&target))
+            .into_iter()
+            .flatten()
+            .copied()
+    };
+    counts
+        .iter()
+        .filter_map(|(target, met)| {
+            let mut name_counts = NameCounts::new();
+            let mut stack: Vec<_> = met.keys().flat_map(|act| named_on(*act, *target)).collect();
+            while let Some((row, act)) = stack.pop() {
+                if name_counts
+                    .get(&row)
+                    .is_some_and(|counts| counts.contains_key(&act))
+                {
+                    continue;
+                }
+                let Some(frontier) = register.frontiers.get(&row) else {
+                    continue;
+                };
+                let reached = counts_from(&standing, frontier, [act]);
+                if reached.is_empty() {
+                    continue;
+                }
+                let row_counts = name_counts.entry(row).or_default();
+                for (hash, count) in reached {
+                    if let std::collections::btree_map::Entry::Vacant(vacant) =
+                        row_counts.entry(hash)
+                    {
+                        stack.extend(named_on(hash, row));
+                        vacant.insert(count);
+                    }
+                }
+            }
+            (!name_counts.is_empty()).then_some((*target, name_counts))
+        })
         .collect()
 }
 

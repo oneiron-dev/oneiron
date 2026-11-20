@@ -351,6 +351,7 @@ pub(super) fn single_owner_state(
         conversation_training: Default::default(),
         conversation_training_vault: Default::default(),
         policy_settings: Default::default(),
+        setting_copy_names: BTreeMap::new(),
         refused_export_acts: BTreeSet::new(),
         agent_carried_acts: BTreeMap::new(),
         home_candidacy: Default::default(),

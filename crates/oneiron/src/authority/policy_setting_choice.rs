@@ -71,13 +71,20 @@ use super::machine_standing::InstallCounted;
 use super::owner_choice::{
     ChoiceAt, FoldedOwnerChoice, OwnerChoiceLanding, OwnerChoiceOp, OwnerChoiceState,
     choice_landing, folded_owner_choices, owner_choice_counts, owner_choice_landing,
-    refused_owner_choices,
+    owner_choice_name_counts, refused_owner_choices,
 };
-pub(crate) use super::owner_choice::{ChoiceCount, ChoiceCounts};
+pub(crate) use super::owner_choice::{ChoiceCount, ChoiceCounts, NameCounts};
 use super::*;
 
 /// Every setting's acts in one fold state, each keyed by its target.
 pub(super) type PolicySettingChoiceState = OwnerChoiceState<[u8; 32]>;
+
+/// What each move's setting copy names (stage 7a-4; row SETTING-COPY-NAME-IGNORES-COUNT): by the
+/// copy's entry, then by the target of each of its rows, the target and hash of each act that row
+/// names. The fold counts each named act on its own row ([`NameCounts`]); the copy's frontier
+/// choice is its entry's own hash, which says nothing of what it names.
+pub(super) type SettingCopyNames =
+    BTreeMap<AuthorityEntryHash, BTreeMap<EntityId, BTreeSet<(EntityId, AuthorityEntryHash)>>>;
 
 /// Every setting's folded acts.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -90,6 +97,12 @@ pub(crate) struct FoldedPolicySettings {
     /// full replaced, followed back. Keyed by the target as `targets` is.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) counts: BTreeMap<EntityId, ChoiceCounts>,
+    /// What each act the copies a reader of each target meets name counts for on its own row
+    /// ([`NameCounts`]; row SETTING-COPY-NAME-IGNORES-COUNT), keyed by the target as `targets`
+    /// is. Kept apart from `counts`: the named rows' own readers do not meet these acts. A
+    /// target whose reader meets no copy has no entry.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) name_counts: BTreeMap<EntityId, NameCounts>,
     /// Well-signed acts without effect: their carrier was not admitted, or
     /// their owner not live, at their parents.
     pub(crate) refused: BTreeSet<AuthorityEntryHash>,
@@ -197,10 +210,21 @@ pub(super) fn apply_setting_copy(
     restriction_only: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let mut landings = Vec::with_capacity(copy.rows.len());
+    let mut names = BTreeMap::new();
     for row in &copy.rows {
         let target = row
             .target()
             .map_err(|_| AuthorityFoldIssue::InvalidEntry(hash))?;
+        names.insert(
+            target,
+            row.names
+                .iter()
+                .filter_map(|name| {
+                    let named = oneiron_authority::authority::setting_slot_target(&name.slot);
+                    Some((named.ok()?, name.act))
+                })
+                .collect::<BTreeSet<_>>(),
+        );
         let named: BTreeSet<AuthorityEntryHash> = row
             .names
             .iter()
@@ -236,6 +260,7 @@ pub(super) fn apply_setting_copy(
     for landing in landings {
         state.policy_settings.land(landing);
     }
+    state.setting_copy_names.insert(hash, names);
     Ok(())
 }
 
@@ -246,8 +271,16 @@ pub(super) fn folded_policy_settings(
     pin: Option<&PinnedRoot>,
     counted: InstallCounted<'_>,
 ) -> FoldedPolicySettings {
+    let counts = owner_choice_counts(state, &state.policy_settings, pin, counted);
     FoldedPolicySettings {
-        counts: owner_choice_counts(state, &state.policy_settings, pin, counted),
+        name_counts: owner_choice_name_counts(
+            state,
+            &state.policy_settings,
+            (pin, counted),
+            &counts,
+            &state.setting_copy_names,
+        ),
+        counts,
         targets: folded_owner_choices(state, &state.policy_settings, pin, counted),
         refused: refused_owner_choices(&state.policy_settings).clone(),
         asking: state.policy_settings.asking_by_target(),
@@ -450,6 +483,11 @@ impl Vault {
                     target,
                     revision: settings.revision(target),
                     counts: settings.counts.get(&target).cloned().unwrap_or_default(),
+                    name_counts: settings
+                        .name_counts
+                        .get(&target)
+                        .cloned()
+                        .unwrap_or_default(),
                     conflict: folded.is_some_and(|folded| !folded.conflict.is_empty()),
                     in_force: folded
                         .and_then(|folded| folded.in_force.as_ref())
@@ -484,6 +522,7 @@ impl Vault {
                 in_force: None,
                 conflict: false,
                 counts: ChoiceCounts::new(),
+                name_counts: NameCounts::new(),
                 asking,
             }));
         };
@@ -505,6 +544,12 @@ impl Vault {
             counts: view
                 .policy_settings
                 .counts
+                .get(&target)
+                .cloned()
+                .unwrap_or_default(),
+            name_counts: view
+                .policy_settings
+                .name_counts
                 .get(&target)
                 .cloned()
                 .unwrap_or_default(),
@@ -704,6 +749,9 @@ pub(crate) struct SettingSlotFold {
     /// each live head, and each act one that does not count in full
     /// replaced, followed back.
     pub(crate) counts: ChoiceCounts,
+    /// What each act the copies among those acts name counts for on its own
+    /// row ([`NameCounts`]; row SETTING-COPY-NAME-IGNORES-COUNT).
+    pub(crate) name_counts: NameCounts,
     /// The row's acts that wait for the owner's proof and still ask (stage
     /// 7b-3): proposals, which change nothing; the row reads `Pending` while
     /// one does.
@@ -718,6 +766,9 @@ pub(crate) struct SettingTargetBasis {
     pub(crate) revision: [u8; 32],
     /// What each act a reader of it meets counts for here (stage 7b-2).
     pub(crate) counts: ChoiceCounts,
+    /// What each act the copies a reader of it meets name counts for on its
+    /// own row ([`NameCounts`]).
+    pub(crate) name_counts: NameCounts,
     /// Whether the acts that stand left different values.
     pub(crate) conflict: bool,
     /// The act the register holds in force; `None` when no act stands.

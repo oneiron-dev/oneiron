@@ -371,6 +371,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         conversation_training: Default::default(),
         conversation_training_vault: Default::default(),
         policy_settings: Default::default(),
+        setting_copy_names: BTreeMap::new(),
         refused_export_acts: BTreeSet::new(),
         agent_carried_acts: BTreeMap::new(),
         home_candidacy: Default::default(),

@@ -400,6 +400,11 @@ pub(super) struct FoldState {
         skip_serializing_if = "super::owner_choice::OwnerChoiceState::is_empty"
     )]
     pub(super) policy_settings: super::policy_setting_choice::PolicySettingChoiceState,
+    /// What each move's setting copy names, by its rows' targets (stage 7a-4; row
+    /// SETTING-COPY-NAME-IGNORES-COUNT), merged by union, so the fold counts each named act on
+    /// its own row. An image carries it only when some copy folded.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) setting_copy_names: super::policy_setting_choice::SettingCopyNames,
     /// Well-signed export acts without effect, merged by union: their
     /// carrier was not admitted, or their owner not live, at their parents
     /// (FIX 4624).
@@ -696,6 +701,15 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
         &right.conversation_training_vault,
     );
     super::owner_choice::merge_owner_choices(&mut merged.policy_settings, &right.policy_settings);
+    for (copy, rows) in &right.setting_copy_names {
+        let merged_rows = merged.setting_copy_names.entry(*copy).or_default();
+        for (target, names) in rows {
+            merged_rows
+                .entry(*target)
+                .or_default()
+                .extend(names.iter().copied());
+        }
+    }
     merged
         .refused_export_acts
         .extend(right.refused_export_acts.iter().copied());
