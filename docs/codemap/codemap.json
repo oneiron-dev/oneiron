@@ -4935,7 +4935,7 @@
      "path": "src/authority/guest_revoke.rs",
      "purpose": "OF-232: the owner mints an Ask or Connect guest's capability slip, bound to its grant, and withdraws one…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 2
      }
     },
@@ -6536,7 +6536,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "fn": 22,
       "re-export": 3
      }
@@ -20434,7 +20434,7 @@
      "path": "src/code_run/replay/cursor.rs",
      "purpose": "The cursor that replays a code run's recorded bridge calls in order and answers each with its stored…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3,
       "struct": 1
      }
@@ -36307,7 +36307,7 @@
      "path": "src/dreamer_runner/program/retraction.rs",
      "purpose": "The acknowledged retraction of a carried wake (FIX TURNPROGRAM-LATE-WITHHOLD-DOUBLE-DECIDE)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -42455,7 +42455,7 @@
      "path": "src/federation/own_device.rs",
      "purpose": "FIX 3134: an owner's own device holds a member FEDERATION_GRANT at its home, so the device's residence…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -73296,7 +73296,7 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "fn": 6,
       "struct": 1
      }
@@ -73440,7 +73440,7 @@
      "path": "src/scope_summary/request/requester_lane.rs",
      "purpose": "FIX 2194 (OF-506): a queued summary keeps the read lane its requester declared it under",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -73655,13 +73655,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/control/input.rs",
      "purpose": "The protected input of an active custody change (WILL L04 row 04): what a register, rotate or bind hands its…",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 26,
       "re-export": 2
      }
     },
@@ -73713,6 +73713,26 @@
      "purpose": "An input whose body passes one envelope's plaintext bound (FIX 5521; Rule 5: split, never refuse)",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/control/input/numbered_test.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/control/input/relayed.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -76369,7 +76389,7 @@
      "path": "src/share.rs",
      "purpose": "Revocable brief read grants",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 5,
       "re-export": 2,
       "struct": 3
@@ -87395,15 +87415,16 @@
      "notable": [
       "DeviceBurstAdmission",
       "DeviceBurstWork",
-      "DevicePeer"
+      "DevicePeer",
+      "PromotedRowAdmission"
      ],
      "path": "src/sync/federation_burst/device.rs",
      "purpose": "One of this vault's own devices as a burst peer (L7-41)",
      "surface": {
       "crate-vis": 5,
       "enum": 2,
-      "fn": 11,
-      "struct": 1
+      "fn": 15,
+      "struct": 2
      }
     },
     {
@@ -88610,7 +88631,7 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 10,
       "re-export": 33
      }
@@ -90532,6 +90553,7 @@
      "purpose": "The entity ids a window update's history inserts (census L6-05, ARCH-0038 `#housekeeping-sla-open`)",
      "surface": {
       "crate-vis": 3,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -94436,6 +94458,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/device_burst_work_stands.rs",
+     "purpose": "Door for `tests/device_burst_admission.rs`: whether an own device's retained batch the burst core handed…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/device_pin.rs",
      "purpose": "The device PIN's step lock, for integration tests (row OCS-OWNER-PIN): a test of two steps at once reads…",
      "surface": {
@@ -95744,7 +95776,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 330,
+      "mod": 331,
       "re-export": 2
      }
     },
@@ -107360,6 +107392,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/conversation_summary_requester_lane.rs",
+     "purpose": "A conversation summary queued under a narrowed lane is composed and landed only while that lane reads its…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -112988,6 +113028,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/saved_member_lane_read_scope.rs",
+     "purpose": "A member credential's saved lane reads while its membership grant still confers what the lane reads (round 2…",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -114025,6 +114073,14 @@
      "notable": [],
      "path": "tests/turn_program_erase_trigger_index.rs",
      "purpose": "An erased actor keeps no trigger index row (FIX-LIST L23270): a timer arming whose row does not decode keeps…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/turn_program_former_home_imported_wake.rs",
+     "purpose": "A riding turn-program wake the elected home took from the window, once that machine is the home no more (FIX…",
      "surface": {}
     },
     {
@@ -116022,7 +116078,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 90,
+     "files": 92,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116281,7 +116337,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 339,
+     "files": 340,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116456,10 +116512,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 305,
+   "over_bar": 304,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8215,
-   "test_files": 1962
+   "source_files": 8218,
+   "test_files": 1965
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -162935,7 +162991,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 54
+      "crate-vis": 56
      }
     },
     {
@@ -167861,7 +167917,7 @@
      "path": "src/handler/window_sync.rs",
      "purpose": "WindowSync sub-tag dispatcher with selector and VV paths",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -174886,7 +174942,7 @@
      "path": "src/server/windows.rs",
      "purpose": "Window serving: snapshots, exports, and the local-change broadcast bridge",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
