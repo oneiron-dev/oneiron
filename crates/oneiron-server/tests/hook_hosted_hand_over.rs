@@ -7,10 +7,13 @@
 //! `vault.imports.hook_transcript`, over `oneiron mcp` as the credential the
 //! selection names, in its own auth mode, read below Claude Code's
 //! `projects` folder through no link, in calls the sign-in's carrier takes.
-//! A session that bound a pin, a session with no start, a config named and
-//! a host whose log the verb does not read each keep the local queue, as
-//! before. A session whose starts bound a hosted vault no longer selected,
-//! or more than one vault, sends its log nowhere (review round 2).
+//! A session that bound a pin, a session with no start and a config named
+//! each keep the local queue, as before. A session whose starts bound a
+//! hosted vault no longer selected, or more than one vault, sends its log
+//! nowhere (review round 2). A Codex, Cursor or GitHub Copilot session goes
+//! the same way, its one log read below the folder its host keeps its logs
+//! in, by the source the import reads it as (FIX
+//! HOOK-HOSTED-HAND-OVER-OTHER-HOSTS).
 //!
 //! The shipped binary runs the hook. The `oneiron` it runs for the bridge
 //! and the import is a stand-in that records its arguments and, as `oneiron
@@ -205,7 +208,22 @@ impl Bench {
     /// Runs `oneiron hook --host <host> <event> <args>` with `payload` on
     /// stdin and `env` set, which exits 0; what it printed.
     fn hook(&self, host: &str, event: &[&str], env: &[(&str, &str)], payload: &Value) -> String {
+        self.hook_in(None, host, event, env, payload)
+    }
+
+    /// [`Bench::hook`], run in the folder `cwd` when one is named.
+    fn hook_in(
+        &self,
+        cwd: Option<&Path>,
+        host: &str,
+        event: &[&str],
+        env: &[(&str, &str)],
+        payload: &Value,
+    ) -> String {
         let mut command = Command::new(env!("CARGO_BIN_EXE_oneiron"));
+        if let Some(cwd) = cwd {
+            command.current_dir(cwd);
+        }
         command
             .args(["hook", "--host", host])
             .args(event)
@@ -583,8 +601,8 @@ fn a_pin_a_running_local_vault_a_named_config_or_another_hosts_log_keeps_the_loc
     );
     assert_eq!(bench.argv(), local_queue, "a pin");
 
-    // The verb reads only a Claude Code log: a Codex session's log is queued
-    // for the import that reads it.
+    // A Codex session whose start recorded nothing: its log is queued for
+    // the import that reads it, as before.
     let codex_log = bench.path("rollout.jsonl");
     let codex_log_arg = codex_log.to_str().expect("UTF-8 path");
     bench.hand_over(
@@ -1047,4 +1065,580 @@ fn a_start_never_undoes_another_starts_record() {
         Some(&words(&["mcp", "--url", &origin])[..]),
         "starts at once removed the session's record"
     );
+}
+
+/// The Codex session the other hosts' cases start: its thread id, which
+/// ends its rollout's name (FIX HOOK-HOSTED-HAND-OVER-OTHER-HOSTS).
+const CODEX_SESSION: &str = "019a7c2e-5555-4666-8777-888899990000";
+/// The GitHub Copilot session they start.
+const COPILOT_SESSION: &str = "8f6c1d2e-3333-4444-8555-666677778888";
+/// The Cursor conversation they start.
+const CURSOR_SESSION: &str = "c0ffee00-1111-4222-8333-444455556666";
+
+/// One other host's session, as its hooks name it: the host, its start and
+/// turn-end events for the log at `log`, the stem the import names that log
+/// by, and the source the import reads it as.
+struct HostSession {
+    host: &'static str,
+    start: Value,
+    stop: Value,
+    log: PathBuf,
+    stem: String,
+    source: &'static str,
+}
+
+impl Bench {
+    /// The person's config folder, as VS Code reads it: `$XDG_CONFIG_HOME`,
+    /// or `~/Library/Application Support` on macOS.
+    fn config_folder(&self) -> PathBuf {
+        if cfg!(target_os = "macos") {
+            self.path("home")
+                .join("Library")
+                .join("Application Support")
+        } else {
+            self.path("config")
+        }
+    }
+
+    /// A Codex session whose rollout sits at `log`.
+    fn codex_session(&self, log: PathBuf) -> HostSession {
+        let stem = log
+            .file_stem()
+            .and_then(std::ffi::OsStr::to_str)
+            .expect("a rollout's stem")
+            .to_owned();
+        write_log(&log, &codex_lines());
+        HostSession {
+            host: "codex",
+            start: json!({
+                "session_id": CODEX_SESSION,
+                "transcript_path": null,
+                "cwd": "/tmp/heron-lantern",
+                "hook_event_name": "SessionStart",
+                "model": "gpt-5",
+                "permission_mode": "default",
+                "source": "startup",
+            }),
+            stop: json!({
+                "session_id": CODEX_SESSION,
+                "transcript_path": log,
+                "cwd": "/tmp/heron-lantern",
+                "hook_event_name": "Stop",
+                "model": "gpt-5",
+                "turn_id": "turn_1",
+                "stop_hook_active": false,
+                "last_assistant_message": "Done.",
+            }),
+            log,
+            stem,
+            source: "codex",
+        }
+    }
+
+    /// The Codex session's rollout below `~/.codex/sessions`.
+    fn codex_rollout(&self) -> PathBuf {
+        self.path("home")
+            .join(".codex")
+            .join("sessions")
+            .join("2026")
+            .join("11")
+            .join("20")
+            .join(format!("rollout-2026-11-20T01-00-00-{CODEX_SESSION}.jsonl"))
+    }
+
+    /// A Cursor conversation whose transcript sits below
+    /// `~/.cursor/projects`, as Cursor keeps it.
+    fn cursor_session(&self) -> HostSession {
+        let log = self
+            .path("home")
+            .join(".cursor")
+            .join("projects")
+            .join("tmp-heron-lantern")
+            .join("agent-transcripts")
+            .join(CURSOR_SESSION)
+            .join(format!("{CURSOR_SESSION}.jsonl"));
+        write_log(&log, &cursor_lines());
+        HostSession {
+            host: "cursor",
+            // Cursor's `sessionStart` names the conversation twice and no
+            // `source`; its `stop` names only `conversation_id`.
+            start: json!({
+                "conversation_id": CURSOR_SESSION,
+                "generation_id": "9e000000-1111-4222-8333-444455556666",
+                "model": "default",
+                "hook_event_name": "sessionStart",
+                "cursor_version": "3.0.0",
+                "workspace_roots": ["/tmp/heron-lantern"],
+                "user_email": null,
+                "transcript_path": null,
+                "session_id": CURSOR_SESSION,
+                "is_background_agent": false,
+                "composer_mode": "agent",
+            }),
+            stop: json!({
+                "conversation_id": CURSOR_SESSION,
+                "generation_id": "9e000000-1111-4222-8333-444455556666",
+                "model": "default",
+                "hook_event_name": "stop",
+                "cursor_version": "3.0.0",
+                "workspace_roots": ["/tmp/heron-lantern"],
+                "user_email": null,
+                "transcript_path": log,
+                "status": "completed",
+                "loop_count": 0,
+            }),
+            stem: CURSOR_SESSION.to_owned(),
+            log,
+            source: "hook-transcript",
+        }
+    }
+
+    /// A Copilot session whose log sits at `log`, started as `source` names
+    /// (`startup`, `new`, `resume`).
+    fn copilot_session(&self, log: PathBuf, source: &str) -> HostSession {
+        write_log(&log, &copilot_lines());
+        HostSession {
+            host: "copilot",
+            start: json!({
+                "hook_event_name": "SessionStart",
+                "session_id": COPILOT_SESSION,
+                "timestamp": "2026-11-20T01:00:00.000Z",
+                "cwd": "/tmp/heron-lantern",
+                "source": source,
+            }),
+            stop: json!({
+                "hook_event_name": "Stop",
+                "session_id": COPILOT_SESSION,
+                "timestamp": "2026-11-20T01:05:00.000Z",
+                "cwd": "/tmp/heron-lantern",
+                "transcript_path": log,
+                "stop_reason": "end_turn",
+                "stop_hook_active": false,
+            }),
+            log,
+            stem: COPILOT_SESSION.to_owned(),
+            source: "hook-transcript",
+        }
+    }
+
+    /// The Copilot CLI's `events.jsonl`, in its session's folder below
+    /// `~/.copilot/session-state`.
+    fn copilot_cli_log(&self) -> PathBuf {
+        self.path("home")
+            .join(".copilot")
+            .join("session-state")
+            .join(COPILOT_SESSION)
+            .join("events.jsonl")
+    }
+
+    /// VS Code's Copilot transcript, in its `transcripts` folder below VS
+    /// Code's workspace storage.
+    fn copilot_vs_code_log(&self) -> PathBuf {
+        self.config_folder()
+            .join("Code")
+            .join("User")
+            .join("workspaceStorage")
+            .join("0a1b2c3d4e5f")
+            .join("GitHub.copilot-chat")
+            .join("transcripts")
+            .join(format!("{COPILOT_SESSION}.jsonl"))
+    }
+
+    /// Runs `session`'s start with no recall: what it said.
+    fn start(&self, session: &HostSession) -> String {
+        self.hook(
+            session.host,
+            &["session-start", "--query", ""],
+            &[],
+            &session.start,
+        )
+    }
+}
+
+/// `text` at `log`, its folders made.
+fn write_log(log: &Path, text: &str) {
+    std::fs::create_dir_all(log.parent().expect("a folder")).expect("test fixture");
+    std::fs::write(log, text).expect("test fixture");
+}
+
+/// Whole Codex rollout lines: the session's meta, a user message, the
+/// answer.
+fn codex_lines() -> String {
+    [
+        json!({"timestamp": "2026-11-20T01:00:00.000Z", "type": "session_meta", "payload": {"id": CODEX_SESSION, "timestamp": "2026-11-20T01:00:00.000Z", "cwd": "/tmp/heron-lantern", "originator": "codex_cli_rs", "cli_version": "0.50.0"}}),
+        json!({"timestamp": "2026-11-20T01:00:01.000Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Keep the heron lantern timetable in pier nine order."}]}}),
+        json!({"timestamp": "2026-11-20T01:00:05.000Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "id": "msg_heron_1", "content": [{"type": "output_text", "text": "Noted: pier nine order."}]}}),
+    ]
+    .iter()
+    .map(|line| format!("{line}\n"))
+    .collect()
+}
+
+/// Whole Cursor transcript lines: a user message and the answer.
+fn cursor_lines() -> String {
+    [
+        json!({"role": "user", "message": {"content": [{"type": "text", "text": "<user_query>\nWhere is the heron lantern ledger kept?\n</user_query>"}]}}),
+        json!({"role": "assistant", "message": {"content": [{"type": "text", "text": "Beside the pier nine timetable."}]}}),
+    ]
+    .iter()
+    .map(|line| format!("{line}\n"))
+    .collect()
+}
+
+/// Whole Copilot transcript lines: the session's start, a user message and
+/// the answer.
+fn copilot_lines() -> String {
+    [
+        json!({"type": "session.start", "data": {"sessionId": COPILOT_SESSION}, "id": "evt0", "timestamp": "2026-11-20T01:00:00.000Z"}),
+        json!({"type": "user.message", "data": {"content": "Keep the heron lantern timetable in pier nine order."}, "id": "evt1", "timestamp": "2026-11-20T01:00:01.000Z"}),
+        json!({"type": "assistant.message", "data": {"content": "Noted: pier nine order."}, "id": "evt2", "timestamp": "2026-11-20T01:00:05.000Z"}),
+    ]
+    .iter()
+    .map(|line| format!("{line}\n"))
+    .collect()
+}
+
+#[test]
+fn a_codex_cursor_or_copilot_hand_over_sends_its_log_to_the_selected_hosted_vault_by_its_source() {
+    // FIX HOOK-HOSTED-HAND-OVER-OTHER-HOSTS: each host's session whose
+    // start bound the selected hosted vault sends its own log there, read
+    // as the import that reads that host's logs, by the stem that import
+    // names it; nothing is queued here. On the PR's base the start records
+    // no binding for these hosts, and each log is queued locally.
+    type Case = fn(&Bench) -> (HostSession, Vec<(&'static str, String)>);
+    let cases: [(&str, Case); 5] = [
+        ("Codex below ~/.codex/sessions", |bench| {
+            (bench.codex_session(bench.codex_rollout()), Vec::new())
+        }),
+        ("Codex below $CODEX_HOME/sessions", |bench| {
+            let codex_home = bench.path("codex-home");
+            std::fs::create_dir(&codex_home).expect("test fixture");
+            // Codex names its rollouts below `CODEX_HOME` made absolute,
+            // its links resolved.
+            let codex_home = std::fs::canonicalize(codex_home).expect("test fixture");
+            let rollout = codex_home
+                .join("sessions")
+                .join("2026")
+                .join("11")
+                .join("20")
+                .join(format!("rollout-2026-11-20T01-00-00-{CODEX_SESSION}.jsonl"));
+            let home = codex_home.to_str().expect("UTF-8 path").to_owned();
+            (bench.codex_session(rollout), vec![("CODEX_HOME", home)])
+        }),
+        ("Cursor", |bench| (bench.cursor_session(), Vec::new())),
+        ("the Copilot CLI, a new session", |bench| {
+            (
+                bench.copilot_session(bench.copilot_cli_log(), "new"),
+                Vec::new(),
+            )
+        }),
+        ("Copilot in VS Code", |bench| {
+            (
+                bench.copilot_session(bench.copilot_vs_code_log(), "startup"),
+                Vec::new(),
+            )
+        }),
+    ];
+    for (name, case) in cases {
+        let bench = Bench::new();
+        let origin = answering_vault();
+        let credential = bench.path("slip-credential");
+        bench.select_hosted(&origin, VAULT_ID, "slip", &credential);
+        let (session, env) = case(&bench);
+        let env: Vec<(&str, &str)> = env
+            .iter()
+            .map(|(variable, value)| (*variable, value.as_str()))
+            .collect();
+        let said = bench.start(&session);
+        assert!(
+            said.contains("uses your hosted vault") && said.contains(&origin),
+            "{name}: the session binds the selected hosted vault: {said}"
+        );
+        bench.hand_over(session.host, &[], &env, &session.stop);
+
+        let mut bridge = words(&["mcp", "--url", &origin, "--surface", "tool-first"]);
+        bridge.extend(words(&[
+            "--credential-file",
+            credential.to_str().expect("UTF-8 path"),
+        ]));
+        assert_eq!(bench.argv(), bridge, "{name}: one bridge, nothing queued");
+        let call: Value = serde_json::from_str(&bench.recorded("call")).expect("one JSON-RPC call");
+        assert_eq!(
+            call["params"]["name"], "vault.imports.hook_transcript",
+            "{name}"
+        );
+        assert_eq!(
+            call["params"]["arguments"]["consent"]["policy_ref"],
+            format!("policy:{}-hooks", session.host),
+            "{name}"
+        );
+        let spec = &call["params"]["arguments"]["arguments"]["spec"];
+        assert_eq!(spec["session"], session.stem.as_str(), "{name}: {spec}");
+        assert_eq!(spec["source"], session.source, "{name}: {spec}");
+        assert_eq!(
+            inflated(&spec["transcript_gzip_base64"]),
+            std::fs::read(&session.log).expect("the session's log"),
+            "{name}: the log goes byte for byte"
+        );
+        assert!(
+            spec["subagents"].as_array().is_none_or(Vec::is_empty),
+            "{name}: one log, no subagent logs: {spec}"
+        );
+    }
+}
+
+#[test]
+fn another_hosts_log_not_named_for_its_session_or_outside_its_hosts_folder_is_never_sent() {
+    // The log goes only where it is its own session's, named as its host
+    // names it, and below the folder its host keeps its logs in: else no
+    // bridge starts and nothing is queued, as for a Claude Code log. On the
+    // PR's base each is queued locally. A rollout of a session whose id ends
+    // in this one's is another session's (REVIEW-9914,
+    // hosted_hand_over.rs:148).
+    let bench = Bench::new();
+    bench.select_hosted(
+        &answering_vault(),
+        VAULT_ID,
+        "slip",
+        &bench.path("slip-credential"),
+    );
+    let codex = bench.codex_session(bench.codex_rollout());
+    bench.start(&codex);
+    let copilot = bench.copilot_session(bench.copilot_vs_code_log(), "startup");
+    bench.start(&copilot);
+    let other_sessions = bench
+        .codex_rollout()
+        .with_file_name("rollout-2026-11-20T01-00-00-019a7c2e-5555-4666-8777-000000000000.jsonl");
+    let ending_in_its_id = bench.codex_rollout().with_file_name(format!(
+        "rollout-2026-11-20T01-00-00-0000aaaa-{CODEX_SESSION}.jsonl"
+    ));
+    let outside = bench
+        .path("outside")
+        .join(bench.codex_rollout().file_name().expect("a rollout's name"));
+    let loose = bench
+        .config_folder()
+        .join("Code")
+        .join("User")
+        .join("workspaceStorage")
+        .join("0a1b2c3d4e5f")
+        .join(format!("{COPILOT_SESSION}.jsonl"));
+    for (name, session, log) in [
+        ("another session's rollout", &codex, other_sessions),
+        (
+            "the rollout of a session whose id ends in this one's",
+            &codex,
+            ending_in_its_id,
+        ),
+        ("a rollout outside ~/.codex/sessions", &codex, outside),
+        ("a Copilot log in no transcripts folder", &copilot, loose),
+    ] {
+        write_log(&log, &codex_lines());
+        let mut stop = session.stop.clone();
+        stop["transcript_path"] = json!(log);
+        bench.forget_runs();
+        bench.hand_over(session.host, &[], &[], &stop);
+        assert!(
+            bench.ran_nothing(),
+            "{name}: the log went somewhere: {:?}",
+            bench.recorded("argv")
+        );
+    }
+}
+
+#[test]
+fn another_hosts_resumed_session_with_no_record_sends_nowhere_and_a_pinned_one_keeps_the_queue() {
+    // A Codex or Copilot start that resumes turns no start recorded may hold
+    // another vault's turns: its log goes nowhere, as a Claude Code one's.
+    // On the PR's base each is queued locally.
+    for resumed in ["codex", "copilot"] {
+        let bench = Bench::new();
+        bench.select_hosted(
+            &answering_vault(),
+            VAULT_ID,
+            "slip",
+            &bench.path("slip-credential"),
+        );
+        let mut session = match resumed {
+            "codex" => bench.codex_session(bench.codex_rollout()),
+            _ => bench.copilot_session(bench.copilot_cli_log(), "resume"),
+        };
+        session.start["source"] = json!("resume");
+        bench.start(&session);
+        bench.forget_runs();
+        bench.hand_over(session.host, &[], &[], &session.stop);
+        assert!(
+            bench.ran_nothing(),
+            "{resumed}: a resumed session's log went somewhere: {:?}",
+            bench.recorded("argv")
+        );
+    }
+
+    // A Codex session pinned by its hook's `--url` keeps the local queue,
+    // with the hosted vault selected and answering.
+    let bench = Bench::new();
+    bench.select_hosted(
+        &answering_vault(),
+        VAULT_ID,
+        "slip",
+        &bench.path("slip-credential"),
+    );
+    let codex = bench.codex_session(bench.codex_rollout());
+    let pin = answering_vault();
+    let said = bench.hook(
+        "codex",
+        &["session-start", "--query", "", "--url", &pin],
+        &[],
+        &codex.start,
+    );
+    assert!(said.contains(&pin), "the session binds its pin: {said}");
+    bench.hand_over("codex", &[], &[], &codex.stop);
+    assert!(
+        !bench.called(),
+        "the pinned session's log went to the hosted vault"
+    );
+    assert_eq!(
+        bench.argv(),
+        words(&[
+            "import",
+            "codex",
+            codex.log.to_str().expect("UTF-8 path"),
+            "--queue"
+        ]),
+        "a Codex session that bound a pin"
+    );
+}
+
+/// Another Claude Code session, whose start removes the records of
+/// sessions that wrote nothing for 30 days.
+const OTHER_SESSION: &str = "0b5e55e0-3333-4444-8555-a66677779999";
+
+impl Bench {
+    /// Makes every file of the record of the Claude Code session `SESSION`
+    /// 31 days old.
+    fn age_record(&self) {
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(31 * 24 * 60 * 60);
+        let record = self.run_dir().join("hook-sessions").join(SESSION);
+        for entry in std::fs::read_dir(record).expect("the session's record") {
+            std::fs::File::options()
+                .write(true)
+                .open(entry.expect("test fixture").path())
+                .and_then(|file| file.set_modified(old))
+                .expect("test fixture");
+        }
+    }
+
+    /// Starts the Claude Code session `OTHER_SESSION` with no recall.
+    fn other_session_start(&self) {
+        let payload = json!({
+            "hook_event_name": "SessionStart",
+            "session_id": OTHER_SESSION,
+            "transcript_path": self.projects().join("-tmp-heron-lantern").join(format!("{OTHER_SESSION}.jsonl")),
+            "cwd": "/tmp/heron-lantern",
+            "source": "startup",
+        });
+        self.hook(
+            "claude-code",
+            &["session-start", "--query", ""],
+            &[],
+            &payload,
+        );
+    }
+}
+
+#[test]
+fn a_session_whose_record_was_removed_as_old_sends_its_log_nowhere_and_a_hand_over_keeps_it() {
+    // REVIEW-9914, session_binding.rs:268: a session whose record another
+    // session's start removed as old may still hand over; its log goes
+    // nowhere, never to the local queue. On the PR's base it is queued
+    // locally.
+    let bench = Bench::new();
+    let origin = answering_vault();
+    bench.select_hosted(&origin, VAULT_ID, "slip", &bench.path("slip-credential"));
+    let log = bench.session_log();
+    bench.session_start(&[], &log);
+    bench.age_record();
+    bench.other_session_start();
+    assert!(
+        !bench.run_dir().join("hook-sessions").join(SESSION).exists(),
+        "the old record stays"
+    );
+    bench.forget_runs();
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    assert!(
+        bench.ran_nothing(),
+        "the session whose record went sent its log: {:?}",
+        bench.recorded("argv")
+    );
+
+    // A hand-over keeps its session's record, so a session that hands over
+    // goes on sending to the vault it bound. On the PR's base the record
+    // goes, and the next hand-over queues locally.
+    let bench = Bench::new();
+    let origin = answering_vault();
+    bench.select_hosted(&origin, VAULT_ID, "slip", &bench.path("slip-credential"));
+    let log = bench.session_log();
+    bench.session_start(&[], &log);
+    bench.age_record();
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    bench.other_session_start();
+    bench.forget_runs();
+    bench.hand_over("claude-code", &[], &[], &claude_code_stop(&log));
+    assert_eq!(
+        bench.argv().get(..3),
+        Some(&words(&["mcp", "--url", &origin])[..]),
+        "the record of a session that hands over went"
+    );
+}
+
+#[test]
+fn a_codex_hand_over_finds_its_rollout_below_a_relative_or_linked_codex_home() {
+    // REVIEW-9914, hosted_hand_over.rs:103: Codex makes `CODEX_HOME`
+    // absolute, its links resolved, and names its rollouts below that; the
+    // hand-over finds them there. On the PR's base a relative or linked
+    // `CODEX_HOME` names another folder, and nothing is sent.
+    for linked in [false, true] {
+        let bench = Bench::new();
+        let origin = answering_vault();
+        bench.select_hosted(&origin, VAULT_ID, "slip", &bench.path("slip-credential"));
+        let real = bench.path("codex-home");
+        std::fs::create_dir(&real).expect("test fixture");
+        let codex_home = if linked {
+            let link = bench.path("codex-link");
+            std::os::unix::fs::symlink(&real, &link).expect("test fixture");
+            link.to_str().expect("UTF-8 path").to_owned()
+        } else {
+            "codex-home".to_owned()
+        };
+        let rollout = std::fs::canonicalize(&real)
+            .expect("test fixture")
+            .join("sessions")
+            .join("2026")
+            .join("11")
+            .join("20")
+            .join(format!("rollout-2026-11-20T01-00-00-{CODEX_SESSION}.jsonl"));
+        let codex = bench.codex_session(rollout);
+        bench.start(&codex);
+        let said = bench.hook_in(
+            Some(bench.dir.path()),
+            "codex",
+            &["hand-over"],
+            &[("CODEX_HOME", &codex_home)],
+            &codex.stop,
+        );
+        assert!(said.is_empty(), "a hand-over prints nothing");
+        assert!(
+            bench.called(),
+            "CODEX_HOME={codex_home}: the rollout was not sent"
+        );
+        assert_eq!(
+            bench.argv().get(..3),
+            Some(&words(&["mcp", "--url", &origin])[..]),
+            "CODEX_HOME={codex_home}"
+        );
+        assert_eq!(
+            bench.sent_spec()["session"],
+            codex.stem.as_str(),
+            "CODEX_HOME={codex_home}"
+        );
+    }
 }
