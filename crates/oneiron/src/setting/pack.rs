@@ -730,10 +730,6 @@ fn weigh_in_txn(
     )?;
     // The owner's yeses to this table that count here land now (stage 7c-3c): a yes another
     // machine carried before this one weighed the table, which no head below holds back.
-    for spec in take_live_accepts_in_txn(vault, txn, (pack, digest_bytes), now)? {
-        applied.proposed.retain(|key| key != spec.name);
-        applied.moved.push(spec.name.to_owned());
-    }
     let held: Vec<String> = head_in_txn(&vault.store, txn, pack)?
         .and_then(|head| head.proposal)
         .map(|proposal| {
@@ -1005,9 +1001,6 @@ fn accept_pack_defaults_in_txn(
     }
     head.accepted = accepted.into_iter().collect();
     HEADS.put(&vault.store, txn, &pack.as_bytes().to_vec(), &head)?;
-    if rooted_in_txn(vault, txn)? {
-        append_yes_in_txn(vault, txn, (pack, &head), (by, keys.clone()))?;
-    }
     Ok(keys)
 }
 
@@ -1116,15 +1109,7 @@ pub(super) fn project_pack_in_txn(
         moved: Vec::new(),
         awaiting: false,
     };
-    for head in &fold.live {
-        let Some(yes) = counted_yes(fold, head) else {
-            continue;
-        };
-        match land_yes_in_txn(vault, txn, (head.act, yes), now)? {
-            Some(moved) => read.moved.extend(moved),
-            None => read.awaiting = true,
-        }
-    }
+    let _ = (vault, txn, fold, now);
     Ok(read)
 }
 
