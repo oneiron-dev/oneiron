@@ -470,9 +470,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/left_notices/delivery.rs` | src | s | 3 fn · 1 crate-vis | — | The host's delivery of an export-first removal's archive to its removed holder (FIX 3215, 3396), beside the… |
 | `src/authority/local_host_root.rs` | src | s | 2 struct · 2 enum · 3 fn | HostIssuerSeedSlot, LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace | Re-keying this install's host root (FIX 5571, the re-key half of FIX 5346; owner ruling FIX 5341 = A) |
 | `src/authority/local_open.rs` | src | s | 1 enum · 6 fn · 1 crate-vis | LocalOpenProfile | A raw open's own machine profile, from the host's root secret (FIX 4730) |
-| `src/authority/log_budget.rs` | src | m | 2 fn · 2 const · 1 re-export · 22 crate-vis | — | The authority log's fold bounds, and the store-door checks that keep a stored log inside them (H72) |
+| `src/authority/log_budget.rs` | src | m | 2 fn · 2 const · 1 re-export · 23 crate-vis | — | The authority log's fold bounds, and the store-door checks that keep a stored log inside them (H72) |
 | `src/authority/log_budget/log_check.rs` | src | s | 1 struct · 1 fn · 7 const · 1 crate-vis | AuthorityLogCheck | The typed checks on the stored authority log's bounds (OF-520), and the signer label they and the doors'… |
 | `src/authority/log_budget/owner_reserve.rs` | src | s | 9 crate-vis | — | The owner's reserve under the fold's memory floor (FIX [AUTHORITY-LOG-SIGNER-FLOOD]): the stored log's… |
+| `src/authority/log_budget/owner_signed_work.rs` | src | s | 3 crate-vis | — | Whether a row a result answers is the owner's own signed word (row… |
 | `src/authority/log_budget/policy_bounds.rs` | src | s | 7 crate-vis | — | The bounds the authority observation policy's rows set: the signer bound, the fold headroom rows and the… |
 | `src/authority/log_structure.rs` | src | m | 20 crate-vis | — | The authority log's consent structure, read from its signed rows alone, so the fold's bounds and the store… |
 | `src/authority/machine_answers.rs` | src | L | 1 enum · 5 fn · 16 crate-vis | MachineAnswerLanding | The owner's machine answers as one install writes them (mesh PR1b): he enrols, re-marks and removes a… |
@@ -521,7 +522,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/owner_key_removal_door.rs` | src | m | 3 struct · 3 enum · 3 fn · 5 crate-vis | EndedOwnerKey, LastDeviceKeyConfirmation, MachineRemoval, MachineRemovalReceipt, OwnerKeyRemoval, RemainingOwnerKeys | The owner removes a device's owner key (the owner's ruling AUTH-5, pass 27 row R1; Engine RULING… |
 | `src/authority/owner_key_vouch.rs` | src | m | 1 struct · 1 enum · 8 fn · 2 const · 5 crate-vis | DeviceOwnerKeyVouch, OwnerKeyVouchRequest | An owner key vouches for another device's new owner key (pass 27 R2, "an owner key vouches"; MFA-1 A: "vault… |
 | `src/authority/owner_project_slip.rs` | src | s | 1 fn | — | The host's owner-project slip (OF-497): the host-held project.write slip an [`OwnerProjectSigner`] signs the… |
-| `src/authority/owner_proof.rs` | src | m | 2 fn · 23 crate-vis | — | An owner act's proof (row CARRIER-OWNER-PROOF; the lead's rulings 15 Nov 12:1x and 13:2x, FIX… |
+| `src/authority/owner_proof.rs` | src | m | 2 fn · 24 crate-vis | — | An owner act's proof (row CARRIER-OWNER-PROOF; the lead's rulings 15 Nov 12:1x and 13:2x, FIX… |
 | `src/authority/owner_roots.rs` | src | s | 2 struct · 2 fn · 2 crate-vis | AwaitedRoot, OwnerRootView | The owner roots this vault stores, as this install sees them (world privacy P6b, R1) |
 | `src/authority/owner_work.rs` | src | m | 21 crate-vis | — | Folds the owner's work requests and their results: which install is to do the key, custody or root work an… |
 | `src/authority/owner_work/cancel.rs` | src | s | 5 crate-vis | — | What keeps a root request from running (FIX 4739): the owner's cancel of it, and a newer request on its target |
@@ -1079,7 +1080,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking/lifecycle/claim.rs` | src | L | 1 struct · 6 fn · 12 crate-vis | BookingConfirmationContext | Booking facts on the EVENT: the four exact claims, their writes and supersessions, the family validator, and… |
 | `src/booking/lifecycle/confirmation_state.rs` | src | s | 5 crate-vis | — | The confirmation receipt's session and invite-identity bindings, read and bound inside the caller's… |
 | `src/booking/lifecycle/deposit.rs` | src | m | 4 struct · 3 enum · 5 fn · 1 const · 1 re-export · 5 crate-vis | BookingDepositStatus, DepositCheckoutLease, DepositCheckoutStart, DepositProviderEvent, DepositProviderEventKind, DepositProviderEventOutcome, DepositState | BK-DEPOSITS PR 2: one deposit's payment, from checkout to settlement |
-| `src/booking/lifecycle/deposit/refund.rs` | src | s | 4 crate-vis | — | A deposit's refund rules, each in the booking writer's commit: a visitor's cancel or reschedule refunds by… |
+| `src/booking/lifecycle/deposit/refund.rs` | src | m | 5 crate-vis | — | A deposit's refund rules, each in the booking writer's commit: a visitor's cancel or reschedule refunds by… |
 | `src/booking/lifecycle/deposit/settle.rs` | src | m | 2 struct · 3 enum · 1 trait · 2 fn · 1 const | BookingDepositSettlementDrain, DepositProviderFailure, DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort | One deposit's provider moves: capture, void, refund (BK-DEPOSITS PR 2) |
 | `src/booking/lifecycle/door.rs` | src | m | 2 struct · 1 enum · 6 fn · 1 crate-vis | BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest | The public verb door and the home-node consumer turn: enqueue, checkout lease, and one claimed attempt run… |
 | `src/booking/lifecycle/emergency.rs` | src | m | 5 crate-vis | — | BK-09's emergency-reschedule transitions: the home-node guard, the durable pick row, and the commit that… |
@@ -4745,7 +4746,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/commitment_doors/mod.rs` | src | m | 7 fn · 3 re-export | — | Typed indexed commitment birth, observation and explicit lifecycle effects |
 | `src/memory/commitment_doors/reminder.rs` | src | s | 2 struct · 2 fn | CommitmentReminderRouteReply, CommitmentReminderRouteSetRequest | The owner's commitment reminder route as SDK verbs (OF-187): read it, or set and clear it |
 | `src/memory/commitment_doors/types.rs` | src | s | 1 struct · 1 re-export | CommitmentCreateRequest | Public commitment shapes |
-| `src/memory/conflict_settle.rs` | src | L | 8 fn · 1 re-export · 2 crate-vis | — | The authorised responder's door to a parked contradiction (OF-023) |
+| `src/memory/conflict_settle.rs` | src | L | 8 fn · 1 re-export · 1 crate-vis | — | The authorised responder's door to a parked contradiction (OF-023) |
 | `src/memory/conflict_settle/candidate_decisions.rs` | src | s | 2 fn · 1 re-export | — | The read door to a Dreamer attempt's decided candidates (FIX 11306): every candidate it decided a correction… |
 | `src/memory/conflict_settle/decision_context.rs` | src | s | 4 crate-vis | — | The member read contexts and loop a conflict settlement, its approval or its revert answers (FIX 7500, 11002) |
 | `src/memory/consolidation.rs` | src | m | 2 fn · 1 re-export | — | Typed promotion and evidence observation over the existing Dreamer writer |
@@ -7569,7 +7570,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/documents/owner_bodies.rs` | src | s | 1 fn · 5 crate-vis | — | Typed bodies on the owner lane (FIX 2458): an own device takes an office body as it takes a NOTE, under the… |
 | `src/sync/documents/storage.rs` | src | s | 4 crate-vis | — | Snapshot-then-update recovery and transactional text-plane persistence |
 | `src/sync/documents/tests.rs` | test | m | — | — | — |
-| `src/sync/federation_burst/device.rs` | src | m | 2 struct · 2 enum · 15 fn · 5 crate-vis | DeviceBurstAdmission, DeviceBurstWork, DevicePeer, PromotedRowAdmission | One of this vault's own devices as a burst peer (L7-41) |
+| `src/sync/federation_burst/device.rs` | src | m | 2 struct · 2 enum · 17 fn · 5 crate-vis | DeviceBurstAdmission, DeviceBurstWork, DevicePeer, PromotedRowAdmission | One of this vault's own devices as a burst peer (L7-41) |
 | `src/sync/federation_burst/documents.rs` | src | s | 3 crate-vis | — | A federation peer's text doors (FIX 8861) |
 | `src/sync/federation_burst/erase.rs` | src | s | 7 crate-vis | — | Retained copies an entity's erase owns (FIX 7998) |
 | `src/sync/federation_burst/import_guard.rs` | src | s | 2 crate-vis | — | Revalidate the retained batch and its acting proof in every import writer |
@@ -8678,7 +8679,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/blob_input.rs` | src | s | 2 fn | — | The artifact write rows a host runs with their `content_base64` already decoded into a file (FIX 22074… |
 | `src/verbs/board_layout.rs` | src | s | 6 fn · 2 re-export | — | The doors of the agent's own board layout (BOARD-LAYOUT = A, owner 2026-11-03): `self.board.layout` reads… |
 | `src/verbs/browser.rs` | src | s | 17 type · 1 re-export | — | Browser wire shapes, shared by code mode and the credential-bound host doors |
-| `src/verbs/calendar.rs` | src | s | 1 struct · 3 enum · 1 re-export | BookingAvailabilityRequest, BookingBookRequest, BookingConstraintHoldContext, BookingConstraintTurnResponse | Typed booking-page discovery, public lifecycle calls and calendar occupancy inputs |
+| `src/verbs/calendar.rs` | src | s | 1 struct · 3 enum · 2 fn · 2 re-export | BookingAvailabilityRequest, BookingBookRequest, BookingConstraintHoldContext, BookingConstraintTurnResponse | Typed booking-page discovery, public lifecycle calls and calendar occupancy inputs |
 | `src/verbs/campaign_archive.rs` | src | s | 9 fn | — | Typed output-archive doors under the existing research-controller gate |
 | `src/verbs/campaign_enrollment.rs` | src | s | 2 fn · 1 re-export | — | Owner review and approve-once doors for held campaign enrollments |
 | `src/verbs/campaign_split.rs` | src | s | 1 fn · 1 re-export | — | `vault.research.evaluate_split` (FIX 655): the vault owner scores one arm of a bound claim-authoring… |
@@ -9247,6 +9248,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/authority_log_owner_reserve_carry.rs` | test | m | — | — | FIX [OWNER-RESERVE-CROSS-INSTALL-CARRY]: past its owner reserve, an install lands only the owner's work… |
 | `tests/authority_log_owner_reserve_cosign_fence.rs` | test | m | — | — | A carried act's owner key proof, which buys only room past another install's owner reserve, is no signature… |
 | `tests/authority_log_owner_reserve_owner_work_requests.rs` | test | m | — | — | Row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, part 2d: the owner work requests the vault owner's own acts… |
+| `tests/authority_log_owner_reserve_owner_work_results.rs` | test | m | — | — | Row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, part 2e: an owner work result carries the owner key's proof… |
 | `tests/authority_log_owner_reserve_request_slip.rs` | test | s | — | — | An owner act whose proof came with a request's slip carries no owner key proof (row… |
 | `tests/authority_log_owner_reserve_world_key_wraps.rs` | test | s | — | — | Row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, part 2c: the key records the vault owner's own work writes… |
 | `tests/authority_log_owner_reserve_world_privacy.rs` | test | s | — | — | Row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, part 2b: the vault owner's own world-privacy edit carries… |
@@ -10208,6 +10210,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/selector_relationship_label.rs` | test | s | — | — | A federation selector window carries no relationship row its member does not read (OPUS-LEAKS round 2… |
 | `tests/selector_scope_summary_label.rs` | test | m | — | — | A selector discloses a scope SUMMARY and its copied reply only when its member reads every word source… |
 | `tests/selector_tombstone_label.rs` | test | m | — | — | A federation selector window carries no tombstone of a relationship row its member does not read (OPUS-LEAKS… |
+| `tests/selector_tombstone_of_summary_with_erased_source.rs` | test | m | — | — | A band-narrowed federation selector window carries the delete of an epoch summary whose source was erased… |
 | `tests/self_board_doors.rs` | test | m | — | — | The `self.board.*` doors keep the agent-managed board layout promises (BOARD-LAYOUT = A, owner ruling… |
 | `tests/self_code_doors.rs` | test | m | — | — | self.code doors: what the custody rows answer, keep, and refuse |
 | `tests/self_hooks_doors.rs` | test | m | — | — | Self hook regen doors: an agent reads and adopts the regen of the hooks it authored |
