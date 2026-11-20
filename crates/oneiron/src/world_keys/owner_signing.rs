@@ -366,7 +366,11 @@ impl Vault {
     /// This install's owner signing key when its slot already holds a
     /// seed: `None` when it holds none. It never creates a seed, so a read
     /// answers what this install holds, and a door that needs the key (a
-    /// recovery hold's answer) refuses instead of minting one.
+    /// recovery hold's answer) refuses instead of minting one. A seed in the
+    /// slot is no key there while a device PIN is set on the keystore or was
+    /// forgotten there: `None` then too, as the slot's own reader refuses
+    /// it. The key it answers is read from its slot, so it signs only while
+    /// the slot still holds its seed and no PIN came since.
     ///
     /// # Errors
     /// `KeystoreUnavailable` while the host installed no keystore; the
@@ -374,10 +378,17 @@ impl Vault {
     pub(crate) fn existing_device_owner_signing_key(&self) -> Result<Option<OwnerRootSigner>> {
         let keystore = self.device_keystore()?;
         let machine = self.prepare_install_signing()?;
-        Ok(keystore
-            .get(&self.owner_signing_slot(machine))
+        if slot_seed_bar(keystore.as_ref())
             .map_err(super::keystore_error)?
-            .map(|seed| OwnerRootSigner::from_seed(&seed)))
+            .is_some()
+        {
+            return Ok(None);
+        }
+        let slot = self.owner_signing_slot(machine);
+        Ok(keystore
+            .get(&slot)
+            .map_err(super::keystore_error)?
+            .map(|seed| OwnerRootSigner::from_slot(&seed, &keystore, &slot)))
     }
 
     /// This install's [`SlotKind::OwnerSigning`] slot and the keystore that

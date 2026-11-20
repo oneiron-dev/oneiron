@@ -45,18 +45,26 @@ fn key_person(
     })
 }
 
+/// One counted answer to a hold: its kind, its signer and its entry hash.
+type HoldAnswerRow = (RecoveryHoldAnswerKind, AuthorityKey, AuthorityEntryHash);
+
 /// The rows the hold view reads off the counted log: each hold with its
-/// signer R, each answer with its kind and signer, every key a valid
+/// signer R, each answer with its kind, signer and hash, every key a valid
 /// enrolment made a recovery root's authority key (the fold's own memory of
-/// the R keys), which tells the kit's Cancel from an owner device's, and
-/// the owner each valid owner-key enrolment names, which tells the hold's
-/// owner's `ItIsMe` from a co-owner's.
+/// the R keys), which tells the kit's Cancel from an owner device's, the
+/// owner each valid owner-key enrolment names, which tells the hold's
+/// owner's `ItIsMe` from a co-owner's, and each owner-key enrolment's hash
+/// by the key it enrols, which tells whose attempt put a successor key on
+/// the roster. `parents` holds every read entry's parents, counted or not,
+/// for that causal question.
 #[derive(Default)]
 struct HoldRows {
     holds: Vec<(AuthorityEntryHash, RecoveryHold, AuthorityKey)>,
-    answers: BTreeMap<AuthorityEntryHash, Vec<(RecoveryHoldAnswerKind, AuthorityKey)>>,
+    answers: BTreeMap<AuthorityEntryHash, Vec<HoldAnswerRow>>,
     root_keys: BTreeSet<AuthorityKey>,
     key_owners: BTreeMap<AuthorityKey, EntityId>,
+    enrolments: BTreeMap<AuthorityKey, Vec<AuthorityEntryHash>>,
+    parents: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>>,
 }
 
 impl HoldRows {
@@ -67,10 +75,11 @@ impl HoldRows {
                     .push((hash, hold.clone(), entry.signer_key().clone()));
             }
             AuthorityOp::RecoveryHoldAnswer(answer) => {
-                self.answers
-                    .entry(answer.hold)
-                    .or_default()
-                    .push((answer.answer, entry.signer_key().clone()));
+                self.answers.entry(answer.hold).or_default().push((
+                    answer.answer,
+                    entry.signer_key().clone(),
+                    hash,
+                ));
             }
             AuthorityOp::OwnerKeyEnroll(enroll) => {
                 if enroll.is_recovery_authority() {
@@ -79,9 +88,63 @@ impl HoldRows {
                 self.key_owners
                     .entry(enroll.device.key.clone())
                     .or_insert(enroll.act.owner);
+                self.enrolments
+                    .entry(enroll.device.key.clone())
+                    .or_default()
+                    .push(hash);
             }
             _ => {}
         }
+    }
+
+    /// Whether `ancestor` is in the causal past of `entry`, by the read
+    /// entries' parents. An entry this reader holds no copy of ends that
+    /// line of the walk.
+    fn descends_from(
+        &self,
+        entry: AuthorityEntryHash,
+        ancestor: &BTreeSet<AuthorityEntryHash>,
+    ) -> bool {
+        let mut seen = BTreeSet::new();
+        let mut next = vec![entry];
+        while let Some(at) = next.pop() {
+            for parent in self.parents.get(&at).into_iter().flatten() {
+                if ancestor.contains(parent) {
+                    return true;
+                }
+                if seen.insert(*parent) {
+                    next.push(*parent);
+                }
+            }
+        }
+        false
+    }
+
+    /// Whether the successor key `successor` on the roster is this hold's
+    /// landing: the key is on the roster, and some enrolment of it does
+    /// not follow any of `cancels`, this hold's counted Cancels. A landing
+    /// writes only for a hold its fold reads as not cancelled, so an
+    /// enrolment whose causal past holds this hold's Cancel is another
+    /// attempt's: a retry with the same successor, or the kit's vouch that
+    /// cancelled this hold first. A key on the roster through no owner-key
+    /// enrolment the reader holds counts as landed.
+    fn landed(
+        &self,
+        fold: &AuthorityFold,
+        successor: &AuthorityKey,
+        cancels: &BTreeSet<AuthorityEntryHash>,
+    ) -> bool {
+        if !fold.roster.contains_key(successor) {
+            return false;
+        }
+        if cancels.is_empty() {
+            return true;
+        }
+        self.enrolments.get(successor).is_none_or(|enrolments| {
+            enrolments
+                .iter()
+                .any(|enrolment| !self.descends_from(*enrolment, cancels))
+        })
     }
 }
 
@@ -132,7 +195,8 @@ pub enum RecoveryHoldState {
     /// Live and due: the hold's owner's ItIsMe answered it, or the reader's
     /// clock reached `lands_at`. Lands at the seed holder's next call.
     Due,
-    /// The successor key is on the roster: the attempt completed.
+    /// The successor key is on the roster, through an enrolment that
+    /// follows none of the hold's Cancels: the attempt completed.
     Landed,
     /// A Cancel answered it: it never lands, and no later answer revives it.
     Cancelled,
@@ -153,7 +217,10 @@ fn state_rank(state: RecoveryHoldState) -> u8 {
 impl Vault {
     /// Every recovery hold this install's log holds, with its state: Landed
     /// once the successor key is on the roster (live or since revoked: the
-    /// attempt completed), else Cancelled on any valid Cancel that counts
+    /// attempt completed) through an enrolment that follows none of the
+    /// hold's counted Cancels (`HoldRows::landed`: a retry's or the kit's
+    /// enrolment of the same key after a Cancel leaves a cancelled hold
+    /// Cancelled), else Cancelled on any valid Cancel that counts
     /// for the hold (any owner device key's of this vault, a co-owner's
     /// included, or the kit's, which this hold's signer R signs; another
     /// root's R is inert, and an ItIsMe never revives one), else Void when
@@ -178,6 +245,7 @@ impl Vault {
         let mut stored = BTreeSet::new();
         for (hash, (_, entry)) in &history {
             stored.insert(*hash);
+            rows.parents.insert(*hash, entry.parent_hashes.clone());
             if !fold.valid_entries.contains(hash) {
                 continue;
             }
@@ -187,21 +255,24 @@ impl Vault {
             crate::authority::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?
         {
             for (hash, entry) in evidence.carried_past(&stored) {
+                rows.parents.insert(*hash, entry.parent_hashes.clone());
                 if !fold.valid_entries.contains(hash) {
                     continue;
                 }
                 rows.read(*hash, entry);
             }
         }
-        let HoldRows {
-            holds,
-            answers,
-            root_keys,
-            key_owners,
-        } = rows;
-        let mut views: Vec<RecoveryHoldView> = holds
-            .into_iter()
+        let mut views: Vec<RecoveryHoldView> = rows
+            .holds
+            .iter()
             .map(|(hash, hold, signer)| {
+                let (hash, signer) = (*hash, signer.clone());
+                let HoldRows {
+                    answers,
+                    root_keys,
+                    key_owners,
+                    ..
+                } = &rows;
                 let successor_key = hold.successor_key();
                 let named = answers.get(&hash);
                 // A Cancel counts for this hold when an owner device key of
@@ -222,21 +293,22 @@ impl Vault {
                         !root_keys.contains(answerer) || *answerer == signer
                     }
                 };
-                let cancels: Vec<&AuthorityKey> = named.map_or(Vec::new(), |list| {
+                let cancels: Vec<&HoldAnswerRow> = named.map_or(Vec::new(), |list| {
                     list.iter()
-                        .filter(|(kind, answerer)| {
+                        .filter(|(kind, answerer, _)| {
                             *kind == RecoveryHoldAnswerKind::Cancel && counts(*kind, answerer)
                         })
-                        .map(|(_, answerer)| answerer)
                         .collect()
                 });
                 let cancelled = !cancels.is_empty();
+                let cancel_rows: BTreeSet<AuthorityEntryHash> =
+                    cancels.iter().map(|(_, _, row)| *row).collect();
                 let affirmed = named.is_some_and(|list| {
-                    list.iter().any(|(kind, answerer)| {
+                    list.iter().any(|(kind, answerer, _)| {
                         *kind == RecoveryHoldAnswerKind::ItIsMe && counts(*kind, answerer)
                     })
                 });
-                let state = if fold.roster.contains_key(&successor_key) {
+                let state = if rows.landed(&fold, &successor_key, &cancel_rows) {
                     RecoveryHoldState::Landed
                 } else if cancelled {
                     RecoveryHoldState::Cancelled
@@ -253,8 +325,8 @@ impl Vault {
                 };
                 let mut answered_by: Vec<AuthorityKey> = named.map_or(Vec::new(), |list| {
                     list.iter()
-                        .filter(|(kind, answerer)| counts(*kind, answerer))
-                        .map(|(_, answerer)| answerer.clone())
+                        .filter(|(kind, answerer, _)| counts(*kind, answerer))
+                        .map(|(_, answerer, _)| answerer.clone())
                         .collect()
                 });
                 answered_by.sort();
@@ -262,7 +334,7 @@ impl Vault {
                 let mut cancelled_by: Vec<EntityId> = if state == RecoveryHoldState::Cancelled {
                     cancels
                         .into_iter()
-                        .filter_map(|answerer| {
+                        .filter_map(|(_, answerer, _)| {
                             key_person(&fold, key_owners.get(answerer).copied(), answerer)
                         })
                         .collect()
@@ -285,13 +357,7 @@ impl Vault {
                 }
             })
             .collect();
-        views.sort_by(|a, b| {
-            (state_rank(a.state), a.lands_at, a.hold).cmp(&(
-                state_rank(b.state),
-                b.lands_at,
-                b.hold,
-            ))
-        });
+        views.sort_by_key(|view| (state_rank(view.state), view.lands_at, view.hold));
         Ok(views)
     }
 
