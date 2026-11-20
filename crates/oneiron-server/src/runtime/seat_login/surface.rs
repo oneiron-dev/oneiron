@@ -150,7 +150,27 @@ impl From<OfficialSeatFields> for super::OfficialRunnerSeatSettings {
 
 impl<'de> Deserialize<'de> for super::OfficialRunnerSeatSettings {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        OfficialSeatFields::deserialize(deserializer).map(Self::from)
+        deserializer
+            .deserialize_map(OfficialSeatTable)
+            .map(Self::from)
+    }
+}
+
+/// Reads an official seat from a table and refuses every other shape, as
+/// the flattened struct read before it did. A derived [`OfficialSeatFields`]
+/// also takes a sequence, by position, and fills each setting the sequence
+/// leaves out from its default; an official seat is never read so.
+struct OfficialSeatTable;
+
+impl<'de> serde::de::Visitor<'de> for OfficialSeatTable {
+    type Value = OfficialSeatFields;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("an official runner seat as a table of its settings")
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+        OfficialSeatFields::deserialize(serde::de::value::MapAccessDeserializer::new(map))
     }
 }
 
