@@ -40,9 +40,11 @@ use oneiron_model::llm::Scope;
 /// read from. The correctable set freezes the listed and speaker Entity
 /// ids whose step scope holds a correctable claim. The inputs name the
 /// version of every row whose words the transcript shows, so a receipt
-/// answers only while each still reads at it. No person-mint namespace
-/// binds the request; the decoded reply retains declared persons without
-/// minting them.
+/// answers only while each still reads at it. The request also names the
+/// label table, each piece's served range and the sources
+/// ([`Self::call_inputs`]), and the step's record keeps them. No person-mint
+/// namespace binds the request; the decoded reply retains declared persons
+/// without minting them.
 pub(crate) struct PreparedExtractionStep {
     /// Holds the native transcript over the served words, with labels rendered in.
     transcript: String,
@@ -60,6 +62,29 @@ pub(crate) struct PreparedExtractionStep {
     /// Holds the version of every row whose words the transcript shows,
     /// in id order, as the request names them.
     inputs: Vec<SourceVersion>,
+}
+
+impl PreparedExtractionStep {
+    /// What this step's call shows beside its words, as its request names it
+    /// and its record keeps it: the row behind each label, the served byte
+    /// range of each piece in request order, and the sources in id order,
+    /// each once.
+    fn call_inputs(&self) -> crate::llm::StepCallInputs {
+        let sources: BTreeSet<EntityId> = self.sources.iter().copied().collect();
+        crate::llm::StepCallInputs {
+            labels: self.labels.table(),
+            ranges: self
+                .pieces
+                .iter()
+                .map(|piece| crate::llm::StepInputRange {
+                    turn: piece.turn,
+                    start: piece.start,
+                    end: piece.start + piece.text.len() as u64,
+                })
+                .collect(),
+            sources: sources.into_iter().collect(),
+        }
+    }
 }
 
 /// Renders the wake's admitted host material as every extraction input
@@ -361,7 +386,7 @@ fn layout_slices(
 /// native pass asks in, with no source rule over the prepared transcript
 /// led by the loan's host material through the shared helper, then the
 /// labels bound with no person-mint namespace, then the prepared inputs'
-/// versions in the host options, then the Extraction rules,
+/// versions and the call inputs in the host options, then the Extraction rules,
 /// then the final Extraction role authorization and reasoning binding.
 /// The bound path has no clean-slice loan, extraction-width, or
 /// trust-flag equivalent for material; none is invented. The call sends
@@ -396,6 +421,7 @@ pub(crate) async fn execute_bound_step(
     )?;
     prepared.labels.bind_request(&mut request, None);
     crate::llm::bind_step_input_versions(&mut request, &prepared.inputs)?;
+    crate::llm::bind_step_call_inputs(&mut request, &prepared.call_inputs())?;
     if let Some(rules) = rules.as_ref() {
         rules.bind(Stage::Extraction, &mut request);
     }

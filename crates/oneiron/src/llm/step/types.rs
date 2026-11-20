@@ -59,6 +59,20 @@ pub(super) const KEY_AT: &str = "at";
 /// same key, and the terminal record keeps them.
 pub(super) const KEY_INPUT_VERSIONS: &str = "input_versions";
 
+/// The row behind each call label a bound step's request showed, as one JSON
+/// string: each label prefix letter with its rows in label order. The request
+/// carries it in its host provider options under the same key, and the
+/// terminal record keeps it.
+pub(super) const KEY_INPUT_LABELS: &str = "input_labels";
+
+/// The byte range of each cited TURN's words a bound step's request showed, as
+/// one JSON string, in request order; carried and kept as the labels are.
+pub(super) const KEY_INPUT_RANGES: &str = "input_ranges";
+
+/// Every row a bound step's request was read from, as one JSON string, in id
+/// order, each once; carried and kept as the labels are.
+pub(super) const KEY_INPUT_SOURCES: &str = "input_sources";
+
 pub(super) const KEY_TRAP_KIND: &str = "trap_kind";
 
 pub(super) const KEY_STATE: &str = "state";

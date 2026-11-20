@@ -69,6 +69,7 @@ pub use self::peer_wait::{
 #[cfg(oneiron_test_support)]
 pub(crate) use self::request_hash_step::step_state_present_for_attempt;
 pub(crate) use self::request_hash_step::{
+    StepCallInputs, StepInputLabels, StepInputRange, bind_step_call_inputs,
     bind_step_input_versions, request_hash_step_receipt_in_txn, request_hash_submit_receipt,
     request_hash_submit_receipt_keeping_erased,
 };

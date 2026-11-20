@@ -177,8 +177,10 @@ pub(super) fn new_person(text: &str) -> Option<usize> {
     (label.kind == LabelKind::Entity).then_some(label.number)
 }
 
-/// One call's labels, both ways. Built per call from its admitted inputs,
-/// never shared with another call and never stored.
+/// One call's labels, both ways. Built per call from its admitted inputs and
+/// never shared with another call. A bound extraction step's terminal record
+/// keeps its table ([`Self::table`]), so that step's saved reply reads back
+/// through the labels its own call showed; nothing else stores one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct CallLabelMap {
     /// Each kind's ids in the order their labels were assigned: the id at
@@ -231,6 +233,16 @@ impl CallLabelMap {
                     *id,
                 )
             })
+    }
+
+    /// This call's label table: each kind's prefix letter with its ids in
+    /// label order, the id at index `i` being labelled `i + 1`. Shown choice
+    /// options are not part of it: only a decision read shows them.
+    pub(super) fn table(&self) -> crate::llm::StepInputLabels {
+        self.ids
+            .iter()
+            .map(|(kind, ids)| (kind.prefix().to_string(), ids.clone()))
+            .collect()
     }
 
     /// Every row this call labelled, its questions aside: each id its

@@ -1,6 +1,7 @@
 //! The bound extraction step shows the listing its native slice shows, names its layout, and
 //! skips an unbound quote by native's correctable rule. Its receipt answers only while every row
-//! the listing showed still reads for the Dreamer.
+//! the listing showed still reads for the Dreamer. Its record keeps the row behind each label, the
+//! served range of each cited turn and the rows its call was read from.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test extraction_step_listing`.
 #![cfg(oneiron_test_support)]
@@ -8,9 +9,11 @@
 #[path = "extraction_steps/support.rs"]
 mod step_support;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use oneiron::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptBinding};
+use oneiron::llm::DREAMER_STEP_PREDICATE;
 use oneiron::memory::{
     ExtractionLayout, ExtractionStepSlice, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_NOT_FOUND,
 };
@@ -224,7 +227,7 @@ fn a_bound_step_lists_native_entities_and_decodes_a_listed_subject() -> Extracti
         texts[0]
     );
     assert!(
-        texts[0].contains("  claim C1 profile.name = \"owen\"\n"),
+        texts[0].contains("  claim C1 profile.name = \"owen\" (uncitable)\n"),
         "the profile claim lists under owen: {}",
         texts[0]
     );
@@ -265,7 +268,7 @@ fn a_receipt_withholds_a_step_whose_listed_claim_left_the_grant() -> ExtractionS
     let texts = backend.request_texts();
     assert_eq!(texts.len(), 1);
     assert!(
-        texts[0].contains("  claim C1 profile.name = \"owen\"\n"),
+        texts[0].contains("  claim C1 profile.name = \"owen\" (uncitable)\n"),
         "the step's request lists the claim: {}",
         texts[0]
     );
@@ -665,5 +668,142 @@ fn a_cite_across_two_slices_refuses_naming_both_in_native_order() -> ExtractionS
         Some(Box::new(ExtractionLayout::StepSlices { slices: expected }))
     );
     assert_eq!(backend.call_count(), 0);
+    Ok(())
+}
+
+/// Reads the string entries of the `dreamer.step` record of `step_ref` in `vault`, by key.
+fn step_record_strings(
+    vault: &Vault,
+    step_ref: &str,
+) -> ExtractionStepTestResult<BTreeMap<String, String>> {
+    for id in vault.entities_by_type(ENTITY_TYPE_CLAIM)? {
+        let Ok(Some(body)) = vault.get_claim(&id) else {
+            continue;
+        };
+        if body.predicate != DREAMER_STEP_PREDICATE {
+            continue;
+        }
+        let Some(entries) = body.value.as_map() else {
+            continue;
+        };
+        let strings: BTreeMap<String, String> = entries
+            .iter()
+            .filter_map(|(key, value)| Some((key.as_str()?.to_owned(), value.as_str()?.to_owned())))
+            .collect();
+        if strings.get("step_hash").map(String::as_str) == Some(step_ref) {
+            return Ok(strings);
+        }
+    }
+    Err("the step filed no record".into())
+}
+
+/// The terminal record of a bound step keeps what its call showed, in ids and offsets: the row
+/// behind each call label in label order, the served byte range of each cited turn, and every row
+/// the call was read from in id order. The step cites a part of its turn, so the range is the
+/// served part and not the whole turn. The receipt and the memo read the record as before.
+#[test]
+fn a_bound_step_record_keeps_the_labels_ranges_and_sources_its_call_showed()
+-> ExtractionStepTestResult<()> {
+    let (fixture, subject, claim) = listing_fixture(&["before owen likes tea after"])?;
+    let backend = Arc::new(CapturingStepBackend::new(
+        listed_reply("P2", "owen likes tea"),
+        100,
+        50,
+    ));
+    let step = ExtractionStepFixture::new(backend.clone())?;
+    let binding = lent_binding(&fixture, &step)?;
+    let (turn, version) = &fixture.turns[0];
+    let request = extraction_step_request(json!([extraction_step_evidence(
+        turn,
+        version.clone(),
+        Some(json!({"start": 7, "end": 21}))
+    ),]));
+    let submit = invoke_bound_step(&binding, request.clone()).expect("the listed step finishes");
+    assert_eq!(submit["result"]["status"], json!("finished"));
+    assert_eq!(
+        submit["result"]["json"]["candidates"][0]["subject"],
+        json!({"listed": subject.to_hex()}),
+        "P2 names the listed subject"
+    );
+    let step_ref = submit["step_ref"]
+        .as_str()
+        .expect("the submit answers its step ref")
+        .to_owned();
+    let record = step_record_strings(&fixture.vault, &step_ref)?;
+
+    let labels: Value = serde_json::from_str(
+        record
+            .get("input_labels")
+            .expect("the record names its call labels"),
+    )?;
+    assert_eq!(labels["T"], json!([turn]), "T1 is the cited turn");
+    assert_eq!(
+        labels["C"],
+        json!([claim.to_hex()]),
+        "C1 is the listed claim"
+    );
+    let entities = labels["P"]
+        .as_array()
+        .expect("the record names its entity labels");
+    assert_eq!(
+        entities.len(),
+        2,
+        "the call listed the turn's author and owen: {labels}"
+    );
+    assert_eq!(
+        entities[1],
+        json!(subject.to_hex()),
+        "P2 is the listed subject"
+    );
+    assert_eq!(
+        labels["V"].as_array().map(Vec::len),
+        Some(1),
+        "V1 is the cited conversation: {labels}"
+    );
+
+    let ranges: Value = serde_json::from_str(
+        record
+            .get("input_ranges")
+            .expect("the record names its turn ranges"),
+    )?;
+    assert_eq!(
+        ranges,
+        json!([{"turn": turn, "start": 7, "end": 21}]),
+        "the range is the served part of the turn"
+    );
+
+    let sources: Vec<String> = serde_json::from_str(
+        record
+            .get("input_sources")
+            .expect("the record names its source rows"),
+    )?;
+    assert!(
+        sources.windows(2).all(|pair| pair[0] < pair[1]),
+        "the sources are in id order, each once: {sources:?}"
+    );
+    let labelled = labels
+        .as_object()
+        .expect("the label table is an object")
+        .values()
+        .flat_map(|ids| ids.as_array().into_iter().flatten())
+        .filter_map(Value::as_str);
+    for id in labelled {
+        assert!(
+            sources.iter().any(|source| source == id),
+            "every labelled row is a source: {id} in {sources:?}"
+        );
+    }
+
+    let receipt =
+        invoke_bound_step_receipt(&binding, &step_ref).expect("the receipt reads the record");
+    assert_eq!(receipt["result"]["status"], json!("finished"));
+    let again = invoke_bound_step(&binding, request).expect("the memo reads the record");
+    assert_eq!(again["result"]["status"], json!("finished"));
+    assert_eq!(again["step_ref"], json!(step_ref));
+    assert_eq!(
+        backend.call_count(),
+        1,
+        "the resubmit is served from the record"
+    );
     Ok(())
 }
