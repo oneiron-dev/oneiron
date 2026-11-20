@@ -132,6 +132,7 @@ pub mod extraction_routing;
 pub mod extraction_single_valued;
 pub mod extraction_steps;
 pub mod extraction_verdict;
+pub mod extraction_wake;
 pub mod fanout_admission;
 pub mod feed_prune;
 pub mod feeds;
