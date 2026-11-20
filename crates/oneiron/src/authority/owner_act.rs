@@ -235,6 +235,16 @@ fn grant_verb(act: OwnerActKind) -> &'static str {
     }
 }
 
+/// The verbs an agent's Grant lists to name the acts it may carry, one per
+/// act in [`AGENT_GRANTABLE_ACTS`]. The Grant mint refuses a Grant that lists
+/// one of them without `read` (Engine ANSWER
+/// AGENT-GRANTABLE-ACT-GRANT-NEEDS-READ-VERB = A, 20 Nov 20:32):
+/// [`scope_names_act`] asks the Grant to confer, which needs `read`, so such a
+/// Grant would look live and never carry its act.
+pub(crate) fn agent_grantable_act_verbs() -> impl Iterator<Item = &'static str> {
+    AGENT_GRANTABLE_ACTS.into_iter().map(grant_verb)
+}
+
 /// Whether a scope of `kind` with `expires_at` and `member` names `act`
 /// for `agent` at `at` (FIX 4703): the shared member/verb/confers predicate
 /// behind [`grant_names_act`] and the signed-Mint check, over explicit parts

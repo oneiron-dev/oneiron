@@ -111,8 +111,8 @@ pub use self::call::{
     ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ResponseFormat, TierPrecedence,
 };
 pub use self::catalog::{
-    LlmCapability, LlmCatalogCost, LlmCatalogEntry, MEDIA_METADATA_KEY, REASONING_BUDGET_PARAM,
-    ReasoningEffort,
+    LlmCapability, LlmCatalogCost, LlmCatalogEntry, MEDIA_METADATA_KEY, OWN_SERVER_ONLY_PARAM,
+    REASONING_BUDGET_PARAM, ReasoningEffort,
 };
 pub use self::error::{
     BudgetDenied, FatalLlmError, InterruptedMediaCall, LabelReadFailure, LlmError,

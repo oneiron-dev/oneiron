@@ -235,12 +235,6 @@ impl Vault {
         }
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
-        // The image this vault had adopted before the write. A prelude may
-        // adopt one in this transaction (a sealed kit restore), which rolls
-        // back with a refused import: a handoff only that image covers is
-        // none this vault holds, so a refusal's evidence never names it
-        // (REVIEW-9572 round 2). The fold and ancestry read the staged image.
-        let (_, held_evidence) = adopted_context_in_txn(&self.store, &txn)?;
         prelude(&mut txn)?;
         let carried: BTreeMap<_, _> = decoded
             .iter()
@@ -319,13 +313,17 @@ impl Vault {
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         if judge_merged {
+            // The fold and ancestry see an image the prelude adopts (e.g. a
+            // sealed kit restore), but it rolls back with a refused import.
+            // The refusal reads committed evidence, so it names no handoff
+            // only that image covers (REVIEW-9572 round 2).
             refuse_retired_standing(
                 &self.store,
+                self.privacy_posture(),
                 &fold,
                 &merged,
                 evidence.as_deref(),
                 &arriving,
-                &mut super::retired_signers::import_row_held(&resident, held_evidence.as_deref()),
             )?;
         }
         if fold.vault_root_is_conflicted() {

@@ -2730,8 +2730,10 @@ written into a one-shot document of that origin which the host answers
 itself, so no page script runs before it, and read back key by key; then
 it loads the URL, scrolls, and reads the page whole. The answer carries
 the switch's `receipt` (verb `switch_engine`), whose `engine_switch` is its
-record (`{from, to, reason, url, carried, not_carried, outcome}`), and the
-new page's `observation`. A carried store names its origin, its item
+record (`{from, to, reason, url, carried, not_carried, outcome}`, and on a
+switched one `source_guest_pressure`: the pids-limit hits the source guest
+showed by the time it went, which no later answer names), and the new
+page's `observation`. A carried store names its origin, its item
 count, its `phase` (`pre_input`, `post_act`, `exit`, `hand_back` or
 `switch_export`) and `after_receipt`, the last receipt the run had landed
 when it was read. `not_carried` lists, by component, origin, cookie

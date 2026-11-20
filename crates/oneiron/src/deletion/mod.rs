@@ -1,6 +1,8 @@
 //! ARCH-0038 deletion/redaction contract types.
 
 mod actor_fields;
+mod brief_delete_fence;
+pub(crate) use brief_delete_fence::{BriefDeleteFence, BriefDeleteFences, conclude_brief_delete};
 pub(crate) use oneiron_store::deletion::archive_role;
 mod safe_delete_reason;
 pub use safe_delete_reason::SafeDeleteReason;

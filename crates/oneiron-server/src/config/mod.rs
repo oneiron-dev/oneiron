@@ -66,6 +66,7 @@ pub use gpu_jobs::{GpuJobsSettings, GpuOfferSettings};
 pub use import::ImportConfig;
 pub use keystore::{DEFAULT_KEYCHAIN_SERVICE, KeystoreBackend, KeystoreConfig, KeystoreInstall};
 pub use limits::LimitsConfig;
+pub(crate) use limits::REQUEST_BODY_FLOOR_MIN_BYTES;
 pub use line::LineConfig;
 pub(crate) use linear::LinearCredential;
 pub use linear::{LinearConfig, LinearMode};

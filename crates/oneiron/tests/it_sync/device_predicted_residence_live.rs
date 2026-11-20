@@ -25,8 +25,9 @@ use oneiron::sync::{
     SyncClientConfig, SyncResidenceMode, SyncSelector, SyncSelectorWorld, WindowKey, WindowManager,
 };
 use oneiron::temporal::TimeRange;
+use oneiron::test_doors::host_node_seals::copy_authority_log;
 use oneiron::test_doors::predicted_residence::{
-    append_prediction, apply_residence_directives, run_predicted_pass,
+    append_prediction, append_prediction_dated, apply_residence_directives, run_predicted_pass,
 };
 use oneiron::{Vault, VaultConfig};
 
@@ -132,6 +133,25 @@ where
 }
 
 /// This vault's own machine.
+/// Another install of the device's vault, holding its authority log as it stood when taken, as a
+/// second home of the owner does: a prediction it signs follows only the rows it took in.
+struct Replica {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+}
+
+impl Replica {
+    /// Takes `device`'s authority log as it stands now.
+    fn of(device: &Device) -> Self {
+        let dir = tempfile::tempdir().expect("replica vault directory");
+        let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh replica vault");
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+        copy_authority_log(&device.vault, &vault)
+            .expect("FIXTURE: the replica takes the device's authority log");
+        Self { _dir: dir, vault }
+    }
+}
+
 fn local_machine(vault: &Vault) -> EntityId {
     vault
         .local_machine()
@@ -1149,6 +1169,551 @@ fn a_prediction_without_its_live_parent_is_refused() {
                 result_of(&device, newer),
                 Some(ResidenceResultStatus::Applied)
             );
+        },
+    );
+}
+
+/// A prediction dated ahead by another home's clock (the home moved, or its clock runs fast) is
+/// replaced by the home's next prediction, which follows it in the signed log though it is dated
+/// before it: the machine applies the one that follows and refuses the one dated ahead, though it
+/// runs them in date order (FIX PREDICTED-FUTURE-DATED-BLOCKS-LATER).
+#[test]
+fn a_prediction_dated_ahead_is_replaced_by_the_one_that_follows_it() {
+    run_async(
+        "a_prediction_dated_ahead_is_replaced_by_the_one_that_follows_it",
+        || async {
+            let predicted = Arc::new(PredictedHome::default());
+            let (url, _seen) = start_home(Arc::clone(&predicted)).await;
+            let device = Device::open();
+            let connection = device_connection(&device, url);
+            let parent = issue(
+                &device,
+                ResidenceAct::SyncPredicted {
+                    window_budget: 8,
+                    document_budget: 16,
+                },
+            );
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the level applies"),
+                1
+            );
+            let ahead_set = predicted_set(&[WindowKey::for_world(now_secs(), device.founder)], &[]);
+            serve(&predicted, &ahead_set);
+            let ahead = append_prediction_dated(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &ahead_set,
+                now_secs() + 86_400,
+            )
+            .expect("the prediction dated a day ahead");
+            let next_set = predicted_set(
+                &[
+                    WindowKey::for_world(now_secs(), device.founder),
+                    WindowKey::for_world(now_secs(), device.granted),
+                ],
+                &[],
+            );
+            serve(&predicted, &next_set);
+            let next = append_prediction(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &next_set,
+            )
+            .expect("the prediction that follows, dated now");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("both predictions run"),
+                2
+            );
+            assert_eq!(
+                reason_of(&device, next),
+                None,
+                "a prediction that follows one dated ahead applies"
+            );
+            assert_eq!(
+                result_of(&device, next),
+                Some(ResidenceResultStatus::Applied)
+            );
+            assert_eq!(
+                count_of(&device, next),
+                2,
+                "the set that follows is adopted"
+            );
+            assert_eq!(
+                result_of(&device, ahead),
+                Some(ResidenceResultStatus::Refused)
+            );
+            let reason = reason_of(&device, ahead).expect("a refusal reason");
+            assert!(
+                reason.contains("a newer prediction replaced it"),
+                "the newer reason: {reason}"
+            );
+        },
+    );
+}
+
+/// A prediction a home whose clock lags signs after taking in the last one is dated before it,
+/// and still applies: what it follows replaces nothing (FIX PREDICTED-FUTURE-DATED-BLOCKS-LATER).
+#[test]
+fn a_prediction_dated_before_the_one_it_follows_still_applies() {
+    run_async(
+        "a_prediction_dated_before_the_one_it_follows_still_applies",
+        || async {
+            let predicted = Arc::new(PredictedHome::default());
+            let (url, _seen) = start_home(Arc::clone(&predicted)).await;
+            let device = Device::open();
+            let connection = device_connection(&device, url);
+            let parent = issue(
+                &device,
+                ResidenceAct::SyncPredicted {
+                    window_budget: 8,
+                    document_budget: 16,
+                },
+            );
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the level applies"),
+                1
+            );
+            let first_set = predicted_set(&[WindowKey::for_world(now_secs(), device.founder)], &[]);
+            serve(&predicted, &first_set);
+            let first = append_prediction(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &first_set,
+            )
+            .expect("the first prediction, dated now");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the first prediction runs"),
+                1
+            );
+            assert_eq!(
+                result_of(&device, first),
+                Some(ResidenceResultStatus::Applied)
+            );
+            let lagging_set = predicted_set(
+                &[
+                    WindowKey::for_world(now_secs(), device.founder),
+                    WindowKey::for_world(now_secs(), device.granted),
+                ],
+                &[],
+            );
+            serve(&predicted, &lagging_set);
+            let lagging = append_prediction_dated(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &lagging_set,
+                now_secs() - 3_600,
+            )
+            .expect("the prediction that follows, dated an hour back");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the prediction that follows runs"),
+                1
+            );
+            assert_eq!(
+                reason_of(&device, lagging),
+                None,
+                "a prediction dated before the one it follows applies"
+            );
+            assert_eq!(
+                result_of(&device, lagging),
+                Some(ResidenceResultStatus::Applied)
+            );
+            assert_eq!(
+                count_of(&device, lagging),
+                2,
+                "the set that follows is adopted"
+            );
+        },
+    );
+}
+
+/// A prediction under a predicted level the owner has since replaced applies nowhere, so it
+/// replaces none under the live level, even when it sorts after one: the live one applies and the
+/// stale one is refused (FIX PREDICTED-FUTURE-DATED-BLOCKS-LATER).
+#[test]
+fn a_prediction_under_a_replaced_parent_replaces_none() {
+    run_async(
+        "a_prediction_under_a_replaced_parent_replaces_none",
+        || async {
+            let predicted = Arc::new(PredictedHome::default());
+            let (url, _seen) = start_home(Arc::clone(&predicted)).await;
+            let device = Device::open();
+            let connection = device_connection(&device, url);
+            let replaced = issue(
+                &device,
+                ResidenceAct::SyncPredicted {
+                    window_budget: 8,
+                    document_budget: 16,
+                },
+            );
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the first level applies"),
+                1
+            );
+            let live = issue(
+                &device,
+                ResidenceAct::SyncPredicted {
+                    window_budget: 8,
+                    document_budget: 16,
+                },
+            );
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the live level applies"),
+                1
+            );
+            let set = predicted_set(&[WindowKey::for_world(now_secs(), device.founder)], &[]);
+            serve(&predicted, &set);
+            let current = append_prediction(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                live,
+                &set,
+            )
+            .expect("the prediction under the live level");
+            let stale = append_prediction(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                replaced,
+                &set,
+            )
+            .expect("the prediction under the replaced level, sorting after");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("both predictions run"),
+                2
+            );
+            assert_eq!(
+                reason_of(&device, current),
+                None,
+                "a prediction under a replaced level replaces none under the live one"
+            );
+            assert_eq!(
+                result_of(&device, current),
+                Some(ResidenceResultStatus::Applied)
+            );
+            assert_eq!(
+                result_of(&device, stale),
+                Some(ResidenceResultStatus::Refused)
+            );
+            let reason = reason_of(&device, stale).expect("a refusal reason");
+            assert!(
+                reason.contains("under the owner's live predicted level"),
+                "the parent reason: {reason}"
+            );
+        },
+    );
+}
+
+/// REVIEW-9781 round 1: of two predictions neither of which follows the other in the signed log
+/// (two homes signed them, each before it took the other's in), the one dated later stays the
+/// machine's target in whichever order they arrive: the later dated one applies first, and the
+/// earlier dated one, which reaches the machine after it, is refused (FIX
+/// PREDICTED-FUTURE-DATED-BLOCKS-LATER).
+#[test]
+fn a_late_concurrent_prediction_dated_earlier_is_refused() {
+    run_async(
+        "a_late_concurrent_prediction_dated_earlier_is_refused",
+        || async {
+            let predicted = Arc::new(PredictedHome::default());
+            let (url, _seen) = start_home(Arc::clone(&predicted)).await;
+            let device = Device::open();
+            let connection = device_connection(&device, url);
+            let parent = issue(
+                &device,
+                ResidenceAct::SyncPredicted {
+                    window_budget: 8,
+                    document_budget: 16,
+                },
+            );
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the level applies"),
+                1
+            );
+            let other_home = Replica::of(&device);
+            let later_set = predicted_set(&[WindowKey::for_world(now_secs(), device.founder)], &[]);
+            serve(&predicted, &later_set);
+            let later = append_prediction(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &later_set,
+            )
+            .expect("the prediction dated now");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the prediction dated now runs"),
+                1
+            );
+            assert_eq!(
+                result_of(&device, later),
+                Some(ResidenceResultStatus::Applied),
+                "FIXTURE: the prediction dated now applies"
+            );
+            let earlier_set = predicted_set(
+                &[
+                    WindowKey::for_world(now_secs(), device.founder),
+                    WindowKey::for_world(now_secs(), device.granted),
+                ],
+                &[],
+            );
+            serve(&predicted, &earlier_set);
+            let earlier = append_prediction_dated(
+                &other_home.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &earlier_set,
+                now_secs() - 3_600,
+            )
+            .expect("the other home's prediction, dated an hour back");
+            copy_authority_log(&other_home.vault, &device.vault)
+                .expect("the other home's prediction reaches the machine");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the late prediction runs"),
+                1
+            );
+            assert_eq!(
+                result_of(&device, earlier),
+                Some(ResidenceResultStatus::Refused),
+                "a late prediction dated before the applied one, which it does not follow, never \
+                 replaces it"
+            );
+            let reason = reason_of(&device, earlier).expect("a refusal reason");
+            assert!(
+                reason.contains("a newer prediction replaced it"),
+                "the newer reason: {reason}"
+            );
+        },
+    );
+}
+
+/// REVIEW-9781 round 2: of the predictions no other one follows, the machine adopts the one that
+/// follows the most of the others, so one it refused never becomes its target later. Home B signs
+/// a prediction concurrent with home A's, dated before it, and the machine refuses it. Home C,
+/// which took in A's but not B's, then signs one that follows A's, dated before both: it applies,
+/// since it follows A's and B's follows none. A machine that takes in all three in one round
+/// adopts C's as well, so the target is the same whichever rounds the predictions arrive in.
+#[test]
+fn a_prediction_that_follows_the_target_outranks_a_refused_concurrent_one() {
+    run_async(
+        "a_prediction_that_follows_the_target_outranks_a_refused_concurrent_one",
+        || async {
+            let predicted = Arc::new(PredictedHome::default());
+            let (url, _seen) = start_home(Arc::clone(&predicted)).await;
+
+            // A round after each arrival.
+            let device = Device::open();
+            let connection = device_connection(&device, url.clone());
+            let parent = issue(
+                &device,
+                ResidenceAct::SyncPredicted {
+                    window_budget: 8,
+                    document_budget: 16,
+                },
+            );
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the level applies"),
+                1
+            );
+            let home_b = Replica::of(&device);
+            let a_set = predicted_set(&[WindowKey::for_world(now_secs(), device.founder)], &[]);
+            serve(&predicted, &a_set);
+            let a = append_prediction(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &a_set,
+            )
+            .expect("home A's prediction, dated now");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("home A's prediction runs"),
+                1
+            );
+            assert_eq!(
+                result_of(&device, a),
+                Some(ResidenceResultStatus::Applied),
+                "FIXTURE: home A's prediction applies"
+            );
+            let home_c = Replica::of(&device);
+            let b_set = predicted_set(
+                &[
+                    WindowKey::for_world(now_secs(), device.founder),
+                    WindowKey::for_world(now_secs(), device.granted),
+                ],
+                &[],
+            );
+            serve(&predicted, &b_set);
+            let b = append_prediction_dated(
+                &home_b.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &b_set,
+                now_secs() - 3_600,
+            )
+            .expect("home B's concurrent prediction, dated an hour back");
+            copy_authority_log(&home_b.vault, &device.vault)
+                .expect("home B's prediction reaches the machine");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("home B's prediction runs"),
+                1
+            );
+            assert_eq!(
+                result_of(&device, b),
+                Some(ResidenceResultStatus::Refused),
+                "FIXTURE: a concurrent prediction dated before the target is refused"
+            );
+            let c_set = predicted_set(
+                &[
+                    WindowKey::for_world(now_secs(), device.founder),
+                    WindowKey::for_world(now_secs(), device.granted),
+                ],
+                &[predicted_turn(&device)],
+            );
+            serve(&predicted, &c_set);
+            let c = append_prediction_dated(
+                &home_c.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &c_set,
+                now_secs() - 7_200,
+            )
+            .expect("home C's prediction that follows A's, dated two hours back");
+            copy_authority_log(&home_c.vault, &device.vault)
+                .expect("home C's prediction reaches the machine");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("home C's prediction runs"),
+                1
+            );
+            assert_eq!(
+                reason_of(&device, c),
+                None,
+                "a prediction that follows the target outranks a refused concurrent one dated \
+                 after it"
+            );
+            assert_eq!(result_of(&device, c), Some(ResidenceResultStatus::Applied));
+            assert_eq!(count_of(&device, c), 3, "home C's set is the target");
+
+            // All three in one round.
+            let device = Device::open();
+            let connection = device_connection(&device, url);
+            let parent = issue(
+                &device,
+                ResidenceAct::SyncPredicted {
+                    window_budget: 8,
+                    document_budget: 16,
+                },
+            );
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the level applies"),
+                1
+            );
+            let home_b = Replica::of(&device);
+            let a_set = predicted_set(&[WindowKey::for_world(now_secs(), device.founder)], &[]);
+            serve(&predicted, &a_set);
+            let a = append_prediction(
+                &device.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &a_set,
+            )
+            .expect("home A's prediction, dated now");
+            let home_c = Replica::of(&device);
+            let b_set = predicted_set(
+                &[
+                    WindowKey::for_world(now_secs(), device.founder),
+                    WindowKey::for_world(now_secs(), device.granted),
+                ],
+                &[],
+            );
+            serve(&predicted, &b_set);
+            let b = append_prediction_dated(
+                &home_b.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &b_set,
+                now_secs() - 3_600,
+            )
+            .expect("home B's concurrent prediction, dated an hour back");
+            let c_set = predicted_set(
+                &[
+                    WindowKey::for_world(now_secs(), device.founder),
+                    WindowKey::for_world(now_secs(), device.granted),
+                ],
+                &[predicted_turn(&device)],
+            );
+            serve(&predicted, &c_set);
+            let c = append_prediction_dated(
+                &home_c.vault,
+                &issuer(),
+                local_machine(&device.vault),
+                parent,
+                &c_set,
+                now_secs() - 7_200,
+            )
+            .expect("home C's prediction that follows A's, dated two hours back");
+            copy_authority_log(&home_b.vault, &device.vault)
+                .expect("home B's prediction reaches the machine");
+            copy_authority_log(&home_c.vault, &device.vault)
+                .expect("home C's prediction reaches the machine");
+            assert_eq!(
+                apply_residence_directives(&connection)
+                    .await
+                    .expect("the three predictions run"),
+                3
+            );
+            assert_eq!(result_of(&device, a), Some(ResidenceResultStatus::Refused));
+            assert_eq!(result_of(&device, b), Some(ResidenceResultStatus::Refused));
+            assert_eq!(
+                result_of(&device, c),
+                Some(ResidenceResultStatus::Applied),
+                "the target is home C's in one round as in three"
+            );
+            assert_eq!(count_of(&device, c), 3, "home C's set is the target");
         },
     );
 }
