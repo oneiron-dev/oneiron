@@ -289,7 +289,7 @@ pub(crate) struct CorrectionFacts {
     /// may ask that position to correct.
     correctable: BTreeMap<usize, Vec<String>>,
     /// Names each request position whose operand the read proves different from the
-    /// head it corrects, in predicate or in value.
+    /// head it corrects: in predicate, or in a value whose key is exact.
     differs: BTreeSet<usize>,
 }
 
@@ -301,8 +301,10 @@ impl CorrectionFacts {
     /// corrects and serves that predicate on the operand's row. A row predicate that
     /// is not the operand's own is therefore the head's, and the operand's differs
     /// from it. With the head's predicate, the operand and the head are keyed by one
-    /// value rule, so value tokens that differ mean values that differ. Equal tokens
-    /// prove nothing: the rule may fold two spellings into one key.
+    /// value rule, so for a value whose stored forms all share one key
+    /// (`exactly_keyed`) value tokens that differ mean values that differ as JSON,
+    /// which is how the engine compares a restatement. Equal tokens do not show
+    /// equal values: the rule may fold two spellings into one key.
     fn from_read(operands: &[Value], observations: &Observations) -> Self {
         let mut facts = Self::default();
         for candidate in &observations.candidates {
@@ -320,11 +322,14 @@ impl CorrectionFacts {
                 .get(candidate.index)
                 .and_then(|operand| operand["predicate"].as_str())
                 .is_some_and(|proposed| proposed != candidate.predicate);
-            let other_value = observations
-                .priors
-                .iter()
-                .find(|prior| prior.claim == head)
-                .is_some_and(|prior| prior.value_token != candidate.value_token);
+            let other_value = operands
+                .get(candidate.index)
+                .is_some_and(|operand| exactly_keyed(&operand["value"]))
+                && observations
+                    .priors
+                    .iter()
+                    .find(|prior| prior.claim == head)
+                    .is_some_and(|prior| prior.value_token != candidate.value_token);
             if other_predicate || other_value {
                 facts.differs.insert(candidate.index);
             }
@@ -360,6 +365,23 @@ impl CorrectionFacts {
             Some(_) => !same_proposal,
             None => same_proposal && member["corrects"].as_str() == Some(head),
         }
+    }
+}
+
+/// Tells whether every stored form of the JSON `value` shares one value key: a string,
+/// a boolean, an integer, or an array of such values.
+///
+/// The engine keys a stored value by its own bytes and compares a restatement as JSON.
+/// A float (a signed zero, a narrower stored width), a `null` inside an array (a stored
+/// value JSON cannot express reads as `null`) and an object (stored keys JSON cannot
+/// express are dropped) can equal a stored value as JSON while their keys differ. For
+/// those a differing value token proves nothing.
+fn exactly_keyed(value: &Value) -> bool {
+    match value {
+        Value::String(_) | Value::Bool(_) => true,
+        Value::Number(number) => !number.is_f64(),
+        Value::Array(items) => items.iter().all(exactly_keyed),
+        Value::Null | Value::Object(_) => false,
     }
 }
 

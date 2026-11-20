@@ -186,14 +186,17 @@ fn union_keeps_a_citation_from_a_member_that_restates_the_head_with_another_valu
 
 /// The read's facts: each row's correctable claims by request position, and each
 /// correcting operand whose own predicate is not its row's, or whose value token is
-/// not the head's.
+/// not the head's while its value is one whose key is exact. A float's key is not: a
+/// stored zero and a proposed negative zero are equal as JSON under two keys.
 #[test]
 fn correction_facts_read_the_pairs_and_the_operands_that_differ_from_their_head() {
-    let operands = vec![
+    let mut operands = vec![
         operand("preference.food", "coffee", true, false),
         operand("preference.drink", "tea", true, false),
         operand("preference.food", "tea", true, false),
+        operand("preference.food", "tea", true, false),
     ];
+    operands[3]["value"] = json!(-0.0);
     let observations = Observations {
         attempt: "attempt".to_owned(),
         now_ms: 1,
@@ -203,6 +206,7 @@ fn correction_facts_read_the_pairs_and_the_operands_that_differ_from_their_head(
             row(0, "preference.food", "token-coffee"),
             row(1, "preference.food", "token-tea"),
             row(2, "preference.food", "token-tea"),
+            row(3, "preference.food", "token-negative-zero"),
         ],
         listed: vec![ListedObservation {
             claim: head(),
@@ -230,12 +234,17 @@ fn correction_facts_read_the_pairs_and_the_operands_that_differ_from_their_head(
     let read = CorrectionFacts::from_read(&operands, &observations);
     assert_eq!(
         read.correctable,
-        BTreeMap::from([(0, vec![head()]), (1, vec![head()]), (2, vec![head()]),]),
+        BTreeMap::from([
+            (0, vec![head()]),
+            (1, vec![head()]),
+            (2, vec![head()]),
+            (3, vec![head()]),
+        ]),
         "each row's correctable indexes read as the listed claims they name"
     );
     assert_eq!(
         read.differs,
         BTreeSet::from([0, 1]),
-        "position 0 by its value token, position 1 by its predicate; position 2 proves nothing"
+        "position 0 by its value token, position 1 by its predicate; positions 2 and 3 prove nothing"
     );
 }
