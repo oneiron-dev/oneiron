@@ -63,6 +63,63 @@ fn two_open_vaults_observe_on_independent_authority_clocks() {
     );
 }
 
+/// A reply's held authority reading (FIX
+/// QUESTION-OUTCOMES-REPLY-SPANS-SNAPSHOTS, blind review round 2 of #9864):
+/// every reading in the held snapshot is the held one while the handle's
+/// clock moves an hour, another vault reads its own clock meanwhile, and once
+/// the hold drops the same snapshot reads the moved clock.
+///
+/// Another thread moves the clock: it commits a floor an hour ahead and reads
+/// it, which rebases this handle's anchor. That snapshot's floor did not
+/// move, yet an unheld reading in it moves by the hour, as a credential's
+/// expiry falling between two checks of one reply would be read.
+#[test]
+fn a_held_authority_reading_stands_for_its_snapshot_while_the_clock_moves() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault_at(dir.path(), 1_000);
+    let other_dir = tempfile::tempdir().unwrap();
+    let other = open_vault_at(other_dir.path(), 500_000);
+    let store = &vault.store;
+    let txn = store.env.read_txn().unwrap();
+    let held = hold_authority_reading_in_txn(store, &txn).unwrap();
+    let at = authority_instant_secs_for_store_in_txn(store, &txn).unwrap();
+    let later = at + 3_600;
+    // LMDB's default reader slot is thread-local: the second snapshot of this
+    // vault is opened on another thread.
+    std::thread::scope(|scope| {
+        scope
+            .spawn(move || {
+                let mut wtxn = store.env.write_txn().unwrap();
+                put_authority_clock_floor_in_txn(store, &mut wtxn, later).unwrap();
+                wtxn.commit().unwrap();
+                let fresh = store.env.read_txn().unwrap();
+                assert!(
+                    authority_instant_secs_for_store_in_txn(store, &fresh).unwrap() >= later,
+                    "a fresh snapshot on another thread reads the raised floor"
+                );
+            })
+            .join()
+            .unwrap();
+    });
+    assert_eq!(
+        authority_instant_secs_for_store_in_txn(store, &txn).unwrap(),
+        at,
+        "every reading in the held snapshot is the held one, though the clock moved an hour"
+    );
+    let other_txn = other.store.env.read_txn().unwrap();
+    assert!(
+        authority_instant_secs_for_store_in_txn(&other.store, &other_txn).unwrap() >= 500_000,
+        "another vault reads its own clock while this vault's reading is held"
+    );
+    drop(other_txn);
+    drop(held);
+    assert!(
+        authority_instant_secs_for_store_in_txn(store, &txn).unwrap() >= later,
+        "with the hold dropped the same snapshot reads the moved clock, the second reading a \
+         reply judged twice would take"
+    );
+}
+
 #[test]
 fn authority_genesis_golden_vector_is_canonical() {
     let genesis = genesis_entry(1, 123);

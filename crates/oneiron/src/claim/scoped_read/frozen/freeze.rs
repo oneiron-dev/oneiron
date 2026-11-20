@@ -37,6 +37,24 @@ impl FrozenReadLane {
     /// by two credentials, as a frozen lane keeps one. A store failure
     /// reading the owner binding or the live-owner census.
     pub fn freeze(lane: &ScopedRead<'_>) -> Result<Self> {
+        Self::freeze_judged(lane, None)
+    }
+
+    /// [`Self::freeze`] in the caller's snapshot `txn` of `lane`'s vault: a
+    /// human key's live-owner census is read there, never in a snapshot of
+    /// its own, which the thread holding `txn` cannot open (MDB_BAD_RSLOT).
+    /// So a door that reads its reply in `txn` freezes its lane at the same
+    /// instant (blind review P1 on #9864).
+    ///
+    /// # Errors
+    /// As [`Self::freeze`].
+    pub(crate) fn freeze_in(lane: &ScopedRead<'_>, txn: &heed::RoTxn<'_>) -> Result<Self> {
+        Self::freeze_judged(lane, Some(txn))
+    }
+
+    /// [`Self::freeze`], the live-owner census read in `txn` when the caller
+    /// holds one.
+    fn freeze_judged(lane: &ScopedRead<'_>, txn: Option<&heed::RoTxn<'_>>) -> Result<Self> {
         let key = &lane.actor_key;
         if key.room_turn.is_some() || lane.audience.is_some() || !lane.peer_reads.is_empty() {
             return Err(Error::InvalidConfig(
@@ -116,7 +134,7 @@ impl FrozenReadLane {
         // OWNER-LANE-WITHOUT-CLASS-REBUILDS-AS-HUMAN).
         let basis = key.native_read_basis();
         let keeps_basis = basis.closes_unscoped_rows()
-            || (!keeps_scope && !narrows && !human_key_of_live_owner(lane)?);
+            || (!keeps_scope && !narrows && !human_key_of_live_owner(lane, txn)?);
         // The lane stays bound to each credential a rebuilt key carries, and
         // to the proof's own unless the lane freezes as its principal's own
         // with no grant to judge. A credential that names a grant stands
@@ -230,7 +248,8 @@ fn keeps_top_scope(key: &ScopedReadActorKey, proof: &crate::authority::VerifiedS
 }
 
 /// Whether `lane`'s key names the human class and its actor is a live owner
-/// of its vault, judged in a snapshot of its own
+/// of its vault, judged in `txn`, the caller's snapshot, or in a snapshot of
+/// its own when the caller holds none
 /// (`ScopedReadActorKey::actor_is_live_owner_in`): only such a lane freezes
 /// as its principal's own with no basis. A key that names no class, or
 /// another, is no such key, whatever the census says of its actor (FIX
@@ -239,10 +258,15 @@ fn keeps_top_scope(key: &ScopedReadActorKey, proof: &crate::authority::VerifiedS
 /// # Errors
 /// A store failure opening the snapshot, reading the owner binding or the
 /// live-owner census.
-fn human_key_of_live_owner(lane: &ScopedRead<'_>) -> Result<bool> {
+fn human_key_of_live_owner(lane: &ScopedRead<'_>, txn: Option<&heed::RoTxn<'_>>) -> Result<bool> {
     if lane.actor_key.actor_class() != Some("human") {
         return Ok(false);
     }
-    let txn = lane.vault.store.env.read_txn()?;
-    lane.actor_key.actor_is_live_owner_in(lane.vault, &txn)
+    match txn {
+        Some(txn) => lane.actor_key.actor_is_live_owner_in(lane.vault, txn),
+        None => {
+            let txn = lane.vault.store.env.read_txn()?;
+            lane.actor_key.actor_is_live_owner_in(lane.vault, &txn)
+        }
+    }
 }

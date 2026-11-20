@@ -47,8 +47,9 @@ impl<'v> ScopedRead<'v> {
     }
 
     /// [`Self::refs_readable_each`] in the caller's snapshot `rtxn`, opened
-    /// as [`Self::grant_read_txn`] opens one.
-    pub(super) fn refs_readable_each_in(
+    /// as [`Self::with_grant_read_snapshot`] opens one, so a door that reads
+    /// its items and judges their rows does both at one instant.
+    pub(crate) fn refs_readable_each_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         sets: &[Vec<EntityId>],
