@@ -39,11 +39,14 @@ const FRAME_LIMIT: usize = 64 * 1024 * 1024;
 const REPLY_LIMIT: usize = 16 * 1024 * 1024;
 /// The server's default bound on one inbound socket frame: its sync frame
 /// floor in base64, plus a window pad's header and a window frame's lead.
-/// The bridge sends no longer request on its socket.
 const SOCKET_FRAME_LIMIT: usize = transport::MAX_DECODED_PAYLOAD_BYTES.div_ceil(3) * 4
     + transport::WINDOW_PAD_HEADER_BYTES
     + 3
     + transport::MAX_WINDOW_KEY_LEN;
+/// The longest app payload the server's socket decodes behind a frame's tag
+/// byte, under [`SOCKET_FRAME_LIMIT`]: the bridge sends no longer request on
+/// its socket.
+const SOCKET_PAYLOAD_LIMIT: usize = transport::MAX_DECODED_PAYLOAD_BYTES;
 
 /// A running `oneiron serve`; dropping it kills the process.
 struct Server(Child);
@@ -1182,10 +1185,12 @@ fn the_bridge_bounds_every_request_and_keeps_its_credential_from_curl() {
 }
 
 /// A message past the bridge's old 2 MiB cap and within the server's request
-/// floor reaches the server: over the socket while the socket's frame bound
-/// takes it, and over HTTP past that bound, which the server would answer by
-/// closing the socket under every request in flight. The socket carries the
-/// next call. FIX MCP-BRIDGE-FRAME-CAP-BELOW-SERVER-BODY-LIMIT.
+/// floor reaches the server: over the socket while the socket decodes it,
+/// its body read up to the request floor there as over HTTP; and over HTTP
+/// past the socket's payload bound (under its frame bound, as past it),
+/// which the server would answer by closing the socket under every request
+/// in flight. The socket carries the next call. FIX
+/// MCP-BRIDGE-FRAME-CAP-BELOW-SERVER-BODY-LIMIT; review round 1 of #9786.
 #[test]
 fn a_message_within_the_request_floor_reaches_the_server_on_either_carrier() {
     let dir = tempfile::tempdir().unwrap();
@@ -1212,8 +1217,11 @@ fn a_message_within_the_request_floor_reaches_the_server_on_either_carrier() {
     let mut bridge = Bridge::spawn(&origin, &credential_file, &curl_dir, &stderr);
     // `tools/list` reads no params, so the pad changes only the length.
     let socket_sized = 3 * 1024 * 1024;
-    let http_sized = SOCKET_FRAME_LIMIT + 1024 * 1024;
-    for (id, pad) in [(1, socket_sized), (2, http_sized)] {
+    // Past the socket's payload bound and under its frame bound (9 MiB vs
+    // about 10.7 MiB): the frame alone would pass the socket's codec.
+    let past_payload = SOCKET_PAYLOAD_LIMIT + 1024 * 1024;
+    let past_frame = SOCKET_FRAME_LIMIT + 1024 * 1024;
+    for (id, pad) in [(1, socket_sized), (2, past_payload), (3, past_frame)] {
         let listed = bridge.call(id, "tools/list", json!({ "pad": "x".repeat(pad) }));
         assert!(
             listed["result"]["tools"].is_array(),
@@ -1221,7 +1229,7 @@ fn a_message_within_the_request_floor_reaches_the_server_on_either_carrier() {
             head(&listed)
         );
     }
-    let listed = bridge.call(3, "tools/list", json!({}));
+    let listed = bridge.call(4, "tools/list", json!({}));
     assert!(listed["result"]["tools"].is_array(), "{}", head(&listed));
     bridge.close();
     let stderr = std::fs::read_to_string(&stderr).unwrap();
