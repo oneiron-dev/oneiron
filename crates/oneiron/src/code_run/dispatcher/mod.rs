@@ -267,3 +267,8 @@ pub(crate) use self::agent_verb::kept_reveal_lease;
 pub use self::agent_verb::{SecretUseAnswer, SecretUseRecord, SecretUseStatus, kept_reveal_answer};
 
 pub use self::workflow_dispatch::operations as workflow_operations;
+
+// Door seams for `test_doors::parked_hook_custody`, at the file's end, clear
+// of the import block.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::verb_hooks::{hook_parked_outcome_for_test, parked_note_resumed_for_test};
