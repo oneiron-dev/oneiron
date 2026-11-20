@@ -254,8 +254,8 @@ enum QueuedAsk {
 impl Vault {
     /// Queues `signed` for `destination` and records it `queued`, in one
     /// transaction. The ask must be this vault's, about a pact it ended.
-    /// The leave action's nonce of the pact holds only that action's
-    /// whole-pact ask.
+    /// The leave action's nonce of the pact is that action's alone: a
+    /// hand-picked ask under it refuses, whatever its shape.
     pub fn queue_cooperative_deletion_request_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -299,9 +299,11 @@ impl Vault {
             return Err(invalid("the ask does not match its pact"));
         }
         // A repeated leave action answers whatever its nonce names, so no
-        // other ask may take that nonce (REVIEW L7-09 P2).
+        // other ask may take that nonce (REVIEW L7-09 P2): a hand-picked ask
+        // under it refuses even in the leave ask's shape, since its signer
+        // may be a key the peer never pinned (review round 2 of #8379).
         if body.nonce == leave::leave_ask_nonce(&body.pact_id, terminal_epoch)
-            && !leave::is_leave_ask(body, terminal_epoch)
+            && (queued == QueuedAsk::Refuse || !leave::is_leave_ask(body, terminal_epoch))
         {
             return Err(invalid("this nonce is the leave action's whole-pact ask"));
         }
