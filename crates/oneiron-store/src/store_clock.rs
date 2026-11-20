@@ -3,7 +3,7 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::{Error, Result};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub mod lease_journal;
 use lease_journal::LeaseJournal;
@@ -19,6 +19,15 @@ pub trait Clock: Send + Sync {
     /// no later write's clock. The default reads seconds.
     fn now_recorded_ms(&self) -> u64 {
         self.now_recorded_at().saturating_mul(1000)
+    }
+    /// The source's own monotonic reading, for the vault's elapsed-time
+    /// clock (the authority log's observation clock): time since an origin
+    /// of the source's choosing, which no change of wall time moves. `None`,
+    /// the default, measures with the host's monotonic clock. A test clock
+    /// that moves only when its test moves it returns its own time, so the
+    /// elapsed time the vault measures is the time the test advanced.
+    fn monotonic_now(&self) -> Option<Duration> {
+        None
     }
 }
 /// The engine mints ids inside the vault's write transaction, under the same
@@ -64,6 +73,11 @@ pub struct StoreClock {
     /// `None` for any other open. It closes with the store.
     lease_journal: Arc<Mutex<Option<Arc<LeaseJournal>>>>,
     last_id: Arc<Mutex<u128>>,
+    /// The host monotonic instant [`Self::monotonic_now`] measures from.
+    monotonic_origin: Instant,
+    /// The highest reading [`Self::monotonic_now`] took from a source that
+    /// gives its own ([`Clock::monotonic_now`]).
+    monotonic_floor: Arc<Mutex<Duration>>,
 }
 impl std::fmt::Debug for StoreClock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -95,6 +109,8 @@ impl StoreClock {
             renewal: Arc::new(AtomicBool::new(false)),
             lease_journal: Arc::new(Mutex::new(None)),
             last_id: Arc::new(Mutex::new(0)),
+            monotonic_origin: Instant::now(),
+            monotonic_floor: Arc::new(Mutex::new(Duration::ZERO)),
         }
     }
     /// Fork construction state: sharing the source must not share a vault's floor.
@@ -223,6 +239,23 @@ impl StoreClock {
     /// metadata (FIX 10517); never a stamp on what the vault records.
     pub fn now_recorded_ms(&self) -> u64 {
         self.source.now_recorded_ms()
+    }
+    /// Monotonic time for the vault's elapsed-time clock (the authority
+    /// log's observation clock): the source's own reading
+    /// ([`Clock::monotonic_now`]), held at the highest this store clock has
+    /// read, so a source set back never moves it back; else the host's
+    /// monotonic time since this store clock was made. Only the difference
+    /// between two readings of one store clock means anything.
+    pub fn monotonic_now(&self) -> Duration {
+        let Some(reading) = self.source.monotonic_now() else {
+            return self.monotonic_origin.elapsed();
+        };
+        let mut floor = self
+            .monotonic_floor
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *floor = (*floor).max(reading);
+        *floor
     }
     /// Nondecreasing seconds, not one fictitious second for each write.
     /// Transactions persist this floor before commit.
