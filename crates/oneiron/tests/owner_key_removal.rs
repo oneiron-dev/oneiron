@@ -52,13 +52,13 @@ use oneiron::test_doors::host_root_row_signature::sign_authority_row_as_host_roo
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::owner_key_release::release_owner_keys;
 use oneiron::world_keys::RecoveryRootSeed;
-use oneiron::{EntityId, Error, HostingPrivacyPosture, TimeRange, Vault, VaultConfig};
+use oneiron::{EntityId, Error, HostingPrivacyPosture, TimeRange, Vault};
 use oneiron_authority::authority::{
     OWNER_KEY_ENROLLMENT_SEEN, OWNER_KEY_POSSESSION_KIND, OwnerKeyEnroll,
     RECOVERY_AUTHORITY_POSSESSION_KIND, owner_key_enrollment_target,
     recovery_authority_enrollment_challenge,
 };
-use p256::ecdsa::signature::Signer as _;
+use oneiron_testkit::FakeClock;
 use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
 use sha2::{Digest as _, Sha256};
 
@@ -120,13 +120,16 @@ struct RemovalVault {
     vault: Vault,
     issuer: HostSlipIssuer,
     owner: AuthenticatedOwner,
+    /// The vault's clock; every stamp a test writes reads it.
+    clock: FakeClock,
     _dir: tempfile::TempDir,
 }
 
 impl RemovalVault {
     fn hosted() -> Self {
         let dir = tempfile::tempdir().expect("vault directory");
-        let mut config = VaultConfig::device();
+        let clock = FakeClock::default();
+        let mut config = clock.vault_config();
         config.privacy.posture = HostingPrivacyPosture::Hosted;
         let vault = Vault::open(dir.path(), config).expect("hosted vault");
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
@@ -139,6 +142,7 @@ impl RemovalVault {
             vault,
             issuer,
             owner,
+            clock,
             _dir: dir,
         }
     }
@@ -845,13 +849,6 @@ fn the_confirmed_removal_of_the_last_device_keys_machine_ends_the_key() {
 /// The seed of the third machine's machine key.
 const MACHINE_C_SEED: u8 = 69;
 
-fn now_seconds() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("a clock after 1970")
-        .as_secs()
-}
-
 impl RemovalVault {
     /// Another machine's request to join this vault, for `machine_bytes`
     /// with `seed`'s machine key: its own keys, and its own proof over them
@@ -1036,7 +1033,7 @@ impl RemovalVault {
         holder: EntityId,
         new_signing_key: &SigningKey,
     ) -> AuthorityEntryHash {
-        let now = now_seconds();
+        let now = self.clock.now();
         let (entry, enrolment) = self.sibling_enrolment_row(
             parents,
             sequence,
@@ -1436,7 +1433,7 @@ fn two_removals_that_cross_both_show_in_the_changes_list() {
     let second_sequence = removal_vault.next_sequence_for(&AuthorityKey::Ed25519(
         second_signing_key.verifying_key().to_bytes(),
     ));
-    let now = now_seconds();
+    let now = removal_vault.clock.now();
     let (first_entry, first_removal) = removal_vault.sibling_revoke_row(
         parents.clone(),
         predecessor_sequence,
@@ -1560,7 +1557,7 @@ fn a_key_enrolled_as_a_devices_and_as_the_recovery_roots_ends_with_its_machine()
     let shared_key = shared_signing_key.verifying_key().to_bytes();
     let (_, device_enrolment) =
         removal_vault.enrol_owner_key_on_machine(machine_b, &shared_signing_key);
-    let start = now_seconds();
+    let start = removal_vault.clock.now();
     let mut chosen = None;
     for offset in 0..64u64 {
         let timestamp = start + offset;
@@ -1783,7 +1780,7 @@ fn the_key_list_marks_a_key_enrolled_both_ways_as_the_recovery_roots() {
         let shared_key = shared_signing_key.verifying_key().to_bytes();
         let (_, device_enrolment) =
             removal_vault.enrol_owner_key_on_machine(machine_b, &shared_signing_key);
-        let start = now_seconds();
+        let start = removal_vault.clock.now();
         let mut chosen = None;
         for offset in 0..64u64 {
             let timestamp = start + offset;
@@ -1888,7 +1885,7 @@ impl RemovalVault {
             self.enrol_owner_key_on_machine(self.install(), &predecessor_signing_key);
         let (shared_key, device_enrolment) =
             self.enrol_owner_key_on_machine(device_machine, shared_signing_key);
-        let recovery_time = now_seconds();
+        let recovery_time = self.clock.now();
         let (recovery_entry, recovery_enrolment) = self.sibling_enrolment_row(
             vec![branch_parent],
             1,
@@ -2611,7 +2608,7 @@ fn a_removal_a_sibling_handoff_fenced_is_not_in_the_changes_list() {
     // parents never saw the removal, so its fence holds both device keys.
     let successor = signing(35).verifying_key().to_bytes();
     let sequence = removal_vault.next_sequence_for(&removal_vault.issuer.public_key());
-    let now = now_seconds();
+    let now = removal_vault.clock.now();
     let (entry, handoff) =
         removal_vault.sibling_reroot_row_as_host(parents, sequence, successor, now);
     removal_vault
@@ -2692,7 +2689,7 @@ fn a_removal_whose_signer_another_crossing_ended_is_not_in_the_changes_list() {
             signing_key.verifying_key().to_bytes(),
         ))
     };
-    let now = now_seconds();
+    let now = removal_vault.clock.now();
     let (a_removes_c, a_removes_c_hash) =
         removal_vault.sibling_revoke_row(parents.clone(), sequence(&a), &a, c_key, now);
     let (c_removes_a, c_removes_a_hash) =
