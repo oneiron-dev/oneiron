@@ -374,13 +374,22 @@ impl ScopedRead<'_> {
                     .map_err(|_| Error::CorruptedIndex("gate decision read context"))?,
             ),
         };
+        // Under A the claim door judges the claim's placement as the
+        // named-row route's A does: the stored claim's facet refs, else the
+        // facet its kept position stamps (review round 1 of #10040). B's
+        // view stays as before.
+        let facets = match (grant, row) {
+            (None, _) => Vec::new(),
+            (Some(_), Some((id, Some(_)))) => self.claim_facet_refs_in(txn, id)?,
+            (Some(_), _) => stamped_facets(&position.scope),
+        };
         let view = ClaimReadView {
             record: position.scope.clone(),
             scope: scope.as_ref(),
             stale: claim.stale,
             confidence,
             salience,
-            facets: &[],
+            facets: &facets,
         };
         Ok(crate::gate::scoped_read_claim_view_allowed(
             &read.policy,
@@ -406,6 +415,15 @@ impl ScopedRead<'_> {
             || self.audience.is_some()
             || !self.peer_reads.is_empty()
             || self.actor_key.off_device()
+    }
+}
+
+/// The facets a kept position stamps, as a record that never landed sits in
+/// them; none for a position that stamps none or every facet.
+fn stamped_facets(position: &Scope) -> Vec<EntityId> {
+    match &position.facets {
+        ScopeAxis::Some(ids) => ids.iter().map(|ScopeId(id)| *id).collect(),
+        ScopeAxis::Bottom | ScopeAxis::All => Vec::new(),
     }
 }
 
