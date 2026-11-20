@@ -41,7 +41,8 @@ use run::RunRecord;
 /// the next turn (ARCH-0080 §5).
 const COMPACT: &str = "host.compact";
 /// The skill-answer verb, whose post chain judges the answer's whole body:
-/// a blocking post hook that cannot judge it for its size refuses the call
+/// a blocking post hook whose body never started on it, because the
+/// runtime could not take it, refuses the call
 /// ([`Chain::skill_answer_unjudged`]).
 const SKILL_CALL: &str = "self.skills.call";
 /// Why that refusal stops the call: the hook never saw the answer.
@@ -609,9 +610,9 @@ impl<'c> Chain<'c> {
     /// Runs the post-hooks over the caller's view of `result`. Redacts
     /// narrow the view; a failed blocking hook hides a read's result and is
     /// recorded on a write, whose commit stands. A skill answer a blocking
-    /// post hook could not judge for its size is refused instead
-    /// ([`Self::skill_answer_unjudged`]): its caller never reads the
-    /// unjudged body.
+    /// post hook's body never started on, because the runtime could not
+    /// take it, is refused instead ([`Self::skill_answer_unjudged`]): its
+    /// caller never reads the unjudged body.
     fn post(mut self, hooks: &[Hook<'c>], args: &Value, result: Value) -> Result<Stopped<Value>> {
         let mut view = result;
         let mut hidden = None;
@@ -658,24 +659,17 @@ impl<'c> Chain<'c> {
 
     /// Whether this post chain's last run left a skill answer unjudged: the
     /// call is a skill answer (`self.skills.call`, a write, read whole so
-    /// its post chain judges the body itself), the blocking hook's run
-    /// failed, and the input it failed on passed the runtime's message
-    /// limit, so the body never ran on it. Only then does the chain refuse
-    /// the call; every other verb, and every other failure, keeps the
+    /// its post chain judges the body itself), and the blocking hook's run
+    /// failed with its body never started on the answer, because the
+    /// runtime could not take it. Only then does the chain refuse the
+    /// call; every other verb, and every other failure, keeps the
     /// recorded write behaviour above.
     fn skill_answer_unjudged(&self) -> bool {
-        if self.call.verb != SKILL_CALL {
-            return false;
-        }
-        let Ok(runtime) = self.runtime else {
-            return false;
-        };
-        let Some(limit) = runtime.message_limit() else {
-            return false;
-        };
-        self.runs
-            .last()
-            .is_some_and(|run| run.token == "failed" && run.input.len() > limit)
+        self.call.verb == SKILL_CALL
+            && self
+                .runs
+                .last()
+                .is_some_and(|run| run.token == "failed" && run.input_not_taken)
     }
 
     /// The verb engine's own checks on an outcome its binding accepted; the
