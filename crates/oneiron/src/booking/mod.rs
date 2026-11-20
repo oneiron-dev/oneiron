@@ -13,6 +13,7 @@ pub mod companion_preset;
 pub mod config;
 pub mod constraint;
 pub mod conversion;
+pub mod deposit;
 pub mod disclosure_rung;
 pub mod emergency_reschedule;
 pub mod invite_grant;
@@ -22,8 +23,6 @@ pub mod publication;
 mod reminder;
 pub mod solver;
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-BOOKING-TESTS]: the lib test target's type check fails here (5 errors: E0063 x5); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -61,6 +60,10 @@ pub use conversion::{
     booking_zoned_time, parse_booking_slot_link, repeat_no_show_offer,
     resolve_booking_conversion_rows,
 };
+pub use deposit::{
+    DEFAULT_DEPOSIT_FULL_REFUND_NOTICE_SECS, DepositRefundRule, DepositTerms,
+    MAX_DEPOSIT_AMOUNT_MINOR, configured_deposit_terms, deposit_checkout_idempotency_key,
+};
 pub use disclosure_rung::{
     BusyBlockRow, CalendarDisclosureDefault, DisclosureRung, EventDetailsRow, EventRow,
     RungProjection, SurfaceClass, TitledEventRow, default_disclosure_rung, project_at_rung,
@@ -95,6 +98,7 @@ pub use lifecycle::{
     run_booking_lifecycle_attempt, run_booking_lifecycle_attempt_with_invites,
     run_booking_lifecycle_once, token_page_ref, validate_booking_family_claim,
 };
+pub use lifecycle::{BOOKING_OWNER_CARD_ITEM_PREFIX, BookingOwnerCard, BookingOwnerCardOffer};
 pub use public_lens::{
     BookingPageLens, BookingPageModel, BookingPageModelError, BookingPagePresentation,
     ConstraintFieldConfig, EventTypeCard, PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction,

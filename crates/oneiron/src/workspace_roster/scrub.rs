@@ -38,6 +38,46 @@ pub(crate) fn erase_member_actor_in_txn(
     Ok(())
 }
 
+/// Every roster actor `person`'s memberships speak through
+/// ([MEMBER-REMOVAL-KEEPS-ACTOR-GRANTS]): the `actor_ref` of each MEMBER row,
+/// in any workspace, whose `person_ref` names `person`, in id order. A
+/// merged member PERSON still matches: besides the exact row, a row matches
+/// when the heads [`Vault::resolve_entity_in_txn`] reads for its `person_ref`
+/// meet the heads it reads for `person`.
+///
+/// Actor refs only: never a `companion_actor_ref` or a companion's PERSON.
+/// A work companion is her own principal, not her member's voice, so her
+/// rows stay whatever removes her member.
+///
+/// # Errors
+///
+/// Storage errors, a member row that cannot be read, or an identity
+/// projection that cannot be resolved.
+pub(crate) fn member_actor_refs_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    person: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let member_heads = vault.resolve_entity_in_txn(txn, person)?;
+    let mut actors = Vec::new();
+    for (_, row) in MEMBER.scan(&vault.store, txn)? {
+        if row.person_ref == *person {
+            actors.push(row.actor_ref);
+            continue;
+        }
+        if vault
+            .resolve_entity_in_txn(txn, &row.person_ref)?
+            .iter()
+            .any(|head| member_heads.contains(head))
+        {
+            actors.push(row.actor_ref);
+        }
+    }
+    actors.sort();
+    actors.dedup();
+    Ok(actors)
+}
+
 /// Erasing `actor` from the companion-principal bindings: the binding of
 /// the companion PERSON it is, and every binding naming it as the
 /// principal, go.

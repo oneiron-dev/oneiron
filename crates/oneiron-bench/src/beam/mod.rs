@@ -125,6 +125,7 @@ mod ablations;
 mod arms;
 mod chroma;
 mod citations;
+mod code_bench;
 mod community;
 mod comparability;
 mod corpus_clock;

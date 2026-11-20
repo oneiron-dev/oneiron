@@ -17,6 +17,8 @@ pub(crate) use fold::resolve_creation_default;
 pub(crate) use fold::{
     birth_for_project, implicit_birth_applies, resolve_project_depth, unsigned_birth_trusted,
 };
+#[cfg(test)]
+pub(crate) use write::signed_edit_for_scan_tests;
 pub(crate) use write::{put_edit_in_txn, put_local_birth_in_txn, put_signed_birth_in_txn};
 
 #[cfg(test)]

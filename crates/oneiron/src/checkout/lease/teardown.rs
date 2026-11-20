@@ -3,6 +3,7 @@ use super::codec::store_act_in_txn;
 use super::transactions::{fenced_in_txn, require_not_regressed};
 use super::types::*;
 use crate::Vault;
+use oneiron_contracts::lifecycle::Lifecycle;
 
 #[derive(Clone, Copy)]
 pub(crate) enum TeardownStep {
@@ -65,11 +66,11 @@ pub(crate) fn prepare_teardown_in_txn<L: CheckoutLiveness, R: CheckoutRepoOps>(
         return Ok((act, reason));
     }
     let reason = teardown_reason(&act, receipt, ops, liveness)?;
-    act.state = if reason.is_some() {
+    act.state.transition_to(if reason.is_some() {
         CheckoutLeaseState::Retained
     } else {
         CheckoutLeaseState::Settling
-    };
+    })?;
     act.updated_at = now;
     store_act_in_txn(vault, txn, &act)?;
     Ok((act, reason))

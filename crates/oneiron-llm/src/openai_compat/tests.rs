@@ -219,6 +219,70 @@ fn an_own_server_gets_the_level_in_its_template_with_the_budget_and_a_hosted_api
     }
 }
 
+/// A param the call names own-server only (a Dreamer extraction's answer cap
+/// and sampling) reaches an own server and this device's model, and never a
+/// hosted API: the wire of the rung that answers decides, not the seat's
+/// widest route. The name list itself reaches no wire, and a list that is not
+/// an array of names is refused.
+#[test]
+fn an_own_server_only_param_reaches_an_own_server_and_this_device_and_never_a_hosted_api() {
+    let config_at = |locality| {
+        OpenAiCompatConfig::from_catalog([LlmCatalogEntry {
+            model: ModelId::new(MODEL).expect("model"),
+            display_name: "teacher".to_owned(),
+            locality,
+            context_window_tokens: 8_192,
+            max_output_tokens: None,
+            cost: None,
+            capabilities: Vec::new(),
+            metadata: BTreeMap::new(),
+        }])
+    };
+    for locality in [
+        ModelLocality::OwnServer,
+        ModelLocality::OnDevice,
+        ModelLocality::ThirdParty,
+    ] {
+        let mut call = request();
+        call.envelope.locality = locality;
+        call.params.insert("max_tokens".into(), json!(12_288));
+        call.params.insert("temperature".into(), json!(0.7));
+        call.params.insert("seed".into(), json!(7));
+        call.params.insert(
+            oneiron::llm::OWN_SERVER_ONLY_PARAM.into(),
+            json!(["max_tokens", "temperature"]),
+        );
+        let body = super::build_openai_chat_request(&config_at(locality), &call, false)
+            .expect("request")
+            .body;
+        assert_eq!(
+            body.get(oneiron::llm::OWN_SERVER_ONLY_PARAM),
+            None,
+            "{body}"
+        );
+        assert_eq!(
+            body["seed"], 7,
+            "a param it does not name reaches every wire: {body}"
+        );
+        if locality == ModelLocality::ThirdParty {
+            assert_eq!(body.get("max_tokens"), None, "{body}");
+            assert_eq!(body.get("temperature"), None, "{body}");
+        } else {
+            assert_eq!(body["max_tokens"], 12_288, "{locality:?}: {body}");
+            assert_eq!(body["temperature"], 0.7, "{locality:?}: {body}");
+        }
+    }
+    let mut call = request();
+    call.params.insert(
+        oneiron::llm::OWN_SERVER_ONLY_PARAM.into(),
+        json!("max_tokens"),
+    );
+    assert!(matches!(
+        super::build_openai_chat_request(&config_at(ModelLocality::ThirdParty), &call, false),
+        Err(LlmError::Fatal(FatalLlmError::InvalidRequest))
+    ));
+}
+
 /// A reply that names no finish is not a finished one. The decoder used to
 /// fill in `Stop`, which every caller that demands a finished answer (the
 /// policy classifier among them) then read as one.

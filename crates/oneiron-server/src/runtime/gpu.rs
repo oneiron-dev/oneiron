@@ -138,6 +138,19 @@ impl GpuPodHours {
             minute >= start || minute < end
         }
     }
+    /// When these hours next hold, as Unix seconds: `now` when they hold at
+    /// `now`, else the first whole minute after it that they hold, read as
+    /// [`Self::contains`] reads it (a zone's skipped minutes never hold).
+    /// `None` when none does in the next two days.
+    pub fn next_open(&self, now: u64) -> Option<u64> {
+        if self.contains(now) {
+            return Some(now);
+        }
+        let first = (now / 60).checked_add(1)?.checked_mul(60)?;
+        (0..2 * u64::from(MINUTES_PER_DAY) + 120)
+            .filter_map(|step| first.checked_add(step * 60))
+            .find(|at| self.contains(*at))
+    }
 }
 #[derive(Clone, Debug)]
 struct Pod {

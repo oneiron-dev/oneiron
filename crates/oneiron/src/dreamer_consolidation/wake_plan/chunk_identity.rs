@@ -11,6 +11,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::retry::Lineage;
 use crate::EntityId;
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
@@ -57,7 +59,7 @@ impl ChunkPin<'_> {
                 Some((_, learned_at, body)) => {
                     hasher.update(&[1]);
                     hasher.update(&learned_at.to_be_bytes());
-                    hasher.update(blake3::hash(body).as_bytes());
+                    hasher.update(ContentHash::of(body).as_bytes());
                 }
                 None => {
                     hasher.update(&[0]);

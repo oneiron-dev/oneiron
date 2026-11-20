@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::claim::history_projection::MachineHistoryReadCache;
 use crate::error::Result;
 use crate::federation::{FederationGrantScope, Position, Scope, decode_federation_grant_body};
 use crate::{EntityId, Vault};
@@ -54,12 +55,17 @@ pub(in crate::sync) fn machine_history_controls(
 /// A). The export ships a target only when it keeps every control
 /// (`authorize/filter.rs`, the incomplete-target check); the home's history
 /// pages (FIX 3820) serve a history only when this gate carries every control
-/// of it, so the page refuses what the export refuses.
+/// of it, so the page refuses what the export refuses. The gate resolves the
+/// target's history once for all its controls (FIX
+/// MACHINE-HISTORY-PAGE-PER-CONTROL-RESOLVE), so one page is linear in the
+/// history, not quadratic.
 pub(in crate::sync) struct HistoryControlGate<'v, 's> {
     selector: &'s SyncSelector,
     member: MemberAccess<'v>,
     authority: Scope,
     position: Position,
+    /// The histories the gate's read resolves, each once.
+    history: MachineHistoryReadCache<'v>,
 }
 
 impl<'v, 's> HistoryControlGate<'v, 's> {
@@ -93,6 +99,7 @@ impl<'v, 's> HistoryControlGate<'v, 's> {
             member,
             authority: grant.authority_scope,
             position,
+            history: MachineHistoryReadCache::new(vault),
         }))
     }
 
@@ -103,7 +110,8 @@ impl<'v, 's> HistoryControlGate<'v, 's> {
     /// labels) and the grant's selection ([`source_selected`]), as the export
     /// judges each row it ships (`authorize/filter.rs`). A control is not a
     /// facet seed of the window, so the selection judges its own recorded
-    /// facets, as it judges a text's source.
+    /// facets, as it judges a text's source. Ask it only in the read the gate
+    /// was built in: its history cache holds that read's.
     ///
     /// # Errors
     ///
@@ -141,6 +149,7 @@ impl<'v, 's> HistoryControlGate<'v, 's> {
                 self.selector,
                 self.position.as_scope(),
                 &HashMap::new(),
+                &self.history,
             )?)
     }
 }

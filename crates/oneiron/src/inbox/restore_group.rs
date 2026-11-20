@@ -7,8 +7,9 @@
 //! writer, so no agent can add one. The
 //! owner answers a group through `vault.inbox.groups.resolve` under the owner's
 //! proof; `Memory::resolve_restore_inbox_group` settles each member on the
-//! `vault.claims.settle` path. `Vault::inbox_restore_groups` lists the groups for
-//! the owner's one inbox page.
+//! `vault.claims.settle` path, and an accept-all that leaves no member open also
+//! installs the archived hook grants the restore brought (OPUS-MAP-5B2).
+//! `Vault::inbox_restore_groups` lists the groups for the owner's one inbox page.
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -71,16 +72,21 @@ impl Vault {
             }
             let head =
                 crate::batch::export::owner_restore_group_head_in_txn(self, &txn, &group_key)?;
+            let (source_vault, hook_grants) = match head {
+                Some(head) => (head.source_vault, head.deferred_hook_grants.len() as u64),
+                None => (None, 0),
+            };
             groups.push(RestoreInboxGroup {
                 receipt_ref: format!("gate:{group_key}"),
                 group_key,
                 created_at: receipt.created_at,
-                source_vault: head.and_then(|head| head.source_vault),
+                source_vault,
                 open_members: open.len() as u64,
                 replaces_live_head: open
                     .iter()
                     .filter(|member| member.replaces.is_some())
                     .count() as u64,
+                hook_grants,
             });
         }
         Ok(groups)

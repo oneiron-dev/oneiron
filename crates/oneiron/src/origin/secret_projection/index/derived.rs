@@ -24,6 +24,7 @@
 use std::collections::BTreeSet;
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::{RepoIndexMarks, RepoIndexProjectionStamp};
 use crate::Vault;
@@ -254,7 +255,7 @@ fn source_identity(
     let mut hasher = blake3::Hasher::new_derive_key(REPO_DERIVED_SOURCE_CONTEXT);
     hasher.update(id.as_bytes());
     hasher.update(&[row.entity_type]);
-    hasher.update(blake3::hash(&row.body).as_bytes());
+    hasher.update(ContentHash::of(&row.body).as_bytes());
     let mut marked = false;
     if let Some(stamp) = repo_source_copy_stamp_in(vault, txn, marks, id, &row.body)? {
         marked = true;
