@@ -55,7 +55,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/home_room_project.rs` | src | s | 1 fn | — | The project a home-room body names, read by an importer to order a room after its project |
 | `src/batch/export/secret_supplement_record.rs` | src | s | 2 struct · 1 enum | HolderExportNeed, OpenedSecretSupplement, SecretSupplementImport | Snapshot needs and opened secret-supplement import values |
 | `src/batch/leader_chat_admission.rs` | src | s | 1 fn | — | Final-state leader-chat TURN candidates, independent of batch op order |
-| `src/batch/phonetic_codes.rs` | src | m | 1 struct · 4 fn · 1 const · 3 re-export | LinkingCodes | Deterministic name codes for the phonetic rungs (OF-101; CROSS-ARCH-0013 `#ladder`) |
+| `src/batch/phonetic_codes.rs` | src | m | 1 struct · 6 fn · 2 const · 3 re-export | LinkingCodes | Deterministic name codes for the phonetic rungs (OF-101; CROSS-ARCH-0013 `#ladder`) |
 | `src/batch/phonetic_codes/features.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | Segment | The articulatory features of the segments the readers emit |
 | `src/batch/phonetic_codes/ipa.rs` | src | s | 1 struct · 3 fn | IpaReading | Grapheme-to-phoneme readings of a name (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): each reading is… |
 | `src/batch/phonetic_codes/ipa/english.rs` | src | m | 1 crate-vis | — | The English reading (`eng`): the letter-to-sound rules of NRL Report 7948 (H |
@@ -603,7 +603,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/claim_body/evidence_refs.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 const · 1 crate-vis | CursorSpan, EvidenceKind, EvidenceRef | Typed document citations a claim's evidence carries (ARCH-0032, FIX 904): the [`EvidenceRef`] vocabulary… |
 | `src/write_envelope/claim_body/lexical_query_hint.rs` | src | s | 1 struct · 6 fn · 3 const | LexicalQueryHintValue | Codec primitives for `core.lexical.query_hint` side records |
 | `src/write_envelope/claim_body/made_by.rs` | src | s | 1 enum · 3 fn | MadeByClass | The provenance class a stored claim offers to readers |
-| `src/write_envelope/claim_body/mod.rs` | src | m | 4 struct · 1 enum · 5 fn · 10 const · 2 mod · 11 re-export · 1 crate-vis | ClaimBody, ClaimSubject, SessionClaimBundle, SessionClaimBundleClaim, SessionClaimBundleMember | The stored CLAIM body, its MessagePack codec, scope stamps and citations |
+| `src/write_envelope/claim_body/mod.rs` | src | m | 4 struct · 1 enum · 5 fn · 11 const · 2 mod · 11 re-export · 1 crate-vis | ClaimBody, ClaimSubject, SessionClaimBundle, SessionClaimBundleClaim, SessionClaimBundleMember | The stored CLAIM body, its MessagePack codec, scope stamps and citations |
 | `src/write_envelope/claim_body/relationship_scope.rs` | src | s | 1 struct · 11 fn · 1 type | RelationshipSet | CLAIM relationship scope sets (ARCH-0022): the relationship key holds everything (`all`), a set of… |
 | `src/write_envelope/claim_body/scope.rs` | src | s | 1 fn · 1 crate-vis | — | The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed… |
 | `src/write_envelope/claim_body/scope_stamp.rs` | src | s | 5 fn · 1 const · 1 re-export | — | Stable CLAIM scope identifiers and their MessagePack representation |

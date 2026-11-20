@@ -777,7 +777,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/evidence_import.rs` | src | s | 7 crate-vis | — | FIX 7777: the whole-vault import's MESSAGE orchestration |
 | `src/batch/export/export_authority.rs` | src | s | 1 fn · 1 re-export · 4 crate-vis | — | Core half of `batch::export::export_authority`: its store-layer items live in… |
 | `src/batch/export/export_diary.rs` | src | s | 1 const · 5 crate-vis | — | OF-490: a vault export is a read of agent diaries, made through the diary door's [`DiaryReadGate`] with the… |
-| `src/batch/export/export_egress.rs` | src | s | 14 fn · 1 crate-vis | — | Whole-vault manifest egress doors and the Vault export surface |
+| `src/batch/export/export_egress.rs` | src | m | 14 fn · 1 crate-vis | — | Whole-vault manifest egress doors and the Vault export surface |
 | `src/batch/export/export_enumerate.rs` | src | s | 1 struct · 1 fn | WholeVaultExportRow | Snapshot enumeration for whole-vault exports, independent of type whitelists |
 | `src/batch/export/export_manifest.rs` | src | m | 5 struct · 31 fn · 1 re-export · 3 crate-vis | ExportDataShapeManifest, ExportDbManifestEntry, ExportManifest, ExportManifestArtifact, ExportSerializerManifest | Core half of `batch::export::export_manifest`: its store-layer items live in… |
 | `src/batch/export/expression_import.rs` | src | s | 5 crate-vis | — | Dependency scheduling for the owning expression-preference archive adapter |
@@ -2122,7 +2122,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/companion/keys.rs` | src | s | 3 const · 8 crate-vis | — | Durable companion task payload keys |
 | `src/companion/mod.rs` | src | s | 5 re-export · 3 crate-vis | — | Companion task queue and PERSON/FACET persona compilation |
 | `src/companion/model.rs` | src | s | 1 re-export | — | Companion scopes and subjects are core task vocabulary |
-| `src/companion/persona.rs` | src | m | 3 struct · 6 fn · 1 const · 1 re-export · 3 crate-vis | CompiledPersona, PersonaChange, PersonaReplayConflict | PERSON identity baselines and deterministic replay of recorded changes |
+| `src/companion/persona.rs` | src | m | 3 struct · 6 fn · 1 const · 1 re-export · 4 crate-vis | CompiledPersona, PersonaChange, PersonaReplayConflict | PERSON identity baselines and deterministic replay of recorded changes |
 | `src/companion/persona/tests.rs` | test | s | — | — | — |
 | `src/companion/profile_admission.rs` | src | s | 1 enum · 1 fn · 1 const | CompanionProfileAdmission | The admitted companion profile read (FIX 8141) |
 | `src/companion/queue.rs` | src | m | 1 struct · 9 fn · 2 re-export | CompanionQueue | Durable companion task queue over AttemptQueue with payload codec and dedupe keys |
@@ -8486,13 +8486,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/entity_revision/document_mutation.rs` | src | s | 3 crate-vis | — | The vault's document-mutation head (FIX 2860): one row that moves with every committed document edit, so an… |
 | `src/vault/entity_revision/document_version.rs` | src | s | 1 crate-vis | — | Whether one retained revision is a version of an entity's common document (FIX 2783, OF-540): the proof a… |
 | `src/vault/entity_revision/idle.rs` | src | m | 6 fn · 5 crate-vis | — | Idle debounce and atomic BM25/vector/frontier publication |
-| `src/vault/entity_revision/mod.rs` | src | s | 2 re-export · 24 crate-vis | — | Per-entity Loro history, exact reads, and idle-only index publication |
+| `src/vault/entity_revision/mod.rs` | src | s | 2 re-export · 25 crate-vis | — | Per-entity Loro history, exact reads, and idle-only index publication |
 | `src/vault/entity_revision/pending_index.rs` | src | s | 11 crate-vis | — | Caller-supplied index inputs retained until atomic idle publication |
 | `src/vault/entity_revision/pending_index/checkpoint.rs` | src | s | 5 crate-vis | — | The checkpoint rows of the staged index inputs (KS7-2): the caller's fields, vector and token waiting for… |
 | `src/vault/entity_revision/phonetic.rs` | src | s | 7 crate-vis | — | Supplied and generated name codes publish with the indexed text frontier |
 | `src/vault/entity_revision/phonetic/checkpoint.rs` | src | s | 5 crate-vis | — | The checkpoint rows of the staged phonetic codes (KS7-2): the codes waiting to publish with the indexed text… |
 | `src/vault/entity_revision/repo_projection.rs` | src | s | 6 crate-vis | — | Idle publication and refill of a record whose text is a repo blob's (FIX 7608 slice 3): what the embedder… |
-| `src/vault/entity_revision/storage.rs` | src | L | 2 fn · 1 re-export · 43 crate-vis | — | Transactional revision ledger |
+| `src/vault/entity_revision/storage.rs` | src | L | 2 fn · 1 re-export · 44 crate-vis | — | Transactional revision ledger |
 | `src/vault/entity_revision/storage/checkpoint.rs` | src | s | 1 crate-vis | — | The checkpoint getter of the revision ledger (KS7-2): each entity's revision state, retained frontiers… |
 | `src/vault/entity_revision/storage/checkpoint/document.rs` | src | L | 12 crate-vis | — | A revision document's actors (FIX 6072, part 3 of 3): each raw entity row a revision recorded, its NOTE… |
 | `src/vault/entity_revision/storage/checkpoint/native.rs` | src | s | 3 crate-vis | — | Native NOTE revision binding proofs for checkpoint capture and restore |
@@ -8547,7 +8547,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault_cleanup/marks.rs` | src | s | 7 crate-vis | — | Cleanup marks keyed by id16: a run's archive mark on a completed attempt, and the owner's kept mark on an… |
 | `src/vault_cleanup/mod.rs` | src | s | 1 mod · 10 re-export · 14 crate-vis | — | ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931) |
 | `src/vault_cleanup/owner_doors.rs` | src | s | 9 fn | — | The owner's cleanup doors for a transport |
-| `src/vault_cleanup/person_provenance.rs` | src | s | 1 fn · 8 crate-vis | — | Mint-time evidence for the extraction-only PERSON cleanup arm |
+| `src/vault_cleanup/person_provenance.rs` | src | s | 1 fn · 9 crate-vis | — | Mint-time evidence for the extraction-only PERSON cleanup arm |
 | `src/vault_cleanup/proposal_review.rs` | src | m | 5 crate-vis | — | The owner's per-item cleanup decision (FIX 1758): one complete verdict, an Accept or a Reject for every slot… |
 | `src/vault_cleanup/proposals_archive.rs` | src | m | 7 fn · 6 crate-vis | — | Proposal accept/reject lane plus the archived query and restore door |
 | `src/vault_cleanup/qodo_tests.rs` | test | m | 1 crate-vis | — | Correctness regressions for the Qodo cleanup repair |
@@ -9117,6 +9117,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/api_verb_class_table.rs` | test | m | — | — | [L8-57] Per-API verb-class tables (ARCH-0069 #door-reads-action): the door reads what an API call does from… |
 | `tests/approval_target_round_trip.rs` | test | s | — | — | FIX 22398 (APPROVAL-TARGET): every approval family spends what it composed |
 | `tests/archive_axes_job.rs` | test | L | — | — | The Coach's output-archive axes job (ARM05 P2; ARCH-0053 #output-archive: "For each task, the Coach proposes… |
+| `tests/archive_export_withholds_content_about_a_withheld_person.rs` | test | m | — | — | The whole-vault export keeps out the rows whose content is about a PERSON it keeps out (FIX… |
 | `tests/archive_export_withholds_retained_rows_of_withheld_records.rs` | test | m | — | — | The whole-vault export withholds a retained side row about a record it keeps out (FIX… |
 | `tests/archive_import_deleted_agent_id.rs` | test | s | — | — | A deleted agent stays deleted across a whole-vault archive import (FIX AGENT-DEF-ARCHIVE-IMPORT-DELETED-ID… |
 | `tests/archive_import_maintenance_kinds.rs` | test | m | — | — | Whole-vault archive restore of a vault that holds a maintenance row no import door restores (L10-23, OF-222) |
@@ -9398,7 +9399,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/engine_default_owner_act.rs` | test | s | — | — | The engine's default Steward grants are not the owner's act (lead 10 Nov 06:5x; Engine S6C-PLACE-1 = A) |
 | `tests/engine_owned_input_rules.rs` | test | m | — | — | UC-02 B1a: the engine owns the input rules the bindings used to own |
 | `tests/entity_doc_capture_retained_versions.rs` | test | s | — | — | A canonical capture of an entity document reads the text of every version it retains (FIX 275) |
-| `tests/entity_linker_cascade.rs` | test | L | — | — | The entity linker's phonetic, role and vector rungs (census item 12; ARCH-0024 signals 2, 3 and 4) |
+| `tests/entity_linker_cascade.rs` | test | XL | — | — | The entity linker's phonetic, role and vector rungs (census item 12; ARCH-0024 signals 2, 3 and 4) |
 | `tests/entity_linker_role_possessor.rs` | test | m | — | — | A role phrase names a person by their relation to its possessor, the one author of the message it is said in… |
 | `tests/entity_revision_text_diff_budget.rs` | test | s | — | — | A row edit diffs each revision text field within a budget |
 | `tests/epoch_lineage_pointer_form_summary.rs` | test | s | — | — | The lineage census reads a pointer-form epoch SUMMARY by the keyframe keys it keeps beside its pointer… |
@@ -9733,7 +9734,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/lifecycle_words.rs` | test | s | — | — | UC-15: each stored lifecycle status keeps its stored spelling byte for byte (STORED-CHANGE-RULE: keep), and… |
 | `tests/linked_self_verb_surface.rs` | test | s | — | — | The verb table is closed over the linked `self.*` operations (F2.1): each operation a code-mode guest can… |
 | `tests/list_limit_rules.rs` | test | L | — | — | Pinned limit answers of the twelve paged lists (UC-13 PR 4a) |
-| `tests/live_run_claim_put.rs` | test | m | — | — | Review 6881 P1 (#6881, FIX 3983): a caller's live-run claim put asking Auto reaches the host's auto checker… |
+| `tests/live_run_claim_put.rs` | test | L | — | — | Review 6881 P1 (#6881, FIX 3983): a caller's live-run claim put asking Auto reaches the host's auto checker… |
 | `tests/live_window_import_waits_for_pass.rs` | test | s | — | — | L7-45 (ARCH-0023b `#tombstone-index-built`, the H15 follow-up: "serialize live-window imports with indexed… |
 | `tests/live_window_note_scrub.rs` | test | s | — | — | FIX 25183 (REPLACEMENT-FORWARD-VS-NOTE-SCRUB-LOCK-ORDER): a window replacement holds the window registry… |
 | `tests/machine_answer_standing_heads.rs` | test | L | — | — | An owner's machine answer is numbered, copied and checked from the heads its machine stands under on this… |
@@ -10112,7 +10113,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/stalwart_read_back.rs` | test | s | — | — | The Stalwart read-back of an uncertain native mail send (brief 09) |
 | `tests/stalwart_submit_cancelled_dedupe.rs` | test | m | — | — | The Stalwart submit dedupe of a draft that was submitted before |
 | `tests/step_budget_refusal.rs` | test | m | — | — | Row B1 of BUDGET-TRAP-UNTYPED-NO-SENDER: a step whose spend scope refuses its reservation for good refuses… |
-| `tests/step_claim_audience.rs` | test | s | — | — | A `dreamer.step` claim holds its call's raw response, so it carries the call's exposure (S63E-RULED, live… |
+| `tests/step_claim_audience.rs` | test | m | — | — | A `dreamer.step` claim holds its call's raw response, so it carries the call's exposure (S63E-RULED, live… |
 | `tests/steward_grant_is_no_membership.rs` | test | s | — | — | A base agent's Steward grant is no membership (untangle 6.3b; review of #6913, #6914 and #6915) |
 | `tests/steward_grant_narrowing.rs` | test | s | — | — | The opt-out of a system agent's grant (untangle 6.3c; S6-4 amended), on a grant the host's first mint signed… |
 | `tests/steward_grant_rows_decide.rs` | test | m | — | — | The grant rows decide a base agent's reach (ruling S63-P13-STATE = A, Engine 11 Nov; review of #6913 and… |
@@ -10162,6 +10163,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/thread_task_from_message.rs` | test | m | — | — | A TASK made from a project-room message binds to that message's thread in the create's own write… |
 | `tests/thread_task_one_surface.rs` | test | m | — | — | A plain thread reply in a project room lands on the same surface as a witness turn… |
 | `tests/tombstone_publish_policy_prune.rs` | test | s | — | — | FIX 17211: a tombstone publication prunes, in its own commit, the policy revisions no binding reaches any… |
+| `tests/tournament_winner_restores_archived_person.rs` | test | s | — | — | ARCH-0073 §6, "a re-mention restores the archived record" (FIX… |
 | `tests/training_data_timeline.rs` | test | m | — | — | ARCH-0053 #training-timeline (census L1-22): a run that changes its data mixture or restarts from an earlier… |
 | `tests/transport_credential_release.rs` | test | L | — | — | Credentials never cross Connect guest envelopes, guest documents or federation windows; the owner's… |
 | `tests/tray_answered_removal.rs` | test | s | — | — | FIX 22394 (CONSENT-TRAY): a tray removal that says `Answered` carries the owner's answer |
