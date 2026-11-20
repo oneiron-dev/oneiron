@@ -438,6 +438,32 @@ impl AuthorityFold {
         self.passkey_limited_keys.contains(key)
     }
 
+    /// Whether a counted fresh enrolment of the passkey `key`, signed by a
+    /// key in the host's custody, names `owner` on this fold: the passkey
+    /// the host vouched for as `owner`'s, which may sign `owner`'s first
+    /// binding itself (row PASSKEY-SELF-BIND,
+    /// `owner_key_enrollment::passkey_self_bind`).
+    #[must_use]
+    pub(crate) fn host_vouched_passkey_for(&self, key: &AuthorityKey, owner: &EntityId) -> bool {
+        self.host_vouched_passkey_owners
+            .get(key)
+            .is_some_and(|owners| owners.contains(owner))
+    }
+
+    /// Whether `key` is a passkey the host vouched for that the passkey
+    /// limits hold ([`Self::passkey_limited`]): once it binds its owner, its
+    /// binding names the owner for their verbs and writes alone, and it
+    /// stands for no one but its own key elsewhere (row PASSKEY-SELF-BIND):
+    /// its federation narrowings are its key's
+    /// (`current_scope::projected_narrowing_party`) and its project-depth
+    /// edits stay quarantined. A passkey a self-hosted vault bound at its
+    /// enrolment, by its predecessor's signature, is no host's and keeps its
+    /// standing.
+    #[must_use]
+    pub(crate) fn host_vouched_passkey_limited(&self, key: &AuthorityKey) -> bool {
+        self.passkey_limited(key) && self.host_vouched_passkey_owners.contains_key(key)
+    }
+
     /// A choice door's answer about `act`, the choice it appended in its
     /// writing transaction and this fold has folded: the owner-key refusal
     /// when the act waits for the owner's proof

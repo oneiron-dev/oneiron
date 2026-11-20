@@ -41,6 +41,9 @@ mod owner_authority_closure;
 mod owner_key_binding;
 pub use owner_key_binding::{OwnerKeyBindingReceipt, PreparedOwnerKeyBinding};
 
+mod owner_passkey_binding;
+pub use owner_passkey_binding::{OwnerPasskeyBindingReceipt, PreparedOwnerPasskeyBinding};
+
 mod recovery_authority;
 pub(crate) use recovery_authority::ActivationPredecessor;
 pub use recovery_authority::WaysBack;

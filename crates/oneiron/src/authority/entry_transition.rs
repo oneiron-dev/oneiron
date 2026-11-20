@@ -269,6 +269,7 @@ fn transition_entry(
             passkey_contexts: BTreeMap::new(),
             passkey_vouched_keys: BTreeSet::new(),
             passkey_vouch_confirmations: BTreeSet::new(),
+            host_vouched_passkey_owners: BTreeMap::new(),
         };
         upsert_device(&mut state, device, None);
         state.seqs.insert(device.key.clone(), 0);
@@ -677,6 +678,9 @@ fn fold_merged_entry(
                 apply_op(&mut state, &entry.op, hash, entry.signer_key());
                 super::owner_key_enrollment::remember_passkey_context(&mut state, enroll);
                 super::owner_key_enrollment::remember_passkey_vouch(&mut state, entry, enroll);
+                super::owner_key_enrollment::remember_host_vouched_passkey(
+                    &mut state, entry, enroll,
+                );
             }
             Ok(OwnerKeyEnrollReading::Confirmation) => {
                 state
@@ -771,9 +775,17 @@ fn fold_merged_entry(
     // B; Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B; Sol xhigh stack
     // review F1, F2; Astra stack review finding 1), nor the owner key's proof
     // a revoke of an owner key needs (row HOSTED-ROOT-REVOKES-OWNER-KEY;
-    // REVIEW2 #8451 P2-1): the rest must give both.
-    let barred =
-        super::owner_key_enrollment::passkey_barred_participants(&state, &entry.op, &participants);
+    // REVIEW2 #8451 P2-1): the rest must give both. One binding is a
+    // passkey's to sign: its own first `human` binding to the owner a host
+    // vouched for it as (row PASSKEY-SELF-BIND), which also stands as its own
+    // proof on a hosted fold below.
+    let passkey_self_bind = super::owner_key_enrollment::passkey_self_bind(&state, entry, context);
+    let barred = super::owner_key_enrollment::passkey_barred_participants(
+        &state,
+        &entry.op,
+        &participants,
+        passkey_self_bind.then_some(&signer),
+    );
     if barred.contains(&signer) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
@@ -859,12 +871,14 @@ fn fold_merged_entry(
             | AuthorityOp::RebindActor { .. }
             | AuthorityOp::RevokeActor { .. }
     ) {
-        if !super::owner_proof::human_bind_proved(
-            &state,
-            &entry.op,
-            &participants,
-            context.consent_arm,
-        ) {
+        if !passkey_self_bind
+            && !super::owner_proof::human_bind_proved(
+                &state,
+                &entry.op,
+                &participants,
+                context.consent_arm,
+            )
+        {
             return EntryFold::Invalid(AuthorityFoldIssue::ActorBindingRejected {
                 entry: hash,
                 reason: ActorBindingRejection::OwnerProofRequired,

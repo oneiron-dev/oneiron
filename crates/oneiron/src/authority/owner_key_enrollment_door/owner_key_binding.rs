@@ -23,8 +23,9 @@
 //! roster.
 //!
 //! K is an Ed25519 owner device key that a counted enrolment names this
-//! owner for, live on the roster. A passkey signs no binding (the fold bars
-//! every passkey from a `BindActor`), and the recovery root's authority key
+//! owner for, live on the roster. A passkey signs only its own first
+//! binding, through its own door ([`Vault::prepare_owner_passkey_binding_as`],
+//! row PASSKEY-SELF-BIND), and the recovery root's authority key
 //! stays off this door: it is the way back, not a key the owner acts with
 //! each day. A device key only a passkey vouched for binds once a key that
 //! is no passkey confirmed it: until then the hosted fold takes no owner
@@ -352,7 +353,7 @@ impl Vault {
     ///
     /// # Errors
     /// [`invalid_authority`] for a floor at the last epoch; the store's.
-    fn next_binding_epoch_in_txn(
+    pub(super) fn next_binding_epoch_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         fold: &AuthorityFold,
