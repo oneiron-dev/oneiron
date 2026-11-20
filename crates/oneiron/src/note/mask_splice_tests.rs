@@ -87,6 +87,7 @@ fn a_large_note_with_many_copies_of_one_secret_is_masked_within_the_budget() -> 
     assert!(written.len() < 1024 * 1024);
 
     // Birth admits before creating the document; edit its live body instead.
+    // testkit-lint: allow(wall-clock) the elapsed time is the budget under test
     let started = Instant::now();
     let result = vault.memory(owner, EdgeActorClass::Human).apply_note_ops(
         note,
@@ -231,6 +232,7 @@ fn a_pending_rewrite_restores_many_copies_of_one_handle_within_the_budget() -> T
         .unwrap();
     assert_eq!(before, masked);
 
+    // testkit-lint: allow(wall-clock) the elapsed time is the budget under test
     let started = Instant::now();
     let result = vault.rule_found_key_not_a_secret(&proof, ActSurface::ThisInstall, &handle);
     let elapsed = started.elapsed();

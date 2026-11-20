@@ -221,6 +221,7 @@ mod text_diff_budget_tests {
         doc.commit();
         let new = "\u{e9}dited tail \u{2713}";
         body.cells = BTreeMap::from([(NodeId(2), BTreeMap::from([(NodeId(3), new.to_owned())]))]);
+        // testkit-lint: allow(wall-clock) the elapsed time is the budget under test
         let started = Instant::now();
         let result = sync_table(&entry, &body);
         let elapsed = started.elapsed();

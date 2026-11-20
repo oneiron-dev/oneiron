@@ -22,9 +22,7 @@ mod engine_stack;
 
 use std::sync::Arc;
 
-use device_burst_home::{
-    BURST_ROWS, Device, Home, WINDOW, eventually, held_answer, operations, send_update,
-};
+use device_burst_home::{BURST_ROWS, Device, Home, WINDOW, held_answer, operations, send_update};
 use engine_stack::run_on_engine_stack;
 use oneiron::DeleteReason;
 use oneiron::sync::WindowKey;
@@ -47,7 +45,8 @@ async fn held_burst_lands_by_drain() {
     let mut socket = home.connect_root().await;
     send_update(&mut socket, &trickle).await;
     assert!(
-        eventually(|| home.held_rows(&trickle_rows) == 1).await,
+        home.until_committed(|| home.held_rows(&trickle_rows) == 1)
+            .await,
         "the trickle lands at the home"
     );
     send_update(&mut socket, &burst).await;
@@ -87,7 +86,8 @@ async fn held_burst_lands_by_drain() {
         "the drain lands the held burst"
     );
     assert!(
-        eventually(|| home.held_rows(&burst_rows) == BURST_ROWS).await,
+        home.until_committed(|| home.held_rows(&burst_rows) == BURST_ROWS)
+            .await,
         "every row of the held burst lands at the home: {} of {BURST_ROWS}",
         home.held_rows(&burst_rows)
     );
@@ -128,7 +128,8 @@ async fn held_delta_scrubbed_by_erase() {
     let mut socket = home.connect_root().await;
     send_update(&mut socket, &trickle).await;
     assert!(
-        eventually(|| home.held_rows(&trickle_rows) == 1).await,
+        home.until_committed(|| home.held_rows(&trickle_rows) == 1)
+            .await,
         "the trickle lands at the home"
     );
     send_update(&mut socket, &burst).await;

@@ -91,6 +91,7 @@ fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
 /// A fresh destination whose engine-seed seconds differ from the source's:
 /// any 1100 ms interval crosses a second boundary.
 fn open_later_vault() -> (tempfile::TempDir, Vault) {
+    // testkit-lint: allow(sleep) built-in pack seeds use real wall seconds
     std::thread::sleep(std::time::Duration::from_millis(1100));
     let dir = tempfile::tempdir().expect("temp dir for the destination vault");
     let vault =
