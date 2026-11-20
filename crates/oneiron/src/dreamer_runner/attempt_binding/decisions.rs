@@ -40,6 +40,7 @@ use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
 };
 use crate::retrieval_depth::RetrievalDeadline;
+use crate::settings::ReadDestination;
 use crate::snapshot_read::{conflict_reader_in_txn, conflict_served_in_txn};
 use crate::verbs::{AI_VERDICT_DEADLINE_MS, AiVerdict, AiVerdictRequest};
 
@@ -167,6 +168,19 @@ pub trait DreamerDecisionLender: Send + Sync {
         ) -> MemoryResult<crate::llm::model_step::ModelStepReceipt>,
     ) -> MemoryResult<Option<crate::llm::model_step::ModelStepReceipt>> {
         Ok(None)
+    }
+
+    /// States the destination bound of the pass whose resources this lender lends (FIX 12735).
+    ///
+    /// The pass's vended executors stated it, and the pass read its wake's listings for
+    /// it. Each lent extraction read of the attempt (its observations page, a generation
+    /// step, a verdict pack) asks again and rebuilds its listing for the bound answered,
+    /// so a lender that answers its pass's bound at every call makes those reads list for
+    /// the destination the native wake read for. The engine does not check the answer
+    /// against a wake. The default states none, and those reads list for a destination
+    /// nobody proved.
+    fn destination_bound(&self) -> Option<ReadDestination> {
+        None
     }
 }
 
