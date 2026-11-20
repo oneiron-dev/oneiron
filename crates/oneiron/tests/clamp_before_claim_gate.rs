@@ -25,6 +25,13 @@
 //! window, or the temporal channel's cut, and the readable claim never
 //! reached the run: the pack read `NoData` where it read `AllActivated`.
 //!
+//! Nor do such claims move a readable row's score (REVIEW-9980 round 2):
+//! BM25 counted their postings in each word's document frequency, so they
+//! lowered the weight of their words and decided which readable rows the
+//! window held. And a `made_by` slice narrows the temporal list, whose cut
+//! handed back no hidden row, so a live hidden claim in the window counted
+//! among no clamped rows.
+//!
 //! The clamp's contact and Tier-A mark are written through test doors: run
 //! the file with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features --test clamp_before_claim_gate`.
@@ -39,9 +46,10 @@ use oneiron::test_doors::disclosure_word_sources::{
     clamp_admits_claim_revision_with_contact, clamp_admits_with_contact, mark_tier_a,
     seed_cleared_contact,
 };
+use oneiron::write_envelope::provenance::made_by::MadeByPredicate;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, DisclosureContext,
-    EmptyReason, EntityId, TimeRange, Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    DisclosureContext, EmptyReason, EntityId, TimeRange, Vault, VaultConfig,
 };
 use oneiron_retrieval::fusion::FUSION_LIST_LENGTH;
 
@@ -56,6 +64,9 @@ const OUTRANKING_CLAIMS: usize = FUSION_LIST_LENGTH + 20;
 const READABLE_TEXT: &str = "cobalt quartz";
 /// The words of each hidden claim, and the query: both words match.
 const OUTRANKING_TEXT: &str = "cobalt zircon";
+/// The words of a live claim the contact may read: the query's other word,
+/// in a field as long as [`READABLE_TEXT`]'s.
+const COMMON_TEXT: &str = "zircon quartz";
 const DAY: u64 = 86_400;
 /// The temporal calls' clock and anchor: the anchor window is the day on
 /// each side of `ANCHOR`, and every temporal claim was learned at `ANCHOR`.
@@ -128,6 +139,17 @@ fn put_claim(
     text: &str,
     occurred_at: Option<u64>,
 ) -> EntityId {
+    put_claim_from(fixture, (approval, None), hidden, text, occurred_at)
+}
+
+/// [`put_claim`] with the claim's source, which names its `made_by` class.
+fn put_claim_from(
+    fixture: &Fixture,
+    (approval, source): (ClaimApprovalStatus, Option<ClaimSource>),
+    hidden: bool,
+    text: &str,
+    occurred_at: Option<u64>,
+) -> EntityId {
     let vault = &fixture.vault;
     let subject = EntityId::now();
     vault
@@ -147,10 +169,12 @@ fn put_claim(
             (at, at)
         }
     };
+    let mut body = claim_body(subject, approval);
+    body.source = source;
     vault
         .put_claim(
             &claim,
-            &claim_body(subject, approval),
+            &body,
             TimeRange {
                 start: occurred,
                 end: occurred,
@@ -199,8 +223,25 @@ fn pack_says(fixture: &Fixture, claims_only: bool, clamped: bool) -> PackSays {
 
 /// [`pack_says`] for a text search for `query`.
 fn pack_says_for(fixture: &Fixture, query: &str, claims_only: bool, clamped: bool) -> PackSays {
+    let (served, says) = pack_serves_for(fixture, query, claims_only, clamped);
+    assert!(served.is_empty(), "FIXTURE: the pack serves nothing");
+    says
+}
+
+/// The rows a text search for `query` serves, and what its pack says of
+/// itself. It blends no recency, so the text window holds
+/// [`FUSION_LIST_LENGTH`] rows.
+fn pack_serves_for(
+    fixture: &Fixture,
+    query: &str,
+    claims_only: bool,
+    clamped: bool,
+) -> (Vec<EntityId>, PackSays) {
     let vault = &fixture.vault;
-    let mut builder = vault.context_pack().search_text(query, 10);
+    let mut builder = vault
+        .context_pack()
+        .search_text(query, 10)
+        .boost_recency(0.0);
     if claims_only {
         builder = builder.filter_types(&[ENTITY_TYPE_CLAIM]);
     }
@@ -212,12 +253,14 @@ fn pack_says_for(fixture: &Fixture, query: &str, claims_only: bool, clamped: boo
         .include_stats(true)
         .run()
         .expect("the pack");
-    assert!(pack.results.is_empty(), "FIXTURE: the pack serves nothing");
     (
-        pack.empty
-            .as_ref()
-            .map(|empty| (empty.reason, empty.total_in_scope)),
-        pack.stats.claims_suppressed,
+        pack.results.iter().map(|entity| entity.id).collect(),
+        (
+            pack.empty
+                .as_ref()
+                .map(|empty| (empty.reason, empty.total_in_scope)),
+            pack.stats.claims_suppressed,
+        ),
     )
 }
 
@@ -363,6 +406,56 @@ fn a_clamped_text_search_reads_alike_with_hidden_claims_that_outrank_a_readable_
     );
 }
 
+/// REVIEW-9980 round 2, text: a readable proposed claim holds the rarer of
+/// the query's two words, so it outranks the live readable claims that hold
+/// the other, takes a place in the text window and counts as suppressed.
+/// Hidden proposed claims holding its word made that word the commoner in
+/// BM25's document frequency, so the live claims outranked it, filled the
+/// window, and the pack counted no suppressed claim. The query's last word
+/// is the live claims', so no gate-rejected posting widens the read.
+#[test]
+fn a_clamped_text_search_scores_alike_with_hidden_claims_that_share_a_word() {
+    let fixture = fixture();
+    put_claim(
+        &fixture,
+        ClaimApprovalStatus::Proposed,
+        false,
+        READABLE_TEXT,
+        None,
+    );
+    for _ in 0..OUTRANKING_CLAIMS {
+        put_claim(
+            &fixture,
+            ClaimApprovalStatus::Auto,
+            false,
+            COMMON_TEXT,
+            None,
+        );
+    }
+    let without = pack_serves_for(&fixture, OUTRANKING_TEXT, false, true);
+    assert_eq!(
+        (without.0.len(), without.1.1),
+        (10, 1),
+        "FIXTURE: the clamped pack serves live claims, and its window holds the readable \
+         proposed claim, which its gate refuses"
+    );
+    for _ in 0..2 * OUTRANKING_CLAIMS {
+        put_claim(
+            &fixture,
+            ClaimApprovalStatus::Proposed,
+            true,
+            READABLE_TEXT,
+            None,
+        );
+    }
+    assert_eq!(
+        pack_serves_for(&fixture, OUTRANKING_TEXT, false, true),
+        without,
+        "FAILBEFORE REVIEW-9980-R2-TEXT-STATISTICS: hidden claims count in no word's document \
+         frequency, so the clamped pack's window holds the readable proposed claim as before"
+    );
+}
+
 /// The pack of a temporal search over the day on each side of [`ANCHOR`]
 /// (Occurred mode, one row), clamped for the contact when `clamped`.
 fn temporal_pack(fixture: &Fixture, clamped: bool) -> oneiron::ContextPackBuilder<'_> {
@@ -473,5 +566,48 @@ fn a_clamped_temporal_search_counts_a_live_hidden_claim_among_its_clamped_rows()
         run.clamped_out(),
         1,
         "the clamp's withheld rows count the live hidden claim"
+    );
+}
+
+/// REVIEW-9980 round 2, temporal: a `made_by` slice narrows the temporal
+/// list, and the narrowed cut handed back no hidden row. A live stated claim
+/// the contact may not read, inside the window, was served to no one and
+/// counted among no clamped rows.
+#[test]
+fn a_sliced_clamped_temporal_search_counts_a_live_hidden_claim_among_its_clamped_rows() {
+    let fixture = fixture();
+    let claim = put_claim_from(
+        &fixture,
+        (ClaimApprovalStatus::Auto, Some(ClaimSource::UserStated)),
+        true,
+        WORD,
+        Some(ANCHOR),
+    );
+    let owner: Vec<EntityId> = temporal_pack(&fixture, false)
+        .made_by(MadeByPredicate::Stated)
+        .run()
+        .expect("the owner's pack")
+        .results
+        .iter()
+        .map(|entity| entity.id)
+        .collect();
+    assert_eq!(
+        owner,
+        [claim],
+        "FIXTURE: the owner's sliced pack serves the stated claim"
+    );
+    let run = temporal_pack(&fixture, true)
+        .made_by(MadeByPredicate::Stated)
+        .run_unfinalized_with_telemetry()
+        .expect("the clamped pack");
+    assert!(
+        run.value.results.is_empty(),
+        "the clamped pack serves no row its audience may not read"
+    );
+    assert_eq!(
+        run.clamped_out(),
+        1,
+        "FAILBEFORE REVIEW-9980-R2-TEMPORAL-SLICE: the narrowed cut hands back the live hidden \
+         claim, and the clamp's withheld rows count it"
     );
 }
