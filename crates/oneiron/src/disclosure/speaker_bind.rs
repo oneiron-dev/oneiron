@@ -348,13 +348,11 @@ impl Vault {
             decision_id,
             created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
             outcome: "approved".into(),
-            // The ledger takes only the gate's own reason grammar
-            // (`gate.` codes; #8934 review r2 P1).
             reason_codes: vec![
                 (if act.person.is_some() {
-                    "gate.allow.speaker_bind"
+                    "speaker_bind"
                 } else {
-                    "gate.allow.speaker_unbind"
+                    "speaker_unbind"
                 })
                 .into(),
             ],
