@@ -13,8 +13,8 @@
 //! OpenAI-compatible model, code mode's compaction live under a prompt
 //! package that holds the self-writer frame, and stores two CLAIMs about one
 //! PERSON: one the owner then erases (GDPR erase), one that stays. The run's
-//! live request holds the words of both and was read from both. Nothing is sent to the
-//! provider: the doors stop at the request a call would send.
+//! live request holds the words of both and was read from both. In tests 1 and 2 nothing is
+//! sent to the provider: the doors stop at the request a call would send.
 //!
 //! Test 1, a flight's call (`house_live_fork_request`): before the erase the
 //! fork's call is built and holds the erased row's words (guard). After it,
@@ -28,6 +28,14 @@
 //! admits: before the erase the bind gets past the prefix's checks and is
 //! refused as `LiveRungUnbound` (guard). After it the prefix is refused
 //! first, as `LiveForkStale`. On main it still says `LiveRungUnbound` (RED).
+//!
+//! Test 3, a pass's call (`house_pass`), on a window the host read from
+//! two CLAIMs, one of which the owner then erases (REVIEW-9900 P1 2: under
+//! `auto` a stale fork's flight falls back to the cheap writer, which sent
+//! the same in-memory window): the pass is refused before anything is sent,
+//! while a pass of a window read from the kept row alone reaches the provider
+//! (guard). Every call of a pass, its retries and waits too, asks the same
+//! (REVIEW-9900 P1 1). On the round-1 head the stale window is sent (RED).
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test
 //! --locked -p oneiron-server --all-features --features oneiron/test-support
@@ -57,7 +65,9 @@ use oneiron_server::ai_host::AiHost;
 use oneiron_server::config::SyncServerConfig;
 use oneiron_server::config::models::ModelsConfig;
 use oneiron_server::server::SyncServer;
-use oneiron_server::test_doors::compaction_pass::{house_live_fork_bind, house_live_fork_request};
+use oneiron_server::test_doors::compaction_pass::{
+    house_live_fork_bind, house_live_fork_request, house_pass,
+};
 
 /// The self-writer frame this test's prompt package carries: a self-written
 /// flight, live or not, wears it.
@@ -298,6 +308,70 @@ fn a_breakpoint_binds_no_fork_read_from_a_row_erased_since() {
         assert_eq!(
             after, "LiveForkStale",
             "a breakpoint binds no fork read from a row erased since"
+        );
+    });
+}
+
+#[test]
+fn a_pass_sends_no_window_read_from_a_row_erased_since() {
+    run_on_engine_stack("live-fork-erased-window-pass", || async {
+        let fake = FakeLlm::start(Vec::new(), None).await;
+        let prompts = prompt_package_with_frame();
+        let dir = tempfile::tempdir().unwrap();
+        let (server, _host) = served(dir.path(), &models(&fake.base_url, prompts.path())).await;
+        let vault = server.vault();
+        let person = stored_person(vault);
+        let erased = stored_claim(vault, person, ERASED_WORDS);
+        let kept = stored_claim(vault, person, KEPT_WORDS);
+        // A window the host read from the rows it names, as a conversation's
+        // is.
+        let window_read_from = |words: &str, rows: Vec<EntityId>| {
+            let mut request = oneiron::test_doors::compaction_request::sealed_window(
+                vault,
+                &[words, WINDOW[1]],
+                200,
+            )
+            .unwrap();
+            request.sources = rows;
+            request.window_read_from_sources = true;
+            request
+        };
+        let stale = window_read_from(ERASED_WORDS, vec![erased, kept]);
+        let clean = window_read_from(KEPT_WORDS, vec![kept]);
+
+        privacy_erase(vault, erased);
+
+        let refused = {
+            let server = Arc::clone(&server);
+            tokio::task::spawn_blocking(move || house_pass(&server, &stale))
+                .await
+                .unwrap()
+        };
+        match refused {
+            Err(refusal) => assert!(
+                refusal.contains("deleted since"),
+                "a pass of a window read from a row erased since is refused unsent: {refusal}"
+            ),
+            Ok(answer) => panic!(
+                "a pass of a window read from a row erased since was served: {}",
+                answer.summary
+            ),
+        }
+        assert!(
+            fake.seen().is_empty(),
+            "a window read from a row erased since reached the provider: {} requests",
+            fake.seen().len()
+        );
+
+        let _clean_pass = {
+            let server = Arc::clone(&server);
+            tokio::task::spawn_blocking(move || house_pass(&server, &clean))
+                .await
+                .unwrap()
+        };
+        assert!(
+            !fake.seen().is_empty(),
+            "FIXTURE: a pass of a window read from live rows reaches the provider"
         );
     });
 }
