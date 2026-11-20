@@ -16,12 +16,12 @@ use std::sync::Arc;
 use oneiron::off_record::OffRecordBackendClass;
 use oneiron::secret_custody::parse_secret_handle;
 use oneiron::test_doors::erased_request_identity::{
-    room_stored_call_erased, room_stored_call_holds, room_stored_call_is,
+    put_room_record_again, room_stored_call_erased, room_stored_call_holds, room_stored_call_is,
     room_stored_fields_call_is, store_fields_call_in_room, store_note_call_in_room,
 };
 use oneiron::test_doors::off_record_side_row::{
-    RoomCustody, put_room_replay_row, room_replay_row, vault_custody_record_count,
-    vault_knows_value,
+    RoomCustody, base_replay_row, put_room_replay_row, release_scan_whole_and_streamed,
+    room_replay_row, vault_custody_record_count, vault_knows_value,
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 
@@ -31,6 +31,8 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const KEY: &str = "AKIA1234567890123456";
 /// Another key of the same shape.
 const OTHER_KEY: &str = "AKIA1234567890123457";
+/// A third key of the same shape.
+const THIRD_KEY: &str = "AKIA1234567890123458";
 /// A password, which the wall lifts whole from a `password` field.
 const PASSWORD: &str = "cobalt-otter-871!";
 /// Another password.
@@ -249,6 +251,147 @@ fn a_rooms_erase_keeps_the_identity_of_the_room_value_a_request_names() -> TestR
         assert!(
             !room_stored_call_is(&vault, &session, call, &words(OTHER_KEY), true)?,
             "another key of the same shape is another call after the {how}"
+        );
+    }
+    Ok(())
+}
+
+/// REVIEW-10003 round 2 (P1 routing/replay.rs:215): a run the room began
+/// holds a room handle in its record. Once the stretch is on record, its
+/// next append would write that record to base, where no custody holds the
+/// value the handle names and the room's close leaves the record unreplayable.
+/// The append is refused: nothing lands in base and the room keeps its row.
+#[test]
+fn a_record_holding_a_room_handle_does_not_move_to_base_on_record() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-room-handle-on-record", OffRecordBackendClass::Local)?;
+    let call = store_note_call_in_room(&vault, &session, &words(KEY), false)?;
+    assert!(
+        room_stored_call_holds(&session, call[1], "[secret r")?,
+        "FIXTURE: the room stores the call with a room handle"
+    );
+    let owner_id = vault.ensure_embedded_owner_actor()?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        oneiron::store::GateDecisionId::now(),
+    )?;
+    session.flip_on_record_as(&owner)?;
+
+    assert!(
+        put_room_record_again(&session, call).is_err(),
+        "an on-record append of a record holding a room handle is refused"
+    );
+    assert!(
+        base_replay_row(&vault, call[1])?.is_none(),
+        "base holds no record of the room's run"
+    );
+    assert!(
+        room_stored_call_holds(&session, call[1], "[secret r")?,
+        "the room keeps its row"
+    );
+    Ok(())
+}
+
+/// REVIEW-10003 round 2 (P1 side_row.rs:765): a compare with no custody in
+/// reach (a record read in memory) reads a room handle as written, so a row
+/// holding one room's handle never meets a call offering another room's.
+#[test]
+fn a_compare_with_no_custody_reads_a_room_handle_as_written() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let first = vault.off_record_session_vault().enter(
+        "sess-room-handle-memory-first",
+        OffRecordBackendClass::Local,
+    )?;
+    let second = vault.off_record_session_vault().enter(
+        "sess-room-handle-memory-second",
+        OffRecordBackendClass::Local,
+    )?;
+    let call = store_note_call_in_room(&vault, &first, &words(KEY), false)?;
+    let run = EntityId::now();
+    put_room_replay_row(
+        &second,
+        run,
+        format!("step output: {OTHER_KEY}\n").as_bytes(),
+    )?;
+    let other = room_handle(&room_replay_row(&second, run)?.ok_or("the room keeps the row")?)?;
+    assert!(
+        room_stored_call_holds(&first, call[1], "[secret r")?
+            && !room_stored_call_holds(&first, call[1], &other)?,
+        "FIXTURE: the first room's row holds its own handle, not {other}"
+    );
+
+    assert!(
+        !room_stored_call_is(&vault, &first, call, &words(&other), false)?,
+        "{other}, another room's handle, meets no row of this room in a compare with no custody"
+    );
+    Ok(())
+}
+
+/// The budget of the room in [`a_refused_room_write_keeps_no_secret`].
+const SMALL_ROOM_BUDGET: usize = 64 * 1024;
+
+/// REVIEW-10003 round 2 (P1 room_secrets.rs:138): a room write its budget
+/// refuses keeps none of the secrets the wall lifted from it, however often
+/// it is tried with a fresh one; a write that fits keeps its own.
+#[test]
+fn a_refused_room_write_keeps_no_secret() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let session = vault.off_record_session_vault().enter_with_budget(
+        "sess-room-handle-budget",
+        OffRecordBackendClass::Local,
+        SMALL_ROOM_BUDGET,
+    )?;
+    let custody = RoomCustody::of(&session);
+    let padding = "x".repeat(2 * SMALL_ROOM_BUDGET);
+    for key in [KEY, OTHER_KEY, THIRD_KEY] {
+        let body = format!("step output: {key}\n{padding}\n");
+        assert!(
+            put_room_replay_row(&session, EntityId::now(), body.as_bytes()).is_err(),
+            "FIXTURE: the room's budget refuses the row"
+        );
+    }
+    assert_eq!(
+        custody.count()?,
+        0,
+        "no refused write leaves a secret in the room"
+    );
+
+    put_room_replay_row(
+        &session,
+        EntityId::now(),
+        format!("step output: {KEY}\n").as_bytes(),
+    )?;
+    assert_eq!(
+        custody.count()?,
+        1,
+        "a write that fits keeps its own secret"
+    );
+    Ok(())
+}
+
+/// REVIEW-10003 round 2 (P1 assignment.rs:423): the release scan reads a
+/// room handle as a body streams as it reads it whole: the bracketed and the
+/// bare spelling a room gives are handles, and `[secret r1]` is none.
+#[test]
+fn the_streamed_release_scan_reads_a_room_handle_as_the_whole_scan_does() -> TestResult {
+    for (body, handle) in [
+        ("password=[secret r0123456789abcdef.1]\n", true),
+        ("password=r0123456789abcdef.1\n", true),
+        ("password=[secret r1]\n", false),
+    ] {
+        let (whole, streamed) = release_scan_whole_and_streamed(body.as_bytes())?;
+        assert_eq!(
+            whole.is_none(),
+            handle,
+            "FIXTURE: the whole scan reads {body:?}"
+        );
+        assert_eq!(
+            streamed, whole,
+            "the streamed scan reads {body:?} as the whole scan does"
         );
     }
     Ok(())

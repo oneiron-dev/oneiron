@@ -753,10 +753,11 @@ pub(crate) fn admitted_from_known(
 }
 
 /// Whether `held` is what admitting `raw` stored, in a compare with no
-/// custody read in reach (a record read in memory): each handle on either
-/// side, and each secret the plan places in `raw`, as the plan's one
+/// custody read in reach (a record read in memory): each vault handle on
+/// either side, and each secret the plan places in `raw`, as the plan's one
 /// stand-in, so a secret the wall lifted meets the same secret offered
-/// again (FIX 6534). Nothing is minted.
+/// again (FIX 6534). A room's handle meets only itself here (REVIEW-10003
+/// round 2). Nothing is minted.
 ///
 /// # Errors
 ///
@@ -975,8 +976,12 @@ fn stand_in_body(body: &[u8]) -> Result<Option<Vec<u8>>> {
     encoded(&tree.0).map(Some)
 }
 
+/// `text` with each vault custody handle, whole or in `[secret …]`, as the
+/// plan's stand-in. A room's handle stays as written (REVIEW-10003 round 2):
+/// only a matcher holding the room's values meets it with its value, so two
+/// rooms' handles, or a room's and a fresh value, never read as one here.
 fn stand_in_text(text: &str) -> String {
-    if bracket_handle(text) {
+    if bare_handle(text) {
         return STAND_IN.to_owned();
     }
     let mut out = String::with_capacity(text.len());
@@ -986,7 +991,7 @@ fn stand_in_text(text: &str) -> String {
         out.push_str(HANDLE_OPEN);
         let after = &rest[at + HANDLE_OPEN.len()..];
         rest = match after.split_once(']') {
-            Some((handle, tail)) if bracket_handle(handle) => {
+            Some((handle, tail)) if bare_handle(handle) => {
                 out.push_str(STAND_IN);
                 out.push(']');
                 tail

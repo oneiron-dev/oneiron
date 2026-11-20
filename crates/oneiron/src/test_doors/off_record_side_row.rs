@@ -4,7 +4,8 @@
 //! write route, through the vault, which holds the custody door, or through a
 //! bare store; and read back in a room or in base. The room's own custody is
 //! read by its handles, past the room's close too, and base custody by its
-//! records and its known-value index.
+//! records and its known-value index. The release scan reads a body holding
+//! a room handle whole and as it streams (REVIEW-10003 round 2).
 
 use std::sync::Arc;
 
@@ -234,4 +235,19 @@ pub fn vault_custody_value(vault: &Vault, handle: &str) -> Result<Option<Vec<u8>
         crate::secret_custody::read_secret_custody_in_txn(&vault.store, &rtxn, &id)?
             .map(|record| record.value_bytes.clone()),
     )
+}
+
+/// What the release scan names in `body` read whole, and read as it streams
+/// a frame at a time (REVIEW-10003 round 2): the reason each finds, `None`
+/// for none.
+///
+/// # Errors
+///
+/// The streamed read's own.
+pub fn release_scan_whole_and_streamed(
+    body: &[u8],
+) -> Result<(Option<&'static str>, Option<&'static str>)> {
+    let whole = crate::batch::secret_scan::scan_file_content("note.txt", body);
+    let streamed = crate::batch::secret_scan::scan_file_content_reader("note.txt", &mut &*body)?;
+    Ok((whole, streamed))
 }
