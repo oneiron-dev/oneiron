@@ -20,7 +20,10 @@
 //! stamped `FacetOf` another FACET G. The owner packs and keeps the window
 //! and hard-deletes all three. P's selector narrowed to F then carries the
 //! stamped CLAIM's tombstone and neither other one; its selector narrowed to
-//! G carries the G-stamped CLAIM's tombstone.
+//! G carries the G-stamped CLAIM's tombstone. The same window copied to
+//! another vault's machine carries no tombstone at all: that vault's
+//! federation admission refuses every one, so a single tombstone failed the
+//! whole answer (REVIEW-10024).
 //!
 //! Each `FIXTURE:` assertion checks the setup, never the export rule.
 //!
@@ -30,6 +33,7 @@
 #![cfg(all(oneiron_test_support, feature = "test-hooks"))]
 
 use loro::{ExportMode, LoroDoc};
+use oneiron::authority::PeerMachine;
 use oneiron::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
 };
@@ -38,7 +42,7 @@ use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::window::{load_window_from_state, reverse_rematerialize};
 use oneiron::sync::{
     SyncSelector, SyncSelectorWorld, WindowKey, authorize_sync_selector, filtered_window_doc,
-    put_selector_test_federation_grant,
+    filtered_window_doc_for_peer, put_selector_test_federation_grant,
 };
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::open_member_vault;
@@ -96,6 +100,10 @@ struct Exports {
     facet: Carried,
     /// Narrowed to G.
     other_facet: Carried,
+    /// No filter, copied to another vault's machine.
+    other_vault_open: Carried,
+    /// Narrowed to F, copied to another vault's machine.
+    other_vault_facet: Carried,
 }
 
 /// A CLAIM about `member` in `facet`, kept with the owner's put.
@@ -257,9 +265,7 @@ fn exports_after_hard_delete() -> Exports {
             "FIXTURE: the delete took each CLAIM's body out of the window"
         );
     }
-    let carries = |selector: &SyncSelector| {
-        let doc = filtered_window_doc(&vault, &window, &key, scope, selector)
-            .expect("the member's selector window");
+    let carried_by = |doc: &LoroDoc| {
         let tombstones = doc.get_map("tombstones");
         let carried = |claim: &EntityId| tombstones.get(&claim.to_hex()).is_some();
         Carried {
@@ -268,10 +274,31 @@ fn exports_after_hard_delete() -> Exports {
             other_stamped: carried(&other_stamped),
         }
     };
+    let carries = |selector: &SyncSelector| {
+        carried_by(
+            &filtered_window_doc(&vault, &window, &key, scope, selector)
+                .expect("the member's selector window"),
+        )
+    };
+    let carries_to_other_vault = |selector: &SyncSelector| {
+        carried_by(
+            &filtered_window_doc_for_peer(
+                &vault,
+                &window,
+                &key,
+                scope,
+                selector,
+                PeerMachine::Unknown,
+            )
+            .expect("the member's selector window for another vault's machine"),
+        )
+    };
     Exports {
         open: carries(&open),
         facet: carries(&facet_selector),
         other_facet: carries(&other_facet_selector),
+        other_vault_open: carries_to_other_vault(&open),
+        other_vault_facet: carries_to_other_vault(&facet_selector),
     }
 }
 
@@ -317,5 +344,25 @@ fn a_facet_narrowed_members_window_carries_no_tombstone_of_a_row_it_never_kept()
         !exports.other_facet.stamped && !exports.other_facet.unstamped,
         "LEAK: the member's window narrowed to G carries the tombstone of a CLAIM in F: {:?}",
         exports.other_facet
+    );
+}
+
+#[test]
+fn a_window_copied_to_another_vault_carries_no_tombstone() {
+    let exports = exports_after_hard_delete();
+    assert!(
+        exports.open.stamped && exports.facet.stamped,
+        "FIXTURE: the member's own open and F windows carry the stamped CLAIM's tombstone: open \
+         {:?}, F {:?}",
+        exports.open,
+        exports.facet
+    );
+    let none = |carried: Carried| !carried.stamped && !carried.unstamped && !carried.other_stamped;
+    assert!(
+        none(exports.other_vault_open) && none(exports.other_vault_facet),
+        "REFUSED-ANSWER: the window copied to another vault's machine carries a tombstone, which \
+         that vault's federation admission refuses with the whole answer: open {:?}, F {:?}",
+        exports.other_vault_open,
+        exports.other_vault_facet
     );
 }
