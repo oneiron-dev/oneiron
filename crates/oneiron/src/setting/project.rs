@@ -422,7 +422,8 @@ enum Inert {
     /// Its acts are on the key named, which this build does not know (stage 7c-1): recorded as
     /// `Pending` with the key's name ([`Projection::unknown_key`]), so a pass reads them again
     /// only once the revision moves or a build knows the key. A value that comes beside one of
-    /// them changes nothing such a build reads.
+    /// them changes nothing such a build reads. The record keeps the row a build that knew the
+    /// key last projected, and how a pin at it reads, for when a build knows it again.
     UnknownKey(String),
     /// An act on the way keeps its value beside it, and that value has not reached this install
     /// (stage 7c-1; DESIGN 1.6, "Fold states": Pending): the row reads as it did before that
@@ -1154,9 +1155,9 @@ fn met_with_local(
 
 /// Leaves the row of `target` as it is (`Inert`), recording its `basis` when no build writes a
 /// row from those acts; while a value beside an act has not arrived, that the row reads
-/// `Pending`, the rows beside acts it read (`reads`), and what the last projection left (its row
-/// and how a pin reads) until it does; and while this build does not know their key, that the
-/// row reads `Pending` and the key's name. Returns no changed key.
+/// `Pending` and the rows beside acts it read (`reads`); and while this build does not know their
+/// key, that the row reads `Pending` and the key's name. Both keep what the last projection left
+/// ([`pending_as_last_in_txn`]). Returns no changed key.
 fn leave_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -1173,31 +1174,40 @@ fn leave_in_txn(
             beside: Vec::new(),
             unknown_key: None,
         },
-        Inert::UnknownKey(key) => Projection {
-            slot: Vec::new(),
-            basis,
-            standing: SettingStanding::Pending,
-            pin_read_as_value: false,
-            beside: Vec::new(),
-            unknown_key: Some(key),
-        },
+        Inert::UnknownKey(key) => {
+            pending_as_last_in_txn(vault, txn, (target, basis), Vec::new(), Some(key))?
+        }
         Inert::Awaiting => {
-            let last = PROJECTIONS.get(&vault.store, txn, &target_key(target))?;
-            Projection {
-                slot: last
-                    .as_ref()
-                    .map(|last| last.slot.clone())
-                    .unwrap_or_default(),
-                basis,
-                standing: SettingStanding::Pending,
-                pin_read_as_value: last.is_some_and(|last| last.pin_read_as_value),
-                beside: reads.into_seen(),
-                unknown_key: None,
-            }
+            pending_as_last_in_txn(vault, txn, (target, basis), reads.into_seen(), None)?
         }
     };
     PROJECTIONS.put(&vault.store, txn, &target_key(target), &projection)?;
     Ok(TargetProjected::UNMOVED)
+}
+
+/// A `Pending` projection of `target` at `basis` with the rows beside acts it read (`beside`) and
+/// the key this build does not know (`unknown_key`), that keeps what the last projection of
+/// `target` left: its row, and how a pin at that row reads. A read then takes the row as it did
+/// before these acts until a pass reads them again, under this build or one that knows the key.
+fn pending_as_last_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    (target, basis): (EntityId, [u8; 32]),
+    beside: Vec<BesideSeen>,
+    unknown_key: Option<String>,
+) -> Result<Projection> {
+    let last = PROJECTIONS.get(&vault.store, txn, &target_key(target))?;
+    Ok(Projection {
+        slot: last
+            .as_ref()
+            .map(|last| last.slot.clone())
+            .unwrap_or_default(),
+        basis,
+        standing: SettingStanding::Pending,
+        pin_read_as_value: last.is_some_and(|last| last.pin_read_as_value),
+        beside,
+        unknown_key,
+    })
 }
 
 /// Whether `target`'s acts moved since `projection` was recorded: its basis is not `basis`, this
