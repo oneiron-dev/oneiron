@@ -523,11 +523,20 @@ impl PipelineBuilder<'_> {
                 )?;
                 // Exact phonetic codes have no cut and a PPR walk's results
                 // no admission, so their rows reach these lists unasked: the
-                // call's made_by slice keeps them out of the blend here, once
-                // the lane and the authority above have narrowed the lists,
-                // so the run's gate judges only rows the D19 gate judges
-                // anyway (REVIEW-9842 round 2).
-                if [phonetic_channel_index, ppr_channel_index].contains(&Some(index)) {
+                // call's scope keeps an exact hit out of the blend here, and
+                // its made_by slice a walk's result (narrowed walk
+                // visibility asks the rest), once the lane and the authority
+                // above have narrowed the lists, so the run's gate judges
+                // only rows the D19 gate judges anyway (REVIEW-9842 round 2).
+                if phonetic_channel_index == Some(index) {
+                    self.retain_phonetic_hits_in_scope(
+                        rtxn,
+                        scores,
+                        filter_config,
+                        &mut metadata_cache,
+                        &mut claim_gate,
+                    )?;
+                } else if ppr_channel_index == Some(index) {
                     self.retain_made_by_slice(rtxn, scores, &mut metadata_cache, &mut claim_gate)?;
                 }
             }

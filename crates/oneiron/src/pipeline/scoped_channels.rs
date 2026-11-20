@@ -91,9 +91,10 @@ impl PipelineBuilder<'_> {
     /// The phonetic channel under the call's scope. The sound match keeps
     /// the nearest few of its rows, so the call's predicate decides inside
     /// that cut ([`Self::phonetic_candidate_admits`]). Exact codes have no
-    /// cut; the gates after the channel filter them as before. The probe's
-    /// caches are its own, as the vector walk's: a row the cut asks about
-    /// leaves no decision behind.
+    /// cut: the call's scope asks their hits once entity-type authority has
+    /// narrowed the list ([`Self::retain_phonetic_hits_in_scope`]). The
+    /// probe's caches are its own, as the vector walk's: a row the cut asks
+    /// about leaves no decision behind.
     pub(super) fn scoped_phonetic_results(
         &self,
         rtxn: &RoTxn<'_>,
@@ -164,8 +165,8 @@ impl PipelineBuilder<'_> {
     }
 
     /// Keeps the rows of a result list no admission sliced (a PPR walk's,
-    /// and the phonetic code rung's exact-code hits) that the call's
-    /// `made_by` slice admits, before the list joins a blend. A row the
+    /// whose narrowed visibility asks the rest of the call's scope) that the
+    /// call's `made_by` slice admits, before the list joins a blend. A row the
     /// slice drops takes no rank in the fusion, counts as no candidate and
     /// seeds no implicit expansion (REVIEW-9842). A walk's transit and an
     /// explicit seed stay as the run's shared scope has them. The run's
@@ -189,6 +190,55 @@ impl PipelineBuilder<'_> {
         for scored in std::mem::take(results) {
             claim_status_gate_allows(&self.read, rtxn, &scored.id, metadata, claim_gate)?;
             if self.made_by_slice_admits(rtxn, &scored.id, metadata, claim_gate)? {
+                kept.push(scored);
+            }
+        }
+        *results = kept;
+        Ok(())
+    }
+
+    /// Keeps the rows of the phonetic code rung's list that the call's scope
+    /// admits, before the list joins a blend. Its exact-code hits have no
+    /// cut, so no admission asked them, and a hit outside the call's type,
+    /// time, world, corpus, relationship or candidate filter counted as a
+    /// candidate in scope, took a fusion rank and could seed an implicit
+    /// expansion ([PHONETIC-EXACT-HITS-UNSCOPED-BEFORE-BLEND]). Each row is
+    /// asked as a bounded channel's admission asks it, made_by slice
+    /// included, in the run's caches: the D19 gate judges a row the scope
+    /// admits as far as the gate, as it judges every row of the blend, so
+    /// its suppression counts as before, and the bookkeeping of every later
+    /// check is the post-blend filters' own. A row the candidate filter
+    /// refuses is judged by nothing, so a reader learns nothing of a row it
+    /// cannot read. The list takes this only once the memory lane and
+    /// entity-type authority have narrowed it, so the gate judges no row of
+    /// a kind the reader may not retrieve (REVIEW-9842 round 2). No deadline
+    /// cuts it: admission always runs.
+    pub(super) fn retain_phonetic_hits_in_scope(
+        &self,
+        rtxn: &RoTxn<'_>,
+        results: &mut Vec<ScoredEntity>,
+        filters: PipelineFilterConfig<'_>,
+        metadata: &mut EntityMetadataCache,
+        claim_gate: &mut ClaimStatusGateCache,
+    ) -> Result<()> {
+        let admission = filters.candidate_filter;
+        // The candidate filter is asked here, so the predicate judges the
+        // rows it admits in the run's caches, not in caches of its own.
+        let filters = PipelineFilterConfig {
+            candidate_filter: None,
+            deadline: None,
+            ..self.bounded_result_filters(filters)
+        };
+        let mut kept = Vec::with_capacity(results.len());
+        for scored in std::mem::take(results) {
+            if let Some(admits) = admission
+                && !admits(&self.read, rtxn, &scored.id)?
+            {
+                continue;
+            }
+            if pipeline_candidate_matches_filters_and_gate(
+                &self.read, rtxn, &scored.id, filters, metadata, claim_gate,
+            )? {
                 kept.push(scored);
             }
         }
