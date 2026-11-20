@@ -32,11 +32,13 @@ mod substrate_authorization;
 mod write_doors;
 
 fn put_subject_fixture(vault: &Vault, id: &EntityId, body: &ClaimBody) -> Result<()> {
+    let mut stamped = body.clone();
+    crate::test_util::stamp_vault_default_facet(vault, &mut stamped);
     vault.with_write_txn(|txn| {
         vault.put_reserved_claim_in_txn(
             txn,
             id,
-            body,
+            &stamped,
             TimeRange {
                 start: 100,
                 end: 100,
@@ -96,7 +98,9 @@ fn unrooted_test_vault() -> (tempfile::TempDir, Vault) {
     cfg.map_size = 16 * 1024 * 1024;
     cfg.dimensions = 4;
     cfg.embedding_model = None;
-    open_test_vault_with(cfg)
+    let (dir, vault) = open_test_vault_with(cfg);
+    vault.prepare_install_signing().expect("install signing");
+    (dir, vault)
 }
 
 fn test_vault() -> (tempfile::TempDir, Vault) {
@@ -125,6 +129,57 @@ fn seed(vault: &Vault, id: EntityId, entity_type: u8) -> EntityId {
     id
 }
 
+/// A structurally valid AGENT_DEF row WITHOUT the creation door's model
+/// PERSON and subject anchor: the same [`seed_agent_definition`] body shape
+/// written through the generic entity door, which validates the body but
+/// mints no person. For tests whose precondition is a genuinely unanchored
+/// actor. Never `b"fixture"` bytes: those are rejected with
+/// `InvalidAgentDefBody`.
+fn seed_unanchored_agent_definition(vault: &Vault, id: EntityId, label: &str) -> EntityId {
+    use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
+    use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+    use rmpv::Value;
+
+    let def = AgentDefinition::new(
+        format!("{label}-{}", id.to_hex()),
+        "test_util agent fixture",
+        "1",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+        AgentScope::All,
+        AgentCeiling::Proposed,
+        None,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+        ClaimSource::Imported,
+        1.0,
+        false,
+        true,
+        Value::Map(vec![(Value::from("fixture"), Value::from(label))]),
+        None,
+        true,
+        None,
+    );
+    let data = crate::agent_def::encode_agent_definition(&def)
+        .expect("encode unanchored agent definition");
+    vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_AGENT_DEF,
+            TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+            &data,
+        )
+        .expect("seed unanchored agent definition");
+    id
+}
+
 fn writer() -> WriteActor {
     // The fixture writer is the embedded owner, so owner writes pass the live owner census.
     WriteActor::new(
@@ -136,7 +191,7 @@ fn writer() -> WriteActor {
 #[test]
 fn anchor_subject_must_be_person_or_org() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let actor = seed(&vault, entity(0x24), ENTITY_TYPE_AGENT_DEF);
+    let actor = seed_unanchored_agent_definition(&vault, entity(0x24), "subject_model");
 
     for (seed_id, wrong_type) in [
         (entity(0xC1), ENTITY_TYPE_PLACE),
@@ -353,7 +408,7 @@ fn typed_vault_subject_doors_check_kind_and_provenance() -> Result<()> {
 #[test]
 fn typed_anchor_door_requires_the_same_owner_as_the_free_door() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let actor = seed(&vault, entity(0xB1), ENTITY_TYPE_AGENT_DEF);
+    let actor = seed_unanchored_agent_definition(&vault, entity(0xB1), "subject_model");
     let person = seed(&vault, entity(0xB2), ENTITY_TYPE_PERSON);
     let other = seed(&vault, entity(0xB3), ENTITY_TYPE_ORG);
     let stranger = seed(&vault, entity(0xB4), ENTITY_TYPE_PERSON);
@@ -745,7 +800,7 @@ fn substrate_rejects_malformed_dangling_wrong_kind_and_cyclic_redirects() -> Res
 #[test]
 fn onboarding_anchor_ensure_is_idempotent_and_never_reanchors() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let actor = seed(&vault, entity(0x61), ENTITY_TYPE_AGENT_DEF);
+    let actor = seed_unanchored_agent_definition(&vault, entity(0x61), "subject_model");
     let first = seed(&vault, entity(0x62), ENTITY_TYPE_PERSON);
     let second = seed(&vault, entity(0x63), ENTITY_TYPE_ORG);
     ensure_actor_subject(&vault, actor, first, writer(), 100)?;
@@ -850,7 +905,7 @@ fn a_held_subject_fact_still_binds_and_never_names_the_subject() -> Result<()> {
 #[test]
 fn concurrent_onboarding_cannot_reanchor_the_same_house() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let actor = seed(&vault, entity(0x65), ENTITY_TYPE_AGENT_DEF);
+    let actor = seed_unanchored_agent_definition(&vault, entity(0x65), "subject_model");
     let first = seed(&vault, entity(0x66), ENTITY_TYPE_ORG);
     let second = seed(&vault, entity(0x67), ENTITY_TYPE_ORG);
     let barrier = std::sync::Barrier::new(2);

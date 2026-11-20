@@ -171,6 +171,9 @@ fn dangling_sibling_does_not_block_valid_ancestor() {
     )));
 }
 
+/// Named for the retired quorum revoke: one live owner root now revokes
+/// another key alone (FIX 4920, OF-452 D10; `entry_transition.rs` module
+/// doc), so the revoke lands and the fold reports no issue.
 #[test]
 fn fold_rejects_revoke_without_surviving_quorum() {
     let owner = ed_key(14);
@@ -178,20 +181,18 @@ fn fold_rejects_revoke_without_surviving_quorum() {
     let genesis = genesis_entry(14, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let enroll = enroll_entry(vault_id, &genesis, &owner, 15, 1, 2);
-    let revoke = revoke_entry(
-        vault_id,
-        &enroll,
-        &owner,
-        authority_key_from_ed(&revoked_signer),
-        2,
-    );
+    let revoked_key = authority_key_from_ed(&revoked_signer);
+    let revoke = revoke_entry(vault_id, &enroll, &owner, revoked_key.clone(), 2);
 
     let fold = fold_legacy_authority_log(&[revoke.clone(), enroll, genesis]);
-    assert!(fold.issues.iter().any(|issue| matches!(
-    issue,
-    AuthorityFoldIssue::MissingQuorum(hash)
-        if *hash == authority_entry_hash(&revoke).unwrap()
-    )));
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+    assert!(
+        fold.valid_entries.contains(&revoke_hash),
+        "{:?}",
+        fold.issues
+    );
+    assert!(fold.issues.is_empty(), "{:?}", fold.issues);
+    assert!(fold.roster[&revoked_key].revoked);
 }
 
 #[test]

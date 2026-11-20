@@ -32,6 +32,7 @@ use super::super::settle::decision_pages::{json_len, split_pages};
 use super::super::support::invalid_consolidation;
 use super::super::value_projection::rmpv_to_json;
 use super::observed_beside::route_observed_priors;
+use super::step_records::{OperandBound, takes_head_relationship};
 use super::{
     BoundBranchRead, ExtractionRebuildContext, extraction_layout_refusal, select_conflict,
 };
@@ -156,19 +157,46 @@ pub(in crate::dreamer_consolidation) fn parse_reference(reference: &str) -> Resu
     Ok(id)
 }
 
-/// The eligible (candidate position, listed index) pairs over `subjects` with
+/// The eligible (candidate position, listed index) pairs over `operands` with
 /// the listing in native first-seen order: every claim the bound listing
-/// shows about each subject that its read may correct. Operand evidence is
-/// turn-only, so no candidate restates a listed claim through a claim
-/// locator and every correctable pair is asked, as native asks it.
+/// shows about each subject that its read may correct, except a claim the
+/// candidate restates and a claim whose relationship set the candidate may
+/// not take. Native never asks about a restated claim (FIX 8295), and a
+/// claim left in no pair is not listed. `cited` holds each operand's
+/// admitted claim evidence and `bounds` what the shared operand check fixed
+/// for each operand, both by position. An operand that names recorded
+/// candidates is paired only with a head one of them may be asked about.
+///
+/// A correcting candidate takes the relationship set of the head it
+/// corrects, and assembly refuses a set outside the candidate's own
+/// (S63E-RULED: a claim never holds wider than its words' label). A native
+/// candidate that the model binds to such a head is not written. Here that
+/// head is left in no pair, so no read asks about it and no request names it
+/// in `corrects`: the candidate stands on its own proposal, inside its own
+/// set.
 pub(super) fn correction_sets(
+    operands: &[CandidateOperand],
     subjects: &[EntityId],
-    bound: &BoundBranchRead,
+    cited: &[Vec<EntityId>],
+    (bound, bounds): (&BoundBranchRead, &[OperandBound]),
 ) -> Result<(Vec<(usize, usize)>, Vec<CorrectionListed>)> {
     let mut entries: Vec<(usize, usize)> = Vec::new();
     let mut listed: Vec<CorrectionListed> = Vec::new();
-    for (position, subject) in subjects.iter().enumerate() {
+    let rows = operands.iter().zip(subjects).zip(cited);
+    for (position, ((operand, subject), cited)) in rows.enumerate() {
+        let fixed = bounds.get(position);
+        let within = fixed.and_then(|fixed| fixed.relationship.as_ref());
+        let askable = fixed.and_then(|fixed| fixed.askable.as_ref());
         for (claim, predicate, value) in bound.correctable(*subject, bound.scope()) {
+            if cited.contains(&claim) && restates(operand, bound, claim) {
+                continue;
+            }
+            if askable.is_some_and(|heads| !heads.contains(&claim)) {
+                continue;
+            }
+            if !takes_head_relationship(bound, claim, within) {
+                continue;
+            }
             let at = match listed.iter().position(|row| row.claim == claim) {
                 Some(at) => at,
                 None => {
@@ -187,10 +215,44 @@ pub(super) fn correction_sets(
     Ok((entries, listed))
 }
 
+/// Whether `operand`, which cites listed `claim`, restates it unchanged: it
+/// carries the head's own predicate and its value as JSON. The subject is the
+/// head's, since the listing shows the head about that subject. This mirrors
+/// the native correction read's restatement rule over the bound prior heads.
+pub(super) fn restates(
+    operand: &CandidateOperand,
+    bound: &BoundBranchRead,
+    claim: EntityId,
+) -> bool {
+    bound.prior(claim).is_some_and(|prior| {
+        operand.predicate == prior.body.predicate
+            && rmpv_to_json(&prior.body.value) == operand.value
+    })
+}
+
+/// The listed heads `operand` cites as evidence, sorted and deduped: each
+/// reference parsed canonically and each head admitted by the bound read's
+/// cited-head rule, so a candidate never rests on a claim outside the
+/// branch's listing or one that may not corroborate. Which call showed the
+/// head is not checked: `BoundBranchRead::cited_head` says why.
+fn cited_claims(operand: &CandidateOperand, bound: &BoundBranchRead) -> Result<Vec<EntityId>> {
+    let mut cited = operand
+        .claim_evidence
+        .iter()
+        .map(|pin| parse_reference(&pin.claim))
+        .collect::<Result<Vec<_>>>()?;
+    cited.sort_unstable();
+    cited.dedup();
+    for claim in &cited {
+        bound.cited_head(*claim)?;
+    }
+    Ok(cited)
+}
+
 /// The native correction evidence over `checked`: every rebuilt listed claim
-/// in native order, then the asked candidates' source TURNs sorted and
-/// deduped, excluding any TURN already listed. This mirrors the native
-/// correction pack's one evidence set across all its pages.
+/// in native order, then the asked candidates' sources, their cited TURNs
+/// and cited claims, sorted and deduped, excluding any already listed. This
+/// mirrors the native correction pack's one evidence set across all its pages.
 pub(super) fn correction_evidence(checked: &CheckedPack) -> Vec<EntityId> {
     let mut evidence: Vec<EntityId> = checked.listed_ids();
     let mut turns: Vec<EntityId> = checked
@@ -224,42 +286,62 @@ pub(super) fn correction_project(checked: &CheckedPack) -> Option<EntityId> {
 }
 
 /// Every pack candidate checked with the listing its pairs need: each subject
-/// parsed, each predicate grammar checked, each value non-null with turn
-/// evidence, each corrected claim a listed head about its subject, whose
+/// parsed, each cited claim a listed head that may corroborate, each predicate
+/// grammar checked, each value non-null with turn or claim evidence, each
+/// corrected claim a listed head about its subject that it does not restate, whose
 /// predicate, relationship set and topic it then binds as native binds them,
-/// each relationship inside the bound set, each project the common one of
-/// its turns, and each id derived with the native deterministic id.
+/// each relationship inside the set its operand is assembled under, each
+/// project the common one of its sources, and each id derived with the native
+/// deterministic id.
+///
+/// `bounds` holds, by operand position, what the shared operand check fixed
+/// for each operand. Its relationship set is the branch's own, or on a branch
+/// with none the set every labelled word the candidate was drawn from shares.
+/// A candidate that names no relationship is assembled under it, as a native
+/// candidate is under its call's scope, and one that names a relationship
+/// stays inside it, except a correction that names its recorded candidates.
 pub(crate) fn check_pack_candidates(
     candidates: &[CandidateOperand],
-    bound: &BoundBranchRead,
+    (bound, bounds): (&BoundBranchRead, &[OperandBound]),
     attempt: AttemptId,
     branch: &ConsolidationBranchPlan<EntityId>,
 ) -> Result<CheckedPack> {
+    if bounds.len() != candidates.len() {
+        return Err(invalid_consolidation(
+            "extraction operands and their relationship sets differ in count",
+        ));
+    }
     let mut subjects = Vec::with_capacity(candidates.len());
+    let mut cited = Vec::with_capacity(candidates.len());
     for operand in candidates {
         subjects.push(parse_reference(&operand.subject)?);
+        cited.push(cited_claims(operand, bound)?);
     }
-    let (pairs, listed) = correction_sets(&subjects, bound)?;
+    let (pairs, listed) = correction_sets(candidates, &subjects, &cited, (bound, bounds))?;
     let mut rows = Vec::with_capacity(candidates.len());
-    for (position, (operand, subject)) in candidates.iter().zip(&subjects).enumerate() {
+    let operands = candidates.iter().zip(&subjects).zip(&cited);
+    for (position, ((operand, subject), cited)) in operands.enumerate() {
         validate_predicate(&operand.predicate, false).map_err(|_| {
             invalid_consolidation("extracted candidate's predicate breaks the claim grammar")
         })?;
         if operand.value.is_null() {
             return Err(invalid_consolidation("extracted candidate names no value"));
         }
-        if operand.evidence.is_empty() {
+        if operand.evidence.is_empty() && cited.is_empty() {
             return Err(invalid_consolidation(
-                "extracted candidate needs TURN evidence",
+                "extracted candidate needs TURN or claim evidence",
             ));
         }
-        let mut turn_refs: Vec<EntityId> = operand
+        // A cited claim is a source beside the cited TURNs, as the native
+        // reply parser reads it: it joins the project fold and the refs.
+        let mut source_refs: Vec<EntityId> = operand
             .evidence
             .iter()
             .map(|evidence| parse_reference(&evidence.turn))
             .collect::<Result<Vec<_>>>()?;
-        turn_refs.sort_unstable();
-        turn_refs.dedup();
+        source_refs.extend(cited.iter().copied());
+        source_refs.sort_unstable();
+        source_refs.dedup();
         let corrects_id = operand
             .corrects
             .as_ref()
@@ -293,17 +375,25 @@ pub(crate) fn check_pack_candidates(
                     .collect::<Result<Vec<_>>>()?,
             ),
         };
-        // A proposed relationship stays inside the bound set even while the
-        // candidate corrects: shared assembly intentionally ignores it then.
-        if let PackRelationship::Set(ids) = &rel
-            && let Some(allowed) = bound.relationship()
+        // A proposed relationship stays inside the operand's set even while
+        // the candidate corrects: shared assembly intentionally ignores it then.
+        // A correction that names its recorded candidates is not held to it:
+        // each naming step kept its candidate's relationship inside its own
+        // set, and the set folded over several steps may be narrower than the
+        // proposing step's. The head's set, which the correction binds, is held
+        // inside the folded set by the pairs above and by assembly below.
+        let scope_relationship = bounds[position].relationship.as_ref();
+        let recorded_correction = corrects.is_some() && !operand.from_steps.is_empty();
+        if !recorded_correction
+            && let PackRelationship::Set(ids) = &rel
+            && let Some(allowed) = scope_relationship
             && !ids.iter().all(|id| allowed.contains(id))
         {
             return Err(invalid_consolidation(
                 "extraction relationship crossed branch scope",
             ));
         }
-        let project = bound.evidence_project(&turn_refs)?.ok_or_else(|| {
+        let project = bound.evidence_project(&source_refs)?.ok_or_else(|| {
             invalid_consolidation("extracted candidate's sources share no one branch project")
         })?;
         let input = CandidateAssemblyInput {
@@ -322,7 +412,7 @@ pub(crate) fn check_pack_candidates(
             project,
             world: branch.world_ref,
             facet: branch.facet_ref,
-            scope_relationship: bound.relationship(),
+            scope_relationship,
         };
         let candidate = assemble_identity_candidate(&input)?;
         let claim_id = claim_id_for_identity(attempt, &candidate)?;
@@ -336,7 +426,7 @@ pub(crate) fn check_pack_candidates(
             proposal: PromotionCandidate {
                 claim_id,
                 candidate,
-                evidence_turn_refs: turn_refs,
+                evidence_turn_refs: source_refs,
                 provenance_chain: Vec::new(),
                 supersedes: None,
                 evidence_meet: ClaimSource::Generated,

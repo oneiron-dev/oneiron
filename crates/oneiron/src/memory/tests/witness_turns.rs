@@ -1483,6 +1483,7 @@ fn persist_received_turn_tombstone(vault: &crate::Vault, turn: EntityId, raw_val
 fn persisted_personal_turn_tombstone_erases_only_its_authored_messages_on_receiver() {
     for soft_first in [false, true] {
         let (_dir, vault, alice, _bob, _room, turn, a_message, b_message) = mixed_room_messages();
+        vault.prepare_install_signing().expect("install signing");
         let request_id = *uuid::Uuid::now_v7().as_bytes();
         if soft_first {
             let soft = crate::deletion::TombstoneValueV2 {

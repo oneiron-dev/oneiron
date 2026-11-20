@@ -1,0 +1,16 @@
+{
+  "name": "vault.gpu.jobs.allow",
+  "description": "Sets the longest run time one GPU job an agent starts under the given Grant may declare, the per-job maximum that Grant carries; 0 removes it. The owner's own act.",
+  "input": "crate::gpu_job::GpuJobAllowRequest",
+  "output": "crate::gpu_job::GpuJobAllowanceView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.gpu.jobs.allow\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "gpu_job_caller"
+}

@@ -100,7 +100,7 @@ pub(super) fn judge_owner_key_enroll(
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     };
     let carrier = super::machine_claims::folded_machine_in(state, enroll.carrier);
-    if !super::owner_act_signer_admits(carrier.as_ref(), &state.roster, carrier_key) {
+    if !super::owner_act_signer_admits(carrier.as_ref(), &state.roster, carrier_key, None) {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }
     if !super::owner_act::owner_live_at(state, enroll.act.owner) {
@@ -313,9 +313,22 @@ pub(super) fn remember_passkey_context(state: &mut FoldState, enroll: &OwnerKeyE
     }
 }
 
-/// A live machine of the vault, in any role: no chain removed it, and some
-/// chain of it is live (the carrier rule's liveness, without its key).
+/// A live machine of the vault, in any role: the roster's head of it is
+/// live (the carrier rule's liveness, without its key). Every install
+/// judges this row, so an anchor's chain neither links nor removes the
+/// machine here (Fable pass 29).
 pub(super) fn machine_is_live(machine: &FoldedMachine) -> bool {
-    machine.chains().all(|(_, chain)| !chain.removed)
-        && machine.chains().any(|(_, chain)| chain.is_live())
+    machine
+        .roster
+        .as_ref()
+        .is_some_and(MachineRevision::is_live)
+}
+
+/// [`machine_is_live`] as a writer on this install reads it: also no head
+/// the machine stands under here ([`FoldedMachine::standing_heads`], the
+/// pinned anchor's chain too) says removed. The fold passes no pin and reads
+/// the roster's head alone; a door passes its install's pin, so it writes no
+/// enrolment its own install would not count (#8722 review round 2, P1).
+pub(super) fn machine_is_live_here(machine: &FoldedMachine, pin: Option<&PinnedRoot>) -> bool {
+    machine_is_live(machine) && machine.standing_heads(pin).iter().all(|head| !head.removed)
 }

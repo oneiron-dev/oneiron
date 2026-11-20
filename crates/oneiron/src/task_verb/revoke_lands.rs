@@ -327,7 +327,7 @@ fn entity_trimmed(value: &Value) -> bool {
 fn entity_ref(value: &Value) -> bool {
     value.as_str().is_some_and(|text| {
         let text = text.trim();
-        if text.len() == 32 && text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        if oneiron_hex::is_hex_any_case(text, Some(32)) {
             EntityId::from_hex(text).is_ok()
         } else {
             crate::entity_id::parse_short_ref_syntax(text).is_ok()
@@ -335,11 +335,11 @@ fn entity_ref(value: &Value) -> bool {
     })
 }
 
-/// `digits` hex digits.
+/// `digits` hex digits, either case.
 fn hex_digits(value: &Value, digits: usize) -> bool {
-    value.as_str().is_some_and(|text| {
-        text.len() == digits && text.bytes().all(|byte| byte.is_ascii_hexdigit())
-    })
+    value
+        .as_str()
+        .is_some_and(|text| oneiron_hex::is_hex_any_case(text, Some(digits)))
 }
 
 /// 32 bytes of hex: a pact, a grant digest, a support grant id.

@@ -11,6 +11,7 @@
 //! id is scrubbed once ([`SCRUBBED`]): from that write on, each carrier's
 //! writer keeps it out.
 
+mod input_ids;
 mod kept;
 
 use std::collections::BTreeSet;
@@ -22,6 +23,10 @@ use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::runtime_hooks::lineage;
 use crate::runtime_hooks::verb::{self, HookVerbRunRecord, VERB_RUNS};
 
+#[cfg(oneiron_test_support)]
+pub(in crate::runtime_hooks) use input_ids::erase_deep_input_for_test;
+use input_ids::{DeepInputErase, erase_deep_verb_input, escapes_read, named_ids, spelled_ids_in};
+pub(in crate::runtime_hooks) use input_ids::{rows_named_by_call, rows_named_by_fact};
 pub(crate) use kept::scrub_erased_in_session_stores;
 
 const ERASED_HISTORY_REASON: &str = "source history erased";
@@ -129,12 +134,17 @@ impl ErasedIds {
         self.ids.contains(id)
     }
 
-    /// Whether `text` holds the ref of one anywhere: the cheap test before
-    /// a pinned input is decoded.
+    /// Whether `text` holds the ref of one anywhere, its escapes read too
+    /// ([`escapes_read`]), so a ref spelled through `\u` escapes counts: the
+    /// cheap test before a pinned input is decoded.
     pub(in crate::runtime_hooks) fn named_in(&self, text: &str) -> bool {
-        self.refs
-            .iter()
-            .any(|reference| text.contains(reference.as_str()))
+        let read = escapes_read(text);
+        self.refs.iter().any(|reference| {
+            text.contains(reference.as_str())
+                || read
+                    .as_deref()
+                    .is_some_and(|read| read.contains(reference.as_str()))
+        })
     }
 
     /// Whether `text` is the ref of one.
@@ -149,107 +159,22 @@ impl ErasedIds {
         !named.is_disjoint(&self.ids)
     }
 
-    /// Whether the JSON `text` names one; text that holds a ref and does not
-    /// decode names it.
+    /// Whether JSON `text` that does not decode spells one in a string or
+    /// key ([`spelled_ids_in`]), as its decoded value would name it.
+    fn spelled_in(&self, text: &str) -> bool {
+        let mut spelled = BTreeSet::new();
+        spelled_ids_in(text, &mut spelled);
+        !spelled.is_disjoint(&self.ids)
+    }
+
+    /// Whether the JSON `text` names one; text that does not decode names
+    /// one it spells ([`Self::spelled_in`]).
     pub(in crate::runtime_hooks) fn named_by_json(&self, text: &str) -> bool {
         self.named_in(text)
-            && serde_json::from_str::<Value>(text)
-                .ok()
-                .is_none_or(|value| self.named_by(&value))
-    }
-}
-
-/// Adds to `ids` each id `text` names: every run of exactly 32 lowercase
-/// hex digits that reads as one, as a record spells an id. A longer run,
-/// such as a digest, names none.
-fn hex_ids_in(text: &str, ids: &mut BTreeSet<EntityId>) {
-    for token in text.split(|digit: char| !matches!(digit, '0'..='9' | 'a'..='f')) {
-        if token.len() == 32
-            && let Ok(id) = EntityId::from_hex(token)
-        {
-            ids.insert(id);
-        }
-    }
-}
-
-/// The rows a verb run's caller named in its own args and result, and in
-/// the args its landing was judged on ([`named_ids`]), read from the whole
-/// input before the pin bound drops any of it (review #6817): a row named
-/// there can carry its bytes into the run's outcome. Text that does not
-/// decode names every id it spells.
-pub(in crate::runtime_hooks) fn rows_named_by_call(
-    input: &str,
-    landing_original: Option<&str>,
-) -> Vec<EntityId> {
-    let mut rows = BTreeSet::new();
-    match serde_json::from_str::<Value>(input) {
-        Ok(value) => {
-            for field in ["args", "result"] {
-                if let Some(part) = value.get(field) {
-                    named_ids(part, &mut rows);
-                }
+            && match serde_json::from_str::<Value>(text) {
+                Ok(value) => self.named_by(&value),
+                Err(_) => self.spelled_in(text),
             }
-        }
-        Err(_) => spelled_ids_in(input, &mut rows),
-    }
-    if let Some(args) = landing_original {
-        match serde_json::from_str::<Value>(args) {
-            Ok(value) => named_ids(&value, &mut rows),
-            Err(_) => spelled_ids_in(args, &mut rows),
-        }
-    }
-    rows.into_iter().collect()
-}
-
-/// The rows a fact run's whole `input` names anywhere but as the fact's
-/// actor (`/fact/actor/principal`), whose erase only renames it: read
-/// before the pin bound drops the input, so an erase of one retires the
-/// memo even when its input was not kept (FIX 22240). An input that does
-/// not decode names every id it can spell.
-pub(in crate::runtime_hooks) fn rows_named_by_fact(input: &str) -> Vec<EntityId> {
-    let mut rows = BTreeSet::new();
-    match serde_json::from_str::<Value>(input) {
-        Ok(mut value) => {
-            if let Some(actor) = value.pointer_mut("/fact/actor/principal") {
-                *actor = Value::Null;
-            }
-            named_ids(&value, &mut rows);
-        }
-        Err(_) => spelled_ids_in(input, &mut rows),
-    }
-    rows.into_iter().collect()
-}
-
-/// Adds to `ids` each id the JSON `text` can spell in a string or key once
-/// decoded ([`hex_ids_in`]): a run of 32 lowercase hex digits, or the last
-/// 32 of a longer run, as an escape such as `\b` or `\u001f` lengthens a
-/// run on its left. A superset, each one checked before it counts.
-fn spelled_ids_in(text: &str, ids: &mut BTreeSet<EntityId>) {
-    for token in text.split(|digit: char| !matches!(digit, '0'..='9' | 'a'..='f')) {
-        if let Some(start) = token.len().checked_sub(32)
-            && let Ok(id) = EntityId::from_hex(&token[start..])
-        {
-            ids.insert(id);
-        }
-    }
-}
-
-/// [`hex_ids_in`] over every string and key of `value`.
-fn named_ids(value: &Value, ids: &mut BTreeSet<EntityId>) {
-    match value {
-        Value::String(text) => hex_ids_in(text, ids),
-        Value::Array(items) => {
-            for item in items {
-                named_ids(item, ids);
-            }
-        }
-        Value::Object(fields) => {
-            for (key, field) in fields {
-                hex_ids_in(key, ids);
-                named_ids(field, ids);
-            }
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
 }
 
@@ -305,6 +230,10 @@ fn erase_fact_memo(memo: &mut HookRunRecord, erased: &ErasedIds) -> RunErase {
         return RunErase::Unchanged;
     };
     let Ok(mut value) = serde_json::from_str::<Value>(input) else {
+        // Text that does not decode loses its payload when it spells one.
+        if !erased.spelled_in(input) {
+            return RunErase::Unchanged;
+        }
         scrub_memo_payload(memo);
         return RunErase::Rewritten;
     };
@@ -357,8 +286,18 @@ fn erase_verb_run(record: &mut HookVerbRunRecord, erased: &ErasedIds) -> RunEras
         return RunErase::Unchanged;
     };
     let Ok(mut value) = serde_json::from_str::<Value>(input) else {
-        scrub_verb_payload(record);
-        return RunErase::Rewritten;
+        return match erase_deep_verb_input(input, erased) {
+            DeepInputErase::Unchanged => RunErase::Unchanged,
+            DeepInputErase::Depends => RunErase::Depends,
+            DeepInputErase::Renamed(input) => {
+                record.input_json = Some(input);
+                RunErase::Rewritten
+            }
+            DeepInputErase::Scrubbed => {
+                scrub_verb_payload(record);
+                RunErase::Rewritten
+            }
+        };
     };
     if ["args", "result"]
         .into_iter()

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 // A weave Admin's wrong labels, filed under its proof (OF-499 A3).
 mod admin;
 mod item_key;
-pub(super) use item_key::WeaveItemKey;
+pub(crate) use item_key::WeaveItemKey;
 
 /// Wrong-link labels, keyed by the link's edge ref, then the label's receipt id.
 const LABELS: SideTable<([u8; EDGE_REF_LEN], EntityId), StoredCorrection, Named> =
@@ -847,6 +847,15 @@ mod tests {
             TimeRange { start: 1, end: 1 },
             1,
             b"person",
+        )?;
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault.put_entity(
+            &space,
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
         )?;
         vault
             .memory(person, crate::EdgeActorClass::Human)

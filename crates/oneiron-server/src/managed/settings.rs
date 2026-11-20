@@ -163,8 +163,10 @@ pub(super) fn prepare(
     let Some(path) = &managed.settings_file else {
         return Ok(None);
     };
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("read settings file {}", path.display()))?;
+    // Hypnos places the file root's, at mode 0640 for the vault's group: one
+    // any user can write is refused before it is read (FIX
+    // MANAGED-SETTINGS-FILE-MODE-UNCHECKED).
+    let raw = crate::config::merge::read_host_placed_config_file(path)?;
     let mut table: toml::Table = crate::config::parse_toml(path, &raw)?;
     refuse_supervisor_leaves(&table)?;
     refuse_unknown(&table)?;

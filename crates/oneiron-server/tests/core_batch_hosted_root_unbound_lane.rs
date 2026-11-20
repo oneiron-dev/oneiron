@@ -17,8 +17,12 @@
 //!   named route `POST /v1/core/batch` stays 403 typed for the hosted root
 //!   (already refused via `rest_action_bound`, FIX 8210).
 //!
-//! The hosted fixture roots a `Hosted`-posture vault and calls under its
-//! root slip with the issuer's holder proof (tests/inquiry_federation.rs);
+//! The hosted fixture serves a `Hosted`-posture vault the way a managed host
+//! starts: its install holds a device keystore, and the server's start roots
+//! the vault under the issuer seed it keeps there
+//! (tests/owner_key_removal_routes.rs; [CORE-BATCH-HOSTED-ROOT-TEST-NO-KEYSTORE]:
+//! with no keystore the start refuses before any call). It calls under that
+//! root's slip with the issuer's holder proof (tests/inquiry_federation.rs);
 //! the vault shape and the engine-stack driver follow
 //! tests/gate_pin_core_write_lane.rs.
 //!
@@ -36,6 +40,7 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
     EntityId, HostingPrivacyPosture, Vault, VaultConfig, VaultDataKeyCustody, VaultPrivacyConfig,
 };
+use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{
     ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
 };
@@ -83,13 +88,25 @@ impl Fixture {
         }
         let vault = Arc::new(Vault::open_owned(dir.path(), config)?);
 
-        // HTTP trusts the logged issuer of each mint, not auth_secret, as in
-        // tests/gate_pin_core_write_lane.rs. Root the vault explicitly.
-        let issuer = HostSlipIssuer::from_secret(b"oneiron-test-core-batch-hosted-root")?;
-        let root = vault.ensure_host_root_slip(&issuer)?;
+        let (server, issuer, root) = if hosted {
+            // A hosted start bootstraps its root issuer from this install's
+            // keystore and roots the vault under it (SyncServer::new); the
+            // root slip is that root's own.
+            vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
+            vault.prepare_install_signing()?;
+            let server = Arc::new(SyncServer::new(vault.clone(), SyncServerConfig::default())?);
+            let issuer = vault.load_host_slip_issuer()?;
+            let root = vault.ensure_host_root_slip(&issuer)?;
+            (server, issuer, root)
+        } else {
+            // HTTP trusts the logged issuer of each mint, not auth_secret, as
+            // in tests/gate_pin_core_write_lane.rs. Root the vault explicitly.
+            let issuer = HostSlipIssuer::from_secret(b"oneiron-test-core-batch-hosted-root")?;
+            let root = vault.ensure_host_root_slip(&issuer)?;
+            let server = Arc::new(SyncServer::new(vault.clone(), SyncServerConfig::default())?);
+            (server, issuer, root)
+        };
         let root_token = root.to_token()?;
-
-        let server = Arc::new(SyncServer::new(vault.clone(), SyncServerConfig::default())?);
         Ok(Self {
             app: build_app(server),
             vault,

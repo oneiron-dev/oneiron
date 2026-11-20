@@ -428,6 +428,7 @@ impl SyncServer {
             cloud_registration,
             connector_elicitations: Arc::default(),
             connector_stdio: Arc::default(),
+            gpu_jobs: Arc::default(),
             browser_guest: None,
             browser_readiness: Default::default(),
             runner_fence: std::sync::OnceLock::new(),

@@ -110,6 +110,7 @@ pub(super) fn apply_device_succession(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let choice = DeviceSuccessionChoice {
         successor: succession.successor,
@@ -119,6 +120,7 @@ pub(super) fn apply_device_succession(
         machine: succession.machine,
         choice: Some(&choice),
         context: DEVICE_SUCCESSION_REVISION_CONTEXT,
+        needs_proof_off_the_line,
         persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
@@ -214,12 +216,23 @@ impl Vault {
         let public_key = key.verifying_key().to_bytes();
         let signer = AuthorityKey::Ed25519(public_key);
         let target = device_succession_target(client, &device_key)?;
-        if !super::owner_act_signer_admits(before.machine(machine), &before.roster, &public_key) {
+        if !super::owner_act_signer_admits(
+            before.machine(machine),
+            &before.roster,
+            &public_key,
+            before.pinned_root.as_ref(),
+        ) {
             return Err(authority_refused(NO_CARRIER));
         }
         let seen = before.device_successions.revision(target);
         // FIX 7908: join a frontier wider than one entry names.
-        let joiner = FrontierSigner::Install(machine, &key);
+        // The owner key this install holds proves the act; its join carries
+        // the proof only for the owner's own write (row
+        // OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, REVIEW-9962 P1).
+        let proof = self.owner_proof_signer(&before);
+        let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
+        let joiner =
+            FrontierSigner::install(machine, &key, proof.as_ref().filter(|_| proves_joins));
         let joined =
             self.prepare_authority_frontier_in_txn(&mut txn, &before, joiner, MAX_PARENTS)?;
         let fold = joined.as_ref().unwrap_or(&before);
@@ -243,7 +256,7 @@ impl Vault {
                 successor: machine,
             }),
             now,
-            self.owner_proof_signer(fold).as_deref(),
+            proof.as_ref(),
         )?;
         let hash = authority_entry_hash(&entry)?;
         let at = TimeRange {

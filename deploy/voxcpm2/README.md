@@ -52,7 +52,7 @@ source clip. The bank is checked before the clip is sent and again before the
 audio comes back.
 
 The worker takes no `request_compression`: its loopback voice socket carries
-no codec frame, and an entry that sets it is refused at config load.
+no codec frame, and an entry that turns it on is refused at config load.
 
 `GET /v1/voice` is the versioned duplex WebSocket the cascade speaks (L8-47
 PR V1; bearer credential, RFC 6455, stdlib framing, no subprotocol or

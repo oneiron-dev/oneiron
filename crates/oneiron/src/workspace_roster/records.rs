@@ -3,7 +3,12 @@
 use super::*;
 use crate::side_table::NulFreeText;
 
-/// Body schema version for every record this module writes.
+/// Body schema version for every record this module writes. The member
+/// row's `one_vault_told` and `companion_brought` keys (L7-05) are optional
+/// within version 1: a row without them, as every row stored before one-vault
+/// mode, reads as a member who was not told and whose companion was not
+/// brought (the lead's M-1 STORED-CHANGE-RULE, keep path; Engine RULING
+/// L7-05-STORED-ROSTER = B).
 pub const WORKSPACE_ROSTER_SCHEMA_VERSION: u64 = 1;
 
 /// Idempotency journal tracking one member-onboarding request's progress
@@ -139,7 +144,13 @@ pub(super) struct RosterMemberRow {
     pub(super) companion_person_ref: Option<EntityId>,
     pub(super) companion_actor_ref: Option<EntityId>,
     pub(super) companion_facet_ref: Option<EntityId>,
+    /// This enrollment brought an existing companion rather than birthing one.
+    pub(super) companion_brought: bool,
     pub(super) identity_ref: Option<EntityId>,
+    /// The time the member was told one-vault mode is on, at joining;
+    /// `None` when the mode was off (plain line 2). Set by the Complete
+    /// step from the vault's `one_vault` row.
+    pub(super) one_vault_told: Option<u64>,
 }
 
 impl RawValue for RosterMemberRow {

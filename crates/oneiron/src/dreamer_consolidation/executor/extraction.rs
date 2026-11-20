@@ -6,6 +6,9 @@ use super::*;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, CandidateRel};
 use crate::dreamer_consolidation::extracted_people::MintNamespace;
 use crate::dreamer_consolidation::provenance::KeptDecision;
+use crate::dreamer_consolidation::roles::DEFAULT_BUDGET_TOKENS;
+use oneiron_model::llm::OWN_SERVER_ONLY_PARAM;
+use serde_json::{Value as JsonValue, json};
 
 pub(in crate::dreamer_consolidation) use super::decisions::identity_choice::identity_round_specs;
 pub(in crate::dreamer_consolidation) use super::decisions::{
@@ -27,12 +30,63 @@ mod wire;
 pub(in crate::dreamer_consolidation) use cited::CitationCheck;
 use corrections::Correction;
 pub(in crate::dreamer_consolidation) use quote_binding::{QuoteBinding, bind_quote};
+pub(crate) use wire::entity_id_from_hex;
+use wire::parse_candidate;
 pub(in crate::dreamer_consolidation) use wire::{
     CallPins, ExtractedPerson, ExtractionReply, ReplyContext, authored_fallback,
     check_extraction_reply, contract_reply, decode_ref, disagreeing_child_hashes, extraction_reply,
     prospective_queries, reply_json, resolve_subject,
 };
-use wire::{entity_id_from_hex, parse_candidate};
+
+/// The tokens a claim extraction answer may take after its thought. The
+/// largest RESEARCH-1232 gold answer (55 claims) is 5,570 tokens in that
+/// pack's own format and at most 4,004 in the shipped label format; 8,192
+/// is the cap RESEARCH-1232 gave its largest packets.
+const EXTRACTION_ANSWER_TOKENS: u64 = 8_192;
+
+/// The output limit a claim extraction call asks an own server: the default
+/// level's thinking budget plus [`EXTRACTION_ANSWER_TOKENS`]. It is the
+/// largest output a Dreamer call asks, so the host's model windows reserve it
+/// for a provider that names no output ceiling.
+pub const EXTRACTION_MAX_TOKENS: u64 = DEFAULT_BUDGET_TOKENS + EXTRACTION_ANSWER_TOKENS;
+
+/// The output limit param every adapter folds into its provider's own field.
+const MAX_TOKENS_PARAM: &str = "max_tokens";
+
+/// The output limit and sampling a claim extraction call sends to an own
+/// server or an on-device model. `max_tokens` is the default level's thinking
+/// budget plus [`EXTRACTION_ANSWER_TOKENS`], so a thought that spends its
+/// whole budget still leaves the answer its room. With no limit sent, the
+/// house EXL3 server capped the thought and the answer together at 4,096
+/// tokens, and the answer got what the thought left. The sampling is the one
+/// RESEARCH-1232 measured the ruled recipe with (the Qwen card's values):
+/// temperature 0.7, top_p 0.8, top_k 20, min_p 0, presence_penalty 1.5,
+/// frequency_penalty 0, repetition_penalty 1, so a server default never picks
+/// it. [`OWN_SERVER_ONLY_PARAM`] names every one of them, so a hosted API is
+/// sent none, as it is sent no thinking budget: its thought has no engine cap,
+/// so a total the engine picked would cut answers, and a hosted reasoning API
+/// refuses some of these sampling fields. The call carries them whatever its
+/// seat's widest route is: a seat whose own server comes before a hosted rung
+/// is ThirdParty, yet its own server answers first, and the wire of the rung
+/// that answers keeps or drops them.
+fn extraction_params() -> BTreeMap<String, JsonValue> {
+    let mut params = BTreeMap::from([
+        (MAX_TOKENS_PARAM.to_owned(), json!(EXTRACTION_MAX_TOKENS)),
+        ("temperature".to_owned(), json!(0.7)),
+        ("top_p".to_owned(), json!(0.8)),
+        ("top_k".to_owned(), json!(20)),
+        ("min_p".to_owned(), json!(0.0)),
+        ("presence_penalty".to_owned(), json!(1.5)),
+        ("frequency_penalty".to_owned(), json!(0.0)),
+        ("repetition_penalty".to_owned(), json!(1.0)),
+    ]);
+    let own_server_only: Vec<JsonValue> = params.keys().map(|key| json!(key)).collect();
+    params.insert(
+        OWN_SERVER_ONLY_PARAM.to_owned(),
+        JsonValue::Array(own_server_only),
+    );
+    params
+}
 
 impl ConsolidationExecutor<'_> {
     /// The extraction request over one child's `transcript`, rendered with
@@ -51,8 +105,33 @@ impl ConsolidationExecutor<'_> {
         Ok(request)
     }
 
+    /// How far one extraction call's input may run (FIX
+    /// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW): `config`'s TURNs per
+    /// child, and, when the host lends the extraction model's window, that
+    /// window less the prompt every call carries, by the recipe policy's
+    /// bytes-per-token estimate the follower also sizes by.
+    pub(in crate::dreamer_consolidation) fn extraction_bound(
+        &self,
+        vault: &crate::Vault,
+        config: &crate::dreamer_consolidation::selection::SelectionConfig,
+    ) -> Result<crate::dreamer_consolidation::resources::SliceBound> {
+        let room = match self.roles.follower_window_tokens() {
+            Some(window) => {
+                let bytes_per_token = vault.dreamer_recipe_policy()?.follower_sizing_token_bytes;
+                crate::dreamer_wake::follower::Sizing::new(Some(window), bytes_per_token)
+                    .room(self.decisions.extraction_prompt.frame_bytes())
+            }
+            None => None,
+        };
+        Ok(crate::dreamer_consolidation::resources::SliceBound {
+            turns: config.extraction_turns_per_child,
+            room,
+        })
+    }
+
     /// The extraction request over `source` in `prompt`'s words, `source_rule`
     /// before it: a NOTE review's rule is `note_classification`'s (OF-073).
+    /// It carries [`extraction_params`].
     pub(in crate::dreamer_consolidation) fn request_over(
         call: &RoleCall<'_>,
         prompt: &ExtractionPrompt,
@@ -108,7 +187,7 @@ impl ConsolidationExecutor<'_> {
             }.with_purpose_defaults(),
             messages,
             tools: Vec::new(),
-            params: BTreeMap::new(),
+            params: extraction_params(),
             provider_options: BTreeMap::new(),
             host_segments: None,
         })
@@ -573,6 +652,17 @@ struct WorkedExample {
 }
 
 impl ExtractionPrompt {
+    /// The bytes every extraction call carries beside its transcript: the
+    /// system text and both turns of each worked example (FIX
+    /// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW).
+    pub(in crate::dreamer_consolidation) fn frame_bytes(&self) -> usize {
+        self.examples
+            .iter()
+            .map(|example| example.user.len() + example.assistant.len())
+            .sum::<usize>()
+            + self.system.len()
+    }
+
     /// The shipped prompt (`extraction_prompt.json`), word for word what the
     /// engine asks with when the host words none.
     ///

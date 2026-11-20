@@ -24,10 +24,15 @@ use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
 const AT: TimeRange = TimeRange { start: 1, end: 1 };
 
-/// The vault's host: rooted, with the owner and the world's row, never marked yours.
+/// The vault's host: rooted, with the owner and the world's row, never marked yours. Its
+/// handle holds the host's root as a serving host does, so the owner answers it carries (the
+/// two admissions, the removal) are proven (row CARRIER-OWNER-PROOF) and stand instead of
+/// being held for an owner device. The beside copies are made on its device, so they share its
+/// keystore (each install keeps its own slots there).
 struct Host {
     _dir: tempfile::TempDir,
     vault: Vault,
+    keystore: Arc<oneiron_keystore::MemoryKeystore>,
     proof: AuthenticatedOwner,
     vault_id: [u8; 32],
 }
@@ -35,13 +40,18 @@ struct Host {
 fn rooted_host() -> Host {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("the host install");
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
+    vault.install_device_keystore(keystore.clone());
     let issuer = oneiron::test_support::provision_engine_machines(&vault);
     vault
         .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
         .expect("the host install profile");
     let owner = vault.ensure_embedded_owner_actor().expect("the owner");
     oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner binding");
+    vault.hold_checkpoint_root_signer(Arc::new(issuer));
+    // A checkpoint is sealed under the vault data key, so the host mints it before its first
+    // snapshot for a beside copy.
+    vault.ensure_vault_key().expect("mint the vault data key");
     let proof = vault
         .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
         .expect("an owner proof");
@@ -52,6 +62,7 @@ fn rooted_host() -> Host {
     Host {
         _dir: dir,
         vault,
+        keystore,
         proof,
         vault_id,
     }
@@ -64,8 +75,13 @@ struct MachineInstall {
     proof: AuthenticatedOwner,
 }
 
-/// A beside copy of `source`, with its own keystore and owner proof, before enrolment.
-fn restored_beside(source: &Vault) -> (tempfile::TempDir, Vault, AuthenticatedOwner) {
+/// A beside copy of `source`, a new install on the same device, with its own owner proof,
+/// before enrolment. It takes the device's `keystore`, so it opens the vault data key with the
+/// device wrap of the install it was copied from, as a copy made on that device does.
+fn restored_beside(
+    source: &Vault,
+    keystore: &Arc<oneiron_keystore::MemoryKeystore>,
+) -> (tempfile::TempDir, Vault, AuthenticatedOwner) {
     let backups = oneiron::test_support::restore_tempdir();
     let image = backups.path().join("image");
     source
@@ -84,7 +100,7 @@ fn restored_beside(source: &Vault) -> (tempfile::TempDir, Vault, AuthenticatedOw
         200,
     )
     .expect("restore beside the source");
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault.install_device_keystore(keystore.clone());
     let owner = vault
         .ensure_embedded_owner_actor()
         .expect("the owner on the copy");
@@ -159,7 +175,8 @@ fn signer_fork_after_removal() -> SignerFork {
         .put_entity(&world, ENTITY_TYPE_WORLD, AT, 1, b"world")
         .expect("the world row on the host");
 
-    let (backups_removed, vault_removed, proof_removed) = restored_beside(&host.vault);
+    let (backups_removed, vault_removed, proof_removed) =
+        restored_beside(&host.vault, &host.keystore);
     let removed_machine = admit_install(&host, &vault_removed);
     let removed_install = MachineInstall {
         _backups: backups_removed,
@@ -214,7 +231,7 @@ fn signer_fork_after_removal() -> SignerFork {
     sync_authority(&removed_install.vault, &host.vault);
 
     let (backups_standing, vault_standing, proof_standing) =
-        restored_beside(&removed_install.vault);
+        restored_beside(&removed_install.vault, &host.keystore);
     let standing_machine = admit_install(&host, &vault_standing);
     let standing_install = MachineInstall {
         _backups: backups_standing,

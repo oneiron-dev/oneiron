@@ -46,6 +46,7 @@ fn published_page(vault: &Vault) -> BookingPagePublication {
             deposit: None,
             duration_min: u32::from(DEFAULT_INTRO_DURATION_MIN),
             description: "Fixture description".to_owned(),
+            allowed_durations_min: Vec::new(),
         }],
         constraint_field: ConstraintFieldConfig {
             enabled: false,
