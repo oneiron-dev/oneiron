@@ -106,13 +106,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/draft_from_steps_literal_opens_slot.rs` | test | m | — | — | These tests cover FIX [BROWSER-DRAFT-LITERAL-TEXT-WITH-SLOT-BRACES-READS-AS-A-SLOT] |
 | `tests/guest_pressure_answer.rs` | test | m | — | — | A browser or desktop guest's pids-limit hits reach its session's manifest (FIX 8013 follow-up… |
 | `tests/library_run_mode_and_model_free.rs` | test | s | — | — | These tests hold the run mode and model-free contract (FIX [BROWSER-LIBRARY-PLAIN-FUNCTIONS-HELD-BY-NO-TEST]) |
+| `tests/library_session_doors/draft.rs` | test | m | — | — | The `library_draft` door's five tests (FIX [BROWSER-LIBRARY-SESSION-DOORS-HELD-BY-NO-TEST]): a minted check… |
 | `tests/library_session_doors/find.rs` | test | s | — | — | The `library_find` door's tests: the refusal before the store, the forwarded filters, the seed candidates… |
-| `tests/library_session_doors/main.rs` | test | s | — | — | Holds the browser workflow library's find, retire, retired and run session doors (FIX… |
+| `tests/library_session_doors/main.rs` | test | s | — | — | Holds the browser workflow library's draft, find, retire, retired and run session doors and the solved-run… |
 | `tests/library_session_doors/retire.rs` | test | s | — | — | The `library_retire` door's tests: the forwarded reason and the returned card, the missing card's answer… |
 | `tests/library_session_doors/retired.rs` | test | s | — | — | The `library_retired` door's tests: the normalized explicit site, the open page's site by default, and the… |
 | `tests/library_session_doors/run.rs` | test | m | — | — | The `library_run` door's nine tests (FIX [BROWSER-LIBRARY-SESSION-DOORS-HELD-BY-NO-TEST]): refusals before a… |
-| `tests/library_session_doors/scripted_chromium.rs` | test | m | 6 crate-vis | — | The scripted Chromium peer: one fixture page behind NUL-framed CDP |
-| `tests/library_session_doors/session_fixture.rs` | test | s | 4 crate-vis | — | Attaches the real browser session without starting a guest or allowing egress |
+| `tests/library_session_doors/scripted_chromium.rs` | test | m | 8 crate-vis | — | The scripted Chromium peer: one fixture page behind NUL-framed CDP |
+| `tests/library_session_doors/secret_custody.rs` | test | s | 4 crate-vis | — | Records custody calls over fabricated fixture values |
+| `tests/library_session_doors/session_fixture.rs` | test | s | 6 crate-vis | — | Attaches the real browser session without starting a guest or allowing egress |
+| `tests/library_session_doors/snapshot.rs` | test | m | — | — | The `snapshot_solved_run` door's seven tests (FIX [BROWSER-LIBRARY-SESSION-DOORS-HELD-BY-NO-TEST]): what a… |
 | `tests/library_session_doors/workflow_store.rs` | test | s | 7 crate-vis | — | Records what the session forwards; it does not filter, sort or apply vault policy |
 | `tests/program_origin_and_filled_checks.rs` | test | s | — | — | These tests hold the plain origin and check-filling rules (FIX… |
 | `tests/replay_args_held_out.rs` | test | s | — | — | Tests for the replay held-out check (FIX [BROWSER-LIBRARY-PLAIN-FUNCTIONS-HELD-BY-NO-TEST]) |
