@@ -83,6 +83,12 @@ const FAILED: WebhookReply = WebhookReply::Refused(
     StatusCode::INTERNAL_SERVER_ERROR,
     "stripe_deposit_webhook_failed",
 );
+/// Not applied yet, during a home move: any answer other than 2xx makes
+/// Stripe deliver the event again later.
+const HOME_MOVING: WebhookReply = WebhookReply::Refused(
+    StatusCode::SERVICE_UNAVAILABLE,
+    "stripe_deposit_home_moving",
+);
 
 async fn stripe_deposit_webhook(
     State(server): State<Arc<SyncServer>>,
@@ -254,6 +260,15 @@ pub(crate) fn deliver(
                 "a Stripe authorization for other than the deposit's terms was not applied"
             );
             WebhookReply::Accepted
+        }
+        // A home move holds the deposit between two nodes: Stripe delivers
+        // the event again, and the node that holds the deposit applies it.
+        Ok(DepositProviderEventOutcome::Deferred) => {
+            tracing::info!(
+                payment = %event.payment_id,
+                "a Stripe deposit event waits for the home move that holds its deposit"
+            );
+            HOME_MOVING
         }
         Ok(_) => WebhookReply::Accepted,
         Err(BookingError::InvalidConstraint(_)) => {
