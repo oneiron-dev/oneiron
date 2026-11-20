@@ -12,6 +12,10 @@ pub struct DeleteEntityOutcome {
     /// FIX 5775): the same `turn_program.undecodable_rows_removed:N` details the gated hard
     /// purge names on its gate decision. Empty when none did, or when no hard purge ran.
     pub turn_program_details: Vec<String>,
+    /// The delete of a live artifact's lone `blob.version` claim ran as the release of the
+    /// version it records (ASTRA-R2-002): the claim went with its version and, unless another
+    /// holder keeps them, with its bytes. No receipt entity is written for it.
+    pub version_release: bool,
 }
 
 impl DeleteEntityOutcome {
@@ -22,6 +26,7 @@ impl DeleteEntityOutcome {
             receipt_id: None,
             sweep_key: None,
             turn_program_details: Vec::new(),
+            version_release: false,
         }
     }
 }

@@ -38,6 +38,9 @@
 //!   consent-log verb `vault.voices.recognition.consent` logs a
 //!   counterparty's spoken withdrawal on a call, the owner is told which
 //!   consent was withdrawn, and the withdrawal only narrows;
+//! - a withdrawal dated before a grant it covers is accepted and voids that
+//!   grant, while a yes recorded after it stands (VOICE-BACKDATED-WITHDRAWAL-SHAPE
+//!   = B); red on main, where the voided grant enrols a print again;
 //! - logging voice-recognition consent enrols nothing (VOICE-CONSENT-LOG-WHO = A;
 //!   oneiron-arch-0061 "the agent logs who/when/what"): a person logs their own
 //!   voice, the owner any subject's, and an agent with the consent-log Grant a
@@ -1144,6 +1147,83 @@ fn a_recognition_withdrawal_deletes_the_print_and_keeps_the_consent_record() {
         assert_eq!(
             inspection["render_consent"]["state"], "granted",
             "the render grant stays: {inspection}"
+        );
+    });
+}
+
+/// A withdrawal dated before a grant it covers is never refused, and it
+/// voids that grant (FIX [VOICE-WITHDRAWAL-BACKDATED-LEAVES-GRANT];
+/// VOICE-BACKDATED-WITHDRAWAL-SHAPE = B: "It voids every covered grant dated
+/// after it, and a yes recorded later still stands"). Red on main: the old
+/// grant enrols a new print again, since main blocks a grant only by a
+/// withdrawal dated at or after it.
+#[test]
+fn a_backdated_withdrawal_voids_the_later_dated_grant_and_a_later_yes_stands() {
+    run_on_engine_stack("voices-recognition-backdated-withdrawal", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let owner = served.owner_person;
+        served.enroll_print(owner, "backdated-old-grant", &axis_vector(0), now);
+        assert_eq!(
+            served.recognized("before-backdated-withdrawal", &axis_vector(0)),
+            Some(owner),
+            "setup: the enrolled print recognizes the owner"
+        );
+
+        // The owner logs a "stop" said ten minutes before the grant's time.
+        let withdrawal = recognition_withdrawal("backdated-withdrawal", now - 600, None);
+        let receipt = served
+            .ok(Caller::Owner, RECOGNITION_WITHDRAW, withdrawal.clone())
+            .await;
+        assert_eq!(receipt["replayed"], false, "{receipt}");
+        assert_eq!(
+            receipt["deleted_print"], true,
+            "the backdated withdrawal is accepted and deletes the print: {receipt}"
+        );
+        assert!(
+            served
+                .vault
+                .enroll_voice_print(&enrollment(
+                    owner,
+                    "backdated-old-grant",
+                    &axis_vector(0),
+                    now,
+                ))
+                .is_err(),
+            "the grant dated after the withdrawal it was recorded before enrolls no new print"
+        );
+        assert_eq!(
+            served.recognized("after-backdated-withdrawal", &axis_vector(0)),
+            None,
+            "no print recognizes the owner after the backdated withdrawal"
+        );
+
+        // A yes recorded after the withdrawal stands on its own date, even
+        // dated between the withdrawal and the voided grant, and a replay of
+        // the withdrawal voids nothing new.
+        let later = served
+            .ok(
+                Caller::Owner,
+                RECOGNITION_CONSENT,
+                recognition_consent("later-yes", now - 300, None, &["meeting_attribution"]),
+            )
+            .await;
+        assert_eq!(
+            later["replayed"], false,
+            "setup: the later yes is logged: {later}"
+        );
+        let replay = served
+            .ok(Caller::Owner, RECOGNITION_WITHDRAW, withdrawal)
+            .await;
+        assert_eq!(replay["replayed"], true, "{replay}");
+        served
+            .vault
+            .enroll_voice_print(&enrollment(owner, "later-yes", &axis_vector(0), now))
+            .expect("the yes recorded after the backdated withdrawal enrolls a print");
+        assert_eq!(
+            served.recognized("after-later-yes", &axis_vector(0)),
+            Some(owner),
+            "the print the later yes enrolled recognizes the owner"
         );
     });
 }

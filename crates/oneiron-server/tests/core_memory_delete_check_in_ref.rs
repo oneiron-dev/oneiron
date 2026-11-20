@@ -7,17 +7,19 @@
 //! approves it, the same route call naming it as `check_in_ref` deletes the
 //! NOTE, spends the check-in, and its receipt names it.
 //!
-//! A delete that goes at once (a Steward's or a Member's delete of its own
-//! NOTE) spends no check-in, so one it names is refused 400: it deletes
-//! nothing, and the check-in stays unspent for the delete it was asked for
-//! (REVIEW-9810 P1).
+//! A delete that goes at once (a Member's delete of its own NOTE) spends no
+//! check-in, so one it names is refused 400: it deletes nothing, and the
+//! check-in stays unspent for the delete it was asked for (REVIEW-9810 P1).
+//! A Steward writes no content, so it holds no NOTE of its own here; its
+//! own-item arm of the same judge is pinned at `vault.delete` by
+//! crates/oneiron/tests/check_in_delete_effects.rs.
 //!
 //! Red on main 7b962d258336: the route sends `vault.delete` only the target
 //! and the reason, so the approved call waits again and the NOTE stays. The
 //! owner's delete naming a check-in deletes (the field is dropped), and a
 //! retract naming one runs as if it named none. Red at 91f25febd64: the
 //! engine's judge lets a delete that goes at once ignore the check-in it
-//! names, so the Steward's own NOTE is deleted with 200.
+//! names, so the Member's own NOTE is deleted with 200.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --features oneiron/test-support --test
@@ -381,25 +383,10 @@ fn a_delete_that_goes_at_once_refuses_a_named_check_in_and_leaves_it_unspent() {
     run_on_engine_stack("at-once-delete-check-in", || async {
         let fx = Served::new();
         let others = fx.member_note();
-        let own = fx.note_by(fx.steward);
         let steward = fx.credential(fx.steward);
         let (status, body) = fx.post(&steward, "delete", json!({ "id": others })).await;
         let check_in = pending_check_in(status, &body);
         fx.owner_approves(&check_in);
-
-        let (status, body) = fx
-            .post(
-                &steward,
-                "delete",
-                json!({ "id": own, "check_in_ref": check_in }),
-            )
-            .await;
-        assert_check_in_ref_refused(status, &body);
-        assert!(
-            !fx.deleted(&own),
-            "the Steward's own NOTE goes at once, so the named check-in refuses it"
-        );
-        assert!(!fx.spent(&check_in), "the refusal leaves it unspent");
 
         let mine = fx.member_note();
         let member = fx.credential(fx.member);

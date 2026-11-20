@@ -1,6 +1,8 @@
 //! The embedded owner's door for the verb-table rows that are the vault
 //! owner's (`vault.packs.put`, the `connector.*` key lifecycle). A server
-//! takes the owner's proof from the request instead.
+//! takes the owner's proof from the request instead. Also the owner proof
+//! each whole-vault export door hands its audit write, so the export's
+//! signed act can carry the owner key's proof.
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::authority::{OwnerOrDelegate, VerifiedSlip, is_owner_delegate_verb};
@@ -191,6 +193,49 @@ impl Memory<'_> {
         let proof = self.embedded_owner(verb)?;
         Ok(self.vault.put_pack(&proof, files)?)
     }
+
+    /// This caller as the owner whose slip `proof` carries his whole-vault
+    /// export, bound to it as an owner door binds the slip a request
+    /// arrived with ([`crate::Vault::bind_owner_credential`]), for the
+    /// export's audit write to revalidate as his own write
+    /// ([`crate::memory::ExportCopy::authenticated`]). `None` where it does
+    /// not bind (no recorded owner, not his own full slip, not live): the
+    /// act is then carried unproven, and the export's own admission judges
+    /// the slip as before.
+    pub(super) fn export_owner_of_slip(&self, proof: &VerifiedSlip) -> Option<AuthenticatedOwner> {
+        let principal = self.actor.to_hex();
+        let owner = self
+            .vault
+            .authenticate_recorded_owner(self.actor, &principal, GateDecisionId::now())
+            .ok()??;
+        self.vault.bind_owner_credential(owner, proof.clone()).ok()
+    }
+}
+
+/// The owner a self-hosted root's slip `root` exports the whole vault as,
+/// authenticated from its host action as every owner door takes one
+/// ([`crate::Vault::authenticate_host_action_owner`]), for the export's
+/// audit write to revalidate as his own write. `None` where the root acts
+/// as no owner: the act is then carried unproven.
+pub(super) fn export_owner_of_host_root(
+    vault: &crate::Vault,
+    root: &VerifiedSlip,
+) -> Option<AuthenticatedOwner> {
+    let action = vault.host_action_authority(root).ok()?;
+    export_owner_of_host_action(vault, &action)
+}
+
+/// The owner a host action exports the whole vault as, authenticated from
+/// it ([`crate::Vault::authenticate_host_action_owner`]), for the export's
+/// audit write to revalidate as his own write. `None` where the action no
+/// longer holds: the act is then carried unproven.
+pub(super) fn export_owner_of_host_action(
+    vault: &crate::Vault,
+    action: &crate::authority::HostActionAuthority,
+) -> Option<AuthenticatedOwner> {
+    vault
+        .authenticate_host_action_owner(action, GateDecisionId::now())
+        .ok()
 }
 
 /// An owner-delegate door's refusal of an agent's credential that lacks

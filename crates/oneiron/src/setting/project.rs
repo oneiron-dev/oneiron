@@ -92,13 +92,14 @@ use super::beside::{
 };
 use super::born::is_born_value_slot;
 use super::change::{
-    change_in_txn, record_change_in_txn, record_receipt_in_txn, record_signed_entry_in_txn,
+    change_in_txn, hex_id_mentions, record_change_in_txn, record_receipt_in_txn,
+    record_signed_entry_in_txn,
 };
 use super::pack::{fold_layer, layer_default_in_txn, proved_pack_row_in_txn};
 use super::read::{StoredRow, table_of};
 use super::{
     EncodedValue, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, SettingSync,
-    spec_named,
+    WriteTurn, spec_named,
 };
 use crate::Vault;
 use crate::authority::{
@@ -618,10 +619,38 @@ fn beside_of(
     digest: [u8; 32],
 ) -> Result<std::result::Result<Option<EncodedValue>, Short>> {
     Ok(match reads.read_in_txn(vault, txn, (slot, act), digest)? {
-        BesideRead::Here(bytes) => inline_value(spec, &bytes).map_err(|()| Short::Unreadable),
+        BesideRead::Here(bytes) => match inline_value(spec, &bytes) {
+            Ok(Some(value)) => Ok(Some(without_erased_mentions_in_txn(
+                vault, txn, spec, &bytes, value,
+            )?)),
+            Ok(None) => Ok(None),
+            Err(()) => Err(Short::Unreadable),
+        },
         BesideRead::Absent => Err(Short::Inert(Inert::Awaiting)),
         BesideRead::Unreadable => Err(Short::Unreadable),
     })
+}
+
+/// `value`, decoded from the JSON bytes `json` beside an act, with each entity this vault erased
+/// taken out where the key says how ([`super::Kind::erase_mentions`]), as an erase takes it out
+/// of the rows stored when it ran: a value that reaches this install after the erase, or is read
+/// again, names it no more than they do (stage 7c-1). A value names an entity by its hex id.
+fn without_erased_mentions_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    spec: &SettingSpec,
+    json: &[u8],
+    mut value: EncodedValue,
+) -> Result<EncodedValue> {
+    let named: BTreeSet<EntityId> = hex_id_mentions(json).collect();
+    for id in named {
+        if crate::deletion::row_deletion_marked(&vault.store, txn, &id, None)?
+            && let Some(erased) = spec.kind.erase_mentions_in(&value, id)
+        {
+            value = erased;
+        }
+    }
+    Ok(value)
 }
 
 /// A value's JSON bytes under `spec`; `Err` when this build cannot decode them or the key's
@@ -849,6 +878,9 @@ struct Projected {
     /// The row stays as it is: a quarantined value of a key that names no strictest value, so
     /// no row could read as one (its read would fail).
     keep: bool,
+    /// A row beside an act the projection read was erased here or does not hold its act's value
+    /// (stage 7c-1): the change row names no prior value, so no erased value is written again.
+    erased: bool,
     standing: ChangeStanding,
     /// The act the row is credited to.
     deciding: Credit,
@@ -953,6 +985,7 @@ fn combine(
         return Ok(Ok(Projected {
             value: joined,
             keep: false,
+            erased: false,
             standing,
             with: others(&deciding),
             deciding,
@@ -982,6 +1015,7 @@ fn combine(
         return Ok(Ok(Projected {
             value: None,
             keep: false,
+            erased: false,
             standing,
             with: others(&deciding),
             deciding,
@@ -999,6 +1033,7 @@ fn combine(
             Projected {
                 value,
                 keep: false,
+                erased: false,
                 standing,
                 with: others(&deciding),
                 deciding,
@@ -1024,6 +1059,7 @@ fn quarantined_of(
     Projected {
         value: (!unwritten).then(|| EncodedValue(vec![UNREADABLE_VALUE])),
         keep: !has_strictest && !unwritten,
+        erased: reads.any_unreadable(),
         standing: ChangeStanding::Quarantined,
         with: heads
             .iter()
@@ -1385,7 +1421,7 @@ pub(super) fn project_target_in_txn(
         };
         return leave_in_txn(vault, txn, inert(why), reads);
     }
-    let projected = match combine(vault, txn, &reads, (spec, target), &heads, &fold)? {
+    let mut projected = match combine(vault, txn, &reads, (spec, target), &heads, &fold)? {
         Ok(projected) => projected,
         // A later act waits for its own value (stage 7c-1): the row keeps the value it holds
         // while every row beside an act that value came from holds it, and reads the key's
@@ -1402,6 +1438,17 @@ pub(super) fn project_target_in_txn(
         }
         Err(why) => return leave_in_txn(vault, txn, inert(why), reads),
     };
+    // A quarantine that keeps the row keeps the value it holds (stage 7c-1): it reads again each
+    // row beside an act that value came from, keeps watching it, and holds no row once one is
+    // erased here or no longer matches its act, so no read takes that value.
+    if projected.keep {
+        let kept = last.as_ref().map_or(&[][..], |last| last.beside.as_slice());
+        if reads.carry_kept_in_txn(vault, txn, kept)?
+            && let Some(newest) = heads.first()
+        {
+            projected = quarantined_of(false, (newest, &heads), &reads);
+        }
+    }
     let local = match slot.mode {
         SettingMode::Carried => own_carry_bound_in_txn(vault, txn, spec, &slot, &heads)?,
         SettingMode::Value | SettingMode::Pin => None,
@@ -1698,7 +1745,7 @@ fn write_row_in_txn(
             mode: slot.mode,
             by,
             setter,
-            prior,
+            prior: prior.clone().filter(|_| !projected.erased),
             value: projected.value.clone(),
             at: now,
             why: None,
@@ -1730,8 +1777,10 @@ fn write_row_in_txn(
             table.delete(&vault.store, txn, &key)?;
         }
     }
+    // The key's hook reads the row as it stood before the change, an erased value included
+    // (a seat or a feed it takes out of service): the history keeps none of it.
     if let Some(on_change) = spec.on_change {
-        on_change(vault, txn, &recorded)?;
+        on_change(vault, txn, &SettingChange { prior, ..recorded })?;
     }
     Ok(true)
 }
@@ -1759,6 +1808,54 @@ pub(crate) fn forget_projected_rows_in_txn(
         PROJECTIONS.delete(&vault.store, txn, &target)?;
     }
     Ok(forgotten)
+}
+
+/// A row beside an act that a target's last projection read, as an erase of it takes its value
+/// out of the setting history (stage 7c-1, `change::scrub_beside_value_in_txn`).
+pub(super) struct BesideSource {
+    /// The row the target's acts name.
+    pub(super) slot: RowKey,
+    /// BLAKE3 over the JSON bytes of the value the act keeps beside it.
+    pub(super) digest: [u8; 32],
+    /// That row's value as stored here, where the value came from the row beside the act.
+    pub(super) stored: Option<EncodedValue>,
+}
+
+/// The row beside an act `row` as the last projection of the target that reads it recorded it;
+/// `None` where no projection reads it now.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn beside_source_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    row: &EntityId,
+) -> Result<Option<BesideSource>> {
+    let Some(target) = super::beside::watched_target_in_txn(dbs, txn, row)? else {
+        return Ok(None);
+    };
+    let Some(projection) = PROJECTIONS.get(dbs, txn, &target_key(target))? else {
+        return Ok(None);
+    };
+    let (Some(slot), Some(seen)) = (
+        RowKey::decode(&projection.slot),
+        projection.beside.iter().find(|seen| seen.row == *row),
+    ) else {
+        return Ok(None);
+    };
+    let stored = match spec_named(&slot.name) {
+        Ok(spec) if seen.kept => table_of(spec)
+            .get_bytes(dbs, txn, &slot.encode())?
+            .and_then(|bytes| rmp_serde::from_slice::<StoredRow>(&bytes).ok())
+            .map(|stored| stored.value),
+        _ => None,
+    };
+    Ok(Some(BesideSource {
+        slot,
+        digest: seen.digest,
+        stored,
+    }))
 }
 
 /// Whether the pin row `slot` reads as a value row at its scope (stage 7b-3): its projection
@@ -1849,7 +1946,7 @@ impl Vault {
                 "the owner's setting rows no act backs were not published; the next authority commit or open tries again"
             ),
         }
-        let moved: Vec<EntityId> = {
+        let mut moved: Vec<(EntityId, Option<WriteTurn>)> = {
             let txn = self.store.env.read_txn()?;
             if !rooted_in_txn(self, &txn)? {
                 return Ok(SettingsProjected::default());
@@ -1865,18 +1962,44 @@ impl Vault {
                         None => true,
                     };
                 if moved_here {
-                    moved.push(target.target);
+                    let turn = write_turn_of_target_in_txn(self, &txn, target.target)?;
+                    moved.push((target.target, turn));
                 }
             }
             moved
         };
+        // The turns of the keys whose rows the pass may change, taken before its writer opens, as
+        // a change of such a key takes its own ([`WriteTurn`]): a feed's uninstall or a seat's
+        // then never lands inside a running calendar admission. A turn this thread already holds
+        // (a pass run by a commit of the turn's holder) leaves those rows for the pass that runs
+        // once it is released ([`project_deferred_settings`]).
+        let turns: BTreeMap<&str, WriteTurn> = moved
+            .iter()
+            .filter_map(|(_, turn)| turn.map(|turn| (turn.name, turn)))
+            .collect();
+        let mut held = Vec::with_capacity(turns.len());
+        let mut deferred = BTreeSet::new();
+        for turn in turns.values() {
+            match (turn.take)(self) {
+                Ok(guard) => held.push(guard),
+                Err(Error::InvalidConfig(_)) => {
+                    deferred.insert(turn.name);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        if !deferred.is_empty() {
+            moved.retain(|(_, turn)| turn.is_none_or(|turn| !deferred.contains(turn.name)));
+            PROJECTION_DEFERRED.with(|owed| owed.set(true));
+            crate::federation::note_authority_row();
+        }
         if moved.is_empty() {
             return Ok(SettingsProjected::default());
         }
         let changed = self.with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let mut changed = Vec::new();
-            for target in &moved {
+            for (target, _) in &moved {
                 // Each row in a savepoint of its own: one a key's hook refuses on this install
                 // (its manifest, a seat installed here) stays as it was, and the others land.
                 let mut savepoint = self.store.env.nested_write_txn(txn)?;
@@ -1919,4 +2042,39 @@ impl Vault {
             );
         }
     }
+}
+
+thread_local! {
+    /// Set on a thread whose projection pass left rows for later because the thread held their
+    /// key's turn ([`Vault::project_settings`]); [`project_deferred_settings`] runs that pass.
+    static PROJECTION_DEFERRED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Runs the projection pass a pass on this thread left for later because the thread held a key's
+/// turn, once the turn's holder released it ([`Vault::set_setting`]). A no-op where none was
+/// left; a failure is logged, and the next authority commit or open tries again. Any other holder
+/// of a turn leaves the pass to the next watched commit on its thread, which the deferring pass
+/// noted, or to the open.
+pub(crate) fn project_deferred_settings(vault: &Vault) {
+    let deferred = PROJECTION_DEFERRED.with(|owed| owed.replace(false));
+    vault.project_settings_after_authority_ingest(deferred);
+}
+
+/// The turn the key of the acts on `target` takes before a write of its row opens
+/// ([`WriteTurn`]), read before the pass's writer opens; `None` for a key that names none, or acts
+/// that name no row this build writes.
+fn write_turn_of_target_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    target: EntityId,
+) -> Result<Option<WriteTurn>> {
+    let Some(fold) = vault.setting_slot_fold_in_txn(txn, target)? else {
+        return Ok(None);
+    };
+    Ok(fold
+        .live
+        .iter()
+        .find_map(|head| head_of(head).ok())
+        .and_then(|head| spec_named(&head.slot.name).ok())
+        .and_then(|spec| spec.write_turn))
 }
