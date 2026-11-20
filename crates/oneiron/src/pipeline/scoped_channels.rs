@@ -209,10 +209,14 @@ impl PipelineBuilder<'_> {
     /// its suppression counts as before, and the bookkeeping of every later
     /// check is the post-blend filters' own. A row the candidate filter
     /// refuses is judged by nothing after it: this step adds no gate
-    /// decision, no `read_suppressed` entry and no count for it, so a reader
-    /// learns nothing here of a row it cannot read. The list takes this only
-    /// once the memory lane and entity-type authority have narrowed it, so
-    /// the gate judges no row of a kind the reader may not retrieve
+    /// decision, no `read_suppressed` entry and no count for it. A claim
+    /// that only a check after the gate refuses (the pack's disclosure
+    /// prefilter among them) is judged by the gate first and its
+    /// suppression counts, as at a bounded channel's fetch and at main's
+    /// post-blend gate. The disclosure prefilter reads the row alone; the
+    /// pack's full sweep still asks a summary's sources. The list takes this
+    /// only once the memory lane and entity-type authority have narrowed it,
+    /// so the gate judges no row of a kind the reader may not retrieve
     /// (REVIEW-9842 round 2). No deadline cuts it: admission always runs.
     pub(super) fn retain_phonetic_hits_in_scope(
         &self,
