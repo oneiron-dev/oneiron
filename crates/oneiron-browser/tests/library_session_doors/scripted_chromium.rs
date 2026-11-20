@@ -209,8 +209,10 @@ fn page_answer(state: &mut State, method: &str, params: &Value) -> Result<Value,
 
 /// Answers DOM calls.
 fn dom_answer(state: &mut State, method: &str, params: &Value) -> Result<Value, (i32, String)> {
-    if method != "DOM.getDocument" {
-        return unknown_answer(state, method);
+    match method {
+        "DOM.enable" => return Ok(json!({})),
+        "DOM.getDocument" => {}
+        _ => return unknown_answer(state, method),
     }
     match params.get("depth").and_then(Value::as_i64) {
         Some(-1) => Ok(json!({"root": {
