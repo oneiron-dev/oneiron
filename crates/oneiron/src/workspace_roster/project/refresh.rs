@@ -495,6 +495,18 @@ fn write(
         }
     };
     let changed = old.as_ref().is_none_or(|old| !old.same_view(&record));
+    // A view that reads less may leave a standing answer wider than its row
+    // (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS). A project with no view
+    // persisted before is new: no answer rests on its room yet.
+    if changed && let Some(old) = &old {
+        super::room_narrowing::queue_narrowed_room_in(
+            store,
+            txn,
+            project,
+            old.effective.as_ref(),
+            record.effective.as_ref(),
+        )?;
+    }
     PROJECT_FRONTIER.put(store, txn, &project, &record)?;
     Ok(changed)
 }

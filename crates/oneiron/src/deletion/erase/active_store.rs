@@ -398,6 +398,9 @@ impl Vault {
             .deindex_project_room(&self.store, wtxn, id, &|txn, id| {
                 crate::batch::deindex_entity(&write, txn, id)
             })?;
+        // A project's unbound home room leaves no standing answer wider than
+        // its rows (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS).
+        self.mark_answers_in_narrowed_rooms_in_txn(wtxn)?;
         if room_had_graph {
             ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &room_neighbors)?;
             crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;

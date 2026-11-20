@@ -161,7 +161,10 @@ impl BatchBuilder<'_> {
         } else {
             self.apply_staged(wtxn, gate_mode, None, lane, authority_beside, own_device)?;
         }
-        vault.stamp_agent_authored_creates_in_txn(wtxn, creates)
+        vault.stamp_agent_authored_creates_in_txn(wtxn, creates)?;
+        // A room the batch narrowed leaves no standing answer wider than its
+        // rows (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS).
+        vault.mark_answers_in_narrowed_rooms_in_txn(wtxn)
     }
 
     fn apply_staged(
