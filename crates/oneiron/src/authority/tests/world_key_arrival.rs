@@ -9,12 +9,11 @@ use super::support::{authority_key_from_ed, sign_ed, unsigned_entry};
 use super::world_chain_reads::hash;
 use super::world_key_doors::{Fresh, enrol_own, fresh_install, keyed_machine, kit_seed, set};
 use super::world_privacy::{settings, stored_entries, world_row};
-use super::world_reissue::{Issued, admit, issue, set_on, sync};
+use super::world_reissue::{Issued, admit, issue, profiled, set_on, sync, with_predecessor};
 use super::*;
 use crate::world_keys::{RecoveryRootSeed, WorldKey, WorldKeyBinding, seal_world_key};
 use crate::{Vault, VaultConfig};
 
-const HERE: EditOrigin = EditOrigin::ThisMachine;
 const AT: TimeRange = TimeRange { start: 3, end: 3 };
 
 /// A host with this install's machine and an owner root, the root's kit
@@ -22,10 +21,11 @@ const AT: TimeRange = TimeRange { start: 3, end: 3 };
 fn rooted() -> (Host, RecoveryRootSeed, EntityId) {
     let host = host();
     enrol_own(&host);
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let seed = kit_seed(host.vault_id, prepared.seed());
     host.vault
-        .activate_owner_root(&host.owner, HERE, prepared, &BTreeSet::new())
+        .activate_owner_root(&host.owner, prepared, &BTreeSet::new())
         .unwrap();
     let world = world_row(&host);
     (host, seed, world)
@@ -99,7 +99,7 @@ fn a_key_record_that_arrives_after_a_later_edit_still_restores_from_the_kit() {
     for (row, _) in [&rows[0], &rows[2], &rows[1]] {
         fresh.put_authority_log_entry(row, AT, 3).unwrap();
     }
-    let restore = fresh.restore_world_keys(&owner, HERE, &seed, None).unwrap();
+    let restore = fresh.restore_world_keys(&owner, &seed, None).unwrap();
     assert_eq!(restore.usable, vec![key]);
     assert_eq!(fresh.world_key(world).unwrap().id(), &key);
 }
@@ -156,7 +156,9 @@ fn every_arrival_order_of_one_machines_world_rows_keeps_each_row() {
 /// Astra-c's vault: every install is a new install of one vault. The
 /// owner's root R anchors machine A, A's only admission. A makes the world
 /// `MyMachines` (E1; the door mints K for A and R in K2). R then anchors B,
-/// and A wraps K to B (K3). The issuer holds every row.
+/// and A wraps K to B (K3). The issuer holds every row. B's roster profile
+/// is `WorkSchool`, so it joins before R anchors it but reads K only from
+/// that anchor on (a `Yours` one would get K in K2).
 pub(super) struct Graph {
     pub(super) host: Host,
     pub(super) world: EntityId,
@@ -173,6 +175,13 @@ pub(super) fn graph() -> Graph {
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
     let b = fresh_install(&host);
+    profiled(&host, &a.vault, MachineRole::Owned(MachineOwnership::Yours));
+    profiled(
+        &host,
+        &b.vault,
+        MachineRole::Owned(MachineOwnership::WorkSchool),
+    );
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let root = issue(&issuer, &[]);
     admit(&issuer, &root, &a);
     set_on(&a, world, ReadLocation::MyMachines);
@@ -298,7 +307,8 @@ impl Graph {
             policy: record.policy,
             commitment: key.commitment(),
         };
-        let envelope = seal_world_key(&binding, to, public, &key).unwrap();
+        let pad = oneiron_store::world_pad_codec::WorldKeyPad::mint().unwrap();
+        let envelope = seal_world_key(&binding, to, public, &key, &pad).unwrap();
         let record = WorldKeyWrapsRecord {
             key: *key.id(),
             commitment: key.commitment(),
@@ -366,7 +376,7 @@ fn a_kit_restore_after_a_reversed_arrival_and_a_removal_keeps_the_key() {
         }
         let restore = install
             .vault
-            .restore_world_keys(&install.owner, HERE, &graph.root.seed, None)
+            .restore_world_keys(&install.owner, &graph.root.seed, None)
             .unwrap();
         assert_eq!(
             restore.usable,

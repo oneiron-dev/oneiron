@@ -23,6 +23,7 @@ pub(crate) mod session;
 
 use heed::RoTxn;
 use loro::LoroDoc;
+use oneiron_contracts::fingerprint::ContentHash;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
@@ -60,7 +61,7 @@ pub(in crate::sync) fn file_echo_equal(
         return Ok(false);
     };
     let body = &carried[ENTITY_METADATA_HEADER_LEN..];
-    Ok(body.len() as u64 == len && *blake3::hash(body).as_bytes() == digest)
+    Ok(body.len() as u64 == len && *ContentHash::of(body).as_bytes() == digest)
 }
 
 /// The row a point read serves for `blob`, what `doc` carries for `id`

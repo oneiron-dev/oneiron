@@ -190,10 +190,19 @@ checks the pin, refuses any import outside the three, checks the `run-hook`
 export and runs a real-JS readiness probe. `hook_component_bytes()` returns
 the checked-in artifact and its BLAKE3 pin, `HOOK_COMPONENT_BLAKE3`, which
 must be replaced along with the artifact. Each `run_hook` gets a fresh Store
-under the code-mode fuel, memory, stack, host-call and message limits. The
+under the code-mode fuel, memory, stack, host-call and message limits, except
+that a memory growth past them fails the guest's allocation (QuickJS throws
+out of memory) instead of trapping. The
 deadline is the hook's `budget_ms`, and it covers start-up and reads. Every
 read and verdict debits the host-call budget. A read request may carry 4 KiB,
-a verdict request 64 KiB, and an answer 256 KiB.
+a verdict request 64 KiB, and an answer 256 KiB. The body is held to 1 MiB.
+The input is held only to the guest's memory: the host measures, once per
+sandbox, the room a fresh instance's 32 MiB can still grow by, less the 1 MiB
+body and the allocator's slack, and refuses a longer input before the start
+(checked before the body and budget), so a lowering never aborts the guest.
+A guest that cannot take its input answers `hook_input_not_taken`, and a
+blocking post hook on a skill answer its body never started on refuses the
+call.
 
 ## Production MCP binding
 

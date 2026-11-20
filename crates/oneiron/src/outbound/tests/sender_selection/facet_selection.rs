@@ -80,6 +80,7 @@ fn automatic_outbound_selection_matches_actor_not_facet_and_preserves_safety() -
         name: grant.custody_record_ref.clone(),
         class: crate::secret_custody::CustodyClass::CrossVault,
         device_only: true,
+        model_reveal_allowed: false,
         value_bytes: b"test-delegated-token".to_vec(),
         status: crate::secret_custody::SecretCustodyStatus::Active,
         registered_at: 1_800_000_000,

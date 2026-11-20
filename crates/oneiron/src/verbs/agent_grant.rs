@@ -140,7 +140,7 @@ pub fn mint_agent_grants_from_slip_as(
     surface: ActSurface,
     input: AgentGrantFromSlipRequest,
 ) -> MemoryResult<AgentGrantFromSlipOutcome> {
-    let slip_id = hex32(&input.slip_ref)
+    let slip_id = oneiron_hex::decode_any_case::<32>(&input.slip_ref)
         .ok_or_else(|| crate::memory::MemoryError::bad_request("slip_ref is 64 hex"))?;
     Ok(
         match vault.mint_default_agent_grants_from_slip(owner, surface, slip_id)? {
@@ -215,7 +215,8 @@ pub fn narrow_system_agent_grant_as(
         .confirm
         .as_deref()
         .map(|hex| {
-            hex32(hex).ok_or_else(|| crate::memory::MemoryError::bad_request("confirm is 64 hex"))
+            oneiron_hex::decode_any_case::<32>(hex)
+                .ok_or_else(|| crate::memory::MemoryError::bad_request("confirm is 64 hex"))
         })
         .transpose()?;
     Ok(
@@ -306,18 +307,6 @@ pub fn restore_system_agent_grant_as(
         }
     };
     Ok(SystemAgentGrantRestored { restored, reach })
-}
-
-/// 32 bytes from 64 ASCII hex digits of either case.
-fn hex32(text: &str) -> Option<[u8; 32]> {
-    if text.len() != 64 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    let mut out = [0; 32];
-    for (byte, pair) in out.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
-        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    Some(out)
 }
 
 /// `vault.engine.defaults`'s answer row: one grant the engine stood by

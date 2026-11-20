@@ -166,12 +166,16 @@ pub(crate) fn claim_read_policy_allows(
     }
     // Conversation-home clearance (DEC-0006 `#home-clearance`, RULING
     // SECREAD-HOME-READ-DOORS = B): a reader homed in no conversation of this
-    // vault reads no stamped claim, on every door, by any Grant. It goes before
+    // vault reads no stamped claim, on every door, by any Grant, save a
+    // Connect guest's own envelope fetch up to its grant's ceiling (ANSWER
+    // FED-CONNECT-STAMPED-HOME = A; `home_clears_band`). It goes before
     // the owner's shortcut: the owner's own key is never so homed, and a saved
     // lane of such a reader rebuilt on the owner's floor reads no more than it
     // did. The scope map is part of the claim's access class, so a held class
     // verdict keeps it.
-    if actor_key.reads_homed_unnamed() && crate::disclosure::scope_home_band(claim.scope).is_some()
+    if actor_key.reads_homed_unnamed()
+        && crate::disclosure::scope_home_band(claim.scope)
+            .is_some_and(|band| !actor_key.home_clears_band(band))
     {
         return false;
     }

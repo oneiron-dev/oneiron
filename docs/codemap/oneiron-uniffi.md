@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `build.rs` | src | s | — | — | Generates the SDK outputs oneiron-uniffi includes at build time (crates/oneiron-sdk-build) |
 | `src/bin/uniffi_bindgen.rs` | src | s | — | — | Local bindgen entry point, behind the `bindgen-cli` feature |
-| `src/codec.rs` | src | XL | 18 crate-vis | — | Lift and lower codecs between this crate's UniFFI records and the engine types the shared… |
+| `src/codec.rs` | src | XL | 19 crate-vis | — | Lift and lower codecs between this crate's UniFFI records and the engine types the shared… |
 | `src/codec/ai_answers.rs` | src | s | 2 crate-vis | — | Owned provider-usage JSON conversion for AI answer outputs (FIX 12936) |
 | `src/codec/ai_options.rs` | src | s | — | — | Owned AI-options output lift for opaque model option JSON (FIX 12936) |
 | `src/codec/browser_answers.rs` | src | s | 2 crate-vis | — | Owned JSON in browser-answer manifests and nested library batches |
@@ -44,7 +44,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/codec/wire_json.rs` | src | s | — | — | Consuming output conversion for an opaque JSON leaf |
 | `src/contract.rs` | src | s | 1 fn · 2 const | — | The crate-private verb export macro |
 | `src/dto.rs` | src | L | 55 struct · 14 enum | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView, CitedMessage, ClaimInput, ClaimListFilter, ClaimView +61 | The typed UniFFI records of the SDK surface |
-| `src/embedded_engine.rs` | src | m | 6 struct · 1 trait · 13 fn | AppHostCallbacks, EmbeddedEngine, EngineConnection, EngineHeader, EngineLimits, EngineReply, EngineRequest | The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the… |
+| `src/embedded_engine.rs` | src | m | 6 struct · 1 trait · 14 fn | AppHostCallbacks, EmbeddedEngine, EngineConnection, EngineHeader, EngineLimits, EngineReply, EngineRequest | The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the… |
 | `src/error.rs` | src | s | 1 enum | OneironError | The single exported error type for the UniFFI head-contract surface |
 | `src/host_root.rs` | src | s | 1 struct · 2 fn | HostRootProfile | `Oneiron.open_with_host_root` (FIX 4730): `Oneiron.open`, then this install's own machine profile from the… |
 | `src/lib.rs` | src | m | 1 struct · 13 fn · 1 const · 8 re-export | Oneiron | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound |

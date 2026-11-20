@@ -44,6 +44,7 @@ pub use purpose::SummaryPurpose;
 pub use status::{ArcPendingStatus, ScopeSummaryResult, ScopeSummaryStatus, SummaryStale};
 mod word_sources;
 
+pub(crate) use codec::scope_summary_actor;
 pub use codec::{
     ScopeSummaryBody, SummarySourceMessage, SummarySourceNote, decode_scope_summary_body,
     encode_scope_summary_body,
@@ -67,7 +68,5 @@ pub(crate) use word_sources::{
 };
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-SCOPE-SUMMARY-TESTS]: the lib test target's type check fails here (34 errors: E0061 x25, E0600 x3, E0308 x2, E0609 x2, E0063 x1, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

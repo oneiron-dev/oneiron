@@ -5,6 +5,7 @@
 //! which has no host walk, answers them with a typed refusal; its owner may
 //! list, read a source's ledger and detach.
 
+use super::setting_keys::FILES_PAGE_MAX;
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -50,7 +51,8 @@ impl From<FolderRescanReport> for FilesRescanCounts {
 pub const DEFAULT_FILES_PAGE_LIMIT: u64 = 200;
 
 /// How many files one `vault.files.sources.files` answer holds at most
-/// (FIX 10247).
+/// while the owner has not moved `verbs.files.max_page_limit` (its
+/// default; FIX 10247).
 pub const MAX_FILES_PAGE_LIMIT: u64 = 1000;
 
 /// The refusal an embedded handle answers a row that reads the host's
@@ -182,10 +184,10 @@ pub fn files_source_files_as(
 ) -> MemoryResult<FilesSourceFiles> {
     owner.revalidate(vault)?;
     let source = files_source_named(vault, input.source)?;
-    let take = usize::try_from(
-        page_limit_zero_as_one(input.limit, DEFAULT_FILES_PAGE_LIMIT, MAX_FILES_PAGE_LIMIT).rows,
-    )
-    .unwrap_or(usize::MAX);
+    let max = u64::from(vault.page_max_in_force(&FILES_PAGE_MAX)?.0);
+    let take =
+        usize::try_from(page_limit_zero_as_one(input.limit, DEFAULT_FILES_PAGE_LIMIT, max).rows)
+            .unwrap_or(usize::MAX);
     let mut ledger = vault.folder_source_files(&source.folder)?;
     // Ledger keys hash overlong paths, so path order is sorted here, not
     // read off the keys.

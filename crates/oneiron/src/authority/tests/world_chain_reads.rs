@@ -6,7 +6,7 @@
 //! foreign admitter's edits only narrow on the owner's installs.
 use super::machine_identity::request_for;
 use super::owner_anchor::{YOURS, hosted_genesis, pin, profile, publish, signed};
-use super::support::{ed_key, owner_act};
+use super::support::{ed_key, genesis_entry, owner_act};
 use super::world_privacy::settings;
 use super::*;
 use crate::HostingPrivacyPosture::Hosted;
@@ -170,16 +170,25 @@ impl TwoRoots {
     }
 }
 
-/// 7c, foreign widening and narrowing. A host-anchored H holds W (it reads
-/// on the owner's machines) under the host's admitter. Its widening is valid
-/// everywhere and reads everywhere on an install pinned to the host's root,
-/// but the owner's installs and an unpinned one keep `MyMachines`. Its
-/// narrowing to itself leaves W readable on no owner machine and orphaned
-/// under the owner's admitter, and the owner's A re-picks it, valid on every
-/// install and at full strength on the owner's.
+/// 7c, foreign narrowing only (mesh PR1a, FIX-LIST 10-19 02:16; Fable design pass
+/// 29: an anchor's chain admits no carrier): A is a roster carrier via a hosted
+/// bootstrap, so its settings count, while H stays host-anchor-only, so its edits
+/// are invalid on every install and W reads A's setting on all three installs.
 #[test]
 fn a_host_machines_settings_only_narrow_on_the_owners_installs() {
-    let vault = two_roots(150);
+    let mut vault = two_roots(150);
+    let cloud = ed_key(150);
+    let genesis = vault.entries[0].clone();
+    let a_request = vault.a.0.clone();
+    let roster_a = signed(
+        vault.id,
+        &[&genesis],
+        &cloud,
+        1,
+        profile(&a_request, MachineRole::HostedNode, 1),
+    );
+    vault.entries.insert(1, roster_a.clone());
+    vault.marks.push(roster_a);
     let (owner, host) = (&vault.owner.0, &vault.host.0);
     let world = EntityId::now();
     let mine = edit(
@@ -199,36 +208,43 @@ fn a_host_machines_settings_only_narrow_on_the_owners_installs() {
         ReadLocation::Everywhere,
     );
     let entries = vault.with(&[&mine, &widen]);
-    assert!(valid_everywhere(&entries, Hosted, &[owner, host], &widen));
-    assert_eq!(
-        read_under(&entries, Hosted, Some(host), world),
-        EffectiveRead::Everywhere
-    );
-    for root in [Some(owner), None] {
+    for root in [Some(owner), Some(host), None] {
+        assert!(
+            !fold_under(&entries, Hosted, root)
+                .valid_entries
+                .contains(&hash(&widen))
+        );
+    }
+    for root in [Some(owner), Some(host), None] {
         assert_eq!(
             read_under(&entries, Hosted, root, world),
             EffectiveRead::MyMachines
         );
     }
 
-    let h = vault.h.0.machine;
     let narrow = edit(
         vault.id,
         &vault.on(&[&mine]),
         vault.h(),
         1,
         world,
-        ReadLocation::OneMachine(h),
+        ReadLocation::OneMachine(vault.h.0.machine),
     );
     let entries = vault.with(&[&mine, &narrow]);
-    let fold = fold_under(&entries, Hosted, Some(owner));
-    assert_eq!(fold.world_privacy(world).read, EffectiveRead::OneMachine(h));
+    for root in [Some(owner), Some(host), None] {
+        assert!(
+            !fold_under(&entries, Hosted, root)
+                .valid_entries
+                .contains(&hash(&narrow))
+        );
+    }
+    for root in [Some(owner), Some(host), None] {
+        assert_eq!(
+            read_under(&entries, Hosted, root, world),
+            EffectiveRead::MyMachines
+        );
+    }
     let a = vault.a.0.machine;
-    assert!(!fold.world_readable_on(world, Destination::Machine(a)));
-    assert_eq!(
-        fold.world_edit_standing(a, world),
-        Some(WorldEditStanding::RepicksOrphan)
-    );
     let repick = edit(
         vault.id,
         &vault.on(&[&narrow]),
@@ -239,10 +255,12 @@ fn a_host_machines_settings_only_narrow_on_the_owners_installs() {
     );
     let entries = vault.with(&[&mine, &narrow, &repick]);
     assert!(valid_everywhere(&entries, Hosted, &[owner, host], &repick));
-    assert_eq!(
-        read_under(&entries, Hosted, Some(owner), world),
-        EffectiveRead::OneMachine(a)
-    );
+    for root in [Some(owner), Some(host), None] {
+        assert_eq!(
+            read_under(&entries, Hosted, root, world),
+            EffectiveRead::OneMachine(a)
+        );
+    }
 }
 
 /// 7c, no admission: an edit signed by a key no chain admits for its
@@ -273,56 +291,68 @@ fn an_edit_no_chain_admits_is_invalid_everywhere() {
     }
 }
 
-/// 7c, sequential demoted widenings (Wonder R1b-F2): the holder A of
-/// `OneMachine(A)` is removed or demoted on a branch it had not seen, then
-/// widens W two and three times in a row. W stays `OneMachine(A)` on the
-/// owner's installs and on an unpinned one. Fails before: the second
-/// widening's stored prior was the first widening.
+/// 7c, sequential widenings after a removal stay narrow, after a demotion they count
+/// (mesh PR1a, FIX-LIST 10-19 02:16; only removal revokes a carrier): on a self-host
+/// vault A is a roster carrier, the roster demotion saw only `held`, the removed half
+/// reads `OneMachine(A)` pinned and unpinned, the WorkSchool half reads `Everywhere`.
 #[test]
-fn sequential_demoted_widenings_never_widen() {
+fn sequential_widenings_after_a_removal_never_widen_and_a_demotion_keeps_them() {
     for role in [
         MachineRole::Removed,
         MachineRole::Owned(MachineOwnership::WorkSchool),
     ] {
-        let vault = two_roots(160);
-        let owner = &vault.owner.0;
-        let a = vault.a.0.machine;
+        let seed = 160;
+        let genesis = genesis_entry(seed, 1);
+        let id = genesis_vault_id(&genesis).unwrap();
+        let (owner_root, _, published) = publish(id, &genesis);
+        let owner = &owner_root;
+        let roster_key = ed_key(seed);
+        let a_key = ed_key(seed.wrapping_add(1));
+        let a_request = request_for(id, EntityId::now(), &a_key);
+        let a = a_request.machine;
+        let roster_mark = signed(
+            id,
+            &[&genesis],
+            &roster_key,
+            1,
+            profile(&a_request, YOURS, 1),
+        );
         let world = EntityId::now();
         let held = edit(
-            vault.id,
-            &vault.on(&[]),
-            vault.a(),
+            id,
+            &[&roster_mark],
+            (a, &a_key),
             1,
             world,
             ReadLocation::OneMachine(a),
         );
         let demotion = signed(
-            vault.id,
-            &[&vault.marks[0]],
-            &vault.owner.1,
-            3,
-            seeing(&vault.a.0, role, 2, &[&held]),
+            id,
+            &[&roster_mark],
+            &roster_key,
+            2,
+            seeing(&a_request, role, 2, &[&held]),
         );
         let first = edit(
-            vault.id,
-            &vault.on(&[&held]),
-            vault.a(),
+            id,
+            &[&roster_mark, &held],
+            (a, &a_key),
             2,
             world,
             ReadLocation::MyMachines,
         );
         let second = edit(
-            vault.id,
-            &vault.on(&[&first]),
-            vault.a(),
+            id,
+            &[&roster_mark, &first],
+            (a, &a_key),
             3,
             world,
             ReadLocation::Everywhere,
         );
         let third = edit(
-            vault.id,
-            &vault.on(&[&second]),
-            vault.a(),
+            id,
+            &[&roster_mark, &second],
+            (a, &a_key),
             4,
             world,
             ReadLocation::Everywhere,
@@ -331,11 +361,22 @@ fn sequential_demoted_widenings_never_widen() {
             vec![&held, &demotion, &first, &second],
             vec![&held, &demotion, &first, &second, &third],
         ] {
-            let entries = vault.with(&rows);
+            let mut entries = vec![genesis.clone(), published.clone(), roster_mark.clone()];
+            entries.extend(rows.iter().map(|row| (*row).clone()));
+            let expected = if role == MachineRole::Removed {
+                EffectiveRead::OneMachine(a)
+            } else {
+                EffectiveRead::Everywhere
+            };
             for root in [Some(owner), None] {
                 assert_eq!(
-                    read_under(&entries, Hosted, root, world),
-                    EffectiveRead::OneMachine(a),
+                    read_under(
+                        &entries,
+                        crate::HostingPrivacyPosture::SelfHostLocal,
+                        root,
+                        world
+                    ),
+                    expected.clone(),
                     "{role:?}, {} widenings",
                     rows.len() - 2
                 );
@@ -344,13 +385,10 @@ fn sequential_demoted_widenings_never_widen() {
     }
 }
 
-/// 7c, a clone moves a world off its holder (Sol R1c-F1): the owner's root
-/// admits A and B, and A holds W at `OneMachine(A)`. A host clone of A's id,
-/// with the host's keys, widens W to `MyMachines` and then moves it to
-/// `OneMachine(B)`. On the owner's installs W reads `Conflicted{A, B}`; A
-/// re-picks it, valid on every install, heading the frontier, and the owner's
-/// installs read `OneMachine(A)` again. Fails before: validity read an
-/// all-admitted, full-strength read, where A neither held nor contended.
+/// 7c, a clone moves nothing (mesh PR1a, FIX-LIST 10-19 02:16; Fable design pass
+/// 29: an anchor's chain admits no carrier): A and B are roster carriers via hosted
+/// bootstraps, so A's hold counts, while the host's clone stays anchor-only, so its
+/// edits are invalid on every install and W reads `OneMachine(A)` throughout.
 #[test]
 fn a_clone_never_moves_a_world_off_its_holder() {
     let mut vault = two_roots(165);
@@ -376,6 +414,25 @@ fn a_clone_never_moves_a_world_off_its_holder() {
     );
     vault.entries.extend([mark_b.clone(), clone_mark.clone()]);
     vault.marks.extend([mark_b, clone_mark]);
+    let cloud = ed_key(165);
+    let genesis = vault.entries[0].clone();
+    let a_request = vault.a.0.clone();
+    let roster_a = signed(
+        vault.id,
+        &[&genesis],
+        &cloud,
+        1,
+        profile(&a_request, MachineRole::HostedNode, 1),
+    );
+    let roster_b = signed(
+        vault.id,
+        &[&roster_a],
+        &cloud,
+        2,
+        profile(&b, MachineRole::HostedNode, 1),
+    );
+    vault.entries.extend([roster_a.clone(), roster_b.clone()]);
+    vault.marks.extend([roster_a, roster_b]);
     let world = EntityId::now();
     let held = edit(
         vault.id,
@@ -402,13 +459,21 @@ fn a_clone_never_moves_a_world_off_its_holder() {
         ReadLocation::OneMachine(b.machine),
     );
     let entries = vault.with(&[&held, &widened, &moved]);
-    assert!(valid_everywhere(&entries, Hosted, &[&owner, &host], &moved));
-    assert_eq!(
-        read_under(&entries, Hosted, Some(&owner), world),
-        EffectiveRead::Conflicted {
-            contenders: BTreeSet::from([a, b.machine]),
+    for row in [&widened, &moved] {
+        for root in [Some(&owner), Some(&host), None] {
+            assert!(
+                !fold_under(&entries, Hosted, root)
+                    .valid_entries
+                    .contains(&hash(row))
+            );
         }
-    );
+    }
+    for root in [Some(&owner), Some(&host), None] {
+        assert_eq!(
+            read_under(&entries, Hosted, root, world),
+            EffectiveRead::OneMachine(a)
+        );
+    }
     let repick = edit(
         vault.id,
         &vault.on(&[&moved]),
@@ -429,16 +494,18 @@ fn a_clone_never_moves_a_world_off_its_holder() {
         fold.worlds[&world].live.keys().copied().collect::<Vec<_>>(),
         vec![hash(&repick)]
     );
-    assert_eq!(fold.world_privacy(world).read, EffectiveRead::OneMachine(a));
+    for root in [Some(&owner), Some(&host), None] {
+        assert_eq!(
+            read_under(&entries, Hosted, root, world),
+            EffectiveRead::OneMachine(a)
+        );
+    }
 }
 
-/// 7c, a copied profile (Wonder R1c-F2): the host copies the owner's
-/// machine A's profile verbatim, keys and proof, into its own anchor's
-/// chain, and a host machine H moves W to `OneMachine(H)`. A's re-pick
-/// verifies under both of A's chains and is valid on every install, in
-/// either order of the two chains, because the owner's admitter gives it
-/// `RepicksOrphan`. Fails before: one signing chain was chosen, and under the
-/// host's admitter H holds the world.
+/// 7c, a copied profile never blocks the owner's re-pick (mesh PR1a, FIX-LIST 10-19
+/// 02:16; Fable design pass 29): A is a roster carrier via a hosted bootstrap, H stays
+/// host-anchor-only so its take is invalid everywhere, and A's re-pick heads the
+/// frontier on all three installs.
 #[test]
 fn a_copied_profile_never_blocks_the_owners_re_pick() {
     for copy_saw_the_mark in [false, true] {
@@ -460,6 +527,18 @@ fn a_copied_profile_never_blocks_the_owners_re_pick() {
         );
         vault.entries.insert(3, copy.clone());
         vault.marks.push(copy);
+        let cloud = ed_key(170);
+        let genesis = vault.entries[0].clone();
+        let a_request = vault.a.0.clone();
+        let roster_a = signed(
+            vault.id,
+            &[&genesis],
+            &cloud,
+            1,
+            profile(&a_request, MachineRole::HostedNode, 1),
+        );
+        vault.entries.insert(1, roster_a.clone());
+        vault.marks.push(roster_a);
         let world = EntityId::now();
         let mine = edit(
             vault.id,
@@ -486,27 +565,35 @@ fn a_copied_profile_never_blocks_the_owners_re_pick() {
             ReadLocation::OneMachine(a),
         );
         let entries = vault.with(&[&mine, &taken, &repick]);
+        for root in [Some(&owner), Some(&host), None] {
+            assert!(
+                !fold_under(&entries, Hosted, root)
+                    .valid_entries
+                    .contains(&hash(&taken)),
+                "{copy_saw_the_mark}"
+            );
+        }
         assert!(
             valid_everywhere(&entries, Hosted, &[&owner, &host], &repick),
             "{copy_saw_the_mark}"
         );
-        assert_eq!(
-            read_under(&entries, Hosted, Some(&owner), world),
-            EffectiveRead::OneMachine(a)
-        );
+        for root in [Some(&owner), Some(&host), None] {
+            assert_eq!(
+                read_under(&entries, Hosted, root, world),
+                EffectiveRead::OneMachine(a),
+                "{copy_saw_the_mark}"
+            );
+        }
     }
 }
 
-/// 7c, an anchor-only machine's acknowledged removal (Wonder R1o-F2; Sol
-/// R1p-F2): on a hosted vault A is the owner's under the anchor alone. A
-/// widens W from `OneMachine(A)` to `MyMachines` (E), and the anchor then
-/// removes A with a head that lists E. Installs pinned to the anchor read
-/// `MyMachines`. Fails before: the absent roster chain read as a reason
-/// that fails the race.
+/// 7c, an anchor-only machine's edits are invalid everywhere (Fable design pass 29:
+/// an anchor's chain names no carrier key): A has no roster profile, so `held` and
+/// `widened` are invalid pinned or not, and W reads the default `Everywhere`.
 #[test]
 fn an_anchor_only_machines_acknowledged_removal_keeps_its_widening() {
     let vault = two_roots(175);
-    let owner = &vault.owner.0;
+    let (owner, host) = (&vault.owner.0, &vault.host.0);
     let a = vault.a.0.machine;
     let world = EntityId::now();
     let held = edit(
@@ -533,21 +620,31 @@ fn an_anchor_only_machines_acknowledged_removal_keeps_its_widening() {
         seeing(&vault.a.0, MachineRole::Removed, 2, &[&widened]),
     );
     let entries = vault.with(&[&held, &widened, &removal]);
-    assert_eq!(
-        read_under(&entries, Hosted, Some(owner), world),
-        EffectiveRead::MyMachines
-    );
+    for row in [&held, &widened] {
+        for root in [Some(owner), Some(host), None] {
+            assert!(
+                !fold_under(&entries, Hosted, root)
+                    .valid_entries
+                    .contains(&hash(row))
+            );
+        }
+    }
+    for root in [Some(owner), Some(host), None] {
+        assert_eq!(
+            read_under(&entries, Hosted, root, world),
+            EffectiveRead::Everywhere
+        );
+    }
 }
 
-/// 7c, a poisoned trusted chain (Wonder R1n-F1): A, the owner's under the
-/// anchor, widens W offline; the anchor then marks a second machine id with
-/// A's key, which poisons A's chain. On installs pinned to that anchor the
-/// widening is restriction-only. Fails before: the race rule named only
-/// removal, demotion and conflict.
+/// 7c, a poisoned anchor-only chain's edits are invalid everywhere (Fable design pass
+/// 29: an anchor's chain names no carrier key): A has no roster profile, so `held` and
+/// `widened` are invalid pinned or not, M stays not mine under the pin, and W reads
+/// the default `Everywhere`.
 #[test]
 fn a_poisoned_trusted_chain_never_acknowledges_a_widening() {
     let vault = two_roots(185);
-    let owner = &vault.owner.0;
+    let (owner, host) = (&vault.owner.0, &vault.host.0);
     let a = vault.a.0.machine;
     let world = EntityId::now();
     let held = edit(
@@ -581,21 +678,27 @@ fn a_poisoned_trusted_chain_never_acknowledges_a_widening() {
             .unwrap()
             .is_mine(Some(&pin(owner)))
     );
-    assert_eq!(
-        read_under(&entries, Hosted, Some(owner), world),
-        EffectiveRead::OneMachine(a)
-    );
+    for row in [&held, &widened] {
+        for root in [Some(owner), Some(host), None] {
+            assert!(
+                !fold_under(&entries, Hosted, root)
+                    .valid_entries
+                    .contains(&hash(row))
+            );
+        }
+    }
+    for root in [Some(owner), Some(host), None] {
+        assert_eq!(
+            read_under(&entries, Hosted, root, world),
+            EffectiveRead::Everywhere
+        );
+    }
 }
 
-/// 7c, the transition window (Sol R1b-F1): R1 admits A and B; R2 carries A
-/// but not B. A, holding both marks while still pinned to R1, sets an
-/// unedited W to `OneMachine(B)`. The edit is valid everywhere, W reads no
-/// wider than `OneMachine(B)` on R2 installs, it is orphaned there, and A's
-/// re-pick on top of it is valid: nothing stalls. Fails before: under the
-/// new pin B failed the target check, the edit became invalid, and W read
-/// everywhere. On an R1 install B still holds W, so A has no standing at a
-/// door there, though R2's read would make its re-pick valid: a door takes
-/// standing from this install's read alone (Astra code-S2-R1 A1-F3).
+/// 7c, the transition window (mesh PR1a, FIX-LIST 10-19 02:16; Fable design pass 29):
+/// R1 and R2 anchor A and B as before with roster bootstraps for both, so the move to
+/// `OneMachine(B)` stays valid everywhere and narrow on all installs, orphaned on R2,
+/// and A's re-pick lands.
 #[test]
 fn an_edit_made_across_a_re_issue_stays_valid_and_narrow() {
     let cloud = ed_key(195);
@@ -629,7 +732,24 @@ fn an_edit_made_across_a_re_issue_stays_valid_and_narrow() {
             profile(&a, YOURS, 1),
         ),
     ];
-    let heads: Vec<&AuthorityLogEntry> = marks.iter().collect();
+    let roster_a = signed(
+        id,
+        &[&genesis],
+        &cloud,
+        1,
+        profile(&a, MachineRole::HostedNode, 1),
+    );
+    let roster_b = signed(
+        id,
+        &[&roster_a],
+        &cloud,
+        2,
+        profile(&b, MachineRole::HostedNode, 1),
+    );
+    let heads: Vec<&AuthorityLogEntry> = [&roster_a, &roster_b]
+        .into_iter()
+        .chain(marks.iter())
+        .collect();
     let world = EntityId::now();
     let moved = edit(
         id,
@@ -639,7 +759,13 @@ fn an_edit_made_across_a_re_issue_stays_valid_and_narrow() {
         world,
         ReadLocation::OneMachine(b.machine),
     );
-    let mut entries = vec![genesis, first_published, second_published];
+    let mut entries = vec![
+        genesis,
+        first_published,
+        second_published,
+        roster_a.clone(),
+        roster_b.clone(),
+    ];
     entries.extend(marks.iter().cloned());
     entries.push(moved.clone());
     assert!(valid_everywhere(

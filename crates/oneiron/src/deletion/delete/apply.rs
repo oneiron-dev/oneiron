@@ -1,13 +1,16 @@
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::GateDecisionRecord;
 
 use super::super::erase::{ProvenanceCapture, stage_sweep_refs_in_txn};
 use super::super::gate::{
-    GatedDeletion, journal_deletion_in_txn, reverify_deletion_authority_before_publication,
-    reverify_deletion_authority_when_unpublished, revoke_guest_grants_in_txn,
+    GatedDeletion, OwnerAtPublication, journal_deletion_in_txn,
+    reverify_deletion_authority_before_publication, reverify_deletion_authority_when_unpublished,
+    reverify_owner_proof_before_publication, reverify_owner_proof_when_unpublished,
+    revoke_guest_grants_in_txn,
 };
 use super::super::rendezvous::{
     DeleteRendezvous, maybe_fail_after_tombstone_before_purge, signal_delete_rendezvous,
@@ -28,6 +31,7 @@ impl Vault {
         gate: &Option<GatedDeletion<'_>>,
         allow_replay_test: bool,
         due: Option<&PendingConfirmedErase>,
+        owner: Option<&AuthenticatedOwner>,
         header: EntityMetadataHeader,
         tombstone: TombstoneValueV2,
         gate_decision: &Option<GateDecisionRecord>,
@@ -49,6 +53,14 @@ impl Vault {
         // arm publishes its tombstone after the scrub, so the re-fold below
         // in the publish txn is the decision that binds.
         reverify_deletion_authority_before_publication(gate.as_ref(), &wtxn)?;
+        reverify_owner_proof_before_publication(self, owner, &wtxn)?;
+        // The last-bound-owner guard re-proven inside this transaction
+        // (round-1 P1 of #7900): the guard phase read a snapshot it already
+        // dropped, so a binding change committed since — a `RebindActor` of
+        // the sole key to this PERSON — refuses here before a single byte is
+        // scrubbed. The read-phase check stays as the early refusal; this
+        // write-transaction check is the one that decides.
+        self.refuse_last_bound_owner_delete_in(&wtxn, id)?;
         // A due owner delete scrubs only while its request still waits
         // (FIX 1465): this scrub is its first destructive commit.
         if let Some(due) = due {
@@ -138,6 +150,18 @@ impl Vault {
                 false,
             )?;
         }
+        // The pt: marker this scrub commits is its own publication's, below,
+        // which re-proves the delete first: no replay publishes it meanwhile.
+        // Held until this arm returns, after the marker's retirement.
+        #[cfg(feature = "sync")]
+        let _publication_in_flight = (existed && reason.publishes_crdt_tombstone()).then(|| {
+            self.store
+                .tombstone_publications_in_flight
+                .hold(window_label, id, &tombstone)
+        });
+        // The scrub linearizes this delete: its brief fence settles under
+        // the scrub's writer.
+        self.store.brief_delete_fences.settle(id);
         wtxn.commit()?;
         if existed {
             self.notify_local_delete_materialized(&changed);
@@ -171,6 +195,10 @@ impl Vault {
             // the publication the refusal denied. Nothing replayable may
             // survive a refusal — `begin_tombstone_publish_txn` withdraws
             // it in the refusing txn itself.
+            //
+            // The owner's proof re-proves there too, after this scrub: the
+            // owner's delete of their own PERSON finds that PERSON the shell
+            // this scrub left, and re-proves with it taken as live.
             let crdt_persisted = self.write_crdt_tombstone(
                 id,
                 header.learned_at,
@@ -178,6 +206,7 @@ impl Vault {
                 &tombstone,
                 None,
                 gate.as_ref(),
+                owner.map(OwnerAtPublication::AfterOwnScrub),
             )?;
             signal_delete_rendezvous(self, DeleteRendezvous::AfterTombstonePublish, id, None);
             if crdt_persisted {
@@ -201,6 +230,7 @@ impl Vault {
         gate: &Option<GatedDeletion<'_>>,
         allow_replay_test: bool,
         due: Option<&PendingConfirmedErase>,
+        owner: Option<&AuthenticatedOwner>,
         header: EntityMetadataHeader,
         tombstone: TombstoneValueV2,
         gate_decision: &Option<GateDecisionRecord>,
@@ -221,6 +251,7 @@ impl Vault {
             gate_decision.as_ref(),
             gate.as_ref(),
             due,
+            owner.map(OwnerAtPublication::BeforeScrub),
         )?;
         #[cfg(all(test, feature = "sync"))]
         maybe_fail_after_tombstone_before_purge()?;
@@ -273,6 +304,15 @@ impl Vault {
             // OWN view — the refusal is actionable (nothing is on the wire) and
             // true (nothing replays back).
             reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
+            reverify_owner_proof_when_unpublished(self, owner, authority_settled, &wtxn)?;
+            // The last-bound-owner guard under the same conditional law
+            // (round-1 P1 of #7900): with nothing published this scrub is the
+            // first irreversible act, so it re-proves the guard against its
+            // own view. Once the tombstone published, the publish transaction
+            // already decided it.
+            if !authority_settled {
+                self.refuse_last_bound_owner_delete_in(&wtxn, id)?;
+            }
             self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
             crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
             self.reject_held_redirect_shells_in_txn(&wtxn, id)?;
@@ -358,6 +398,8 @@ impl Vault {
                 // `scrub_is_the_linearization_point` is `!authority_settled`, so
                 // there the flag is already `true` and stays untouched.
                 authority_settled = true;
+                // The brief fence settles under this linearizing writer.
+                self.store.brief_delete_fences.settle(id);
             }
             if existed && window_label.contains('@') {
                 // The shell loses its world body in this commit. Preserve the

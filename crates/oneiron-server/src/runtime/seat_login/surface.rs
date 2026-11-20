@@ -2,6 +2,8 @@
 //! owner writes, the sign-in surface built from them, the seat catalog a
 //! settings page renders, and the Sign in with ChatGPT authorize request.
 
+use std::collections::BTreeMap;
+
 use oneiron::HostingPrivacyPosture;
 use oneiron::code_sandbox::SandboxCredentialHandle;
 use oneiron::dispatch_byoa::{
@@ -14,7 +16,10 @@ use utoipa::ToSchema;
 
 /// The owner's settings for one official seat. Every field is a label, a
 /// choice, or a custody handle; there is no field a vendor token could go in.
+/// A key that names no field is refused, as the server's request types refuse
+/// one (FIX RUNNER-SEATS-UNKNOWN-KEY-SILENT).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SeatSettings {
     /// Route label, one of `OfficialSeatRoute::ALL` spellings.
     pub route: String,
@@ -54,6 +59,128 @@ fn default_true() -> bool {
 fn default_dry_fallback() -> String {
     "park".to_owned()
 }
+
+/// One official runner seat as the owner writes it (OF-137): the fields of
+/// [`SeatSettings`] and the seat's endpoint bindings side by side in one
+/// table, so a key that names none of them is refused where it stands (FIX
+/// RUNNER-SEATS-UNKNOWN-KEY-SILENT). serde refuses no unknown key through a
+/// `flatten`, so [`super::OfficialRunnerSeatSettings`] is read and described
+/// through this table. Its seat fields are [`SeatSettings`]'s, by the same
+/// names and defaults, and the conversion names every field of both: a field
+/// added to one and not the other does not build.
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct OfficialSeatFields {
+    /// Route label, one of `OfficialSeatRoute::ALL` spellings.
+    route: String,
+    /// Opaque label for the person's account (never the credential).
+    account_ref: String,
+    #[serde(default)]
+    machine_ref: Option<String>,
+    /// Where the vendor's own login store lives on that machine.
+    #[serde(default)]
+    login_store_ref: Option<String>,
+    /// Custody handle for endpoint-shaped seats, by name.
+    #[serde(default)]
+    credential_handle: Option<String>,
+    /// The vendor binary is the unmodified build as published.
+    #[serde(default = "default_true")]
+    unmodified_binary: bool,
+    #[serde(default)]
+    anthropic_agent_sdk_approved: bool,
+    #[serde(default)]
+    openai_hosted_plan_approved: bool,
+    /// `park` (default), `continue_on_local`, or `overdraft`.
+    #[serde(default = "default_dry_fallback")]
+    dry_fallback: String,
+    /// The owner's spend cap when `dry_fallback` is `overdraft`.
+    #[serde(default)]
+    overdraft_cap_units: u64,
+    #[serde(default)]
+    plan_percent_used: Option<u8>,
+    #[serde(default)]
+    plan_resets_at: Option<u64>,
+    /// Slug-to-model bindings for endpoint-shaped seats (Agent SDK, Sign
+    /// in with ChatGPT, API keys).
+    #[serde(default)]
+    models: BTreeMap<String, String>,
+    /// Overrides the adapter's default endpoint base URL.
+    #[serde(default)]
+    base_url: Option<String>,
+}
+
+impl From<OfficialSeatFields> for super::OfficialRunnerSeatSettings {
+    fn from(fields: OfficialSeatFields) -> Self {
+        let OfficialSeatFields {
+            route,
+            account_ref,
+            machine_ref,
+            login_store_ref,
+            credential_handle,
+            unmodified_binary,
+            anthropic_agent_sdk_approved,
+            openai_hosted_plan_approved,
+            dry_fallback,
+            overdraft_cap_units,
+            plan_percent_used,
+            plan_resets_at,
+            models,
+            base_url,
+        } = fields;
+        Self {
+            seat: SeatSettings {
+                route,
+                account_ref,
+                machine_ref,
+                login_store_ref,
+                credential_handle,
+                unmodified_binary,
+                anthropic_agent_sdk_approved,
+                openai_hosted_plan_approved,
+                dry_fallback,
+                overdraft_cap_units,
+                plan_percent_used,
+                plan_resets_at,
+            },
+            models,
+            base_url,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for super::OfficialRunnerSeatSettings {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer
+            .deserialize_map(OfficialSeatTable)
+            .map(Self::from)
+    }
+}
+
+/// Reads an official seat from a table and refuses every other shape, as
+/// the flattened struct read before it did. A derived [`OfficialSeatFields`]
+/// also takes a sequence, by position, and fills each setting the sequence
+/// leaves out from its default; an official seat is never read so.
+struct OfficialSeatTable;
+
+impl<'de> serde::de::Visitor<'de> for OfficialSeatTable {
+    type Value = OfficialSeatFields;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("an official runner seat as a table of its settings")
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+        OfficialSeatFields::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+    }
+}
+
+impl utoipa::PartialSchema for super::OfficialRunnerSeatSettings {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        <OfficialSeatFields as utoipa::PartialSchema>::schema()
+    }
+}
+
+impl ToSchema for super::OfficialRunnerSeatSettings {}
 
 impl SeatSettings {
     /// Folds the settings into the engine seat spec the dispatcher judges.

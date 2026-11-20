@@ -3,13 +3,18 @@
 //! each pass reads one row at a time from it; the dependency queues, id sets
 //! and maps grow in the index as well, so no archive-wide row state stays in
 //! memory. The rows still go in through one write transaction.
+mod claim_pair_same_as;
+mod issue_archive_restore;
 mod owner_archive_restore;
 mod seed_replacement;
+mod topology_restore;
+mod unseated_rooms;
 
 use owner_archive_restore::OwnerRestore;
 pub(crate) use owner_archive_restore::{
     OwnerArchiveRestorePermit, owner_restore_group_head_in_txn, owner_restore_groups_in_txn,
     owner_restore_members_in_txn, owner_restore_opened_claim_in_txn, owner_restore_receipt_in_txn,
+    record_deferred_hook_grant_in_txn, take_deferred_hook_grants_in_txn,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -18,8 +23,9 @@ use std::io::{Read, Seek};
 use serde::Deserialize;
 
 use super::archive_index::{
-    ArchiveIndex, EntityAt, FLAG_EXPRESSION, FLAG_PACK_BODY, FLAG_PROVENANCE, IndexedArchive,
-    QUEUE_EXPRESSION, QUEUE_PROVENANCE, QUEUE_ROW, Section, Tag, id_at, id_list, ids_of, ready_key,
+    ArchiveIndex, EntityAt, FLAG_EXPRESSION, FLAG_PACK_BODY, FLAG_PROVENANCE, IndexedArchive, Loc,
+    QUEUE_EXPRESSION, QUEUE_PROVENANCE, QUEUE_ROW, Section, Tag, edge_key, id_at, id_list, ids_of,
+    ready_key,
 };
 use super::bundle_validation::{ReservedClaimImport, ReservedClaimRestore};
 use super::result_import::put_run_results_in_txn;
@@ -283,6 +289,45 @@ impl Vault {
         // results' are; the values custody holds are read in the writer.
         let _bodies = self.pin_all_result_bodies();
         let mint = super::asset_reserve::reserved_asset_mint(self, &archive)?;
+        // The filing resolver opens read txns, so resolve each subject before the writer.
+        let issue_routes = if owner.is_some() {
+            issue_archive_restore::artifact_routes(self, &archive, secrets)?
+        } else {
+            BTreeMap::new()
+        };
+        // An owner restore can install a setting row through its key's hook, so it holds the write
+        // turn of each key the archive holds a row of through its commit and the wakes after it,
+        // as a set of that key does.
+        let setting_turns = if owner.is_some() {
+            use crate::setting::archive_restore::{take_write_turns, write_turn_of_archived_row};
+            let mut turns = Vec::new();
+            super::archive_retained_side_rows::visit_retained_side_rows(&archive, |_, row| {
+                turns.extend(write_turn_of_archived_row(&row));
+                Ok(())
+            })?;
+            take_write_turns(self, turns)?
+        } else {
+            Vec::new()
+        };
+        let retrieval_tuning_guard = if owner.is_some() {
+            Some(self.store.archive_retrieval_tuning_guard()?)
+        } else {
+            None
+        };
+        // RESTORE-KEEPS-MERGES-AND-SPLITS: an owner's restore into a fresh
+        // vault of an archive naming current merges or splits seals them
+        // again with this install's keys, which load outside every
+        // transaction; with none, each stays archive data. The keys load only
+        // into a vault this read finds fresh, and never by making it forget
+        // its machine: a writer can commit a row after this read (REVIEW-9756
+        // P1-2, rounds 1 and 2). The writer below reads freshness again.
+        let topology_signing = owner.is_some()
+            && !archive.manifest.current_identity_topology_events.is_empty()
+            && {
+                let rtxn = self.store.env.read_txn()?;
+                self.first_non_bootstrap_row_in_txn(&rtxn)?.is_none()
+            }
+            && self.prepare_install_signing_keeping_machine_logged();
         let mut wtxn = self.store.env.write_txn()?;
         let seeds = EngineSeedIdentities::load()?;
         let restore_fresh =
@@ -312,6 +357,9 @@ impl Vault {
         };
         let actor = owner_actor.as_ref().or(actor);
         let receipt_ref = permit.as_ref().map(OwnerArchiveRestorePermit::receipt_ref);
+        let restore_receipt_hex = receipt_ref
+            .as_deref()
+            .map(|receipt| receipt.strip_prefix("gate:").unwrap_or(receipt));
         let source_vault = archive.manifest.source_vault.vault_id.clone();
         let owner_restore = owner_actor
             .zip(receipt_ref.as_deref())
@@ -324,6 +372,22 @@ impl Vault {
         withhold_unborn_projects(self, &wtxn, &mut archive)?;
         let projects = map_project_root(self, &wtxn, &mut archive)?;
         omit_project_revisions(self, &mut archive)?;
+        // ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM = B: every door but the owner's
+        // restore keeps an archived room it cannot seat as archive data; the
+        // owner's restore keeps out a room whose archived ledger seat would
+        // not stand here (REVIEW-9446); and every room the import keeps out
+        // keeps its speech out with it (`unseated_rooms`).
+        let mut room_omissions = if owner.is_none() {
+            unseated_rooms::omit_rooms_not_seated_here(self, &wtxn, &mut archive)?
+        } else {
+            unseated_rooms::omit_rooms_owner_restore_cannot_seat(
+                self,
+                &wtxn,
+                &mut archive,
+                secrets,
+            )?
+        };
+        room_omissions.extend(unseated_rooms::omit_speech_of_omitted_rooms(&mut archive)?);
         // Each runtime pack row maps onto this vault's pack handles; the
         // mapping is read again, alike, as each row goes in.
         let mut after = None;
@@ -410,6 +474,19 @@ impl Vault {
                     unchanged_entities += 1;
                     continue;
                 }
+                // A pack seed the destination holds unchanged apart from its
+                // seed times stays the destination's row. It compares on its
+                // archived body before that body is rebuilt: the carrier of a
+                // seeded skill whose tree a no-secrets export redacted has no
+                // rebuilt body.
+                if seeds.is_pack_seed(row.entity_type, &id)
+                    && matches_seed_row_apart_from_seed_times(&row, &existing, &row.body, secrets)
+                {
+                    validate_existing_source(self, &wtxn, &row, &archive, &at, secrets)?;
+                    // Keep the destination seed's birth metadata as well as its header.
+                    unchanged_entities += 1;
+                    continue;
+                }
                 let body = imported_body(
                     self,
                     &row,
@@ -439,13 +516,12 @@ impl Vault {
                     continue;
                 }
                 if seeds.is_pack_seed(row.entity_type, &id)
-                    && (matches_seed_row_apart_from_seed_times(&row, &existing, &row.body, secrets)
-                        || matches_seed_row_apart_from_seed_times(
-                            &row,
-                            &existing,
-                            &ExportBody::from_bytes_with(&body, row.entity_type, secrets),
-                            secrets,
-                        ))
+                    && matches_seed_row_apart_from_seed_times(
+                        &row,
+                        &existing,
+                        &ExportBody::from_bytes_with(&body, row.entity_type, secrets),
+                        secrets,
+                    )
                 {
                     validate_existing_source(self, &wtxn, &row, &archive, &at, secrets)?;
                     // Keep the destination seed's birth metadata as well as its header.
@@ -484,6 +560,15 @@ impl Vault {
                     )?;
                 }
                 return Err(invalid("import ID collides with different entity data"));
+            }
+            // A deleted agent stays deleted (RULING AGENT-DEF-ARCHIVE-IMPORT-DELETED-ID = A):
+            // an agent id this vault pinned that holds no row is one it deleted, its bytes
+            // purged by a hard delete, and every door refuses it as it refuses a deleted row
+            // whose bytes remain, whoever runs the import.
+            if row.entity_type == ENTITY_TYPE_AGENT_DEF
+                && crate::agent_def::agent_id_pinned_in_txn(&self.store, &wtxn, &id)?
+            {
+                return Err(invalid("import ID collides with a deleted entity"));
             }
             if row.entity_type == ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
                 let state =
@@ -531,6 +616,24 @@ impl Vault {
                     )?,
                 )?
             };
+            // The owner's restore puts a room after the PERSON records of its archived roster:
+            // the room guard requires each member to be a PERSON row here.
+            if permit.is_some()
+                && row.entity_type == ENTITY_TYPE_CONVERSATION
+                && let Ok(body) = crate::conversation::ConversationBody::from_bytes(
+                    &row.body.to_bytes_in_with(&archive.files, secrets)?,
+                )
+            {
+                for member in body.member_ids {
+                    if archive
+                        .entity_at(&member)?
+                        .is_some_and(|at| at.entity_type == crate::registry::ENTITY_TYPE_PERSON)
+                        && !waits_on.contains(&member)
+                    {
+                        waits_on.push(member);
+                    }
+                }
+            }
             // Blind-review P1b (REVIEW-4389): an EVENT/TURN born under a
             // non-default facet waits on its archived facet row, so the
             // facet's put lands first and the masked initial put below finds
@@ -582,7 +685,48 @@ impl Vault {
             pending += 1;
         }
         let mut inserted_entities = pending + model_imports.inserted + inserted_descriptors;
-        let mut destination_omissions = Vec::new();
+        let mut destination_omissions = room_omissions;
+        // ISSUE stayed omitted through generic indexing; only this owner's permit restores it.
+        if let Some(permit) = permit.as_ref() {
+            let (inserted, unchanged) = issue_archive_restore::restore_in_txn(
+                self,
+                &mut wtxn,
+                &mut archive,
+                permit,
+                &issue_routes,
+                secrets,
+            )?;
+            inserted_entities += inserted;
+            unchanged_entities += unchanged;
+        }
+        // CLAIM-NOTE-SAME-AS-RESTORE-PROOF = A: the owner's archived standing
+        // grants go in before any row or link, so a `same_as` between two
+        // CLAIMs is proven on the nightly-link grant as the Dreamer's own
+        // writer reads it; the grant is read once, here
+        // (`claim_pair_same_as`). Every other door installs no grant.
+        let mut side_refresh = super::archive_side_install::ArchivedSideRowRefresh::default();
+        let grants_landed_first =
+            super::archive_retained_side_rows::land_standing_grants_first_in_txn(
+                self,
+                &mut wtxn,
+                &archive,
+                permit.as_ref(),
+                &mut side_refresh,
+            )?;
+        if let Some(receipt_ref) = receipt_ref.as_deref() {
+            claim_pair_same_as::index_nightly_link_grant(
+                self,
+                &wtxn,
+                &mut archive.index,
+                receipt_ref,
+            )?;
+        }
+        if let Some(permit) = permit.as_ref() {
+            side_refresh.prelanded_rooms =
+                crate::conversation::archive_restore::preland_room_ledgers_in_txn(
+                    self, &mut wtxn, permit, &archive, secrets,
+                )?;
+        }
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
         // Each round queues what waits on no pending id, then restores it.
@@ -598,14 +742,24 @@ impl Vault {
                 let id = id_at(&key, 1)?;
                 let (inserted, unchanged) = match key[0] {
                     QUEUE_PROVENANCE => {
-                        let (inserted, unchanged) = super::provenance_import::restore(
+                        let cohort = super::provenance_import::restore(
                             id,
                             self,
                             &mut wtxn,
                             &mut archive,
                             secrets,
+                            permit.as_ref(),
                         )?;
-                        (inserted.into_iter().collect::<Vec<_>>(), unchanged)
+                        destination_omissions.extend(cohort.kept_out.iter().map(
+                            |&(id, reason)| ExportImportOmission {
+                                entity_id: id.to_hex(),
+                                reason,
+                            },
+                        ));
+                        (
+                            cohort.inserted.into_iter().collect::<Vec<_>>(),
+                            cohort.unchanged,
+                        )
                     }
                     QUEUE_EXPRESSION => {
                         let actor = actor.ok_or_else(actor_required)?;
@@ -647,6 +801,11 @@ impl Vault {
                 }
             }
         }
+        crate::conversation::archive_restore::remove_orphaned_prelanded_rooms_in_txn(
+            self,
+            &mut wtxn,
+            &mut side_refresh.prelanded_rooms,
+        )?;
         let mut agents = archive.spool.rows(ArchiveRecordKind::AgentPack);
         while let Some((_, bundle)) = agents.next_parsed::<AgentForkBinding>(&archive.spool)? {
             let id = parse_id(&bundle.entity_id)?;
@@ -671,11 +830,21 @@ impl Vault {
         // its restored pair does not prove stays out, counted (FIX 6206).
         // An archived conversation DAG link is proven on its record's
         // restored ChildOf and body, so it lands after the plain links
-        // (WHOLE-VAULT-IMPORT-REFUSES-CONVERSATION-DAG).
+        // (WHOLE-VAULT-IMPORT-REFUSES-CONVERSATION-DAG). An archived
+        // readiness or fulfillment link is proven on its restored rows and
+        // their restored `supersedes` chain, so it lands after the plain
+        // links too (WHOLE-VAULT-IMPORT-REFUSES-RESERVED-OWNER-EDGES). An
+        // archived `same_as` link is proven on its two restored PERSONs, or
+        // on its two restored CLAIMs and the owner's nightly-link grant, and
+        // on its restored status claim, so it lands in the plain pass, or
+        // before a claim about it.
         let mut skipped_unproven_regenerates_edges = 0;
+        let mut unrestored_identity_topology_shells = BTreeSet::new();
+        let mut unrestored_same_as_links = 0;
         for pass in [
             ArchiveEdgePass::Plain,
             ArchiveEdgePass::ConversationDag,
+            ArchiveEdgePass::ReadinessAndFulfillment,
             ArchiveEdgePass::Regenerates,
         ] {
             let mut edges = archive.spool.rows(ArchiveRecordKind::Edge);
@@ -684,33 +853,42 @@ impl Vault {
                     continue;
                 }
                 let edge = super::provenance_import::mapped_edge(&edge, &archive.index)?;
-                // FIX 7777: an archived MESSAGE's or NOTE's byline rides
-                // inert in its body; an archive never makes a local author.
-                if let Some(kind) = EdgeKind::try_from_u8(edge.kind)
-                    && super::evidence_import::is_evidence_byline(
-                        &archive,
-                        &parse_id(&edge.source)?,
-                        kind,
-                    )?
-                {
-                    continue;
-                }
-                if archive
-                    .index
-                    .contains(Tag::Omitted, parse_id(&edge.source)?.as_bytes())?
-                    || archive
-                        .index
-                        .contains(Tag::Omitted, parse_id(&edge.target)?.as_bytes())?
-                {
+                if archived_edge_skipped(&archive, &edge)? {
+                    // A `same_as` with an end left out stays out, counted as
+                    // every other one does (REVIEW-9581 round 2).
+                    if edge.kind == EdgeKind::SameAs as u8 {
+                        unrestored_same_as_links += 1;
+                    }
                     continue;
                 }
                 let landed =
                     import_edge_with_seeds(self, &mut wtxn, &edge, &archive.index, Some(&seeds))?;
-                if landed == EdgeImport::UnprovenRegenerates {
-                    skipped_unproven_regenerates_edges += 1;
+                match landed {
+                    EdgeImport::Landed => {}
+                    EdgeImport::UnprovenRegenerates => skipped_unproven_regenerates_edges += 1,
+                    EdgeImport::IdentityTopologyLeftOut => {
+                        unrestored_identity_topology_shells.insert(parse_id(&edge.source)?);
+                    }
+                    EdgeImport::SameAsLeftOut => unrestored_same_as_links += 1,
                 }
             }
         }
+        // RESTORE-KEEPS-MERGES-AND-SPLITS: the owner's restore into a fresh
+        // vault decides each current merge and split again, once every row
+        // and link it reads is in; a row one shells again is not back
+        // separate.
+        let topology = match owner.filter(|_| restore_fresh) {
+            Some(owner) => topology_restore::restore_identity_topology_in_txn(
+                self,
+                &mut wtxn,
+                &archive,
+                secrets,
+                owner,
+                topology_signing,
+            )?,
+            None => topology_restore::TopologyRestore::default(),
+        };
+        unrestored_identity_topology_shells.retain(|row| !topology.shelled.contains(row));
         let mut archived_receipt_sources = 0;
         let mut envelopes = archive.spool.rows(ArchiveRecordKind::DerivationEnvelope);
         while let Some((_, envelope)) =
@@ -746,6 +924,19 @@ impl Vault {
         let (restored_secrets, unchanged_secrets, skipped_revoked_secrets, missing_secrets) =
             restore_secrets_in_txn(self, &mut wtxn, &mut archive)?;
         let owed_secrets = owed_secrets_in_txn(self, &wtxn, &archive.manifest.fold_only_secrets)?;
+        // Actor and actorless doors retain only; the owner door installs tables with a
+        // landing group and retains the rest, after imported persons, results and secrets;
+        // the standing grants it landed before the rows count as installed.
+        let retained_side_rows =
+            super::archive_retained_side_rows::install_or_retain_side_rows_in_txn(
+                self,
+                &mut wtxn,
+                &archive,
+                permit.as_ref(),
+                restore_receipt_hex,
+                &grants_landed_first,
+                &mut side_refresh,
+            )?;
         // OF-013: each lineage's floor rises to the archive's and never falls.
         super::epoch_floors::restore_epoch_floors_in_txn(&self.store, &mut wtxn, &archive.spool)?;
         // OF-370: the embedding setup declares and binds only what is absent
@@ -754,7 +945,10 @@ impl Vault {
             super::import_embedding_setup_in_txn(&self.store, &mut wtxn, &archive)?;
         let setup_rows = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
+        drop(retrieval_tuning_guard);
         cleanup.committed = true;
+        side_refresh.after_commit(self);
+        drop(setting_turns);
         self.embedding_setup_committed(setup_rows);
         let mut remapped_entities = BTreeMap::new();
         for entry in archive.index.entries(Tag::Model)? {
@@ -785,11 +979,16 @@ impl Vault {
             unchanged_secrets,
             skipped_revoked_secrets,
             skipped_unproven_regenerates_edges,
+            unrestored_identity_topology_shells: unrestored_identity_topology_shells.len(),
+            restored_identity_topology: topology.restored,
+            unrestored_identity_topology_events: topology.unrestored,
+            unrestored_same_as_links,
             missing_secrets,
             owed_secrets,
             embedding_setup,
             restored_side_rows,
             unchanged_side_rows,
+            retained_side_rows,
         })
     }
 }
@@ -828,7 +1027,8 @@ fn mark_ready_rows<R: Read + Seek>(archive: &mut IndexedArchive<'_, R>) -> Resul
 /// comes back as that restore's (`owner_archive_restore::owner_restored_claim`),
 /// and only its restore into a fresh vault sets the default facet. Returns the
 /// reason for a row the destination keeps as archive data instead
-/// (`TargetDefaultFacetKept`).
+/// (`TargetDefaultFacetKept`, `ClaimSubjectEdgeNotRestored`,
+/// `CoreferenceConsentNotRestored`, `ClaimSubjectNotRestored`).
 #[expect(
     clippy::too_many_arguments,
     reason = "the import's writer, archive and maps, plus the one row and its owner restore"
@@ -893,6 +1093,22 @@ fn insert_ready_row<R: Read + Seek>(
                 archive.index.remove(Tag::Inserted, id.as_bytes())?;
                 return Ok(None);
             }
+            // A claim about a row this import keeps as archive data (for any
+            // reason here, or one the manifest names) stays archive data too:
+            // every claim door reads its subject live (REVIEW-9581 P1). A
+            // subject this vault holds anyway is written about as before.
+            if let ClaimSubject::Entity(subject) = claim.subject
+                && archive.index.contains(Tag::Omitted, subject.as_bytes())?
+                && !crate::ports::EntityStoreRead::port_entity_present(
+                    &vault.store,
+                    wtxn,
+                    &subject,
+                )?
+            {
+                archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
+                archive.index.remove(Tag::Inserted, id.as_bytes())?;
+                return Ok(Some(ImportOmissionReason::ClaimSubjectNotRestored));
+            }
             // The one list of reserved families names each claim's restore
             // door; an archive-only family never reaches this writer.
             match super::bundle_validation::reserved_claim_import(&claim.predicate) {
@@ -914,27 +1130,55 @@ fn insert_ready_row<R: Read + Seek>(
                 }
                 Some(ReservedClaimImport::Restore(ReservedClaimRestore::ActorProjection)) => vault
                     .restore_actor_projection_in_txn(wtxn, &id, &claim, occurred, row.learned_at),
-                _ if claim.predicate
-                    == crate::write_envelope::learning_predicate::PREDICATE_LEARNING_RELIABILITY =>
-                {
-                    vault.restore_reliability_claim_in_txn(
-                        wtxn,
-                        &id,
-                        &claim,
-                        occurred,
-                        row.learned_at,
-                    )
-                }
                 // The owner's restore lists each open proposal it inserts in its
-                // inbox group (R1, RULING 02:26 13 Nov).
-                _ => vault
-                    .put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
-                    .and_then(|()| match owner_restore {
-                        Some(restore) => owner_archive_restore::record_restored_member_in_txn(
-                            vault, wtxn, restore, &id, &claim,
-                        ),
-                        None => Ok(()),
-                    }),
+                // inbox group (R1, RULING 02:26 13 Nov). A claim about a link
+                // goes in after its link, staged here; one whose link does not
+                // come back stays archive data
+                // (WHOLE-VAULT-IMPORT-REFUSES-EDGE-SUBJECT-CLAIMS). A share
+                // consent stays archive data: it counts only as this vault's
+                // own Approved act, and an imported claim is neither
+                // (`federation::coreference_shared_for_pact`), so the
+                // restored link is local until the owner consents again.
+                _ if claim.predicate == crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT => {
+                    archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
+                    archive.index.remove(Tag::Inserted, id.as_bytes())?;
+                    return Ok(Some(ImportOmissionReason::CoreferenceConsentNotRestored));
+                }
+                _ => {
+                    if let ClaimSubject::Edge {
+                        source,
+                        kind,
+                        target,
+                    } = claim.subject
+                        && !stage_claim_subject_edge(vault, wtxn, archive, source, kind, target)?
+                    {
+                        archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
+                        archive.index.remove(Tag::Inserted, id.as_bytes())?;
+                        return Ok(Some(ImportOmissionReason::ClaimSubjectEdgeNotRestored));
+                    }
+                    let edge_subject_status = claim_pair_same_as::claim_edge_subject_read_status(
+                        vault,
+                        wtxn,
+                        &archive.index,
+                        owner_restore.is_some(),
+                        &claim,
+                    )?;
+                    vault
+                        .put_claim_reading_edge_subject_in_txn(
+                            wtxn,
+                            &id,
+                            &claim,
+                            occurred,
+                            row.learned_at,
+                            edge_subject_status,
+                        )
+                        .and_then(|()| match owner_restore {
+                            Some(restore) => owner_archive_restore::record_restored_member_in_txn(
+                                vault, wtxn, restore, &id, &claim,
+                            ),
+                            None => Ok(()),
+                        })
+                }
             }
         }
         // FIX 7777: the witness archive owner writes the row as imported
@@ -1054,6 +1298,14 @@ fn insert_ready_row<R: Read + Seek>(
                     row.learned_at,
                     &body,
                 );
+                // The owner's restore of the owner's own archive brings a
+                // room's shared pins, the records its unpins removed, its pin
+                // policy and its closed bit back as the room pin doors and the
+                // room's closed-setting door wrote them: it writes under their
+                // markers (ROOM-SCOPED-PINS, ROOM-PINS-LWW-MERGE,
+                // ARCHIVE-IMPORT-ROOM-PINS-OR-CLOSED-REFUSED).
+                let room_door_markers = owner_restore.is_some()
+                    && row.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION;
                 if !sources.is_empty() {
                     let weight =
                         EdgeKind::DerivedFrom
@@ -1065,7 +1317,23 @@ fn insert_ready_row<R: Read + Seek>(
                         batch = batch.edge(&id, EdgeKind::DerivedFrom, source, weight);
                     }
                 }
-                batch.apply(wtxn)
+                if room_door_markers {
+                    crate::conversation::PIN_UPDATES.put(&vault.store, wtxn, &id, &[1])?;
+                    crate::conversation::CLOSED_UPDATES.put(&vault.store, wtxn, &id, &[1])?;
+                }
+                let applied = batch.apply(wtxn);
+                if room_door_markers {
+                    // The apply's own error comes back first.
+                    let pins_cleared =
+                        crate::conversation::PIN_UPDATES.delete(&vault.store, wtxn, &id);
+                    let closed_cleared =
+                        crate::conversation::CLOSED_UPDATES.delete(&vault.store, wtxn, &id);
+                    if applied.is_ok() {
+                        pins_cleared?;
+                        closed_cleared?;
+                    }
+                }
+                applied
             }
         }
     };
@@ -1108,6 +1376,71 @@ fn restore_archived_default_facet<R: Read + Seek>(
     archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
     archive.index.remove(Tag::Inserted, id.as_bytes())?;
     Ok(Some(ImportOmissionReason::TargetDefaultFacetKept))
+}
+
+/// Whether the edge passes leave archived `edge` out: an archived MESSAGE's
+/// or NOTE's byline rides inert in its body, since an archive never makes a
+/// local author (FIX 7777), and a link with an end left out stays out too.
+pub(super) fn archived_edge_skipped<R: Read + Seek>(
+    archive: &IndexedArchive<'_, R>,
+    edge: &ExportEdge,
+) -> Result<bool> {
+    let source = parse_id(&edge.source)?;
+    if let Some(kind) = EdgeKind::try_from_u8(edge.kind)
+        && super::evidence_import::is_evidence_byline(archive, &source, kind)?
+    {
+        return Ok(true);
+    }
+    Ok(archive.index.contains(Tag::Omitted, source.as_bytes())?
+        || archive
+            .index
+            .contains(Tag::Omitted, parse_id(&edge.target)?.as_bytes())?)
+}
+
+/// Whether this vault holds the link `source` -`kind`-> `target` an archived
+/// claim is about, once the archive's copy of it is in
+/// (WHOLE-VAULT-IMPORT-REFUSES-EDGE-SUBJECT-CLAIMS). The claim door reads an
+/// EdgeRef subject live, so the link goes in before the claim, as an
+/// edge-provenance cohort stages its subject edge
+/// (`provenance_import::restore`). Only a plain link the edge passes would
+/// restore is staged here, and the plain pass then finds it as the archive
+/// has it. A link of a later pass is proven on rows and links not in yet; a
+/// skipped link, one whose door leaves it out (`merged_into`, `split_into`,
+/// a `same_as` [`import_same_as_edge`] does not restore) and one the archive
+/// does not carry never come back before the claim.
+fn stage_claim_subject_edge<R: Read + Seek>(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    archive: &IndexedArchive<'_, R>,
+    source: EntityId,
+    kind: EdgeKind,
+    target: EntityId,
+) -> Result<bool> {
+    if crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
+        .is_some()
+    {
+        return Ok(true);
+    }
+    let Some(loc) = archive
+        .index
+        .get(Tag::MappedEdge, &edge_key(&source, kind as u8, &target))?
+    else {
+        return Ok(false);
+    };
+    let edge = super::provenance_import::mapped_edge(
+        &archive.spool.parse::<ExportEdge>(Loc::decode(&loc)?)?,
+        &archive.index,
+    )?;
+    if ArchiveEdgePass::of(edge.kind) != ArchiveEdgePass::Plain
+        || archived_edge_skipped(archive, &edge)?
+    {
+        return Ok(false);
+    }
+    super::provenance_import::stage_edge(vault, wtxn, &edge, &archive.index)?;
+    Ok(
+        crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
+            .is_some(),
+    )
 }
 
 /// FIX 1178: stamps the birth the archive carries for `id` beside its landed
@@ -1338,7 +1671,9 @@ fn owed_secrets_in_txn(
 }
 
 /// A stored skill's source package against the archive's: the tree reads
-/// under the archive's `secrets`, so writer and reader agree.
+/// under the archive's `secrets`, so writer and reader agree. A tree the
+/// export redacted (a seeded built-in setup skill in a no-secrets archive)
+/// compares as the redacted tree the stored package exports to.
 fn validate_existing_source<R: Read + Seek>(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -1352,11 +1687,12 @@ fn validate_existing_source<R: Read + Seek>(
     }
     let bundle: ExportSkillBundle = archive.hydrated(at.loc)?;
     if let Some(tree) = &bundle.source_tree {
-        let files = tree.import_files_in_with(&archive.files, secrets)?;
         let stored = vault
             .export_hub_package_in_txn(txn, &parse_id(&row.id)?)?
             .ok_or_else(|| invalid("existing skill has no matching stored source package"))?;
-        if stored.export_files()? != files || Some(stored.format) != bundle.source_format {
+        if !tree.matches_stored_in_with(&archive.files, &stored.export_files()?, secrets)?
+            || Some(stored.format) != bundle.source_format
+        {
             return Err(invalid(
                 "existing skill source package differs from archive",
             ));
@@ -1808,6 +2144,14 @@ fn imported_body(
             if body.approval != ClaimApprovalStatus::Rejected {
                 body.approval = ClaimApprovalStatus::Proposed;
             }
+            // A coreference status states its approval in its value too (the
+            // validator pins `confirmed` to Approved), so a confirmed link
+            // comes back proposed, as its approval does.
+            if body.predicate == crate::claim::PREDICATE_COREFERENCE_STATUS
+                && body.value.as_str() == Some(crate::claim::COREFERENCE_STATUS_CONFIRMED)
+            {
+                body.value = rmpv::Value::from(crate::claim::COREFERENCE_STATUS_PROPOSED);
+            }
             if let Some(restore) = owner_restore {
                 owner_archive_restore::owner_restored_claim(&mut body, restore);
             }
@@ -2032,6 +2376,13 @@ pub(super) enum EdgeImport {
     /// An archived `regenerates` link its restored pair does not prove,
     /// left out (FIX 5972); the import's last edge pass counts it (FIX 6206).
     UnprovenRegenerates,
+    /// An archived `merged_into` or `split_into` link this vault does not
+    /// hold, left out: the type-76 events such a link follows stay archive
+    /// data (OWNEDGES-SHELL-RESTORE = A); the edge passes count its source.
+    IdentityTopologyLeftOut,
+    /// An archived `same_as` link [`import_same_as_edge`] does not restore,
+    /// left out; the edge passes count it.
+    SameAsLeftOut,
 }
 
 /// Writes one archived edge; `inserted` names the rows this import put in or
@@ -2057,15 +2408,42 @@ fn import_edge_with_seeds(
     let source = parse_id(&edge.source)?;
     let target = parse_id(&edge.target)?;
     let kind = EdgeKind::try_from_u8(edge.kind).ok_or_else(|| invalid("unknown edge kind"))?;
+    // OWNEDGES-SHELL-RESTORE = A: a merged_into or split_into link moves only
+    // with a validated type-76 event (ARCH-0055), and the archived events
+    // stay archive data (`LocalHistoryNotRestored`), so the link stays out
+    // and its merged or split row is back here as a separate row. A link this
+    // vault's own events already drew is left as it is.
+    if matches!(kind, EdgeKind::MergedInto | EdgeKind::SplitInto) {
+        let held =
+            crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
+                .is_some();
+        return Ok(if held {
+            EdgeImport::Landed
+        } else {
+            EdgeImport::IdentityTopologyLeftOut
+        });
+    }
+    if kind == EdgeKind::SameAs {
+        return import_same_as_edge(vault, wtxn, edge, inserted, source, target);
+    }
     if let Some(existing) =
         crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
     {
+        // A link this vault held with provenance of its own keeps its own
+        // stamp, since its archived cohort stayed archive data
+        // (`provenance_import::restore`, REVIEW-9652 P1): only its base
+        // fields compare. So do they for a link whose archived cohort the
+        // gate pended (`ProvenanceAutoNotPermitted`): it came back bare.
+        let link_key = edge_key(&source, edge.kind, &target);
+        let base_fields_only = inserted.contains(Tag::OwnHistoryLink, &link_key)?
+            || inserted.contains(Tag::UnpermittedProvenanceLink, &link_key)?;
         let same_body = existing.weight == edge.weight
             && existing.vad.map(|v| [v.valence, v.arousal, v.dominance]) == edge.vad
-            && existing
-                .provenance
-                .map(|p| [p.confirmation_status as u8, p.actor_class as u8])
-                == edge.provenance;
+            && (base_fields_only
+                || existing
+                    .provenance
+                    .map(|p| [p.confirmation_status as u8, p.actor_class as u8])
+                    == edge.provenance);
         let seed_edge = seeds.is_some_and(|seeds| match kind {
             EdgeKind::ClaimOf => seeds.is_subject_claim_edge(&source, &target),
             EdgeKind::FacetOf => seeds.is_carrier_facet_edge(&source, &target),
@@ -2116,6 +2494,10 @@ fn import_edge_with_seeds(
         import_conversation_dag_edge(vault, wtxn, edge, inserted, source, kind, target)?;
         return Ok(EdgeImport::Landed);
     }
+    if is_readiness_or_fulfillment_kind(kind) {
+        import_readiness_or_fulfillment_edge(vault, wtxn, edge, inserted, source, kind, target)?;
+        return Ok(EdgeImport::Landed);
+    }
     let vad = edge
         .vad
         .map_or(oneiron_contracts::affect::Vad::NEUTRAL, |v| {
@@ -2151,6 +2533,29 @@ fn import_edge_with_seeds(
             .apply(wtxn)?;
         return Ok(EdgeImport::Landed);
     }
+    // The epoch mint alone creates this kind: an archived carried manifest
+    // comes back through the internal write, its weights (the host's order)
+    // kept, from a restored epoch SUMMARY. From any other row the public
+    // write below refuses it.
+    if kind == EdgeKind::Carries
+        && crate::compaction::is_epoch_summary_in(&vault.store, wtxn, &source)?
+    {
+        vault
+            .batch_in()
+            .edge_with_value_fields(
+                &source,
+                kind,
+                &target,
+                crate::batch::EdgeValueFields {
+                    weight: edge.weight,
+                    created_at: edge.created_at,
+                    vad,
+                    provenance: None,
+                },
+            )
+            .apply(wtxn)?;
+        return Ok(EdgeImport::Landed);
+    }
     vault
         .batch_in()
         .edge_with_created_at_and_vad(&source, kind, &target, edge.weight, edge.created_at, vad)
@@ -2160,11 +2565,13 @@ fn import_edge_with_seeds(
 
 /// The order an archived edge lands in: plain links first, then the
 /// conversation DAG links their records' restored ChildOf and bodies prove,
-/// then `regenerates`, proven on restored MESSAGEs (FIX 5972).
+/// then the readiness and fulfillment links their restored rows prove, then
+/// `regenerates`, proven on restored MESSAGEs (FIX 5972).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ArchiveEdgePass {
     Plain,
     ConversationDag,
+    ReadinessAndFulfillment,
     Regenerates,
 }
 
@@ -2173,9 +2580,227 @@ impl ArchiveEdgePass {
         match EdgeKind::try_from_u8(kind) {
             Some(EdgeKind::Regenerates) => Self::Regenerates,
             Some(kind) if is_conversation_dag_kind(kind) => Self::ConversationDag,
+            Some(kind) if is_readiness_or_fulfillment_kind(kind) => Self::ReadinessAndFulfillment,
             _ => Self::Plain,
         }
     }
+}
+
+/// The kinds one typed door each writes, and every public edge door refuses:
+/// `blocks` (`code_memory::insert_blocks_edge`) and the brief fulfillment
+/// pair `fulfills` / `discharged_by` (`link_brief_fulfillment`).
+fn is_readiness_or_fulfillment_kind(kind: EdgeKind) -> bool {
+    matches!(
+        kind,
+        EdgeKind::Blocks | EdgeKind::Fulfills | EdgeKind::DischargedBy
+    )
+}
+
+/// An archived readiness or fulfillment link
+/// (WHOLE-VAULT-IMPORT-REFUSES-RESERVED-OWNER-EDGES) comes back through the
+/// internal write, with its archived value fields, once both its ends are
+/// records this import inserted and the restored rows prove what its one
+/// write door proved. A record already here keeps its own links.
+///
+/// * `blocks`: both ends are CODE_SYMBOLs, the link is no self-loop, and it
+///   closes no cycle of `blocks` links (`validate_blocks_insert`). The door's
+///   actor check is not run again: the source vault's door ran it, and the
+///   link reads only between the two restored symbols.
+/// * `fulfills` and `discharged_by`: one end is a TASK brief and the other a
+///   `commitment.record` its completion can discharge (open, closed or
+///   withdrawn: `fulfill_commitments_for_brief`), and the archive carries
+///   the inverse link too, so the pair the door writes lands whole. The
+///   commitment need not be open: the door checked that when it linked, and
+///   a commitment closes after its link.
+///
+/// Each value is the one its door writes: weight 1.0 and no affect.
+fn import_readiness_or_fulfillment_edge(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    edge: &ExportEdge,
+    inserted: &ArchiveIndex<'_>,
+    source: EntityId,
+    kind: EdgeKind,
+    target: EntityId,
+) -> Result<()> {
+    for end in [&source, &target] {
+        if !inserted.contains(Tag::Inserted, end.as_bytes())? {
+            return Err(invalid(
+                "archived readiness or fulfillment edge names a record this import did not insert",
+            ));
+        }
+    }
+    if edge.vad.is_some() || edge.weight != 1.0 {
+        return Err(invalid(
+            "archived readiness or fulfillment edge carries a value its door never writes",
+        ));
+    }
+    match kind {
+        EdgeKind::Blocks => {
+            for end in [&source, &target] {
+                if crate::batch::stored_entity_type(&vault.store, wtxn, end)?
+                    != Some(crate::registry::ENTITY_TYPE_CODE_SYMBOL)
+                {
+                    return Err(invalid("archived blocks edge leaves a CODE_SYMBOL"));
+                }
+            }
+            if source == target
+                || crate::code_memory::blocks_path_exists(vault, wtxn, target, source)?
+            {
+                return Err(invalid("archived blocks edge closes a cycle"));
+            }
+        }
+        _ => {
+            let (brief, commitment, inverse) = if kind == EdgeKind::Fulfills {
+                (source, target, EdgeKind::DischargedBy)
+            } else {
+                (target, source, EdgeKind::Fulfills)
+            };
+            if crate::batch::stored_entity_type(&vault.store, wtxn, &brief)?
+                != Some(ENTITY_TYPE_TASK)
+            {
+                return Err(invalid("archived fulfillment edge names no TASK brief"));
+            }
+            if !matches!(
+                vault.commitment_instance_state_in_txn(wtxn, &commitment)?,
+                crate::commitment::CommitmentInstanceState::Open(_)
+                    | crate::commitment::CommitmentInstanceState::Closed(_)
+                    | crate::commitment::CommitmentInstanceState::Withdrawn
+            ) {
+                return Err(invalid(
+                    "archived fulfillment edge names no commitment its brief can discharge",
+                ));
+            }
+            if !super::evidence_import::archived_targets(inserted, &target, inverse)?
+                .contains(&source)
+            {
+                return Err(invalid("archived fulfillment edge lacks its inverse link"));
+            }
+        }
+    }
+    vault
+        .batch_in()
+        .edge_with_value_fields(
+            &source,
+            kind,
+            &target,
+            crate::batch::EdgeValueFields {
+                weight: edge.weight,
+                created_at: edge.created_at,
+                vad: oneiron_contracts::affect::Vad::NEUTRAL,
+                provenance: None,
+            },
+        )
+        .apply(wtxn)
+}
+
+/// An archived `same_as` link (WHOLE-VAULT-IMPORT-REFUSES-RESERVED-OWNER-EDGES)
+/// comes back through the internal write, with its archived `created_at`,
+/// when it is the link the federation door writes
+/// (`federation::put_coreference_link`): between two PERSONs this import
+/// inserted, at weight [`COREFERENCE_LINK_WEIGHT`](crate::federation::COREFERENCE_LINK_WEIGHT),
+/// with no affect and no provenance, and with a status claim on it that this
+/// import puts in too, since the door writes the link and its status together
+/// (REVIEW-9581 round 2). The door's actor check is not run again: the source
+/// vault's door ran it. The link's status claims come back as proposals, as
+/// every imported claim does, and its share consents stay archive data
+/// (`CoreferenceConsentNotRestored`), so the link is local here.
+///
+/// A link between two CLAIMs is applied only under the owner's standing
+/// nightly-link grant (`federation::put_consolidated_same_as_in_txn`), so it
+/// comes back on that proof, read on this vault: on the owner's restore,
+/// once its archived standing grants are in, with an active status claim
+/// that comes back, and the grant's use recorded with a Gate receipt naming
+/// the restore (`claim_pair_same_as`, CLAIM-NOTE-SAME-AS-RESTORE-PROOF = A).
+/// Every other door installs no grant and keeps it out.
+///
+/// A record already here keeps its own links: a link this vault holds is
+/// left as it is, and one naming a PERSON or a CLAIM already here stays out,
+/// since a foreign archive would otherwise tell this vault who its own
+/// person is, or join its own memories. Every other `same_as` stays out
+/// too: one between two diary NOTEs is proven only on its residents' own
+/// submission (`Memory::link_diary_coreference`), and an imported diary has
+/// no local author here (`NoteActor::Imported`), so no resident proof
+/// exists on this vault. The edge passes count each link left out, and a
+/// claim about it, its edge provenance among them, stays archive data
+/// (`ClaimSubjectEdgeNotRestored`).
+fn import_same_as_edge(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    edge: &ExportEdge,
+    inserted: &ArchiveIndex<'_>,
+    source: EntityId,
+    target: EntityId,
+) -> Result<EdgeImport> {
+    if crate::ports::EdgeStoreRead::port_edge_get(
+        &vault.store,
+        wtxn,
+        &source,
+        EdgeKind::SameAs,
+        &target,
+    )?
+    .is_some()
+    {
+        return Ok(EdgeImport::Landed);
+    }
+    let ends_restored = edge.weight == crate::federation::COREFERENCE_LINK_WEIGHT
+        && edge.vad.is_none()
+        && edge.provenance.is_none()
+        && inserted.contains(Tag::Inserted, source.as_bytes())?
+        && inserted.contains(Tag::Inserted, target.as_bytes())?;
+    if !ends_restored {
+        return Ok(EdgeImport::SameAsLeftOut);
+    }
+    let claim_pair = if crate::federation::person_pair_in_txn(vault, wtxn, source, target)? {
+        if !same_as_status_restored(inserted, &source, &target)? {
+            return Ok(EdgeImport::SameAsLeftOut);
+        }
+        None
+    } else {
+        match claim_pair_same_as::claim_pair_proof(vault, wtxn, inserted, source, target)? {
+            Some(proof) => Some(proof),
+            None => return Ok(EdgeImport::SameAsLeftOut),
+        }
+    };
+    vault
+        .batch_in()
+        .edge_with_value_fields(
+            &source,
+            EdgeKind::SameAs,
+            &target,
+            crate::batch::EdgeValueFields {
+                weight: edge.weight,
+                created_at: edge.created_at,
+                vad: oneiron_contracts::affect::Vad::NEUTRAL,
+                provenance: None,
+            },
+        )
+        .apply(wtxn)?;
+    if let Some(proof) = claim_pair {
+        proof.record_use_in_txn(vault, wtxn, source, target)?;
+    }
+    Ok(EdgeImport::Landed)
+}
+
+/// Whether the archive carries a `core.coreference.status` claim on the
+/// `same_as` link `source` -> `target` that this import puts in: one it has
+/// put in, or one still pending that it has not kept out. A pending status
+/// claim on a link this import wrote goes in after it, staged on the link
+/// as every claim about a link is (`stage_claim_subject_edge`).
+fn same_as_status_restored(
+    archive: &ArchiveIndex<'_>,
+    source: &EntityId,
+    target: &EntityId,
+) -> Result<bool> {
+    let link = edge_key(source, EdgeKind::SameAs as u8, target);
+    let mut after: Option<Vec<u8>> = None;
+    while let Some((key, _)) = archive.next(Tag::CoreferenceStatus, &link, after.as_deref())? {
+        if archive.contains(Tag::Inserted, id_at(&key, link.len())?.as_bytes())? {
+            return Ok(true);
+        }
+        after = Some(key);
+    }
+    Ok(false)
 }
 
 /// The kinds only the conversation DAG writes; every public edge door refuses

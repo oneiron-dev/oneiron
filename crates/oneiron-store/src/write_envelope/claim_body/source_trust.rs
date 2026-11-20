@@ -102,15 +102,17 @@ pub struct ClaimDemotion {
 /// Provenance inheritance floor (ONE-1645, P3/V2): the band an UNSTAMPED
 /// claim reads. A claim with no scope map, or a scope map carrying no
 /// `sensitivity` key, has no recorded provenance — so it reads "sensitive"
-/// (band 2) and every disclosure surface fails closed against it.
+/// (band 2), and a disclosure surface admits it only to a party cleared for
+/// sensitive content.
 ///
 /// Positive-evidence rule: public is an explicit act. Only a stored
 /// `"sensitivity": "public" | 0` stamp reads band 0; absence never reads
-/// public. Band 2 (not 3) is deliberate — it holds unstamped claims out of
-/// non-owner disclosure (`disclosure_tier` Rule 3 fails closed at >= 2) while
-/// leaving them visible to the OWNER in persona compiles
-/// (`TIER_A_MIN_SENSITIVITY_BAND` = 3). Private means not-disclosed-to-others,
-/// not invisible-to-self.
+/// public. Band 2 (not 3) is deliberate — it keeps unstamped claims from
+/// every non-owner audience below sensitive clearance (`disclosure_tier`
+/// Rule 3 withholds only an ambiguous or out-of-range band; a decoded band
+/// goes to the audience's clearance, OF-365) while leaving them visible to
+/// the OWNER in persona compiles (`TIER_A_MIN_SENSITIVITY_BAND` = 3).
+/// Unrecorded means never public, not invisible-to-self.
 pub const UNSTAMPED_CLAIM_SENSITIVITY_BAND: u8 = 2;
 
 /// Lookup outcome for ONE recognized key in an engine-owned scope map.
@@ -187,7 +189,8 @@ pub fn without_initial_weight(scope: Option<Value>) -> Option<Value> {
 ///
 /// * **missing** (no scope map, or no `sensitivity` key) ⇒
 ///   `Some(UNSTAMPED_CLAIM_SENSITIVITY_BAND)` — the ONE-1645 inheritance
-///   floor. Unrecorded provenance reads private at every disclosure surface.
+///   floor. Unrecorded provenance reads sensitive at every disclosure
+///   surface.
 /// * **ambiguous** (duplicate `sensitivity` key) ⇒ `None` — unreadable, not
 ///   merely unstamped; consumers clamp harder on `None` than on the floor.
 pub fn claim_sensitivity_band(body: &ClaimBody) -> Option<u8> {

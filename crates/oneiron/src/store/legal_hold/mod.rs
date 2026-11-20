@@ -19,16 +19,20 @@
 //! owner reads a host order's rows through the one permitted view
 //! (`LegalHold::owner_may_see`), never a copy.
 
+/// Owner-permitted customer hold archive landing.
+pub(crate) mod archive;
 mod events;
 mod notice;
 mod pending;
+mod person_content;
 mod settlement;
 mod use_limit;
 
+pub(crate) use person_content::{kept_person_content_row_in_txn, person_content_subjects};
 pub(crate) use use_limit::{
-    CooperativeRestriction, CooperativeRestrictionKey, cooperative_restriction_active_in_txn,
-    held_in_txn, legal_hold_held_in_txn, legal_hold_use_limit_in_txn, partition_held_in_txn,
-    rows_keep_record, use_limit_in_txn,
+    CooperativeRestriction, CooperativeRestrictionKey, any_record_use_limit_in_txn,
+    cooperative_restriction_active_in_txn, held_in_txn, legal_hold_held_in_txn,
+    legal_hold_use_limit_in_txn, partition_held_in_txn, rows_keep_record, use_limit_in_txn,
 };
 use use_limit::{USE_LIMITS, keep_use_limited_in_txn};
 
@@ -302,6 +306,44 @@ fn standing_row_in_txn(
     Ok(hold)
 }
 
+/// An opaque reference: ids only, never free text (C3).
+pub(crate) fn check_opaque(value: &str, what: &str) -> Result<()> {
+    let opaque = !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._:-/".contains(&byte));
+    if opaque {
+        Ok(())
+    } else {
+        Err(Error::InvalidConfig(format!(
+            "{what} must be an opaque id: 1 to 128 of A-Z a-z 0-9 . _ : - /"
+        )))
+    }
+}
+
+/// Keeps distinct targets and rejects an empty hold scope.
+pub(crate) fn distinct(targets: Vec<LegalHoldTarget>) -> Result<Vec<LegalHoldTarget>> {
+    let mut seen = BTreeSet::new();
+    let targets: Vec<LegalHoldTarget> = targets
+        .into_iter()
+        .filter(|target| seen.insert(*target))
+        .collect();
+    if targets.is_empty() {
+        return Err(Error::InvalidConfig("a legal hold names records".into()));
+    }
+    Ok(targets)
+}
+
+/// The exact target keys indexed by a standing customer hold.
+fn held_keys(hold: &LegalHold) -> BTreeSet<HeldKey> {
+    if hold.keeps_vault_data() {
+        hold.targets.iter().map(held_key).collect()
+    } else {
+        BTreeSet::new()
+    }
+}
+
 /// Writes `hold`, keeping its target index exact: a hold that keeps its
 /// records in the vault (a standing customer hold) indexes every target it
 /// names; a lifted one, or any host order, none.
@@ -311,18 +353,11 @@ pub(crate) fn put_hold_in_txn(
     hold: &LegalHold,
 ) -> Result<()> {
     let (rows, targets) = (rows_of(hold.kind), TARGETS);
-    let keys = |hold: &LegalHold| -> BTreeSet<HeldKey> {
-        if hold.keeps_vault_data() {
-            hold.targets.iter().map(held_key).collect()
-        } else {
-            BTreeSet::new()
-        }
-    };
     let before = rows
         .get(dbs, txn, &hold.hold_id)?
-        .map(|old| keys(&old))
+        .map(|old| held_keys(&old))
         .unwrap_or_default();
-    let after = keys(hold);
+    let after = held_keys(hold);
     for key in before.difference(&after) {
         targets.delete(dbs, txn, &(*key, hold.hold_id))?;
     }
@@ -604,6 +639,16 @@ pub(crate) fn note_erase_completed_in_txn(
     Ok(())
 }
 
+/// The id of the partition door's hold on `target`, derived from the partition.
+fn partition_hold_id(target: &LegalHoldTarget) -> Result<EntityId> {
+    let mut seed = b"legal_hold:gate_partition:v1".to_vec();
+    seed.extend_from_slice(&held_key(target));
+    let digest = blake3::hash(&seed);
+    let mut id = [0; 16];
+    id.copy_from_slice(&digest.as_bytes()[..16]);
+    EntityId::from_bytes(id)
+}
+
 /// The gate-decision partition door's own hold on `target`: one row per
 /// partition, its id derived from the partition, so placing it twice is one
 /// hold and releasing it lifts that hold alone.
@@ -614,12 +659,7 @@ pub(crate) fn set_partition_hold_in_txn(
     held: bool,
     now: u64,
 ) -> Result<()> {
-    let mut seed = b"legal_hold:gate_partition:v1".to_vec();
-    seed.extend_from_slice(&held_key(&target));
-    let digest = blake3::hash(&seed);
-    let mut id = [0; 16];
-    id.copy_from_slice(&digest.as_bytes()[..16]);
-    let hold_id = EntityId::from_bytes(id)?;
+    let hold_id = partition_hold_id(&target)?;
     let existing = ROWS.get(dbs, txn, &hold_id)?;
     let actor = HoldActor::new(LegalHoldActorKind::Host, None);
     match (existing, held) {

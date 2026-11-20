@@ -21,6 +21,7 @@ impl SyncServer {
 
     /// Exports root doc updates since the given version vector.
     pub(crate) fn export_root_updates(&self, from_vv: &VersionVector) -> Result<Vec<u8>, String> {
+        self.merge_link_root_for_read();
         self.root_doc
             .export(ExportMode::updates(from_vv))
             .map_err(|e| format!("root doc export failed: {e}"))
@@ -28,9 +29,75 @@ impl SyncServer {
 
     /// Exports all root doc state for a new client.
     pub(crate) fn export_root_snapshot(&self) -> Result<Vec<u8>, String> {
+        self.merge_link_root_for_read();
         self.root_doc
             .export(ExportMode::Snapshot)
             .map_err(|e| format!("root doc snapshot failed: {e}"))
+    }
+
+    /// Under a device link this process runs (serve's, managed serve's or the
+    /// macOS app's), merges the vault's persisted root into this server's
+    /// before a socket reads it (L7-47, SERVE-DEVICE-PEER-STALE-ROOT). The
+    /// link's client imports the home's root into its own doc and persists it
+    /// to `d:root`; this server loaded `d:root` once, at start. Without the
+    /// merge a peer would never learn a window the link learned since.
+    /// Importing adds no op of this server's. What it takes in goes to every
+    /// socket of this server as any root update does, so a later update never
+    /// reaches a socket without the ops it rests on. A root that cannot be
+    /// read or merged leaves this server's own, as before, with a warning.
+    ///
+    /// The caller holds `lease_registrar`, the root writers' lock. Each root
+    /// write (a window added, a lease revoked or expired) merges first, under
+    /// it, so the root it persists over `d:root` keeps what the link had
+    /// persisted there when the write began. A lease write takes the version
+    /// a failed persist reverts to after the merge, so its revert never undoes
+    /// it; a window add has no revert, and cuts its delta after the merge. A
+    /// link persist that lands between a write's merge and its persist is
+    /// still overwritten (FIX-LIST DEVICE-LINK-ROOT-PERSIST-DROPS-SERVER-ROOT-OPS).
+    /// A read merges through [`Self::merge_link_root_for_read`].
+    pub(super) fn merge_link_root(&self) {
+        if !self.device_link_opened() {
+            return;
+        }
+        let merged = server_state::load_root_from_state(&self.vault)
+            .map_err(|error| error.to_string())
+            .and_then(|persisted| {
+                let Some(persisted) = persisted else {
+                    return Ok(None);
+                };
+                let before = self.root_doc.oplog_vv();
+                let missing = persisted
+                    .export(ExportMode::updates(&before))
+                    .map_err(|error| error.to_string())?;
+                self.root_doc
+                    .import(&missing)
+                    .map_err(|error| error.to_string())?;
+                Ok((self.root_doc.oplog_vv() != before).then_some(missing))
+            });
+        match merged {
+            Ok(Some(taken_in)) => {
+                let notice = crate::protocol::encode_root_update(&taken_in);
+                let _ = crate::broadcast::broadcast(&self.broadcast_tx, 0, notice);
+            }
+            Ok(None) => {}
+            Err(reason) => tracing::warn!(
+                %reason,
+                "device server: the link's persisted root did not merge; serving this server's own"
+            ),
+        }
+    }
+
+    /// [`Self::merge_link_root`] for a root export, only while no root writer
+    /// holds `lease_registrar`: a writer merged at its start, and a merge
+    /// during its write would be undone by its revert after a failed persist.
+    /// The next read merges what the link persisted since.
+    fn merge_link_root_for_read(&self) {
+        if !self.device_link_opened() {
+            return;
+        }
+        if let Ok(_writers) = self.lease_registrar.try_lock() {
+            self.merge_link_root();
+        }
     }
 
     /// Gets or creates the canonical live window.
@@ -61,6 +128,9 @@ impl SyncServer {
             .any(|existing| existing == key)
         {
             let _guard = self.lease_registrar.lock().await;
+            // A window the device link learned may be named already, and the
+            // root persisted below keeps what the link persisted.
+            self.merge_link_root();
             if !read_window_list(&self.root_doc)
                 .iter()
                 .any(|existing| existing == key)
@@ -116,6 +186,77 @@ impl SyncServer {
             inserts,
             landings,
             |txn| auth.is_none_or(|auth| auth.credential_is_live_in_write_txn(&self.vault, txn)),
+        )
+    }
+
+    /// [`Self::persist_imported_update`] for a promoted window's write: the
+    /// entities the update lands on `source` must still reach `peer`'s
+    /// machine in the committing transaction (world privacy may have changed
+    /// since the pre-write check).
+    pub(crate) fn persist_promoted_imported_update(
+        &self,
+        key: &WindowKey,
+        update_bytes: &[u8],
+        inserts: &oneiron::sync::window::UpdateInserts,
+        landings: &oneiron::sync::selector::RepoSyncLandings,
+        auth: Option<&crate::auth::CoreAuth>,
+        peer: oneiron::authority::PeerMachine,
+        source: &loro::LoroDoc,
+    ) -> Result<u64, oneiron::Error> {
+        server_state::persist_promoted_window_update(
+            &self.vault,
+            key,
+            update_bytes,
+            inserts,
+            landings,
+            |txn| auth.is_none_or(|auth| auth.credential_is_live_in_write_txn(&self.vault, txn)),
+            peer,
+            source,
+        )
+    }
+
+    /// [`Self::persist_imported_update`] for an own device's retained update
+    /// that the home's drain replays (L7-41). No socket sent it, so no Write
+    /// credential is rechecked: the writer requires instead that `work` still
+    /// stands as the burst core handed it back
+    /// ([`DeviceBurstWork::stands_in_txn`]): still held, its device's
+    /// authority unchanged. A batch that no longer stands persists nothing,
+    /// and the drain's next pass ends it (#9226 review). One a residence
+    /// socket sent ([`DeviceBurstWork::promoted`]) is judged as
+    /// [`Self::persist_promoted_imported_update`] judges the socket's own:
+    /// the entities it lands on `source` must still reach the device's
+    /// machine, in the same writer (#9226 review round 2).
+    ///
+    /// [`DeviceBurstWork::stands_in_txn`]: oneiron::sync::federation_burst::DeviceBurstWork::stands_in_txn
+    /// [`DeviceBurstWork::promoted`]: oneiron::sync::federation_burst::DeviceBurstWork::promoted
+    pub(crate) fn persist_retained_device_update(
+        &self,
+        key: &WindowKey,
+        update_bytes: &[u8],
+        inserts: &oneiron::sync::window::UpdateInserts,
+        landings: &oneiron::sync::selector::RepoSyncLandings,
+        work: &oneiron::sync::federation_burst::DeviceBurstWork,
+        source: &loro::LoroDoc,
+    ) -> Result<u64, oneiron::Error> {
+        if work.promoted() {
+            return server_state::persist_promoted_window_update(
+                &self.vault,
+                key,
+                update_bytes,
+                inserts,
+                landings,
+                |txn| retained_work_stands(&self.vault, work, txn),
+                work.peer().machine(),
+                source,
+            );
+        }
+        server_state::persist_admitted_window_update(
+            &self.vault,
+            key,
+            update_bytes,
+            inserts,
+            landings,
+            |txn| retained_work_stands(&self.vault, work, txn),
         )
     }
 
@@ -246,6 +387,20 @@ pub(super) fn spawn_local_change_producer(
             }
         }
     });
+}
+
+/// Whether `work` still stands in `txn`
+/// ([`oneiron::sync::federation_burst::DeviceBurstWork::stands_in_txn`]); a
+/// standing that does not read does not stand.
+fn retained_work_stands(
+    vault: &oneiron::Vault,
+    work: &oneiron::sync::federation_burst::DeviceBurstWork,
+    txn: &heed::RoTxn<'_>,
+) -> bool {
+    work.stands_in_txn(vault, txn).unwrap_or_else(|error| {
+        tracing::warn!(%error, "a retained device batch's standing did not read");
+        false
+    })
 }
 
 #[cfg(test)]
