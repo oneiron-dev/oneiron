@@ -22,10 +22,9 @@
 //! fill a page; its work is bounded by the home's windows in the months
 //! asked (at most 36 months).
 
-use super::*;
+use oneiron::sync::carrier::MAX_CATALOGUE_MONTHS;
 
-/// The most months one catalogue call names.
-const MAX_CATALOGUE_MONTHS: usize = 36;
+use super::*;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
