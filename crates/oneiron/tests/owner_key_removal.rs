@@ -3384,15 +3384,10 @@ fn a_crossing_removal_refused_for_a_row_below_it_shows_in_the_changes_list() {
         AuthorityKey::Ed25519(c.verifying_key().to_bytes()),
         "the line names C, whose key stands, as its signer"
     );
-    assert!(
-        !matches!(
-            line.change,
-            OwnerKeyChangeKind::Enrolled
-                | OwnerKeyChangeKind::Confirmed
-                | OwnerKeyChangeKind::Removed
-                | OwnerKeyChangeKind::RemovedByEndedKey
-        ),
-        "the line is a change of its own kind: the vault counted no removal of A, and C did \
-         not end: {line:?}"
+    assert_eq!(
+        line.change,
+        OwnerKeyChangeKind::RemovedInConflict,
+        "the line is a removal in conflict: the vault counted no removal of A, and C did not \
+         end: {line:?}"
     );
 }

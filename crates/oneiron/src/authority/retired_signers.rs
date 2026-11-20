@@ -230,7 +230,8 @@ impl Retirements {
     /// `InvalidAncestry` when it holds only a signer of a row below; a
     /// recovered row keeps its proof fold's refusal,
     /// `Recovered::entry_fold`), and its own fence ended its key all the
-    /// same. The owner's key changes list names only the first kind
+    /// same. The owner's key changes list names the first kind as removed by
+    /// an ended key and the second as removed in conflict
     /// (`owner_key_changes`).
     pub(super) fn crossed_revocations(&self) -> BTreeSet<AuthorityEntryHash> {
         self.fences
