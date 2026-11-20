@@ -550,7 +550,7 @@ impl PipelineBuilder<'_> {
                     media_evidence: Default::default(),
                     blend_components: HashMap::new(),
                     access_factors: HashMap::new(),
-                    rerank_merged_components: None,
+                    rerank_components: None,
                     retrieval_trace: None,
                     replay_inputs: capture_replay_enabled.then(|| {
                         capture_replay_inputs(
@@ -767,7 +767,7 @@ impl PipelineBuilder<'_> {
             )?;
 
             let RerankApplied {
-                merged_components: rerank_merged_components,
+                rerank_components,
                 reranked_trace_scores,
                 words_revisions,
                 block: mut reranked_block,
@@ -779,7 +779,6 @@ impl PipelineBuilder<'_> {
                 RerankLadderInputs {
                     ladder_scores: rerank_ladder_scores.as_ref(),
                     blend_access_factors: &blend_access_factors,
-                    blend_components: &blend_components,
                     filter_config,
                     rerank_query,
                     capture_retrieval_trace,
@@ -980,7 +979,7 @@ impl PipelineBuilder<'_> {
                         fused_trace_scores,
                         blended_trace_scores,
                         reranked_trace_scores: reranked_trace_scores.as_deref(),
-                        rerank_merged_components: rerank_merged_components.as_ref(),
+                        rerank_components: rerank_components.as_ref(),
                         blend_components: &blend_components,
                         blend_access_factors: &blend_access_factors,
                         community_trace_identity,
@@ -1094,7 +1093,7 @@ impl PipelineBuilder<'_> {
                 media_evidence: acc.media_evidence,
                 blend_components,
                 access_factors: blend_access_factors,
-                rerank_merged_components,
+                rerank_components,
                 retrieval_trace,
                 replay_inputs,
                 ppr_expand_executed,
