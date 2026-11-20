@@ -310,6 +310,33 @@ fn the_next_sweep_after_a_report_sends_nothing() {
 }
 
 #[test]
+fn an_ack_outside_the_contract_leaves_the_change_unreported() {
+    let hosted = HostedVault::open();
+    let first = host_enrols_passkey(&hosted, &passkey(), CREDENTIAL_ID);
+    sweep_and_read_nothing(&hosted);
+    let second = host_enrols_passkey(&hosted, &second_passkey(), SECOND_CREDENTIAL_ID);
+    for answer in [
+        "[true]",
+        r#"{"reported":true,"reported":true}"#,
+        r#"{"reported":true,"error":"refused"}"#,
+        r#"{"reported":false}"#,
+        r#"{"ok":true}"#,
+    ] {
+        let (line, reported) = sweep_and_read_line(&hosted, Answer::Line(answer));
+        assert_eq!(
+            line,
+            expected_line(&second.entry, listed_at(&hosted, &second.entry)),
+            "the change was sent ({answer})"
+        );
+        assert_eq!(
+            reported,
+            BTreeSet::from([first.entry]),
+            "an answer outside the contract reports nothing ({answer})"
+        );
+    }
+}
+
+#[test]
 fn a_refused_report_stays_unreported_and_goes_again() {
     let hosted = HostedVault::open();
     let first = host_enrols_passkey(&hosted, &passkey(), CREDENTIAL_ID);

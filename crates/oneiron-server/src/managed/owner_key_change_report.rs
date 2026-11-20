@@ -188,6 +188,11 @@ impl HypnosOwnerKeyChange {
             }
         };
         let first = answer.get(..end).unwrap_or_default();
+        // a JSON object only: a struct also reads from an array, so `[true]`
+        // would read as reported
+        if first.trim_ascii_start().first() != Some(&b'{') {
+            return Err("had an answer outside the contract".to_owned());
+        }
         let ack: OwnerKeyChangeReportAck = serde_json::from_slice(first)
             .map_err(|_| "had an answer outside the contract".to_owned())?;
         if !ack.well_formed() {
