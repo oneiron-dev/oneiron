@@ -753,11 +753,14 @@ impl DocxPackage {
         let main_part_name = main_document_part_from_root_rels(&root_rels, archive)?;
         let document_rels_path = rels_part_path(&main_part_name);
 
-        // Parse the main part's relationships (required).
-        let doc_rels_bytes = archive
-            .get(&document_rels_path)
-            .ok_or_else(|| PackageError::MissingPart(document_rels_path.clone()))?;
-        let document_rels = RelationshipSet::parse(doc_rels_bytes, &document_rels_path)?;
+        // Parse the main part's relationships. The part is optional: a main
+        // part with no outgoing relationship has none. The empty set is based
+        // at the main part's directory, so a relationship the writer adds
+        // later resolves its relative target there.
+        let document_rels = match archive.get(&document_rels_path) {
+            Some(bytes) => RelationshipSet::parse(bytes, &document_rels_path)?,
+            None => RelationshipSet::empty().rebased(&document_rels_path),
+        };
 
         // Parse every non-root, non-main relationships part. This includes
         // headers/footers as well as customXml and arbitrary extension parts:

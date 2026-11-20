@@ -938,3 +938,23 @@ each prefixed attribute and each `mc:Choice` `Requires` token now costs one
 hash, not a scan of the tag's declarations and of every open frame: one tag with
 d declarations and a prefixed attributes cost O(a*d). The innermost binding
 still wins, and the built tree, the refusals and their order are unchanged.
+
+
+## Main part with no relationships part (FIX DOCX-READER-REFUSES-A-DOCUMENT-WITH-NO-RELATIONSHIPS-PART, 2026-11-20)
+
+`src/import.rs` and `src/docx_package.rs`. A package whose main document part
+has no relationships part (`word/_rels/document.xml.rels` in the usual layout)
+is read as a main part with no outgoing relationships.
+`parse_document_relationships` returns the empty `DocumentRelationships`, and
+`DocxPackage::from_archive` starts from an empty `RelationshipSet` based at the
+main part's directory, so a relationship the writer adds later resolves its
+relative target beside the main part. Both refused before (`missing
+word/_rels/document.xml.rels`, `missing package part: ...`), while the linker
+took the same bytes. A part that is present must still parse and carry `Id`,
+`Type` and `Target`. The package relationships part `_rels/.rels` and
+`[Content_Types].xml` stay required, and a reference with no relationship is
+still the linker's finding. The fork's unit test of the absent case
+(`parse_document_relationships_missing_rels_file_returns_empty`) is rewritten to
+the new rule; no workspace run compiles it, and the wrapper's
+`tests/contract.rs` holds the rule. `tests/stress_manifest.rs` still names the
+old refusal text as a failure class; no reader produces that text now.

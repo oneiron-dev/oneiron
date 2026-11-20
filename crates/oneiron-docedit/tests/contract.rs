@@ -98,6 +98,47 @@ fn document() -> Vec<u8> {
     file("vendor/stemma-engine/testdata/simple-text/before.docx")
 }
 
+/// The relationships part of the main part `word/document.xml`.
+const MAIN_PART_RELATIONSHIPS: &str = "word/_rels/document.xml.rels";
+const PACKAGE_RELATIONSHIPS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+
+fn has_part(bytes: &[u8], name: &str) -> bool {
+    let archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("open archive");
+    archive.file_names().any(|part| part == name)
+}
+
+/// A document of three paragraphs whose package holds no relationships part
+/// for its main part. OPC asks for that part only when the main part has a
+/// relationship, and this one has none.
+fn document_with_no_relationships_part() -> Vec<u8> {
+    let bytes = fixture("docx/word-semantics/join-base.docx");
+    assert!(
+        !has_part(&bytes, MAIN_PART_RELATIONSHIPS),
+        "the fixture gained the part these tests need absent"
+    );
+    bytes
+}
+
+/// The part that a relationship of `word/document.xml` names by `target`: a
+/// leading slash counts from the package root, anything else from `word/`.
+fn main_part_target(target: &str) -> String {
+    let path = match target.strip_prefix('/') {
+        Some(from_root) => from_root.to_owned(),
+        None => format!("word/{target}"),
+    };
+    let mut segments = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            segment => segments.push(segment),
+        }
+    }
+    segments.join("/")
+}
+
 fn docx_limits() -> Value {
     json!({"max_entries": 1024, "max_part_bytes": 16_777_216, "max_total_bytes": 67_108_864})
 }
@@ -350,6 +391,95 @@ fn docx_project() {
             .any(|block| block.text.contains("PARAGRAPH-AS-CHANGED"))
     );
     assert_tracked_insertion(changed, "PARAGRAPH-AS-CHANGED");
+}
+
+// FIX [DOCX-READER-REFUSES-A-DOCUMENT-WITH-NO-RELATIONSHIPS-PART]: the reader
+// and the writer take a main part with no relationships part, as the linker
+// already did.
+#[test]
+fn docx_read_takes_a_main_part_with_no_relationships_part() {
+    let bytes = document_with_no_relationships_part();
+    let blocks = read_document(&bytes);
+    let read: Vec<_> = blocks
+        .iter()
+        .map(|block| (block.kind, block.text.as_str()))
+        .collect();
+    assert_eq!(
+        read,
+        [
+            (DocxBlockKind::Paragraph, "First "),
+            (DocxBlockKind::Paragraph, "second."),
+            (DocxBlockKind::Paragraph, "Untouched third."),
+        ]
+    );
+    let done = run(
+        "docx.validate",
+        json!({"document": 0, "limits": docx_limits()}),
+        &[&bytes],
+    );
+    match &done.reply {
+        Reply::Checked => {}
+        reply => panic!("expected Checked: {reply:?}"),
+    }
+}
+
+#[test]
+fn docx_revise_writes_the_relationships_part_its_input_lacked() {
+    let bytes = document_with_no_relationships_part();
+    let parsed = oneiron_docedit::Document::parse(&bytes).expect("parse base document");
+    let view = parsed.read();
+    let block = view
+        .blocks
+        .iter()
+        .find(|block| block.text == "second.")
+        .expect("the second paragraph");
+    let done = run(
+        "docx.revise",
+        json!({
+            "document": 0, "limits": docx_limits(),
+            "transaction": {"ops": [{"op": "replace", "target": block.id, "guard": block.guard,
+                "content": {"type": "paragraph", "content": [{"type": "text", "text": "SECOND-AS-REVISED"}]}}],
+                "revision": {"author": "Editor", "date": REVISION_DATE}}
+        }),
+        &[&bytes],
+    );
+    match &done.reply {
+        Reply::DocxRevised { transaction, .. } => {
+            assert_eq!(transaction["revision"]["date"], REVISION_DATE);
+        }
+        reply => panic!("expected DocxRevised: {reply:?}"),
+    }
+    let changed = output(&done, "document", contract::DOCX_MEDIA_TYPE);
+    let reread = read_document(changed);
+    assert!(
+        reread
+            .iter()
+            .any(|block| block.text.contains("SECOND-AS-REVISED"))
+    );
+    assert!(reread.iter().any(|block| block.text == "Untouched third."));
+    assert_tracked_insertion(changed, "SECOND-AS-REVISED");
+    // The revision relates the main part to parts the writer made. Each
+    // relationship it wrote names a part the package holds.
+    let relationships = xml_part(changed, MAIN_PART_RELATIONSHIPS);
+    let tree = roxmltree::Document::parse(&relationships).expect("relationships XML");
+    let targets: Vec<String> = tree
+        .descendants()
+        .filter(|node| {
+            node.has_tag_name((PACKAGE_RELATIONSHIPS, "Relationship"))
+                && node.attribute("TargetMode") != Some("External")
+        })
+        .map(|node| main_part_target(node.attribute("Target").expect("a relationship's Target")))
+        .collect();
+    assert!(
+        !targets.is_empty(),
+        "the revision wrote no relationship: {relationships}"
+    );
+    for target in &targets {
+        assert!(
+            has_part(changed, target),
+            "no part {target}: {relationships}"
+        );
+    }
 }
 
 #[test]

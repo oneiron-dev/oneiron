@@ -10511,17 +10511,20 @@ fn inline_nodes_from_atoms(
 /// Parse the main document part's relationships. The relationships part path is
 /// derived from the resolved main part name (OPC §9.3.4), not hardcoded to
 /// `word/_rels/document.xml.rels`.
+///
+/// A package with no relationships part for its main part is read as a main
+/// part with no outgoing relationships: OPC asks for the part only when the
+/// source part has a relationship. A part that is present must still parse and
+/// carry every required attribute.
 pub(crate) fn parse_document_relationships(
     archive: &DocxArchive,
     main_part_name: &str,
 ) -> Result<DocumentRelationships, RuntimeError> {
     let rels_path = crate::docx_package::rels_part_path(main_part_name);
 
-    let rels_xml = archive.get(&rels_path).ok_or_else(|| RuntimeError {
-        code: ErrorCode::InvalidDocx,
-        message: format!("missing {rels_path}"),
-        details: ErrorDetails::default(),
-    })?;
+    let Some(rels_xml) = archive.get(&rels_path) else {
+        return Ok(DocumentRelationships::default());
+    };
 
     let root = word_xml::parse_document_xml(rels_xml).map_err(|err| RuntimeError {
         code: ErrorCode::InvalidDocx,
@@ -13295,21 +13298,23 @@ mod tests {
     }
 
     // =========================================================================
-    // parse_document_relationships tests (confirm existing error behavior)
+    // parse_document_relationships tests (an absent part, and parse errors)
     // =========================================================================
 
     #[test]
-    fn parse_document_relationships_missing_rels_file_returns_error() {
+    fn parse_document_relationships_missing_rels_file_returns_empty() {
         let archive = DocxArchive::from_parts(vec![]);
 
-        let err = parse_document_relationships(&archive, "word/document.xml")
-            .expect_err("missing rels file should return an error");
-        assert_eq!(err.code, ErrorCode::InvalidDocx);
-        assert!(
-            err.message.contains("word/_rels/document.xml.rels"),
-            "error should name the expected file, got: {}",
-            err.message
-        );
+        let rels = parse_document_relationships(&archive, "word/document.xml")
+            .expect("an absent relationships part reads as no relationships");
+        assert!(rels.headers.is_empty());
+        assert!(rels.footers.is_empty());
+        assert!(rels.footnotes.is_none());
+        assert!(rels.endnotes.is_none());
+        assert!(rels.comments.is_none());
+        assert!(rels.comments_extended.is_none());
+        assert!(rels.custom_xml.is_empty());
+        assert!(rels.hyperlinks.is_empty());
     }
 
     #[test]
