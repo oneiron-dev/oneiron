@@ -465,15 +465,24 @@ def scan_source(path, source):
     return findings
 
 
-def walk(root, directory, out):
+def sorted_entries(directory):
     with os.scandir(directory) as listing:
-        entries = sorted(listing, key=lambda entry: os.fsencode(entry.name))
-    for entry in entries:
-        if entry.is_dir(follow_symlinks=False):
+        return sorted(listing, key=lambda entry: os.fsencode(entry.name))
+
+
+def walk(root, directory, out):
+    """Append every .rs file under directory to out: depth first, each directory's entries in byte
+    order of name, as the Rust lint walked. The walk keeps its own stack, so a tree deeper than
+    Python's recursion limit is read too."""
+    stack = [iter(sorted_entries(directory))]
+    while stack:
+        entry = next(stack[-1], None)
+        if entry is None:
+            stack.pop()
+        elif entry.is_dir(follow_symlinks=False):
             relative = os.path.relpath(entry.path, root).replace(os.sep, "/")
-            if entry.name in SKIPPED_DIRS or relative in SKIPPED_CRATES:
-                continue
-            walk(root, entry.path, out)
+            if entry.name not in SKIPPED_DIRS and relative not in SKIPPED_CRATES:
+                stack.append(iter(sorted_entries(entry.path)))
         elif entry.is_file(follow_symlinks=False) and entry.name.endswith(".rs"):
             out.append(entry.path)
 
