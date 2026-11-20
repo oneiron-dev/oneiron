@@ -452,7 +452,8 @@ fn new_store(
         // answers `hook_input_not_taken`. A trap here would end a run on an
         // input the body never judged as an ordinary failure
         // ([SKILL-POST-HOOK-INPUT-BODY-CHANNEL]).
-        .trap_on_grow_failure(false)
+        // RED PIN: a failed growth traps the store, as before 584c37bc487.
+        .trap_on_grow_failure(true)
         .build();
     let mut store = Store::new(
         pre.engine(),
