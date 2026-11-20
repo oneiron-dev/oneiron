@@ -45,10 +45,25 @@
 //!   restores the predecessor under its own declaration's lane, and leaves
 //!   it unobserved when that lane no longer reads its sources.
 //!
+//! #9683's post-merge proof (r1-green at 3467fd125c7) found three faults
+//! that kept five cases from their assertions:
+//! - The records-caveat lanes rode the paired device's credential, which
+//!   names its pairing grant. Such a lane is not saved (FIX 12059), so it
+//!   never froze. They now ride the owner's host-minted read credential,
+//!   which names no grant.
+//! - The owner's edit carried no owner proof, so it waited in a proposal,
+//!   unmerged. It now carries the owner's authorship.
+//! - FIX DREAMER-REVERT-DECODES-SUMMARY-POINTER-ROW: the owner's revert
+//!   judged a SUMMARY's writer from its stored row. A summary with a
+//!   document stores a pointer row there, which never decodes as a summary,
+//!   so every landed summary read as not the Dreamer's and none could be
+//!   reverted. The revert now reads the summary's resolved body.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test conversation_summary_requester_lane`.
 #![cfg(oneiron_test_support)]
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -64,7 +79,7 @@ use oneiron::dreamer_runner::{
     DreamerAdmittedAttempt, DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
     DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerRunnerStore,
 };
-use oneiron::federation::Scope;
+use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext, ReplyAssertions};
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::scope_summary::{
@@ -82,8 +97,11 @@ use oneiron::{
 use serde_json::json;
 
 const REQUEST_CHALLENGE: &[u8] = b"oneiron-request:conversation-summary-requester-lane";
-/// The binding key seed of the owner's paired device.
+/// The binding key seed of the owner's paired device, which also holds the
+/// owner's host-minted read credential.
 const DEVICE_BINDING_SEED: u8 = 0x4D;
+/// The id of the owner's host-minted read credential.
+const OWNER_READ_SLIP_ID: [u8; 32] = [0x4F; 32];
 /// The caveat that narrows only the credential's lifetime.
 const CAVEAT_TTL_SECS: u64 = 1_800;
 /// The words of the conversation's one MESSAGE.
@@ -111,6 +129,12 @@ struct Fixture {
     /// The owner's proof, which their revert of a Dreamer change presents.
     owner_proof: oneiron::consent::AuthenticatedOwner,
     device_slip: CapabilitySlip,
+    /// The owner's read credential, minted by the host and naming no grant:
+    /// its lane, narrowed by a records caveat, freezes as a narrowed lane.
+    /// The paired device's credential names its pairing grant, and a
+    /// grant-naming credential's records-caveat lane is not saved (FIX
+    /// 12059), so a summary is never declared under it.
+    owner_read_slip: CapabilitySlip,
     conversation: EntityId,
     turn: EntityId,
     /// The TURN's one MESSAGE, which holds its words.
@@ -129,6 +153,7 @@ fn fixture() -> Fixture {
         .expect("this install's live machine profile");
     let (owner, owner_proof) = embedded_owner(&vault).expect("authenticated embedded owner");
     let device_slip = paired_device_slip(&vault, &issuer, &owner_proof, owner);
+    let owner_read_slip = mint_owner_read_slip(&vault, &issuer, owner);
     // The scripted model is the host's own: the summary call may leave.
     let mut defaults = vault.purpose_default_table().expect("inference defaults");
     defaults.extraction_max_locality = ModelLocality::OwnServer;
@@ -148,10 +173,35 @@ fn fixture() -> Fixture {
         owner,
         owner_proof,
         device_slip,
+        owner_read_slip,
         conversation,
         turn,
         message,
     }
+}
+
+/// The host mints the owner a read credential that names no grant, bound
+/// to the device's key.
+fn mint_owner_read_slip(vault: &Vault, issuer: &HostSlipIssuer, owner: EntityId) -> CapabilitySlip {
+    let root = vault
+        .ensure_host_root_slip(issuer)
+        .expect("the host's root credential");
+    let mut claims = root.claims;
+    claims.slip_id = OWNER_READ_SLIP_ID;
+    claims.parent_id = None;
+    claims.holder_ref = owner.to_hex();
+    claims.binding_key = SigningKey::from_bytes(&[DEVICE_BINDING_SEED; 32])
+        .verifying_key()
+        .to_bytes();
+    claims.actor_class = Some("human".to_owned());
+    claims.scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    assert_eq!(
+        claims.grant_ref, None,
+        "FIXTURE: the owner's host-minted read credential names no grant"
+    );
+    vault
+        .mint_capability_slip(issuer, claims)
+        .expect("the host mints the owner a read credential")
 }
 
 /// The owner's own device pairs on a link the owner issues for themselves.
@@ -262,6 +312,7 @@ fn witness_turn(
 fn attenuated_lane(fixture: &Fixture) -> ScopedRead<'_> {
     narrowed_lane(
         fixture,
+        &fixture.device_slip,
         SlipCaveat {
             ttl_secs: Some(CAVEAT_TTL_SECS),
             ..Default::default()
@@ -269,12 +320,13 @@ fn attenuated_lane(fixture: &Fixture) -> ScopedRead<'_> {
     )
 }
 
-/// The device's credential narrowed by the device itself to the
+/// The owner's read credential narrowed by its holder to the
 /// conversation's TURN alone: a records caveat holds a row only as named, so
 /// its lane reads the TURN and not the MESSAGE that holds its words.
 fn turn_only_lane(fixture: &Fixture) -> ScopedRead<'_> {
     let lane = narrowed_lane(
         fixture,
+        &fixture.owner_read_slip,
         SlipCaveat {
             ttl_secs: Some(CAVEAT_TTL_SECS),
             records: Some([fixture.turn.to_hex()].into()),
@@ -301,12 +353,13 @@ fn turn_only_lane(fixture: &Fixture) -> ScopedRead<'_> {
     lane
 }
 
-/// The device's credential narrowed by the device itself to the
+/// The owner's read credential narrowed by its holder to the
 /// conversation's TURN and its MESSAGE: its lane reads the conversation's
 /// words, and not `outside`, a row its records caveat does not name.
 fn conversation_records_lane(fixture: &Fixture, outside: EntityId) -> ScopedRead<'_> {
     let lane = narrowed_lane(
         fixture,
+        &fixture.owner_read_slip,
         SlipCaveat {
             ttl_secs: Some(CAVEAT_TTL_SECS),
             records: Some([fixture.turn.to_hex(), fixture.message.to_hex()].into()),
@@ -330,15 +383,20 @@ fn conversation_records_lane(fixture: &Fixture, outside: EntityId) -> ScopedRead
     lane
 }
 
-/// The device's credential narrowed by `caveat`, kept on its key.
-fn narrowed_lane(fixture: &Fixture, caveat: SlipCaveat) -> ScopedRead<'_> {
-    let mut slip = fixture.device_slip.clone();
+/// `base`, a credential the device's key holds, narrowed by `caveat`, kept
+/// on its key.
+fn narrowed_lane<'f>(
+    fixture: &'f Fixture,
+    base: &CapabilitySlip,
+    caveat: SlipCaveat,
+) -> ScopedRead<'f> {
+    let mut slip = base.clone();
     slip.attenuate(caveat, &SigningKey::from_bytes(&[DEVICE_BINDING_SEED; 32]))
         .expect("the device narrows its own credential");
     let proof = verified(fixture, &slip);
     assert_eq!(
         proof.claims().slip_id,
-        fixture.device_slip.claims.slip_id,
+        base.claims.slip_id,
         "FIXTURE: the narrowed credential keeps its mint's id, which the revocation names"
     );
     let key = fixture
@@ -649,10 +707,14 @@ fn rederived_after_later_turn(
     (rederived, landed_summary(fixture, rederived, &run))
 }
 
-/// The owner edits the landed `summary`, adding [`EDIT_TEXT`], and names
-/// `source` as the row the edit's words were read from.
+/// The owner, in person, edits the landed `summary`, adding [`EDIT_TEXT`],
+/// and names `source` as the row the edit's words were read from. Without
+/// the owner's proof the edit would wait in a proposal, unmerged.
 fn owner_edits_summary(fixture: &Fixture, summary: EntityId, source: EntityId) {
-    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let memory = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .with_owner_authorship(&fixture.owner_proof);
     let read = |spans| {
         memory
             .read_summary(&SummaryReadRequest {
@@ -852,20 +914,20 @@ fn a_conversation_summary_composes_no_message_its_requester_lane_does_not_read()
         reason
             .as_deref()
             .is_some_and(|reason| reason.contains(LANE_REFUSAL)),
-        "actor=the owner's device under a credential whose records caveat names TURN {} alone; expected the plan to refuse MESSAGE {}, which holds the TURN's words and which the lane does not read; run {run:?}",
+        "actor=the owner under a read credential whose records caveat names TURN {} alone; expected the plan to refuse MESSAGE {}, which holds the TURN's words and which the lane does not read; run {run:?}",
         fixture.turn.to_hex(),
         fixture.message.to_hex()
     );
     assert_eq!(
         model.calls(),
         0,
-        "actor=the owner's device under a TURN-only credential; expected no model call to read MESSAGE {}",
+        "actor=the owner under a TURN-only read credential; expected no model call to read MESSAGE {}",
         fixture.message.to_hex()
     );
     assert_eq!(
         landed(&fixture, queued),
         None,
-        "actor=the owner's device under a TURN-only credential; expected no SUMMARY of the MESSAGE's words to land"
+        "actor=the owner under a TURN-only read credential; expected no SUMMARY of the MESSAGE's words to land"
     );
 }
 
@@ -919,7 +981,7 @@ fn an_edited_summary_is_not_rederived_from_a_row_the_edit_read_outside_its_lane(
         reason
             .as_deref()
             .is_some_and(|reason| reason.contains(LANE_REFUSAL)),
-        "actor=the owner's device under a credential whose records caveat names conversation {}'s TURN and MESSAGE; the owner edited its landed SUMMARY {} with words read from MESSAGE {}, outside that lane; expected the re-derivation's plan to refuse the edited text's source; run {run:?}",
+        "actor=the owner under a read credential whose records caveat names conversation {}'s TURN and MESSAGE; the owner edited its landed SUMMARY {} with words read from MESSAGE {}, outside that lane; expected the re-derivation's plan to refuse the edited text's source; run {run:?}",
         fixture.conversation.to_hex(),
         summary.to_hex(),
         outside.to_hex()
@@ -927,13 +989,13 @@ fn an_edited_summary_is_not_rederived_from_a_row_the_edit_read_outside_its_lane(
     assert_eq!(
         rederive.calls(),
         0,
-        "actor=the owner's device under a records-caveat credential; expected no model call to read the edited text, which quotes MESSAGE {}",
+        "actor=the owner under a records-caveat read credential; expected no model call to read the edited text, which quotes MESSAGE {}",
         outside.to_hex()
     );
     assert_eq!(
         landed(&fixture, rederived),
         None,
-        "actor=the owner's device under a records-caveat credential; expected no re-derived SUMMARY to land"
+        "actor=the owner under a records-caveat read credential; expected no re-derived SUMMARY to land"
     );
 }
 
