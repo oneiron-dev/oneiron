@@ -119,6 +119,17 @@ impl HeldGrants {
     }
 }
 
+/// One live Grant A may stand on, with the filter it alone reads under what
+/// the read asked ([`ScopedRead::grant_alternatives_in`]).
+pub(super) struct GrantAlternative {
+    /// The Grant's id.
+    pub(super) grant: EntityId,
+    /// What the Grant lets its holder read.
+    pub(super) scope: Scope,
+    /// The filter the Grant alone reads under the read's request.
+    pub(super) filter: ResolvedRetrievalFilter,
+}
+
 /// What a receipt reports over a key's own floor and its live Grants
 /// ([`ScopedRead::live_grant_receipt_scope_in`]).
 pub(super) struct LiveGrantReceiptScope {
@@ -381,12 +392,106 @@ impl ScopedRead<'_> {
         {
             return Ok(false);
         }
+        let filter = self.filter_under_grant(policy, request, grant)?;
+        self.own_row_readable_in(rtxn, policy, id, raw, &filter, authority, Some(grant))
+    }
+
+    /// The filter one Grant alone reads under `request`: the floor a proof of
+    /// `grant` gives this key, `request` met on top as the read met it.
+    fn filter_under_grant(
+        &self,
+        policy: &PolicyManifestResolution,
+        request: Option<&RetrievalFilter>,
+        grant: &Scope,
+    ) -> Result<ResolvedRetrievalFilter> {
         let floor = policy.retrieval_floor_for_actor_with_scope(Some(&self.actor_key), Some(grant));
-        let filter = self.under_caller_filter(
+        Ok(self.under_caller_filter(
             crate::gate::narrow_retrieval_filter(&floor, request)?
                 .under_credential_of(&self.actor_key),
-        );
-        self.own_row_readable_in(rtxn, policy, id, raw, &filter, authority, Some(grant))
+        ))
+    }
+
+    /// The live Grants A may stand on for this key in `rtxn`, as the row
+    /// checks `held` serves hold them, each with the filter it alone reads
+    /// under what the read asked: the alternatives a content cap judges one
+    /// at a time (FIX-LIST GRANT-RECEIPT-OTHER-READ-LANES part 4). None for a
+    /// key A never stands for, or for row checks whose request this read does
+    /// not see. A Grant whose filter cannot be judged is left out and
+    /// counted, as A counts it.
+    pub(super) fn grant_alternatives_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        held: &HeldAuthority,
+    ) -> Vec<GrantAlternative> {
+        let Some(reader) = self.grant_reader() else {
+            return Vec::new();
+        };
+        let AskedFilter::Known(request) = held.grants().asked() else {
+            return Vec::new();
+        };
+        let grants = held.grants().of(reader, || {
+            reader_grants_or_empty_in(self.vault, rtxn, reader)
+        });
+        grants
+            .iter()
+            .filter_map(|(grant, scope)| {
+                match self.filter_under_grant(policy, request.as_ref(), scope) {
+                    Ok(filter) => Some(GrantAlternative {
+                        grant: *grant,
+                        scope: scope.clone(),
+                        filter,
+                    }),
+                    Err(error) => {
+                        warn_grant_errors(1, &[*grant], Some(error.kind()));
+                        None
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// Whether `alternative` alone reads the row `id` in `rtxn`, as the row
+    /// gate's A judges a row under that one Grant, and each row it was
+    /// written from under that same Grant, at the Grant's floor as the row
+    /// gate judges a source: no other Grant lends a source (review round 1
+    /// of #9929). A failure admits nothing and is counted, as A counts it.
+    pub(super) fn row_readable_under_grant_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        held: &HeldAuthority,
+        alternative: &GrantAlternative,
+    ) -> bool {
+        self.row_under_grant_in(rtxn, policy, id, held, &alternative.scope)
+            .unwrap_or_else(|error| {
+                warn_grant_errors(1, &[alternative.grant], Some(error.kind()));
+                false
+            })
+    }
+
+    /// [`Self::row_readable_under_grant_in`] under `grant`, failures kept.
+    fn row_under_grant_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        held: &HeldAuthority,
+        grant: &Scope,
+    ) -> Result<bool> {
+        let AskedFilter::Known(request) = held.grants().asked() else {
+            return Ok(false);
+        };
+        let Some(raw) = self.entity_record_in(rtxn, id)?.map(|row| row.encode()) else {
+            return Ok(false);
+        };
+        if !self.own_row_under_grant_in(rtxn, policy, id, &raw, request.as_ref(), held, grant)? {
+            return Ok(false);
+        }
+        self.written_from_each_readable_in(rtxn, id, &raw, |source, raw| {
+            self.own_row_under_grant_in(rtxn, policy, source, raw, None, held, grant)
+        })
     }
 
     /// Whether `grant` admits the record position of the row `raw` of `id`,
