@@ -206,10 +206,6 @@ impl Chain<'_> {
             None => None,
         };
         let tail = self.project_tail(seen, &mut dependencies)?;
-        let text_pack = match &result {
-            Some(Projected::Text(text)) => served::text_pack(text)?,
-            _ => None,
-        };
         let input = Input {
             hook: json!({
                 "binding": id.to_hex(),
@@ -233,9 +229,7 @@ impl Chain<'_> {
             result: result.as_ref(),
             served: result.as_ref().and_then(|view| match view {
                 Projected::Value(view) => served::rows(view, &binding.selector.served),
-                Projected::Text(_) => text_pack
-                    .as_ref()
-                    .and_then(|pack| served::rows(pack, &binding.selector.served)),
+                Projected::Text(_) => None,
             }),
         };
         let json = serde_json::to_string(&input)
@@ -261,15 +255,10 @@ impl Chain<'_> {
         if binding.selector.served.is_empty() {
             return Ok(true);
         }
-        // A view held as text is a write's result, shown whole as a write's
-        // value is: the rows it serves are read off its text, flat.
-        let result = match result {
-            ResultView::Value(result) => result,
-            ResultView::Text(text) => {
-                self.project_text(text)?;
-                return Ok(served::text_pack(text)?
-                    .is_some_and(|pack| served::admits(&binding.selector.served, &pack)));
-            }
+        // A view held as text frames a skill answer, which is no pack, so it
+        // serves no row a filter takes, as its value would not.
+        let ResultView::Value(result) = result else {
+            return Ok(false);
         };
         let grant = session::hook_read(
             self.storage,
