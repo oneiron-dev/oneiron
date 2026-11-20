@@ -34,7 +34,7 @@ fn emergency_refused(detail: impl Into<String>) -> BookingError {
 // outbound call may run while this writer is held.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct EmergencyPickRow {
+pub(super) struct EmergencyPickRow {
     emergency_item_key: Vec<u8>,
     proposal_index: usize,
 }
@@ -42,7 +42,7 @@ struct EmergencyPickRow {
 /// Same `booking.token.v1:` declaration [`TOKEN`](super::TOKEN) and
 /// [`CHECKOUT_LEASE`](super::CHECKOUT_LEASE) bind; see `TOKEN`'s doc comment.
 /// Key: hash32 (the emergency action token digest).
-const EMERGENCY_PICK: SideTable<
+pub(super) const EMERGENCY_PICK: SideTable<
     [u8; 32],
     EmergencyPickRow,
     VersionedNamed<{ super::types::LIFECYCLE_ROW_VERSION }>,

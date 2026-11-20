@@ -53,6 +53,8 @@ pub(super) use self::refund::{
     refund_on_visitor_cancel_in_writer,
 };
 pub(crate) use self::refund::{refund_booking_deposit_as_owner, refund_deposit_on_host_cancel};
+#[cfg(feature = "sync")]
+pub(super) use self::settle::queue_carried_settle_in_txn;
 pub use self::settle::{
     BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, DepositProviderFailure,
     DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
@@ -116,7 +118,7 @@ impl DepositState {
 /// One deposit, keyed by its provider payment's digest.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DepositRow {
+pub(super) struct DepositRow {
     #[serde(with = "digest_serde")]
     session_hash: [u8; 32],
     #[serde(with = "entity_ref_serde")]
@@ -160,7 +162,7 @@ struct DepositRow {
 /// A booking's deposit. Key: hash32 (the booking digest).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DepositBookingRow {
+pub(super) struct DepositBookingRow {
     #[serde(with = "digest_serde")]
     deposit_key: [u8; 32],
 }
@@ -168,7 +170,7 @@ struct DepositBookingRow {
 /// A provider event already applied. Key: hash32 (the provider event digest).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DepositProviderEventRow {
+pub(super) struct DepositProviderEventRow {
     #[serde(with = "digest_serde")]
     deposit_key: [u8; 32],
     recorded_at: u64,
@@ -176,21 +178,21 @@ struct DepositProviderEventRow {
 
 /// Same `booking.token.v1:` declaration as [`super::TOKEN`]; see its doc
 /// comment. Key: hash32 (the payment digest).
-const DEPOSIT: SideTable<
+pub(super) const DEPOSIT: SideTable<
     [u8; 32],
     DepositRow,
     VersionedNamed<{ super::types::LIFECYCLE_ROW_VERSION }>,
 > = SideTable::new(&side_table::BOOKING_TOKEN);
 
 /// Same declaration. Key: hash32 (the booking digest).
-const DEPOSIT_BOOKING: SideTable<
+pub(super) const DEPOSIT_BOOKING: SideTable<
     [u8; 32],
     DepositBookingRow,
     VersionedNamed<{ super::types::LIFECYCLE_ROW_VERSION }>,
 > = SideTable::new(&side_table::BOOKING_TOKEN);
 
 /// Same declaration. Key: hash32 (the provider event digest).
-const DEPOSIT_PROVIDER_EVENT: SideTable<
+pub(super) const DEPOSIT_PROVIDER_EVENT: SideTable<
     [u8; 32],
     DepositProviderEventRow,
     VersionedNamed<{ super::types::LIFECYCLE_ROW_VERSION }>,

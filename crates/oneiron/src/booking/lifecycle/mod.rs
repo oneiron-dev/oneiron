@@ -58,6 +58,8 @@ mod door;
 mod emergency;
 mod feed_move;
 mod hold_source;
+#[cfg(feature = "sync")]
+pub(crate) mod home_rows;
 mod occurrence;
 mod owner_card;
 mod passport;

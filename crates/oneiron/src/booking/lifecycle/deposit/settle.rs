@@ -99,6 +99,44 @@ pub(super) fn admits_deposits_here(
     Ok(true)
 }
 
+/// FIX [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]: queues, in the writer that adopts a
+/// home move, the settle row a deposit the move carried here still owes: a checkout still
+/// open (its window's end voids it unconfirmed), or a capture, void or refund due. The old
+/// home asks none of them once it froze ([`plan_settle`]), and its queued settle rows stayed
+/// there, so the new home queues every owed move itself, one row per deposit and move: the
+/// cause names the move's generation.
+#[cfg(feature = "sync")]
+pub(in crate::booking::lifecycle) fn queue_carried_settle_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &[u8; 32],
+    generation: u64,
+    now_utc: u64,
+) -> Result<(), BookingError> {
+    let owes_a_move = DEPOSIT
+        .get(&vault.store, &*wtxn, key)
+        .map_err(|error| engine_failure("meta read", error))?
+        .is_some_and(|row| {
+            row.state.is_open()
+                || matches!(
+                    row.state,
+                    DepositState::CaptureDue { .. }
+                        | DepositState::VoidDue
+                        | DepositState::RefundDue { .. }
+                )
+        });
+    if owes_a_move {
+        enqueue_settle(
+            vault,
+            wtxn,
+            key,
+            &format!("home-move-{generation}"),
+            now_utc,
+        )?;
+    }
+    Ok(())
+}
+
 /// One provider move a deposit owes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DepositSettleMove {
