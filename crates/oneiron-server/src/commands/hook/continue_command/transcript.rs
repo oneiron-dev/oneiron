@@ -46,6 +46,8 @@ use oneiron::ingest::history::{
 };
 use rustix::fs::{CWD, Dir, Mode, OFlags, openat};
 
+use crate::commands::hook::hosted_selection::HostedAuthMode;
+use crate::commands::mcp_bridge;
 use crate::files_intake::confined;
 
 /// A session log, read and encoded.
@@ -158,6 +160,22 @@ pub(super) fn calls_within(
         ..alone
     });
     Ok(calls)
+}
+
+/// What `oneiron mcp` adds to a call's spec on the way: the JSON-RPC line
+/// around it, the `_meta` the bridge adds, and the socket's frame.
+const CALL_ENVELOPE_BYTES: usize = 16 * 1024;
+
+/// The longest spec one call carries for a selection signed in in `mode`.
+/// The owner's calls go over the vault's socket alone, so within its frame;
+/// any other's go over HTTP past the socket's frame, so within the longest
+/// line `oneiron mcp` reads.
+pub(super) fn carried_bytes(mode: HostedAuthMode) -> usize {
+    let line = match mode {
+        HostedAuthMode::Owner => mcp_bridge::SOCKET_MAX_OUTBOUND_FRAME,
+        HostedAuthMode::Slip | HostedAuthMode::OAuth => mcp_bridge::MAX_FRAME_BYTES,
+    };
+    line - CALL_ENVELOPE_BYTES
 }
 
 /// The session log at `path`, below `root`, and its subagents' logs, read
