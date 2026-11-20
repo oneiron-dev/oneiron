@@ -14,13 +14,18 @@
 //! The row's body is [`BESIDE_VALUE_TAG`] and then the value's JSON bytes. The tag lets a put of
 //! the row, local or a peer's, note the projection pass that reads it ([`is_beside_value_body`]).
 //!
-//! A machine reads a head that keeps only a digest through that row ([`beside_value_in_txn`]):
+//! A machine reads a head that keeps only a digest through that row ([`beside_row_read_in_txn`]):
 //! - here, and its bytes match the digest: the value;
 //! - not here: the act has not fully arrived, so the row reads as it did before it, `Pending`,
 //!   until the row arrives;
 //! - here and not matching the digest, or erased here: unreadable, so the key's strictest value,
 //!   `Quarantined` (DESIGN 1.6, "Fold states"). The erase door that writes the clear or a new
 //!   value in the same write is ARCH-0038's; until it lands, an erased value reads strictest.
+//!
+//! A projection records each row it read and what that row held ([`BesideHeld`]), and a later
+//! pass reads the target again once one holds otherwise: the value arrived, was erased here, or
+//! no longer matches its act. The put of a row notes that pass; an erase here is read at the next
+//! one (the next authority commit, or the open).
 
 use std::io::Read;
 
@@ -79,7 +84,7 @@ impl SettingTravel {
 /// # Errors
 ///
 /// A derived id in the reserved range (never in practice).
-fn beside_row_id(slot: &RowKey, digest: &[u8; 32]) -> Result<EntityId> {
+pub(super) fn beside_row_id(slot: &RowKey, digest: &[u8; 32]) -> Result<EntityId> {
     let target = setting_slot_target(slot)?;
     Ok(EntityId::derive(
         SETTING_BESIDE_VALUE,
@@ -109,11 +114,12 @@ pub(super) fn slot_value_in_txn(
         return Ok(SlotValue::Inline(json));
     }
     let digest = setting_value_digest(&json);
+    let row = beside_row_id(slot, &digest)?;
     if !matches!(
-        beside_value_in_txn(vault, txn, slot, digest)?,
+        beside_row_read_in_txn(vault, txn, row, digest)?,
         BesideRead::Here(_)
     ) {
-        put_beside_row_in_txn(vault, txn, beside_row_id(slot, &digest)?, &json)?;
+        put_beside_row_in_txn(vault, txn, row, &json)?;
     }
     Ok(SlotValue::Beside(digest))
 }
@@ -148,48 +154,56 @@ fn put_beside_row_in_txn(
 pub(super) enum BesideRead {
     /// The value's JSON bytes, which match the act's digest.
     Here(Vec<u8>),
-    /// No row, and no mark that one was erased here: the value has not arrived. The row's id.
-    Absent(EntityId),
+    /// No row, and no mark that one was erased here: the value has not arrived.
+    Absent,
     /// A row that does not hold the act's value (another tag, bytes that do not match its
     /// digest), or one erased here.
     Unreadable,
 }
 
-/// The value beside an act on the row `slot` whose JSON bytes have BLAKE3 `digest`, as `txn`
-/// holds it.
+impl BesideRead {
+    /// What the row held, as a projection records it.
+    pub(super) fn held(&self) -> BesideHeld {
+        match self {
+            Self::Here(_) => BesideHeld::Value,
+            Self::Absent => BesideHeld::Absent,
+            Self::Unreadable => BesideHeld::Unreadable,
+        }
+    }
+}
+
+/// What a row beside an act held when a projection read it ([`BesideRead`] without the bytes):
+/// a later pass reads the target again once the row holds otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum BesideHeld {
+    /// The act's value.
+    Value,
+    /// Nothing yet: the value has not arrived.
+    Absent,
+    /// Something that is not the act's value, or an erase here.
+    Unreadable,
+}
+
+/// The row `row` beside an act whose value's JSON bytes have BLAKE3 `digest`, as `txn` holds it.
 ///
 /// # Errors
 ///
 /// Storage and filesystem errors.
-pub(super) fn beside_value_in_txn(
+pub(super) fn beside_row_read_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    slot: &RowKey,
+    row: EntityId,
     digest: [u8; 32],
 ) -> Result<BesideRead> {
-    let id = beside_row_id(slot, &digest)?;
-    Ok(match beside_body_in_txn(vault, txn, id)? {
+    Ok(match beside_body_in_txn(vault, txn, row)? {
         Some(body) => match body.strip_prefix(BESIDE_VALUE_TAG) {
             Some(json) if setting_value_digest(json) == digest => BesideRead::Here(json.to_vec()),
             _ => BesideRead::Unreadable,
         },
-        None if erased_in_txn(vault, txn, id)? => BesideRead::Unreadable,
-        None => BesideRead::Absent(id),
+        None if erased_in_txn(vault, txn, row)? => BesideRead::Unreadable,
+        None => BesideRead::Absent,
     })
-}
-
-/// Whether the beside row `row` a projection waits for has settled here: it arrived, or was
-/// erased here, so a read of it no longer waits.
-///
-/// # Errors
-///
-/// Storage and filesystem errors.
-pub(super) fn beside_row_settled_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    row: EntityId,
-) -> Result<bool> {
-    Ok(beside_body_in_txn(vault, txn, row)?.is_some() || erased_in_txn(vault, txn, row)?)
 }
 
 /// Whether `body`, an ASSET row's, holds a setting value beside its act: a put of it notes the

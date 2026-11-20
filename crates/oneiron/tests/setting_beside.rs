@@ -7,7 +7,9 @@
 //! - an act whose value has not arrived leaves the row as it was, `Pending`; the value's arrival
 //!   alone moves the row to it;
 //! - a value beside an act that does not match its digest, or was erased here, reads the key's
-//!   strictest value, `Quarantined`;
+//!   strictest value, `Quarantined`, also when that happens after the row read it;
+//! - an act on a key this build does not know that keeps only a digest is read again only once a
+//!   value comes beside it;
 //! - the rows the owner set before the vault was rooted publish their free text beside the batch
 //!   act, and an install that holds the log and none of the rows writes them from it;
 //! - `vault.settings.list` shows how each key travels: inline, beside, or local.
@@ -48,6 +50,8 @@ const PERMITS: &str = "test.permit_list";
 const NUMBER: &str = "test.owner_number";
 const INSTALL_MODE: &str = "test.install_mode";
 const LEARNED: &str = "test.learned_rate";
+/// A key no build of this crate knows.
+const UNKNOWN: &str = "test.not_in_this_build";
 const T0: u64 = 1_790_000_000;
 
 struct Fixture {
@@ -319,6 +323,70 @@ fn a_value_erased_here_reads_the_strictest_value() {
         fx.permits(),
         (Vec::new(), SettingStanding::Quarantined),
         "the key's strictest value"
+    );
+}
+
+#[test]
+fn a_value_erased_after_the_row_read_it_reads_the_strictest_value() {
+    let fx = Fixture::rooted();
+    let machine = fx.second_machine(7);
+    let read_only = json!(["read"]);
+    land_setting_beside_value(&fx.vault, vault_row(PERMITS), &read_only).expect("the value lands");
+    fx.beside_act_from(&machine, PERMITS, &read_only);
+    assert_eq!(
+        fx.permits(),
+        (vec!["read".to_owned()], SettingStanding::Settled)
+    );
+
+    let row = setting_beside_row(vault_row(PERMITS), &read_only).expect("the row's id");
+    assert!(
+        fx.vault
+            .delete_entity_with_options(&row, DeleteEntityOptions { purge: true })
+            .expect("the erase"),
+        "the row was here"
+    );
+    // The erase moves no act: the next pass reads the row again because its value is gone.
+    fx.vault.project_settings().expect("the pass");
+    assert_eq!(
+        fx.permits(),
+        (Vec::new(), SettingStanding::Quarantined),
+        "the key's strictest value"
+    );
+}
+
+#[test]
+fn a_value_replaced_after_the_row_read_it_reads_the_strictest_value() {
+    let fx = Fixture::rooted();
+    let machine = fx.second_machine(7);
+    let read_only = json!(["read"]);
+    land_setting_beside_value(&fx.vault, vault_row(PERMITS), &read_only).expect("the value lands");
+    fx.beside_act_from(&machine, PERMITS, &read_only);
+    assert_eq!(
+        fx.permits(),
+        (vec!["read".to_owned()], SettingStanding::Settled)
+    );
+
+    // Its commit runs the pass, which reads the row again: it no longer holds the act's value.
+    land_setting_beside_value_holding(&fx.vault, vault_row(PERMITS), &read_only, &json!(["send"]))
+        .expect("a row that no longer matches its digest");
+    assert_eq!(
+        fx.permits(),
+        (Vec::new(), SettingStanding::Quarantined),
+        "the key's strictest value"
+    );
+}
+
+#[test]
+fn an_act_on_a_key_this_build_does_not_know_that_keeps_only_a_digest_is_read_once() {
+    let fx = Fixture::rooted();
+    let machine = fx.second_machine(7);
+    fx.beside_act_from(&machine, UNKNOWN, &json!("another build's value"));
+    // The act's commit ran the pass. No value beside it is here, and a signed record never
+    // brings one: a later pass leaves the target alone.
+    assert_eq!(
+        fx.vault.project_settings().expect("the pass").moved,
+        0,
+        "no pass reads the act again until a value comes"
     );
 }
 
