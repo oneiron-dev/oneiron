@@ -101,9 +101,11 @@ pub(crate) enum SlipVerifyError {
 }
 
 /// Whether `error` from judging a slip is the vault failing to answer,
-/// not the credential failing to verify: a storage, index or IO fault, or
-/// a stored grant row whose body does not decode. Any other failure stays
-/// the credential's refusal, as before.
+/// not the credential failing to verify: a storage, index or IO fault, a
+/// stored grant row whose body does not decode, or a damaged authority
+/// clock floor. Any other failure stays the credential's refusal, as
+/// before. Only ordinary slip verification and admission read this; the
+/// clock repair and restriction-only doors keep their own answers.
 pub(crate) fn slip_verification_store_fault(error: &oneiron::Error) -> bool {
     matches!(
         error,
@@ -112,7 +114,10 @@ pub(crate) fn slip_verification_store_fault(error: &oneiron::Error) -> bool {
             | oneiron::Error::MapFull
             | oneiron::Error::Io(_)
             | oneiron::Error::Store(_)
-            | oneiron::Error::Record(oneiron::error::RecordError::InvalidFederationGrantBody(_))
+            | oneiron::Error::Record(
+                oneiron::error::RecordError::InvalidFederationGrantBody(_)
+                    | oneiron::error::RecordError::AuthorityClockCorrupt
+            )
     )
 }
 
