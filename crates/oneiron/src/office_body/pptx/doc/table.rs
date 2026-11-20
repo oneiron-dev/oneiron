@@ -204,18 +204,17 @@ mod text_diff_budget_tests {
     use loro::LoroDoc;
     use std::time::{Duration, Instant};
 
-    /// Before the diff budget this ran for many minutes.
+    /// Before the diff budget this ran for many minutes. Past the budget
+    /// the cell keeps the text it held.
     #[test]
-    fn syncing_a_large_table_cell_to_unrelated_text_ends_within_the_budget() {
+    fn syncing_a_large_table_cell_to_unrelated_text_is_refused_within_the_budget() {
+        let old = format!("{} tail \u{2713}", "x".repeat(1 << 20));
         let doc = LoroDoc::new();
         let entry = doc.get_map("tables").ensure_mergeable_map("1").unwrap();
         let mut body = TableBody {
             rows: vec![NodeId(2)],
             columns: vec![NodeId(3)],
-            cells: BTreeMap::from([(
-                NodeId(2),
-                BTreeMap::from([(NodeId(3), format!("{} tail \u{2713}", "x".repeat(1 << 20)))]),
-            )]),
+            cells: BTreeMap::from([(NodeId(2), BTreeMap::from([(NodeId(3), old.clone())]))]),
             merges: vec![],
         };
         sync_table(&entry, &body).unwrap();
@@ -229,9 +228,9 @@ mod text_diff_budget_tests {
             elapsed < Duration::from_secs(60),
             "syncing the table cell took {elapsed:?}"
         );
-        result.unwrap();
+        assert!(result.is_err(), "the sync is refused past the budget");
         let cells = child_map(&entry, CELLS).unwrap();
         let row = child_map(&cells, "2").unwrap();
-        assert_eq!(child_text(&row, "3").unwrap().to_string(), new);
+        assert_eq!(child_text(&row, "3").unwrap().to_string(), old);
     }
 }
