@@ -408,7 +408,7 @@ fn remote_applied_resume_uses_stored_snapshot_after_a_newer_local_edit() {
             .ics,
     };
     issue_prepared_upsert(
-        &vault, &operation, &transport, &uid, NOW, &mut row, &request,
+        &vault, &operation, &transport, &uid, NOW, &mut row, &request, true,
     )
     .unwrap();
     let row = calendar_write_outbox_rows(&vault).unwrap().remove(0);
