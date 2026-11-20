@@ -144,6 +144,34 @@ impl Host {
             .id)
     }
 
+    /// The owner enrols `device_key` as the owner key of this server's
+    /// install machine over HTTP; answers the key as hex.
+    async fn enrol(&self, device_key: &SigningKey) -> TestResult<String> {
+        let machine = self.machine()?.to_hex();
+        let public_key = hex(&device_key.verifying_key().to_bytes());
+        let (status, answer) = self
+            .send(
+                "POST",
+                CHALLENGE,
+                Some(json!({"machine": machine.clone(), "public_key": public_key.clone()})),
+            )
+            .await?;
+        assert_eq!(status, StatusCode::OK, "the challenge answers: {answer}");
+        let challenge = answer["challenge"]
+            .as_str()
+            .ok_or("the challenge answers hex")?;
+        let proof = hex(&device_key.sign(&decode_hex(challenge)?).to_bytes());
+        let (status, answer) = self
+            .send(
+                "POST",
+                ENROLL,
+                Some(json!({"machine": machine, "public_key": public_key.clone(), "proof": proof})),
+            )
+            .await?;
+        assert_eq!(status, StatusCode::OK, "the enrolment lands: {answer}");
+        Ok(public_key)
+    }
+
     /// The owner verb's answer: `None` when it passes, else its code.
     fn owner_verb_refusal(&self) -> Option<String> {
         self.vault
@@ -196,31 +224,10 @@ fn a_managed_hosts_owner_binds_with_their_device_key_over_http() -> TestResult {
 
 async fn managed_host_owner_binds_with_their_device_key() -> TestResult {
     let host = Host::serve()?;
-    let machine = host.machine()?.to_hex();
     let device_key = SigningKey::from_bytes(&[0x2E; 32]);
-    let public_key = hex(&device_key.verifying_key().to_bytes());
 
     // The owner enrols the device owner key over HTTP; it binds no one.
-    let (status, answer) = host
-        .send(
-            "POST",
-            CHALLENGE,
-            Some(json!({"machine": machine.clone(), "public_key": public_key.clone()})),
-        )
-        .await?;
-    assert_eq!(status, StatusCode::OK, "the challenge answers: {answer}");
-    let challenge = answer["challenge"]
-        .as_str()
-        .ok_or("the challenge answers hex")?;
-    let proof = hex(&device_key.sign(&decode_hex(challenge)?).to_bytes());
-    let (status, answer) = host
-        .send(
-            "POST",
-            ENROLL,
-            Some(json!({"machine": machine, "public_key": public_key.clone(), "proof": proof})),
-        )
-        .await?;
-    assert_eq!(status, StatusCode::OK, "the enrolment lands: {answer}");
+    let public_key = host.enrol(&device_key).await?;
     assert_eq!(
         host.owner_verb_refusal().as_deref(),
         Some(MEMORY_CODE_OWNER_BINDING_REQUIRED),
