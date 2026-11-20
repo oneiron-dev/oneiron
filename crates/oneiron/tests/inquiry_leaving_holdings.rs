@@ -19,6 +19,10 @@
 //!   nothing, no row leaves the ask for the owner, and the owner's own
 //!   answer is never rewritten. Filing erases nothing under any setting.
 //!   The owner's own delete choice runs through the same delete run.
+//! - review round 1 of #9902: a delete that erased a record a concurrent
+//!   pass read missing still saves it removed; the owner's own delete choice
+//!   over the setting's records takes the setting's operation over, and no
+//!   setting delete runs under it (the door case, cfg-gated).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_leaving_holdings`.
 
@@ -29,7 +33,8 @@ use oneiron::authority::{
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::{
-    COOP_DELETION_PEER_PATH, CooperativeDeletionAnswer, CooperativeDeletionDeliveryStatus,
+    COOP_DELETION_PEER_PATH, CooperativeDeleteOperation, CooperativeDeleteRecordState,
+    CooperativeDeletionAnswer, CooperativeDeletionDeliveryStatus,
     CooperativeDeletionDispositionKind, CooperativeDeletionIngress,
     ERASE_REQUEST_SETTING_DECLINE_CODE, ERASE_REQUEST_SETTING_DECLINE_REVIEW_SECS,
     ERASE_REQUEST_SETTING_HONOUR_CODE, EraseRequestReply, EraseRequestReplySource,
@@ -1161,5 +1166,42 @@ fn a_hand_picked_whole_pact_ask_cannot_take_the_leave_actions_nonce() {
             .expect("sent asks")
             .is_empty(),
         "nothing queued"
+    );
+}
+
+/// Review round 1 of #9902: two passes run one pending record of the same
+/// operation. The pass whose delete found the copy gone settles it missing
+/// first; the pass whose delete erased it then still saves it removed, so
+/// the erased copy reads in `deleted`. A removed record stays removed.
+#[test]
+fn a_removed_record_outranks_a_concurrent_missing_read() {
+    let operation_id = EntityId::from_bytes([0x51; 16]).expect("an operation id");
+    let record = EntityId::from_bytes([0x52; 16]).expect("a record id");
+    let mut operation = CooperativeDeleteOperation::new(operation_id, &[record]);
+    assert!(
+        operation.settle(record, CooperativeDeleteRecordState::Missing),
+        "the pass whose delete found the copy gone settles first"
+    );
+    assert!(
+        operation.settle(record, CooperativeDeleteRecordState::Removed),
+        "the pass whose delete erased the copy still saves it"
+    );
+    assert_eq!(
+        operation.records[0].state,
+        CooperativeDeleteRecordState::Removed
+    );
+    assert_eq!(
+        operation.removed_hex(),
+        vec![record.to_hex()],
+        "the erased copy reads in deleted"
+    );
+    assert!(operation.pending().is_empty());
+    assert!(
+        !operation.settle(record, CooperativeDeleteRecordState::Missing),
+        "a removed record stays removed"
+    );
+    assert_eq!(
+        operation.records[0].state,
+        CooperativeDeleteRecordState::Removed
     );
 }
