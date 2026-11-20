@@ -16,12 +16,12 @@ pub(crate) enum CustodyCall {
 
 /// Returns one fabricated binding and never lends its bytes back.
 #[derive(Clone)]
-pub(crate) struct CountingSecretCustody {
+pub(crate) struct RecordingSecretCustody {
     binding: String,
     calls: Arc<Mutex<Vec<CustodyCall>>>,
 }
 
-impl CountingSecretCustody {
+impl RecordingSecretCustody {
     /// Creates an empty call log and sets the binding to return on acquisition.
     pub(crate) fn new(binding: &str) -> Self {
         Self {
@@ -36,7 +36,7 @@ impl CountingSecretCustody {
     }
 }
 
-impl SecretCustody for CountingSecretCustody {
+impl SecretCustody for RecordingSecretCustody {
     fn acquire(&self, kind: SecretKind, value: &str, origin: &str) -> Result<String, BrowserError> {
         self.calls
             .lock()

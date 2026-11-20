@@ -6,7 +6,7 @@
 //! stays unset, and the door sends only the live page read. Secrets here are
 //! fabricated: a made-up passphrase and a made-up custody binding.
 
-use super::secret_custody::{CountingSecretCustody, CustodyCall};
+use super::secret_custody::{CustodyCall, RecordingSecretCustody};
 use super::session_fixture::{attach_session, expect_answer};
 use oneiron_browser::{
     BatchStep, BatchStopCause, BrowserDriver, DraftGap, DraftGapKind, DraftInput, ExpectInput,
@@ -176,7 +176,7 @@ fn a_plain_secret_field_check_is_bound_through_custody_without_rechecking_the_pa
         is_live_handle(&handle),
         "the password ref has a live handle's form"
     );
-    let custody = CountingSecretCustody::new("sc7");
+    let custody = RecordingSecretCustody::new("sc7");
     session.set_secret_custody(Arc::new(custody.clone()));
     let mark = peer.mark();
     let output = expect_answer(
@@ -290,7 +290,7 @@ fn an_unknown_secret_check_is_dropped_with_its_own_gap_and_index() {
 }
 
 #[test]
-fn an_effect_stop_mark_is_drafted_as_failed_without_inventing_a_replay_action() {
+fn a_stop_that_names_no_effect_is_drafted_as_failed_without_inventing_a_replay_action() {
     let (mut session, peer) = attach_session(PAGE_URL);
     session.note_stop(click_stop(None));
     assert_eq!(

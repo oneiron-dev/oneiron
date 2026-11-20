@@ -4,7 +4,7 @@
 //! unset. The peer proves the door's reads, not a real browser's answers. The custody double proves
 //! what the door takes, not a host's keeping.
 
-use super::secret_custody::{CountingSecretCustody, CustodyCall};
+use super::secret_custody::{CustodyCall, RecordingSecretCustody};
 use super::session_fixture::{attach_session, expect_answer};
 use oneiron_browser::{
     BatchStopCause, BrowserDriver, DraftGap, DraftGapKind, DraftInput, DraftOutput, ExpectInput,
@@ -318,7 +318,7 @@ fn a_durable_copy_strips_a_typed_secret_binding_independently_of_handle_syntax()
         "the fixture page opens",
     );
     assert_eq!(observation.url.as_str(), PAGE_URL, "the open lands");
-    let custody = CountingSecretCustody::new(FIXTURE_BINDING);
+    let custody = RecordingSecretCustody::new(FIXTURE_BINDING);
     session.set_secret_custody(Arc::new(custody.clone()));
     let mark = peer.mark();
     let check = ExpectInput {
@@ -535,9 +535,10 @@ fn a_span_with_only_a_stop_mark_is_drafted_as_failed_without_a_replay_step() {
         session.snapshot_solved_run(draft_input(vec![ready()])),
         "the stop-only span snapshots",
     );
-    // No assertion on `gap` or `solved()`: the module prose says a span is solved only when it
-    // holds steps (`src/session/solved.rs:8-12`), but the code tests `after_seq == through_seq`
-    // only (`src/session/solved.rs:136-137`), so a stop-only span reports no gap. Finding, not pinned.
+    // `gap` and `solved()` are not asserted: the module doc of `session/solved.rs` says a solved
+    // span holds steps, and `span_gap` compares only the span's two bounds, so this span of one
+    // stop names no gap
+    // (FIX [BROWSER-SOLVED-SNAPSHOT-NAMES-NO-GAP-FOR-A-SPAN-THAT-HOLDS-ONLY-A-STOP]).
     assert_draft_span(&snapshot.draft, 1);
     assert!(
         !snapshot.draft.complete,
