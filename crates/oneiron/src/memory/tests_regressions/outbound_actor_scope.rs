@@ -20,6 +20,7 @@ fn actor_scope_draft(idempotency_key: &str, occurred_at: u64) -> OutboundDraftIn
         trigger_ref: "session:actor-scope".to_owned(),
         job_ref: None,
         occurred_at: Some(occurred_at),
+        mention: None,
     }
 }
 
@@ -150,6 +151,7 @@ fn put_calendar_claim(
         crate::claim::ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(vault, &mut body);
     body.world = world;
     vault
         .put_claim(&EntityId::now(), &body, test_time(1), 1)

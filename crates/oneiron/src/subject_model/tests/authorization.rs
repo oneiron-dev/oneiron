@@ -1,8 +1,8 @@
 use super::*;
 use crate::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityKey, AuthorityLogEntry,
-    AuthorityOp, AuthoritySignature, AuthorityTier, DeviceAuthority, ROLE_ADMIN, ROLE_OWNER,
-    authority_entry_hash, authority_transcript, genesis_vault_id,
+    AuthorityOp, AuthoritySignature, AuthorityTier, DeviceAuthority, HostSlipIssuer, ROLE_ADMIN,
+    ROLE_OWNER, authority_entry_hash, authority_transcript, genesis_vault_id,
 };
 use ed25519_dalek::{Signer, SigningKey};
 
@@ -181,10 +181,73 @@ pub(crate) fn sign_child(
     Ok(entry)
 }
 
+/// The host secret the signed-birth fixture `seed` names. Each seed is its
+/// own host identity, so births under different seeds never share a root.
+fn host_secret_for_seed(seed: u8) -> Vec<u8> {
+    format!("signed-birth-test-host-{seed:02x}").into_bytes()
+}
+
+/// The host issuer that roots (or rooted) a vault for the signed-birth
+/// fixture `seed`: rebuilt from the seed's secret, as the same secret
+/// rebuilds the same issuer.
+pub(crate) fn host_issuer_for_seed(seed: u8) -> Result<HostSlipIssuer> {
+    HostSlipIssuer::from_secret(&host_secret_for_seed(seed))
+}
+
+/// The authority-log signing key of [`host_issuer_for_seed`]: the same
+/// `oneiron/host-authority-signing/v2` derivation the issuer holds, so the
+/// depth birth and edits the fixture signs verify under the host key the
+/// fold binds to the owner.
+pub(crate) fn host_signing_for_seed(seed: u8) -> SigningKey {
+    SigningKey::from_bytes(&blake3::derive_key(
+        "oneiron/host-authority-signing/v2",
+        &host_secret_for_seed(seed),
+    ))
+}
+
+/// Roots `vault` under the host `seed` names and returns the writer the
+/// signed-birth tests birth and edit as: the vault's embedded owner, the
+/// only live owner of a personal vault, which the root binds as `human` in
+/// the same transaction. No rebind follows: the host key holds one live
+/// binding, and a fresh person is no vault owner, so the owner stays bound.
+pub(crate) fn root_host_owner(vault: &Vault, seed: u8) -> Result<WriteActor> {
+    let issuer = host_issuer_for_seed(seed)?;
+    vault.ensure_host_root_slip(&issuer)?;
+    host_owner_writer(vault)
+}
+
+/// The writer [`root_host_owner`] returns, for a replica that takes the
+/// origin's authority history by import instead of rooting itself: the
+/// embedded owner staged locally, bound by the imported host genesis.
+pub(crate) fn host_owner_writer(vault: &Vault) -> Result<WriteActor> {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
+    Ok(WriteActor::new(owner, crate::edge::EdgeActorClass::Human))
+}
+
+/// A person-authorized project-depth edit signed with the host key
+/// [`host_signing_for_seed`] derives, for the owner [`root_host_owner`]
+/// bound: what `set_project_depth_signed_for_test` is under a host root.
+pub(crate) fn set_project_depth_with_host(
+    vault: &Vault,
+    id: EntityId,
+    depth: u64,
+    writer: &WriteActor,
+    now: u64,
+    seed: u8,
+) -> Result<()> {
+    let signing = host_signing_for_seed(seed);
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    vault.set_project_depth(id, depth, writer, now, key, |message| {
+        Ok(signing.sign(message).to_bytes().to_vec())
+    })
+}
+
 #[test]
 fn unauthorized_initial_anchor_and_non_actor_targets_are_rejected() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let actor = seed(&vault, entity(0x77), ENTITY_TYPE_AGENT_DEF);
+    let actor = seed_unanchored_agent_definition(&vault, entity(0x77), "subject_model");
     let person = seed(&vault, entity(0x78), ENTITY_TYPE_PERSON);
     let outsider = WriteActor::new(person, EdgeActorClass::Human);
     assert!(anchor_actor_subject(&vault, actor, person, outsider, 100).is_err());
@@ -210,6 +273,9 @@ fn public_reanchor_observes_revocation_committed_after_preflight() -> Result<()>
     let other = seed(&vault, entity(0x7B), ENTITY_TYPE_PERSON);
     let claim = anchor_actor_subject(&vault, actor, first, writer(), 100)?;
     let before = vault.get_claim(&claim)?;
+    // The creation door already anchored the house to its model PERSON; the
+    // revoked reanchor must leave that history unchanged.
+    let baseline = vault.claims_for_subject(&actor)?;
     let mut revocation_txn = vault.store.env.write_txn()?;
     vault.put_authority_log_entries_in_txn(
         &mut revocation_txn,
@@ -244,7 +310,7 @@ fn public_reanchor_observes_revocation_committed_after_preflight() -> Result<()>
     );
     assert_eq!(vault.get_claim(&claim)?, before);
     assert_eq!(actor_subject_anchor(&vault, &actor, 103)?, Some(first));
-    assert_eq!(vault.claims_for_subject(&actor)?.len(), 1);
+    assert_eq!(vault.claims_for_subject(&actor)?, baseline);
     drop(vault);
     drop(dir);
     Ok(())
@@ -256,6 +322,7 @@ fn unrooted_anchor_uses_canonical_human_owner_semantics() -> Result<()> {
     seed(&vault, writer().entity_ref(), ENTITY_TYPE_PERSON);
     let actor = seed(&vault, entity(0x7C), ENTITY_TYPE_AGENT_DEF);
     let person = seed(&vault, entity(0x7D), ENTITY_TYPE_PERSON);
+    let stranger = seed(&vault, entity(0x9F), ENTITY_TYPE_PERSON);
     let machine = seed(&vault, entity(0x7E), crate::registry::ENTITY_TYPE_MACHINE);
     let err = anchor_actor_subject(
         &vault,
@@ -268,8 +335,14 @@ fn unrooted_anchor_uses_canonical_human_owner_semantics() -> Result<()> {
     assert_eq!(err.kind(), ErrorKind::ActorLacksClaimAuthority);
     // With no authority root the owner is the vault's embedded owner alone
     // (H149): another Human PERSON is no owner capability either.
-    let err = anchor_actor_subject(&vault, actor, person, writer(), 101)
-        .expect_err("a PERSON who is not the vault's owner");
+    let err = anchor_actor_subject(
+        &vault,
+        actor,
+        person,
+        WriteActor::new(stranger, EdgeActorClass::Human),
+        101,
+    )
+    .expect_err("a PERSON who is not the vault's owner");
     assert_eq!(err.kind(), ErrorKind::ActorLacksClaimAuthority);
     let owner = WriteActor::new(
         vault

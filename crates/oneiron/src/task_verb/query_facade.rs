@@ -25,8 +25,8 @@ use crate::gate::{
     resolve_policy_manifest,
 };
 use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, facade_provenance,
-    verify_actor_binding,
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
+    facade_provenance, verify_actor_binding,
 };
 use crate::run_tree::RunTreeStatus;
 use crate::temporal::TimeRange;
@@ -47,10 +47,10 @@ use super::presence_scan::{
 };
 use super::rate_limit::task_create_owner_in;
 use super::route_receipts::{
-    DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskDescription,
-    TaskUpdateReceipt,
+    DEFAULT_TASK_CANCEL_MODE, TaskCancelReceipt, TaskCancelTarget, TaskDescription,
+    TaskUpdateReceipt, cancel_ceiling,
 };
-use super::{TaskCall, TaskReport, TaskReportBody, TaskVia, sdk};
+use super::{CheckInMode, TaskCall, TaskReport, TaskReportBody, TaskVia, sdk};
 
 mod cancel_effect;
 mod proposal;
@@ -63,12 +63,12 @@ impl Memory<'_> {
         self.cancel_with_mode(target, DEFAULT_TASK_CANCEL_MODE)
     }
 
-    /// Cancels under one ladder vocabulary token. `auto` and `full-access`
-    /// map to the existing Auto ceiling; `manual` maps to Proposed.
+    /// Cancels under one check-in mode. `auto` and `full-access` map to the
+    /// existing Auto ceiling; `manual` maps to Proposed.
     pub fn cancel_with_mode(
         &self,
         target: TaskCancelTarget,
-        mode: TaskCancelMode,
+        mode: CheckInMode,
     ) -> MemoryResult<TaskCancelReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let state = cancel_target_state(self.vault(), self.actor(), target)?;
@@ -81,7 +81,7 @@ impl Memory<'_> {
     #[cfg(test)]
     pub(super) fn cancel_with_injected_state_for_test(
         &self,
-        mode: TaskCancelMode,
+        mode: CheckInMode,
         state: CancelTargetState,
     ) -> MemoryResult<TaskCancelReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
@@ -238,13 +238,13 @@ impl Memory<'_> {
 
     fn cancel_resolved(
         &self,
-        mode: TaskCancelMode,
+        mode: CheckInMode,
         state: CancelTargetState,
     ) -> MemoryResult<TaskCancelReceipt> {
         let verb = crate::verb_names::CANCEL;
         let now = self.vault().store.clock.now_recorded_at();
         let provenance = facade_provenance(verb);
-        if !state.owned || mode.ceiling() == PolicyApprovalCeiling::Proposed {
+        if !state.owned || cancel_ceiling(mode) == PolicyApprovalCeiling::Proposed {
             let (proposal_ref, gate_decision_ref) = self.persist_task_proposal(
                 TASK_CANCEL_PROPOSAL_PREDICATE,
                 Value::Map(vec![
@@ -387,4 +387,64 @@ fn not_the_task_owner() -> MemoryError {
         "only the task's owner dismisses its failure".to_owned(),
         &["A failed task stays on the board until the actor that owns it dismisses it."],
     )
+}
+
+/// An acknowledgement answers the failure its request read. A failure that
+/// settled since (a synced refailure) is one the owner has not seen, so the
+/// dismissal is refused rather than stamped over it.
+fn failure_changed_since_read() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_INVALID_STATE,
+        "the task's failure changed since it was read; read the task again".to_owned(),
+        &["Read the task's current failure before acknowledging it."],
+    )
+}
+
+#[cfg(test)]
+type BeforeAckWriterHook = Box<dyn FnOnce(&crate::Vault)>;
+
+#[cfg(test)]
+std::thread_local! {
+    static BEFORE_ACK_WRITER: std::cell::RefCell<Option<BeforeAckWriterHook>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Runs `hook` once, on this thread, between an acknowledgement's read of a
+/// failed task and the writer that commits it: a test lands a synced
+/// refailure there.
+#[cfg(test)]
+pub(crate) fn set_before_ack_writer_hook(hook: impl FnOnce(&crate::Vault) + 'static) {
+    BEFORE_ACK_WRITER.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[cfg(test)]
+fn run_before_ack_writer_hook(vault: &crate::Vault) {
+    BEFORE_ACK_WRITER.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook(vault);
+        }
+    });
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static BETWEEN_ACK_READS: std::cell::RefCell<Option<BeforeAckWriterHook>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Runs `hook` once, on this thread, between an acknowledgement's two reads
+/// of a task (its settlement and its dismissal status): a test lands a
+/// same-second failure there.
+#[cfg(test)]
+pub(crate) fn set_between_ack_reads_hook(hook: impl FnOnce(&crate::Vault) + 'static) {
+    BETWEEN_ACK_READS.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[cfg(test)]
+fn run_between_ack_reads_hook(vault: &crate::Vault) {
+    BETWEEN_ACK_READS.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook(vault);
+        }
+    });
 }

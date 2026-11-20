@@ -35,7 +35,8 @@ use crate::write_envelope::WriteActor;
 const ADMISSIONS: SideTable<EntityId, Vec<u8>, Raw> =
     SideTable::new(&side_table::SHARE_BRIEF_ADMISSION);
 
-/// A one-way identity fence. Its exact stored marker is the single byte `1`.
+/// A deleting brief's identity fence ([`reserve_brief_delete`]). Its exact
+/// stored marker is the single byte `1`.
 const DELETE_RESERVATIONS: SideTable<EntityId, [u8; 1], Raw> =
     SideTable::new(&side_table::SHARE_BRIEF_DELETE_RESERVATION);
 
@@ -49,6 +50,7 @@ pub use actor_erase::{ACTOR_ERASE_SHARE_ADMISSION, ShareAdmissionErase};
 pub(crate) use admission_refs::share_gate_decision_refs_in_txn;
 pub use history::{ACTOR_ERASE_SHARE_RECIPIENT, ShareRecipientErase};
 pub(crate) use history::{ShareView, read_share_history_in_txn};
+pub(crate) use revoke::owner_revokes_every_share_in_txn;
 pub(crate) use view_link::{
     authorize_share_link_in_txn, live_share_for_holder_in_txn, share_prompt_sources,
 };
@@ -241,17 +243,44 @@ fn decode_refs(value: &Value) -> Result<BTreeSet<EntityId>> {
 // Local, engine-written provenance. Generic grant writes cannot touch a reserved id,
 // even after deletion or a foreign overwrite. A replayed row with no local admission
 // never becomes a usable share. No rendered bytes or claim values live here.
-// A one-way admission fence for a deleted brief identity. It is staged in the
-// same writer that rechecks direct shares, before the CRDT tombstone can publish.
-// A failed delete may leave the fence, but cannot leave an unshared new grant
-// racing ahead of a later retry at the same id.
+// An admission fence for a deleted brief identity. It is staged in the same
+// writer that rechecks direct shares, before the CRDT tombstone can publish, and
+// stays once a delete of the id linearizes. A delete refused before that point
+// releases a fence its own flight created ([`crate::deletion::BriefDeleteFences`]),
+// so it leaves no unshared new grant racing ahead of a later retry at the same
+// id, and no live brief that can never be shared again. A crash keeps the fence.
+// Returns whether this put created the row.
 pub(crate) fn reserve_brief_delete(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-) -> Result<()> {
+) -> Result<bool> {
+    if DELETE_RESERVATIONS.contains(store, txn, id)? {
+        return Ok(false);
+    }
     DELETE_RESERVATIONS.put(store, txn, id, &[1])?;
+    Ok(true)
+}
+
+/// Removes the fence [`reserve_brief_delete`] created for a delete refused
+/// before it linearized.
+pub(crate) fn release_brief_delete(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    DELETE_RESERVATIONS.delete(store, txn, id)?;
     Ok(())
+}
+
+/// Whether `id` holds a brief delete fence.
+#[cfg(test)]
+pub(crate) fn brief_delete_reserved(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    DELETE_RESERVATIONS.contains(store, txn, id)
 }
 
 pub(crate) fn check_generic_grant_write(
@@ -391,6 +420,19 @@ pub(crate) fn share_effect_target(
     ))
 }
 
+/// `Err` when the row `id` names is stored with an entity header that does
+/// not decode. The share reads below take such a row for no share; a slip
+/// door that judges a share-bound slip calls this first, so the vault
+/// failing to answer is a store fault there, never the slip's refusal
+/// (RATCHET-9413 review round 2). An absent row passes.
+pub(crate) fn require_share_header_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store.port_entity_record(txn, id).map(drop)
+}
+
 /// The share `id` names and its admission, as stored: nothing is proved but
 /// that both decode.
 fn stored_share_in_txn(
@@ -515,10 +557,14 @@ pub(crate) fn active_brief_shares_for(
 }
 
 fn verify_share_actor(store: &Store, txn: &heed::RoTxn<'_>, actor: &WriteActor) -> Result<()> {
-    let raw = store
-        .port_entity_record(txn, &actor.entity_ref())?
-        .ok_or(Error::EntityNotFound)?;
-    crate::provenance::validate_actor_class(raw.entity_type, actor.actor_class())
+    // A deleted shell keeps its header and type byte, so the raw row alone
+    // would admit a deleted issuer; only a live row names one.
+    let crate::vault::LiveEntityRow::Live { entity_type, .. } =
+        crate::vault::live_entity_row_in_txn(store, txn, &actor.entity_ref())?
+    else {
+        return Err(Error::EntityNotFound);
+    };
+    crate::provenance::validate_actor_class(entity_type, actor.actor_class())
 }
 
 // PERSON admits both human and agent. Only a live, verified authority binding
@@ -553,7 +599,13 @@ fn share_viewer_actor_in_txn(
     }
     let mut actor_class = None;
     for class in classes {
-        if !crate::authority::actor_binding_is_active(&fold, viewer, class.gate_actor_class()) {
+        if !crate::authority::actor_binding_is_live_in(
+            &vault.store,
+            txn,
+            &fold,
+            viewer,
+            class.gate_actor_class(),
+        )? {
             continue;
         }
         if crate::provenance::validate_actor_class(raw.entity_type, class).is_err()
@@ -784,6 +836,22 @@ impl Vault {
                 .retain(|id| request.facet_refs.contains(id));
             scope.include_unscoped &= request.include_unscoped;
         }
+        // A brief candidate is a claim ref a caller names, so it must also
+        // pass the scoped read lane's own row admission for this viewer:
+        // its principal audience, credential and audience checks, and the
+        // per-row trailing conjuncts (the records an `edge.provenance`
+        // claim names, an `esign.*` claim's signing document, and both
+        // ends of a `core.coreference.status` claim). The share checks
+        // below are a maximum on top of that admission, never a substitute
+        // for it. A supplied lane for this viewer judges the rows as the
+        // rendering lane will; otherwise the lane is the viewer key this
+        // resolution just proved.
+        let viewer_ref = viewer.to_hex();
+        let viewer_lane = self.scoped_read(actor.clone());
+        let supplied_lane = read.filter(|lane| {
+            lane.vault().vault_id() == self.vault_id()
+                && lane.actor_key().actor_ref() == viewer_ref.as_str()
+        });
         let mut visible_claim_refs = Vec::new();
         let mut seen = BTreeSet::new();
         for id in brief_claim_refs {
@@ -816,7 +884,14 @@ impl Vault {
             // Evaluate LIVE authority on only the facets that survived the maximum.
             // Passing all facets here would let grant A and current authority B
             // combine to leak a multiply-faceted claim despite an empty intersection.
-            if scoped_read_claim_allowed(&policy, &actor, &body, &permitted_facets) {
+            if !scoped_read_claim_allowed(&policy, &actor, &body, &permitted_facets) {
+                continue;
+            }
+            let row_admitted = match supplied_lane {
+                Some(lane) => lane.is_ref_readable_with_policy_in(&txn, &policy, id)?,
+                None => viewer_lane.is_ref_readable_with_policy_in(&txn, &policy, id)?,
+            };
+            if row_admitted {
                 visible_claim_refs.push(*id);
             }
         }
@@ -911,7 +986,5 @@ fn share_claim_facets(
 }
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-SHARE-TESTS]: the lib test target's type check fails here (11 errors: E0061 x7, E0308 x3, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 pub(crate) mod tests;

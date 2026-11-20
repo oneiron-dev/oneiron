@@ -38,7 +38,7 @@ pub use context::{AcquisitionMode, PinnedOrigin, RenderContext};
 pub use door::{WebCrawlRequest, WebFetchRequest};
 pub use egress::{
     HOSTED_INFRASTRUCTURE_REASON, HOSTED_PRIVATE_NETWORK_REASON, HostedEgressGuard,
-    HostedEgressRefusal, HostedPrivateOrigin,
+    HostedEgressRefusal, HostedPrivateNetwork, HostedPrivateOrigin,
 };
 mod render;
 mod rungs;

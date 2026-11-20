@@ -297,6 +297,7 @@ fn authority_log_put_lands_at_an_id_an_agent_held() -> Result<()> {
         );
         let backups = crate::test_support::restore_tempdir();
         let image = backups.path().join("image");
+        vault.ensure_vault_key().expect("mint the vault data key");
         vault.snapshot_checkpoint(&image, 100)?;
         let (restored, _) = Vault::restore_checkpoint_keeping_authority(
             &image,

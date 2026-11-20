@@ -77,7 +77,7 @@ impl WindowManager {
     ) -> Result<(Arc<LoadedWindow>, Vec<ReplacementConflict>)> {
         self.attach_to_vault();
         let mut registry = self.lock_registry_settled(key);
-        // A window a sweep holds closed is replaced once the sweep is done.
+        // A window a sweep or a publication holds closed is replaced once it is released.
         while self.sweep_fence.holds(key) {
             drop(registry);
             self.sweep_fence.wait_until_open(key);

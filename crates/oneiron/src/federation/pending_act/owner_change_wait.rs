@@ -29,6 +29,10 @@ use crate::error::Result;
 use crate::federation::FederationGrantRole as Role;
 use crate::ports::{EntityStoreRead, recorded_at_in_txn};
 
+use std::collections::BTreeSet;
+
+use crate::federation::SharedActKind;
+
 use super::{check_vault, invalid};
 
 /// Seconds in a day, for this setter's days-to-seconds conversion.
@@ -124,5 +128,46 @@ impl Vault {
         self.write_holder_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
         txn.commit()?;
         Ok(())
+    }
+}
+
+impl Vault {
+    /// The wait in seconds an `act` started now on shared vault `vault_id`
+    /// under its stored row would open, as the generic start reckons it:
+    /// [`resolve_start_wait_secs`] over the row's wait, the common
+    /// owner-change wait for a membership act, and no wait on a stored row
+    /// for a sole Owner. A door that writes a membership change outside its
+    /// act reads it to tell whether that write would skip a wait the Owners
+    /// set (FIX HOUSE-OWNER-ROLE-VIA-ADD-OWNER). A vault never shared, or
+    /// deleted, refuses as a start does.
+    pub(crate) fn stored_act_wait_secs_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        act: SharedActKind,
+        now: u64,
+    ) -> Result<u64> {
+        let creation = check_vault(self, txn, vault_id)?;
+        let policies = self.act_policies_in_txn(txn, &creation)?;
+        let base = policies.effective(act.as_str())?;
+        let owners = self
+            .live_act_holders(txn, vault_id, now)?
+            .iter()
+            .filter(|holder| holder.role == Role::Owner)
+            .map(|holder| holder.member)
+            .collect::<BTreeSet<_>>();
+        // The membership acts the start's common wait governs.
+        let owner_change_act = matches!(
+            act,
+            SharedActKind::AddOwner | SharedActKind::TransferOwnership | SharedActKind::RemoveOwner
+        );
+        Ok(resolve_start_wait_secs(
+            policies.common_wait_secs,
+            owner_change_act,
+            true,
+            owners.len() < 2,
+            false,
+            base.wait_secs,
+        ))
     }
 }

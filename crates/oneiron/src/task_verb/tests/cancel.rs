@@ -13,11 +13,11 @@ fn cancel_ladder_is_own_scoped_and_records_gate_decision() {
     let facade = vault.memory(own, EdgeActorClass::Agent);
 
     for mode in [
-        TaskCancelMode::Auto,
-        TaskCancelMode::FullAccess,
-        TaskCancelMode::Manual,
+        CheckInMode::AskWhenUnsure,
+        CheckInMode::NeverAsk,
+        CheckInMode::AlwaysAsk,
     ] {
-        let manual = matches!(mode, TaskCancelMode::Manual);
+        let manual = matches!(mode, CheckInMode::AlwaysAsk);
         let own_create = facade.tasks_create(&spec(120)).expect("own task");
         let mut other_spec = spec(120);
         other_spec.owner_ref = Some(other);
@@ -26,24 +26,24 @@ fn cancel_ladder_is_own_scoped_and_records_gate_decision() {
         let other_target = TaskCancelTarget::Task(other_create.task_ref.expect("other task ref"));
 
         let (own_cancel, foreign_cancel) = match mode {
-            TaskCancelMode::Auto => (
+            CheckInMode::AskWhenUnsure => (
                 facade.cancel(own_target).expect("own cancel"),
                 facade.cancel(other_target).expect("foreign cancel"),
             ),
-            TaskCancelMode::FullAccess => (
+            CheckInMode::NeverAsk => (
                 facade
-                    .cancel_with_mode(own_target, TaskCancelMode::FullAccess)
+                    .cancel_with_mode(own_target, CheckInMode::NeverAsk)
                     .expect("own cancel"),
                 facade
-                    .cancel_with_mode(other_target, TaskCancelMode::FullAccess)
+                    .cancel_with_mode(other_target, CheckInMode::NeverAsk)
                     .expect("foreign cancel"),
             ),
-            TaskCancelMode::Manual => (
+            CheckInMode::AlwaysAsk => (
                 facade
-                    .cancel_with_mode(own_target, TaskCancelMode::Manual)
+                    .cancel_with_mode(own_target, CheckInMode::AlwaysAsk)
                     .expect("own cancel"),
                 facade
-                    .cancel_with_mode(other_target, TaskCancelMode::Manual)
+                    .cancel_with_mode(other_target, CheckInMode::AlwaysAsk)
                     .expect("foreign cancel"),
             ),
         };
@@ -172,7 +172,13 @@ fn pending_cancel_proposes_without_intervening_realization() {
 /// `manual` stays a proposal for the owner too.
 #[test]
 fn owner_soft_cancel_of_own_task_is_auto_without_grant() {
-    let (_dir, vault) = open_vault();
+    let _dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open_owned(_dir.path(), VaultConfig::default()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    // These tests cover task lifecycle behavior, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let facade = vault.memory(owner, EdgeActorClass::Human);
     let task_ref = facade
@@ -219,7 +225,7 @@ fn owner_soft_cancel_of_own_task_is_auto_without_grant() {
         .task_ref
         .expect("task ref");
     let manual = facade
-        .cancel_with_mode(TaskCancelTarget::Task(manual_ref), TaskCancelMode::Manual)
+        .cancel_with_mode(TaskCancelTarget::Task(manual_ref), CheckInMode::AlwaysAsk)
         .expect("owner manual cancel");
     assert_eq!(manual.approval, ClaimApprovalStatus::Proposed);
     assert!(!manual.effected);
@@ -698,7 +704,7 @@ fn cancel_non_owned_spawn_manual_and_auto_both_propose() {
     let facade = vault.memory(own, EdgeActorClass::Agent);
     for cancel in [
         facade
-            .cancel_with_mode(TaskCancelTarget::Spawn(attempt.id), TaskCancelMode::Manual)
+            .cancel_with_mode(TaskCancelTarget::Spawn(attempt.id), CheckInMode::AlwaysAsk)
             .expect("manual cancel"),
         facade
             .cancel(TaskCancelTarget::Spawn(attempt.id))
@@ -792,6 +798,7 @@ fn connector_send_cancel_cancels_queued_realization() {
             trigger_ref: "s1".to_owned(),
             job_ref: None,
             occurred_at: Some(120),
+            mention: None,
         })
         .expect("schedule send");
     let tasks = vault.connector_send_tasks().expect("connector tasks");
@@ -1170,9 +1177,11 @@ fn a_restore_never_drops_a_cancellation_made_since() {
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100).expect("backup");
+    let key = vault.checkpoint_key().expect("derive the checkpoint key");
     let restore = |destination: &std::path::Path| {
         Vault::restore_checkpoint_keeping_authority(
             &image,
+            &key,
             destination,
             vault.config.clone(),
             &vault,
@@ -1236,9 +1245,11 @@ fn a_restore_never_reverses_a_task_reassignment_made_since() {
         )
         .expect("reassign");
 
+    let key = vault.checkpoint_key().expect("derive the checkpoint key");
     let destination = backups.path().join("restored");
     let error = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &destination,
         vault.config.clone(),
         &vault,
@@ -1283,9 +1294,11 @@ fn a_restore_never_rebinds_a_task_whose_body_was_replaced_since() {
         )
         .expect("replace the task body");
 
+    let key = vault.checkpoint_key().expect("derive the checkpoint key");
     let destination = backups.path().join("restored");
     let error = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &destination,
         vault.config.clone(),
         &vault,

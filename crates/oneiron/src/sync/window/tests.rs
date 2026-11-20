@@ -1,3 +1,4 @@
+mod publish_refusal_keeps_carrier_records;
 use super::*;
 use rmpv::Value;
 
@@ -12,6 +13,8 @@ use crate::temporal::TimeRange;
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
     (dir, vault)
 }
 
@@ -35,6 +38,7 @@ fn delegated_identity_fixture(
         name: name.to_owned(),
         class: CustodyClass::CustodyDeviceBound,
         device_only: true,
+        model_reveal_allowed: false,
         value_bytes: b"locally-held-oauth-token".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: learned_at,
@@ -111,7 +115,11 @@ fn typed_addressing_edge_survives_reverse_and_forward_replay_but_forged_peer_edg
     let mut input = crate::conversation_dag::fixtures::input(conversation, None, true, actor);
     input.address = crate::conversation_dag::AddressMode::Direct;
     input.recipients = vec![recipient];
-    let record = source.append_dag_record(&input)?.id;
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
+    let record = source
+        .append_dag_record(&writer, &input)
+        .expect("append")
+        .id;
     let key = WindowKey::from_timestamp(input.learned_at);
     let doc = create_window_doc("addressing-source", &key);
     reverse_rematerialize(&source, &doc, &key)?;
@@ -162,7 +170,11 @@ fn typed_addressing_recovery_restores_only_body_proved_edges() -> Result<()> {
     let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
     input.address = crate::conversation_dag::AddressMode::Direct;
     input.recipients = vec![person];
-    let record = source.append_dag_record(&input)?.id;
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
+    let record = source
+        .append_dag_record(&writer, &input)
+        .expect("append")
+        .id;
     let key = WindowKey::from_timestamp(input.learned_at);
     let doc = create_window_doc("source", &key);
     // Keep the artifact at the conversation boundary: a test policy fixture
@@ -253,7 +265,11 @@ fn soft_deleted_addressed_turn_keeps_its_edge_across_canonical_recovery() -> Res
     let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
     input.address = crate::conversation_dag::AddressMode::Direct;
     input.recipients = vec![recipient];
-    let record = source.append_dag_record(&input)?.id;
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
+    let record = source
+        .append_dag_record(&writer, &input)
+        .expect("append")
+        .id;
     let tombstone = crate::deletion::TombstoneValueV2 {
         reason: crate::deletion::TombstoneReason::UserDelete,
         deleted_at: 100,
@@ -355,7 +371,11 @@ fn soft_addressing_recovers_across_monthly_recipient_window() -> Result<()> {
     input.learned_at = feb;
     input.address = crate::conversation_dag::AddressMode::Direct;
     input.recipients = vec![recipient];
-    let record = source.append_dag_record(&input)?.id;
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
+    let record = source
+        .append_dag_record(&writer, &input)
+        .expect("append")
+        .id;
     let jan_key = WindowKey::from_timestamp(jan);
     let jan_doc = create_window_doc("source", &jan_key);
     reverse_rematerialize(&source, &jan_doc, &jan_key)?;
@@ -409,6 +429,7 @@ fn soft_addressing_recovers_across_monthly_recipient_window() -> Result<()> {
                     end: header.occurred_end,
                 },
                 header.learned_at,
+                None,
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )
             .commit()?;
@@ -448,6 +469,7 @@ fn soft_addressing_recovers_across_monthly_recipient_window() -> Result<()> {
                     end: header.occurred_end,
                 },
                 header.learned_at,
+                None,
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )
             .commit()?;
@@ -498,7 +520,11 @@ fn deleted_recipient_recovery_keeps_conversation_readable_without_resurrecting_h
         let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
         input.address = crate::conversation_dag::AddressMode::Direct;
         input.recipients = vec![recipient];
-        let record = source.append_dag_record(&input)?.id;
+        let writer = source.memory(actor.entity_ref(), actor.actor_class());
+        let record = source
+            .append_dag_record(&writer, &input)
+            .expect("append")
+            .id;
         let tombstone = crate::deletion::TombstoneValueV2 {
             reason,
             deleted_at: 100,
@@ -565,17 +591,21 @@ fn deleted_recipient_recovery_keeps_conversation_readable_without_resurrecting_h
     Ok(())
 }
 
-/// Pinned 25-byte entity envelope: type u8 + occurred_start/end u64 BE +
-/// learned_at u64 BE + body (`occurred == learned` so CRDT-vs-LMDB
-/// byte-equality is exact).
+/// Pinned 33-byte entity envelope: type u8 + occurred_start/end u64 BE +
+/// learned_at u64 BE + row_version u64 BE + body (`occurred == learned` so
+/// CRDT-vs-LMDB byte-equality is exact).
 fn make_entity_blob(entity_type: u8, learned_at: u64, data: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + data.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(data);
-    blob
+    // Fresh test carrier: row_version 0, the value base writes for a new row.
+    crate::test_util::entity_record(
+        entity_type,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        0,
+        data,
+    )
 }
 
 /// THE EGRESS REGRESSION (ARCH-0052 P6, ONE-1731 / R-20260807-06).
@@ -750,13 +780,13 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
     // Observer A persisted the contract rows (ARCH-0023b key table).
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_some()
     );
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000002")
+            .sync_state_get("u:w:2026-03:0000000000000002")
             .unwrap()
             .is_some()
     );
@@ -765,15 +795,15 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
             .sync_state_get("m:u_seq:w:2026-03")
             .unwrap()
             .as_deref(),
-        Some(2u32.to_le_bytes().as_slice())
+        Some(2u64.to_le_bytes().as_slice())
     );
 
     // Sentinels the prune must NOT touch. sync_state families:
     vault
-        .sync_state_put("u:w:2026-02:00000001", b"neighbor-window-update")
+        .sync_state_put("u:w:2026-02:0000000000000001", b"neighbor-window-update")
         .unwrap();
     vault
-        .sync_state_put("u:w:2026-030:00000001", b"prefix-adjacent-update")
+        .sync_state_put("u:w:2026-030:0000000000000001", b"prefix-adjacent-update")
         .unwrap();
     let dt_key = format!("dt:{}", EntityId::now().to_hex());
     vault
@@ -809,14 +839,14 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
     // Subsumed rows pruned; the high-water mark is NOT reset.
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_none(),
         "subsumed u:w: row must be pruned after the snapshot persist"
     );
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000002")
+            .sync_state_get("u:w:2026-03:0000000000000002")
             .unwrap()
             .is_none()
     );
@@ -825,7 +855,7 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
             .sync_state_get("m:u_seq:w:2026-03")
             .unwrap()
             .as_deref(),
-        Some(2u32.to_le_bytes().as_slice()),
+        Some(2u64.to_le_bytes().as_slice()),
         "m:u_seq:w: must stay monotonic — never reset by the prune"
     );
     assert!(vault.sync_state_get("d:w:2026-03").unwrap().is_some());
@@ -843,7 +873,7 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
     // Every sentinel survives byte-identical.
     assert_eq!(
         vault
-            .sync_state_get("u:w:2026-02:00000001")
+            .sync_state_get("u:w:2026-02:0000000000000001")
             .unwrap()
             .as_deref(),
         Some(b"neighbor-window-update".as_slice()),
@@ -851,7 +881,7 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
     );
     assert_eq!(
         vault
-            .sync_state_get("u:w:2026-030:00000001")
+            .sync_state_get("u:w:2026-030:0000000000000001")
             .unwrap()
             .as_deref(),
         Some(b"prefix-adjacent-update".as_slice()),
@@ -933,7 +963,7 @@ fn prune_spares_updates_persisted_after_the_merge() {
     // Snapshot-persist sequence as persist_state runs it, with a
     // concurrent writer landing BETWEEN the merge and the write txn.
     let merged = merge_persisted_state_into_doc(&vault, &window.doc, &key).unwrap();
-    assert_eq!(merged, vec!["u:w:2026-03:00000001".to_string()]);
+    assert_eq!(merged, vec!["u:w:2026-03:0000000000000001".to_string()]);
 
     let transient = create_window_doc("transient", &key);
     let late_id = EntityId::now();
@@ -958,14 +988,14 @@ fn prune_spares_updates_persisted_after_the_merge() {
 
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_none(),
         "the merged row is subsumed and pruned"
     );
     assert_eq!(
         vault
-            .sync_state_get("u:w:2026-03:00000002")
+            .sync_state_get("u:w:2026-03:0000000000000002")
             .unwrap()
             .as_deref(),
         Some(late_bytes.as_slice()),
@@ -1000,7 +1030,7 @@ fn persist_state_marks_svf_stale_when_a_post_merge_uw_row_survives() {
 
     let window = LoadedWindow::new("local", key.clone(), &vault, &materializer);
 
-    // Pre-seed `u:w:2026-03:00000001` with an op the LIVE doc does NOT
+    // Pre-seed `u:w:2026-03:0000000000000001` with an op the LIVE doc does NOT
     // hold, so `persist_state`'s merge import produces a diff (and fires
     // the injection below). This row IS in the merge inventory → pruned.
     let seed = create_window_doc("seed", &key);
@@ -1053,7 +1083,7 @@ fn persist_state_marks_svf_stale_when_a_post_merge_uw_row_survives() {
     // The merged row is pruned …
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_none(),
         "the merged row is subsumed and pruned"
@@ -1061,7 +1091,7 @@ fn persist_state_marks_svf_stale_when_a_post_merge_uw_row_survives() {
     // … the post-merge row survives …
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000002")
+            .sync_state_get("u:w:2026-03:0000000000000002")
             .unwrap()
             .is_some(),
         "a row persisted during the merge import escapes the prune"
@@ -1072,7 +1102,7 @@ fn persist_state_marks_svf_stale_when_a_post_merge_uw_row_survives() {
             .sync_state_get("m:u_seq:w:2026-03")
             .unwrap()
             .as_deref(),
-        Some(2u32.to_le_bytes().as_slice()),
+        Some(2u64.to_le_bytes().as_slice()),
         "m:u_seq:w: must stay monotonic"
     );
     // … and svf is STALE: the fast-reconnect reader must NOT trust sv:w:.
@@ -1101,7 +1131,7 @@ fn replay_pending_tombstones_soft_keeps_svf_stale_when_merged_uw_survives() {
     let _id = commit_entity(&window, t, b"keep-me");
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_some()
     );
@@ -1120,7 +1150,7 @@ fn replay_pending_tombstones_soft_keeps_svf_stale_when_merged_uw_survives() {
     // The merged u:w: row survives the soft branch …
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_some(),
         "soft replay must not scrub surviving u:w: rows"
@@ -1254,6 +1284,8 @@ fn finalized_receipt_not_mirrored_to_crdt() {
                 hard_purge_complete_at: learned_at,
                 sweep_queued_at: Some(learned_at - 8),
             },
+            Vec::new(),
+            Vec::new(),
             receipt_id,
             &identity,
         )
@@ -1277,6 +1309,7 @@ fn finalized_receipt_not_mirrored_to_crdt() {
             ENTITY_TYPE_REDACTION_AUDIT,
             occurred,
             learned_at,
+            None,
             &finalized_body,
         )
         .commit()
@@ -1296,6 +1329,7 @@ fn finalized_receipt_not_mirrored_to_crdt() {
             ENTITY_TYPE_REDACTION_AUDIT,
             occurred,
             learned_at,
+            None,
             &pending_body,
         )
         .commit()
@@ -1309,6 +1343,7 @@ fn finalized_receipt_not_mirrored_to_crdt() {
             ENTITY_TYPE_REDACTION_AUDIT,
             occurred,
             learned_at,
+            None,
             b"invalid-receipt-body",
         )
         .commit()
@@ -1317,7 +1352,14 @@ fn finalized_receipt_not_mirrored_to_crdt() {
     let ordinary_id = EntityId::now();
     vault
         .batch()
-        .put_replicated(&ordinary_id, 1, occurred, learned_at, b"ordinary-body")
+        .put_replicated(
+            &ordinary_id,
+            1,
+            occurred,
+            learned_at,
+            None,
+            b"ordinary-body",
+        )
         .commit()
         .unwrap();
 
@@ -1393,6 +1435,8 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
                 hard_purge_complete_at: learned_at,
                 sweep_queued_at: Some(learned_at - 8),
             },
+            Vec::new(),
+            Vec::new(),
             receipt_id,
             &identity,
         )
@@ -1416,6 +1460,7 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
             ENTITY_TYPE_REDACTION_AUDIT,
             occurred,
             learned_at,
+            None,
             &finalized_body,
         )
         .commit()
@@ -1435,6 +1480,7 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
             ENTITY_TYPE_REDACTION_AUDIT,
             occurred,
             learned_at,
+            None,
             &pending_body,
         )
         .commit()
@@ -1448,6 +1494,7 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
             ENTITY_TYPE_REDACTION_AUDIT,
             occurred,
             learned_at,
+            None,
             b"invalid-receipt-body",
         )
         .commit()
@@ -1456,7 +1503,14 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
     let ordinary_id = EntityId::now();
     vault
         .batch()
-        .put_replicated(&ordinary_id, 1, occurred, learned_at, b"ordinary-body")
+        .put_replicated(
+            &ordinary_id,
+            1,
+            occurred,
+            learned_at,
+            None,
+            b"ordinary-body",
+        )
         .commit()
         .unwrap();
 
@@ -1543,8 +1597,14 @@ fn forward_remat_quarantines_receipt_when_lease_revoked_between_check_and_write(
         hard_purge_complete_at: learned_at,
         sweep_queued_at: Some(102),
     };
-    let body =
-        crate::deletion::encode_redaction_audit_receipt(input, &receipt_id, &identity).unwrap();
+    let body = crate::deletion::encode_redaction_audit_receipt(
+        input,
+        Vec::new(),
+        Vec::new(),
+        &receipt_id,
+        &identity,
+    )
+    .unwrap();
     let mut blob = crate::deletion::receipt_envelope_header(learned_at).to_vec();
     blob.extend_from_slice(&body);
 
@@ -1622,9 +1682,14 @@ fn forward_remat_quarantines_divergent_receipt_landing_mid_flight() {
         hard_purge_complete_at: learned_at,
         sweep_queued_at: Some(102),
     };
-    let remote_body =
-        crate::deletion::encode_redaction_audit_receipt(remote_input, &receipt_id, &identity)
-            .unwrap();
+    let remote_body = crate::deletion::encode_redaction_audit_receipt(
+        remote_input,
+        Vec::new(),
+        Vec::new(),
+        &receipt_id,
+        &identity,
+    )
+    .unwrap();
     let mut remote_blob = crate::deletion::receipt_envelope_header(learned_at).to_vec();
     remote_blob.extend_from_slice(&remote_body);
 
@@ -1639,9 +1704,14 @@ fn forward_remat_quarantines_divergent_receipt_landing_mid_flight() {
         hard_purge_complete_at: learned_at,
         sweep_queued_at: Some(102),
     };
-    let local_body =
-        crate::deletion::encode_redaction_audit_receipt(local_input, &receipt_id, &identity)
-            .unwrap();
+    let local_body = crate::deletion::encode_redaction_audit_receipt(
+        local_input,
+        Vec::new(),
+        Vec::new(),
+        &receipt_id,
+        &identity,
+    )
+    .unwrap();
     let mut local_blob = crate::deletion::receipt_envelope_header(learned_at).to_vec();
     local_blob.extend_from_slice(&local_body);
     assert_ne!(local_blob, remote_blob);
@@ -2067,6 +2137,7 @@ fn forward_remat_quarantines_replicated_secret_custody_carrier() -> Result<()> {
         name: "peer-authored".to_owned(),
         class: CustodyClass::CustodyDeviceBound,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: b"peer-plaintext-value".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: learned_at,
@@ -2517,7 +2588,7 @@ fn authority_revoke_fixture_for_window(
     entry
 }
 
-/// Wraps `data` in the pinned 25-byte envelope with an explicitly chosen
+/// Wraps `data` in the pinned 33-byte envelope with an explicitly chosen
 /// occurred range, so a test can mint the INVERTED range a hostile peer parks
 /// on a CRDT carrier (`put_replicated` rejects `start > end` with
 /// `InvalidTimeRange` before the authority validator ever runs).
@@ -2529,13 +2600,17 @@ fn make_entity_blob_with_range(
     learned_at: u64,
     data: &[u8],
 ) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + data.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&occurred_start.to_be_bytes());
-    blob.extend_from_slice(&occurred_end.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(data);
-    blob
+    // Fresh test carrier: row_version 0, the value base writes for a new row.
+    crate::test_util::entity_record(
+        entity_type,
+        TimeRange {
+            start: occurred_start,
+            end: occurred_end,
+        },
+        learned_at,
+        0,
+        data,
+    )
 }
 
 /// ONE-1604-D1/D5 T9 (fix-leg 1, P2-b): the window-path twin of the bridge
@@ -3101,7 +3176,7 @@ fn forward_remat_defers_facet_of_with_absent_endpoints_instead_of_quarantining()
 /// writes is PERMANENT false evidence blaming the peer for a forgery it never
 /// sent.
 ///
-/// Fixture: an endpoint row whose stored bytes are shorter than the 25-byte
+/// Fixture: an endpoint row whose stored bytes are shorter than the 33-byte
 /// entity envelope. The endpoint EXISTS (so the pass clears the
 /// endpoint-existence check and reaches the table), but its header cannot be
 /// read — exactly the local-defect shape.
@@ -3193,6 +3268,7 @@ fn seed_secret_custody(
         name: name.to_owned(),
         class: crate::secret_custody::CustodyClass::CustodyDeviceBound,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: value.to_vec(),
         status: crate::secret_custody::SecretCustodyStatus::Active,
         registered_at: learned_at,
@@ -3686,6 +3762,7 @@ fn replicated_lww_overwrite_removes_loser_bm25f_before_idle() -> Result<()> {
                 ENTITY_TYPE_TURN,
                 TimeRange { start: 2, end: 2 },
                 2,
+                None,
                 b"winner",
             )
             .apply(txn)?;
@@ -4551,6 +4628,7 @@ fn device_only_holds_a_task_replicated_after_the_upgrade_sweep_but_ships_one_it_
                 end: header.learned_at,
             },
             header.learned_at,
+            None,
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
         )
         .commit()?;
@@ -4693,27 +4771,24 @@ fn forward_remat_quarantines_bad_machine_proof_and_commits_signed_sibling() -> R
     Ok(())
 }
 
+/// The signed birth and edit replay to existing and new replicas, survive
+/// reopen and membership restore, and quarantine a tampered fact.
+/// (Owner-authorized birth: a person-authorized birth by a non-owner is no
+/// longer reachable; the door revalidates the writer as the vault owner.)
 #[test]
 fn signed_owner_project_depth_replays_to_existing_and_new_replicas() -> Result<()> {
     let (_a_dir, a) = test_vault();
     let root_a = a.root_project()?;
     let lead = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
     let project = EntityId::now();
-    let owner_id = EntityId::now();
-    a.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"person",
-    )?;
-    let owner = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
-    crate::subject_model::tests::authorization::root_owner(&a, owner, 0xB6)?;
+    let owner = crate::subject_model::tests::authorization::root_host_owner(&a, 0xB6)?;
     crate::workspace_roster::create_project_signed_for_test(
         &a, project, root_a, lead, &owner, 1, 0xB6,
     )?;
     let history = a.export_signed_authority_history()?;
-    crate::workspace_roster::set_project_depth_signed_for_test(&a, project, 2, &owner, 2, 0xB6)?;
+    crate::subject_model::tests::authorization::set_project_depth_with_host(
+        &a, project, 2, &owner, 2, 0xB6,
+    )?;
     assert_eq!(a.project(project)?.unwrap().depth, 2);
     let contributions = crate::gate::project_depth::contributions_for_test(&a, project)?;
     assert_eq!(contributions.len(), 2); // immutable birth + signed edit
@@ -4730,13 +4805,7 @@ fn signed_owner_project_depth_replays_to_existing_and_new_replicas() -> Result<(
                 .unwrap(),
             1,
         )?;
-        b.put_entity(
-            &owner_id,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"person",
-        )?;
+        crate::subject_model::tests::authorization::host_owner_writer(b)?;
         b.import_signed_authority_history(&history)?;
         if existing {
             let (birth_id, birth_bytes) = contributions
@@ -4757,6 +4826,7 @@ fn signed_owner_project_depth_replays_to_existing_and_new_replicas() -> Result<(
                         crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
                         TimeRange { start: 1, end: 1 },
                         1,
+                        None,
                         birth_bytes,
                     )
                     .apply(txn)
@@ -4938,6 +5008,10 @@ fn project_depth_edit_waits_for_owner_binding_through_retry_drain() -> Result<()
     Ok(())
 }
 
+/// Concurrent offline depth facts merge alike in either exchange order:
+/// the union of immutable facts converges every replica.
+/// (Owner-authorized birth: a person-authorized birth by a non-owner is no
+/// longer reachable; the door revalidates the writer as the vault owner.)
 #[test]
 fn concurrent_signed_project_depth_facts_follow_loro_winner_in_either_exchange_order() -> Result<()>
 {
@@ -4966,35 +5040,64 @@ fn concurrent_signed_project_depth_facts_follow_loro_winner_in_either_exchange_o
             let base =
                 crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader)
                     .unwrap();
-            let owner_id = EntityId::now();
-            let writer = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
-            for vault in [&a, &b] {
-                vault.put_entity(
-                    &owner_id,
-                    crate::registry::ENTITY_TYPE_PERSON,
-                    TimeRange { start: 1, end: 1 },
-                    1,
-                    b"owner",
-                )?;
-            }
-            crate::subject_model::tests::authorization::root_owner(&a, writer, 0xBC)?;
-            let authority = a.export_signed_authority_history()?;
-            b.import_signed_authority_history(&authority)?;
+            let writer = crate::subject_model::tests::authorization::root_host_owner(&a, 0xBC)?;
             crate::workspace_roster::create_project_signed_for_test(
                 &a, project, root_a, leader, &writer, 1, 0xBC,
             )?;
-            crate::workspace_roster::create_project_signed_for_test(
-                &b, project, root_a, leader_b, &writer, 1, 0xBC,
+            // After A's birth: the export carries A's project-slip mint, so
+            // the birth's frontier verifies on B.
+            let authority = a.export_signed_authority_history()?;
+            crate::subject_model::tests::authorization::host_owner_writer(&b)?;
+            b.import_signed_authority_history(&authority)?;
+            // B takes A's birth instead of birthing: each birth mints its
+            // vault's own project slip, so two births would fork the birth
+            // frontier into two birth ids (a quarantined pair), while the
+            // seed world gave both replicas the same birth. The offline
+            // concurrency the test pins is the edits'.
+            let (birth_id, birth_bytes) =
+                crate::gate::project_depth::contributions_for_test(&a, project)?
+                    .into_iter()
+                    .find(|(_, bytes)| {
+                        matches!(
+                            crate::gate::project_depth::decode_contribution(bytes).ok(),
+                            Some(crate::gate::project_depth::ProjectDepthContribution::Birth(
+                                _
+                            ))
+                        )
+                    })
+                    .ok_or(Error::EntityNotFound)?;
+            b.with_write_txn(|txn| {
+                b.batch_in()
+                    .put_replicated(
+                        &birth_id,
+                        crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+                        TimeRange { start: 1, end: 1 },
+                        1,
+                        None,
+                        &birth_bytes,
+                    )
+                    .apply(txn)
+            })?;
+            b.put_project(
+                project,
+                &crate::workspace_roster::ProjectRecord::new(
+                    project,
+                    Some(root_a),
+                    root_a,
+                    leader_b,
+                )
+                .unwrap(),
+                1,
             )?;
-            crate::workspace_roster::set_project_depth_signed_for_test(
+            crate::subject_model::tests::authorization::set_project_depth_with_host(
                 &a, project, 2, &writer, 2, 0xBC,
             )?;
             if unequal {
-                crate::workspace_roster::set_project_depth_signed_for_test(
+                crate::subject_model::tests::authorization::set_project_depth_with_host(
                     &a, project, 6, &writer, 3, 0xBC,
                 )?;
             }
-            crate::workspace_roster::set_project_depth_signed_for_test(
+            crate::subject_model::tests::authorization::set_project_depth_with_host(
                 &b, project, 0, &writer, 2, 0xBC,
             )?;
             assert_eq!(
@@ -5091,13 +5194,7 @@ fn concurrent_signed_project_depth_facts_follow_loro_winner_in_either_exchange_o
                     .unwrap(),
                 1,
             )?;
-            fresh.put_entity(
-                &owner_id,
-                crate::registry::ENTITY_TYPE_PERSON,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"owner",
-            )?;
+            crate::subject_model::tests::authorization::host_owner_writer(&fresh)?;
             fresh.import_signed_authority_history(&authority)?;
             for _ in 0..2 {
                 forward_rematerialize(&fresh, &first, &Materializer::new(), &window)?;
@@ -5307,29 +5404,24 @@ fn pre_regrant_depth_edit_stays_refused_through_both_replay_doors() -> Result<()
     Ok(())
 }
 
+/// An edit that arrives before its predecessor survives the forward retry
+/// drain and applies once the predecessor lands.
+/// (Owner-authorized birth: a person-authorized birth by a non-owner is no
+/// longer reachable; the door revalidates the writer as the vault owner.)
 #[test]
 fn signed_project_edit_before_predecessor_survives_forward_retry_drain() -> Result<()> {
     let (_source_dir, source) = test_vault();
     let root = source.root_project()?;
     let leader = EntityId::from_hex(&source.project(root)?.unwrap().leader)?;
-    let person = EntityId::now();
-    source.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
-    let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
-    crate::subject_model::tests::authorization::root_owner(&source, writer, 0xC2)?;
+    let writer = crate::subject_model::tests::authorization::root_host_owner(&source, 0xC2)?;
     let project = EntityId::now();
     crate::workspace_roster::create_project_signed_for_test(
         &source, project, root, leader, &writer, 1, 0xC2,
     )?;
-    crate::workspace_roster::set_project_depth_signed_for_test(
+    crate::subject_model::tests::authorization::set_project_depth_with_host(
         &source, project, 2, &writer, 2, 0xC2,
     )?;
-    crate::workspace_roster::set_project_depth_signed_for_test(
+    crate::subject_model::tests::authorization::set_project_depth_with_host(
         &source, project, 12, &writer, 3, 0xC2,
     )?;
     let mut birth = None;
@@ -5370,13 +5462,7 @@ fn signed_project_edit_before_predecessor_survives_forward_retry_drain() -> Resu
         .unwrap(),
         1,
     )?;
-    target.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    crate::subject_model::tests::authorization::host_owner_writer(&target)?;
     target.import_signed_authority_history(&source.export_signed_authority_history()?)?;
     let window = WindowKey::new("2026-03");
     let stamp = window.start_timestamp().expect("window start") + 60;
@@ -5698,6 +5784,7 @@ fn foreign_and_unknown_world_tombstones_do_not_delete_or_poison_other_projects()
         crate::claim::ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     body.world = Some(world_b);
     vault.put_claim(&existing, &body, occurred, at)?;
     let window = LoadedWindow::new("owner", key, &vault, &materializer);
@@ -5839,6 +5926,7 @@ fn world_export_does_not_pick_up_a_shared_note_from_the_same_month() -> Result<(
         crate::claim::ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(&source, &mut body);
     body.world = Some(world);
     source.put_claim(&claim, &body, occurred, at)?;
     let world_key = WindowKey::for_world(at, world);

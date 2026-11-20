@@ -65,6 +65,9 @@ pub(crate) struct ApplyOpsGateMode {
     pub(super) owner_approval: Option<(EntityId, crate::consent::OwnerAuthoredWrite)>,
     /// Call-scoped Imported-source permit for one expression batch of the owner's archive restore.
     pub(super) owner_archive_restore: Option<OwnerArchiveRestorePermit>,
+    /// The same permit for one batch of that restore's edge provenance claims, bound to each
+    /// annotator whose claim the batch puts (REVIEW-9687 round 2 P1).
+    pub(super) owner_archive_restore_annotators: Option<(OwnerArchiveRestorePermit, Vec<EntityId>)>,
     /// The body file each ASSET put this batch stages as a manifest names,
     /// published before the batch (FIX 3677); consumed by that put.
     pub(super) asset_files: HashMap<EntityId, crate::store::AssetBodyFacts>,
@@ -109,6 +112,7 @@ impl ApplyOpsGateMode {
             owner_authored: None,
             owner_approval: None,
             owner_archive_restore: None,
+            owner_archive_restore_annotators: None,
             asset_files: HashMap::new(),
             asset_file_bodies: HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
@@ -177,6 +181,15 @@ impl ApplyOpsGateMode {
         self
     }
 
+    pub(super) fn with_owner_archive_restore_for_annotators(
+        mut self,
+        permit: &OwnerArchiveRestorePermit,
+        annotators: Vec<EntityId>,
+    ) -> Self {
+        self.owner_archive_restore_annotators = Some((permit.clone(), annotators));
+        self
+    }
+
     pub(crate) fn with_refinement_admission(
         mut self,
         proof: crate::skill_hub::RefinementAdmissionProof,
@@ -215,7 +228,7 @@ impl ApplyOpsGateMode {
     }
 
     /// Binds each bound raw CLAIM put to its caller's envelope (FIX 8118).
-    pub(super) fn with_caller_envelopes(
+    pub(crate) fn with_caller_envelopes(
         mut self,
         envelopes: HashMap<EntityId, crate::WriteEnvelope>,
     ) -> Self {

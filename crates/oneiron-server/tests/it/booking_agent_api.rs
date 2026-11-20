@@ -115,6 +115,7 @@ fn event_type_config(key: &str, host: EntityId, calendar: EntityId) -> EventType
         booking_window_secs: 30 * 86_400,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: host,
@@ -131,6 +132,7 @@ fn event_type_config(key: &str, host: EntityId, calendar: EntityId) -> EventType
         }],
         flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 

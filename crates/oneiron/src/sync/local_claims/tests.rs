@@ -83,6 +83,7 @@ impl Fixture {
                 title: "local-only-esign-egress-sentinel".into(),
                 sequential: false,
                 expires_at: now + 1000,
+                token_expires_at: None,
                 items: vec![EsignItem {
                     artifact_ref: artifact.to_hex(),
                     original_version: 1,
@@ -96,10 +97,12 @@ impl Fixture {
                     expires_at: now + 1000,
                     principal_ref: None,
                     automated: false,
+                    natural_person: None,
                 }],
                 fields: Vec::new(),
                 full_trail_appendix: true,
                 lifecycle: None,
+                project: None,
                 commitments: Vec::new(),
             },
             EsignAuditActor {
@@ -126,6 +129,7 @@ impl Fixture {
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
         )?;
+        crate::test_util::stamp_vault_default_facet(&vault, &mut body);
         body.source = Some(ClaimSource::Observed);
         vault.put_claim(&ordinary, &body, occurred, now)?;
         let ordinary_raw = vault.get_raw(&ordinary)?.unwrap();
@@ -360,6 +364,7 @@ fn esign_event_selector_excludes_injected_aliases_and_stale_local_identity() -> 
                 end: f.now,
             },
             f.now,
+            None,
             &encode_federation_grant_body(&grant)?,
         )
         .commit()?;

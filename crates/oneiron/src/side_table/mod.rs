@@ -27,14 +27,14 @@ use heed::{RoTxn, RwTxn};
 use crate::error::{Error, Result, SideTableRowProblem, StoreError};
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
 use crate::secret_record::CustodyWrite;
-use crate::store::ManifestDbs;
+use crate::store::{ManifestDbs, Store};
 
 pub(crate) use codec::{
     CodecError, LegacyCompact, LegacyJson, Named, Raw, RawValue, SideCodec, VersionedNamed,
 };
 pub(crate) use decls::*;
 pub(crate) use erased::{Erased, ErasedForm};
-pub(crate) use key::{FixedSideKey, HexId, SideKey};
+pub(crate) use key::{FixedSideKey, HexId, NulFreeText, SideKey};
 pub(crate) use row_classes::{RestoreClass, StorageTier};
 
 /// Where a side table's rows live: the two side databases of a write target.
@@ -51,9 +51,25 @@ pub(crate) trait SideTableDbs {
 
     /// The custody door a mask on write mints through (OF-067): a vault's. A
     /// bare store, a session view or an open gate holds none, so a hit the
-    /// side-row wall finds in a row written there refuses the write.
+    /// side-row wall finds in a row written there that needs a new custody
+    /// record refuses the write.
     fn side_custody(&self) -> Option<CustodyWrite<'_>> {
         None
+    }
+
+    /// The store whose kept values and known values the side-row wall plans
+    /// a row with: the custody door's, or a room's base, which a room only
+    /// reads (FIX 2329). A value that custody holds takes its handle; with
+    /// `None`, no value does.
+    fn side_decides(&self) -> Option<&Store> {
+        self.side_custody().map(|door| door.store)
+    }
+
+    /// Whether this target is an off-record room's view, whose rows stage
+    /// into the room's overlay and evaporate at its close (FIX 2329). The
+    /// side-row wall's refusal of a fresh secret there names the remedy.
+    fn side_off_record(&self) -> bool {
+        false
     }
 }
 
@@ -65,11 +81,20 @@ impl<T: ManifestDbs> SideTableDbs for T {
     fn side_sync_state_opt(&self) -> Option<&OverlayStrDb> {
         Some(self.sync_state())
     }
+
+    fn side_decides(&self) -> Option<&Store> {
+        self.room_base()
+    }
+
+    fn side_off_record(&self) -> bool {
+        self.room_base().is_some()
+    }
 }
 
 /// One routed transaction's side databases: the vault's own, or an off-record session's view
 /// composed over them, which stages its writes into the session's overlay. Only the vault's own
-/// holds the custody door, so an off-record view refuses a secret the side-row wall would mint.
+/// holds the custody door, so an off-record view refuses a secret the side-row wall would mint;
+/// a value base custody holds takes its handle there (FIX 2329).
 #[derive(Clone, Copy)]
 pub(crate) enum RoutedDbs<'v> {
     Base(&'v crate::Vault),
@@ -95,6 +120,20 @@ impl SideTableDbs for RoutedDbs<'_> {
         match self {
             Self::Base(vault) => vault.side_custody(),
             Self::Session(_) => None,
+        }
+    }
+
+    fn side_decides(&self) -> Option<&Store> {
+        match self {
+            Self::Base(vault) => vault.side_decides(),
+            Self::Session(view) => view.side_decides(),
+        }
+    }
+
+    fn side_off_record(&self) -> bool {
+        match self {
+            Self::Base(_) => false,
+            Self::Session(view) => view.side_off_record(),
         }
     }
 }
@@ -280,6 +319,38 @@ impl SideTableDecl {
             .map_or(self.tier, |(_, tier)| *tier)
     }
 
+    /// Every stored row of this declaration as raw bytes, in key order: the key suffix after the
+    /// declared prefix and the stored value, undecoded. A `SyncState` key's text becomes its
+    /// bytes. Storage errors fail the scan.
+    pub(crate) fn iter_raw<'txn>(
+        &'static self,
+        dbs: &impl SideTableDbs,
+        txn: &'txn RoTxn<'_>,
+    ) -> Result<RawRows<'txn>> {
+        let prefix_len = self.prefix.len();
+        Ok(match self.db {
+            SideDb::VaultMeta => Box::new(
+                dbs.side_vault_meta()
+                    .prefix_iter(txn, self.prefix)?
+                    .map(move |row| {
+                        row.map(|(key, value)| (key[prefix_len..].to_vec(), value.into_owned()))
+                    }),
+            ),
+            SideDb::SyncState => {
+                let prefix = self.prefix_str()?;
+                Box::new(
+                    dbs.side_sync_state()?
+                        .prefix_iter(txn, prefix)?
+                        .map(move |row| {
+                            row.map(|(key, value)| {
+                                (key.as_bytes()[prefix_len..].to_vec(), value.into_owned())
+                            })
+                        }),
+                )
+            }
+        })
+    }
+
     /// The declared prefix as the `sync_state` key spelling.
     fn prefix_str(&self) -> Result<&'static str> {
         std::str::from_utf8(self.prefix)
@@ -407,8 +478,9 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         })
     }
 
-    /// Writes bytes the codec would never produce, for fixtures that plant a damaged row.
-    #[cfg(any(test, feature = "test-support"))]
+    /// Writes bytes the codec would never produce, for fixtures that plant a damaged row. The
+    /// test cfg builds it too: the cfg-only door `test_doors::call_receipt_damage` calls it.
+    #[cfg(any(test, feature = "test-support", oneiron_test_support))]
     pub(crate) fn put_undecodable(
         &self,
         dbs: &impl SideTableDbs,
@@ -488,6 +560,25 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         self.put_raw(dbs, txn, &self.key_bytes(key), &bytes)
     }
 
+    /// Stores canonical archive bytes under the owner restore permit, without side-row admission.
+    pub(crate) fn put_archived_as_stored_in_txn(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut heed::RwTxn<'_>,
+        _permit: &crate::batch::export::OwnerArchiveRestorePermit,
+        key: &K,
+        source_value: &[u8],
+    ) -> Result<()> {
+        let value = C::decode(source_value)
+            .map_err(|_| self.decl.row_error(SideTableRowProblem::Undecodable))?;
+        let encoded =
+            C::encode(&value).map_err(|_| self.decl.row_error(SideTableRowProblem::Unencodable))?;
+        if encoded != source_value {
+            return Err(self.decl.row_error(SideTableRowProblem::Undecodable));
+        }
+        self.write_raw(dbs, txn, &self.key_bytes(key), source_value)
+    }
+
     /// [`Self::put`], returning the bytes the row holds now, as the side-row wall stored them,
     /// for a writer that keeps its own copy of what it wrote.
     pub(crate) fn put_as_stored(
@@ -526,6 +617,23 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
             *value = self.decode_value(&masked)?;
         }
         Ok(())
+    }
+
+    /// Reads `projection` as the side-row wall will store it, writing
+    /// nothing (FIX FENCE-ERASED-FORM-THROUGH-WALL): the bytes of a row of
+    /// this table with the parts the wall does not read taken out, and
+    /// `decodes` the table's reading of a masked copy with those parts put
+    /// back. `None` when the wall changes nothing.
+    pub(crate) fn admit_projection(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut RwTxn<'_>,
+        key: &K,
+        projection: &[u8],
+        decodes: impl Fn(&[u8]) -> bool,
+    ) -> Result<Option<Vec<u8>>> {
+        self.decl
+            .admit(dbs, txn, &self.key_bytes(key), projection, decodes)
     }
 
     /// Deletes one row; `true` when a row was present.

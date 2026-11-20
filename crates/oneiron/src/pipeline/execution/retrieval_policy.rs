@@ -114,10 +114,8 @@ impl PipelineBuilder<'_> {
             let breakdown = telemetry_score_breakdown(
                 &attempt.scores,
                 &attempt.signal_components,
-                attempt
-                    .rerank_merged_components
-                    .as_ref()
-                    .unwrap_or(&attempt.blend_components),
+                &attempt.blend_components,
+                attempt.rerank_components.as_ref(),
                 &attempt.access_factors,
             );
             let mut state = RetrievalState::one_shot(&breakdown);
