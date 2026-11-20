@@ -139,6 +139,7 @@ mod tests {
             "X".repeat(middle),
             "b".repeat(side)
         );
+        // testkit-lint: allow(wall-clock) the elapsed time is the budget under test
         let started = Instant::now();
         let result = set_text(&field, &new);
         let elapsed = started.elapsed();
@@ -200,6 +201,7 @@ mod tests {
             .get_cursor(old.chars().count() - 1, Side::Middle)
             .unwrap();
         let new = "\u{e9}dited tail \u{2713}";
+        // testkit-lint: allow(wall-clock) the elapsed time is the budget under test
         let started = Instant::now();
         set_text_or_replace_span(&field, new).unwrap();
         doc.commit();

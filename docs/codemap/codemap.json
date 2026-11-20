@@ -293,7 +293,7 @@
      "path": "src/actor_claims/candidate.rs",
      "purpose": "The resident-dreaming candidate inlet (OF-490): a resident's own dreaming proposes craft notes about itself…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 2,
       "re-export": 1,
@@ -373,7 +373,7 @@
      "path": "src/actor_claims/mod.rs",
      "purpose": "ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 8
      }
     },
@@ -17154,7 +17154,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "mod": 13,
       "re-export": 14
      }
@@ -17621,7 +17621,7 @@
      "path": "src/claim/scoped_read/mod.rs",
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 18,
       "struct": 1
      }
@@ -19935,14 +19935,24 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/memory_verbs.rs",
      "purpose": "The four durable memory writes, search, and the off-record policy that refuses them",
      "surface": {
       "const": 1,
-      "crate-vis": 7
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/memory_verbs/claim_put.rs",
+     "purpose": "The claim put: code mode asks Proposed; a caller's live run asks Auto first, and the checker its door lent…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -24407,7 +24417,7 @@
      "path": "src/compaction/self_writer.rs",
      "purpose": "The agent as its own compaction writer (FIX 4465, owner 10-19: \"the toggle sets WHO writes, not which model\")",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 5,
       "re-export": 2,
@@ -28472,7 +28482,7 @@
      "path": "src/conversation_dag/policy.rs",
      "purpose": "Actor-bound write-policy preflight for the append operation, and the caller binding of its two public doors…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -31551,7 +31561,7 @@
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch; the typed pack that decides which listed…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 2,
       "struct": 1
      }
@@ -31874,7 +31884,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 50,
+      "crate-vis": 51,
       "mod": 5,
       "re-export": 27
      }
@@ -37070,6 +37080,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/frame_outline.rs",
+     "purpose": "Builds an awaited future in its own stack frame and boxes it",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "WakeGrain"
      ],
@@ -37099,7 +37119,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "mod": 1,
       "re-export": 15
      }
@@ -38847,7 +38867,7 @@
      "path": "src/edit_roundtrip/deck_create.rs",
      "purpose": "Deck creation from an approved outline (ARCH-0077, \"Create: an approved argument, then a design\")",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 7,
       "re-export": 1
      }
@@ -62812,7 +62832,7 @@
      "path": "src/origin/secret_projection/claims.rs",
      "purpose": "A masked Git copy's record (FIX 7608 slice 2b-i, CALL M): value-free `repo.secret_projection` claims at…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -64700,7 +64720,7 @@
      "path": "src/outbound_consent/connector_call_consent.rs",
      "purpose": "FIX 990: the owner's `always ask` setting on an admitted connector call",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -64956,7 +64976,7 @@
      "path": "src/outbound_consent/mod.rs",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 1,
       "re-export": 15
      }
@@ -87627,7 +87647,7 @@
      "path": "src/sync/federation_burst/erase.rs",
      "purpose": "Retained copies an entity's erase owns (FIX 7998)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -88262,6 +88282,16 @@
      "surface": {
       "crate-vis": 3,
       "fn": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/manager/follow_refusals.rs",
+     "purpose": "The followed windows the home refused on the manager-owned connection lane…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -95502,6 +95532,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/hex_input_policy.rs",
+     "purpose": "Doors for `tests/hex_input_policy.rs` (UC-07 PR 6, HEX-CASE-POLICY = A): whether six hex spellings read…",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/hex_sign_digit.rs",
+     "purpose": "Doors for `tests/hex_sign_digit.rs` (UC-07 PR 7 sign digit): thin calls to the four crate-private hex…",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ImportedMessageRows"
      ],
@@ -96009,7 +96059,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 336,
+      "mod": 338,
       "re-export": 2
      }
     },
@@ -100262,6 +100312,7 @@
      "path": "src/verbs/fanout_launch.rs",
      "purpose": "The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out…",
      "surface": {
+      "crate-vis": 1,
       "fn": 7,
       "re-export": 3
      }
@@ -109316,6 +109367,22 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/hex_input_policy.rs",
+     "purpose": "UC-07 PR 6, HEX-CASE-POLICY = A: stored and wire forms read lowercase-only; typed or foreign input reads…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/hex_sign_digit.rs",
+     "purpose": "UC-07 PR 7, HEX-PR6-SIGN-SITES = B: a `+` hex digit is refused at the 10 decoders reachable from this crate",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -111988,7 +112055,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/plan_mode_subsession.rs",
@@ -115484,7 +115551,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 274,
+     "files": 275,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -115778,7 +115845,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 76,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116709,7 +116776,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 437,
+     "files": 438,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116765,7 +116832,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 345,
+     "files": 347,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116947,10 +117014,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 302,
+   "over_bar": 301,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8241,
-   "test_files": 1989
+   "source_files": 8246,
+   "test_files": 1991
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -132698,6 +132765,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/host_every_verb.rs",
+     "purpose": "Every verb of the image organ answers as its own process behind the organ host, under the organ's syscall…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -132770,7 +132845,7 @@
    "over_bar": 1,
    "purpose": "The image organ (ART-1, the first slice): still PNG, JPEG and WebP images as a native `image` kind, behind…",
    "source_files": 8,
-   "test_files": 6
+   "test_files": 7
   },
   "oneiron-keystore": {
    "files": [
@@ -136429,6 +136504,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/bin/oneiron-organ-probe/escape_calls.rs",
+     "purpose": "The probe's single calls that check an organ's sandbox (Linux): each is made the way an organ reaching past…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -136862,13 +136947,33 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sandbox/syscall_filter.rs",
-     "purpose": "The syscall filter on Linux (census L4-09, ARCH-0075 \"Syscalls\"): a seccomp deny-list that every organ…",
+     "purpose": "The syscall filter on Linux (ARCH-0075 \"Syscalls\", FIX [ORGAN-SECCOMP-ALLOW-LIST]): a seccomp allow-list…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sandbox/syscall_filter/lists.rs",
+     "purpose": "The calls each organ's allow-list names (FIX [ORGAN-SECCOMP-ALLOW-LIST])",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sandbox/syscall_trace.rs",
+     "purpose": "The syscall recorder, for a trace run only (`--cfg oneiron_test_support`, never a cargo feature; FIX…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -137136,11 +137241,11 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/organ_syscall_filter.rs",
-     "purpose": "The organ's syscall filter (census L4-09, ARCH-0075 \"Syscalls\"): an organ that calls ptrace dies by the…",
+     "purpose": "The organ's syscall filter (census L4-09, ARCH-0075 \"Syscalls\", FIX [ORGAN-SECCOMP-ALLOW-LIST]): an organ…",
      "surface": {}
     }
    ],
@@ -137279,7 +137384,7 @@
      "purpose": "Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on…"
     },
     "sandbox": {
-     "files": 6,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -137316,7 +137421,7 @@
    },
    "over_bar": 3,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 52,
+   "source_files": 55,
    "test_files": 9
   },
   "oneiron-organ-protocol": {
@@ -140473,6 +140578,7 @@
      "path": "src/compaction/conversation.rs",
      "purpose": "Moved from `crates/oneiron/src/compaction/conversation.rs` (lib split R2: record types below the lib)",
      "surface": {
+      "fn": 1,
       "struct": 2
      }
     },
@@ -140542,7 +140648,7 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 3,
+      "fn": 2,
       "struct": 4
      }
     },
@@ -142107,8 +142213,7 @@
      "path": "src/dreamer_runner/maintenance/compaction_check/conversation.rs",
      "purpose": "Moved from `crates/oneiron/src/dreamer_runner/maintenance/compaction_check/conversation.rs` (lib split R2…",
      "surface": {
-      "const": 1,
-      "fn": 1
+      "const": 1
      }
     },
     {
@@ -163766,7 +163871,7 @@
      "path": "src/builtin_host.rs",
      "purpose": "The served host's side of the built-in connector packs (OF-519): the connection checks only a served host…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -163846,7 +163951,7 @@
      "path": "src/builtin_host/webhooks.rs",
      "purpose": "The provider webhooks of the served built-in channels (OF-519)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -167645,17 +167750,17 @@
      "path": "src/embedder/serve.rs",
      "purpose": "`oneiron-server embedder serve`: the local provider over an OpenAI-compatible `/v1/embeddings`, for several…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/embedder/serve/accounts.rs",
      "purpose": "Each account's own bearer key for the shared embedder (CROSS-ARCH-0019 #dm-xaccount-embedder): one server…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -168603,7 +168708,7 @@
      "path": "src/linear_host.rs",
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -168651,7 +168756,7 @@
      "path": "src/linear_host/webhook.rs",
      "purpose": "`POST /v1/hooks/linear`: the signed Linear webhook door (OF-427 C1–C4, C11)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -168991,7 +169096,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/livequery/residence/tombstone_tests.rs",
@@ -169274,7 +169379,7 @@
      "purpose": "Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "re-export": 1,
       "struct": 1
@@ -169480,7 +169585,7 @@
      "path": "src/managed/mod.rs",
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 5,
       "re-export": 10
      }
@@ -173219,7 +173324,7 @@
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -173239,7 +173344,7 @@
      "path": "src/owner/backup/custody.rs",
      "purpose": "Custody heads beside the backups (KS-4A1/KS-4A2, FIX 5685)",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -173249,7 +173354,7 @@
      "path": "src/owner/backup/custody/anchor_client.rs",
      "purpose": "The HTTP custody anchor (FIX 5788, CALLS CUSTODY_ANCHOR_URL): a host whose own disks would roll back with…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -175701,6 +175806,26 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/hex_input_policy.rs",
+     "purpose": "Doors for `tests/hex_input_policy_server.rs` (UC-07 PR 6, HEX-CASE-POLICY = A): whether two hex spellings…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/hex_sign_digit.rs",
+     "purpose": "Doors for `tests/hex_sign_digit_server.rs` (UC-07 PR 7 sign digit): thin calls to the three crate-private…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/history_import.rs",
      "purpose": "Doors for `tests/history_import_review_id_same_second.rs` ([HISTORY-IMPORT-REVIEW-ID-SAME-SECOND]): the…",
      "surface": {
@@ -175917,7 +176042,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 69
+      "mod": 71
      }
     },
     {
@@ -177804,6 +177929,22 @@
      "notable": [],
      "path": "tests/graduation_demote_holder_door.rs",
      "purpose": "A policy holder demotes a graduated ramp scope over the host door (census L7-33; Engine RULING…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/hex_input_policy_server.rs",
+     "purpose": "UC-07 PR 6, HEX-CASE-POLICY = A: stored and wire forms read lowercase-only; typed or foreign input reads…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/hex_sign_digit_server.rs",
+     "purpose": "UC-07 PR 7, HEX-PR6-SIGN-SITES = B: a `+` hex digit is refused at the 3 server decoders, reached through…",
      "surface": {}
     },
     {
@@ -180325,7 +180466,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 72,
+     "files": 74,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -180397,8 +180538,8 @@
    },
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2042,
-   "test_files": 506
+   "source_files": 2044,
+   "test_files": 508
   },
   "oneiron-setting-contract": {
    "files": [
@@ -191883,6 +192024,7 @@
       "DreamerPassFailure",
       "DreamerPassReport",
       "PassBudget",
+      "PassStack",
       "QueueRow",
       "WakeKind"
      ],
@@ -191890,8 +192032,8 @@
      "purpose": "One in-process Dreamer wake pass on the kit's fake clock, its model calls answered by a [`ScriptedBackend`]…",
      "surface": {
       "const": 3,
-      "enum": 2,
-      "fn": 15,
+      "enum": 3,
+      "fn": 16,
       "struct": 6
      }
     },
@@ -191962,7 +192104,7 @@
      "purpose": "The golden day: one scripted day on a fresh vault, and the normalised dump of what it leaves behind (Fable's…",
      "surface": {
       "const": 7,
-      "fn": 8,
+      "fn": 9,
       "mod": 2,
       "re-export": 2,
       "struct": 2
@@ -198119,7 +198261,7 @@
      "path": "src/dreamer_runner/owner_doors.rs",
      "purpose": "Moved from `crates/oneiron/src/dreamer_runner/owner_doors.rs` (lib split W2: wire types below the lib)",
      "surface": {
-      "fn": 2,
+      "fn": 1,
       "struct": 10
      }
     },

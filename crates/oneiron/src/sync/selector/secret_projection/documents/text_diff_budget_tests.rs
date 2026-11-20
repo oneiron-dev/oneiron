@@ -15,6 +15,7 @@ fn bringing_a_large_lineage_to_an_unrelated_copy_is_refused_within_the_budget() 
     lineage.commit();
     let held_version = lineage.oplog_vv();
     let copy = "\u{e9}dited tail \u{2713}";
+    // testkit-lint: allow(wall-clock) the elapsed time is the budget under test
     let started = Instant::now();
     let result = bring_current(&lineage, copy, || Ok(42_u64));
     let elapsed = started.elapsed();

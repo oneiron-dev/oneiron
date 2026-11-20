@@ -15,9 +15,7 @@ mod device_burst_home;
 #[path = "support/engine_stack.rs"]
 mod engine_stack;
 
-use device_burst_home::{
-    BURST_ROWS, Device, Home, WINDOW, eventually, held_answer, operations, send_update,
-};
+use device_burst_home::{BURST_ROWS, Device, Home, WINDOW, held_answer, operations, send_update};
 use engine_stack::run_on_engine_stack;
 use oneiron::sync::WindowKey;
 use oneiron::sync::federation_burst::{
@@ -40,7 +38,8 @@ async fn burst_held_and_trickle_lands() {
     // One trickle update at the device's baseline lands.
     send_update(&mut socket, &trickle).await;
     assert!(
-        eventually(|| home.held_rows(&trickle_rows) == 1).await,
+        home.until_committed(|| home.held_rows(&trickle_rows) == 1)
+            .await,
         "the trickle lands at the home"
     );
 

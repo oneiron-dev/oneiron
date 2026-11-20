@@ -690,6 +690,7 @@ mod text_diff_budget_tests {
             text: new.to_string(),
         };
         let mut minted: Vec<String> = Vec::new();
+        // testkit-lint: allow(wall-clock) the elapsed time is the budget under test
         let started = Instant::now();
         let result = apply(&doc, &op, &mut minted);
         let elapsed = started.elapsed();
@@ -734,6 +735,7 @@ mod text_diff_budget_tests {
             text: new.to_string(),
         };
         let mut minted: Vec<String> = Vec::new();
+        // testkit-lint: allow(wall-clock) the elapsed time is the budget under test
         let started = Instant::now();
         let result = apply(&doc, &op, &mut minted);
         let elapsed = started.elapsed();

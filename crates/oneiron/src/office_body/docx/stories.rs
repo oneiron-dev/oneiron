@@ -357,6 +357,7 @@ mod text_diff_budget_tests {
             }],
         )
         .unwrap();
+        // testkit-lint: allow(wall-clock) the elapsed time is the budget under test
         let started = Instant::now();
         let result = set_text(&doc, &scope, "p1", new);
         let elapsed = started.elapsed();

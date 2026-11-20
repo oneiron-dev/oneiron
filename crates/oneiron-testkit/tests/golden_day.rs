@@ -16,7 +16,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use oneiron_testkit::dreamer::{print_seen, scripted_backend};
+use oneiron_testkit::dreamer::{PassStack, print_seen, scripted_backend};
 use oneiron_testkit::golden_day::{self, GOLDEN_FILE, GoldenDayRun, MEASURED, Normaliser, render};
 use serde_json::{Value, json};
 
@@ -25,6 +25,9 @@ const WRITE_GOLDEN: &str = "ONEIRON_TESTKIT_GOLDEN";
 
 /// How many differing lines a golden mismatch prints before the new form.
 const DIFF_LINES: usize = 60;
+
+/// The stack a libtest thread gets when `RUST_MIN_STACK` is unset.
+const LIBTEST_THREAD_STACK_BYTES: usize = 2 * 1024 * 1024;
 
 /// Runs the day once on a fresh vault: the run and its golden form.
 fn run_day(label: &str) -> (GoldenDayRun, Value) {
@@ -88,6 +91,30 @@ fn a_dreamer_pass_that_leaves_its_script_ends_the_day_with_the_unscripted_call()
     );
     let finish = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.finish()));
     assert!(finish.is_err(), "finish() passed a script the pass left");
+}
+
+/// The whole day, its Dreamer pass included, fits a default libtest thread in
+/// a dev build: polled on the calling thread's own stack, it completes on a
+/// 2 MiB thread. A dev-build turn wake overflowed this stack inside its micro
+/// consolidation until the engine boxed its largest pass futures.
+#[test]
+fn the_whole_golden_day_runs_on_a_default_two_mib_thread_stack() {
+    let day = std::thread::Builder::new()
+        .name("golden-day-2mib".to_owned())
+        .stack_size(LIBTEST_THREAD_STACK_BYTES)
+        .spawn(|| {
+            let backend = golden_day::backend();
+            let run = golden_day::run_on(&backend, PassStack::CallingThread)
+                .map(|_| ())
+                .map_err(|error| error.to_string());
+            backend.finish();
+            run
+        })
+        .unwrap_or_else(|error| panic!("the 2 MiB thread did not start: {error}"));
+    let run = day
+        .join()
+        .unwrap_or_else(|_| panic!("the day panicked on its 2 MiB thread"));
+    run.unwrap_or_else(|error| panic!("{error}"));
 }
 
 #[test]
