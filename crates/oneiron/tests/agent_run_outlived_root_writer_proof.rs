@@ -26,6 +26,13 @@
 //! memory cut away, and that machine's proof covers it. The reaper takes it
 //! here, so the child's try is queued with its parent gone.
 //!
+//! Its lease (REVIEW-9863): once the TASK is rewritten unproven, the claim
+//! refuses the queued try, so no executor here runs it. A reaper pass that
+//! still renewed this machine's lease for it, or took an expired lease for
+//! it as a queued try to keep, would hold the run on a machine that never
+//! runs it. The door `rewrite_peer_agent_run_lease` lands the lease writes a
+//! peer's sync brings.
+//!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features --test agent_run_outlived_root_writer_proof`.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
@@ -52,7 +59,7 @@ use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::agent_run_handover::{
     PeerWriter, agent_run_task_writer, put_peer_outlived_root_run_task, queue_payload,
-    rewrite_peer_frozen_parent_bound, with_parent_attempt,
+    rewrite_peer_agent_run_lease, rewrite_peer_frozen_parent_bound, with_parent_attempt,
 };
 use oneiron::{AttemptId, EntityId, ErrorKind, TimeRange, Vault, VaultConfig};
 
@@ -293,6 +300,75 @@ fn an_outlived_root_whose_task_a_peer_rewrote_unproven_neither_resolves_nor_runs
     assert!(
         claimed.is_none(),
         "the try of an unproven outlived root does not run here; on main it is claimed"
+    );
+    let row = AttemptQueue::new(&fx.vault)
+        .get(fx.child)?
+        .ok_or("the try stays in the queue")?;
+    assert_eq!(row.state, queued, "the try stays queued");
+    Ok(())
+}
+
+/// Rewrites the fixture's run TASK as a peer that holds no proof would (no
+/// frozen bound) and answers the state of the child's try, still waiting
+/// for a claim here.
+fn rewrite_unproven(fx: &Fixture) -> TestResult<AttemptState> {
+    rewrite_peer_frozen_parent_bound(&fx.vault, fx.child, None)?;
+    if agent_run_task_writer(&fx.vault, fx.child)?.is_some() {
+        return Err("FIXTURE: no proof counts on the rewritten TASK".into());
+    }
+    let state = AttemptQueue::new(&fx.vault)
+        .get(fx.child)?
+        .ok_or("FIXTURE: the taken child's try is queued here")?
+        .state;
+    if !matches!(state, AttemptState::Queued | AttemptState::Scheduled) {
+        return Err(format!("FIXTURE: the taken child's try waits for a claim: {state:?}").into());
+    }
+    Ok(state)
+}
+
+#[test]
+fn the_reaper_renews_no_lease_for_the_queued_try_of_an_unproven_outlived_root() -> TestResult {
+    let (fx, _dir) = fixture()?;
+    let queued = rewrite_unproven(&fx)?;
+    // This machine's own lease from the take, with less than half a hold
+    // left: a pass renews it while a try of the run that runs here waits.
+    rewrite_peer_agent_run_lease(
+        &fx.vault,
+        fx.child,
+        None,
+        fx.vault.now_recorded_at().saturating_add(60),
+    )?;
+    let reap = fx
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)?;
+    assert_eq!(
+        (reap.renewed, reap.taken),
+        (0, 0),
+        "the claim refuses the queued try of an unproven outlived root, so it holds the run no \
+         lease here; with the claim gate alone the reaper renews it at every pass"
+    );
+    let row = AttemptQueue::new(&fx.vault)
+        .get(fx.child)?
+        .ok_or("the try stays in the queue")?;
+    assert_eq!(row.state, queued, "the try stays queued");
+    Ok(())
+}
+
+#[test]
+fn no_take_keeps_the_queued_try_of_an_unproven_outlived_root() -> TestResult {
+    let (fx, _dir) = fixture()?;
+    let queued = rewrite_unproven(&fx)?;
+    // The owner's other machine took the run back, and its lease lapsed long
+    // ago, while the try this machine queued for the run still waits here.
+    rewrite_peer_agent_run_lease(&fx.vault, fx.child, Some(PEER_NODE), 0)?;
+    let reap = fx
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)?;
+    assert_eq!(
+        (reap.taken, reap.waiting),
+        (0, 1),
+        "an expired lease does not move here for a queued try the claim refuses: the run waits; \
+         with the claim gate alone the take keeps that try and moves the lease here"
     );
     let row = AttemptQueue::new(&fx.vault)
         .get(fx.child)?

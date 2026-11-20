@@ -3,16 +3,17 @@
 //! AGENT-RUN-OUTLIVED-ROOT-BOUND-FROM-REPLICATED-TASK): the run TASK a peer
 //! machine syncs for a run it holds, a root or a child that outlived its
 //! root, with or without a writer proof; that TASK's frozen parent bound
-//! rewritten by a peer that holds no proof; a dispatch payload with fields
-//! forged or its spawning parent set; and the machine whose writer proof
-//! counts on a run TASK here.
+//! rewritten by a peer that holds no proof; its executor lease as a peer's
+//! sync lands it (REVIEW-9863); a dispatch payload with fields forged or its
+//! spawning parent set; and the machine whose writer proof counts on a run
+//! TASK here.
 
 use ed25519_dalek::SigningKey;
 
 use crate::agent_dispatch::{
     AgentDispatchInput, decode_agent_dispatch_input, encode_agent_dispatch_input,
     proven_agent_run_task_writer_in, put_peer_agent_run_task_in_txn,
-    rewrite_peer_agent_run_task_parent_context_in_txn,
+    rewrite_peer_agent_run_task_lease_in_txn, rewrite_peer_agent_run_task_parent_context_in_txn,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::context_projection::ResolvedContextProjection;
@@ -155,6 +156,27 @@ pub fn rewrite_peer_frozen_parent_bound(
         attempt,
         parent_context.cloned(),
     )?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+/// Rewrites the executor lease on the run TASK of the try `attempt` in one
+/// whole-row write, as the sync of a peer's lease write lands it: the hold
+/// ends at `held_until`, held by the machine of client id `node_id` (`None`:
+/// the holder stays). Every other field, the writer proof included, stays as
+/// stored.
+///
+/// # Errors
+///
+/// As [`rewrite_peer_frozen_parent_bound`].
+pub fn rewrite_peer_agent_run_lease(
+    vault: &Vault,
+    attempt: AttemptId,
+    node_id: Option<u64>,
+    held_until: u64,
+) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    rewrite_peer_agent_run_task_lease_in_txn(vault, &mut wtxn, attempt, node_id, held_until)?;
     wtxn.commit()?;
     Ok(())
 }

@@ -111,7 +111,7 @@ pub use self::run_task::{
 #[cfg(oneiron_test_support)]
 pub(crate) use self::run_task::{
     proven_agent_run_task_writer_in, put_peer_agent_run_task_in_txn,
-    rewrite_peer_agent_run_task_parent_context_in_txn,
+    rewrite_peer_agent_run_task_lease_in_txn, rewrite_peer_agent_run_task_parent_context_in_txn,
 };
 mod run_writer_proof;
 mod scope;

@@ -1505,14 +1505,54 @@ pub(crate) fn rewrite_peer_agent_run_task_parent_context_in_txn(
     attempt: AttemptId,
     parent_context: Option<ResolvedContextProjection>,
 ) -> Result<()> {
+    rewrite_peer_agent_run_task_row_in_txn(vault, wtxn, attempt, |body| {
+        body.parent_context = parent_context.map(FrozenContextBound::of);
+        body.writer_proof = None;
+    })
+}
+
+/// Test support (`oneiron_test_support`; REVIEW-9863): rewrites the
+/// executor lease on the run TASK of the try `attempt` in `wtxn`, its whole
+/// row in one write, as the sync of a peer's lease write lands it: the hold
+/// ends at `held_until`, held by the machine of client id `node_id` (`None`:
+/// the holder stays). Every other field, the writer proof included, stays as
+/// stored: the lease is no frozen field.
+///
+/// # Errors
+///
+/// As [`rewrite_peer_agent_run_task_parent_context_in_txn`].
+#[cfg(oneiron_test_support)]
+pub(crate) fn rewrite_peer_agent_run_task_lease_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    node_id: Option<u64>,
+    held_until: u64,
+) -> Result<()> {
+    rewrite_peer_agent_run_task_row_in_txn(vault, wtxn, attempt, |body| {
+        if let Some(node_id) = node_id {
+            body.executor.node_id = node_id;
+        }
+        body.executor.held_until = held_until;
+    })
+}
+
+/// The whole-row write of the run TASK of the try `attempt` in `wtxn`, as a
+/// peer's sync lands it, with `edit` applied to its stored body.
+#[cfg(oneiron_test_support)]
+fn rewrite_peer_agent_run_task_row_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    edit: impl FnOnce(&mut AgentRunTaskBody),
+) -> Result<()> {
     let task_ref = agent_run_task_id(attempt)?;
     let raw = vault
         .store
         .port_entity_record(&*wtxn, &task_ref)?
         .ok_or(Error::EntityNotFound)?;
     let mut body = decode_agent_run_task_body(raw.entity_type, &raw.body)?;
-    body.parent_context = parent_context.map(FrozenContextBound::of);
-    body.writer_proof = None;
+    edit(&mut body);
     let encoded = rmp_serde::to_vec_named(&body)
         .map_err(|_| Error::InvariantViolation("agent run task body encode failed"))?;
     let now = vault.now_recorded_at();
