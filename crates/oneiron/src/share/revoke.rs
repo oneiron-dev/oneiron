@@ -77,10 +77,10 @@ impl Vault {
         {
             return Err(revoke_refused());
         }
+        check(&txn)?;
         if share.status == AccessGrantStatus::Revoked {
             return Ok(share);
         }
-        check(&txn)?;
         let revoked = share.grant().revoked(revoked_at)?;
         self.apply_access_grant_body(
             &mut txn,
