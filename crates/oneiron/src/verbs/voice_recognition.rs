@@ -303,7 +303,11 @@ impl Memory<'_> {
         &self,
         row: &crate::inbox::NotificationRow,
     ) -> Vec<crate::inbox::NotificationAction> {
-        if self.actor_class() != EdgeActorClass::Human {
+        // A credential the consent door would refuse for scope, such as a
+        // read-only slip, is offered no tap (REVIEW-10022 P1).
+        if self.actor_class() != EdgeActorClass::Human
+            || !self.presented_credential_reaches_verb(VOICE_RECOGNITION_CONSENT_VERB)
+        {
             return Vec::new();
         }
         let Some(event_id) = row.source.result.as_deref() else {

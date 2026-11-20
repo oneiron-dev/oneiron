@@ -757,7 +757,7 @@ impl Vault {
                 format!(
                     "{who} recorded that you asked to stop voice recognition on a call, \
                      and your voiceprint, if any, was deleted (logged by agent {} under \
-                     Grant {}). If that wasn't you, restore your consent here; recognition \
+                     Grant {}). If that wasn't you, you can restore your consent; recognition \
                      then needs a fresh enrolment.",
                     request.recorded_by_ref.to_hex(),
                     grant.to_hex()
