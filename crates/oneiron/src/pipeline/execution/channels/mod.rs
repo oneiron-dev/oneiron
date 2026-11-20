@@ -369,6 +369,16 @@ impl PipelineBuilder<'_> {
                     })?
             {
                 diagnostics.succeeded.push(RetrievalSignal::Phonetic);
+                // Exact codes have no cut, so their hits reach this list
+                // unasked; the call's made_by slice keeps them out of the
+                // blend, as the cut's admission keeps the sound match's.
+                let mut phonetic_results = phonetic_results;
+                self.retain_made_by_slice(
+                    rtxn,
+                    &mut phonetic_results,
+                    &mut metadata_cache,
+                    &mut claim_gate,
+                )?;
                 phonetic_channel_index = Some(acc.admit_channel(
                     RetrievalSignal::Phonetic,
                     phonetic_results,
@@ -471,7 +481,6 @@ impl PipelineBuilder<'_> {
                 self.retain_made_by_slice(
                     rtxn,
                     &mut ppr_results,
-                    filter_config,
                     &mut metadata_cache,
                     &mut claim_gate,
                 )?;

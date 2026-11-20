@@ -163,38 +163,33 @@ impl PipelineBuilder<'_> {
         })
     }
 
-    /// Keeps the rows of a PPR walk's result list that the call's `made_by`
-    /// slice admits, before the list joins a blend. A row the slice drops
-    /// takes no rank in the fusion, counts as no candidate and seeds no
-    /// implicit expansion (REVIEW-9842). The walk's transit and an explicit
-    /// seed stay as the run's shared scope has them. As in a bounded
-    /// channel's cut, the slice reads an unborn claim's body in a probe
-    /// gate, and only the kept rows' answers join `claim_gate`, so a dropped
-    /// row adds no suppression.
+    /// Keeps the rows of a result list no admission sliced (a PPR walk's,
+    /// and the phonetic code rung's exact-code hits) that the call's
+    /// `made_by` slice admits, before the list joins a blend. A row the
+    /// slice drops takes no rank in the fusion, counts as no candidate and
+    /// seeds no implicit expansion (REVIEW-9842). A walk's transit and an
+    /// explicit seed stay as the run's shared scope has them. The run's
+    /// claim gate judges each row first, as the D19 gate judges every row of
+    /// these lists anyway (memoized), so its suppressions count as before;
+    /// the slice's own refusal adds none, and an unborn claim's class is
+    /// read from the body that gate admitted.
     pub(super) fn retain_made_by_slice(
         &self,
         rtxn: &RoTxn<'_>,
         results: &mut Vec<ScoredEntity>,
-        filters: PipelineFilterConfig<'_>,
         metadata: &mut EntityMetadataCache,
         claim_gate: &mut ClaimStatusGateCache,
     ) -> Result<()> {
         if self.made_by == crate::provenance::made_by::MadeByPredicate::All {
             return Ok(());
         }
-        let mut probe_gate = claim_gate.fresh(filters.authority_filter.include_stale);
-        for scored in results.iter() {
-            if let Some(decision) = claim_gate.decisions.get(&scored.id) {
-                probe_gate.decisions.insert(scored.id, decision.clone());
-            }
-        }
         let mut kept = Vec::with_capacity(results.len());
         for scored in std::mem::take(results) {
-            if self.made_by_slice_admits(rtxn, &scored.id, metadata, &mut probe_gate)? {
+            claim_status_gate_allows(&self.read, rtxn, &scored.id, metadata, claim_gate)?;
+            if self.made_by_slice_admits(rtxn, &scored.id, metadata, claim_gate)? {
                 kept.push(scored);
             }
         }
-        import_claim_gate_decisions_for_scores(claim_gate, &mut probe_gate, &kept);
         *results = kept;
         Ok(())
     }

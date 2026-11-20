@@ -238,13 +238,7 @@ impl PipelineBuilder<'_> {
                 metadata_cache,
                 claim_gate,
             )?;
-            self.retain_made_by_slice(
-                rtxn,
-                &mut ppr_results,
-                inputs.filter_config,
-                metadata_cache,
-                claim_gate,
-            )?;
+            self.retain_made_by_slice(rtxn, &mut ppr_results, metadata_cache, claim_gate)?;
             state
                 .blend_allowed_ids
                 .extend(ppr_results.iter().map(|scored| scored.id));
