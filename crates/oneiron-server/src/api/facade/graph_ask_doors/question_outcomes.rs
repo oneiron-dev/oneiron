@@ -10,8 +10,8 @@
 use std::sync::Arc;
 
 use oneiron::llm::decision::questions::{
-    OutcomeWindowClose, calibration_pairs_in_lane, closed_outcome_windows_in_lane,
-    outcome_labels_in_lane, project_bound_outcomes_in_lane,
+    OutcomeWindowClose, closed_outcome_windows_in_lane, project_bound_outcomes_in_lane,
+    question_outcomes_in_lane,
 };
 use oneiron::memory::MemoryResult;
 use oneiron::receipt::{
@@ -103,19 +103,18 @@ async fn vault_questions_outcomes_answer(
     let destination = auth.destination();
     let server = Arc::clone(server);
     let auth = auth.clone();
+    // Labels and pairs are read, and their rows judged, in one snapshot of
+    // the lane (FIX QUESTION-OUTCOMES-REPLY-SPANS-SNAPSHOTS).
     crate::api::facade::clock_ingress::run_blocking(move || -> MemoryResult<QuestionOutcomes> {
         let vault = server.vault();
         let lane = asker_lane(vault, &auth, VERB)?;
-        Ok(QuestionOutcomes {
-            labels: outcome_labels_in_lane(vault, &lane, principal, input.id, &destination)?,
-            calibration: calibration_pairs_in_lane(
-                vault,
-                &lane,
-                principal,
-                input.id,
-                &destination,
-            )?,
-        })
+        Ok(question_outcomes_in_lane(
+            vault,
+            &lane,
+            principal,
+            input.id,
+            &destination,
+        )?)
     })
     .await
     .map_err(|_| internal(VERB))?

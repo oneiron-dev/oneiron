@@ -24,12 +24,14 @@ use std::collections::BTreeSet;
 
 use super::{
     ArtifactUnits, CalibrationPair, GraphQuestionInput, OutcomeLabel, OutcomeWindowClose,
-    QuestionRecord, ScheduledBackfill, calibration_pairs, closed_outcome_windows, outcome_labels,
-    project_bound_outcomes, question_answers, read_question, schedule_backfill,
+    QuestionRecord, ScheduledBackfill, project_bound_outcomes, question_answers, read_question,
+    schedule_backfill,
 };
 use crate::blob_artifact::ArtifactAskUnits;
 use crate::claim::ScopedRead;
-use crate::receipt::{QuestionAnswer, QuestionAnswersReply, QuestionAnswersRequest};
+use crate::receipt::{
+    QuestionAnswer, QuestionAnswersReply, QuestionAnswersRequest, QuestionOutcomes,
+};
 use crate::settings::ReadDestination;
 use crate::{EntityId, Result, Vault};
 
@@ -158,58 +160,111 @@ pub fn schedule_backfill_in_lane(
     Ok(backfill)
 }
 
-/// [`closed_outcome_windows`] as `lane` reads them (FIX 11827): every window
-/// that still reads as it closed for a full lane, each judged again under
-/// its saved lane as the principal's live authority reads it (FIX
-/// STORED-OUTCOME-READS-SKIP-SAVED-LANE); for a narrowed one, each of those
-/// whose rows the lane reads: the answer and its unit, and for a window that
-/// closed observed every row one standing label of its answer was derived
-/// from.
+/// [`closed_outcome_windows`](super::closed_outcome_windows) as `lane` reads
+/// them (FIX 11827): every window that still reads as it closed for a full
+/// lane, each judged again under its saved lane as the principal's live
+/// authority reads it (FIX STORED-OUTCOME-READS-SKIP-SAVED-LANE); for a
+/// narrowed one, each of those whose rows the lane reads: the answer and its
+/// unit, and for a window that closed observed every row one standing label
+/// of its answer was derived from. The windows are read, and their rows
+/// judged, in one snapshot of `lane`, a lane of `vault`, opened as its own
+/// reads open theirs (FIX QUESTION-OUTCOMES-REPLY-SPANS-SNAPSHOTS).
 ///
 /// # Errors
-/// As [`closed_outcome_windows`], and a store failure judging the rows.
+/// As [`closed_outcome_windows`](super::closed_outcome_windows), and a store
+/// failure judging the rows.
 pub fn closed_outcome_windows_in_lane(
     vault: &Vault,
     lane: &ScopedRead<'_>,
     principal: EntityId,
     question: EntityId,
 ) -> Result<Vec<OutcomeWindowClose>> {
-    if reads_as_principal(lane) {
-        return closed_outcome_windows(vault, principal, question);
-    }
-    let windows = super::windows::standing_windows(vault, principal, question)?;
-    if windows.is_empty() {
-        return Ok(Vec::new());
-    }
-    // Each row set a window rests on, every window's in turn.
-    let sets: Vec<Vec<EntityId>> = windows
-        .iter()
-        .flat_map(|window| window.rests_on.iter())
-        .map(|rows| rows_beside(question, rows))
-        .collect();
-    let mut each = lane.refs_readable_each(&sets)?.into_iter();
-    let mut kept = Vec::new();
-    for window in windows {
-        let mut read = false;
-        for _ in &window.rests_on {
-            read |= each.next().unwrap_or(false);
+    lane.with_grant_read_snapshot(|txn| -> Result<Vec<OutcomeWindowClose>> {
+        let windows = super::windows::standing_windows_in_txn(vault, txn, principal, question)?;
+        if reads_as_principal_in(lane, txn) {
+            return Ok(windows.into_iter().map(|window| window.close).collect());
         }
-        if read {
-            kept.push(window.close);
+        if windows.is_empty() {
+            return Ok(Vec::new());
         }
-    }
-    Ok(kept)
+        // Each row set a window rests on, every window's in turn.
+        let sets: Vec<Vec<EntityId>> = windows
+            .iter()
+            .flat_map(|window| window.rests_on.iter())
+            .map(|rows| rows_beside(question, rows))
+            .collect();
+        let mut each = lane.refs_readable_each_in(txn, &sets)?.into_iter();
+        let mut kept = Vec::new();
+        for window in windows {
+            let mut read = false;
+            for _ in &window.rests_on {
+                read |= each.next().unwrap_or(false);
+            }
+            if read {
+                kept.push(window.close);
+            }
+        }
+        Ok(kept)
+    })
 }
 
-/// [`outcome_labels`] as `lane` reads them (FIX 11827): every label that
-/// still stands for a full lane, each judged again under its saved lane as
-/// the principal's live authority reads it (FIX
-/// STORED-OUTCOME-READS-SKIP-SAVED-LANE); for a narrowed one, each of those
-/// whose rows the lane reads: every row it was derived from but the question,
-/// as a calibration pair's.
+/// `vault.questions.outcomes`' reply as `lane`, a lane of `vault`, reads it:
+/// the labels of [`outcome_labels_in_lane`] and the pairs of
+/// [`calibration_pairs_in_lane`], both read and judged in one snapshot of
+/// the lane, opened as its own reads open theirs, under one judgment of
+/// whether it reads as its principal's own (FIX
+/// QUESTION-OUTCOMES-REPLY-SPANS-SNAPSHOTS). So a status, value or grant
+/// change committed while the reply is read never serves a label beside no
+/// pair the same state would pair, nor an item judged in one state and its
+/// rows in another.
 ///
 /// # Errors
-/// As [`outcome_labels`], and a store failure judging the rows.
+/// As [`outcome_labels_in_lane`] and [`calibration_pairs_in_lane`].
+pub fn question_outcomes_in_lane(
+    vault: &Vault,
+    lane: &ScopedRead<'_>,
+    principal: EntityId,
+    question: EntityId,
+    destination: impl Into<ReadDestination>,
+) -> Result<QuestionOutcomes> {
+    let destination = destination.into();
+    lane.with_grant_read_snapshot(|txn| -> Result<QuestionOutcomes> {
+        let full = reads_as_principal_in(lane, txn);
+        Ok(QuestionOutcomes {
+            labels: labels_lane_reads_in_txn(
+                vault,
+                lane,
+                txn,
+                full,
+                principal,
+                question,
+                &destination,
+            )?,
+            calibration: pairs_lane_reads_in_txn(
+                vault,
+                lane,
+                txn,
+                full,
+                principal,
+                question,
+                &destination,
+            )?,
+        })
+    })
+}
+
+/// [`outcome_labels`](super::outcome_labels) as `lane` reads them (FIX
+/// 11827): every label that still stands for a full lane, each judged again
+/// under its saved lane as the principal's live authority reads it (FIX
+/// STORED-OUTCOME-READS-SKIP-SAVED-LANE); for a narrowed one, each of those
+/// whose rows the lane reads: every row it was derived from but the question,
+/// as a calibration pair's. Read and judged in one snapshot of `lane`, a
+/// lane of `vault` ([`question_outcomes_in_lane`] reads them beside the
+/// pairs in one).
+///
+/// # Errors
+/// As [`outcome_labels`](super::outcome_labels), and a store failure judging
+/// the rows.
 pub fn outcome_labels_in_lane(
     vault: &Vault,
     lane: &ScopedRead<'_>,
@@ -217,24 +272,23 @@ pub fn outcome_labels_in_lane(
     question: EntityId,
     destination: impl Into<ReadDestination>,
 ) -> Result<Vec<OutcomeLabel>> {
-    if reads_as_principal(lane) {
-        return outcome_labels(vault, principal, question, destination);
-    }
-    let labels = lane_keeps(
-        lane,
-        super::outcomes::outcome_labels_with_rows(vault, principal, question, destination)?,
-        |(_, rows)| rows_beside(question, rows),
-    )?;
-    Ok(labels.into_iter().map(|(label, _)| label).collect())
+    let destination = destination.into();
+    lane.with_grant_read_snapshot(|txn| {
+        let full = reads_as_principal_in(lane, txn);
+        labels_lane_reads_in_txn(vault, lane, txn, full, principal, question, &destination)
+    })
 }
 
-/// [`calibration_pairs`] as `lane` reads them (FIX 11827): every pair for a
-/// full lane; for a narrowed one, each pair whose rows the lane reads: every
-/// row it was derived from but the question itself, which lives in a side
-/// table and is no row.
+/// [`calibration_pairs`](super::calibration_pairs) as `lane` reads them (FIX
+/// 11827): every pair for a full lane; for a narrowed one, each pair whose
+/// rows the lane reads: every row it was derived from but the question
+/// itself, which lives in a side table and is no row. Read and judged in one
+/// snapshot of `lane`, a lane of `vault` ([`question_outcomes_in_lane`] reads
+/// them beside the labels in one).
 ///
 /// # Errors
-/// As [`calibration_pairs`], and a store failure judging the rows.
+/// As [`calibration_pairs`](super::calibration_pairs), and a store failure
+/// judging the rows.
 pub fn calibration_pairs_in_lane(
     vault: &Vault,
     lane: &ScopedRead<'_>,
@@ -242,11 +296,56 @@ pub fn calibration_pairs_in_lane(
     question: EntityId,
     destination: impl Into<ReadDestination>,
 ) -> Result<Vec<CalibrationPair>> {
-    let pairs = calibration_pairs(vault, principal, question, destination)?;
-    if reads_as_principal(lane) {
+    let destination = destination.into();
+    lane.with_grant_read_snapshot(|txn| {
+        let full = reads_as_principal_in(lane, txn);
+        pairs_lane_reads_in_txn(vault, lane, txn, full, principal, question, &destination)
+    })
+}
+
+/// [`outcome_labels_in_lane`] in the caller's snapshot `txn` of `lane`,
+/// `full` saying whether the lane reads as its principal's own there.
+fn labels_lane_reads_in_txn(
+    vault: &Vault,
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    full: bool,
+    principal: EntityId,
+    question: EntityId,
+    destination: &ReadDestination,
+) -> Result<Vec<OutcomeLabel>> {
+    let labels = super::outcomes::outcome_labels_with_rows_in_txn(
+        vault,
+        txn,
+        principal,
+        question,
+        destination,
+    )?;
+    let labels = if full {
+        labels
+    } else {
+        lane_keeps_in(lane, txn, labels, |(_, rows)| rows_beside(question, rows))?
+    };
+    Ok(labels.into_iter().map(|(label, _)| label).collect())
+}
+
+/// [`calibration_pairs_in_lane`] in the caller's snapshot `txn` of `lane`,
+/// `full` saying whether the lane reads as its principal's own there.
+fn pairs_lane_reads_in_txn(
+    vault: &Vault,
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    full: bool,
+    principal: EntityId,
+    question: EntityId,
+    destination: &ReadDestination,
+) -> Result<Vec<CalibrationPair>> {
+    let pairs =
+        super::outcomes::calibration_pairs_in_txn(vault, txn, principal, question, destination)?;
+    if full {
         return Ok(pairs);
     }
-    lane_keeps(lane, pairs, |pair| {
+    lane_keeps_in(lane, txn, pairs, |pair| {
         rows_beside(question, &pair.derived_from)
     })
 }
@@ -287,14 +386,28 @@ pub fn project_bound_outcomes_in_lane(
 /// otherwise each reply is judged on its rows, and a lapsed credential reads
 /// none of them.
 fn reads_as_principal(lane: &ScopedRead<'_>) -> bool {
-    match lane.freeze() {
-        Ok(frozen) if frozen.is_principal() => true,
-        Ok(frozen) if frozen.reads_as_principal() => lane
-            .vault()
+    reads_as_principal_while(lane, || {
+        lane.vault()
             .store
             .env
             .read_txn()
-            .is_ok_and(|txn| lane.credential_live_in(&txn).unwrap_or(false)),
+            .is_ok_and(|txn| lane.credential_live_in(&txn).unwrap_or(false))
+    })
+}
+
+/// [`reads_as_principal`], its credential judged in the caller's snapshot
+/// `txn`, the one the reply is read in.
+fn reads_as_principal_in(lane: &ScopedRead<'_>, txn: &heed::RoTxn<'_>) -> bool {
+    reads_as_principal_while(lane, || lane.credential_live_in(txn).unwrap_or(false))
+}
+
+/// Whether `lane` freezes as its principal's own, a lane held to a
+/// credential whose grant must stand only while `credential_live` says
+/// that credential holds.
+fn reads_as_principal_while(lane: &ScopedRead<'_>, credential_live: impl FnOnce() -> bool) -> bool {
+    match lane.freeze() {
+        Ok(frozen) if frozen.is_principal() => true,
+        Ok(frozen) if frozen.reads_as_principal() => credential_live(),
         _ => false,
     }
 }
@@ -309,8 +422,22 @@ fn lane_keeps<T>(
     if items.is_empty() {
         return Ok(items);
     }
+    lane.with_grant_read_snapshot(|txn| lane_keeps_in(lane, txn, items, rows))
+}
+
+/// [`lane_keeps`] in the caller's snapshot `txn` of `lane`, the one its
+/// items were read in.
+fn lane_keeps_in<T>(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    items: Vec<T>,
+    rows: impl Fn(&T) -> Vec<EntityId>,
+) -> Result<Vec<T>> {
+    if items.is_empty() {
+        return Ok(items);
+    }
     let sets: Vec<Vec<EntityId>> = items.iter().map(rows).collect();
-    let each = lane.refs_readable_each(&sets)?;
+    let each = lane.refs_readable_each_in(txn, &sets)?;
     Ok(items
         .into_iter()
         .zip(each)
