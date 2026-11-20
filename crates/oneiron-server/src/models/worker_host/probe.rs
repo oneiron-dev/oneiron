@@ -46,7 +46,7 @@ use serde_json::{Value as JsonValue, json};
 
 use super::super::ModelHostBudgets;
 use super::super::http::{
-    BytesReply, HttpFailure, KeyStyle, MAX_REPLY_BYTES, ProviderHttp, charge_read,
+    BytesReply, HttpFailure, KeyStyle, MAX_REPLY_BYTES, ProviderHttp, SocketHeaders, charge_read,
     holding_chat_replies,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -95,6 +95,10 @@ pub(super) struct HouseProbe {
     /// The bound on one exchange on a launch's own socket: its provider's
     /// timeout.
     socket_timeout: Duration,
+    /// What each exchange on a launch's own socket carries: its provider's
+    /// headers and key, as `http` sends them.
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
+    socket_headers: SocketHeaders,
     voice: Option<VoiceSocketDialer>,
 }
 
@@ -123,6 +127,9 @@ impl HouseProbe {
             tracing::warn!(model = %wire_model, %error, "model worker probe unavailable");
             error.to_string()
         });
+        // The same headers and key `http` carries: headers that cannot be
+        // built leave `http` failed too, and then no exchange runs at all.
+        let socket_headers = SocketHeaders::new(&provider).unwrap_or_default();
         let voice = if provider.kind == ProviderKind::Voxcpm2 {
             match VoiceSocketDialer::new(&provider) {
                 Ok(voice) => Some(voice),
@@ -139,6 +146,7 @@ impl HouseProbe {
             wire_model: wire_model.to_owned(),
             slot,
             socket_timeout: Duration::from_secs(provider.timeout_secs),
+            socket_headers,
             voice,
         }
     }
@@ -252,7 +260,7 @@ impl HouseProbe {
             .as_ref()
             .filter(|launch| launch.http_socket.is_some());
         let answered = match on_socket {
-            Some(launch) => socket_answer(launch, self.socket_timeout).await,
+            Some(launch) => socket_answer(launch, &self.socket_headers, self.socket_timeout).await,
             None => self.answer(http).await,
         };
         let body = match answered {
@@ -271,7 +279,9 @@ impl HouseProbe {
         }
         let path = format!("/{}.json", alias.manifest.as_str());
         let fetched = match on_socket {
-            Some(launch) => socket_get(launch, &path, self.socket_timeout).await,
+            Some(launch) => {
+                socket_get(launch, &self.socket_headers, &path, self.socket_timeout).await
+            }
             None => http.get_native_within(&path, MAX_REPLY_BYTES).await,
         };
         let manifest = match fetched {
@@ -358,10 +368,11 @@ impl WorkerProbe for HouseProbe {
 
 /// The rerank qualification answer of a launch that serves HTTP on its own
 /// Unix socket (L9-15), over a connection checked against its supervised
-/// child: the reply's body, or how it failed.
+/// child, with `sent`: the reply's body, or how it failed.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 async fn socket_answer(
     launch: &LaunchRecord,
+    sent: &SocketHeaders,
     timeout: Duration,
 ) -> Result<JsonValue, WorkerReadiness> {
     let launch = launch
@@ -369,6 +380,7 @@ async fn socket_answer(
         .ok_or_else(|| failed(WorkerFailure::Unreachable, None))?;
     let reply = post_json_on(
         &launch,
+        sent,
         RERANK_PATH,
         &rerank_qualification_request(),
         timeout,
@@ -390,31 +402,34 @@ async fn socket_answer(
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 async fn socket_answer(
     launch: &LaunchRecord,
+    sent: &SocketHeaders,
     timeout: Duration,
 ) -> Result<JsonValue, WorkerReadiness> {
-    let _ = (launch, timeout);
+    let _ = (launch, sent, timeout);
     Err(failed(WorkerFailure::Unreachable, None))
 }
 
-/// `path` read on a launch's own socket (L9-15), bounded as an identity
-/// read is.
+/// `path` read on a launch's own socket (L9-15) with `sent`, bounded as an
+/// identity read is.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 async fn socket_get(
     launch: &LaunchRecord,
+    sent: &SocketHeaders,
     path: &str,
     timeout: Duration,
 ) -> Result<BytesReply, HttpFailure> {
     let launch = launch.socket_launch().ok_or(HttpFailure::Connection)?;
-    get_within_on(&launch, path, MAX_REPLY_BYTES, timeout).await
+    get_within_on(&launch, sent, path, MAX_REPLY_BYTES, timeout).await
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 async fn socket_get(
     launch: &LaunchRecord,
+    sent: &SocketHeaders,
     path: &str,
     timeout: Duration,
 ) -> Result<BytesReply, HttpFailure> {
-    let _ = (launch, path, timeout);
+    let _ = (launch, sent, path, timeout);
     Err(HttpFailure::Connection)
 }
 

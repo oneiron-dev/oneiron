@@ -29,6 +29,23 @@ use reply_line::{read_booked, read_whole};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) use socket::{get_within_on, post_json_on};
 
+/// The headers each exchange on a managed worker's own Unix socket carries
+/// (L9-15): its provider's `headers` and, for a `key_env` key, its bearer
+/// credential, as [`ProviderHttp`] sends them on the provider's base URL (a
+/// llama-server started with that key answers 401 to a request without it).
+/// They leave only on a connection already checked against the launch's
+/// supervised child.
+#[derive(Clone, Default)]
+pub(super) struct SocketHeaders(reqwest::header::HeaderMap);
+
+impl SocketHeaders {
+    /// `provider`'s. A configured `key_env` that is unset or empty is a
+    /// refusal, as it is for the provider's HTTP client.
+    pub(super) fn new(provider: &ProviderConfig) -> anyhow::Result<Self> {
+        client::provider_headers(provider, KeyStyle::Bearer).map(Self)
+    }
+}
+
 /// The smallest request body worth compressing (ARCH-0081 §6).
 const MIN_COMPRESSED_BYTES: usize = 16 * 1024;
 

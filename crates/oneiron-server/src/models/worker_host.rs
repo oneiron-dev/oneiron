@@ -718,17 +718,38 @@ pub(super) fn native_local_routes(
         .collect()
 }
 
-/// A `listen = "unix"` llama.cpp worker's route (L9-15): the slot its
-/// launcher records each launch in, the socket the launch serves HTTP on
-/// among it.
+/// A `listen = "unix"` llama.cpp worker's route (L9-15): its supervisor,
+/// and the slot its launcher records each launch in, the socket the launch
+/// serves HTTP on among it.
 #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
 #[derive(Clone)]
 pub(super) struct SocketRoute {
     pub(super) worker_id: String,
+    worker: InferenceWorker,
     slot: Arc<LaunchSlot>,
 }
 
 impl SocketRoute {
+    /// Waits for this route's worker to be ready and holds it, as a managed
+    /// rung's call does (`OfferLadder::hold_worker`): a worker its
+    /// supervisor stopped for idleness starts again for the caller. `None`
+    /// once the hosted row is no longer this managed worker, whose lease
+    /// would hold nothing. Errs for a parked or retired worker.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(super) async fn hold(
+        &self,
+    ) -> Result<Option<oneiron_driver::WorkerLease>, oneiron_driver::WorkerUnavailable> {
+        let managed = HOST.get().is_some_and(|host| {
+            host.lock().get(&self.worker_id).is_some_and(|hosted| {
+                hosted.row.mode == WorkerMode::Managed && hosted.worker.same_instance(&self.worker)
+            })
+        });
+        if !managed {
+            return Ok(None);
+        }
+        self.worker.acquire().await.map(Some)
+    }
+
     /// The current launch's socket and supervised child; `None` before a
     /// launch, or while its child is not in custody.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -759,6 +780,7 @@ pub(super) fn socket_routes(
         .map(|(wire_model, worker, slot)| {
             let route = SocketRoute {
                 worker_id: worker.spec().worker_id.clone(),
+                worker,
                 slot,
             };
             (wire_model, route)

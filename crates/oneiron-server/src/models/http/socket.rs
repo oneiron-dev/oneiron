@@ -3,43 +3,49 @@
 //! launch's supervised child before any byte of the request leaves
 //! ([`crate::models::peer_socket::connect_launch`]). Each exchange opens its
 //! own connection and sends once, following no redirect; nothing is resent.
+//! It carries its provider's headers and bearer credential
+//! ([`super::SocketHeaders`]), sent only on that checked connection.
 use std::collections::BTreeMap;
 use std::time::Duration;
 
 use hyper::body::Body as _;
+use hyper::header::HeaderValue;
 use hyper::{Method, Request, header};
 use hyper_util::rt::TokioIo;
 use serde_json::Value as JsonValue;
 
-use super::{BytesReply, HttpFailure, JsonReply, ReplyBytes, json_reply};
+use super::{BytesReply, HttpFailure, JsonReply, ReplyBytes, SocketHeaders, json_reply};
 use crate::models::peer_socket::connect_launch;
 use crate::models::worker_host::SocketLaunch;
 
-/// `body` posted as JSON to `path` on `launch`'s socket, the whole exchange
-/// within `timeout`: its reply read whole, however large, as
+/// `body` posted as JSON to `path` on `launch`'s socket with `sent`, the
+/// whole exchange within `timeout`: its reply read whole, however large, as
 /// [`super::ProviderHttp::post_json`] reads one.
 pub(in crate::models) async fn post_json_on(
     launch: &SocketLaunch,
+    sent: &SocketHeaders,
     path: &str,
     body: &JsonValue,
     timeout: Duration,
 ) -> Result<JsonReply, HttpFailure> {
     let body = serde_json::to_string(body).map_err(|_| HttpFailure::Malformed)?;
     let (status, headers, bytes) =
-        exchange(launch, Method::POST, path, body, None, timeout).await?;
+        exchange(launch, sent, Method::POST, path, body, None, timeout).await?;
     json_reply(status, headers, &bytes)
 }
 
-/// A GET of `path` on `launch`'s socket, the whole exchange within
-/// `timeout`: a body whose bytes pass `max_bytes` is refused there.
+/// A GET of `path` on `launch`'s socket with `sent`, the whole exchange
+/// within `timeout`: a body whose bytes pass `max_bytes` is refused there.
 pub(in crate::models) async fn get_within_on(
     launch: &SocketLaunch,
+    sent: &SocketHeaders,
     path: &str,
     max_bytes: usize,
     timeout: Duration,
 ) -> Result<BytesReply, HttpFailure> {
     let (status, headers, body) = exchange(
         launch,
+        sent,
         Method::GET,
         path,
         String::new(),
@@ -55,10 +61,11 @@ pub(in crate::models) async fn get_within_on(
     })
 }
 
-/// One request on a fresh checked connection: the reply's status, headers
-/// and body bytes.
+/// One request with `sent` on a fresh checked connection: the reply's
+/// status, headers and body bytes.
 async fn exchange(
     launch: &SocketLaunch,
+    sent: &SocketHeaders,
     method: Method,
     path: &str,
     body: String,
@@ -69,11 +76,19 @@ async fn exchange(
     let mut request = Request::builder()
         .method(method)
         .uri(path)
-        .header(header::HOST, "localhost");
+        .body(body)
+        .map_err(|_| HttpFailure::Malformed)?;
+    // The provider's headers and key, as its HTTP client sends them; the
+    // host and the body's type are this exchange's own.
+    let fields = request.headers_mut();
+    fields.extend(sent.0.clone());
+    fields.insert(header::HOST, HeaderValue::from_static("localhost"));
     if json {
-        request = request.header(header::CONTENT_TYPE, "application/json");
+        fields.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
     }
-    let request = request.body(body).map_err(|_| HttpFailure::Malformed)?;
     let exchanged = async {
         let stream = connect_launch(launch)
             .await

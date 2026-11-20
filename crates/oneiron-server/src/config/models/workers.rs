@@ -682,8 +682,9 @@ impl WorkerFile {
 
 /// Refuses a `listen = "unix"` row whose provider serves anything but the
 /// reranker over a Unix-socket row (L9-15): no other role's ladder and no
-/// media seat names the provider, and each reranker rung on it is a model
-/// such a row serves. Nothing listens on that provider's `base_url`.
+/// media seat names the provider, each reranker rung on it is a model such
+/// a row serves, and no managed row on it listens over TCP. Nothing listens
+/// on that provider's `base_url`.
 pub(super) fn refuse_socket_provider_off_reranker(
     workers: &[WorkerConfig],
     roles: &BTreeMap<ModelRole, Vec<Rung>>,
@@ -694,6 +695,20 @@ pub(super) fn refuse_socket_provider_off_reranker(
         .filter(|row| row.listens_on_socket())
         .map(|row| (row.binding.provider.as_str(), row))
         .collect();
+    // A managed row that listens over TCP binds its provider's host and port,
+    // whether or not a ladder names its model.
+    if let Some(row) = workers.iter().find(|row| {
+        row.mode == WorkerMode::Managed
+            && !row.listens_on_socket()
+            && socket_rows.contains_key(row.binding.provider.as_str())
+    }) {
+        anyhow::bail!(
+            "models.workers.{}.listen: provider {:?} is served on its workers' Unix sockets (models.workers.{}), so a managed row on it listens on one too",
+            row.id,
+            row.binding.provider,
+            socket_rows[row.binding.provider.as_str()].id
+        );
+    }
     for (role, ladder) in roles {
         for rung in ladder {
             let Some(row) = socket_rows.get(rung.model.provider.as_str()) else {

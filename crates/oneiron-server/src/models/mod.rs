@@ -523,6 +523,7 @@ fn build_reranker(
     let transport = if socket_served {
         let socket = rerank::SocketRerank::new(
             worker_host::socket_routes(name, provider, workers),
+            http::SocketHeaders::new(provider)?,
             Duration::from_secs(provider.timeout_secs),
         );
         socket_workers = socket.workers();

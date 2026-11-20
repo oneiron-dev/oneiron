@@ -4,6 +4,37 @@ use futures_util::{StreamExt, TryStreamExt};
 
 use super::*;
 
+/// `provider`'s own `headers` and, for a `key_env` key, that key in `style`,
+/// marked sensitive: what every request to the provider carries. A
+/// configured `key_env` that is unset or empty is a refusal.
+pub(super) fn provider_headers(
+    provider: &ProviderConfig,
+    style: KeyStyle,
+) -> anyhow::Result<reqwest::header::HeaderMap> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    for (name, value) in &provider.headers {
+        headers.insert(
+            reqwest::header::HeaderName::from_bytes(name.as_bytes())?,
+            reqwest::header::HeaderValue::from_str(value)?,
+        );
+    }
+    if let Some(env) = &provider.key_env {
+        let key = std::env::var(env)
+            .ok()
+            .filter(|key| !key.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("{env} is not set"))?;
+        let (name, value) = match style {
+            KeyStyle::Bearer => (reqwest::header::AUTHORIZATION, format!("Bearer {key}")),
+            KeyStyle::ApiKeyHeader => (reqwest::header::HeaderName::from_static("x-api-key"), key),
+            KeyStyle::Named(name) => (reqwest::header::HeaderName::from_static(name), key),
+        };
+        let mut value = reqwest::header::HeaderValue::from_str(&value)?;
+        value.set_sensitive(true);
+        headers.insert(name, value);
+    }
+    Ok(headers)
+}
+
 impl ProviderHttp {
     /// Builds the client. A configured `key_env` that is unset or empty is a
     /// refusal here, so a seat never runs half-authenticated.
@@ -51,29 +82,7 @@ impl ProviderHttp {
         style: KeyStyle,
         direct: bool,
     ) -> anyhow::Result<Self> {
-        let mut headers = reqwest::header::HeaderMap::new();
-        for (name, value) in &provider.headers {
-            headers.insert(
-                reqwest::header::HeaderName::from_bytes(name.as_bytes())?,
-                reqwest::header::HeaderValue::from_str(value)?,
-            );
-        }
-        if let Some(env) = &provider.key_env {
-            let key = std::env::var(env)
-                .ok()
-                .filter(|key| !key.trim().is_empty())
-                .ok_or_else(|| anyhow::anyhow!("{env} is not set"))?;
-            let (name, value) = match style {
-                KeyStyle::Bearer => (reqwest::header::AUTHORIZATION, format!("Bearer {key}")),
-                KeyStyle::ApiKeyHeader => {
-                    (reqwest::header::HeaderName::from_static("x-api-key"), key)
-                }
-                KeyStyle::Named(name) => (reqwest::header::HeaderName::from_static(name), key),
-            };
-            let mut value = reqwest::header::HeaderValue::from_str(&value)?;
-            value.set_sensitive(true);
-            headers.insert(name, value);
-        }
+        let headers = provider_headers(provider, style)?;
         // One request per call (`SingleSend`): a redirect is answered, never
         // followed, and nothing the upstream may have read is sent twice; a
         // request that never reached it goes once more on `fresh`, a client

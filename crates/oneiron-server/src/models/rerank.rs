@@ -139,10 +139,14 @@ pub(super) enum RerankTransport {
 /// workers this process supervises (L9-15): each batch goes on the socket
 /// of the current launch of the worker that serves its wire model, over a
 /// connection checked against that launch's supervised child, and nowhere
-/// else. The routes are captured when the runtime is built; with none (a
-/// process that launches no worker), no batch is sent.
+/// else, with the provider's headers and bearer credential. The routes are
+/// captured when the runtime is built; with none (a process that launches
+/// no worker), no batch is sent.
 pub(super) struct SocketRerank {
     routes: BTreeMap<String, super::worker_host::SocketRoute>,
+    /// What each batch's exchange carries: the provider's headers and key.
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
+    headers: super::http::SocketHeaders,
     /// The bound on one batch's exchange: the provider's timeout.
     #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
     timeout: std::time::Duration,
@@ -151,9 +155,14 @@ pub(super) struct SocketRerank {
 impl SocketRerank {
     pub(super) fn new(
         routes: BTreeMap<String, super::worker_host::SocketRoute>,
+        headers: super::http::SocketHeaders,
         timeout: std::time::Duration,
     ) -> Self {
-        Self { routes, timeout }
+        Self {
+            routes,
+            headers,
+            timeout,
+        }
     }
 
     /// Each served wire model and the id of the worker that serves it.
@@ -164,15 +173,29 @@ impl SocketRerank {
             .collect()
     }
 
-    /// One batch's `body` on the socket of the worker serving `wire_model`.
+    /// One batch's `body` on the socket of the worker serving `wire_model`,
+    /// that worker held across the exchange and before its socket is read:
+    /// a worker its supervisor stopped for idleness starts again for the
+    /// batch, which goes on the new launch's socket. A parked worker's batch
+    /// fails as an unreachable provider's does.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     async fn post_json(&self, wire_model: &str, body: &JsonValue) -> LlmResult<JsonReply> {
-        let launch = self
+        let route = self
             .routes
             .get(wire_model)
-            .and_then(super::worker_host::SocketRoute::socket_launch)
             .ok_or_else(|| transport(HttpFailure::Connection))?;
-        super::http::post_json_on(&launch, RERANK_PATH, body, self.timeout)
+        let _lease = route.hold().await.map_err(|unavailable| {
+            tracing::warn!(
+                worker = %route.worker_id,
+                %unavailable,
+                "the socket reranker's worker is parked; the batch goes on as for a provider that is down"
+            );
+            transport(HttpFailure::Connection)
+        })?;
+        let launch = route
+            .socket_launch()
+            .ok_or_else(|| transport(HttpFailure::Connection))?;
+        super::http::post_json_on(&launch, &self.headers, RERANK_PATH, body, self.timeout)
             .await
             .map_err(transport)
     }
