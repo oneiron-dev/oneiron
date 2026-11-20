@@ -328,7 +328,7 @@ mod lent_checker {
     use super::{RecordingAutoChecker, bounded, doors};
     use oneiron::authority::HostSlipIssuer;
     use oneiron::claim::ScopedReadActorKey;
-    use oneiron::code_run::SelfMemoryPutClaimCall;
+    use oneiron::code_run::{SelfDispatchOutcome, SelfMemoryPutClaimCall, SelfMemoryWriteResult};
     use oneiron::registry::ENTITY_TYPE_PERSON;
     use oneiron::test_support::put_policy_manifest_bytes;
     use oneiron::{
@@ -440,6 +440,35 @@ mod lent_checker {
                 id,
                 doors::put_claim_as_live_run(&dispatcher, call, Some(&self.reader)),
             ))
+        }
+
+        /// As [`Self::put`], at `id` about `subject`: the id of the row that
+        /// landed, which is a fresh successor when the put is a semantic edit
+        /// of the active claim at `id`.
+        fn put_at(
+            &self,
+            checker: &oneiron::llm::BoundedAutoChecker,
+            run: &str,
+            id: EntityId,
+            subject: EntityId,
+            value: &str,
+        ) -> TestResult<EntityId> {
+            let dispatcher = doors::live_run_dispatcher(
+                &self.vault,
+                WriteActor::new(self.agent, EdgeActorClass::Agent),
+                run,
+                checker,
+            )
+            .map_err(at("the live run's dispatcher"))?;
+            let call = claim_call(id, PREDICATE, subject, value);
+            match doors::put_claim_as_live_run(&dispatcher, call, Some(&self.reader))
+                .map_err(at("the live run's claim put"))?
+            {
+                SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult { id: landed }) => {
+                    Ok(landed)
+                }
+                other => Err(format!("the claim put answered {other:?}").into()),
+            }
         }
     }
 
@@ -654,6 +683,104 @@ mod lent_checker {
                 "a put no checker reviewed never lands Auto"
             );
         }
+        Ok(())
+    }
+
+    /// The run `run`, lent `first_checker`, puts `first` at a fresh id about
+    /// a fresh PERSON, and the claim lands Auto; then the run, lent
+    /// `edit_checker`, re-puts `edit` at that id: a semantic edit of the
+    /// active claim the run wrote, which lands as a fresh successor row
+    /// (`claim/candidate_write.rs` `candidate_semantic_successor_in_txn`).
+    /// Answers the requested id and the successor's.
+    fn put_then_edit(
+        f: &Fixture,
+        run: &str,
+        first_checker: &oneiron::llm::BoundedAutoChecker,
+        first: &str,
+        edit_checker: &oneiron::llm::BoundedAutoChecker,
+        edit: &str,
+    ) -> TestResult<(EntityId, EntityId)> {
+        let subject = person(&f.vault)?;
+        let id = EntityId::now();
+        let landed = f.put_at(first_checker, run, id, subject, first)?;
+        assert_eq!(landed, id, "a put of a fresh id lands at that id");
+        assert_eq!(f.approval(id)?, "auto", "the first put landed Auto");
+        let successor = f.put_at(edit_checker, run, id, subject, edit)?;
+        assert_ne!(
+            successor, id,
+            "a semantic edit of an active claim lands a fresh successor"
+        );
+        Ok((id, successor))
+    }
+
+    /// FIX LIVE-RUN-CHECKER-SUCCESSOR-EDIT: a live run's semantic edit of its
+    /// own claim lands as a fresh successor row, and the lent checker judges
+    /// that row in the landing's transaction, so a checker that allows the
+    /// edit lands the successor Auto after one consult, with no review. Red
+    /// on main: the gate judged the requested row, the successor was judged
+    /// at the apply with no checker and pended checker-unavailable, and the
+    /// door's Proposed resubmission parked it with that review after asking
+    /// the checker a second time.
+    #[test]
+    fn a_live_run_semantic_edit_lands_its_successor_auto_when_the_checker_allows() -> TestResult {
+        let f = Fixture::open()?;
+        let allowing = Arc::new(RecordingAutoChecker::allow());
+        let checker = bounded(allowing.clone());
+        let (_, successor) = put_then_edit(
+            &f,
+            "run-edits-allowed",
+            &checker,
+            "sencha",
+            &checker,
+            "gyokuro",
+        )?;
+        assert_eq!(
+            f.approval(successor)?,
+            "auto",
+            "FAILBEFORE LIVE-RUN-CHECKER-SUCCESSOR-EDIT: the successor was judged with no checker \
+             and parked (reviews {:?}, checker asked {} times)",
+            f.reviews(successor)?,
+            allowing.calls()
+        );
+        assert_eq!(
+            allowing.calls(),
+            2,
+            "the lent checker is consulted once per put; the landing reuses its verdict"
+        );
+        assert!(
+            f.reviews(successor)?.is_empty(),
+            "an allowed edit parks no review"
+        );
+        Ok(())
+    }
+
+    /// FIX LIVE-RUN-CHECKER-SUCCESSOR-EDIT: a checker that holds a live run's
+    /// semantic edit parks the successor Proposed with the checker's own
+    /// pending review (`gate.pending.checker`), the hold the owner rules on.
+    /// Red on main: the hold judged the requested row, so the successor was
+    /// judged at the apply with no checker and parked checker-unavailable.
+    #[test]
+    fn a_live_run_semantic_edit_held_by_the_lent_checker_parks_its_successor_with_that_hold()
+    -> TestResult {
+        let f = Fixture::open()?;
+        let allow = bounded(Arc::new(RecordingAutoChecker::allow()));
+        let holding = Arc::new(RecordingAutoChecker::hold());
+        let hold = bounded(holding.clone());
+        let (_, successor) =
+            put_then_edit(&f, "run-edits-held", &allow, "sencha", &hold, "gyokuro")?;
+        assert_eq!(
+            f.reviews(successor)?,
+            vec![vec!["gate.pending.checker".to_owned()]],
+            "FAILBEFORE LIVE-RUN-CHECKER-SUCCESSOR-EDIT: the successor was judged with no checker \
+             (checker asked {} times)",
+            holding.calls()
+        );
+        assert_eq!(
+            f.approval(successor)?,
+            "proposed",
+            "the held edit lands Proposed"
+        );
+        assert_eq!(holding.calls(), 1, "the lent checker is asked once per put");
         Ok(())
     }
 }
