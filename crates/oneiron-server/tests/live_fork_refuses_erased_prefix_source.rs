@@ -48,11 +48,13 @@
 //! through the credential broker as in test 5, refuses each pass's first
 //! send for its rate, with a one-second reset. A pass of live rows waits it
 //! out and is answered by its resend, each send reading the provider's key
-//! (guard). For a window read from two CLAIMs, the owner erases one while
-//! the ladder waits: the pass is refused for it, nothing more reaches the
-//! provider, and the resend never reads the key: the ladder stops it before
-//! it goes out, not only the transport's release after the key read
-//! (REVIEW-9949 round 1).
+//! (guard). For a window read from two CLAIMs, the owner erases one after
+//! the first send went out; the provider holds its refusal until the erase
+//! has committed, so the ladder meets the erase whenever it next asks, right
+//! after the refusal or in a slice of its wait (REVIEW-9949 round 2). The
+//! pass is refused for it, nothing more reaches the provider, and the resend
+//! never reads the key: the ladder stops it before it goes out, not only the
+//! transport's release after the key read (REVIEW-9949 round 1).
 //!
 //! Test 5, a brokered send (REVIEW-9900 round 2 P1 1): the one provider's
 //! key is a vault secret, sent through the credential broker child against
@@ -85,7 +87,7 @@ mod engine_stack;
 mod fake_llm;
 
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -620,22 +622,32 @@ fn a_pass_sends_no_window_read_from_a_row_erased_since() {
 }
 
 #[test]
-fn a_pass_resends_no_window_read_from_a_row_erased_during_its_cooldown() {
-    run_on_engine_stack("live-fork-erased-during-cooldown", || async {
+fn a_pass_resends_no_window_read_from_a_row_erased_before_its_rate_retry() {
+    run_on_engine_stack("live-fork-erased-before-rate-retry", || async {
         let provider = FakeProvider::start(FakeReply::json(500, &json!({})));
         // Each pass's first send is refused for its rate; its resend is
-        // answered.
+        // answered. The second pass's refusal is held until the owner's
+        // erase has committed, so the ladder decides on its retry (it asks
+        // `may_send` before each rung and in each slice of the wait) only
+        // after the erase, however the threads are scheduled.
         let (arrived, mut requests) = watch::channel(0_usize);
+        let (erase_committed, erase_seen) = channel::<()>();
+        let held = Arc::new(AtomicBool::new(false));
+        let held_by_provider = Arc::clone(&held);
         provider.respond_with(move |request| {
             let mut count = 0;
             arrived.send_modify(|seen| {
                 *seen += 1;
                 count = *seen;
             });
-            if matches!(count, 1 | 3) {
-                brokered_rate_limited()
-            } else {
-                brokered_answer(request)
+            match count {
+                1 => brokered_rate_limited(),
+                3 => {
+                    let erased_first = erase_seen.recv_timeout(SEND_DEADLINE).is_ok();
+                    held_by_provider.store(erased_first, Ordering::SeqCst);
+                    brokered_rate_limited()
+                }
+                _ => brokered_answer(request),
             }
         });
         let reads = Arc::new(AtomicUsize::new(0));
@@ -682,7 +694,8 @@ fn a_pass_resends_no_window_read_from_a_row_erased_during_its_cooldown() {
         );
 
         // The same refusal for the window read from both rows; the owner
-        // erases one while the ladder waits.
+        // erases one after the first send went out and before the provider's
+        // refusal reaches the ladder.
         let reads_before = reads.load(Ordering::SeqCst);
         let pass = {
             let server = Arc::clone(&server);
@@ -696,26 +709,34 @@ fn a_pass_resends_no_window_read_from_a_row_erased_during_its_cooldown() {
             "FIXTURE: the pass's first send reaches the provider"
         );
         privacy_erase(vault, erased);
-        match pass.await.unwrap() {
+        erase_committed
+            .send(())
+            .expect("FIXTURE: the provider still holds the first send's refusal");
+        let outcome = pass.await.unwrap();
+        assert!(
+            held.load(Ordering::SeqCst),
+            "FIXTURE: the provider held the first send's refusal until the erase committed"
+        );
+        match outcome {
             Err(refusal) => assert!(
                 refusal.contains("deleted since"),
-                "a pass whose row was erased during its cooldown is refused for it: {refusal}"
+                "a pass whose row was erased before its rate retry is refused for it: {refusal}"
             ),
             Ok(answer) => panic!(
-                "a pass whose row was erased during its cooldown was served: {}",
+                "a pass whose row was erased before its rate retry was served: {}",
                 answer.summary
             ),
         }
         assert_eq!(
             provider.seen().len(),
             3,
-            "the cooldown's resend of a window read from a row erased since went out"
+            "the rate retry of a window read from a row erased since went out"
         );
         assert_eq!(
             reads.load(Ordering::SeqCst) - reads_before,
             1,
-            "the cooldown's resend of a window read from a row erased since got past the \
-             ladder: it read the provider's key, and only the transport's release kept it in"
+            "the rate retry of a window read from a row erased since got past the ladder: it \
+             read the provider's key, and only the transport's release kept it in"
         );
     });
 }
