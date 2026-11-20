@@ -1,12 +1,18 @@
 //! A diagnostics organ for the host's own checks: the runtime's built-in
 //! verbs (`organ.touch`, `organ.echo`) plus `probe.sleep`, `probe.crash`,
-//! `probe.fork`, `probe.outputs`, `probe.ask` and `probe.ptrace` (Linux).
+//! `probe.fork`, `probe.outputs`, `probe.ask`, and `probe.ptrace`,
+//! `probe.inet_socket` and `probe.reach` (Linux).
 //! Hostile modes stand in for
 //! a broken organ: `--deaf` answers the handshake and then never reads its
 //! socket, `--drip` sends its `hello_ack` one byte at a time, `--ask-twice`
 //! sends a second ask before the first is answered, `--ask-once` asks and
 //! then ignores the call and its cancel, and `--stale-asks` asks for calls
-//! that are not in flight.
+//! that are not in flight. `--organ-name <name>` is the probe answering as
+//! organ `<name>`, as a pack build under another organ's name would.
+
+#[cfg(target_os = "linux")]
+#[path = "oneiron-organ-probe/escape_calls.rs"]
+mod escape_calls;
 
 #[cfg(unix)]
 mod probe {
@@ -17,12 +23,19 @@ mod probe {
         Value, VerbSpec, touch_fold,
     };
 
-    pub(super) struct Probe;
+    #[cfg(target_os = "linux")]
+    use crate::escape_calls::{inet_socket, ptrace, reach_process};
+
+    /// The probe, answering the handshake as organ `name`: `probe`, or
+    /// the name `--organ-name` gives it.
+    pub(super) struct Probe {
+        pub(super) name: String,
+    }
 
     impl Organ for Probe {
         fn identity(&self) -> OrganIdentity {
             OrganIdentity {
-                name: "probe".into(),
+                name: self.name.clone(),
                 version: env!("CARGO_PKG_VERSION").into(),
             }
         }
@@ -35,6 +48,8 @@ mod probe {
                 "probe.outputs",
                 "probe.ask",
                 "probe.ptrace",
+                "probe.inet_socket",
+                "probe.reach",
             ]
             .map(|name| VerbSpec {
                 name: name.into(),
@@ -52,7 +67,11 @@ mod probe {
         /// past refusals, and reports each answer (its value, the length and
         /// fold of its bytes) or refusal code; a cancel ends it as cancelled.
         /// With `fail`, it ends in an error once it has asked.
-        /// `probe.ptrace {in_child}` makes one ptrace call (`ptrace` below).
+        /// `probe.ptrace {in_child}` makes one ptrace call and
+        /// `probe.inet_socket {in_child}` opens one inet socket (`ptrace`
+        /// and `inet_socket` below). `probe.reach {call, pid, nice}` makes
+        /// one call aimed at a process, or at the probe's own limits or
+        /// thread (`reach_process` below).
         fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
             let field = |key: &str| {
                 call.args
@@ -81,6 +100,26 @@ mod probe {
                     let in_child = field("in_child").and_then(|v| v.as_bool()).unwrap_or(false);
                     Ok(Answer {
                         report: ptrace(in_child),
+                        ..Answer::default()
+                    })
+                }
+                #[cfg(target_os = "linux")]
+                "probe.inet_socket" => {
+                    let in_child = field("in_child").and_then(|v| v.as_bool()).unwrap_or(false);
+                    Ok(Answer {
+                        report: inet_socket(in_child),
+                        ..Answer::default()
+                    })
+                }
+                #[cfg(target_os = "linux")]
+                "probe.reach" => {
+                    let which = field("call")
+                        .and_then(|v| v.as_str().map(str::to_owned))
+                        .unwrap_or_default();
+                    let pid = field("pid").and_then(|v| v.as_i64());
+                    let nice = field("nice").and_then(|v| v.as_i64()).unwrap_or(0);
+                    Ok(Answer {
+                        report: reach_process(&which, pid, nice),
                         ..Answer::default()
                     })
                 }
@@ -160,58 +199,6 @@ mod probe {
                 other => Err(OrganError::new(ErrorCode::UnknownVerb, other)),
             }
         }
-    }
-
-    /// One ptrace call, as an organ escaping its sandbox would make:
-    /// `PTRACE_PEEKDATA` of pid 0, which nothing traces, so where the call
-    /// is allowed it fails with ESRCH and changes nothing. In the organ
-    /// itself it answers the call's return and errno. With `in_child`, a
-    /// forked child makes the call and exits 0, and the answer is how the
-    /// child ended: `signal` (0 if it exited) and `exit` (-1 if a signal
-    /// ended it).
-    #[cfg(target_os = "linux")]
-    fn ptrace(in_child: bool) -> Value {
-        let request = libc::c_long::from(libc::PTRACE_PEEKDATA);
-        let zero: libc::c_long = 0;
-        if !in_child {
-            // SAFETY: PTRACE_PEEKDATA of pid 0 reads nothing: no process
-            // is pid 0's tracee, so the kernel answers ESRCH.
-            let returned = unsafe { libc::syscall(libc::SYS_ptrace, request, zero, zero, zero) };
-            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            return Value::Map(vec![
-                ("returned".into(), i64::from(returned).into()),
-                ("errno".into(), i64::from(errno).into()),
-            ]);
-        }
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "a hostile organ's own fork, outside the server"
-        )]
-        // SAFETY: the child makes one ptrace syscall and _exit(2), both
-        // async-signal-safe, and touches no memory of the parent's.
-        let pid = unsafe { libc::fork() };
-        if pid == 0 {
-            // SAFETY: as above; _exit(2) ends the child without running
-            // the parent's exit handlers.
-            unsafe {
-                libc::syscall(libc::SYS_ptrace, request, zero, zero, zero);
-                libc::_exit(0);
-            }
-        }
-        let mut status: libc::c_int = 0;
-        // SAFETY: waitpid on the child just forked, into a local.
-        let waited = unsafe { libc::waitpid(pid, &raw mut status, 0) };
-        let (signal, exit) = if waited != pid {
-            (0, -2)
-        } else if libc::WIFSIGNALED(status) {
-            (libc::WTERMSIG(status), -1)
-        } else {
-            (0, libc::WEXITSTATUS(status))
-        };
-        Value::Map(vec![
-            ("signal".into(), i64::from(signal).into()),
-            ("exit".into(), i64::from(exit).into()),
-        ])
     }
 }
 
@@ -641,7 +628,12 @@ fn main() -> std::process::ExitCode {
             std::process::ExitCode::SUCCESS
         }
         Some("--open-paths") => oneiron_organ_protocol::serve(opener::Opener),
-        _ => oneiron_organ_protocol::serve(probe::Probe),
+        Some("--organ-name") => oneiron_organ_protocol::serve(probe::Probe {
+            name: std::env::args().nth(2).unwrap_or_default(),
+        }),
+        _ => oneiron_organ_protocol::serve(probe::Probe {
+            name: "probe".into(),
+        }),
     }
 }
 
