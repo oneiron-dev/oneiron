@@ -181,6 +181,47 @@ pub(in crate::calendar) fn defer_connector_cancel<'a>(
     admission.admit_superseding_passport(event_ref, &next, &screen_body(event))
 }
 
+/// A provider tombstone of `uid` a pull held back unread, since a cancelled
+/// write of the UID to this calendar is still in flight and a provider that
+/// keeps a cancelled event as a deleted one reports that write coming back
+/// as a tombstone
+/// (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING). Each of this
+/// source's live passports of the UID that the tombstone would date (an
+/// inbound-bearing one, or one of a calendar the EVENT was written to) keeps
+/// this first sighting as `deferred_cancel_seen_at`, unless it already dates
+/// a cancellation or a held sighting. A write that settles marks its own
+/// cancel and drops the sighting; when it proves not to be the stored copy,
+/// the tombstone read again dates the host's cancel by this sighting rather
+/// than by that later read.
+pub(in crate::calendar) fn defer_connector_delete<'a>(
+    vault: &'a Vault,
+    system: &'a str,
+    source: ConnectorAdmissionSource<'a>,
+    uid: &str,
+    now: u64,
+) -> Result<(), CalendarError> {
+    let mut admission = connector_admission(vault, system, source, now);
+    for event_ref in list_event_ids(vault)? {
+        let Some((_, passport)) =
+            crate::calendar::passport::live_passport_for(vault, &event_ref, system, uid)?
+        else {
+            continue;
+        };
+        let dated =
+            passport.direction.is_inbound_bearing() || names_written_calendar(system, &passport);
+        if !dated
+            || passport.cancelled_since.is_some()
+            || passport.deferred_cancel_seen_at.is_some()
+        {
+            continue;
+        }
+        let mut next = passport;
+        next.deferred_cancel_seen_at = Some(now);
+        admission.admit_superseding_passport(event_ref, &next, &CalendarInboundBody::default())?;
+    }
+    Ok(())
+}
+
 /// A live passport a tombstone dated, whose calendar shows the uncancelled
 /// EVENT again at the same version, drops that date: the host took the
 /// deletion back, so it can no longer date a host cancel that another

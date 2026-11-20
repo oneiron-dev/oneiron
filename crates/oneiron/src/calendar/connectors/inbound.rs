@@ -365,6 +365,30 @@ fn apply_remote_change(
                 classify_remote_change(None, change),
                 EchoDisposition::ApplyRemoteDeletion
             );
+            // A provider that keeps a cancelled event as a deleted one
+            // reports a cancelled write of this UID still in flight as a
+            // tombstone before its settlement marks the member's passport,
+            // and the tombstone would read as the host's cancel. It stays owed and unread, as a cancelled version a
+            // write in flight holds back does, and each passport it would
+            // date keeps this first sighting
+            // (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING).
+            if !cancelled_members_in_flight(vault, operation, uid)?.is_empty() {
+                let record = pull_source_record_id(provider, seat, uid);
+                crate::calendar::ingest::defer_connector_delete(
+                    vault,
+                    system,
+                    ConnectorAdmissionSource {
+                        record: &record,
+                        source_version: None,
+                        screen,
+                        source: None,
+                    },
+                    uid,
+                    now,
+                )?;
+                counters.owed_cancelled_versions += 1;
+                return Ok(());
+            }
             apply_remote_deletion(
                 vault,
                 seat,

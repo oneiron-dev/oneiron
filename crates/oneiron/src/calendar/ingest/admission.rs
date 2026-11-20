@@ -32,8 +32,9 @@ use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 pub(in crate::calendar) use connector::{
     ConnectorAdmissionSource, ConnectorScreen, admit_connector_event, connector_event_ref,
-    defer_connector_cancel, delete_connector_resource, preflight_connector_feed,
-    repeat_connector_echo, sweep_connector_resource, sweep_connector_uids,
+    defer_connector_cancel, defer_connector_delete, delete_connector_resource,
+    preflight_connector_feed, repeat_connector_echo, sweep_connector_resource,
+    sweep_connector_uids,
 };
 use continuation::OwedProperties;
 pub(super) use continuation::run_ics_property_continuation_admitting;
@@ -41,7 +42,7 @@ pub use continuation::{
     ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsPropertyContinuationPayload,
     run_ics_property_continuation,
 };
-use host_cancel::names_written_calendar;
+use host_cancel::{cancel_moves_deposit, names_written_calendar};
 pub(crate) use import_claim::ensure_ics_import_actor;
 pub use import_claim::ics_import_actor_id;
 pub(in crate::calendar) use import_claim::{
@@ -201,6 +202,7 @@ impl PollAdmission<'_> {
             }) {
                 continue;
             }
+            let mut written_tombstone = false;
             for (_, value) in &passports {
                 let omitted = value.system == self.system
                     && only_uids.is_none_or(|uids| uids.contains(value.uid.as_str()))
@@ -210,17 +212,27 @@ impl PollAdmission<'_> {
                     && value.presence == CalendarPassportPresence::Live;
                 // A provider tombstone is this source's report of the UID
                 // cancelled, first seen now unless an earlier cancelled
-                // version or tombstone already dated it. An omission is no
-                // cancellation evidence and dates nothing, so a tombstone
-                // also dates a passport an omission already flipped absent.
-                // An Outbound passport of a calendar the EVENT was written
-                // to never flips, since it is no absence vote, but its
-                // tombstone is dated the same way.
+                // version or tombstone already dated it, or a pull held this
+                // one back while a cancelled write of the UID was in flight
+                // (`deferred_cancel_seen_at`). An omission is no cancellation
+                // evidence and dates nothing, so a tombstone also dates a
+                // passport an omission already flipped absent. An Outbound
+                // passport of a calendar the EVENT was written to never
+                // flips, since it is no absence vote, but its tombstone is
+                // dated the same way.
                 let dates_cancel = omitted
                     && absence_basis == CalendarStatusBasis::ImportedCancel
                     && value.cancelled_since.is_none()
                     && (value.direction.is_inbound_bearing()
                         || names_written_calendar(self.system, value));
+                // That tombstone is the host's cancel in their own calendar
+                // unless it is the engine's own cancelled write coming back
+                // ([`cancel_moves_deposit`]): a provider that keeps a
+                // cancelled event as a deleted one reports that write as a
+                // tombstone.
+                written_tombstone |= omitted
+                    && absence_basis == CalendarStatusBasis::ImportedCancel
+                    && cancel_moves_deposit(self.system, value);
                 if !flips && !dates_cancel {
                     continue;
                 }
@@ -230,14 +242,26 @@ impl PollAdmission<'_> {
                     next.last_seen_at = self.now;
                 }
                 if dates_cancel {
-                    next.cancelled_since = Some(self.now);
+                    next.cancelled_since = Some(value.deferred_cancel_seen_at.unwrap_or(self.now));
+                    next.deferred_cancel_seen_at = None;
                 }
                 // Absence carries no inbound content, so the screen body is
                 // empty — but the admission still crosses the hook and cites
                 // the complete feed that proved the omission.
                 self.admit_superseding_passport(event_ref, &next, &CalendarInboundBody::default())?;
             }
-            if all_live_inbound_passports_absent(self.vault, &event_ref)? {
+            // A written-to calendar's tombstone cancels an EVENT no inbound
+            // source carries by itself (RULING
+            // CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING = A): with
+            // no absence vote to wait on, the host's delete in the calendar the
+            // EVENT was written to is the cancel DEPOSIT-HOST-CANCEL-SOURCE = A
+            // names. An EVENT another source still carries waits for the
+            // multi-source law as before, and an omission stays no vote.
+            let written_only = written_tombstone
+                && !passports
+                    .iter()
+                    .any(|(_, value)| value.direction.is_inbound_bearing());
+            if written_only || all_live_inbound_passports_absent(self.vault, &event_ref)? {
                 self.admit_absence_cancellation(event_ref, absence_basis)?;
                 if instance.is_some() {
                     self.retract_exception_mask(event_ref)?;
