@@ -213,6 +213,7 @@ impl Memory<'_> {
                 actor: caller.to_hex(),
                 receipt_ref: format!("rooms.upkeep.voice:{}", plan.nudge.finding.to_hex()),
                 at: now,
+                generation: 0,
             };
             CLAIMS.put(&vault.store, txn, &plan.parent, &receipt)?;
         }

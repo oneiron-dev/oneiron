@@ -11,7 +11,9 @@
 //! not descend from X. Y arrives after the install already holds X and the
 //! revocation. K must stay revoked, and X and the revocation must stay
 //! valid: a fork of a key never takes back what an install already counted,
-//! and never undoes the owner's revocation of that key.
+//! and never undoes the owner's revocation of that key. Since the revocation
+//! fence (REVOKED-OWNER-ROOT-SIBLING-ENROL) the door refuses Y outright, so Y
+//! never reaches the fold.
 //!
 //! Expected (estimate, not run yet): green on main, where X's arrival floor
 //! was set before Y arrived; red at 69a0283b, where Y's higher sequence
@@ -279,11 +281,13 @@ fn a_revoked_keys_later_fork_never_undoes_its_revocation() {
          fork; the fork's put {arrival}, issues {:?}",
         fold.issues
     );
-    // The fork reached the fold: a revoked key keeps its standing at the
-    // door, so the assertions above are not met by a refused put.
+    // The door refuses the fork: a revocation closes a fence over its key, and
+    // no new row a retired key signs is stored (REVOKED-OWNER-ROOT-SIBLING-ENROL,
+    // retired_signers.rs). The fork never reaches the fold, so it cannot make
+    // K live again there either.
     assert_eq!(
-        arrival, "stored",
-        "the fork is stored; issues {:?}",
+        arrival, "refused: InvalidAuthorityLogBody",
+        "the door refuses a row the revoked key signs; issues {:?}",
         fold.issues
     );
 }

@@ -4,6 +4,7 @@
 //!
 //! P pins the owner's kit root K, is Yours only through K's anchor mark, and
 //! keeps the bootstrap Unanswered roster head (no answered roster revision).
+//! K's root authority key R is a live owner key on the roster, held on P.
 //! P seals a cadence bundle (no publication request) to K. A fresh install Q,
 //! pinning no root, restores it with K's seed.
 //!
@@ -18,10 +19,10 @@ use std::sync::Arc;
 use ed25519_dalek::{Signer, SigningKey};
 
 use oneiron::authority::{
-    AUTHORITY_LOG_SCHEMA_VERSION, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry, AuthorityOp,
-    AuthoritySignature, AuthorityVaultId, Destination, HostSlipIssuer,
-    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey, MachineOwnership, MachineRole,
-    OwnerRootRecord, authority_entry_hash, authority_transcript,
+    AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityEntryHash, AuthorityKey,
+    AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityVaultId, Destination,
+    HostSlipIssuer, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey, MachineOwnership,
+    MachineRole, OwnerRootRecord, authority_entry_hash, authority_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
@@ -99,7 +100,7 @@ struct ServedVault {
     person: EntityId,
     /// This install, the publisher of the bundle below.
     carrier: EntityId,
-    _issuer: HostSlipIssuer,
+    issuer: HostSlipIssuer,
     _dir: tempfile::TempDir,
 }
 
@@ -124,7 +125,7 @@ impl ServedVault {
             owner,
             person,
             carrier,
-            _issuer: issuer,
+            issuer,
             _dir: dir,
         }
     }
@@ -242,11 +243,38 @@ fn a_kit_restore_reads_its_publisher_under_the_kits_own_root() {
     let root_id = root.id;
     let anchor_key = seed.anchor().verifying_key().to_bytes();
     let root_hash = publish_kit_root(&served.vault, served.person, &seed);
+    // K's root authority key R live on P's roster, as a confirmed kit leaves
+    // it: a kit restore needs it (WAYBACK-KIT-RESTORE-NO-LIVE-R, #9488). The
+    // enrolment is an owner key's, no machine answer of P.
     served
         .vault
-        .restore_world_keys(
+        .enrol_recovery_authority_key_as_host(
+            &ActAuthority::Owner(served.owner.clone(), ActSurface::ThisInstall),
+            p,
+            &seed,
+            &served.issuer,
+        )
+        .expect("guard: the owner enrols K's root authority key, held on P");
+    // P anchors its own request under K through the kit's anchor door, which
+    // pins K and marks P without a roster revision. P's own kit restore is
+    // not this setup since #9488: it puts P on the roster as Yours.
+    let request = served
+        .vault
+        .machine_enrolment_request(
+            vault_id,
+            served
+                .vault
+                .machine_encryption_key(vault_id)
+                .expect("P's encryption key"),
+        )
+        .expect("P's own enrolment request");
+    served
+        .vault
+        .anchor_machine(
             &served.owner,
             &seed,
+            &request,
+            None,
             Some(KitConfirmation::Fingerprint(root_id)),
         )
         .expect("P pins K and marks itself Yours under K");

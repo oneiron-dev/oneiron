@@ -38,6 +38,7 @@ use oneiron::recovery::PassphraseCost;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::device_pin::steps_that_waited;
 use oneiron::test_doors::label_writers::embedded_owner;
+use oneiron::test_doors::owner_key_release::bind_owner_with_owner_key;
 use oneiron::test_doors::steward::recover_cloud_account_signed_by_host_root;
 use oneiron::world_keys::{
     DEVICE_PIN_MIN_CHARS, DEVICE_PIN_SHORT_MIN_CHARS, DevicePin, DevicePinTier, OwnerKeyRest,
@@ -302,6 +303,7 @@ impl AuthBoundSecretStore for SteppedKeystore {
 struct PinDevice {
     vault: Vault,
     issuer: HostSlipIssuer,
+    person: EntityId,
     proof: AuthenticatedOwner,
     keystore: Arc<SteppedKeystore>,
     pin: Arc<DevicePin>,
@@ -356,13 +358,14 @@ impl PinDevice {
         vault
             .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
             .expect("this install's machine profile under the host root");
-        let (_owner, proof) = embedded_owner(&vault).expect("authenticated embedded owner");
+        let (person, proof) = embedded_owner(&vault).expect("authenticated embedded owner");
         vault
             .install_device_pin(Arc::clone(&pin))
             .expect("the device PIN goes on the handle");
         Self {
             vault,
             issuer,
+            person,
             proof,
             keystore,
             pin,
@@ -526,9 +529,14 @@ fn hosted_root(issuer: &HostSlipIssuer) -> DeviceAuthority {
 
 /// The host migrates its root under the owner's account: a re-root, which
 /// retires every key of the roster, this install's owner key among them.
+/// The account recovery reads the owner's active binding, and on a hosted
+/// vault the custodial root alone binds no person, so the owner binds first
+/// with the proof of this install's owner key.
 fn retire_the_roster(device: &PinDevice, key: [u8; 32]) {
     let next = HostSlipIssuer::from_secret(b"device pin test next host root")
         .expect("the managed host's next root");
+    bind_owner_with_owner_key(&device.vault, &device.proof, &device.issuer, device.person)
+        .expect("the owner binds with the proof of this install's owner key");
     recover_cloud_account_signed_by_host_root(
         &device.vault,
         &device.proof,

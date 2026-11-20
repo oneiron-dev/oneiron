@@ -82,7 +82,6 @@ pub use self::claim::{
 pub(in crate::booking) use self::claim::{
     confirmed_booking_starts, confirmed_booking_starts_listed, confirmed_start_for_reminder,
 };
-pub(crate) use self::deposit::refund_deposit_on_host_cancel;
 pub use self::deposit::{
     BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, BookingDepositStatus,
     DEPOSIT_CHECKOUT_WINDOW_SECS, DepositCheckoutLease, DepositCheckoutStart, DepositProviderEvent,
@@ -91,6 +90,9 @@ pub use self::deposit::{
     DepositState, begin_deposit_checkout, booking_deposit_for_event, booking_deposit_for_payment,
     booking_deposit_for_session_hold, record_deposit_provider_event,
     run_booking_deposit_settlement, settle_booking_deposit,
+};
+pub(crate) use self::deposit::{
+    note_unattributed_cancel_in_txn, refund_booking_deposit_as_owner, refund_deposit_on_host_cancel,
 };
 pub use self::door::{
     BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest,
@@ -105,9 +107,13 @@ pub use self::feed_move::{
 pub(crate) use self::feed_move::{FeedMoveOutcome, is_booking_event, move_booking_by_feed};
 pub use self::hold_source::VaultActiveHoldSource;
 pub use self::owner_card::{
-    BOOKING_OWNER_CARD_ITEM_PREFIX, BookingOwnerCard, BookingOwnerCardOffer,
+    BOOKING_HELD_DEPOSIT_ITEM_PREFIX, BOOKING_OWNER_CARD_ITEM_PREFIX, BookingDepositHeld,
+    BookingDepositHeldReason, BookingOwnerCard, BookingOwnerCardDeposit, BookingOwnerCardOffer,
 };
-pub(crate) use self::owner_card::{booking_owner_card_inbox_items, booking_owner_card_of_item};
+pub(crate) use self::owner_card::{
+    booking_inbox_row_version_in_txn, booking_owner_card_inbox_items, booking_owner_card_of_item,
+    booking_owner_card_row_of_handle,
+};
 pub use self::token::{
     HoldLeaseSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, SessionKey, confirm_event_type,
     confirm_hold_taken_at, token_event_type, token_page_ref,
@@ -363,11 +369,30 @@ struct BookingFacts {
     /// only: a cancel reads it, so a cancel still lands on a booking whose
     /// calendar was cancelled.
     status: BookingStatus,
-    /// Whether a `calendar.status` head on the EVENT says cancelled: the
-    /// booking's own cancel, or a calendar provider's that need not change
+    /// What the `calendar.status` heads on the EVENT say: the booking's own
+    /// cancel, or a calendar provider's that need not change
     /// `booking.status` (FIX 22385).
-    calendar_cancelled: bool,
+    calendar_cancellation: CalendarCancellation,
     context: Option<BookingConfirmationContext>,
+}
+
+/// Whether a booking's `calendar.status` heads say cancelled, and whether a
+/// live VEVENT of a feed ends that cancellation. Ordered, so the strongest
+/// head of an EVENT decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CalendarCancellation {
+    /// No head says cancelled.
+    None,
+    /// Only a feed's omission says cancelled (basis `imported_absence`). The
+    /// next live VEVENT of any source ends it: calendar ingest retracts every
+    /// omission's status of an EVENT a feed reports live, and a booking's
+    /// feed move retracts it in the move's own transaction.
+    Omission,
+    /// A head with any other basis says cancelled: the booking's own cancel,
+    /// an owner's ruling, a provider's cancellation or tombstone. No later
+    /// VEVENT ends it, since ingest never writes `confirmed` back and an
+    /// omission never replaces it.
+    Standing,
 }
 
 impl BookingFacts {
@@ -376,10 +401,10 @@ impl BookingFacts {
     /// cancellation says so. The cap reads the same two heads
     /// (`claim::is_confirmed_booking_in`).
     fn effective_status(&self) -> BookingStatus {
-        if self.calendar_cancelled {
-            BookingStatus::Cancelled
-        } else {
+        if self.calendar_cancellation == CalendarCancellation::None {
             self.status
+        } else {
+            BookingStatus::Cancelled
         }
     }
 }

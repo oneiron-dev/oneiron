@@ -5,7 +5,7 @@ use crate::Vault;
 use crate::agent_dispatch::AgentDispatcher;
 use crate::check_in::ActClass;
 use crate::error::Result;
-use crate::setting::{ItemDomain, Kind, ScopeKind, SettingScope, lower_is_tighter};
+use crate::setting::{ItemDomain, Kind, ScopeKind, SettingScope};
 
 /// Off: only the owner manages runner seats.
 fn owner_manages() -> bool {
@@ -56,7 +56,7 @@ crate::setting::setting_keys! {
     pub(crate) DISPATCH_BYOA_RUNNER_SEATS_AGENT_MAY_MANAGE: bool = "dispatch_byoa.runner_seats.agent_may_manage" {
         kind: Kind::new(owner_manages)
             .strictest(owner_manages)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
         scopes: &[ScopeKind::Vault, ScopeKind::Agent],
         item: Some(ItemDomain { name: "runner seat acts", admits: runner_seat_act }),
         act: ActClass::Billing,

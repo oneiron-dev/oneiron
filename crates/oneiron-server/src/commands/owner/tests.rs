@@ -101,11 +101,20 @@ fn doctor_finds_the_configured_backups_beside_a_mistyped_serve_setting() {
     let location = &report["location"]["backups"];
     assert_eq!(location["dir"], backups.display().to_string(), "{report}");
     assert_eq!(location["count"], 1, "{report}");
+    // The mistype is named by its place: a parse error keeps none of the
+    // parser's message, which names the key or quotes the value it refused
+    // (FIX 9477).
     let errors = report["config_errors"].as_array().expect("errors listed");
     assert!(
         errors
             .iter()
-            .any(|error| error.as_str().unwrap().contains("ephemeral_timeout_ms")),
+            .any(|error| error.as_str().unwrap().contains("at line 1, column")),
+        "{errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .all(|error| !error.as_str().unwrap().contains("\"oops\"")),
         "{errors:?}"
     );
 }

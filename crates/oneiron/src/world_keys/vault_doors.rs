@@ -67,16 +67,17 @@ impl Vault {
     /// [`Vault::prepare_install_signing`] for a host that serves on without it: a
     /// failure is logged by kind, never with key material. True when the keys loaded.
     pub fn prepare_install_signing_logged(&self) -> bool {
-        match self.prepare_install_signing() {
-            Ok(_) => true,
-            Err(error) => {
-                tracing::warn!(
-                    kind = ?error.kind(),
-                    "this install's signing keys did not load; signing doors refuse"
-                );
-                false
-            }
-        }
+        signing_loaded_logged(self.prepare_install_signing())
+    }
+
+    /// [`Vault::prepare_install_signing_logged`] for a door that must never make
+    /// this vault forget its machine (an owner's archive restore, REVIEW-9756
+    /// round 2 P1-2: its read of the vault's rows cannot hold off a writer that
+    /// commits one before the keys load). A slot found empty while the vault holds
+    /// a device key's public half refuses: the keys stay unloaded, and the machine
+    /// and client ids stay as they are.
+    pub(crate) fn prepare_install_signing_keeping_machine_logged(&self) -> bool {
+        signing_loaded_logged(self.prepare_install_signing_with(UnheldMachineSeed::Refuse))
     }
 
     /// Loads this install's signing keys from its `DeviceSigning` keystore slot and
@@ -95,6 +96,12 @@ impl Vault {
     ///   a restore that loads no keys (FIX 5472); a cache it cannot write or check
     ///   is logged, and the keys load as before (`identity::cache_machine_pk`).
     pub fn prepare_install_signing(&self) -> Result<EntityId> {
+        self.prepare_install_signing_with(UnheldMachineSeed::ForgetMachine)
+    }
+
+    /// [`Vault::prepare_install_signing`], with `unheld` saying what a slot found
+    /// empty while the vault holds a device key's public half does.
+    fn prepare_install_signing_with(&self, unheld: UnheldMachineSeed) -> Result<EntityId> {
         let keystore = self.device_keystore()?;
         for _ in 0..2 {
             let machine = self.provision_machine_identity()?;
@@ -121,6 +128,11 @@ impl Vault {
                 .map_err(super::machine::keystore_error)?
             {
                 Some(seed) => seed,
+                None if had_public && unheld == UnheldMachineSeed::Refuse => {
+                    return Err(super::refused(
+                        "this install holds no signing seed for the machine this vault names",
+                    ));
+                }
                 None if had_public => {
                     self.with_write_txn_grouped(|wtxn| {
                         if crate::identity::read_machine_id_in_txn(self, wtxn)? == Some(machine) {
@@ -328,5 +340,31 @@ impl Vault {
             .ok_or(Error::Secret(SecretError::KeystoreUnavailable(
                 "the host installed no keystore on this vault",
             )))
+    }
+}
+
+/// What [`Vault::prepare_install_signing`] does when this install's slot is empty
+/// while the vault holds a device key's public half: this install never held
+/// that machine's seed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UnheldMachineSeed {
+    /// The vault forgets that machine and joins as a new one.
+    ForgetMachine,
+    /// The keys do not load, and the machine identity stays.
+    Refuse,
+}
+
+/// True when the keys loaded; a failure is logged by kind, never with key
+/// material.
+fn signing_loaded_logged(prepared: Result<EntityId>) -> bool {
+    match prepared {
+        Ok(_) => true,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "this install's signing keys did not load; signing doors refuse"
+            );
+            false
+        }
     }
 }

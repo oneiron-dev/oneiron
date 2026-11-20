@@ -1,5 +1,9 @@
 //! The shared value-print matcher builder.
 
+use std::collections::BTreeSet;
+
+use oneiron_store::known_value_index::forms;
+
 use super::{Bucket, Keys, Known, KnownSpan, KnownValues, RollingSets, TAG_WINDOW, ValueOrigin};
 use crate::error::{Error, Result};
 use crate::store::KnownEntry;
@@ -21,16 +25,29 @@ impl KnownValues {
     /// RECEIPT-RECORDS-CALL-HELD-INPUT): a compare reads a held row and its
     /// offer for the values of the records the row names alone, so a longer
     /// value another record took since never hides the one a handle names.
+    /// With `longest`, only those values at most that many bytes long are
+    /// read. A base64 run is read as far as those values reach alone, so a
+    /// record named nowhere never changes what is read (blind review round 2
+    /// of #9528).
     pub(crate) fn spans_held_by(
         &self,
         data: &[u8],
         keep: impl Fn(&[u8]) -> bool,
         holds: impl Fn(&str) -> bool,
+        longest: Option<usize>,
     ) -> Vec<KnownSpan<'_>> {
         let admits = |known: &Known| {
-            matches!(known.origin, ValueOrigin::Custody(_)) && holds(known.handle.as_str())
+            matches!(known.origin, ValueOrigin::Custody(_))
+                && holds(known.handle.as_str())
+                && longest.is_none_or(|longest| known.len <= longest)
         };
-        self.matched_spans_by(data, keep, &admits)
+        let reach = self
+            .admitted(&admits)
+            .map(|known| known.len)
+            .max()
+            .unwrap_or(0)
+            .saturating_mul(forms::KNOWN_FORM_REACH_FACTOR);
+        self.matched_spans_by(data, keep, &admits, reach)
             .into_iter()
             .filter_map(|hit| match hit.origin {
                 ValueOrigin::Custody(custody) => Some(KnownSpan {
@@ -50,9 +67,32 @@ impl KnownValues {
     pub(crate) fn is_whole_held_by(&self, data: &[u8], handle: &str) -> bool {
         !data.is_empty()
             && self
-                .spans_held_by(data, |_| false, |held| held == handle)
+                .spans_held_by(data, |_| false, |held| held == handle, None)
                 .first()
                 .is_some_and(|hit| hit.span == (0..data.len()))
+    }
+
+    /// Each length a value a custody record `holds` takes holds has, at any
+    /// generation its history keeps, ascending, each once.
+    pub(crate) fn held_lengths(&self, holds: impl Fn(&str) -> bool) -> Vec<usize> {
+        let lengths: BTreeSet<usize> = self
+            .admitted(&|known: &Known| {
+                matches!(known.origin, ValueOrigin::Custody(_)) && holds(known.handle.as_str())
+            })
+            .map(|known| known.len)
+            .collect();
+        lengths.into_iter().collect()
+    }
+
+    /// Each value the index knows that `admits` takes.
+    fn admitted<'s>(
+        &'s self,
+        admits: &'s dyn Fn(&Known) -> bool,
+    ) -> impl Iterator<Item = &'s Known> + 's {
+        self.buckets
+            .iter()
+            .flat_map(|bucket| &bucket.known)
+            .filter(move |known| admits(known))
     }
 
     pub(super) fn of_entries<'a>(

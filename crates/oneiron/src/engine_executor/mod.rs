@@ -60,13 +60,16 @@ pub(crate) use self::record::{executor_config_hash_for_test, step_state_hash_for
 pub use self::run_position::{CodeRunPosition, code_run_position};
 // FIX 17594: the host's self-brief port a native run's requests carry.
 pub use self::self_brief::{
-    BriefBoundary, BriefCandidateToken, BriefPrefix, FoldBoundary, SelfBriefPort,
+    BriefBoundary, BriefCandidateToken, BriefPrefix, BriefRecheck, FoldBoundary, SelfBriefPort,
 };
 // FIX OFF-RECORD-RUN-POLICY-REFUSAL-500: a session's refusal of a run's act.
 pub use self::session_refusal::is_session_act_refusal;
 pub use self::shadow_step::{ArmTypeFeedback, run_shadow_step};
 pub(crate) use self::shadow_step::{run_shadow_callable_branch, shadow_readable_outputs};
-pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
+pub use self::skill_call::{
+    AdmittedSkillAnswer, AdmittedSkillText, execute_live_skill_call,
+    execute_live_skill_call_listing, judge_admitted_skill_text, spill_admitted_skill_view,
+};
 // FIX 4414: the owner's per-run step evidence.
 pub(crate) use self::step_evidence::step_evidence_page;
 pub use self::store::{RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES};

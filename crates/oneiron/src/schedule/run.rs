@@ -24,6 +24,11 @@ use crate::store::housekeeping_schedule::HousekeepingBudget;
 /// the next pass.
 const RUNS_PER_PASS: usize = 1_000;
 
+/// A test's stand-in for the process dying inside a job: the runner lets a
+/// panic carrying it unwind past its catch.
+#[cfg(test)]
+pub(crate) struct InjectedCrash;
+
 /// What a run's first write decides: the job and its arming to run, or why nothing runs.
 type Start = std::result::Result<(&'static JobSpec, Armed), JobOutcome>;
 
@@ -431,6 +436,13 @@ impl Vault {
             }
         };
         let ran = catch_unwind(AssertUnwindSafe(|| (spec.run)(self, &armed, pass)));
+        // A test's injected crash ends the pass as a dead process would: past
+        // this catch, with the job's start marker committed.
+        #[cfg(test)]
+        let ran = match ran {
+            Err(payload) if (*payload).is::<InjectedCrash>() => std::panic::resume_unwind(payload),
+            ran => ran,
+        };
         run.outcome = match &ran {
             Ok(Ok(result)) => match result.ran {
                 Ran::Done => JobOutcome::Done,

@@ -7,6 +7,13 @@
 //! `serve` builds over an enrolled device vault, its link to home started as
 //! serve starts it (`DeviceSyncHost::start`, no mesh), and what that server
 //! sends a peer that reads its root.
+//!
+//! And the doors for the two-machine mesh peer test (FIX-LIST
+//! MESH-TWO-MACHINE-PEER-E2E, `tests/mesh_two_machine_peer_e2e.rs`): a served
+//! host's paired-machine mesh listener on a bind address, as serve starts it
+//! with `--mesh-bind` (`handler::mesh::start`), so a test runs several engine
+//! machines of one vault on the mesh and dials them by their roster rows; and
+//! the window manager the host's device link runs on.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -257,4 +264,71 @@ fn windows_of(doc: &loro::LoroDoc) -> Vec<String> {
         .iter()
         .map(|key| key.as_str().to_owned())
         .collect()
+}
+
+/// One served host's running mesh listener ([`start_mesh_listener`]).
+pub struct MeshListener {
+    host: crate::handler::mesh::MeshHost,
+    direct_addrs: Vec<SocketAddr>,
+}
+
+impl MeshListener {
+    /// The listener's endpoint, which this machine's own dials ride.
+    #[must_use]
+    pub fn transport(&self) -> Arc<dyn oneiron_mesh_transport::MeshTransport> {
+        self.host.transport()
+    }
+
+    /// The direct addresses the listener's endpoint bound, as a served home
+    /// reports its own (`home_mesh_address`): on a bind to port 0, the port
+    /// the system assigned.
+    #[must_use]
+    pub fn direct_addrs(&self) -> Vec<SocketAddr> {
+        self.direct_addrs.clone()
+    }
+
+    /// Stops the listener and closes its endpoint.
+    pub async fn stop(self) {
+        self.host.stop().await;
+    }
+}
+
+/// Starts `server`'s mesh listener on `bind` with no relay, offering serve's
+/// full route set (`MeshRouteSet::Full`) with sync on `app`, under the default
+/// connection limits. With port 0 in `bind`, [`MeshListener::direct_addrs`]
+/// names the port it took.
+///
+/// # Errors
+///
+/// What the listener's start returns: no enrolled machine on this install, a
+/// bind that fails, an endpoint already attached.
+pub async fn start_mesh_listener(
+    server: Arc<SyncServer>,
+    bind: SocketAddr,
+    app: &axum::Router,
+) -> anyhow::Result<MeshListener> {
+    let limits = crate::config::LimitsConfig::default().connections();
+    let config = crate::handler::mesh::MeshConfig::from_parts(Some(bind), Vec::new());
+    let host = crate::handler::mesh::start(
+        Arc::clone(&server),
+        &config,
+        app,
+        limits,
+        crate::handler::mesh::MeshRouteSet::Full,
+    )
+    .await?
+    .ok_or_else(|| anyhow::anyhow!("a mesh listener with a bind address did not start"))?;
+    let direct_addrs = server
+        .mesh_transport
+        .get()
+        .map(|transport| transport.addr().ip_addrs().copied().collect())
+        .unwrap_or_default();
+    Ok(MeshListener { host, direct_addrs })
+}
+
+/// The window manager a served host's device link runs on, as device sync
+/// takes it for a host that serves (`device_sync::host`): the server's own.
+#[must_use]
+pub fn device_link_windows(server: &SyncServer) -> Arc<oneiron::sync::WindowManager> {
+    Arc::clone(&server.reassert_manager)
 }

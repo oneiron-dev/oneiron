@@ -900,6 +900,115 @@ pub(crate) fn forget_unclear_notes_in_txn(
     Ok(())
 }
 
+/// Takes the notes of the Gate receipt's outcome under unclear-ledger key
+/// `outcome` out of the clustering: a retention sweep removed the receipt's
+/// record, or a restore dropped it (FIX
+/// [GATE-RECEIPT-UNCLEAR-ROW-OUTLIVES-RECORD-REMOVAL]). A proposal that quoted
+/// one and waits on its owner is withdrawn with them, as after a re-judgment,
+/// unless a legal hold or a cooperative restriction keeps it: that one stands
+/// as it is, so the hold refuses no write and the writer's other rows go on.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn withdraw_unclear_notes_unheld_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    outcome: &str,
+) -> Result<()> {
+    let store = write.store;
+    for (key, member) in take_members_in_txn(store, txn, outcome)? {
+        if let Some(pattern_id) = member.pattern {
+            let held = pattern_key(&member.group, &pattern_id);
+            if let Some(pattern) = PATTERN.get(store, &*txn, &held)?
+                && pattern
+                    .filed
+                    .iter()
+                    .any(|filed| filed.as_slice() == key.as_slice())
+                && let Some(proposal) = pattern.proposal
+                && !crate::store::legal_hold::held_in_txn(store, &*txn, &proposal)?
+                && waits_on_owner_in_txn(store, &*txn, &EntityId::from_bytes(proposal)?)?
+            {
+                withdraw_filed_in_txn(write, txn, &held, pattern)?;
+            }
+        }
+        unlink_in_txn(store, txn, &key, &member)?;
+    }
+    Ok(())
+}
+
+/// Takes the notes of the outcome under unclear-ledger key `outcome` out of
+/// the clustering and leaves every proposal that quoted one as it stands: the
+/// owner's discard of a world copy, which is local and erases nothing a kept
+/// window or another device holds (FIX
+/// [GATE-RECEIPT-UNCLEAR-ROW-OUTLIVES-RECORD-REMOVAL]).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn release_unclear_notes_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    outcome: &str,
+) -> Result<()> {
+    for (key, member) in take_members_in_txn(store, txn, outcome)? {
+        unlink_in_txn(store, txn, &key, &member)?;
+    }
+    Ok(())
+}
+
+/// Files `proposal` as the proposal of a new pattern whose filing quotes note
+/// 0 of the outcome under unclear-ledger key `outcome`, the rows
+/// [`Pass::file_if_due_in_txn`] records, without the pass's model choice
+/// (test door).
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn file_label_proposal_for_test(
+    vault: &Vault,
+    outcome: &str,
+    proposal: EntityId,
+) -> Result<()> {
+    let member = member_key(outcome, 0);
+    let group = [7_u8; 32];
+    let pattern_id = *EntityId::now().as_bytes();
+    vault.with_write_txn(|txn| {
+        MEMBER.put(
+            &vault.store,
+            txn,
+            &member,
+            &NoteMember {
+                group,
+                pattern: Some(pattern_id),
+                fingerprint: [0; 32],
+            },
+        )?;
+        SUPPORT.put(
+            &vault.store,
+            txn,
+            &support_key(&group, &pattern_id, &member),
+            &NoteSupport {
+                outcome: outcome.to_owned(),
+            },
+        )?;
+        PATTERN.put(
+            &vault.store,
+            txn,
+            &pattern_key(&group, &pattern_id),
+            &NotePattern {
+                exemplar: Some(member.clone()),
+                proposal: Some(*proposal.as_bytes()),
+                filed: vec![member.clone()],
+                sources: Vec::new(),
+                refile: false,
+            },
+        )?;
+        Ok(())
+    })
+}
+
 /// Withdraws each proposal waiting on its owner that quoted a note of the
 /// outcome under unclear-ledger key `outcome`: a re-judgment replaced the
 /// outcome's row with another (FIX 21885). The notes stay in their patterns
@@ -1014,7 +1123,7 @@ fn withdraw_pending_in_txn(
     let Some(proposal) = pattern.proposal else {
         return Ok(());
     };
-    if waits_on_owner_in_txn(vault, &*txn, &EntityId::from_bytes(proposal)?)? {
+    if waits_on_owner_in_txn(&vault.store, &*txn, &EntityId::from_bytes(proposal)?)? {
         withdraw_filed_in_txn(
             &crate::secret_custody::CustodyWrite::of(vault),
             txn,
@@ -1028,12 +1137,11 @@ fn withdraw_pending_in_txn(
 /// Whether `proposal` is a claim still waiting on its owner: Active and
 /// Proposed.
 fn waits_on_owner_in_txn(
-    vault: &Vault,
+    store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     proposal: &EntityId,
 ) -> Result<bool> {
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, proposal)?
-    else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, proposal)? else {
         return Ok(false);
     };
     let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {

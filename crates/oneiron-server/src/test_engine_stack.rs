@@ -13,12 +13,16 @@
 //! named engine-stack thread under such a runtime.
 //!
 //! The runtime is per test thread, not process-wide: sibling tests in one
-//! `cargo test --lib` process share no runtime. A test thread's exit starts
-//! its runtime's shutdown without waiting: async tasks are dropped at their
-//! next yield, but a `spawn_blocking` job that already started runs on until
-//! it returns (tokio neither cancels nor joins it).
+//! `cargo test --lib` process share no runtime. Its workers record their
+//! wipes into their test thread's wipe record
+//! ([`crate::owner::secrets::wiped`]), so a test reads on its own thread
+//! what its requests wiped. A test thread's exit starts its runtime's
+//! shutdown without waiting: async tasks are dropped at their next yield,
+//! but a `spawn_blocking` job that already started runs on until it returns
+//! (tokio neither cancels nor joins it).
 
 use std::future::Future;
+use std::sync::Arc;
 
 /// One test thread's runtime whose workers have the engine's stack. Its
 /// thread's exit starts its shutdown through `shutdown_background`, which
@@ -29,15 +33,29 @@ struct EngineStackRuntime(Option<tokio::runtime::Runtime>);
 impl EngineStackRuntime {
     fn build() -> Self {
         Self(Some(
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(crate::ENGINE_THREAD_STACK_BYTES)
+            engine_stack_builder()
                 .thread_name("engine-test-worker")
-                .enable_all()
                 .build()
                 .expect("engine-sized test runtime"),
         ))
     }
+}
+
+/// A runtime builder whose two workers have the engine's stack and take the
+/// building thread's wipe record and device-release flag when they start.
+fn engine_stack_builder() -> tokio::runtime::Builder {
+    let record = crate::owner::secrets::wiped::current();
+    let armed = crate::api::release_hook::current();
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder
+        .worker_threads(2)
+        .thread_stack_size(crate::ENGINE_THREAD_STACK_BYTES)
+        .on_thread_start(move || {
+            crate::owner::secrets::wiped::share(Arc::clone(&record));
+            crate::api::release_hook::share(Arc::clone(&armed));
+        })
+        .enable_all();
+    builder
 }
 
 impl Drop for EngineStackRuntime {
@@ -87,10 +105,7 @@ where
         .name(name.into())
         .stack_size(crate::ENGINE_THREAD_STACK_BYTES)
         .spawn(move || {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(crate::ENGINE_THREAD_STACK_BYTES)
-                .enable_all()
+            engine_stack_builder()
                 .build()
                 .expect("engine-sized test runtime")
                 .block_on(test())

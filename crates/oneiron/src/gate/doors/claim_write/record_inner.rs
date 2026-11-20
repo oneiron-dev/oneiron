@@ -81,6 +81,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
     recorded_decision: &mut Option<RecordedClaimGateDecision>,
+    owner_amendment: &mut Option<super::OwnerRevisionAmendment>,
     preflight_receipt: Option<PreflightReceipt>,
     operation_effect_body: bool,
     skip_precommit: bool,
@@ -265,12 +266,14 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         {
             decision = GateDecision::pending(vec![GateReasonCode::PendingCarryForwardConfidence]);
         }
-        let critical_floor_only = body.approval == ClaimApprovalStatus::Auto
-            && critical_claim_can_land_auto_with_confirm(
-                &input,
-                decision.reason_codes(),
-                &body.predicate,
-            );
+        // The policy verdict pends on the criticality floor alone.
+        let criticality_floor_pend_only = critical_claim_can_land_auto_with_confirm(
+            &input,
+            decision.reason_codes(),
+            &body.predicate,
+        );
+        let critical_floor_only =
+            body.approval == ClaimApprovalStatus::Auto && criticality_floor_pend_only;
         // Owner-authored writes carry their own confirmation: the vault's
         // owner, revalidated in this transaction, wrote this claim in person,
         // so it lands Auto with nothing to confirm. The proof rides the
@@ -342,6 +345,16 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             (critical_floor_only || approved_close_floor_only || holder_approved_floor_only)
                 && !owner_authored
                 && !declared_critical;
+        // A checker's hold of an Auto request lands that body Proposed in the
+        // transaction its gate judged it in (a live-run claim put, review
+        // 9216 round 2 P1). On a predicate critical only by fallback, the
+        // Proposed body pends on the floor alone, the floor the Auto request
+        // was lifted past above, so that pend does not stop the hold the
+        // preflight recorded from being replayed below; any other pend or a
+        // denial still stands (review 9774 P1).
+        let proposed_fallback_floor_only = body.approval == ClaimApprovalStatus::Proposed
+            && criticality_floor_pend_only
+            && !declared_critical;
         if owner_authored {
             decision = GateDecision::allow()
                 .with_receipt_reasons([GATE_REASON_ALLOW_CRITICAL_OWNER_AUTHORED]);
@@ -569,11 +582,13 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         // replace it below, and an off-record room stages it instead.
         let mut decision_record = store.mint_gate_receipt_in_txn(wtxn, receipt)?;
         // FIX 8752: a batch apply skips the checker its preflight already
-        // asked, so policy alone answers Allow here. A checker hold that
-        // preflight recorded for this same candidate stays the verdict: the
-        // write lands held, and the writer below binds that receipt's pending
-        // row instead of dropping the hold. A fresh Deny or Pending stands.
-        if decision.outcome() == GateOutcome::Allow
+        // asked, so policy alone answers Allow here (or, for a held Auto
+        // request landing Proposed, the fallback floor's pend). A checker
+        // hold that preflight recorded for this same candidate stays the
+        // verdict: the write lands held, and the writer below binds that
+        // receipt's pending row instead of dropping the hold. Any other fresh
+        // Deny or Pending stands.
+        if (decision.outcome() == GateOutcome::Allow || proposed_fallback_floor_only)
             && let Some(receipt) = preflight_receipt
         {
             let preflight = store
@@ -742,6 +757,16 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                 .is_some_and(|row| pending_row_holds_critical_confirm(&row))
         {
             store.remove_pending_gate_consent_in_txn(wtxn, id, TrayRemoval::Silent)?;
+        }
+        // The owner's own revision of a held MACHINE claim answers its
+        // question (MACHINE-BIRTH-HELD-QUESTION-OWNER-SUCCESSOR = A).
+        if resolve_pending && decision.outcome() == GateOutcome::Allow {
+            let landing = mode.record_decision.then_some(&decision_record);
+            let landing = (landing, preflight_receipt.map(|receipt| receipt.decision));
+            let writer = (envelope, owner_write);
+            *owner_amendment = redeem_held_row_by_owner_revision(
+                store, wtxn, id, body, &binding, writer, landing,
+            )?;
         }
         enforce_claim_gate_decision_with_consent(
             store,

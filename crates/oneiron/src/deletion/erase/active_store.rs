@@ -240,6 +240,10 @@ impl Vault {
             // A MACHINE claim's signed history controls go with it.
             let (existed, had_vector, had_graph_mutation, neighbors) =
                 crate::batch::deindex_entity_with_machine_history(&write, wtxn, id)?;
+            // A project's unbound home room leaves no standing answer wider
+            // than its rows; no batch runs before the purge's caller commits
+            // (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS).
+            self.mark_answers_in_narrowed_rooms_in_txn(wtxn)?;
             crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
             crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
             let note_removed = crate::note::erase::purge(self, wtxn, id)?;
@@ -398,6 +402,9 @@ impl Vault {
             .deindex_project_room(&self.store, wtxn, id, &|txn, id| {
                 crate::batch::deindex_entity(&write, txn, id)
             })?;
+        // A project's unbound home room leaves no standing answer wider than
+        // its rows (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS).
+        self.mark_answers_in_narrowed_rooms_in_txn(wtxn)?;
         if room_had_graph {
             ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &room_neighbors)?;
             crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;

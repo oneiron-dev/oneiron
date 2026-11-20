@@ -165,10 +165,13 @@ pub fn release_turn_program_hold_as_delegate(
 /// try names no TASK, so no read lane holds it, and its rows read for its
 /// waking actor or the verified owner alone (`read::program_for`). The
 /// credential must still stand in `txn` (a revoke after the door's check
-/// refuses here), build a read key whose holder is the agent, and the try's
-/// program stamp must name the agent as its waking actor, at the agent
-/// class. No credential, one revoked or expired, one that grants no read,
-/// or another actor's program reads none.
+/// refuses here) and build a read key whose holder is the agent. The try
+/// must be a program's as the program read finds one: its stamp binds the
+/// admission whose wake authority names the stamp's actor, and that
+/// admission queued a root try (FIX W11-PROGRAM-HOLD-RELEASE-ADMISSION-BINDING).
+/// The stamp must name the agent as that waking actor, at the agent class.
+/// No credential, one revoked or expired, one that grants no read, a try no
+/// admission binds, or another actor's program reads none.
 ///
 /// # Errors
 ///
@@ -194,13 +197,13 @@ fn delegate_reads_program_in_txn(
     if holder != Some(agent) {
         return Ok(false);
     }
-    Ok(ATTEMPT
-        .get_lenient(vault, txn, &attempt)?
-        .is_some_and(|stamp| {
-            stamp.attempt_id == *attempt.as_bytes()
+    Ok(
+        super::read::program_of_in_txn(vault, txn, attempt)?.is_some_and(|(stamp, record)| {
+            record.attempt.is_some()
                 && stamp.actor == agent
                 && stamp.actor_class == EdgeActorClass::Agent as u8
-        }))
+        }),
+    )
 }
 
 /// A committed release's aftermath: a stopped try's running step stops, and

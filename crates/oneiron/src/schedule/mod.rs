@@ -54,6 +54,8 @@ pub(crate) use self::arm::{
 #[cfg(oneiron_test_support)]
 pub(crate) use self::arm::{plant_start_marker_in_txn, put_due_entry_for_test};
 pub(crate) use self::jobs::{job_named, jobs};
+#[cfg(test)]
+pub(crate) use self::run::InjectedCrash;
 pub use self::run::{JobOutcome, JobRun, ScheduleRunReport};
 pub use self::zones::EngineZones;
 use crate::entity_id::EntityId;

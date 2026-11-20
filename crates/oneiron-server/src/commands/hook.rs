@@ -6,7 +6,9 @@
 //! - `session-start` binds a vault ([`bind`]), prints one line naming it,
 //!   and recalls a short block for the project ([`recall`]).
 //! - `prompt` recalls a short block for the prompt from the bound vault.
-//! - `hand-over` queues the session's log for the running `serve` to import.
+//! - `hand-over` queues the session's log for the running `serve` to import,
+//!   or sends it to the selected hosted vault every start of the session
+//!   bound and recorded ([`hand_over`], [`session_binding`]).
 //! - `bind` binds a vault as `session-start` does and prints it as JSON, for
 //!   a plugin that runs inside its host (Hermes's memory provider).
 //!
@@ -19,16 +21,28 @@
 //! agent's `--credential-file` for a pinned or local vault, and the one the
 //! hosted selection names, in its own auth mode, for the hosted vault it
 //! selected (`oneiron hosted`, [`hosted_command`]).
+//!
+//! `oneiron continue --cloud` ([`continue_command`]) lives here too: it
+//! reads the same hosted selection and calls its verbs through the same
+//! bridge the recall speaks to.
 
 mod bind;
+mod continue_command;
 mod hosted_command;
+mod hosted_continue_sign_in;
 mod hosted_selection;
 mod hosted_sign_in;
 mod recall;
+mod session_binding;
 
+pub use self::continue_command::continue_work;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::continue_command::test_support as continue_test_support;
 pub use self::hosted_command::hosted;
 
-use std::io::{Read as _, Write as _};
+use std::fs;
+use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
@@ -36,14 +50,19 @@ use std::time::{Duration, Instant};
 use oneiron::ingest::history::HistorySource;
 use serde_json::{Map, Value};
 
+use self::bind::HandOverTarget;
 use self::hosted_selection::{HostedDiscovery, HostedVault};
 use self::recall::RecallAuth;
+use self::session_binding::EarlierTurns;
 use crate::cli::{HookArgs, HookBindArgs, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs};
 
 /// The most of the host's event read from stdin.
 const MAX_EVENT_BYTES: u64 = 1 << 20;
 /// How long the project's git root may take to find.
 const GIT_TIMEOUT: Duration = Duration::from_secs(2);
+/// The longest first line of a Codex rollout read for its meta, which holds
+/// the session's base instructions: tens of KiB.
+const MAX_ROLLOUT_META_BYTES: u64 = 4 << 20;
 
 pub fn hook(args: HookArgs) {
     let host = args.host;
@@ -126,6 +145,12 @@ fn session_start(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
         args.common.settings_file.as_deref(),
         deadline,
     );
+    // A session's hand-over sends its log only to the vault every start of
+    // it bound.
+    if let Some(session) = session_id(host, &event) {
+        let earlier = earlier_turns(host, &event);
+        session_binding::record(host, session, bound.hosted.as_ref(), &earlier);
+    }
     let mut said = bound.lines;
     let Some(url) = bound.url else {
         return said;
@@ -235,7 +260,17 @@ fn recall_auth<'a>(
 /// host's logs ([`import_source`]): one small file in the queue of the
 /// config named, else of the running local vault, else of the default
 /// config, under the settings file named, else the running vault's own when
-/// the import takes that vault's config. Its output is not the host's.
+/// the import takes that vault's config. With no config named, the log goes
+/// by what the session's starts bound ([`bind::hand_over_target`]): to the
+/// selected hosted vault where every start bound that one and it is still
+/// selected, through `vault.imports.hook_transcript` as the selection's own
+/// credential, by the import that reads the host's logs, when the log is the
+/// event's own session's and sits where the host keeps its logs
+/// ([`continue_command::hand_over_hosted`]), with nothing queued here;
+/// nowhere where they bound a hosted vault no longer selected, or more than
+/// one vault. A send that fails is sent again whole by the session's next
+/// hand-over, and the import lands only what is new. Its output is not the
+/// host's.
 fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     let Some(event) = read_event() else {
         return;
@@ -247,7 +282,28 @@ fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     else {
         return;
     };
-    let mut command = oneiron_spawn::command(oneiron(args.common.oneiron.as_deref()));
+    let oneiron = oneiron(args.common.oneiron.as_deref());
+    let deadline = deadline(args.common.timeout);
+    // A config named here is a local queue's.
+    let session = session_id(host, &event).filter(|_| args.config.is_none());
+    let running = match (session, bind::hand_over_target(host, session)) {
+        (Some(session), HandOverTarget::Hosted(vault)) => {
+            let policy_ref = format!("policy:{}-hooks", host.as_str());
+            let _ = continue_command::hand_over_hosted(
+                &oneiron,
+                &vault,
+                host,
+                session,
+                Path::new(transcript),
+                policy_ref,
+                deadline,
+            );
+            return;
+        }
+        (_, HandOverTarget::Hosted(_) | HandOverTarget::Withheld) => return,
+        (_, HandOverTarget::Local(running)) => running.unwrap_or_default(),
+    };
+    let mut command = oneiron_spawn::command(oneiron);
     command
         .args([
             "import",
@@ -261,7 +317,6 @@ fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     // A named file stands over a found one. The running vault's settings
     // file goes over its own config alone, never over another config named
     // here (FIX 5602).
-    let running = bind::running_config().unwrap_or_default();
     let its_own = args
         .config
         .as_deref()
@@ -277,7 +332,6 @@ fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     if let Some(settings_file) = settings_file {
         command.arg("--settings-file").arg(settings_file);
     }
-    let deadline = deadline(args.common.timeout);
     if let Ok(mut child) = command.spawn()
         && wait_until(&mut child, deadline).is_none()
     {
@@ -301,6 +355,109 @@ fn read_event() -> Option<Map<String, Value>> {
     match serde_json::from_slice(&raw).ok()? {
         Value::Object(event) => Some(event),
         _ => Some(Map::new()),
+    }
+}
+
+/// The session `host`'s event names, when it names one: Cursor's
+/// `conversation_id`, which every Cursor event names (its `sessionStart`
+/// names it again as `session_id`, its `stop` only so), else `session_id`.
+fn session_id(host: HookHost, event: &Map<String, Value>) -> Option<&str> {
+    let named = |field: &str| {
+        event
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|session| !session.is_empty())
+    };
+    match host {
+        HookHost::Cursor => named("conversation_id").or_else(|| named("session_id")),
+        _ => named("session_id"),
+    }
+}
+
+/// Whether a session start of `host` goes on from turns that ran before it.
+/// Cursor runs `sessionStart` only when a conversation is created
+/// (cursor.com/docs/agent/hooks), so its starts never do. Any other host's
+/// does unless its `source` names a new session: `startup` or `clear` (Claude
+/// Code, Codex), `startup` or `new` (Copilot); a resume, a compaction, or no
+/// `source` named, goes on.
+fn resumed(host: HookHost, event: &Map<String, Value>) -> bool {
+    host != HookHost::Cursor
+        && !matches!(
+            event.get("source").and_then(Value::as_str),
+            Some("startup" | "clear" | "new")
+        )
+}
+
+/// The turns a start of `host`'s session goes on from: the session's own
+/// when it is [`resumed`]; for a Codex start of a new session, what its
+/// rollout begins with ([`codex_rollout_start`]); else none.
+fn earlier_turns(host: HookHost, event: &Map<String, Value>) -> EarlierTurns {
+    if resumed(host, event) {
+        return EarlierTurns::Own;
+    }
+    match host {
+        HookHost::Codex => codex_rollout_start(event),
+        _ => EarlierTurns::None,
+    }
+}
+
+/// The turns a Codex rollout at the event's `transcript_path` begins with.
+/// Codex starts a fork (`codex fork`, `/fork`, `/side`, an edited earlier
+/// prompt, a changed folder) with `source` `startup` and names no parent in
+/// the event, but before the hook runs it writes the fork's rollout: its own
+/// `session_meta` line first, naming the session it was forked from as
+/// `forked_from_id`, then a copy of that session's turns. Codex writes a
+/// session's rollout, its own meta first, before the hook gets its path
+/// (`hook_transcript_path`), so a rollout not named is no local log and
+/// holds no turn. A named one not there, empty, or whose first line is not
+/// the session's own whole `session_meta` (an object payload whose `id` is
+/// the event's `session_id` and whose `forked_from_id` is absent, null or a
+/// session id, as Codex's own meta type reads it) holds turns the start
+/// cannot tell the session of (REVIEW-9973).
+fn codex_rollout_start(event: &Map<String, Value>) -> EarlierTurns {
+    let Some(rollout) = event
+        .get("transcript_path")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+    else {
+        return EarlierTurns::None;
+    };
+    // Not blocking on a FIFO named in place of the rollout.
+    let file = match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(rollout)
+    {
+        Ok(file) => file,
+        Err(_) => return EarlierTurns::Own,
+    };
+    if !file.metadata().is_ok_and(|metadata| metadata.is_file()) {
+        return EarlierTurns::Own;
+    }
+    let mut line = Vec::new();
+    if BufReader::new(file.take(MAX_ROLLOUT_META_BYTES))
+        .read_until(b'\n', &mut line)
+        .is_err()
+    {
+        return EarlierTurns::Own;
+    }
+    let Ok(meta) = serde_json::from_slice::<Value>(&line) else {
+        return EarlierTurns::Own;
+    };
+    let session = event.get("session_id").and_then(Value::as_str);
+    let payload = meta
+        .get("payload")
+        .and_then(Value::as_object)
+        .filter(|_| meta.get("type").and_then(Value::as_str) == Some("session_meta"))
+        .filter(|payload| {
+            session.is_some() && payload.get("id").and_then(Value::as_str) == session
+        });
+    match payload.map(|payload| payload.get("forked_from_id")) {
+        Some(None | Some(Value::Null)) => EarlierTurns::None,
+        Some(Some(Value::String(parent))) if !parent.is_empty() => {
+            EarlierTurns::CopiedFrom(parent.clone())
+        }
+        _ => EarlierTurns::Own,
     }
 }
 

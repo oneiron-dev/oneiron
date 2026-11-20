@@ -296,6 +296,7 @@ fn no_read_bump_loop() -> Result<()> {
             .query()
             .search_text("nobumpneedle", 10)
             .with_temporal_now(DECAY_NOW)
+            .boost_recency(f32::INFINITY)
             .run()
     };
 

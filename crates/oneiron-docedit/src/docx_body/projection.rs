@@ -16,6 +16,9 @@ use super::{
     kept_marks, marked_paragraph, new_paragraph, paragraph, remark, runs_text,
 };
 
+/// One group's formatting patches with the operations it builds.
+pub(super) type GroupPatchesAndOperations<'v> = (Vec<(&'v BlockView, Vec<(u8, u8)>)>, Vec<Value>);
+
 /// The formatting patches and ops one group's changes build against `view` and
 /// `canonical`. Shared by [`project_docx`] and [`DocxProjection`]: one group
 /// through the session builds exactly what a lone [`project_docx`] call builds.
@@ -26,7 +29,7 @@ pub(super) fn group_ops<'v>(
     view: &'v DocumentView,
     canonical: &CanonDoc,
     changes: &[DocxChange],
-) -> Result<(Vec<(&'v BlockView, Vec<(u8, u8)>)>, Vec<Value>), DoceditError> {
+) -> Result<GroupPatchesAndOperations<'v>, DoceditError> {
     let find = |id: &str| {
         view.blocks
             .iter()

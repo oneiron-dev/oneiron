@@ -21,6 +21,13 @@
 //! a leave or a removal ends it by design, and the record states a fact
 //! already committed. Until the record counts, the receipt and the audit
 //! report the change pending, never signed.
+//!
+//! The change's writer lends the record the vault owner's own write, when
+//! the person who made the change is that owner, revalidated there
+//! ([`crate::consent::OwnerAuthoredWrite`]): the record it signs then
+//! carries the owner key's proof this install holds (row
+//! OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS). The intent never keeps that
+//! write, so a record a later pass carries goes unproven.
 
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +35,7 @@ use super::super::{ChangeRecord, RECEIPT_PREFIX, encode, key};
 use crate::authority::{
     AuthorityEntryHash, MembershipExecution, MembershipExecutionCause, MembershipHandover,
 };
+use crate::consent::{AuthenticatedOwner, OwnerAuthoredWrite};
 use crate::error::Result;
 use crate::receipt::PendingMembershipExecutionRow;
 use crate::side_table::{self, HexId, Named, SideTable};
@@ -92,10 +100,37 @@ enum Carried {
 }
 
 impl Vault {
+    /// The vault owner's own write of the membership change `actor` makes,
+    /// the proof revalidated in the change's writer `txn` before the change
+    /// applies, since the change may end the actor's standing
+    /// ([`AuthenticatedOwner::owner_answer_in_txn`]): the change's record
+    /// then carries the owner key's proof. A person who is no Owner of the
+    /// vault (an Admin or Deputy holder, a member leaving), a narrowed or
+    /// delegated proof, and one that does not read (logged) answer `None`,
+    /// and the record goes unproven; the change stands either way.
+    pub(in crate::federation::shared_act) fn membership_owner_write_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: &AuthenticatedOwner,
+    ) -> Option<OwnerAuthoredWrite> {
+        actor
+            .owner_answer_in_txn(self, txn)
+            .unwrap_or_else(|error| {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a membership change's owner proof did not read; its record is carried unproven"
+                );
+                None
+            })
+    }
+
     /// Keeps `unsigned`, the half of the change receipted as `receipt` that
     /// no issuer signed, pending in the change's own writer `txn`, then
     /// signs it in a savepoint of `txn` when this install can carry for the
-    /// vault now. [`ChangeRecord::Signed`] when the fold counted the record,
+    /// vault now, with the owner key's proof when `owner_authored` is the
+    /// vault owner's own write of the change, revalidated in `txn` before
+    /// the change applied ([`Self::carry_membership_execution_in_txn`]).
+    /// [`ChangeRecord::Signed`] when the fold counted the record,
     /// [`ChangeRecord::Pending`] when the intent stays owed. A failure past
     /// the intent's write is logged by kind and leaves it owed: the change
     /// stands, as before the record existed.
@@ -107,7 +142,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         vault_id: u64,
         receipt: &str,
-        person: EntityId,
+        (person, owner_authored): (EntityId, Option<&OwnerAuthoredWrite>),
         executed_at: u64,
         unsigned: UnsignedExecution,
     ) -> Result<ChangeRecord> {
@@ -126,7 +161,7 @@ impl Vault {
             handover: unsigned.handover,
         };
         PENDING_MEMBERSHIP_EXECUTION.put(&self.store, txn, &HexId(receipt), &pending)?;
-        match self.carry_membership_execution_in_savepoint(txn, receipt) {
+        match self.carry_membership_execution_in_savepoint(txn, receipt, owner_authored) {
             Ok(Some(Carried::Signed(hash))) => Ok(ChangeRecord::Signed(hash)),
             Ok(Some(Carried::AlreadyWithdrawn)) => Ok(ChangeRecord::Unnamed),
             Ok(None) => Ok(ChangeRecord::Pending),
@@ -144,9 +179,11 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         receipt: EntityId,
+        owner_authored: Option<&OwnerAuthoredWrite>,
     ) -> Result<Option<Carried>> {
         let mut savepoint = self.store.env.nested_write_txn(txn)?;
-        let carried = self.carry_membership_execution_in_txn(&mut savepoint, receipt)?;
+        let carried =
+            self.carry_membership_execution_in_txn(&mut savepoint, receipt, owner_authored)?;
         if carried.is_some() {
             savepoint.commit()?;
         }
@@ -159,10 +196,14 @@ impl Vault {
     /// An intent whose every Grant a counted record already withdrew, with
     /// no handover, clears with no new record. `None`, with nothing
     /// written, for no intent or an install that cannot carry now.
+    /// `owner_authored` is the change's own write when the change's writer
+    /// carries it: it proves the record only when its owner is the person
+    /// the intent names as the one who made the change.
     fn carry_membership_execution_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         receipt: EntityId,
+        owner_authored: Option<&OwnerAuthoredWrite>,
     ) -> Result<Option<Carried>> {
         let Some(pending) = PENDING_MEMBERSHIP_EXECUTION.get(&self.store, txn, &HexId(receipt))?
         else {
@@ -179,8 +220,10 @@ impl Vault {
             PENDING_MEMBERSHIP_EXECUTION.delete(&self.store, txn, &HexId(receipt))?;
             return Ok(Some(Carried::AlreadyWithdrawn));
         }
-        let Some(hash) =
-            self.append_membership_execution_in_txn(txn, |machine| MembershipExecution {
+        let owner_authored = owner_authored.filter(|write| write.actor() == pending.person);
+        let Some(hash) = self.append_membership_execution_in_txn(
+            txn,
+            |machine| MembershipExecution {
                 machine,
                 shared_vault: pending.vault_id,
                 cause: pending.cause,
@@ -191,7 +234,9 @@ impl Vault {
                 executed_at: pending.executed_at,
                 withdrawn_grants,
                 handover: pending.handover.clone(),
-            })?
+            },
+            owner_authored,
+        )?
         else {
             return Ok(None);
         };
@@ -212,7 +257,9 @@ impl Vault {
         let mut failed = None;
         for receipt in owed {
             let outcome = self.with_write_txn(|txn| {
-                let Some(outcome) = self.carry_membership_execution_in_txn(txn, receipt)? else {
+                // A later pass is no owner's write: the record goes unproven.
+                let Some(outcome) = self.carry_membership_execution_in_txn(txn, receipt, None)?
+                else {
                     return Ok(false);
                 };
                 let entry = match outcome {

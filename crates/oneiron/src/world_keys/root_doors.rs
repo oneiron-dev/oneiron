@@ -424,7 +424,7 @@ impl Vault {
             carried_marks(fold, prepared, carry, me)?;
             // Another owner's R refuses before any mint (REVIEW-9488 round 2 P1 3).
             let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-            let key = RecoveryAuthoritySigner::from_seed(prepared.seed(), &vault_id)?;
+            let (_, key) = self.kit_activation_signer_in_txn(txn, prepared.seed(), &vault_id)?;
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             self.recovery_authority_enrols_in_txn(txn, fold, actor, &key.authority_key())
                 .map(drop)
@@ -493,7 +493,8 @@ impl Vault {
             return Err(refused("the new root's marks do not stand"));
         }
         let vault_id = mid.vault_id.ok_or_else(invalid_authority)?;
-        let authority_signer = RecoveryAuthoritySigner::from_seed(seed, &vault_id)?;
+        let (generation, authority_signer) =
+            self.kit_activation_signer_in_txn(txn, seed, &vault_id)?;
         let r_key = authority_signer.authority_key();
         let enrol = self.recovery_authority_enrols_in_txn(txn, &mid, actor, &r_key)?;
         // R enrols before the earlier R keys go: the enrolment's carrier,
@@ -514,7 +515,7 @@ impl Vault {
                 txn,
                 authority,
                 secret.machine,
-                seed,
+                &authority_signer,
                 predecessor,
             )?;
         }
@@ -531,7 +532,7 @@ impl Vault {
         self.bind_owner_to_recovery_authority_key_in_txn(txn, actor, r_key, predecessor)?;
         let report = self.repin_finish_in_txn(txn, &door, start)?.report;
         let authority_seed = RecoveryAuthoritySeed::from_guarded(
-            RecoveryAuthoritySigner::authority_seed(seed, &vault_id),
+            RecoveryAuthoritySigner::authority_seed(seed, &vault_id, generation),
         );
         Ok(ActivatedRoot {
             root: root.id,

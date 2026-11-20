@@ -79,7 +79,7 @@ const PENDING_EDIT_CARRIERS: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_QD_E);
 
 /// Distinct window labels currently carrying persisted CRDT state —
-/// `d:w:{key}` snapshots and `u:w:{key}:{seq:08x}` update rows.
+/// `d:w:{key}` snapshots and `u:w:{key}:{seq:016x}` update rows.
 fn persisted_window_labels(vault: &Vault) -> Result<(BTreeSet<String>, bool)> {
     let mut labels = BTreeSet::new();
     let mut malformed = false;
@@ -201,6 +201,9 @@ pub(super) fn compact_all_windows(
                 continue;
             }
             match vault.compact_document_for_sweep(id, erase) {
+                // A resident document is compacted under its writer lock and
+                // waits only while that writer is busy, or while the vault's
+                // attached manager is gone (HELD-ENTITY-DOCUMENT-DEFERRED).
                 Ok(false) => {
                     run.windows_deferred_live += 1;
                     if matches!(state, WindowSweepState::AllCompacted) {
@@ -562,6 +565,9 @@ pub(super) fn compact_window_with(
     // A fence alone (a release, or a hard delete not yet purged) is no
     // hard-delete record, so `erased` does not name the row.
     crate::sync::window::scrub_withdrawn_delete_carriers(vault, &doc, None)?;
+    // A row a use limit keeps here leaves the window before the side-row
+    // scrubs below, which drop the side rows of a row it no longer carries.
+    crate::sync::window::withhold_use_limited_carriers(vault, &doc, None)?;
 
     // OF-522: a turn row of a room this vault deleted leaves the window; the
     // shallow export below drops its history, so nothing is pinned.

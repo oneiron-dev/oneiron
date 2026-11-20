@@ -69,6 +69,10 @@ use crate::entity_id::EntityId;
 use crate::error::{DevicePinRefusal, Error, RecordError, Result};
 use crate::vault::Vault;
 
+mod slot;
+
+pub(crate) use self::slot::{OwnerSigningSlot, SlotRenewal};
+
 /// The context the signing key is derived under from its seed.
 const OWNER_SIGNING_CONTEXT: &str = "oneiron/owner-signing-key/v1";
 
@@ -320,6 +324,13 @@ enum DeviceOwnerKey {
         machine: EntityId,
         challenge: Vec<u8>,
     },
+}
+
+/// This install's owner signing key that a hold found live on the roster:
+/// read from its slot, or opened under the device PIN.
+enum LiveOwnerKey {
+    Slot(OwnerRootSigner),
+    PinBound(Arc<DevicePin>, [u8; 32]),
 }
 
 impl Vault {
@@ -613,7 +624,8 @@ impl Vault {
     /// first ([`Vault::confirm_device_pin`]); outside a window nothing new
     /// is held. A host that installed no device PIN holds no key there, and
     /// that is logged. On a device whose PIN was forgotten and that has none
-    /// now, a seed left in the slot is no key, and nothing is held.
+    /// now, a seed left in the slot is no key, and nothing is held. It waits
+    /// for a door that holds this vault's owner signing slot lock.
     pub fn hold_device_owner_signer_logged(&self) -> bool {
         held_logged(self.hold_device_owner_signer())
     }
@@ -624,34 +636,46 @@ impl Vault {
         let slot = self.owner_signing_slot(machine);
         let pin = self.device_pin();
         let step = pin.as_deref().map(DevicePin::step);
-        match slot_seed_bar(keystore.as_ref()).map_err(super::keystore_error)? {
-            Some(SlotSeedBar::PinSet) => match (pin.as_ref(), step) {
-                (Some(pin), Some(step)) => {
-                    self.hold_pin_bound_owner_signer(&step, pin, keystore.as_ref(), &slot)
-                }
-                _ => Err(no_device_pin_here()),
+        // The slot is read, and its key's enrollment checked, under the
+        // vault's owner signing slot lock, taken inside the step as at every
+        // door that takes both, so a door that renews the slot is never seen
+        // between its delete and its create. The key is held once that lock
+        // is let go: a hold asks every signer held for its root, and a
+        // signer's answer may read the slot (REVIEW-9678 P1).
+        let slot_lock = self
+            .store
+            .owner_signing_slot_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let live = match slot_seed_bar(keystore.as_ref()).map_err(super::keystore_error)? {
+            Some(SlotSeedBar::PinSet) => match (pin.as_ref(), step.as_ref()) {
+                (Some(pin), Some(step)) => self
+                    .live_pin_bound_owner_key(step, pin, keystore.as_ref(), &slot)?
+                    .map(|public_key| LiveOwnerKey::PinBound(Arc::clone(pin), public_key)),
+                _ => return Err(no_device_pin_here()),
             },
             // What a forgotten PIN left in the slot is no key.
-            Some(SlotSeedBar::PinForgotten) => Ok(false),
+            Some(SlotSeedBar::PinForgotten) => None,
             None => match keystore.get(&slot).map_err(super::keystore_error)? {
-                Some(seed) => self.hold_owner_signer_if_enrolled(OwnerRootSigner::from_slot(
-                    &seed, &keystore, &slot,
-                )),
-                None => Ok(false),
+                Some(seed) => {
+                    let signer = OwnerRootSigner::from_slot(&seed, &keystore, &slot);
+                    let live = self
+                        .listed_owner_key(&signer.public_key())?
+                        .is_some_and(|listed| listed.live);
+                    live.then_some(LiveOwnerKey::Slot(signer))
+                }
+                None => None,
             },
+        };
+        drop(slot_lock);
+        match live {
+            Some(LiveOwnerKey::Slot(signer)) => self.hold_checkpoint_root_signer(Arc::new(signer)),
+            Some(LiveOwnerKey::PinBound(pin, public_key)) => {
+                self.hold_opened_pin_bound_owner_key(&pin, slot, public_key);
+            }
+            None => return Ok(false),
         }
-    }
-
-    /// Holds `signer` when the roster names its key live as an enrolled
-    /// owner key; true when it is held.
-    fn hold_owner_signer_if_enrolled(&self, signer: OwnerRootSigner) -> Result<bool> {
-        let live = self
-            .listed_owner_key(&signer.public_key())?
-            .is_some_and(|listed| listed.live);
-        if live {
-            self.hold_checkpoint_root_signer(Arc::new(signer));
-        }
-        Ok(live)
+        Ok(true)
     }
 
     /// Whether the roster lists `public_key` as a live key now: the rule a
@@ -730,52 +754,6 @@ fn slot_owner_signer(
     let seed = super::slot_seed(keystore.as_ref(), slot)?;
     slot_keys_allowed(keystore.as_ref())?;
     Ok(OwnerRootSigner::from_slot(&seed, keystore, slot))
-}
-
-/// An install's owner signing slot ([`Vault::device_owner_signing_slot`]).
-pub(crate) struct OwnerSigningSlot {
-    keystore: Arc<dyn DeviceKeystore>,
-    slot: KeystoreSlot,
-}
-
-impl OwnerSigningSlot {
-    /// The slot's owner signing key, its seed made on first use. The roster
-    /// may name it, live or revoked. Refused on a device with a PIN set or
-    /// forgotten, as [`Self::fresh_key`] is (`slot_owner_signer`'s rule).
-    ///
-    /// # Errors
-    /// The keystore's own refusal; the slot's rule.
-    pub(crate) fn key(&self) -> Result<OwnerRootSigner> {
-        slot_owner_signer(&self.keystore, &self.slot)
-    }
-
-    /// A new owner signing key, made in this slot from the OS CSPRNG after
-    /// the slot's seed is dropped: a root appointment's successor
-    /// (OWNER-ANCHOR-ROOT-RECOVERY), which must be a key no row names. Never
-    /// the slot's existing key, which the roster may name, live or revoked.
-    /// It touches the keystore alone, so the appointment's writer makes it
-    /// once the roster reads rootless there, and the recovery root's door's
-    /// once the roster reads the slot's key revoked there: a door run checked
-    /// before another run's write committed is refused first, and never
-    /// drops the seed of that run's successor, a live root key.
-    ///
-    /// Refused, before any seed is dropped, on a device with a PIN set or
-    /// forgotten (`slot_owner_signer`'s rule; ruling
-    /// ANCHOR-SUCCESSOR-ON-PIN-DEVICE = A): there a seed in the slot is no
-    /// key, and one that still waits to go under the PIN is not dropped.
-    /// The appointment holds the device PIN's step from before its writer to
-    /// the commit ([`Vault::appoint_owner_root`]), so no PIN of this process
-    /// is set between this check and the commit.
-    ///
-    /// # Errors
-    /// The keystore's own refusal; the slot's rule, as
-    /// [`Vault::device_owner_signing_key`] answers it.
-    pub(crate) fn fresh_key(&self) -> Result<OwnerRootSigner> {
-        slot_keys_allowed(self.keystore.as_ref())?;
-        DeviceKeystore::delete(self.keystore.as_ref(), &self.slot)
-            .map_err(super::keystore_error)?;
-        slot_owner_signer(&self.keystore, &self.slot)
-    }
 }
 
 /// `held`, a failure logged by kind and answered as not held.

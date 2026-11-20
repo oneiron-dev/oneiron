@@ -525,8 +525,9 @@ fn revoking_a_settlement_a_frozen_view_rested_on_serves_no_authority() -> Result
 
 /// Bug repro (Astra #1434 r10 F3): L removes Y (A) over S0; over A, B2 drops
 /// B1 (D) or lowers the depth (E), and B3 signs two resolutions of A's tie
-/// that build on neither, one for D and one for E. Neither stands, so D
-/// excludes no one and B1's removal of X over S0 (C) holds in the tie.
+/// that build on neither, one for D and one for E. Neither resolution stands,
+/// but D's deposition excludes B1's removal of X over S0 (C). A wins alone
+/// at S0, and X stays seated in the D/E meet (well-founded deposition ruling).
 /// Past the budget the frozen view rests on both resolutions: revoking
 /// either one's slip serves no authority.
 #[cfg(feature = "sync")]
@@ -562,7 +563,8 @@ fn revoking_a_conflicting_resolution_a_frozen_view_rested_on_serves_no_authority
             );
             put_companion(&vault, &envelope(id, settle), at)?;
         }
-        assert!(!seats_of(&vault, id).contains(&x));
+        // Well-founded deposition ruling: D excludes C, so A wins and X stays seated.
+        assert!(seats_of(&vault, id).contains(&x));
         vault.set_project_history_policy(
             &owner(&vault)?,
             ProjectHistoryPolicy {

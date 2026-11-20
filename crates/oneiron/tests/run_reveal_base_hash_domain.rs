@@ -12,6 +12,13 @@
 //! copy, but the file reveal it ran files its ask with the owner. Before
 //! the fix the join selected nothing, so no ask was ever filed.
 //!
+//! The secret rides a dotenv file, not a token-shaped key: snapshot custody
+//! quarantines a file the release scan names out of the ingested snapshot
+//! and out of the pinned base a run's work opens from, so no work could
+//! hold such a file at all. A dotenv value the detector does not name is
+//! still lifted into custody and marked at receive (CALL DOTENV-IMPORT),
+//! so the work holds its masked copy as the proof needs.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test run_reveal_base_hash_domain`.
 #![cfg(oneiron_test_support)]
@@ -51,11 +58,13 @@ use oneiron::secret_custody::{SecretRevealAsk, SecretRevealState};
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
-/// The marked file: its token is the fake GitHub token the secret scanner
-/// names, as in `git_smart_http.rs`.
-const SECRET_RS_PATH: &str = "secret.rs";
-const SECRET_RS: &str =
-    "pub const DEPLOY_TOKEN: &str = \"ghp_0123456789abcdefghijklmnopqrstuvwxyz\";\n";
+/// The marked file: a dotenv file whose value the release scan does not
+/// name, so snapshot custody keeps it, while receive still lifts the value
+/// into custody and marks it (CALL DOTENV-IMPORT). Its name is no credential
+/// name and its value no token shape, on purpose: either would quarantine
+/// the file out of the work instead of masking it there.
+const SECRET_ENV_PATH: &str = "deploy.env";
+const SECRET_ENV: &str = "DEPLOY_TARGET=warehouse-7\n";
 
 fn git(dir: &Path, args: &[&str]) -> TestResult<String> {
     let output = Command::new("git").args(args).current_dir(dir).output()?;
@@ -391,7 +400,7 @@ impl Read for ChunkedBody {
 // ---------------------------------------------------------------------------
 
 /// The repo, its served seed push, and one agent run with the work it opened
-/// at the queue's green commit: `secret.rs` carries readable marks and the
+/// at the queue's green commit: `deploy.env` carries readable marks and the
 /// work holds its masked copy.
 struct Fixture {
     vault: Arc<Vault>,
@@ -427,10 +436,10 @@ impl Fixture {
         git(repo_dir.path(), &["symbolic-ref", "HEAD", MAIN])?;
         std::fs::write(repo_dir.path().join("math.rs"), MATH_RS)?;
         std::fs::write(repo_dir.path().join("label.rs"), LABEL_RS)?;
-        std::fs::write(repo_dir.path().join(SECRET_RS_PATH), SECRET_RS)?;
+        std::fs::write(repo_dir.path().join(SECRET_ENV_PATH), SECRET_ENV)?;
         git(
             repo_dir.path(),
-            &["add", "--", "math.rs", "label.rs", SECRET_RS_PATH],
+            &["add", "--", "math.rs", "label.rs", SECRET_ENV_PATH],
         )?;
         git(
             repo_dir.path(),
@@ -489,15 +498,16 @@ impl Fixture {
             landed[0].door.verdict
         );
 
-        // One agent run, reading every Rust file, with its work at green.
+        // One agent run, reading every Rust file and the dotenv file, with its
+        // work at green.
         let agent = create_enabled_agent(&vault, &owner_proof, "reveal-base-agent")?;
         let slip = paired_agent_slip(&vault, &issuer, &owner_proof, agent, 0xA1)?;
         let bounds = RepoAccessBounds {
             repo,
             project,
             refs: BTreeSet::from([MAIN.to_owned()]),
-            readable: BTreeSet::from(["*.rs".to_owned()]),
-            editable: BTreeSet::from(["*.rs".to_owned()]),
+            readable: BTreeSet::from(["*.rs".to_owned(), "*.env".to_owned()]),
+            editable: BTreeSet::from(["*.rs".to_owned(), "*.env".to_owned()]),
         };
         mint_repo_grant(&vault, &owner_proof, agent, Some(&bounds))?;
         let owner_memory = vault
@@ -535,7 +545,7 @@ impl Fixture {
             &self.run.binding,
             RepoViewsReadInput {
                 work: self.work,
-                path: SECRET_RS_PATH.to_owned(),
+                path: SECRET_ENV_PATH.to_owned(),
                 why: why.map(str::to_owned),
             },
         )?;
@@ -559,14 +569,14 @@ fn a_views_read_with_why_reaches_the_base_snapshot_and_files_its_ask() -> TestRe
     let hits = oneiron::test_doors::repo_secret_marks::marked_hits(&fixture.vault)?;
     assert!(
         hits.iter()
-            .any(|hit| hit.path.as_deref() == Some(SECRET_RS_PATH)),
+            .any(|hit| hit.path.as_deref() == Some(SECRET_ENV_PATH)),
         "a mark names the pushed file: {hits:?}"
     );
     // The work holds the masked copy, and nothing asked yet.
     let plain = fixture.read(None)?;
     assert_ne!(
         plain,
-        SECRET_RS.as_bytes(),
+        SECRET_ENV.as_bytes(),
         "the work holds the masked copy"
     );
     assert!(
@@ -598,7 +608,7 @@ fn a_views_read_without_why_files_no_ask() -> TestResult {
     let plain = fixture.read(None)?;
     assert_ne!(
         plain,
-        SECRET_RS.as_bytes(),
+        SECRET_ENV.as_bytes(),
         "the work holds the masked copy"
     );
     assert!(

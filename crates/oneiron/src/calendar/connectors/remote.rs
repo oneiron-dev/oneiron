@@ -150,7 +150,8 @@ pub trait CalendarRemoteTransport {
 
     /// `cursor`, the next cursor of a pull that left a change owed (an
     /// omission with a write of it in flight or its row moved since the
-    /// listing, or a booking move a pending emergency delivery held back):
+    /// listing, a booking move a pending emergency delivery held back, or a
+    /// cancelled version of a member a cancelled write in flight holds back):
     /// one from which the next pull lists the calendar whole again, so the
     /// owed change is read again and never dropped (fix list row 19192,
     /// FIX 22385). The default is `None`, no cursor: the next pull starts

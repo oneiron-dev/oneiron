@@ -583,7 +583,7 @@ pub fn live_passports_for_event(
     live_passports_for_event_in_txn(vault, &txn, event_ref)
 }
 
-fn live_passports_for_event_in_txn(
+pub(crate) fn live_passports_for_event_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     event_ref: &EntityId,
@@ -761,6 +761,18 @@ pub(crate) fn encode_passport_value(value: &CalendarPassportValue) -> rmpv::Valu
             rmpv::Value::from(since),
         ));
     }
+    if value.written_cancelled {
+        entries.push((
+            rmpv::Value::from("written_cancelled"),
+            rmpv::Value::Boolean(true),
+        ));
+    }
+    if let Some(seen_at) = value.deferred_cancel_seen_at {
+        entries.push((
+            rmpv::Value::from("deferred_cancel_seen_at"),
+            rmpv::Value::from(seen_at),
+        ));
+    }
     rmpv::Value::Map(entries)
 }
 
@@ -837,6 +849,8 @@ mod tests {
             last_seen_at: 100,
             presence: CalendarPassportPresence::Live,
             cancelled_since: None,
+            written_cancelled: false,
+            deferred_cancel_seen_at: None,
         };
         let claim = crate::ClaimBody::new(
             PREDICATE_CALENDAR_PASSPORT,
