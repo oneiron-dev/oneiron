@@ -3,10 +3,13 @@
 //!
 //! Before: a federation peer's update carrying any tombstone was refused
 //! whole (`reject_federated_tombstones`), so an owner's delete never reached
-//! the copy a live Connect share had delivered.
+//! the copy a live Connect share had delivered; and the sender's Connect
+//! delivery carried no tombstone at all.
 //! After: on the live peer lane each tombstone the delivering pact proves
 //! lands in the part whose window holds its row, and every other tombstone is
-//! dropped while the rest of the update lands.
+//! dropped while the rest of the update lands. The sender's Connect delivery
+//! carries the owner's delete of a record row it sent that peer, and no
+//! other; a guest document carries none.
 //!
 //! - `a_live_peers_delete_removes_the_copy_its_pact_delivered`: red on main
 //!   (the import is refused whole and C stays), green on the head.
@@ -16,6 +19,12 @@
 //!   membership or topology kind is never admitted).
 //! - `a_dropped_tombstone_leaves_the_rest_of_the_update_landing`: red on main
 //!   (the whole update is refused, C2 never lands), green on the head.
+//! - `an_owners_delete_of_a_row_the_peer_was_sent_removes_its_copy`: red on
+//!   the receiver-only head (the next delivery carries no tombstone), green on
+//!   the sender's head.
+//! - `a_delete_of_a_row_the_peer_was_never_sent_stays_home`: guard, green on
+//!   both (no prepared export under the grant listed the row).
+//! - `a_guest_document_carries_no_delete`: guard, green on both.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test federated_record_tombstone_admission`.
@@ -30,7 +39,7 @@ use oneiron::authority::{
     AuthorityVaultId, FederationPactStatus, HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole,
 };
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::deletion::{TombstoneReason, TombstoneValueV2};
+use oneiron::deletion::{DeleteReason, TombstoneReason, TombstoneValueV2};
 use oneiron::entity_id::LocalWorldId;
 use oneiron::federation::{
     FederationDirectionScope, FederationGrantScope, Scope, ScopeAxis, ScopeId, Sensitivity,
@@ -42,6 +51,7 @@ use oneiron::store::ports::ManualClock;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::federation_burst::FederationPeer;
 use oneiron::sync::manager::WindowManager;
+use oneiron::sync::selector::{GuestDocumentShareRequest, share_guest_document_as_owner};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::{
     ConnectExportRequest, ConnectRejoinStatus, FederationAdmissionRole, SyncClient,
@@ -154,7 +164,6 @@ struct ActivePact {
     pact_hex: String,
     s_world: EntityId,
     b_world: EntityId,
-    #[allow(dead_code)]
     s_grant: EntityId,
     b_grant: EntityId,
     b_member: EntityId,
@@ -600,5 +609,182 @@ fn a_dropped_tombstone_leaves_the_rest_of_the_update_landing() {
             .expect("FIXTURE: B own row reads after the import")
             .is_some(),
         "FIXTURE: B still holds its own row after the dropped tombstone"
+    );
+}
+
+/// S's month window of its named WORLD, where the delete of a CLAIM in that
+/// WORLD is published (`deletion/delete/plan.rs`).
+fn world_window(world: EntityId) -> String {
+    format!("{WINDOW}@{}", world.to_hex())
+}
+
+/// S exports `window_key` of its named WORLD through the live pact.
+fn export_window(
+    s: &Fixture,
+    pact_hex: &str,
+    window_key: &str,
+    s_world: EntityId,
+) -> oneiron::sync::ConnectDelivery {
+    s.manager
+        .open_window(&WindowKey::new(window_key))
+        .expect("FIXTURE: S window opens");
+    SyncClient::export_connect_window_as(
+        &s.manager,
+        &s.proof,
+        &s.issuer,
+        ConnectExportRequest {
+            pact: pact_hex.to_owned(),
+            window_key: window_key.to_owned(),
+            world_ref: s_world,
+            facets: vec![],
+            bands: vec![],
+        },
+    )
+    .expect("FIXTURE: S exports its WORLD's window")
+}
+
+/// The row ids `doc`'s tombstones map names.
+fn tombstone_keys(doc: &LoroDoc) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
+    doc.get_map("tombstones").for_each(|key, _| {
+        keys.insert(key.to_owned());
+    });
+    keys
+}
+
+/// The row ids an exported update's tombstones map names.
+fn carried_tombstones(update: &[u8]) -> BTreeSet<String> {
+    let doc = LoroDoc::new();
+    doc.import(update).expect("FIXTURE: the update imports");
+    tombstone_keys(&doc)
+}
+
+/// The row ids S's own `window_key` window holds tombstones of.
+fn window_tombstones(s: &Fixture, window_key: &str) -> BTreeSet<String> {
+    let window = s
+        .manager
+        .open_window(&WindowKey::new(window_key))
+        .expect("FIXTURE: S window opens");
+    tombstone_keys(&window.doc)
+}
+
+/// S's CLAIM in its WORLD, sent to B by a Connect delivery of the month that
+/// B lands (the route the receiver tests above take), with the WORLD's month
+/// window, where the CLAIM's delete is published.
+fn sent_claim(s: &Fixture, b: &Fixture, pact: &ActivePact) -> (String, EntityId) {
+    let subject = put_person(&s.vault, "kenji");
+    let claim = put_claim(&s.vault, subject, Some(pact.s_world));
+    let delivery = export_window(s, &pact.pact_hex, WINDOW, pact.s_world);
+    let rejoined = SyncClient::rejoin_connect_as(&b.manager, &b.proof, delivery)
+        .expect("FIXTURE: B rejoins the first delivery");
+    assert!(
+        matches!(rejoined.status, ConnectRejoinStatus::Imported),
+        "FIXTURE: the first rejoin lands, not defers: {:?}",
+        rejoined.status
+    );
+    assert!(
+        stored_row(&b.vault, &claim)
+            .expect("FIXTURE: B row reads")
+            .is_some(),
+        "FIXTURE: B holds the CLAIM S sent"
+    );
+    (world_window(pact.s_world), claim)
+}
+
+/// S's owner hard-deletes `id`; S holds no row of it after.
+fn hard_delete(s: &Fixture, id: &EntityId) {
+    let outcome = s
+        .vault
+        .delete_entity_with_reason_as_owner(&s.proof, id, DeleteReason::UserHardDelete)
+        .expect("FIXTURE: S owner hard-deletes the row");
+    assert!(outcome.existed, "FIXTURE: the deleted row existed");
+    assert!(
+        stored_row(&s.vault, id)
+            .expect("FIXTURE: S row reads after its delete")
+            .is_none(),
+        "FIXTURE: S holds no row after its hard delete"
+    );
+}
+
+#[test]
+fn an_owners_delete_of_a_row_the_peer_was_sent_removes_its_copy() {
+    let (s, b, pact) = setup();
+    let (window_key, claim) = sent_claim(&s, &b, &pact);
+    hard_delete(&s, &claim);
+    assert!(
+        window_tombstones(&s, &window_key).contains(&claim.to_hex()),
+        "FIXTURE: S's window holds the CLAIM's tombstone"
+    );
+
+    let delivery = export_window(&s, &pact.pact_hex, &window_key, pact.s_world);
+    let carried = carried_tombstones(&delivery.body.update);
+    assert!(
+        carried.contains(&claim.to_hex()),
+        "NO-DELETE-SENT: S's next delivery under the live pact omits its owner's delete of a row \
+         it sent B: {carried:?}"
+    );
+    let rejoined = SyncClient::rejoin_connect_as(&b.manager, &b.proof, delivery)
+        .expect("B rejoins the delivery that carries the delete");
+    assert!(
+        matches!(rejoined.status, ConnectRejoinStatus::Imported),
+        "the delete's delivery lands, not defers: {:?}",
+        rejoined.status
+    );
+    assert!(
+        stored_row(&b.vault, &claim)
+            .expect("FIXTURE: B row reads after the delete")
+            .is_none(),
+        "KEPT-DELETED-COPY: B keeps its copy of a row S's owner deleted"
+    );
+}
+
+#[test]
+fn a_delete_of_a_row_the_peer_was_never_sent_stays_home() {
+    let (s, b, pact) = setup();
+    let (window_key, claim) = sent_claim(&s, &b, &pact);
+    let unsent_subject = put_person(&s.vault, "haru");
+    let unsent = put_claim(&s.vault, unsent_subject, Some(pact.s_world));
+    hard_delete(&s, &claim);
+    hard_delete(&s, &unsent);
+    assert!(
+        window_tombstones(&s, &window_key).contains(&unsent.to_hex()),
+        "FIXTURE: S's window holds the unsent CLAIM's tombstone"
+    );
+
+    let delivery = export_window(&s, &pact.pact_hex, &window_key, pact.s_world);
+    let carried = carried_tombstones(&delivery.body.update);
+    assert!(
+        !carried.contains(&unsent.to_hex()),
+        "LEAK: S's delivery names the delete of a row it never sent B: {carried:?}"
+    );
+}
+
+#[test]
+fn a_guest_document_carries_no_delete() {
+    let (s, b, pact) = setup();
+    let (window_key, claim) = sent_claim(&s, &b, &pact);
+    hard_delete(&s, &claim);
+    assert!(
+        window_tombstones(&s, &window_key).contains(&claim.to_hex()),
+        "FIXTURE: S's window holds the CLAIM's tombstone"
+    );
+
+    let (document, _) = share_guest_document_as_owner(
+        &s.manager,
+        &s.proof,
+        &s.issuer,
+        &GuestDocumentShareRequest {
+            grant_ref: pact.s_grant,
+            world_ref: pact.s_world,
+            window_key,
+            facets: vec![],
+            bands: vec![],
+        },
+    )
+    .expect("FIXTURE: S shares its WORLD's window as a guest document");
+    let carried = carried_tombstones(&document.envelope.body.update);
+    assert!(
+        carried.is_empty(),
+        "GUEST-DOCUMENT-DELETE: a guest document carries a tombstone: {carried:?}"
     );
 }
