@@ -148,7 +148,10 @@ impl Vault {
         if crate::comm::route_projector_only_comm_put_in_txn(self, wtxn, id, body)? {
             return Ok(());
         }
-        self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, false)
+        self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, false)?;
+        // A claim about a PERSON the cleanup archived makes her no husk: she
+        // is restored in this write (FIX PUT-CLAIM-LANDS-ON-ARCHIVED-PERSON).
+        self.restore_subjects_of_landed_claims_in_txn(wtxn, &[(*id, body.subject)])
     }
 
     /// A selected value-field redaction keeps the existing subject edge
@@ -495,31 +498,7 @@ impl Vault {
         landing(&wtxn)?;
         self.validate_code_run_claim_target_in_txn(&wtxn, id, Some(candidate.predicate()))?;
         crate::memory::guard_existing_claim_in_txn(self, &wtxn, envelope.actor(), *id)?;
-        apply_ops_with_gate_mode(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut wtxn,
-            // The batch door's pairing: an overwrite drops the prospective
-            // query hints the prior claim carried (H83).
-            vec![
-                BatchOp::ClaimCandidate {
-                    id: *id,
-                    candidate: Box::new(candidate),
-                    envelope: envelope.clone(),
-                    occurred,
-                    learned_at,
-                    internal_lexical_query_hint: false,
-                },
-                BatchOp::ReconcileLexicalQueryHints {
-                    source: *id,
-                    keep: Vec::new(),
-                },
-            ],
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            ApplyOpsGateMode::new(false, true).with_source_in_gate_input(),
-        )?;
+        self.apply_candidate_in_txn(&mut wtxn, *id, candidate, envelope, occurred, learned_at)?;
         after_apply(self, &mut wtxn, id)?;
         rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
