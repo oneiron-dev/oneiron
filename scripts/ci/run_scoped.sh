@@ -4,6 +4,7 @@
 # packages only, and for `oneiron` only the touched top-level modules. Full runs the complete gate.
 # The vendored stemma fork is outside the workspace: `test` runs its own unit tests through
 # scripts/docedit/run_stemma_fork_unit_tests.sh when the fork changed, and on every full run.
+# A full run also runs stemma's integration target `suite`.
 # Cargo compilation/test steps use --locked: a PR must commit its dependency resolution.
 # Inputs (from the `changes` job): SCOPE_FULL, SCOPE_PACKAGES, SCOPE_DEPENDENTS, SCOPE_ONEIRON,
 # SCOPE_MODULES, SCOPE_IT, SCOPE_STEMMA_FORK.
@@ -71,6 +72,7 @@ test)
     # broker as a second OS user, and a host that cannot run one fails here instead of skipping.
     run scripts/ci/broker-fixture.sh
     run scripts/docedit/run_stemma_fork_unit_tests.sh
+    run scripts/docedit/run_stemma_fork_unit_tests.sh --test suite
     exit 0
   fi
   [ ${#others[@]} -gt 0 ] && run cargo nextest run --locked "${others[@]}" --all-features --no-fail-fast --no-tests=pass

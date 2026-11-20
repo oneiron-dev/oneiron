@@ -1019,12 +1019,12 @@ or that appears there during the run, refuses the run: the script makes each
 copy only as a new file and neither overwrites nor removes a lock file it did
 not make.
 
-The script does not run the integration targets. As measured on 2026-11-20
-from the fork's manifests: `stemma`'s `suite` (371 files) compiles and passes in
-about 12 minutes, and `element_fidelity` passes in about 17. `examples_reference`
-and `operations_reference` of `stemma` and `read_model_reference` of
-`stemma-diff` fail: each compares a generated page of the upstream repository
-(`docs/examples.md`, `docs/reference/operations.md`,
+With no arguments the script does not run the integration targets. As measured
+on 2026-11-20 from the fork's manifests: `stemma`'s `suite` (371 files)
+compiles and passes in about 12 minutes, and `element_fidelity` passes in
+about 17. `examples_reference` and `operations_reference` of `stemma` and
+`read_model_reference` of `stemma-diff` fail: each compares a generated page of
+the upstream repository (`docs/examples.md`, `docs/reference/operations.md`,
 `docs/reference/read-model.md`, one directory above the package) that the
 import did not copy. `untouched_block_fidelity` fails in one test,
 `single_tracked_edit_leaves_untouched_blocks_identical`, after about 17
@@ -1067,4 +1067,37 @@ fork that makes a single edit rewrite one more untouched block, in any of the
 for `w:r`). The test prints the 16 classes that measure zero as candidates to
 leave `KNOWN_OPEN`; they stay listed, because the test file is kept as the
 import's bytes. No job runs the target: it takes about 12 to 18 minutes, and
-`scripts/docedit/run_stemma_fork_unit_tests.sh` runs the unit tests only.
+it can be run by hand with
+`scripts/docedit/run_stemma_fork_unit_tests.sh --test untouched_block_fidelity`.
+
+## The fork's suite and its other integration targets (FIX STEMMA-FORK-SUITE-PASSES-AND-IS-RUN-BY-NO-JOB, 2026-11-21)
+
+No file of the fork changes. The runner's `--test <target>` form runs one
+integration target of `stemma` from the checkout root:
+
+```sh
+cargo test --locked --manifest-path crates/oneiron-docedit/vendor/stemma-engine/Cargo.toml --test <target>
+```
+
+In this form the runner copies the workspace lock beside `stemma-engine`'s
+manifest alone. `stemma-diff` is a path dev-dependency of `stemma`, and cargo
+reads no lock beside a path dependency. A full run of
+`scripts/ci/run_scoped.sh test` calls the runner for `suite` after the unit
+tests; a scoped run does not. For a change of the fork's edit, diff or
+serialize code, run the suite by hand with
+`scripts/docedit/run_stemma_fork_unit_tests.sh --test suite`.
+
+Measured on 2026-11-21 at `944774530919` from the fork's manifest on the
+workspace's lock, on a 12-thread host: `suite` compiles in 45 seconds and runs
+in 740. 3,438 tests pass, none fails and 83 are ignored.
+
+The full run leaves the other integration targets out. The
+`untouched_block_fidelity` and `element_fidelity` targets pass and take about
+17 minutes each, so they stay by hand (`--test untouched_block_fidelity` and
+`--test element_fidelity`). The `examples_reference` and
+`operations_reference` targets fail because the import did not copy the
+upstream pages they compare. The `redline_invariants` target passes with one
+test and ignores five. The `corpus_triage`, `redline_word_parity` and
+`stress_manifest` targets hold only ignored tests. The `read_model_reference`
+target of `stemma-diff` fails for the same reason, and the `--test` form names
+targets of `stemma` only.

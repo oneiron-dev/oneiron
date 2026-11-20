@@ -1,11 +1,13 @@
-"""The vendored stemma fork's own unit tests in scoped CI.
+"""The vendored stemma fork's unit tests and single integration targets in CI.
 
 Three parts, each driven without a real cargo:
   * scripts/ci/ci_scope.py: which changed paths set the `stemma_fork` output, how the changed paths are
     read from git (a path git would quote, a file moved out of the fork), and which changed names go into
     the `modules` output (a path can hold a line break);
-  * scripts/ci/run_scoped.sh: which modes and scopes call the fork runner;
-  * scripts/docedit/run_stemma_fork_unit_tests.sh: the lock it resolves from, the
+  * scripts/ci/run_scoped.sh: which modes and scopes call the fork runner for the
+    unit tests, and whether they also call it for the integration target `suite`;
+  * scripts/docedit/run_stemma_fork_unit_tests.sh: how it selects both packages'
+    unit tests or one stemma integration target, the lock it resolves from, the
     resolved lock it refuses, the cargo calls it makes, what it leaves behind and
     the lock file of someone else that it neither overwrites nor removes.
 The two shell scripts run in a disposable tree with a `cargo` that records its
@@ -238,6 +240,10 @@ class ScopedRunnerTests(unittest.TestCase):
         self.assertEqual(names, ["fork-runner"])
         self.assertNotIn("nothing to test", stdout)
 
+    def test_a_scoped_test_run_with_the_fork_changed_runs_only_its_unit_tests(self):
+        _, calls, _ = self.run_mode("test", SCOPE_FULL="false", SCOPE_STEMMA_FORK="true")
+        self.assertEqual(calls, ["fork-runner "])
+
     def test_a_scoped_test_run_without_the_scope_does_not_call_it(self):
         for scope in ({}, {"SCOPE_STEMMA_FORK": "false"}, {"SCOPE_STEMMA_FORK": ""}):
             with self.subTest(scope=scope):
@@ -252,8 +258,12 @@ class ScopedRunnerTests(unittest.TestCase):
         self.assertIn("nextest run --locked -p oneiron-docedit ", calls[0])
 
     def test_a_full_test_run_calls_the_fork_runner_whatever_the_scope_says(self):
-        names, _, _ = self.run_mode("test", SCOPE_FULL="true")
-        self.assertEqual(names, ["cargo", "cargo", "broker-fixture", "fork-runner"])
+        for scope in ({}, {"SCOPE_STEMMA_FORK": "false"}, {"SCOPE_STEMMA_FORK": "true"}):
+            with self.subTest(scope=scope):
+                self.log.unlink(missing_ok=True)
+                names, calls, _ = self.run_mode("test", SCOPE_FULL="true", **scope)
+                self.assertEqual(names, ["cargo", "cargo", "broker-fixture", "fork-runner", "fork-runner"])
+                self.assertEqual(calls[-2:], ["fork-runner ", "fork-runner --test suite"])
 
     def test_the_lint_and_featureless_modes_never_call_it(self):
         for mode in ("clippy", "featureless"):
@@ -267,6 +277,7 @@ class ScopedRunnerTests(unittest.TestCase):
 class ForkRunnerTests(unittest.TestCase):
     """run_stemma_fork_unit_tests.sh in a tree with a workspace lock, two empty fork manifests and a recording cargo."""
 
+    ENGINE_MANIFEST = f"{FORK}/stemma-engine/Cargo.toml"
     WORKSPACE = [("oneiron-docedit", "0.1.0", None), ("stemma", "0.6.0", None), ("serde", "1.0.228", "aa11"),
                  ("zip", "0.6.6", "bb22"), ("zip", "8.6.0", "cc33"), ("tokio", "1.48.0", "dd44")]
     # What cargo's resolve keeps for a fork package: its own subset, and the fork's other path package.
@@ -298,12 +309,21 @@ class ForkRunnerTests(unittest.TestCase):
         (self.resolved / f"{package}.lock").write_text(text)
         return text
 
-    def run_runner(self, **extra):
+    def make_integration_target(self, entry, *, directory=False):
+        path = self.tree / FORK / "stemma-engine/tests" / entry
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if directory:
+            path.mkdir()
+        else:
+            path.touch()
+
+    def run_runner(self, *args, **extra):
         env = {k: v for k, v in os.environ.items() if k != "CARGO_TARGET_DIR"}
         env.update(extra, STUB_LOG=str(self.log), STUB_RESOLVED=str(self.resolved),
                    PATH=f"{self.tree.parent / 'tools'}{os.pathsep}{os.environ['PATH']}")
         # From a directory outside the checkout: the script finds the root by its own path.
-        result = subprocess.run(["bash", str(self.runner)], cwd=self.elsewhere, env=env, capture_output=True, text=True)
+        result = subprocess.run(["bash", str(self.runner), *args], cwd=self.elsewhere, env=env,
+                                capture_output=True, text=True)
         calls = [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
         return result, calls
 
@@ -389,6 +409,121 @@ class ForkRunnerTests(unittest.TestCase):
         result, calls = self.run_runner(STUB_TEST_EXIT="101")
         self.assertEqual(result.returncode, 101, result.stdout + result.stderr)
         self.assertEqual([call["args"][0] for call in calls], ["metadata", "test"])
+        self.assert_no_lock_copy_left()
+
+    def test_an_integration_target_resolves_from_the_workspace_lock_and_tests_locked(self):
+        self.make_integration_target("suite/main.rs")
+        resolved = self.resolve("stemma-engine", self.RESOLVED)
+        result, calls = self.run_runner("--test", "suite", CARGO_TARGET_DIR="/ci/target")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([call["args"] for call in calls], [
+            ["metadata", "--manifest-path", self.ENGINE_MANIFEST, "--format-version", "1"],
+            ["test", "--locked", "--manifest-path", self.ENGINE_MANIFEST, "--test", "suite"],
+        ])
+        self.assertEqual(calls[0]["lock_before"], self.workspace_lock)
+        self.assertEqual(calls[1]["lock_before"], resolved)
+        for call in calls:
+            self.assertEqual(call["cwd"], str(self.tree))
+            self.assertEqual(call["target_dir"], "/ci/target/stemma-fork")
+        self.assertEqual(result.stdout, f"+ cargo test --locked --manifest-path {self.ENGINE_MANIFEST} --test suite\n")
+        self.assert_no_lock_copy_left()
+        self.assertEqual((self.tree / "Cargo.lock").read_text(), self.workspace_lock)
+
+    def test_an_integration_target_can_be_a_single_file(self):
+        for name in ("element_fidelity", "target_2"):
+            with self.subTest(name=name):
+                self.log.unlink(missing_ok=True)
+                self.make_integration_target(f"{name}.rs")
+                result, calls = self.run_runner("--test", name)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(calls[-1]["args"][-2:], ["--test", name])
+
+    def test_an_integration_run_does_not_resolve_test_or_leave_a_lock_for_stemma_diff(self):
+        self.make_integration_target("suite/main.rs")
+        result, calls = self.run_runner("--test", "suite")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        diff_manifest = f"{FORK}/stemma-diff/Cargo.toml"
+        for call in calls:
+            self.assertNotIn(diff_manifest, call["args"])
+        self.assertFalse((self.tree / diff_manifest).with_name("Cargo.lock").exists())
+
+    def test_bad_arguments_are_refused_before_making_anything_or_calling_cargo(self):
+        self.make_integration_target("suite/main.rs")
+        self.make_integration_target("Suite.rs")
+        self.make_integration_target("directory_target.rs", directory=True)
+        self.make_integration_target("directory_main/main.rs", directory=True)
+        write_executable(self.tree.parent / "tools/mktemp", '#!/bin/sh\n: > "$STUB_LOG.mktemp"\nexit 99\n')
+        for args, reason in (
+            (("suite",), "expected no arguments"),
+            (("--test",), "expected no arguments"),
+            (("--test", "suite", "extra"), "expected no arguments"),
+            (("--lib",), "expected no arguments"),
+            (("--lib", "suite"), "first argument must be --test"),
+            (("--test", "../suite"), "target name must match"),
+            (("--test", "suite/main"), "target name must match"),
+            (("--test", "--lib"), "target name must match"),
+            (("--test", "Suite"), "target name must match"),
+            (("--test", ""), "target name must match"),
+            (("--test", "no_such_target"), "no stemma integration target"),
+            (("--test", "directory_target"), "no stemma integration target"),
+            (("--test", "directory_main"), "no stemma integration target"),
+        ):
+            with self.subTest(args=args):
+                self.log.unlink(missing_ok=True)
+                result, calls = self.run_runner(*args)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                lines = result.stderr.splitlines()
+                self.assertEqual(len(lines), 3, result.stderr)
+                error, unit_usage, integration_usage = lines
+                self.assertTrue(error.startswith("error: "), error)
+                self.assertIn(reason, error)
+                self.assertEqual(unit_usage, "Usage: scripts/docedit/run_stemma_fork_unit_tests.sh")
+                self.assertEqual(integration_usage,
+                                 "       scripts/docedit/run_stemma_fork_unit_tests.sh --test <target>")
+                self.assertFalse(self.log.with_name(f"{self.log.name}.mktemp").exists())
+                self.assertEqual(calls, [])
+                self.assert_no_lock_copy_left()
+
+    def test_an_integration_run_refuses_an_existing_stemma_lock_without_changing_it(self):
+        self.make_integration_target("suite/main.rs")
+        lock = (self.tree / self.ENGINE_MANIFEST).with_name("Cargo.lock")
+        mine = b"mine\r\n\xff\n"
+        lock.write_bytes(mine)
+        result, calls = self.run_runner("--test", "suite")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn(f"{FORK}/stemma-engine/Cargo.lock exists", result.stderr)
+        self.assertEqual(calls, [])
+        self.assertEqual(lock.read_bytes(), mine)
+
+    def test_an_integration_run_leaves_an_existing_stemma_diff_lock_as_it_is(self):
+        self.make_integration_target("suite/main.rs")
+        lock = self.tree / FORK / "stemma-diff/Cargo.lock"
+        mine = b"mine\r\n\xff\n"
+        lock.write_bytes(mine)
+        result, _ = self.run_runner("--test", "suite")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(lock.read_bytes(), mine)
+        self.assertFalse((self.tree / self.ENGINE_MANIFEST).with_name("Cargo.lock").exists())
+
+    def test_an_integration_run_refuses_an_unpinned_package_before_testing_and_removes_the_copy(self):
+        self.make_integration_target("suite/main.rs")
+        self.resolve("stemma-engine", self.RESOLVED + [("serde_test", "1.0.177", "ee55")])
+        result, calls = self.run_runner("--test", "suite")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("the workspace's Cargo.lock does not hold", result.stderr)
+        self.assertIn(f"serde_test 1.0.177 {REGISTRY} ee55", result.stderr.splitlines())
+        self.assertEqual([call["args"] for call in calls], [
+            ["metadata", "--manifest-path", self.ENGINE_MANIFEST, "--format-version", "1"],
+        ])
+        self.assert_no_lock_copy_left()
+
+    def test_an_integration_test_failure_keeps_cargos_exit_code_and_removes_the_copy(self):
+        self.make_integration_target("suite/main.rs")
+        result, calls = self.run_runner("--test", "suite", STUB_TEST_EXIT="101")
+        self.assertEqual(result.returncode, 101, result.stdout + result.stderr)
+        self.assertEqual([call["args"][0] for call in calls], ["metadata", "test"])
+        self.assertEqual(result.stdout, f"+ cargo test --locked --manifest-path {self.ENGINE_MANIFEST} --test suite\n")
         self.assert_no_lock_copy_left()
 
 
