@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 use oneiron::ModelId;
 use oneiron::agent_def::DreamingMode;
 use oneiron::dreamer_consolidation::{
-    DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, ResidentDreamModel,
-    RoleBackend, RoleBackends, SourcedBackend, TASK_REALIZE_UNLENT_PARK_REASON,
+    DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, EXTRACTION_MAX_TOKENS,
+    ResidentDreamModel, RoleBackend, RoleBackends, SourcedBackend, TASK_REALIZE_UNLENT_PARK_REASON,
     WEAVE_LENS_UNLENT_PARK_REASON, resident_of_dream_input, run_resident_dream,
 };
 use oneiron::dreamer_promotion::AttemptPromotionSink;
@@ -53,6 +53,8 @@ mod request_sources;
 mod run_log;
 mod task_lend;
 mod urgent_digest;
+#[cfg(test)]
+mod window_tests;
 use super::skill_author::CoachSkillAuthor;
 use super::status::{IdleReason, StatusCell, UnservedNote, UnservedReason, WorkState, WorkStatus};
 use crate::config::models::{DreamerSettings, DreamerWording, ModelsConfig, role_key};
@@ -188,7 +190,12 @@ pub(super) struct DreamerStart {
 }
 
 /// The input each model a role's rungs name may fill: its provider's context
-/// less the output it reserves, the smallest where several rungs name it.
+/// less the output it reserves, the smallest where several rungs name it. A
+/// provider that names no output ceiling reserves [`EXTRACTION_MAX_TOKENS`],
+/// the largest output a Dreamer call asks, since its server's own default
+/// sizes the reply: an input that filled the whole context would leave an
+/// extraction's thought and answer no room. A context no larger than its
+/// reserve reserves nothing.
 pub(super) fn dream_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
     let mut windows = BTreeMap::new();
     for rungs in models.roles.values() {
@@ -199,11 +206,12 @@ pub(super) fn dream_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
             let Ok(model) = rung.model.engine_id(&provider.revision) else {
                 continue;
             };
-            let output = provider
-                .max_output_tokens
-                .filter(|output| *output < provider.context_tokens)
-                .unwrap_or(0);
-            let room = provider.context_tokens - output;
+            let output = provider.max_output_tokens.unwrap_or(EXTRACTION_MAX_TOKENS);
+            let room = provider
+                .context_tokens
+                .checked_sub(output)
+                .filter(|room| *room > 0)
+                .unwrap_or(provider.context_tokens);
             windows
                 .entry(model)
                 .and_modify(|held: &mut u64| *held = (*held).min(room))
