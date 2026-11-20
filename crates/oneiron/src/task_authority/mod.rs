@@ -688,13 +688,46 @@ fn refuse_second_assignment(fact: &TaskAuthorityFact, folded: &TaskAuthorityFact
         TaskAuthorityFactKind::HumanAssigned => folded.human_assigner,
         _ => return Ok(()),
     };
-    if let (Some(held_binding), Some(offered)) = (held, fact.assigned_ref)
-        && (fact.actor_ref, offered) != held_binding
+    match fact.assigned_ref {
+        Some(offered) => refuse_other_binding(fact.task_ref, held, (fact.actor_ref, offered)),
+        None => Ok(()),
+    }
+}
+
+/// The check [`put_task_authority_fact_in_txn`] makes on an Assigned fact, for a settle
+/// whose TASK already landed and which therefore writes no fact: an approval that offers
+/// `owner`'s task `offered` while the fold holds another assignee is the fork that write
+/// refuses, and it is refused the same way, so the approval does not commit over a TASK
+/// assigned to someone else (TASK-ASSIGNED-FORK = C; blind review P1, REVIEW-9983). The
+/// held binding offered again, or no assignee offered, passes and changes nothing.
+pub(crate) fn refuse_landed_task_reassignment_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+    owner: EntityId,
+    offered: Option<EntityId>,
+) -> Result<()> {
+    let Some(offered) = offered else {
+        return Ok(());
+    };
+    let held = vault.task_authority_facts_in(txn, task_ref)?.assigned;
+    refuse_other_binding(task_ref, held, (owner, offered))
+}
+
+/// Refuses the binding `offered` (assigner, assignee) of `task_ref` when the fold holds
+/// another one, `held`.
+fn refuse_other_binding(
+    task_ref: EntityId,
+    held: Option<(EntityId, EntityId)>,
+    offered: (EntityId, EntityId),
+) -> Result<()> {
+    if let Some(held_binding) = held
+        && offered != held_binding
     {
         return Err(Error::Record(RecordError::TaskAssignmentConflict {
-            task_ref: fact.task_ref,
+            task_ref,
             held_assignee: held_binding.1,
-            offered_assignee: offered,
+            offered_assignee: offered.1,
         }));
     }
     Ok(())

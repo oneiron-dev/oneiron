@@ -18,7 +18,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::federation::record_scope::BirthPosition;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::task_authority::TaskMaker;
+use crate::task_authority::{TaskMaker, refuse_landed_task_reassignment_in_txn};
 use crate::write_envelope::WriteActor;
 
 use super::consts::{TASK_CREATE_PROPOSAL_PREDICATE, TASK_POST_STAMP_KEY, TASK_SETTLE_ID_DOMAIN};
@@ -28,7 +28,7 @@ use super::create_validation::validate_task_create_in;
 use super::highway_post::{
     envelope_actor_class, proposer_of, put_assignment_fact_in_txn, settle_refusal,
 };
-use super::verb_kind::{TaskKind, TaskTtl};
+use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
 use super::wire_decode::{
     decode_consult_payload, decode_entity_ref, decode_task_assignee, task_body_field,
     task_body_optional,
@@ -175,9 +175,11 @@ pub(super) fn decode_task_create_proposal(value: &Value) -> MemoryResult<TaskCre
 /// Lands one approved brief-less create proposal inside the approving
 /// transaction: the TASK at the id its proposer, its owner and the claim
 /// derive ([`settled_task_identity`]), its route, and the assignment fact a
-/// stamped post writes. An id already landed changes nothing; a spec that no
-/// longer validates (expired, amended into an invalid shape) fails the
-/// approval. The opener never settles its own.
+/// stamped post writes. An id already landed changes nothing, unless the
+/// approval offers another assignee than the landed TASK holds, which is
+/// refused as the assignment write refuses it; a spec that no longer
+/// validates (expired, amended into an invalid shape) fails the approval.
+/// The opener never settles its own.
 pub(super) fn settle_create_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -190,13 +192,22 @@ pub(super) fn settle_create_in_txn(
     // The owner the stored spec names is decoded before the id, which
     // commits to it.
     let (maker, owner) = settled_task_identity(claim_id, claim)?;
-    if vault.get_raw_in(wtxn, &maker.task_ref(owner)?)?.is_some() {
-        return Ok(());
+    let spec = decode_task_create_proposal(&claim.value).map_err(settle_refusal)?;
+    let task_ref = maker.task_ref(owner)?;
+    if vault.get_raw_in(wtxn, &task_ref)?.is_some() {
+        // A concurrent approval landed the TASK first (blind review P1,
+        // REVIEW-9983).
+        return refuse_landed_task_reassignment_in_txn(
+            vault,
+            wtxn,
+            task_ref,
+            owner,
+            spec.assignee.and_then(TaskAssignee::entity_ref),
+        );
     }
     let class = envelope_actor_class(claim).ok_or(Error::Record(RecordError::InvalidTaskBody(
         "tasks.proposal.actor_class",
     )))?;
-    let spec = decode_task_create_proposal(&claim.value).map_err(settle_refusal)?;
     // The creator the proposal witnessed, never its approver.
     let origin = proposal_origin_in(vault, wtxn, claim_id).map_err(settle_refusal)?;
     // A parked proposal was born where its writer's TASK would be; the TASK
