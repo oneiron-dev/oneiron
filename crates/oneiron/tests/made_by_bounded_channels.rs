@@ -4,21 +4,25 @@
 //! only after the blend: a stated-only call whose channel fetched only
 //! concluded rows returned nothing while a stated row sat just past the cut.
 //! The temporal window's bound counts only the slice's rows, and a PPR
-//! walk's results take the slice before the blend, so a dropped row neither
-//! counts as a candidate nor seeds an implicit expansion (REVIEW-9842).
+//! walk's results and the phonetic exact-code hits take the slice before
+//! the blend, so a dropped row neither counts as a candidate nor seeds an
+//! implicit expansion (REVIEW-9842).
 //! Births are stamped through a test door: run the file with
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test made_by_bounded_channels`.
 #![cfg(oneiron_test_support)]
 
+use oneiron::batch::generate_phonetic_codes;
 use oneiron::pipeline::RetrievalParams;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::test_doors::sound_match_birth::put_born_at;
 use oneiron::write_envelope::provenance::made_by::{MadeByClass, MadeByPredicate};
 use oneiron::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EdgeKind,
-    EntityId, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    EntityId, PipelineBuilder, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope,
+    WriteProvenance,
 };
+use oneiron_retrieval::fusion::FUSION_LIST_LENGTH;
 
 const DAY: u64 = 86_400;
 const NOW: u64 = 1_700_000_000;
@@ -34,9 +38,14 @@ const CONCLUDED_TEXT: &str = "quokka quokka quokka";
 /// The stated row says it once among eight words, so BM25 ranks it below
 /// every concluded row.
 const STATED_TEXT: &str = "quokka wombat wallaby numbat bilby dingo echidna platypus";
-/// A temporal window bound below `CONCLUDED_ROWS`: with a widening
-/// multiple of 1, a one-row call's window keeps at most this many rows.
-const TIGHT_WINDOW_BOUND: usize = 50;
+/// What a one-row call's temporal channel fetches: the fusion floor. With a
+/// widening multiple of 1 and no floor, a sliced call's window keeps at
+/// most this many rows, fewer than `CONCLUDED_ROWS`, and its scan reads up
+/// to four times as many per axis.
+const CHANNEL_FETCH_FLOOR: usize = FUSION_LIST_LENGTH;
+/// The walk fixture's names: no phonetic code of one is a code of the other.
+const WALK_STATED_NAME: &str = "Bilby";
+const WALK_CONCLUDED_NAME: &str = "Numbat";
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -195,13 +204,13 @@ impl Fixture {
     /// concluded row to the stated one for a walk to follow.
     fn concluded_about_stated(&self) -> (EntityId, EntityId) {
         let stated = self.born(
-            "walk stated",
+            WALK_STATED_NAME,
             MadeByClass::Stated,
             &[],
             (ANCHOR, &far_vector(), STATED_TEXT),
         );
         let concluded = self.born(
-            "walk concluded",
+            WALK_CONCLUDED_NAME,
             MadeByClass::Concluded,
             &[stated],
             (ANCHOR, &query_vector(), CONCLUDED_TEXT),
@@ -212,20 +221,41 @@ impl Fixture {
         (stated, concluded)
     }
 
-    /// A PPR search of `searched` at depth 0, then, when `expand` is
-    /// `Some`, an expansion one hop out from those seeds and the search's
-    /// top results. Returns the result ids and the run's recorded count of
-    /// candidates in scope.
+    /// A PPR search of `searched` at depth 0, run as [`Self::counted`].
     fn walk(
         &self,
         made_by: MadeByPredicate,
         searched: &[EntityId],
         expand: Option<&[EntityId]>,
     ) -> (Vec<EntityId>, usize) {
-        let mut query = self.vault.query().search_ppr(searched, 0);
-        if let Some(seeds) = expand {
-            query = query.expand_ppr(seeds, 1);
-        }
+        self.counted(self.vault.query().search_ppr(searched, 0), made_by, expand)
+    }
+
+    /// A phonetic search for `codes`, run as [`Self::counted`].
+    fn phonetic(
+        &self,
+        made_by: MadeByPredicate,
+        codes: &[String],
+        expand: Option<&[EntityId]>,
+    ) -> (Vec<EntityId>, usize) {
+        let codes: Vec<&str> = codes.iter().map(String::as_str).collect();
+        self.counted(self.vault.query().search_phonetic(&codes), made_by, expand)
+    }
+
+    /// Runs `query` under `made_by`, then, when `expand` is `Some`, an
+    /// expansion one hop out from those seeds and the query's top results.
+    /// Returns the result ids and the run's recorded count of candidates in
+    /// scope.
+    fn counted(
+        &self,
+        query: PipelineBuilder<'_>,
+        made_by: MadeByPredicate,
+        expand: Option<&[EntityId]>,
+    ) -> (Vec<EntityId>, usize) {
+        let query = match expand {
+            Some(seeds) => query.expand_ppr(seeds, 1),
+            None => query,
+        };
         let run = query
             .made_by(made_by)
             .limit(10)
@@ -341,7 +371,7 @@ fn a_stated_row_past_the_temporal_fetch_is_found() {
 }
 
 /// The temporal window's bound counts only the slice's rows: with a bound
-/// of `TIGHT_WINDOW_BOUND` rows, below the concluded rows nearer the anchor,
+/// of `CHANNEL_FETCH_FLOOR` rows, below the concluded rows nearer the anchor,
 /// a stated-only call still finds the stated row. Before, the window kept
 /// its nearest rows up to the bound and the slice then dropped them all
 /// (REVIEW-9842 P1 1).
@@ -351,11 +381,11 @@ fn a_stated_row_past_the_temporal_window_bound_is_found() {
     let stated = fixture.stated_behind_concluded();
     let tight = RetrievalParams {
         temporal_widening_multiple: 1,
-        temporal_widening_floor: TIGHT_WINDOW_BOUND,
+        temporal_widening_floor: 0,
         ..RetrievalParams::shipped()
     };
     assert!(
-        TIGHT_WINDOW_BOUND < CONCLUDED_ROWS,
+        CHANNEL_FETCH_FLOOR < CONCLUDED_ROWS,
         "FIXTURE: more concluded rows than the window keeps"
     );
     let unsliced = fixture.temporal_with(MadeByPredicate::All, tight);
@@ -401,6 +431,45 @@ fn an_out_of_slice_walk_result_neither_counts_nor_seeds() {
             .0,
         Vec::<EntityId>::new(),
         "a concluded row the call drops seeds no implicit expansion"
+    );
+}
+
+/// The phonetic channel's exact codes have no cut, so their hits reached
+/// the blend unasked: under a stated-only call, a concluded row holding the
+/// query's exact code counted as a candidate and seeded an implicit
+/// expansion to the stated row it is about. Now the slice keeps such a hit
+/// out of the blend (REVIEW-9842 P1 2, its phonetic path).
+#[test]
+fn an_out_of_slice_exact_phonetic_hit_neither_counts_nor_seeds() {
+    let fixture = fixture_with_capture(true);
+    let (stated, concluded) = fixture.concluded_about_stated();
+    let exact: Vec<String> = generate_phonetic_codes(WALK_CONCLUDED_NAME)
+        .into_iter()
+        .filter(|code| !code.starts_with("ipa:"))
+        .collect();
+    assert!(!exact.is_empty(), "FIXTURE: the name has exact codes");
+    let (found, _) = fixture.phonetic(MadeByPredicate::All, &exact, None);
+    assert_eq!(
+        found,
+        [concluded],
+        "FIXTURE: the exact codes find the concluded row alone"
+    );
+    let (expanded, _) = fixture.phonetic(MadeByPredicate::All, &exact, Some(&[]));
+    assert!(
+        expanded.contains(&stated),
+        "FIXTURE: the expansion from the hit reaches the stated row, got {expanded:?}"
+    );
+    assert_eq!(
+        fixture.phonetic(MadeByPredicate::Stated, &exact, None),
+        (Vec::new(), 0),
+        "a stated-only phonetic search counts no concluded candidate"
+    );
+    assert_eq!(
+        fixture
+            .phonetic(MadeByPredicate::Stated, &exact, Some(&[]))
+            .0,
+        Vec::<EntityId>::new(),
+        "a concluded exact hit the call drops seeds no implicit expansion"
     );
 }
 
