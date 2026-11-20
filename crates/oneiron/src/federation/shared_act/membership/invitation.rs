@@ -102,19 +102,29 @@ impl InvitationKeyBinding {
 }
 
 impl Vault {
+    /// `invitee`'s invitation `id` as stored: `None` when no row is stored,
+    /// else the row decoded (`Err` inside when it does not decode).
+    fn stored_invitation_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        invitee: EntityId,
+        id: &str,
+    ) -> Result<Option<Result<SharedInvitation>>> {
+        let id = EntityId::from_hex(id)?.to_hex();
+        Ok(self
+            .store
+            .vault_meta
+            .get(txn, &invitation_key(&invitee, &id))?
+            .map(|raw| decode(&raw)))
+    }
     fn invitation_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         invitee: EntityId,
         id: &str,
     ) -> Result<SharedInvitation> {
-        let id = EntityId::from_hex(id)?.to_hex();
-        let raw = self
-            .store
-            .vault_meta
-            .get(txn, &invitation_key(&invitee, &id))?
-            .ok_or_else(invalid)?;
-        decode(&raw)
+        self.stored_invitation_in_txn(txn, invitee, id)?
+            .ok_or_else(invalid)?
     }
     fn put_invitation_in_txn(
         &self,
@@ -229,15 +239,12 @@ impl Vault {
             return Ok(false);
         };
         let id = id.to_hex();
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(txn, &invitation_key(&invitee, &id))?
-        else {
-            return Ok(false);
+        let open = match self.stored_invitation_in_txn(txn, invitee, &id)? {
+            None => return Ok(false),
+            Some(open) => {
+                open.map_err(|_| crate::error::Error::CorruptedIndex("shared invitation"))?
+            }
         };
-        let open: SharedInvitation =
-            decode(&raw).map_err(|_| crate::error::Error::CorruptedIndex("shared invitation"))?;
         if open.state != SharedInvitationState::Pending
             || oneiron_store::expiry::is_expired(now, open.expires_at)
         {
