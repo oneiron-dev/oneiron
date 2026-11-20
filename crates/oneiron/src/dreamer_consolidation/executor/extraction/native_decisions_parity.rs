@@ -312,16 +312,7 @@ fn operand_locators(
         };
         locators.push(EvidenceLocator::turn_range(turn, start, end)?);
     }
-    let mut cited = operand
-        .claim_evidence
-        .iter()
-        .map(|pin| parse_reference(&pin.claim))
-        .collect::<Result<Vec<_>>>()?;
-    cited.sort_unstable();
-    cited.dedup();
-    for claim in cited {
-        locators.push(EvidenceLocator::claim(claim, claim)?);
-    }
+    // RED (scratch, never merged): the door reads no claim locator again.
     Ok(locators)
 }
 

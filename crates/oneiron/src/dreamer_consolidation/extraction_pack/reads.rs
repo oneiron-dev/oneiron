@@ -279,7 +279,8 @@ pub(crate) fn check_pack_candidates(
         // proposing step's. The head's set, which the correction binds, is held
         // inside the folded set by the pairs above and by assembly below.
         let scope_relationship = bounds[position].relationship.as_ref();
-        let recorded_correction = corrects.is_some() && !operand.from_steps.is_empty();
+        // RED (scratch, never merged): a recorded correction is held to the set again.
+        let recorded_correction = false;
         if !recorded_correction
             && let PackRelationship::Set(ids) = &rel
             && let Some(allowed) = scope_relationship

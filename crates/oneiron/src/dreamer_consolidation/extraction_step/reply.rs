@@ -277,9 +277,8 @@ impl BoundReplySources<'_> {
                 .and_then(entity_id_from_hex)
                 .ok_or_else(|| "invalid relationship ref".to_owned())?,
         };
-        if self.relationship.is_some_and(|bound| !bound.contains(&id)) {
-            return Err("extraction relationship crossed branch scope".to_owned());
-        }
+        // RED (scratch, never merged): the step's relationship set check is reverted.
+        let _ = self.relationship;
         Ok(Some(vec![id.to_hex()]))
     }
 
