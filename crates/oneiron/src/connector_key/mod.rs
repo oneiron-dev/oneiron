@@ -90,7 +90,7 @@ pub use self::txn::ConnectorKeyGeneration;
 
 pub(crate) use self::charter::{
     charter_block_drifted, charter_never_list_matches, charter_never_list_matches_capability,
-    charter_never_list_matches_scoped_channel,
+    charter_never_list_matches_scoped_channel, iso_4217_exponent,
 };
 pub(crate) use self::credential_binding::{
     connector_issuer_hold_in_txn, connector_issuer_hold_reason_in_txn,
