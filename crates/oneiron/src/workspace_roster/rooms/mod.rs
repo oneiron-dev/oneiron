@@ -692,13 +692,33 @@ impl Memory<'_> {
             {
                 return Ok(RoomClaimOutcome::NotAddressed);
             }
-            if let Some(claim) = CLAIMS.get(&self.vault().store, txn, &turn)? {
-                if claim.actor != self.actor().to_hex() {
-                    return Ok(RoomClaimOutcome::HeldBy(claim));
+            let generation = match CLAIMS.get(&self.vault().store, txn, &turn)? {
+                Some(claim) if claim.actor == self.actor().to_hex() => {
+                    claimant.record_in_txn(self.vault(), txn, turn, named, task)?;
+                    return Ok(RoomClaimOutcome::Claimed(claim));
                 }
-                claimant.record_in_txn(self.vault(), txn, turn, named, task)?;
-                return Ok(RoomClaimOutcome::Claimed(claim));
-            }
+                // ROOM-CLAIM-TAKEOVER = A (Engine 21 Nov 03:04): a claim
+                // whose holder the turn no longer speaks to (a replaced
+                // leader, a reassigned task) holds the turn for no one, as
+                // the witness refuses that holder's answer. Until the turn
+                // is answered, this claimant, spoken to as checked above,
+                // takes it over; an answered turn keeps its claim.
+                Some(claim) => {
+                    if RESPONSE.get(&self.vault().store, txn, &turn)?.is_some()
+                        || !participation::claim_holder_released_in_txn(
+                            self.vault(),
+                            txn,
+                            room,
+                            &addressed,
+                            &claim.actor,
+                        )?
+                    {
+                        return Ok(RoomClaimOutcome::HeldBy(claim));
+                    }
+                    claim.generation.saturating_add(1)
+                }
+                None => 0,
+            };
             let receipt = RoomClaimReceipt {
                 room_id: room.to_hex(),
                 turn_id: turn.to_hex(),
@@ -708,6 +728,7 @@ impl Memory<'_> {
                     self.vault().store.clock.entity_id()?.to_hex()
                 ),
                 at: now,
+                generation,
             };
             CLAIMS.put(&self.vault().store, txn, &turn, &receipt)?;
             claimant.record_in_txn(self.vault(), txn, turn, named, task)?;

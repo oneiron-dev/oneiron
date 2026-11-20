@@ -392,6 +392,7 @@ fn claim(turn: EntityId) -> RoomSideRow {
             actor: fixed(0x41).to_hex(),
             receipt_ref: "r".repeat(ROOM_FACT_MAX_ROW_BYTES + 1024),
             at: 1,
+            generation: 0,
         },
     }
 }

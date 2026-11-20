@@ -310,6 +310,37 @@ pub(in crate::workspace_roster::rooms) fn leader_answers_turn_in_txn(
         .is_some_and(|(_, effective)| effective.leader == agent.to_hex()))
 }
 
+/// Whether the claim `holder` of `turn` in `room` holds it for no one now
+/// (ROOM-CLAIM-TAKEOVER = A, Engine 21 Nov 03:04): the holder takes part as
+/// an agent, and the turn no longer speaks to it as the claim door reads an
+/// agent claimant, re-read in this transaction: it is not named on the turn,
+/// holds none of its thread's open TASKs, and does not answer it as the
+/// project's current leader. The witness refuses such a holder's answer. A
+/// person, and a holder this vault knows as neither, keep their claim: a
+/// person claims only a turn that names no agent, and a turn's names never
+/// change.
+pub(super) fn claim_holder_released_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    turn: &RoomTurn,
+    holder: &str,
+) -> Result<bool> {
+    let Ok(holder) = EntityId::from_hex(holder) else {
+        return Ok(false);
+    };
+    let now = vault.store.clock.now_recorded_at();
+    if !matches!(
+        participant_in_txn(vault, txn, holder, now)?,
+        Some(JoinSubject::Agent(_))
+    ) {
+        return Ok(false);
+    }
+    Ok(!turn.addressed_agents.contains(&holder.to_hex())
+        && held_thread_task_in_txn(vault, txn, turn, holder)?.is_none()
+        && !leader_answers_turn_in_txn(vault, txn, room, holder, turn)?)
+}
+
 /// Files the room join a person's first write in a room needs, in the
 /// write's transaction, for nothing paid. Its intent key is the room and
 /// the person, so `vault.rooms.join` with the same key files the same join

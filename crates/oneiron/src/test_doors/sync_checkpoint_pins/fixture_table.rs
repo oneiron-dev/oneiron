@@ -348,6 +348,7 @@ fn side_claim(turn: u8) -> RoomSideRow {
             actor: fixed(ACTOR).to_hex(),
             receipt_ref: "receipt".to_owned(),
             at: 1,
+            generation: 0,
         },
     }
 }
