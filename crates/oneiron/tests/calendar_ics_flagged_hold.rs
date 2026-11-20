@@ -858,3 +858,68 @@ fn an_omission_the_owner_approves_while_a_held_cancellation_is_screened_stays_ad
         "the flagged cancellation waits on the owner beside it: {statuses:?}"
     );
 }
+
+/// Review round 2 of #9877: the owner's approval of a feed's first review
+/// closes the admitted status that a flagged status in it was admitted
+/// beside. Feed `work` left the EVENT out and its omission's cancellation
+/// settled under `work`'s standing consent. Feed `home`'s first poll carries
+/// the same UID cancelled in a body the screen flags, so its cancellation
+/// waits in `home`'s review and the omission stays admitted beside it. The
+/// owner approves `home`'s review: one admitted status stands, `home`'s
+/// explicit cancellation, as the owner's own settlement of it leaves. The
+/// head before the fix left both admitted, so a retraction of the explicit
+/// cancellation still read the EVENT cancelled by the omission.
+#[test]
+fn a_feed_review_s_approval_of_a_flagged_cancellation_closes_the_omission_beside_it() {
+    let f = Fixture::open();
+    let work = f.install("work");
+    f.poll(
+        &work,
+        calendar(&[Event::new("uid-0@work", "weekly sync")], "v1"),
+    );
+    f.approve_first_poll("work");
+    f.poll(&work, calendar(&[], "v2"));
+    let statuses = live_statuses(&f.imported_claims("uid-0@work"));
+    let [(omission, CalendarStatusBasis::ImportedAbsence, ClaimApprovalStatus::Approved)] =
+        statuses.as_slice()
+    else {
+        panic!("the omission's cancellation settles under work's consent: {statuses:?}");
+    };
+    let omission = *omission;
+
+    let home = f.install("home");
+    f.poll(
+        &home,
+        cancelled_calendar(&[Event::new("uid-0@work", FLAG_MARKER)], "h1"),
+    );
+    let statuses = live_statuses(&f.imported_claims("uid-0@work"));
+    let cancel = statuses
+        .iter()
+        .find(|(_, basis, approval)| {
+            *basis == CalendarStatusBasis::ImportedCancel
+                && *approval == ClaimApprovalStatus::Proposed
+        })
+        .map(|(id, _, _)| *id)
+        .unwrap_or_else(|| panic!("home's cancellation waits in its review: {statuses:?}"));
+    assert_eq!(
+        admitted(&statuses),
+        vec![(
+            omission,
+            CalendarStatusBasis::ImportedAbsence,
+            ClaimApprovalStatus::Approved
+        )],
+        "the omission stays admitted while home's review waits: {statuses:?}"
+    );
+
+    f.approve_first_poll("home");
+    let statuses = live_statuses(&f.imported_claims("uid-0@work"));
+    assert_eq!(
+        statuses,
+        vec![(
+            cancel,
+            CalendarStatusBasis::ImportedCancel,
+            ClaimApprovalStatus::Approved
+        )],
+        "the approved cancellation is the one live status: {statuses:?}"
+    );
+}
