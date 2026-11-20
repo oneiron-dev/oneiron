@@ -44,7 +44,7 @@ impl DreamerAttemptBinding {
                 &read,
                 txn,
                 reader_scope.as_ref(),
-                self.lease.attempt(),
+                (self.lease.attempt(), self.destination_bound()),
                 &pack.candidates,
                 Some((&pack.listed, &pack.priors)),
             )?;
