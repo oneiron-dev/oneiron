@@ -14,9 +14,10 @@
 //! One batch has one landing at a time (FIX DEVICE-BURST-ALLOW-DRAIN-OVERLAP):
 //! the drain leaves a batch whose landing a socket claimed. A send of bytes
 //! whose batch another landing holds is answered by the batch's record at the
-//! home (#9954 review round 1): as held while the batch is retained, by its
-//! receipt once it settled, and with a Try Again Later close while nothing of
-//! it is retained.
+//! home (#9954 review rounds 1 and 2): by its receipt once it settled, and
+//! with a Try Again Later close while it is not settled, retained or not. A
+//! sync-all device clears its queue on a held answer, and the landing that
+//! holds the batch may yet end without landing it.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --features oneiron/test-support
@@ -47,7 +48,7 @@ use oneiron_server::test_doors::device_burst_drain::{
 use tokio_tungstenite::tungstenite::Message;
 
 /// RFC 6455 "Try Again Later": the close the home answers a send with while
-/// another landing holds its batch and nothing of it is retained.
+/// another landing holds its batch and the batch has not settled.
 const TRY_AGAIN_LATER: u16 = 1013;
 
 #[test]
@@ -317,13 +318,17 @@ async fn send_of_unretained_claimed_batch() {
     );
 }
 
-/// #9954 review round 1, the socket's side with the batch retained, then
-/// settled. While another landing holds a batch the burst core retained
-/// (its receipt Pending), the device's send of the bytes is answered as
-/// held: the batch is durable, and that landing, or the drain after it,
-/// lands it. Once the batch settled, a send while a landing holds it is
-/// answered by its receipt: no held answer, and nothing lands twice. The
-/// settled half is red when the socket answers by the claim alone.
+/// #9954 review rounds 1 and 2, the socket's side with the batch retained,
+/// then settled. While another landing holds a batch the burst core retained
+/// (its receipt Pending), a sync-all device's send of the bytes is closed
+/// with Try Again Later, never answered as held: the device clears its queue
+/// on the version a held answer names, and the landing that holds the batch
+/// may yet end without landing it (the home stops before it appends, and the
+/// retained copy expires before its replay). Nothing lands from that send.
+/// Once the batch settled, a send while a landing holds it is answered by its
+/// receipt: no held answer, and nothing lands twice. The retained half is red
+/// when the socket answers a retained batch as held; the settled half is red
+/// when it answers by the claim alone.
 #[test]
 fn a_send_of_a_retained_or_settled_batch_another_landing_holds_is_answered_by_its_record() {
     run_on_engine_stack(
@@ -349,9 +354,10 @@ async fn send_of_retained_claimed_batch() {
     }
     let mut socket = home.connect_root().await;
     send_update(&mut socket, &trickle).await;
-    assert!(
-        held_answer(&mut socket).await,
-        "the home answers the send of a retained batch as held"
+    assert_eq!(
+        close_code(&mut socket).await,
+        Some(TRY_AGAIN_LATER),
+        "the home closes a sync-all send of a retained batch to be sent again"
     );
     assert_eq!(
         home.held_rows(&trickle_rows),
@@ -381,6 +387,7 @@ async fn send_of_retained_claimed_batch() {
     // receipt.
     let _claim =
         claim_device_burst_landing(&home.server, batch_ref).expect("the drain's landing ended");
+    let mut socket = home.connect_root().await;
     send_update(&mut socket, &trickle).await;
     assert!(
         !held_answer(&mut socket).await,
