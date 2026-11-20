@@ -13,9 +13,12 @@
 //! correction read through [`correction_source_rows`] and a read over a conflict through
 //! [`conflict_source_rows`]. Capture only: no read is refused, held or narrowed here.
 //!
-//! One difference from native stays. Native asks each candidate before it folds
-//! candidates, so a lent operand folded from two steps sends under both steps' rows where
-//! native sends under one step's. The set is then wider than native's and never narrower.
+//! The set names every row the lent calls read, which is not always native's set. Native
+//! asks each candidate before it folds candidates, so a lent operand folded from two steps
+//! sends under both steps' rows where native sends under one step's. And a native
+//! extraction call reads its whole chunk of TURNs, while a lent step may be given a part of
+//! that chunk: its record then names fewer rows than the native call's, and so does a read
+//! over its candidate.
 
 use super::super::call_labels::CallLabelMap;
 use super::super::executor::extraction::conflict_source_rows;
