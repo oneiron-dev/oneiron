@@ -324,6 +324,21 @@ pub(in crate::sync::selector) fn filter_window_doc(
                     return;
                 }
             }
+            // The carried bytes name their own subjects, which a row with no
+            // canonical copy here, or another version of it, need not share.
+            match crate::store::legal_hold::kept_person_content_row_in_txn(
+                &vault.store,
+                &rtxn,
+                &id,
+                blob,
+            ) {
+                Ok(true) => return,
+                Ok(false) => {}
+                Err(error) => {
+                    scope_error = Some(error);
+                    return;
+                }
+            }
         }
         if other_vault && !is_tombstoned {
             match released_for_other_vault(vault, &rtxn, &id, blob) {

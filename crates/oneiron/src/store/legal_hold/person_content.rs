@@ -38,18 +38,49 @@ pub(super) fn kept_person_content_in_txn(
     txn: &RoTxn<'_>,
     record: &EntityId,
 ) -> Result<bool> {
-    if USE_LIMITS
-        .iter_raw_from(dbs, txn, &[])?
-        .next()
-        .transpose()?
-        .is_none()
-    {
+    if !any_use_limit_in_txn(dbs, txn)? {
         return Ok(false);
     }
     let subjects = EntityStoreRead::port_entity_with_raw(dbs, txn, record, |raw| {
         Ok(person_content_subjects(raw))
     })?
     .unwrap_or_default();
+    subject_kept_in_txn(dbs, txn, record, &subjects)
+}
+
+/// [`kept_person_content_in_txn`] judged on `raw`, the envelope of `record` a
+/// door is about to serve, in place of its current row: a retained revision
+/// a read selects, or the bytes a sync window carries, names its own
+/// subjects, which need not be the current row's.
+pub(crate) fn kept_person_content_row_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    if !any_use_limit_in_txn(dbs, txn)? {
+        return Ok(false);
+    }
+    subject_kept_in_txn(dbs, txn, record, &person_content_subjects(raw))
+}
+
+/// Whether the vault holds any use limit at all: one table probe.
+fn any_use_limit_in_txn(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<bool> {
+    Ok(USE_LIMITS
+        .iter_raw_from(dbs, txn, &[])?
+        .next()
+        .transpose()?
+        .is_some())
+}
+
+/// Whether any of `subjects`, other than `record` itself, is a PERSON whose
+/// own C6 limit stands.
+fn subject_kept_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+    subjects: &[EntityId],
+) -> Result<bool> {
     for subject in subjects.iter().filter(|subject| *subject != record) {
         if legal_hold_use_limit_in_txn(dbs, txn, subject)?.is_some()
             && kept_row_is_person_in_txn(dbs, txn, subject)?
