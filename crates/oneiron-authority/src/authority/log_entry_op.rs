@@ -204,6 +204,10 @@ pub enum AuthorityOp {
     /// install key of the mover alone, with no owner act (stage 7a-4). A
     /// main-log entry, so every machine the owner admits folds it.
     SettingCopy(SettingCopy),
+    /// One pack's head as one engine act, signed by the install key of the
+    /// machine whose pack door weighed it alone, with no owner act (stage
+    /// 7c-3a). A main-log entry, so every machine the owner admits folds it.
+    SettingPackHead(SettingPackHead),
     /// One owner whole-vault export, signed by the install key of a live
     /// machine of the vault, in any role, after the copy left (FIX 4624). A
     /// main-log entry, so every machine the owner admits folds it.
@@ -561,6 +565,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::AgentGrantAct(record) => record.validate(),
         AuthorityOp::PolicySettingSet(set) => set.validate(),
         AuthorityOp::SettingCopy(copy) => copy.validate(),
+        AuthorityOp::SettingPackHead(head) => head.validate(),
         AuthorityOp::ExportAct(record) => record.validate(),
         AuthorityOp::OwnerKeyEnroll(enroll) => enroll.validate(),
         AuthorityOp::FrontierJoin(_) => Ok(()),

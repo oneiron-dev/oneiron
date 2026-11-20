@@ -118,6 +118,7 @@ pub(super) fn apply_op(
         | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::SettingCopy(_)
+        | AuthorityOp::SettingPackHead(_)
         | AuthorityOp::ExportAct(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)

@@ -82,9 +82,9 @@ pub(crate) use self::change::{
     settings_head_in_txn,
 };
 pub use self::learned::{LEARNED_SCOPES, LearnedRange, SettingFitView};
-pub use self::pack::{ENGINE_PACK, PackApplied, ProposedDefaultView};
+pub use self::pack::{ENGINE_PACK, ENGINE_PACK_VERSION, PackApplied, ProposedDefaultView};
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
-pub(crate) use self::pack::{delete_layer_row, layer_row_revision};
+pub(crate) use self::pack::{delete_layer_row, head_version_and_digest, layer_row_revision};
 pub use self::page_max::PageMax;
 pub use self::project::SettingsProjected;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]

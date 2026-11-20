@@ -749,6 +749,7 @@ fn carries_own_will(
         | AuthorityOp::MembershipExecution(_)
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::SettingCopy(_)
+        | AuthorityOp::SettingPackHead(_)
         | AuthorityOp::ExportAct(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::CustodyPermitPiece(_)

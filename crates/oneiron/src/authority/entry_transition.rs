@@ -460,6 +460,22 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
+    // So is a pack's head, on its pack's frontier, signed by the machine
+    // whose pack door weighed it alone, with no owner act (stage 7c-3a).
+    if let AuthorityOp::SettingPackHead(head) = &entry.op {
+        if let Err(issue) = super::policy_setting_choice::apply_setting_pack_head(
+            &mut state,
+            entry,
+            head,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     // So is the owner's whole-vault export, which moves no fold state but a
     // refused one's mark (FIX 4624).
     if let AuthorityOp::ExportAct(record) = &entry.op {
@@ -846,6 +862,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::SettingCopy(_)
+        | AuthorityOp::SettingPackHead(_)
         | AuthorityOp::ExportAct(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)

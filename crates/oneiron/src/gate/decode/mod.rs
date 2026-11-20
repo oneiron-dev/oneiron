@@ -16,6 +16,7 @@ pub(super) use self::decode_residence_operation_budgets::{
     POLICY_RESIDENCE_OPERATION_BUDGETS_KEY, parse_residence_operation_budgets,
 };
 
+pub(crate) use self::decode_map_util::version_gt;
 pub(crate) use self::policy_scope_migration::normalize_policy_manifest_scope;
 
 /// The native scoped-grant parser shared with the typed manifest projection.

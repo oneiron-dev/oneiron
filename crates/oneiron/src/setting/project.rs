@@ -467,6 +467,11 @@ fn head_of(head: &SettingSlotHead) -> std::result::Result<Head, Inert> {
             body: HeadBody::Copy(copy.names.clone()),
         });
     }
+    // A pack's head (stage 7c-3a) names no row: each machine's pack door weighs its own
+    // build's defaults.
+    if head.pack.is_some() {
+        return Err(Inert::ForGood);
+    }
     let Some(set) = &head.set else {
         return Err(Inert::ForNow);
     };

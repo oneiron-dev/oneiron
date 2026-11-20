@@ -49,6 +49,8 @@
 //! bounds and never drops one. The projection reads what it names
 //! ([`Vault::setting_slot_head_in_txn`]).
 //!
+//! A pack's head is one `SettingPackHead` engine act (stage 7c-3a), with no owner act.
+//!
 //! What a head counts for (stage 7b-2): the view gives each act a reader of
 //! a row meets its count here ([`ChoiceCounts`]): in full, or as a safe
 //! move where its entry is in doubt (held where only this install's own
@@ -264,6 +266,42 @@ pub(super) fn apply_setting_copy(
     Ok(())
 }
 
+/// The `SettingPackHead` transition (stage 7c-3a): the head lands on its pack's target as an
+/// engine statement ([`choice_landing`] with no owner), its choice the entry's own hash, its
+/// `seen` judged against the target's live revision.
+pub(super) fn apply_setting_pack_head(
+    state: &mut FoldState,
+    entry: &AuthorityLogEntry,
+    head: &SettingPackHead,
+    hash: AuthorityEntryHash,
+    counting: (Option<&PinnedRoot>, InstallCounted<'_>),
+    restriction_only: bool,
+) -> std::result::Result<(), AuthorityFoldIssue> {
+    let target = head
+        .target()
+        .map_err(|_| AuthorityFoldIssue::InvalidEntry(hash))?;
+    let at = ChoiceAt {
+        target,
+        seen: head.seen,
+        owner: None,
+        machine: head.machine,
+        choice: Some(&hash),
+        context: POLICY_SETTING_REVISION_CONTEXT,
+        persons_own_narrowing: false,
+    };
+    let landing = choice_landing(
+        state,
+        &state.policy_settings,
+        entry,
+        at,
+        hash,
+        counting,
+        restriction_only,
+    )?;
+    state.policy_settings.land(landing);
+    Ok(())
+}
+
 /// The fold's view of every setting's acts, under this install's pin and
 /// holds.
 pub(super) fn folded_policy_settings(
@@ -440,6 +478,55 @@ impl Vault {
         })
     }
 
+    /// Appends `pack`'s head as one signed `SettingPackHead` in the pack door's write `txn`
+    /// (stage 7c-3a): its version, the digest of its table, the keys held at their earlier
+    /// accepted value, and the `seen` of the pack's target, read in `txn`. Not best effort here:
+    /// whatever stops it fails the call, and its savepoint is rolled back. The entry's hash.
+    ///
+    /// # Errors
+    ///
+    /// The typed refusal of the append ([`super::carried_act`]), or a storage error.
+    pub(crate) fn append_setting_pack_head_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        pack: &str,
+        version: &str,
+        digest: [u8; 32],
+        held: Vec<String>,
+    ) -> Result<AuthorityEntryHash> {
+        let seen = {
+            let view = self.authority_view_readonly_in_txn(txn)?;
+            view.policy_settings.revision(setting_pack_target(pack)?)
+        };
+        self.append_carried_act_in_savepoint(txn, |machine| {
+            AuthorityOp::SettingPackHead(SettingPackHead {
+                machine,
+                pack: pack.to_owned(),
+                version: version.to_owned(),
+                digest,
+                held,
+                seen,
+            })
+        })
+    }
+
+    /// `pack`'s live head acts in `txn`, read back from the log, with the hash of each: what the
+    /// pack's projection weighs (stage 7c-3a). Empty when no head names the pack.
+    pub(crate) fn setting_pack_heads_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        pack: &str,
+    ) -> Result<Vec<(AuthorityEntryHash, SettingPackHead)>> {
+        let target = setting_pack_target(pack)?;
+        let mut heads = Vec::new();
+        for hash in self.setting_slot_live_in_txn(txn, target)? {
+            if let Some(head) = self.setting_slot_head_in_txn(txn, target, hash)?.pack {
+                heads.push((hash, head));
+            }
+        }
+        Ok(heads)
+    }
+
     /// `target`'s live setting acts in `txn`, a copy among them: what a copy
     /// of its row names (stage 7a-4). Empty when no act names the target.
     pub(crate) fn setting_slot_live_in_txn(
@@ -602,6 +689,7 @@ impl Vault {
             act: hash,
             set: None,
             copy: None,
+            pack: None,
         };
         let id = authority_log_entity_id_from_hash(&hash)?;
         let Some(raw) = self
@@ -625,6 +713,9 @@ impl Vault {
         match &entry.op {
             AuthorityOp::PolicySettingSet(set) => head.set = set.on_target(target)?,
             AuthorityOp::SettingCopy(copy) => head.copy = copy.on_target(target)?.cloned(),
+            AuthorityOp::SettingPackHead(pack) if pack.target()? == target => {
+                head.pack = Some(pack.clone());
+            }
             _ => {}
         }
         Ok(head)
@@ -787,6 +878,8 @@ pub(crate) struct SettingSlotHead {
     /// The copy's row on the target where the entry is a move's setting copy
     /// (stage 7a-4); `None` otherwise.
     pub(crate) copy: Option<SettingCopyRow>,
+    /// The pack head this act is, when it is one (stage 7c-3a).
+    pub(crate) pack: Option<SettingPackHead>,
 }
 
 /// Where some rows' acts stood when a test read them (stage 7a-2 tests; several rows 7a-3): the
@@ -904,6 +997,44 @@ impl Vault {
             })
             .collect::<Result<Vec<_>>>()?;
         let op = AuthorityOp::SettingCopy(SettingCopy { machine, rows });
+        self.sign_on_frontier_as(key, frontier, op, ts, 0)
+    }
+
+    /// The frontier of `pack`'s head acts now (stage 7c-3a).
+    pub(crate) fn setting_pack_frontier(&self, pack: &str) -> Result<SettingFrontier> {
+        let target = setting_pack_target(pack)?;
+        let fold = self.authority_fold()?;
+        let mut parents = fold.append_heads.clone();
+        if let Some(folded) = fold.policy_settings.targets.get(&target) {
+            parents.extend(folded.live.keys().copied());
+        }
+        let seen = BTreeMap::from([(target, fold.policy_settings.revision(target))]);
+        Ok(SettingFrontier { parents, seen })
+    }
+
+    /// A pack's head, as the machine `machine`'s own pack door signs it with its install key
+    /// `key`, on `frontier`, at `ts` (stage 7c-3a tests). A pack `frontier` did not read names
+    /// `seen` zero.
+    pub(crate) fn sign_setting_pack_head_as(
+        &self,
+        (machine, key): (EntityId, &ed25519_dalek::SigningKey),
+        frontier: &SettingFrontier,
+        (pack, version, digest, held): (&str, &str, [u8; 32], Vec<String>),
+        ts: u64,
+    ) -> Result<AuthorityLogEntry> {
+        let seen = frontier
+            .seen
+            .get(&setting_pack_target(pack)?)
+            .copied()
+            .unwrap_or([0; 32]);
+        let op = AuthorityOp::SettingPackHead(SettingPackHead {
+            machine,
+            pack: pack.to_owned(),
+            version: version.to_owned(),
+            digest,
+            held,
+            seen,
+        });
         self.sign_on_frontier_as(key, frontier, op, ts, 0)
     }
 

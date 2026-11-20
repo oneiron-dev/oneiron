@@ -10,7 +10,9 @@
 //! detail how many carried rows it lists and how many acts they name.
 
 use super::{AuthorityAuditEventKind, OpFields};
-use oneiron_authority::authority::{ActBy, ExportActRecord, PolicySettingSet, SettingCopy};
+use oneiron_authority::authority::{
+    ActBy, ExportActRecord, PolicySettingSet, SettingCopy, SettingPackHead,
+};
 
 /// The class, op name and fields of one setting act.
 pub(super) fn classify_policy_setting(
@@ -60,6 +62,26 @@ pub(super) fn classify_setting_copy(
         OpFields {
             detail: Some(format!("{} carried rows, {names} acts", copy.rows.len())),
             subject_ref: Some(copy.machine.to_hex()),
+            ..OpFields::default()
+        },
+    )
+}
+
+/// The class, op name and fields of one pack's head.
+pub(super) fn classify_setting_pack_head(
+    head: &SettingPackHead,
+) -> (AuthorityAuditEventKind, &'static str, OpFields) {
+    (
+        AuthorityAuditEventKind::Other,
+        "setting_pack_head",
+        OpFields {
+            detail: Some(format!(
+                "{} {}, {} held keys",
+                head.pack,
+                head.version,
+                head.held.len()
+            )),
+            subject_ref: Some(head.machine.to_hex()),
             ..OpFields::default()
         },
     )

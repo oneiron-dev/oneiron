@@ -9,15 +9,26 @@
 //! default of a key that guards nothing; a looser one, or one the key's order cannot compare,
 //! waits in the head's proposal while the accepted row stays, so every read is unchanged. A key
 //! new in this build takes the engine pack's default with no compare: no earlier build read it.
+//!
+//! The head travels (stage 7c-3a; DESIGN 1.6 "Packs across machines"). On a rooted vault the
+//! door appends one engine act per update in its own write: the pack's version, the digest of
+//! its defaults, and the keys it held at their earlier accepted value. A reader proves a table by
+//! its digest, never by the machine that sent it, and a version only by its own build: so on
+//! another machine a head changes nothing, and that machine's door weighs its own build's
+//! defaults (a birth's copy names the head, stage 7c-3b; an owner's yes that names its digest
+//! proves its table, stage 7c-3c). The head row keeps the newest version the door acted under,
+//! and the door acts only for a build whose version is not older, so an older build never
+//! proposes its older defaults back.
 
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use oneiron_contracts::fingerprint::{ContentHash, Fingerprinter, purposes};
+use oneiron_contracts::fingerprint::{ContentHash, Fingerprint, Fingerprinter, purposes};
 use oneiron_setting_contract::{ChangeDirection, Order, RowKey};
 
 use super::change::record_change_in_txn;
+use super::project::rooted_in_txn;
 use super::read::{StoredRow, table_of};
 use super::{
     EncodedValue, ScopeKind, Setter, SettingChange, SettingMode, SettingScope, SettingSpec,
@@ -30,6 +41,9 @@ use crate::side_table::{self, Named, SideTable, SideTableDbs};
 
 /// The pack whose layer is this build's catalogue: every key.
 pub const ENGINE_PACK: &str = "engine";
+
+/// The version of the `engine` pack this build ships: the build's own (stage 7c-3a).
+pub const ENGINE_PACK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The head rows, keyed by the pack's name.
 const HEADS: SideTable<Vec<u8>, PackHead, Named> = SideTable::new(&side_table::SETTING_PACK_HEAD);
@@ -45,6 +59,11 @@ pub(super) struct PackHead {
     /// The defaults of the last update the door could not land, waiting on a holder's yes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     proposal: Option<PackProposal>,
+    /// The version of the pack the door last acted under (stage 7c-3a): the newest it met, since
+    /// the door never acts for an older one. Empty in a head written before versions, which
+    /// reads as the oldest.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    version: String,
 }
 
 /// The loose defaults of one update, proposed together to the holders.
@@ -229,7 +248,7 @@ fn lost(spec: &SettingSpec, pack: &str) -> Result<LayerDefault> {
 /// The digest of `pack`'s defaults: a fingerprint under
 /// [`purposes::setting::PACK_DEFAULTS`] of the pack's name, the count of its defaults, then each
 /// key's name and default's bytes, in name order.
-fn defaults_digest(pack: &str, defaults: &[(&'static SettingSpec, EncodedValue)]) -> String {
+fn defaults_digest(pack: &str, defaults: &[(&'static SettingSpec, EncodedValue)]) -> Fingerprint {
     let mut sorted: Vec<&(&'static SettingSpec, EncodedValue)> = defaults.iter().collect();
     sorted.sort_by_key(|(spec, _)| spec.name);
     let mut digest = Fingerprinter::new(purposes::setting::PACK_DEFAULTS);
@@ -237,7 +256,16 @@ fn defaults_digest(pack: &str, defaults: &[(&'static SettingSpec, EncodedValue)]
     for (spec, value) in sorted {
         digest.part(spec.name.as_bytes()).part(&value.0);
     }
-    digest.finish().to_hex()
+    digest.finish()
+}
+
+/// Whether the pack door acts on `head` for a build that ships `version` of the pack, whose
+/// defaults digest is `digest` (hex): not when the head weighed these defaults, and not when the
+/// head holds a newer version than the build's (DESIGN 1.6, "Packs across machines": an older
+/// build never proposes its older defaults back). An equal version with other defaults acts:
+/// every build of one release names one version, so the rule tells releases apart, not builds.
+fn door_acts(head: &PackHead, version: &str, digest: &str) -> bool {
+    head.digest != digest && crate::gate::version_gt(&head.version, version) != Some(true)
 }
 
 /// The digest of a stored layer row's bytes: what a proposal names as the row it replaces. The
@@ -296,10 +324,13 @@ pub(crate) fn engine_pack_defaults() -> Result<Vec<(&'static SettingSpec, Encode
         .collect()
 }
 
-/// The pack door: weighs `pack`'s `defaults` against what the vault accepted from it, in the
-/// caller's write. `layer` lists the keys the pack's install named; `None` is every key (the
-/// `engine` pack). A default outside the layer is a proposal, tighter or not. Answers `None` when
-/// the head's digest is the defaults' own: the door then writes nothing.
+/// The pack door: weighs `pack`'s `defaults`, as its build ships `version` of the pack, against
+/// what the vault accepted from it, in the caller's write. `layer` lists the keys the pack's
+/// install named; `None` is every key (the `engine` pack). A default outside the layer is a
+/// proposal, tighter or not. Answers `None` when the door does not act ([`door_acts`]): the head
+/// weighed these defaults, or holds a newer version. On a rooted vault whose install can carry,
+/// the door appends the new head as one act in the same write (stage 7c-3a); an append it cannot
+/// make is logged, and the rows stand.
 ///
 /// # Errors
 ///
@@ -308,15 +339,16 @@ pub(crate) fn apply_pack_defaults_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     pack: &str,
-    defaults: &[(&'static SettingSpec, EncodedValue)],
+    (version, defaults): (&str, &[(&'static SettingSpec, EncodedValue)]),
     layer: Option<&[&str]>,
 ) -> Result<Option<PackApplied>> {
     if pack.is_empty() {
         return Err(Error::InvalidConfig("a pack has a name".into()));
     }
-    let digest = defaults_digest(pack, defaults);
+    let fingerprint = defaults_digest(pack, defaults);
+    let digest = fingerprint.to_hex();
     let head = head_in_txn(&vault.store, txn, pack)?.unwrap_or_default();
-    if head.digest == digest {
+    if !door_acts(&head, version, &digest) {
         return Ok(None);
     }
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
@@ -422,6 +454,12 @@ pub(crate) fn apply_pack_defaults_in_txn(
         accepted.insert(name.clone());
         applied.moved.push(name);
     }
+    let mut held: Vec<String> = proposals
+        .iter()
+        .map(|proposed| proposed.key.clone())
+        .collect();
+    held.sort_unstable();
+    held.dedup();
     let proposal = (!proposals.is_empty()).then(|| PackProposal {
         digest: proposal_digest(pack, &digest, &proposals),
         defaults: proposals,
@@ -434,8 +472,25 @@ pub(crate) fn apply_pack_defaults_in_txn(
             digest,
             accepted: accepted.into_iter().collect(),
             proposal,
+            version: version.to_owned(),
         },
     )?;
+    if rooted_in_txn(vault, txn)?
+        && vault.can_carry_owner_act_in_txn(txn)?
+        && let Err(error) = vault.append_setting_pack_head_in_txn(
+            txn,
+            pack,
+            version,
+            fingerprint.into_bytes(),
+            held,
+        )
+    {
+        tracing::warn!(
+            pack,
+            kind = ?error.kind(),
+            "the pack door's head was not appended: its rows stand on this install, and other machines weigh their own builds' defaults"
+        );
+    }
     Ok(Some(applied))
 }
 
@@ -548,14 +603,14 @@ impl Vault {
         let defaults = engine_pack_defaults()?;
         {
             let txn = self.store.env.read_txn()?;
-            let digest = defaults_digest(ENGINE_PACK, &defaults);
+            let digest = defaults_digest(ENGINE_PACK, &defaults).to_hex();
             if head_in_txn(&self.store, &txn, ENGINE_PACK)?
-                .is_some_and(|head| head.digest == digest)
+                .is_some_and(|head| !door_acts(&head, ENGINE_PACK_VERSION, &digest))
             {
                 return Ok(None);
             }
         }
-        self.apply_pack_defaults(ENGINE_PACK, &defaults, None)
+        self.apply_pack_defaults(ENGINE_PACK, (ENGINE_PACK_VERSION, &defaults), None)
     }
 
     /// [`apply_pack_defaults_in_txn`] in its own write, then each moved key's `after_commit`.
@@ -566,11 +621,11 @@ impl Vault {
     pub(crate) fn apply_pack_defaults(
         &self,
         pack: &str,
-        defaults: &[(&'static SettingSpec, EncodedValue)],
+        shipped: (&str, &[(&'static SettingSpec, EncodedValue)]),
         layer: Option<&[&str]>,
     ) -> Result<Option<PackApplied>> {
         self.with_write_txn_grouped_after_commit(
-            |txn| apply_pack_defaults_in_txn(self, txn, pack, defaults, layer),
+            |txn| apply_pack_defaults_in_txn(self, txn, pack, shipped, layer),
             |applied| {
                 if let Some(applied) = &applied {
                     run_layer_after_commit(self, &applied.moved);
@@ -715,4 +770,19 @@ pub(crate) fn delete_layer_row(vault: &Vault, name: &str, pack: &str) -> Result<
     table_of(spec).delete(&vault.store, &mut txn, &pack_row_key(spec.name, pack))?;
     txn.commit()?;
     Ok(())
+}
+
+/// The version and the defaults digest (hex) `pack`'s head row keeps; `None` when the door never
+/// ran for it. A test door's read (stage 7c-3a).
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) fn head_version_and_digest(
+    vault: &Vault,
+    pack: &str,
+) -> Result<Option<(String, String)>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(head_in_txn(&vault.store, &txn, pack)?.map(|head| (head.version, head.digest)))
 }

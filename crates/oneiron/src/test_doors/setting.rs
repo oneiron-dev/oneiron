@@ -229,7 +229,7 @@ pub fn custom_window_requested(vault: &Vault, ask: u64) -> Result<crate::setting
 
 /// Runs the pack door for `pack` over `defaults` (each key's name and its default as JSON), in its
 /// own write, as a new build or a pack's update would: every key not listed keeps its row. The
-/// whole list is the pack's layer.
+/// whole list is the pack's layer, and the door runs as this build's version of the pack.
 ///
 /// # Errors
 ///
@@ -240,6 +240,22 @@ pub fn apply_pack_defaults(
     pack: &str,
     defaults: &[(&str, serde_json::Value)],
 ) -> Result<Option<crate::setting::PackApplied>> {
+    apply_pack_defaults_at(vault, pack, crate::setting::ENGINE_PACK_VERSION, defaults)
+}
+
+/// [`apply_pack_defaults`] as a build that ships `version` of the pack runs it (stage 7c-3a): the
+/// door does not act when the pack's head holds a newer version.
+///
+/// # Errors
+///
+/// As [`apply_pack_defaults`].
+#[cfg(feature = "test-support")]
+pub fn apply_pack_defaults_at(
+    vault: &Vault,
+    pack: &str,
+    version: &str,
+    defaults: &[(&str, serde_json::Value)],
+) -> Result<Option<crate::setting::PackApplied>> {
     let defaults = defaults
         .iter()
         .map(|(key, value)| {
@@ -247,7 +263,28 @@ pub fn apply_pack_defaults(
             Ok((spec, spec.kind.from_json(value.clone())?))
         })
         .collect::<Result<Vec<_>>>()?;
-    vault.apply_pack_defaults(pack, &defaults, None)
+    vault.apply_pack_defaults(pack, (version, &defaults), None)
+}
+
+/// The version `pack`'s head row keeps (stage 7c-3a); `None` when the door never ran for it.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(feature = "test-support")]
+pub fn pack_head_version(vault: &Vault, pack: &str) -> Result<Option<String>> {
+    Ok(crate::setting::head_version_and_digest(vault, pack)?.map(|(version, _)| version))
+}
+
+/// The digest (hex) of the defaults `pack`'s door last weighed here (stage 7c-3a); `None` when the
+/// door never ran for it.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(feature = "test-support")]
+pub fn pack_head_digest(vault: &Vault, pack: &str) -> Result<Option<String>> {
+    Ok(crate::setting::head_version_and_digest(vault, pack)?.map(|(_, digest)| digest))
 }
 
 /// The `engine` pack's run, as the vault's open makes it.
@@ -811,4 +848,81 @@ pub fn land_signed_setting_act(
     let at = crate::temporal::TimeRange { start: ts, end: ts };
     vault.put_authority_log_entries(&[(act.0.clone(), at, ts)])?;
     Ok(hash)
+}
+
+/// The frontier of `pack`'s head acts now (stage 7c-3a).
+///
+/// # Errors
+///
+/// A pack target that does not encode; storage errors.
+#[cfg(feature = "test-support")]
+pub fn setting_pack_frontier_of(vault: &Vault, pack: &str) -> Result<SettingFrontier> {
+    vault.setting_pack_frontier(pack).map(SettingFrontier)
+}
+
+/// A pack's head, as `signer`'s own pack door signs it on `frontier` at `ts`, landed here as a
+/// peer's entry lands (stage 7c-3a). The digest is 64 hex digits. Whether the fold here counts
+/// the entry (valid, and not held back).
+///
+/// # Errors
+///
+/// `InvalidConfig` for a bad digest; the log's refusal of the entry; storage errors.
+#[cfg(feature = "test-support")]
+pub fn land_setting_pack_head_from(
+    vault: &Vault,
+    signer: &EnrolledMachine,
+    frontier: &SettingFrontier,
+    (pack, version, digest, held): (&str, &str, &str, &[&str]),
+    ts: u64,
+) -> Result<bool> {
+    let digest = oneiron_hex::decode_any_case::<32>(digest)
+        .ok_or_else(|| Error::InvalidConfig("a pack digest must be 64 hex digits".into()))?;
+    let held = held.iter().map(|name| (*name).to_owned()).collect();
+    let entry = vault.sign_setting_pack_head_as(
+        (signer.machine, &signer.key),
+        &frontier.0,
+        (pack, version, digest, held),
+        ts,
+    )?;
+    let hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
+    let at = crate::temporal::TimeRange { start: ts, end: ts };
+    vault.put_authority_log_entries(&[(entry, at, ts)])?;
+    let fold = vault.authority_fold()?;
+    Ok(fold.valid_entries.contains(&hash) && !fold.held_back_entries().contains(&hash))
+}
+
+/// One live head act of a pack, as a test reads it (stage 7c-3a).
+#[cfg(feature = "test-support")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackHeadView {
+    /// The carrier whose pack door weighed the defaults.
+    pub machine: EntityId,
+    /// The version of the pack the door's build ships.
+    pub version: String,
+    /// The digest of the pack's table of defaults, as lowercase hex.
+    pub digest: String,
+    /// The keys held at their earlier accepted value, in name order.
+    pub held: Vec<String>,
+}
+
+/// `pack`'s live head acts, read back from the log and sorted by version and digest (stage 7c-3a).
+///
+/// # Errors
+///
+/// A pack target that does not encode; storage errors.
+#[cfg(feature = "test-support")]
+pub fn setting_pack_heads(vault: &Vault, pack: &str) -> Result<Vec<PackHeadView>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut heads: Vec<_> = vault
+        .setting_pack_heads_in_txn(&txn, pack)?
+        .into_iter()
+        .map(|(_, head)| PackHeadView {
+            machine: head.machine,
+            version: head.version,
+            digest: oneiron_hex::encode(&head.digest),
+            held: head.held,
+        })
+        .collect();
+    heads.sort_by(|a, b| (&a.version, &a.digest).cmp(&(&b.version, &b.digest)));
+    Ok(heads)
 }
