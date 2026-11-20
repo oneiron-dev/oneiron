@@ -536,7 +536,9 @@ pub struct UnrestoredIdentityTopologyEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IdentityTopologyNotRestored {
     /// The archive does not hold it whole: a row or part missing, nulled or
-    /// not decoding, or a decision that is no applied merge or split.
+    /// not decoding, or a decision that is no applied merge or split. An
+    /// archive taken without secrets holds a decision recorded over several
+    /// parts this way: a part's payload is free bytes, so it goes nulled.
     ArchivedDecisionIncomplete,
     /// This install could not load its signing keys, so it seals no
     /// decision.

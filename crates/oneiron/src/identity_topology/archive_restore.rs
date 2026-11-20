@@ -26,6 +26,7 @@ use super::op_apply::IdentityOpWrite;
 use super::op_vocabulary::IdentityTopologyOp;
 use super::operation_parts::logical_identity_topology_event_with;
 use super::stored_event::StoredIdentityOpEvent;
+use super::wire_keys::{BODY_KEY_AMENDED, BODY_KEY_OPERATION_PAYLOAD};
 
 /// The merge and split decisions this vault's effective ledger holds
 /// current, sorted: each names a row still in its Merged or Split shell.
@@ -109,6 +110,15 @@ pub(crate) fn restored_merge_or_split(
             actor: None,
         },
     ))
+}
+
+/// Whether a byte slot named `key` in a type-76 body holds free bytes (an
+/// operation part's slice of a larger record, an amended body) rather than a
+/// typed id, reassignment item or digest. An export without secrets keeps
+/// only the typed slots of a body the codec decodes whole.
+#[must_use]
+pub(crate) fn is_free_byte_slot(key: &str) -> bool {
+    key == BODY_KEY_OPERATION_PAYLOAD || key == BODY_KEY_AMENDED
 }
 
 /// Whether `error` is the topology door refusing a decision here (a

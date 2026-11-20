@@ -232,6 +232,14 @@ impl ExportBody {
             if entity_type == crate::registry::ENTITY_TYPE_FACET {
                 export_substrate_reference(&value, &mut exported, secrets);
             }
+            if entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+                super::export_identity_topology_references::export_identity_topology_references(
+                    bytes,
+                    &value,
+                    &mut exported,
+                    secrets,
+                );
+            }
             // The NOTE codec has one validated binary revision reference.
             // Treating it as arbitrary opaque bytes would null it and make a live
             // edited NOTE's JSON archive impossible to decode on import.
