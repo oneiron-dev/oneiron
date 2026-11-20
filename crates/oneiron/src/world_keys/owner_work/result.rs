@@ -7,7 +7,7 @@ use super::OwnerWorkReceipt;
 use crate::authority::{
     AuthorityEntryHash, AuthorityKey, AuthorityOp, FrontierSigner, MAX_PARENTS, OwnerWorkOutcome,
     OwnerWorkResult, authority_entry_hash, invalid_authority, next_sequence,
-    owner_act_signer_admits, sign_side_entry,
+    owner_act_signer_admits, sign_side_entry_with_owner_proof,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -45,7 +45,11 @@ impl Vault {
     /// [`Self::append_owner_work_result_in_txn`], returning beside the
     /// result's entry hash the key that signed it, for work that signs more
     /// with that key in the same commit: an export copy's numbered parts
-    /// (FIX 12373).
+    /// (FIX 12373). The result, and the frontier join ahead of it, carry the
+    /// owner key's proof this install holds when the request is the owner's
+    /// own signed word ([`Vault::result_proof_signer_in_txn`], LIMIT-1),
+    /// picked once, before the join, on every path that answers a request:
+    /// the pickup, root, bundle and custody executors, enacted or refused.
     pub(crate) fn append_owner_work_result_with_key_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -64,8 +68,9 @@ impl Vault {
         ) {
             return Err(no_executor_key());
         }
+        let proof = self.result_proof_signer_in_txn(txn, &fold, &request)?;
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joiner = FrontierSigner::Install(executor, &signing);
+        let joiner = FrontierSigner::install(executor, &signing, proof.as_ref());
         let fold = self
             .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
@@ -79,7 +84,7 @@ impl Vault {
         }
         let seq = next_sequence(&fold, &AuthorityKey::Ed25519(public_key))?;
         let now = self.instant_in_txn(txn)?.secs();
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &signing,
             seq,
@@ -90,6 +95,7 @@ impl Vault {
                 outcome,
             }),
             now,
+            proof.as_ref(),
         )?;
         let hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
