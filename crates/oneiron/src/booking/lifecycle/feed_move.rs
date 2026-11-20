@@ -29,7 +29,7 @@ use super::storage::{
 };
 use super::transition::booking_read_rows;
 use super::types::{BOOKING_PASSPORT_SYSTEM, BookingStatus, CalendarRevision};
-use super::{BookingContent, LifecycleReceiptRow};
+use super::{BookingContent, CalendarCancellation, LifecycleReceiptRow};
 use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
     FailAttempt, RequeueAttempt,
@@ -62,12 +62,14 @@ pub use oneiron_records::booking::lifecycle::feed_move::BookingRevisionInvitePay
 /// What one feed update did to the booking its EVENT carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FeedMoveOutcome {
-    /// The EVENT carries no confirmed, uncancelled booking: the feed writes
-    /// it as it writes any other EVENT.
+    /// The EVENT carries no confirmed booking, or one its own status
+    /// cancelled: the feed writes it as it writes any other EVENT.
     NotBooking,
     /// The feed reports no new slot: the slot the booking already sits at
     /// (the echo of our own revised invite included), or no bounded
-    /// interval. Nothing is written.
+    /// interval. Or a calendar's cancellation stands on a booking its own
+    /// status still confirms: the EVENT keeps its booked slot. Nothing is
+    /// written.
     Unchanged,
     /// The booking moved to the feed's slot under this revision.
     Moved(CalendarRevision),
@@ -81,8 +83,17 @@ pub(crate) enum FeedMoveOutcome {
 /// Moves the booking on `event_ref` to `feed_slot`, the half-open
 /// `[DTSTART, DTEND)` a calendar feed now reports for it.
 ///
-/// A held, partial or cancelled booking is [`FeedMoveOutcome::NotBooking`]:
-/// only a confirmed, uncancelled booking has a slot its booker relies on.
+/// A held or partial booking, or one its own status cancelled, is
+/// [`FeedMoveOutcome::NotBooking`]: only a confirmed booking has a slot its
+/// booker relies on. A confirmed booking a calendar's cancellation stands on
+/// is [`FeedMoveOutcome::Unchanged`]: the EVENT keeps its booked slot, so a
+/// live VEVENT of a calendar the booking was written to (undated, or at
+/// another slot) never moves the start its deposit's host-cancel rule and
+/// CAL-07 measure a later cancellation against. That cancellation may come
+/// from a calendar that moves no money (RULING DEPOSIT-HOST-CANCEL-SOURCE =
+/// A). An omission's cancellation is no bar: this live VEVENT ends it, so
+/// the booking moves as a live one.
+///
 /// The move does not consult the solver: a clash with another booking is two
 /// overlapping EVENTs, as any feed drift makes.
 ///
@@ -110,8 +121,11 @@ pub(crate) fn move_booking_by_feed(
             Err(BookingError::InvalidConstraint(_)) => return Ok(FeedMoveOutcome::NotBooking),
             Err(error) => return Err(error),
         };
-        if booking.effective_status() == BookingStatus::Cancelled {
+        if booking.status == BookingStatus::Cancelled {
             return Ok(FeedMoveOutcome::NotBooking);
+        }
+        if booking.calendar_cancellation == CalendarCancellation::Standing {
+            return Ok(FeedMoveOutcome::Unchanged);
         }
         let Some(slot) = feed_slot.filter(|range| range.start < range.end) else {
             return Ok(FeedMoveOutcome::Unchanged);

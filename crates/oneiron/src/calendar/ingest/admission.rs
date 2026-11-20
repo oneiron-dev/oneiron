@@ -318,7 +318,9 @@ impl PollAdmission<'_> {
     /// revised invite is queued. The echo of the slot the booking already
     /// sits at writes nothing, and a pending emergency delivery holds the
     /// move back. [`FeedMoveOutcome::NotBooking`] when the EVENT carries no
-    /// live booking: the caller then rewrites the EVENT as any other.
+    /// booking, or one its own status cancelled: the caller then rewrites the
+    /// EVENT as any other. A booking a calendar's cancellation stands on keeps
+    /// its booked slot ([`FeedMoveOutcome::Unchanged`]), as below.
     ///
     /// A cancellation moves nothing and stays the imported-cancel outcome. A
     /// booking's EVENT keeps its booked slot through it
