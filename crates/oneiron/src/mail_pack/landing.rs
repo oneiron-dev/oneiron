@@ -32,6 +32,8 @@ use crate::memory::{
 };
 use crate::{Result, Vault, source_audience};
 
+mod session;
+
 /// The longest label a CONVERSATION body carries (a subject, a thread key).
 const MAX_LABEL_BYTES: usize = 512;
 
@@ -352,6 +354,22 @@ impl<'v> Landing<'v> {
         full: Option<&MailFull>,
         searched: bool,
     ) -> MemoryResult<LandOutcome> {
+        self.land_checked(row, headers, full, searched, &|_| Ok(()))
+    }
+
+    /// [`Self::land`], whose every write transaction runs `check` before it
+    /// writes. A search inside an off-record session's stretch on record
+    /// checks there that the route it took still stands, so a hit whose
+    /// session went off record while the provider answered lands nowhere
+    /// (ARCH-0063 #searched-mail).
+    pub(super) fn land_checked(
+        &self,
+        row: &MailSourceRow,
+        headers: &MailHeaders,
+        full: Option<&MailFull>,
+        searched: bool,
+        check: &dyn Fn(&heed::RoTxn<'_>) -> crate::Result<()>,
+    ) -> MemoryResult<LandOutcome> {
         let vault = self.vault;
         let source = self.source_ref;
         let source_hex = source.to_hex();
@@ -386,7 +404,7 @@ impl<'v> Landing<'v> {
                 // gains them, fix list row 17645), and with the whole
                 // message read, so do the body stage and its attachments; no
                 // new revision.
-                self.settle_same_in_place(&key, headers, full)?;
+                self.settle_same_in_place(&key, headers, full, check)?;
                 return Ok(LandOutcome::Same);
             }
             let turn = prior.as_ref().map_or(
@@ -462,6 +480,7 @@ impl<'v> Landing<'v> {
             facet: None,
         };
         let landed = self.memory.witness_imported(&witness, &stamp, |wtxn| {
+            check(wtxn)?;
             self.owner.revalidate_in_txn(vault, wtxn)?;
             let current = SOURCES
                 .get(&vault.store, wtxn, &source)?
@@ -668,16 +687,19 @@ impl Landing<'_> {
     /// when the message was read whole (`full`), its stage is the body, it
     /// keeps the message's attachments and the digest of its first whole
     /// read (fix list row 19145), and it leaves the body queue. It writes
-    /// nothing when none of these changed.
+    /// nothing when none of these changed, and nothing unless `check` passes
+    /// in its transaction first.
     fn settle_same_in_place(
         &self,
         key: &(EntityId, [u8; 32]),
         headers: &MailHeaders,
         full: Option<&MailFull>,
+        check: &dyn Fn(&heed::RoTxn<'_>) -> crate::Result<()>,
     ) -> MemoryResult<()> {
         let vault = self.vault;
         let reply = MailReplyHeaders::of(headers);
         vault.with_write_txn_grouped(|wtxn| {
+            check(wtxn)?;
             let Some(mut occurrence) = OCCURRENCES.get(&vault.store, wtxn, key)? else {
                 return Ok(());
             };

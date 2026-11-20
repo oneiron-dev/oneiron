@@ -194,6 +194,25 @@ pub(super) fn encode_imported_turn_body(
     }
 }
 
+/// The TURN body an off-record session stages for a turn of an import
+/// (ARCH-0063 #searched-mail): the one non-system speaker of `messages` and
+/// `source`, with no source-audience obligation, which an overlay never
+/// births (fix list row 16256). The bytes a landing without that proof
+/// mints in base.
+///
+/// # Errors
+///
+/// `messages` carry no non-system speaker, or more than one.
+pub(crate) fn imported_turn_body_unstamped(
+    messages: &[WitnessMessage],
+    source: &str,
+) -> MemoryResult<Vec<u8>> {
+    let speaker = incoming_turn_speaker(messages)?.ok_or_else(|| {
+        MemoryError::bad_request("a new witnessed turn needs one non-system speaker")
+    })?;
+    encode_imported_turn_body(speaker, source, None)
+}
+
 /// An imported TURN's or CONVERSATION's source is a birth fact (ARCH-0040):
 /// no later put adds, changes or removes it, so imported evidence is never
 /// relabelled the owner's live words, nor the reverse, and an import's
