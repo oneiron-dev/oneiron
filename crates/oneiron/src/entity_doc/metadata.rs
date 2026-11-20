@@ -128,7 +128,7 @@ impl Vault {
             super::forks::authorize(self, txn, authorization, entity, actor)?;
             // A shared vault's role and record scope, in the committing writer
             // (FIX 9846).
-            self.authorize_shared_content_write_in_txn(txn, *entity, &actor)?;
+            super::bound_room::authorize_content_write_in_txn(self, txn, *entity, &actor)?;
             if let Some(refusal) = self.store.use_restricted_in_txn(txn, entity)? {
                 return Err(refusal);
             }
