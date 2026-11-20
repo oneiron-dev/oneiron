@@ -9,7 +9,11 @@
 //!   for that exact erase on their own proof: it is spent in the erase's
 //!   writer, the answer names the asker as requester, and it applies once. A
 //!   check-in for another effect erases nothing and stays unspent; so does a
-//!   lift-and-erase whose shown state changed.
+//!   lift-and-erase whose state changed after its preview.
+//! - Each erase takes the owner's shared confirm (L8-49): the call passes
+//!   back the confirm `vault.owner_confirm.preview` returned for it, and the
+//!   preview names the same `check_in_ref`. A lift-and-erase previewed
+//!   before a hold was placed is refused.
 //!
 //! The ask is opened here through the check-in test doors on a chain whose
 //! Owner rung is the vault owner; `check_in_destructive_effects` drives the
@@ -30,12 +34,14 @@ mod owner_apply_fixture;
 use oneiron::check_in::{
     ActClass, legal_hold_erase_effect_digest, outbound_call_request_erase_effect_digest,
 };
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::LegalHoldTarget;
-use oneiron::memory::BlobArtifactInput;
+use oneiron::memory::{BlobArtifactInput, Memory};
 use oneiron::verbs::{
     LegalHoldEraseState, LegalHoldLiftAndEraseRequest, LegalHoldLiftAndErased,
-    LegalHoldPlaceRequest, OutboundCallRequestEraseRequest, erase_outbound_call_request_as_owner,
-    lift_legal_hold_and_erase_as, place_legal_hold_as,
+    LegalHoldPlaceRequest, OutboundCallRequestEraseRequest, OwnerConfirmPreviewRequest,
+    erase_outbound_call_request_as_owner, lift_legal_hold_and_erase_as, place_legal_hold_as,
+    preview_owner_confirm,
 };
 use oneiron::{EdgeActorClass, EntityId};
 use owner_apply_fixture::{approved, owner_decision, rooted, spent};
@@ -43,18 +49,44 @@ use owner_apply_fixture::{approved, owner_decision, rooted, spent};
 const OUTBOUND_ERASE: &str = "vault.outbound_calls.request.erase";
 const LIFT_AND_ERASE: &str = "vault.legal_holds.lift_and_erase";
 
+/// The confirm of the owner's shared preview of `verb` on `input` (L8-49).
+fn previewed(
+    memory: &Memory<'_>,
+    owner_proof: &AuthenticatedOwner,
+    verb: &str,
+    input: &impl serde::Serialize,
+) -> String {
+    preview_owner_confirm(
+        memory,
+        owner_proof,
+        OwnerConfirmPreviewRequest {
+            verb: verb.to_owned(),
+            input: serde_json::to_value(input).expect("the erase input encodes"),
+        },
+    )
+    .expect("the owner previews the erase")
+    .confirm
+}
+
 #[test]
 fn the_owner_applies_an_approved_outbound_request_erase_once() {
     let (_dir, vault, owner, owner_proof) = rooted();
+    let memory = vault.memory(owner, EdgeActorClass::Human);
     let attempt = EntityId::now();
     let erase = |call_seq, check_in_ref: Option<EntityId>| {
+        let input = OutboundCallRequestEraseRequest {
+            attempt,
+            call_seq,
+            confirm: None,
+            check_in_ref: check_in_ref.map(|id| id.to_hex()),
+        };
+        let confirm = previewed(&memory, &owner_proof, OUTBOUND_ERASE, &input);
         erase_outbound_call_request_as_owner(
             &vault,
             &owner_proof,
             OutboundCallRequestEraseRequest {
-                attempt,
-                call_seq,
-                check_in_ref: check_in_ref.map(|id| id.to_hex()),
+                confirm: Some(confirm),
+                ..input
             },
         )
     };
@@ -113,21 +145,24 @@ fn the_owner_applies_an_approved_lift_and_erase_on_the_state_shown() {
             .expect("the owner writes an artifact");
         EntityId::from_hex(&put.id_hex).expect("an artifact id")
     };
-    let confirm = |record: EntityId, check_in_ref: Option<EntityId>| -> LegalHoldLiftAndErased {
-        let shown_state = vault
-            .lift_and_erase_shown_state(&owner_proof, &[record], false)
-            .expect("the confirm's shown state");
-        lift_legal_hold_and_erase_as(
-            &vault,
-            &owner_proof,
-            LegalHoldLiftAndEraseRequest {
+    // The call as previewed now: it carries that preview's confirm.
+    let previewed_call =
+        |record: EntityId, check_in_ref: Option<EntityId>| -> LegalHoldLiftAndEraseRequest {
+            let input = LegalHoldLiftAndEraseRequest {
                 records: vec![record],
                 claim_free_partition: false,
-                shown_state,
+                confirm: None,
                 check_in_ref: check_in_ref.map(|id| id.to_hex()),
-            },
-        )
-        .expect("the owner confirms")
+            };
+            let confirm = previewed(&memory, &owner_proof, LIFT_AND_ERASE, &input);
+            LegalHoldLiftAndEraseRequest {
+                confirm: Some(confirm),
+                ..input
+            }
+        };
+    let confirm = |record: EntityId, check_in_ref: Option<EntityId>| -> LegalHoldLiftAndErased {
+        lift_legal_hold_and_erase_as(&vault, &owner_proof, previewed_call(record, check_in_ref))
+            .expect("the owner confirms")
     };
     let ran = |erased: &LegalHoldLiftAndErased| {
         erased.records.len() == 1
@@ -155,10 +190,8 @@ fn the_owner_applies_an_approved_lift_and_erase_on_the_state_shown() {
         ActClass::Erase,
         &digest,
     );
-    // A hold placed after the state was read: the confirm changes nothing.
-    let stale_shown = vault
-        .lift_and_erase_shown_state(&owner_proof, &[record], false)
-        .expect("the shown state");
+    // A hold placed after the preview: its confirm no longer stands.
+    let stale_call = previewed_call(record, Some(asked));
     let hold = place_legal_hold_as(
         &vault,
         &owner_proof,
@@ -168,20 +201,11 @@ fn the_owner_applies_an_approved_lift_and_erase_on_the_state_shown() {
         },
     )
     .expect("the owner holds the record");
-    let stale = lift_legal_hold_and_erase_as(
-        &vault,
-        &owner_proof,
-        LegalHoldLiftAndEraseRequest {
-            records: vec![record],
-            claim_free_partition: false,
-            shown_state: stale_shown,
-            check_in_ref: Some(asked.to_hex()),
-        },
-    )
-    .expect("a stale confirm answers");
-    assert!(
-        stale.changed.is_some() && stale.check_in.is_none(),
-        "a changed shown state lifts and erases nothing: {stale:?}"
+    let stale = lift_legal_hold_and_erase_as(&vault, &owner_proof, stale_call)
+        .expect_err("a stale confirm is refused");
+    assert_eq!(
+        stale.code, "OWNER_CONFIRM_REQUIRED",
+        "a state changed since its preview lifts and erases nothing: {stale:?}"
     );
     assert!(!spent(&vault, &asked), "a stale confirm spends nothing");
 

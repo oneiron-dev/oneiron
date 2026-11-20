@@ -442,3 +442,57 @@ fn expiry_releases_each_inert_commitment() -> Result<()> {
     )?;
     assert_released_by(&fixture, "esign.expired")
 }
+
+/// A redraft that keeps the draft's obligations lands, as a field move by
+/// `vault.esign.fields.place` does (FIX ESIGN-FIELDS-COMMITMENT-DRAFT), and
+/// mints nothing again: the two terms stay as the first draft minted them,
+/// and completion still opens both. A redraft that changes a term is refused.
+#[test]
+fn a_redraft_keeping_the_obligations_lands_and_mints_nothing_again() -> Result<()> {
+    let fixture = setup()?;
+    let mut redraft = draft(
+        fixture.document,
+        &fixture.signer,
+        fixture.obligor,
+        fixture.beneficiary,
+    );
+    redraft.title = "Statement of work, second draft".into();
+    let state = event(
+        &fixture,
+        EsignEvent::Drafted {
+            document: redraft.clone(),
+        },
+        3,
+    )
+    .unwrap_or_else(|error| panic!("a redraft keeping the obligations lands: {error}"));
+    assert_eq!(state.document.title, "Statement of work, second draft");
+    for (index, text) in (0_u32..).zip(OBLIGATIONS) {
+        let (_, record) = commitment(&fixture, index)?;
+        assert_eq!(record.status, CommitmentStatus::Inert, "term {index}");
+        assert_eq!(record.content.text, text);
+    }
+    assert!(
+        fixture
+            .vault
+            .get_commitment_claim(&esign_document_commitment_id(&fixture.document, 2)?)?
+            .is_none(),
+        "the redraft mints no third term"
+    );
+    let mut changed = redraft;
+    changed.commitments[1].content.text = "Pay the second invoice".into();
+    assert!(
+        event(&fixture, EsignEvent::Drafted { document: changed }, 3).is_err(),
+        "a redraft that changes a term is refused"
+    );
+    assert_eq!(
+        commitment(&fixture, 1)?.1.content.text,
+        OBLIGATIONS[1],
+        "the refused redraft leaves the minted term as it was"
+    );
+    assert!(sign(&fixture)?.ready_to_seal());
+    seal(&fixture)?;
+    let mut expected: Vec<String> = OBLIGATIONS.iter().map(|text| (*text).to_owned()).collect();
+    expected.sort();
+    assert_eq!(open_commitments_named_by_the_document(&fixture)?, expected);
+    Ok(())
+}

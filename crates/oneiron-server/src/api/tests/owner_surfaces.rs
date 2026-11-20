@@ -1303,10 +1303,10 @@ async fn a_feedback_send_queued_behind_a_slip_revocation_admits_nothing() {
     assert!(collector.join().unwrap().starts_with("post /ingest"));
 }
 
-/// Two owners of one shared vault preview the same bundle and send it with the
-/// same preview second: each approval names its owner, so each send is its
-/// own, neither owner can send on the other's preview, and one owner's repeat
-/// is still that owner's one send.
+/// Two owners of one shared vault preview the same bundle and each send it with
+/// their own preview's timestamp and approval. Each approval names its owner,
+/// so each send is its own, neither owner can send on the other's preview, and
+/// one owner's repeat is still that owner's one send.
 #[tokio::test]
 async fn two_owners_sending_one_bundle_are_two_sends() {
     use oneiron::federation::{FederationGrantRole, InitialSharedMember};
@@ -1357,13 +1357,12 @@ async fn two_owners_sending_one_bundle_are_two_sends() {
     }
     assert_eq!(previews[0]["digest"], previews[1]["digest"]);
     assert_ne!(previews[0]["approval"], previews[1]["approval"]);
-    let previewed_at = previews[0]["previewed_at"].clone();
     let send_body = |preview: &Value| {
         json!({
             "category": "bug",
             "digest": preview["digest"],
             "approval": preview["approval"],
-            "previewed_at": previewed_at,
+            "previewed_at": preview["previewed_at"],
         })
     };
     let mut sent = Vec::new();

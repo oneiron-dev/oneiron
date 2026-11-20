@@ -4,11 +4,14 @@
 //!
 //! The confirm carries a typed echo of what the owner was shown: the title
 //! and prompt, the records, and every standing customer hold on them, whole.
-//! Its writer reads the same state again before it links, logs or lifts
-//! anything, and acts only on an exact match. Anything else changes nothing
-//! and answers with what the confirm shows now, so the owner confirms again
-//! in one step. No token, expiry or second press is kept, and no host order
-//! is ever part of the echo: one under a secrecy order stays unseen (C2).
+//! The verb reads that state fresh, and the shared owner confirm
+//! (`vault.owner_confirm.preview`) binds it; its writer reads the same state
+//! again before it links, logs or lifts anything, and acts only on an exact
+//! match. Anything else changes nothing and answers with what the confirm
+//! shows now, so the owner confirms again in one step. The shared confirm
+//! asks no second press and keeps no expiry: its row lives until a confirm
+//! uses it or the owner previews again (Engine 11:34). No host order is
+//! ever part of the echo: one under a secrecy order stays unseen (C2).
 //!
 //! In a shared vault with two or more Owners an explicit erase waits out the
 //! vault's `erase` veto window first (ARCH-0043, FIX 9781): each record
@@ -208,7 +211,8 @@ impl Vault {
 
     /// The owner's one confirm: [`LIFT_AND_ERASE_TITLE`], showing
     /// [`LIFT_AND_ERASE_PROMPT`], bound to `shown`, what it showed (FIX
-    /// 1462). Lifts every customer hold on `records` (a hold naming more
+    /// 1462; the verb admits the shared confirm of that same state first).
+    /// Lifts every customer hold on `records` (a hold naming more
     /// keeps the rest), and on the claim-free gate-decision partition with
     /// `claim_free_partition` (FIX 9782), and erases the records through the
     /// owner delete rail; the confirm, the lift and each scope change are

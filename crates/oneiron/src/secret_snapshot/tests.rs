@@ -22,7 +22,8 @@ fn unreadable_files_are_quarantined() -> crate::Result<()> {
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
     let snap = snapshot(vec![CodebaseFileEntry::new("src/lib.rs", [1; 32], 1)]);
     let txn = vault.store.env.read_txn()?;
-    let (files, report) = vault.apply_custody_to_snapshot(&txn, &snap, &|_| None)?;
+    let (files, report) =
+        vault.apply_custody_to_snapshot(&txn, &snap, snapshot_root(&snap.repo_ref), &|_| None)?;
     assert!(files.is_empty());
     assert_eq!(report.quarantined_paths, ["src/lib.rs"]);
     Ok(())
@@ -39,7 +40,10 @@ fn detected_files_are_quarantined_without_value() -> crate::Result<()> {
         token.len() as u64,
     )]);
     let txn = vault.store.env.read_txn()?;
-    let (files, report) = vault.apply_custody_to_snapshot(&txn, &snap, &|_| Some(token.clone()))?;
+    let (files, report) =
+        vault.apply_custody_to_snapshot(&txn, &snap, snapshot_root(&snap.repo_ref), &|_| {
+            Some(token.clone())
+        })?;
     assert!(files.is_empty());
     assert_eq!(report.quarantined_paths, [".env"]);
     assert_eq!(
@@ -56,7 +60,10 @@ fn hash_mismatch_is_quarantined_without_proposal() -> crate::Result<()> {
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
     let snap = snapshot(vec![CodebaseFileEntry::new("src/lib.rs", [1; 32], 1)]);
     let txn = vault.store.env.read_txn()?;
-    let (files, report) = vault.apply_custody_to_snapshot(&txn, &snap, &|_| Some(vec![2]))?;
+    let (files, report) =
+        vault.apply_custody_to_snapshot(&txn, &snap, snapshot_root(&snap.repo_ref), &|_| {
+            Some(vec![2])
+        })?;
     assert!(files.is_empty());
     assert_eq!(report.quarantined_paths, ["src/lib.rs"]);
     assert!(report.proposals.is_empty());
@@ -117,6 +124,7 @@ fn absolute_t2_registration_excludes_relative_snapshot_entry_after_recovery() ->
         name: "snapshot-t2".to_owned(),
         class: CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: content.clone(),
         status: SecretCustodyStatus::Active,
         registered_at: 1,
@@ -145,7 +153,9 @@ fn absolute_t2_registration_excludes_relative_snapshot_entry_after_recovery() ->
     )]);
     let txn = vault.store.env.read_txn()?;
     let (files, report) =
-        vault.apply_custody_to_snapshot(&txn, &snap, &|_| Some(content.clone()))?;
+        vault.apply_custody_to_snapshot(&txn, &snap, snapshot_root(&snap.repo_ref), &|_| {
+            Some(content.clone())
+        })?;
     assert!(files.is_empty());
     assert_eq!(report.excluded_secret_paths, [".secrets/api.key"]);
     Ok(())

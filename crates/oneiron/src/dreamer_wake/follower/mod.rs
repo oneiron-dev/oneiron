@@ -30,10 +30,10 @@ mod state;
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
-use crate::Vault;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope, DreamerRunnerStore,
 };
@@ -45,6 +45,7 @@ use crate::dreamer_wake::sieve::follower::{
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::store::Store;
+use crate::{EntityId, Vault};
 use oneiron_model::llm::Scope;
 
 pub(crate) use keyframe::{
@@ -62,13 +63,10 @@ use state::{FollowerResult, PreparedSuffix, Session, SessionKey, held_session_in
 /// The follower's attempt type: a Micro job, one queued per session.
 pub(crate) const FOLLOWER_ATTEMPT: &str = "dreamer.sieve.follower";
 
-const SESSION_DOMAIN: &[u8] = b"oneiron:dreamer-follower:session:v1";
 /// The read scope every session reads under at this head: the Dreamer's own
 /// gate over the vault. An off-record or private route never reaches the
 /// sieve, so it never shares a session.
 const READ_SCOPE: &[u8] = b"dreamer-gate:vault";
-const PREFIX_DOMAIN: &[u8] = b"oneiron:dreamer-follower:prefix:v1";
-const QUESTION_DOMAIN: &[u8] = b"oneiron:dreamer-follower:question:v1";
 
 /// The follower attempt's input: the session it writes.
 #[derive(Serialize, Deserialize)]
@@ -82,14 +80,10 @@ fn invalid() -> Error {
 }
 
 /// The session of the vault-local Dreamer authority under its read scope.
+/// Queued session identifiers keep their bytes (K, PLAN-UC-04 stage 7).
 pub(crate) fn session_key() -> Result<SessionKey> {
     let authority = crate::dreamer_runner::authority::dreamer_actor_id()?;
-    Ok(*blake3::Hasher::new()
-        .update(SESSION_DOMAIN)
-        .update(authority.as_bytes())
-        .update(READ_SCOPE)
-        .finalize()
-        .as_bytes())
+    Ok(session_key_for(&authority))
 }
 
 /// The session a follower attempt's `input` names, when it is the live one.
@@ -613,22 +607,21 @@ fn ask_bytes(ask: &AskWork) -> usize {
 }
 
 /// The chained digest of a prefix's parts, the instruction first.
+/// Stored prepared-prefix digests keep their bytes (K, PLAN-UC-04 stage 7).
 fn prefix_digest(instruction: &str, parts: &[String]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(PREFIX_DOMAIN);
+    let mut hasher = LegacyDigest::new(purposes::dreamer_wake::FOLLOWER_PREFIX);
     for part in std::iter::once(instruction).chain(parts.iter().map(String::as_str)) {
-        hasher.update(&(part.len() as u64).to_be_bytes());
-        hasher.update(part.as_bytes());
+        hasher.len_u64_be(part.len());
+        hasher.raw(part.as_bytes());
     }
-    *hasher.finalize().as_bytes()
+    hasher.finish()
 }
 
+/// Stored prepared-question digests keep their bytes (K, PLAN-UC-04 stage 7).
 fn question_digest(question: &str) -> [u8; 32] {
-    *blake3::Hasher::new()
-        .update(QUESTION_DOMAIN)
-        .update(question.as_bytes())
-        .finalize()
-        .as_bytes()
+    LegacyDigest::new(purposes::dreamer_wake::FOLLOWER_QUESTION)
+        .raw(question.as_bytes())
+        .finish()
 }
 
 /// Hands `span` back to its own rung, as the per-span path asks it, and
@@ -714,3 +707,24 @@ pub(crate) fn hand_back_owed_in_txn(
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::state::dreamer_follower_result_accepts_masked;
+
+/// The follower identity for an authority under the vault's fixed read scope.
+pub(crate) fn session_key_for(authority: &EntityId) -> SessionKey {
+    LegacyDigest::new(purposes::dreamer_wake::FOLLOWER_SESSION)
+        .raw(authority.as_bytes())
+        .raw(READ_SCOPE)
+        .finish()
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::session_key_for as session_key_for_test;
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn prefix_digest_for_test(instruction: &str, parts: &[String]) -> [u8; 32] {
+    prefix_digest(instruction, parts)
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn question_digest_for_test(question: &str) -> [u8; 32] {
+    question_digest(question)
+}

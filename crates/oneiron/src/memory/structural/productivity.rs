@@ -6,8 +6,9 @@
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
+use crate::batch::secret_scan::LiftedKeys;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimReadStatus, ScopedReadResult};
+use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadResult};
 use crate::error::Error;
 use crate::memory::support::encode_rmpv;
 use crate::memory::{Memory, MemoryResult};
@@ -163,42 +164,85 @@ impl Memory<'_> {
     }
 
     /// The role-labelled `ChildOf` tree under one TASK, read through the
-    /// caller's lane: a withheld child and its subtree are absent and
-    /// counted in the receipt; a non-TASK child is not part of the tree.
+    /// caller's lane: a withheld TASK child and its subtree are absent and
+    /// counted in the receipt; a child of another type is not part of the
+    /// tree, withheld or not, so it never counts. Each label is read as
+    /// vault.get serves its TASK: every reader but the owner reads the body
+    /// the typed Nulled rule releases, a TASK whose body that rule withholds
+    /// whole is not a node, and a key the lift sweep marked reads as its
+    /// handle (OF-067).
     pub fn productivity_tree(
         &self,
         input: &ProductivityTreeRequest,
     ) -> MemoryResult<ScopedReadResult<Option<ProductivityTree>>> {
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        // Its nodes are admitted under the key's live Grants too, so its
+        // receipt reports what admitted them.
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
         let root = self.resolve_ref_in_lane(&lane, &input.root_ref)?;
-        lane.child_of_tree_projected(&root, input.max_depth, node_body, |txn, nodes| {
-            let Some(nodes) = nodes else {
-                return Ok(None);
-            };
-            let ref_of = |id: &crate::EntityId| -> MemoryResult<String> {
-                Ok(self
-                    .short_ref_of_in_txn(txn, id)?
-                    .unwrap_or_else(|| id.to_hex()))
-            };
-            let mut rows = Vec::with_capacity(nodes.len());
-            for node in nodes {
-                rows.push(ProductivityNode {
-                    task_ref: ref_of(&node.id)?,
-                    id_hex: node.id.to_hex(),
-                    parent_ref: node.parent.as_ref().map(ref_of).transpose()?,
-                    depth: node.depth,
-                    role: node.node.role,
-                    label: node.node.label,
-                    current_streak: node.node.streak.map(|(current, _)| current),
-                    longest_streak: node.node.streak.map(|(_, longest)| longest),
-                });
-            }
-            Ok(Some(ProductivityTree {
-                root_ref: ref_of(&root)?,
-                nodes: rows,
-            }))
-        })
+        lane.child_of_tree_projected(
+            &root,
+            input.max_depth,
+            Some(ENTITY_TYPE_TASK),
+            |txn, raw| released_node_body(&lane, txn, raw),
+            |txn, nodes| {
+                let Some(nodes) = nodes else {
+                    return Ok(None);
+                };
+                let ref_of = |id: &crate::EntityId| -> MemoryResult<String> {
+                    Ok(self
+                        .short_ref_of_in_txn(txn, id)?
+                        .unwrap_or_else(|| id.to_hex()))
+                };
+                let mut rows = Vec::with_capacity(nodes.len());
+                for node in nodes {
+                    rows.push(ProductivityNode {
+                        task_ref: ref_of(&node.id)?,
+                        id_hex: node.id.to_hex(),
+                        parent_ref: node.parent.as_ref().map(ref_of).transpose()?,
+                        depth: node.depth,
+                        role: node.node.role,
+                        label: node.node.label,
+                        current_streak: node.node.streak.map(|(current, _)| current),
+                        longest_streak: node.node.streak.map(|(_, longest)| longest),
+                    });
+                }
+                let tree = ProductivityTree {
+                    root_ref: ref_of(&root)?,
+                    nodes: rows,
+                };
+                let value = serde_json::to_value(&tree)
+                    .map_err(|_| Error::InvariantViolation("a productivity tree did not encode"))?;
+                let keys = LiftedKeys::of_json_in_txn(&self.vault().store, txn, &value)?;
+                Ok(Some(self.lifted_view_in_txn(txn, tree, || Ok(keys))?))
+            },
+        )
     }
+}
+
+/// [`node_body`] of the TASK body `lane`'s reader is served in `txn`: the
+/// stored body for the owner, the body the typed Nulled rule releases for
+/// every other reader (ruling EXPORTDOORS Q4 = A), as vault.get serves it.
+/// A body that rule withholds whole is no node.
+fn released_node_body(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    raw: &[u8],
+) -> MemoryResult<Option<NodeBody>> {
+    let header = EntityMetadataHeader::parse(raw)
+        .ok_or(Error::CorruptedIndex("productivity tree header"))?;
+    if header.entity_type != ENTITY_TYPE_TASK {
+        return Ok(None);
+    }
+    let Some(body) =
+        lane.released_body_in(txn, header.entity_type, &raw[ENTITY_METADATA_HEADER_LEN..])?
+    else {
+        return Ok(None);
+    };
+    let mut released = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+    released.extend_from_slice(&body);
+    node_body(&released)
 }
 
 /// A TASK row of a public role, with its label and a Habit's counters

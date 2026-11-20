@@ -6,21 +6,87 @@ use super::*;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, CandidateRel};
 use crate::dreamer_consolidation::extracted_people::MintNamespace;
 use crate::dreamer_consolidation::provenance::KeptDecision;
+use crate::dreamer_consolidation::roles::DEFAULT_BUDGET_TOKENS;
+use oneiron_model::llm::OWN_SERVER_ONLY_PARAM;
+use serde_json::{Value as JsonValue, json};
+
+pub(in crate::dreamer_consolidation) use super::decisions::identity_choice::identity_round_specs;
+pub(in crate::dreamer_consolidation) use super::decisions::{
+    ChoiceSpec, ConflictRows, DecisionKeyPart, NONE, PartMark, key_part_bytes, key_part_text,
+    page_or_whole,
+};
+pub(in crate::dreamer_consolidation) use super::merge_resolution::{
+    ESCALATE, RESOLUTIONS, conflict_identity_specs, resolution_choice_spec, resolution_final_prep,
+    resolution_spans_predicates,
+};
 
 mod cited;
-mod corrections;
+pub(in crate::dreamer_consolidation) mod corrections;
 mod decided;
+#[cfg(oneiron_test_support)]
+pub(crate) mod native_decisions_parity;
 mod quote_binding;
 mod wire;
 pub(in crate::dreamer_consolidation) use cited::CitationCheck;
 use corrections::Correction;
 pub(in crate::dreamer_consolidation) use quote_binding::{QuoteBinding, bind_quote};
+pub(crate) use wire::entity_id_from_hex;
+use wire::parse_candidate;
 pub(in crate::dreamer_consolidation) use wire::{
-    CallPins, ExtractedPerson, ExtractionReply, ReplyContext, check_extraction_reply,
-    contract_reply, decode_ref, disagreeing_child_hashes, extraction_reply, reply_json,
-    resolve_subject,
+    CallPins, ExtractedPerson, ExtractionReply, ReplyContext, authored_fallback,
+    check_extraction_reply, contract_reply, decode_ref, disagreeing_child_hashes, extraction_reply,
+    prospective_queries, reply_json, resolve_subject,
 };
-use wire::{authored_fallback, entity_id_from_hex, parse_candidate};
+
+/// The tokens a claim extraction answer may take after its thought. The
+/// largest RESEARCH-1232 gold answer (55 claims) is 5,570 tokens in that
+/// pack's own format and at most 4,004 in the shipped label format; 8,192
+/// is the cap RESEARCH-1232 gave its largest packets.
+const EXTRACTION_ANSWER_TOKENS: u64 = 8_192;
+
+/// The output limit a claim extraction call asks an own server: the default
+/// level's thinking budget plus [`EXTRACTION_ANSWER_TOKENS`]. It is the
+/// largest output a Dreamer call asks, so the host's model windows reserve it
+/// for a provider that names no output ceiling.
+pub const EXTRACTION_MAX_TOKENS: u64 = DEFAULT_BUDGET_TOKENS + EXTRACTION_ANSWER_TOKENS;
+
+/// The output limit param every adapter folds into its provider's own field.
+const MAX_TOKENS_PARAM: &str = "max_tokens";
+
+/// The output limit and sampling a claim extraction call sends to an own
+/// server or an on-device model. `max_tokens` is the default level's thinking
+/// budget plus [`EXTRACTION_ANSWER_TOKENS`], so a thought that spends its
+/// whole budget still leaves the answer its room. With no limit sent, the
+/// house EXL3 server capped the thought and the answer together at 4,096
+/// tokens, and the answer got what the thought left. The sampling is the one
+/// RESEARCH-1232 measured the ruled recipe with (the Qwen card's values):
+/// temperature 0.7, top_p 0.8, top_k 20, min_p 0, presence_penalty 1.5,
+/// frequency_penalty 0, repetition_penalty 1, so a server default never picks
+/// it. [`OWN_SERVER_ONLY_PARAM`] names every one of them, so a hosted API is
+/// sent none, as it is sent no thinking budget: its thought has no engine cap,
+/// so a total the engine picked would cut answers, and a hosted reasoning API
+/// refuses some of these sampling fields. The call carries them whatever its
+/// seat's widest route is: a seat whose own server comes before a hosted rung
+/// is ThirdParty, yet its own server answers first, and the wire of the rung
+/// that answers keeps or drops them.
+fn extraction_params() -> BTreeMap<String, JsonValue> {
+    let mut params = BTreeMap::from([
+        (MAX_TOKENS_PARAM.to_owned(), json!(EXTRACTION_MAX_TOKENS)),
+        ("temperature".to_owned(), json!(0.7)),
+        ("top_p".to_owned(), json!(0.8)),
+        ("top_k".to_owned(), json!(20)),
+        ("min_p".to_owned(), json!(0.0)),
+        ("presence_penalty".to_owned(), json!(1.5)),
+        ("frequency_penalty".to_owned(), json!(0.0)),
+        ("repetition_penalty".to_owned(), json!(1.0)),
+    ]);
+    let own_server_only: Vec<JsonValue> = params.keys().map(|key| json!(key)).collect();
+    params.insert(
+        OWN_SERVER_ONLY_PARAM.to_owned(),
+        JsonValue::Array(own_server_only),
+    );
+    params
+}
 
 impl ConsolidationExecutor<'_> {
     /// The extraction request over one child's `transcript`, rendered with
@@ -39,8 +105,33 @@ impl ConsolidationExecutor<'_> {
         Ok(request)
     }
 
+    /// How far one extraction call's input may run (FIX
+    /// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW): `config`'s TURNs per
+    /// child, and, when the host lends the extraction model's window, that
+    /// window less the prompt every call carries, by the recipe policy's
+    /// bytes-per-token estimate the follower also sizes by.
+    pub(in crate::dreamer_consolidation) fn extraction_bound(
+        &self,
+        vault: &crate::Vault,
+        config: &crate::dreamer_consolidation::selection::SelectionConfig,
+    ) -> Result<crate::dreamer_consolidation::resources::SliceBound> {
+        let room = match self.roles.follower_window_tokens() {
+            Some(window) => {
+                let bytes_per_token = vault.dreamer_recipe_policy()?.follower_sizing_token_bytes;
+                crate::dreamer_wake::follower::Sizing::new(Some(window), bytes_per_token)
+                    .room(self.decisions.extraction_prompt.frame_bytes())
+            }
+            None => None,
+        };
+        Ok(crate::dreamer_consolidation::resources::SliceBound {
+            turns: config.extraction_turns_per_child,
+            room,
+        })
+    }
+
     /// The extraction request over `source` in `prompt`'s words, `source_rule`
     /// before it: a NOTE review's rule is `note_classification`'s (OF-073).
+    /// It carries [`extraction_params`].
     pub(in crate::dreamer_consolidation) fn request_over(
         call: &RoleCall<'_>,
         prompt: &ExtractionPrompt,
@@ -96,7 +187,7 @@ impl ConsolidationExecutor<'_> {
             }.with_purpose_defaults(),
             messages,
             tools: Vec::new(),
-            params: BTreeMap::new(),
+            params: extraction_params(),
             provider_options: BTreeMap::new(),
             host_segments: None,
         })
@@ -226,6 +317,203 @@ impl ParsedCandidate<'_> {
     }
 }
 
+/// One candidate's proposed relationship as plain assembly input: the branch
+/// set it inherits, or the narrower set it narrows to.
+#[derive(Debug, Clone)]
+pub(in crate::dreamer_consolidation) enum PackRelationship {
+    /// No proposed relationship: the candidate inherits its scope's set.
+    Inherit,
+    /// The proposed relationship ids, narrowed inside the scope's set.
+    Set(Vec<EntityId>),
+}
+
+/// The listed head a candidate corrects, as identity assembly takes it: the
+/// head's own subject, predicate, relationship set and topic, which the
+/// candidate binds to through the conflict and grant doors.
+#[derive(Debug, Clone)]
+pub(in crate::dreamer_consolidation) struct CorrectsPrior {
+    /// The head's entity subject, which the operand repeats.
+    pub(in crate::dreamer_consolidation) subject: EntityId,
+    /// The head predicate, which the candidate binds whatever it proposed.
+    pub(in crate::dreamer_consolidation) predicate: String,
+    /// The head relationship set.
+    pub(in crate::dreamer_consolidation) rel: crate::claim::RelationshipScope,
+    /// The head topic as its scope map holds it, when it holds one.
+    pub(in crate::dreamer_consolidation) topic: Option<Value>,
+}
+
+impl CorrectsPrior {
+    /// `head` as a correction target: its entity subject with its predicate,
+    /// relationship set and filed topic. A head with no entity subject is no
+    /// correction target.
+    pub(in crate::dreamer_consolidation) fn from_head(
+        head: &crate::dreamer_consolidation::PriorHead,
+    ) -> Result<Self> {
+        let crate::claim::ClaimSubject::Entity(subject) = head.body.subject else {
+            return Err(invalid_consolidation(
+                "extracted correction names a claim with no entity subject",
+            ));
+        };
+        Ok(Self {
+            subject,
+            predicate: head.body.predicate.clone(),
+            rel: head.body.rel.clone(),
+            topic: prior_topic(head.body.scope.as_ref()),
+        })
+    }
+}
+
+/// One candidate's identity as plain assembly input: what native parsing and
+/// the bound pack both project before the claim below is built.
+#[derive(Debug, Clone)]
+pub(in crate::dreamer_consolidation) struct CandidateAssemblyInput<'a> {
+    /// The operand subject.
+    pub(in crate::dreamer_consolidation) subject: EntityId,
+    /// The proposed predicate, read only while the candidate corrects no
+    /// head: a correcting candidate binds the head predicate whatever it
+    /// proposed, so native and the bound check both pass none then.
+    pub(in crate::dreamer_consolidation) predicate: Option<&'a str>,
+    /// The proposed value as JSON.
+    pub(in crate::dreamer_consolidation) value: &'a serde_json::Value,
+    /// The proposed relationship.
+    pub(in crate::dreamer_consolidation) rel: PackRelationship,
+    /// The proposed topic, when it carries one.
+    pub(in crate::dreamer_consolidation) topic: Option<&'a serde_json::Value>,
+    /// The head it corrects, when it corrects one.
+    pub(in crate::dreamer_consolidation) corrects: Option<CorrectsPrior>,
+    /// The extraction confidence the assembled claim carries.
+    pub(in crate::dreamer_consolidation) confidence: f32,
+    /// The prospective query hints the assembled claim carries.
+    pub(in crate::dreamer_consolidation) lexical_hints: Vec<String>,
+    /// The project its sources share.
+    pub(in crate::dreamer_consolidation) project: EntityId,
+    /// The partition world axis, when the branch names one.
+    pub(in crate::dreamer_consolidation) world: Option<EntityId>,
+    /// The partition facet axis, when the branch names one.
+    pub(in crate::dreamer_consolidation) facet: Option<EntityId>,
+    /// The scope relationship set it assembles inside, when bound.
+    pub(in crate::dreamer_consolidation) scope_relationship: Option<&'a BTreeSet<EntityId>>,
+}
+
+/// `input` as the identity claim native building and the bound check derive
+/// the same id from: the corrected head's subject, predicate, relationship
+/// set and topic while correcting, else the operand's own, with the
+/// relationship checked inside the bound set and the world, facet, topic and
+/// project stamped as native stamps them.
+pub(in crate::dreamer_consolidation) fn assemble_identity_candidate(
+    input: &CandidateAssemblyInput<'_>,
+) -> Result<ClaimCandidate> {
+    let (subject, predicate) = match &input.corrects {
+        Some(prior) => {
+            if input.subject != prior.subject {
+                return Err(invalid_consolidation(
+                    "extracted correction names a claim about another subject",
+                ));
+            }
+            (prior.subject, prior.predicate.clone())
+        }
+        None => (
+            input.subject,
+            input
+                .predicate
+                .ok_or_else(|| {
+                    invalid_consolidation(
+                        "extracted candidate's predicate breaks the claim grammar",
+                    )
+                })?
+                .to_owned(),
+        ),
+    };
+    // No grammar check here: native wire parsing validated a supplied
+    // predicate already, and a corrected prior's predicate is never
+    // revalidated (it may reserve namespaces); the bound check validates its
+    // own operand before assembly.
+    let value = json_to_rmpv(input.value);
+    let rel = match (&input.corrects, &input.rel) {
+        (Some(prior), _) => prior.rel.clone(),
+        (None, PackRelationship::Inherit) => input
+            .scope_relationship
+            .map(|ids| ids.iter().copied().collect()),
+        (None, PackRelationship::Set(ids)) => Some(ids.iter().copied().collect()),
+    };
+    // A bound branch writes inside its relationship set: the whole set or a
+    // narrower one, never a relationship outside it or `all`.
+    if let Some(bound) = input.scope_relationship
+        && !rel
+            .as_ref()
+            .is_some_and(|rel| rel.iter().all(|id| bound.contains(id)))
+    {
+        return Err(invalid_consolidation(
+            "extraction relationship crossed branch scope",
+        ));
+    }
+    let mut candidate = ClaimCandidate::new(
+        predicate,
+        ClaimSubject::Entity(subject),
+        value,
+        input.confidence,
+    )
+    .with_lexical_hints(input.lexical_hints.clone());
+    candidate = candidate.with_relationships(rel);
+    if let Some(world) = input.world {
+        candidate = candidate.with_world(world);
+    }
+    let mut fields = Vec::new();
+    if let Some(facet) = input.facet {
+        fields.push((
+            Value::from(TURN_BODY_FACET_REF_KEY),
+            Value::Binary(facet.as_bytes().to_vec()),
+        ));
+    }
+    let topic = match &input.corrects {
+        Some(prior) => prior.topic.clone(),
+        None => input.topic.map(json_to_rmpv),
+    };
+    if let Some(topic) = topic {
+        fields.push((Value::from("topic_key"), topic));
+    }
+    if input.project != crate::claim::default_project_id() {
+        fields.push((
+            Value::from(SCOPE_PROJECT_KEY),
+            Value::Binary(input.project.as_bytes().to_vec()),
+        ));
+    }
+    if !fields.is_empty() {
+        candidate = candidate.with_scope(Value::Map(fields));
+    }
+    Ok(candidate)
+}
+
+/// The deterministic claim id `candidate` writes under in `attempt`: the
+/// native id over its stamped subject, predicate, value, world, facet,
+/// relationship set, project and topic. Native building and the bound check
+/// derive through this function from the same assembled claim.
+pub(in crate::dreamer_consolidation) fn claim_id_for_identity(
+    attempt: crate::attempt_queue::AttemptId,
+    candidate: &ClaimCandidate,
+) -> Result<EntityId> {
+    let facts = candidate_facts(candidate)?;
+    deterministic_claim_id(
+        attempt,
+        facts.subject,
+        &facts.predicate,
+        &facts.value,
+        facts.world,
+        facts.facet,
+        facts.rel.as_ref(),
+        facts.project,
+        facts.topic.as_deref(),
+    )
+}
+
+/// The claim times the pass clock stamps on one candidate.
+/// The wake clock runs in milliseconds while a claim carries Unix seconds, so the helper divides once (FIX 8695).
+/// Native building and the bound observation path both stamp through this one rule.
+pub(in crate::dreamer_consolidation) fn claim_times(now_ms: u64) -> (TimeRange, u64) {
+    let at = now_ms / 1_000;
+    (TimeRange { start: at, end: at }, at)
+}
+
 /// One parsed candidate as the branch takes it, or why it is not written.
 /// A candidate that corrects a listed claim binds to that head: its subject,
 /// predicate, relationship and topic, so it routes to the head through the
@@ -287,105 +575,42 @@ fn resolve_proposal(
     PromotionCandidate,
     Vec<super::super::evidence::EvidenceLocator>,
 )> {
-    let scope = parsed.scope;
-    let (subject, predicate) = match corrects {
-        Some(prior) => {
-            let ClaimSubject::Entity(subject) = prior.body.subject else {
-                return Err(invalid_consolidation(
-                    "extracted correction names a claim with no entity subject",
-                ));
-            };
-            if parsed.subject != subject {
-                return Err(invalid_consolidation(
-                    "extracted correction names a claim about another subject",
-                ));
-            }
-            (subject, prior.body.predicate.as_str())
-        }
-        None => (
-            parsed.subject,
-            parsed.predicate.as_deref().ok_or_else(|| {
-                invalid_consolidation("extracted candidate's predicate breaks the claim grammar")
-            })?,
-        ),
+    let corrects = corrects.map(CorrectsPrior::from_head).transpose()?;
+    let (candidate, claim_id) = {
+        let rel = match (&corrects, &parsed.rel) {
+            (Some(_), _) | (None, None) => PackRelationship::Inherit,
+            // A relationship the call listed, by its label (FIX 7575).
+            (None, Some(CandidateRel::Listed(rel))) => PackRelationship::Set(vec![*rel]),
+            // A value that is no listed label is read as before.
+            (None, Some(CandidateRel::Unlisted(value))) => PackRelationship::Set(vec![
+                value
+                    .as_str()
+                    .and_then(entity_id_from_hex)
+                    .ok_or_else(|| invalid_consolidation("invalid relationship ref"))?,
+            ]),
+        };
+        let input = CandidateAssemblyInput {
+            subject: parsed.subject,
+            predicate: match &corrects {
+                Some(_) => None,
+                None => parsed.predicate.as_deref(),
+            },
+            value: &parsed.value,
+            rel,
+            topic: parsed.topic.as_ref(),
+            corrects,
+            confidence: parsed.confidence,
+            lexical_hints: parsed.prospective_queries.clone(),
+            project: parsed.project,
+            world: partition.world_ref,
+            facet: partition.facet_ref,
+            scope_relationship: parsed.scope.relationship.as_ref(),
+        };
+        let candidate = assemble_identity_candidate(&input)?;
+        let claim_id = claim_id_for_identity(attempt_id, &candidate)?;
+        (candidate, claim_id)
     };
-    let value = json_to_rmpv(&parsed.value);
-    let rel = match (corrects, parsed.rel) {
-        (Some(prior), _) => prior.body.rel.clone(),
-        (None, None) => scope
-            .relationship
-            .as_ref()
-            .map(|ids| ids.iter().copied().collect()),
-        // A relationship the call listed, by its label (FIX 7575).
-        (None, Some(CandidateRel::Listed(rel))) => crate::claim::relationship_scope_of(Some(rel)),
-        // A value that is no listed label is read as before.
-        (None, Some(CandidateRel::Unlisted(value))) => crate::claim::relationship_scope_of(Some(
-            value
-                .as_str()
-                .and_then(entity_id_from_hex)
-                .ok_or_else(|| invalid_consolidation("invalid relationship ref"))?,
-        )),
-    };
-    // A bound branch writes inside its relationship set: the whole set or a
-    // narrower one, never a relationship outside it or `all`.
-    if let Some(bound) = &scope.relationship
-        && !rel
-            .as_ref()
-            .is_some_and(|rel| rel.iter().all(|id| bound.contains(id)))
-    {
-        return Err(invalid_consolidation(
-            "extraction relationship crossed branch scope",
-        ));
-    }
-    let mut candidate = ClaimCandidate::new(
-        predicate,
-        ClaimSubject::Entity(subject),
-        value,
-        parsed.confidence,
-    )
-    .with_lexical_hints(parsed.prospective_queries);
-    candidate = candidate.with_relationships(rel.clone());
-    if let Some(world) = partition.world_ref {
-        candidate = candidate.with_world(world);
-    }
-    let mut fields = Vec::new();
-    if let Some(facet) = partition.facet_ref {
-        fields.push((
-            Value::from(TURN_BODY_FACET_REF_KEY),
-            Value::Binary(facet.as_bytes().to_vec()),
-        ));
-    }
-    let topic = match corrects {
-        Some(prior) => prior_topic(prior.body.scope.as_ref()),
-        None => parsed.topic.as_ref().map(json_to_rmpv),
-    };
-    if let Some(topic) = topic {
-        fields.push((Value::from("topic_key"), topic));
-    }
-    if parsed.project != crate::claim::default_project_id() {
-        fields.push((
-            Value::from(SCOPE_PROJECT_KEY),
-            Value::Binary(parsed.project.as_bytes().to_vec()),
-        ));
-    }
-    if !fields.is_empty() {
-        candidate = candidate.with_scope(Value::Map(fields));
-    }
-    let facts = candidate_facts(&candidate)?;
-    let claim_id = deterministic_claim_id(
-        attempt_id,
-        subject,
-        predicate,
-        &facts.value,
-        partition.world_ref,
-        partition.facet_ref,
-        rel.as_ref(),
-        facts.project,
-        facts.topic.as_deref(),
-    )?;
-    // The wake's clock is milliseconds; a claim's times are Unix seconds
-    // (FIX 8695).
-    let at = now_ms / 1_000;
+    let (occurred, learned_at) = claim_times(now_ms);
     Ok((
         PromotionCandidate {
             claim_id,
@@ -397,8 +622,8 @@ fn resolve_proposal(
             provenance_chain: Vec::new(),
             supersedes: None,
             evidence_meet: ClaimSource::Generated,
-            occurred: TimeRange { start: at, end: at },
-            learned_at: at,
+            occurred,
+            learned_at,
             decisions: decisions.to_vec(),
         },
         parsed.locators,
@@ -427,6 +652,17 @@ struct WorkedExample {
 }
 
 impl ExtractionPrompt {
+    /// The bytes every extraction call carries beside its transcript: the
+    /// system text and both turns of each worked example (FIX
+    /// DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW).
+    pub(in crate::dreamer_consolidation) fn frame_bytes(&self) -> usize {
+        self.examples
+            .iter()
+            .map(|example| example.user.len() + example.assistant.len())
+            .sum::<usize>()
+            + self.system.len()
+    }
+
     /// The shipped prompt (`extraction_prompt.json`), word for word what the
     /// engine asks with when the host words none.
     ///

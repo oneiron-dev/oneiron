@@ -1,4 +1,5 @@
 //! Exact, content-addressed POLICY_MANIFEST carrier and signature grammar.
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use crate::authority::{AuthorityKey, AuthoritySignature, verify_authority_signature};
@@ -54,7 +55,7 @@ pub(crate) fn canonical_birth(project: EntityId) -> Result<ProjectDepthBirth> {
         project_ref: project.to_hex(),
         depth: seeded_default().depth,
         source_manifest: seed.to_hex(),
-        source_hash: *blake3::hash(&seed_body).as_bytes(),
+        source_hash: *ContentHash::of(&seed_body).as_bytes(),
         owner: None,
     })
 }

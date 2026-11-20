@@ -35,6 +35,7 @@ use std::collections::BTreeSet;
 
 use loro::event::MapDelta;
 use loro::{CommitOptions, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use super::bridge::BRIDGE_ORIGIN;
@@ -202,7 +203,7 @@ fn held_carrier_proved_invalid(map: &LoroMap, body: &Parts) -> bool {
         let Some(part) = map_get_bytes(map, &part_key(digest)) else {
             return false;
         };
-        if blake3::hash(&part).as_bytes() != digest {
+        if ContentHash::of(&part).as_bytes() != digest {
             return true;
         }
         total += part.len();

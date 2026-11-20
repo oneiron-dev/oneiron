@@ -3,6 +3,7 @@
 use rmpv::Value;
 
 use crate::error::{ArtifactError, Error, Result};
+use oneiron_contracts::msgpack;
 
 pub(super) const KEY_SCHEMA_VERSION: &str = "schema_version";
 
@@ -18,38 +19,41 @@ pub(super) const fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidSkillBody(reason))
 }
 
-pub(super) fn map_entry<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
-    value
-        .as_map()?
-        .iter()
-        .find(|(k, _)| k.as_str() == Some(key))
-        .map(|(_, v)| v)
+const DUPLICATE_KEY: &str = "skill reliability map repeats a key";
+
+/// The entry under `key`, `None` when `value` is not a map or lacks `key`. A key stored twice is refused.
+pub(super) fn map_entry<'a>(value: &'a Value, key: &str) -> Result<Option<&'a Value>> {
+    let Value::Map(entries) = value else {
+        return Ok(None);
+    };
+    msgpack::Entries::new(entries)
+        .get(key)
+        .map_err(|_| invalid(DUPLICATE_KEY))
 }
 
-pub(super) fn map_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    map_entry(value, key)?.as_str()
+/// The text under `key`, `None` when it is absent or not text. A key stored twice is refused.
+pub(super) fn map_str<'a>(value: &'a Value, key: &str) -> Result<Option<&'a str>> {
+    Ok(map_entry(value, key)?.and_then(Value::as_str))
 }
 
-pub(super) fn map_u64(value: &Value, key: &str) -> Option<u64> {
-    map_entry(value, key)?.as_u64()
+/// The unsigned integer under `key`, `None` when it is absent or not one. A key stored twice is refused.
+pub(super) fn map_u64(value: &Value, key: &str) -> Result<Option<u64>> {
+    Ok(map_entry(value, key)?.and_then(Value::as_u64))
 }
 
-pub(super) fn map_f32(value: &Value, key: &str) -> Option<f32> {
-    match map_entry(value, key)? {
-        Value::F32(v) => Some(*v),
-        Value::F64(v) => Some(*v as f32),
+/// The float under `key`, `None` when it is absent or not one. A key stored twice is refused.
+pub(super) fn map_f32(value: &Value, key: &str) -> Result<Option<f32>> {
+    Ok(match map_entry(value, key)? {
+        Some(Value::F32(v)) => Some(*v),
+        Some(Value::F64(v)) => Some(*v as f32),
         _ => None,
-    }
+    })
 }
 
 pub(super) fn encode_value(value: &Value) -> Result<Vec<u8>> {
-    let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, value)
-        .map_err(|_| invalid("skill reliability MessagePack encode failed"))?;
-    Ok(encoded)
+    Ok(msgpack::encode(value))
 }
 
 pub(super) fn decode_value(raw: &[u8]) -> Result<Value> {
-    rmpv::decode::read_value(&mut std::io::Cursor::new(raw))
-        .map_err(|_| invalid("skill reliability MessagePack decode failed"))
+    msgpack::decode(raw).map_err(|_| invalid("skill reliability MessagePack decode failed"))
 }

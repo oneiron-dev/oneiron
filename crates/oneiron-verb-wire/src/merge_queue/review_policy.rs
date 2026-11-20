@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/merge_queue/review_policy.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::critic_lens::LensCatalog;
 use serde::Deserialize;
 use serde::Serialize;
@@ -40,15 +39,15 @@ impl Default for QueueReviewThresholds {
     }
 }
 
-/// The vault's one review policy row: the lenses inherited queue work must
-/// pass, its limits, and who set it when.
+/// The vault's review policy: the lenses inherited queue work must pass,
+/// and its limits. Who set it, and when, is its setting row's
+/// (`merge_queue.review_policy`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct QueueReviewPolicy {
+    /// The lenses inherited queue work must pass.
     pub catalog: LensCatalog,
+    /// Its limits; omitted, today's defaults (2 critics, 64 votes).
+    #[serde(default)]
     pub thresholds: QueueReviewThresholds,
-    /// The Owner or Granted agent who set it; `None` once that actor was
-    /// erased (FIX 8519): the policy stands, its setter no longer named.
-    pub set_by: Option<EntityId>,
-    /// When it was set, Unix seconds.
-    pub set_at: u64,
 }

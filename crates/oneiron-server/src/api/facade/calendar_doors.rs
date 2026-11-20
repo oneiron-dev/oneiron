@@ -149,6 +149,7 @@ pub(crate) async fn calendar_connector_pull(
                 Arc::clone(server.vault()),
                 owner.clone(),
                 row.clone(),
+                server.hosted_egress_guard(),
             )
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
             let operation = wire.operation().clone();
@@ -205,6 +206,7 @@ pub(crate) async fn calendar_connector_write(
                 Arc::clone(server.vault()),
                 owner,
                 row.clone(),
+                server.hosted_egress_guard(),
             )
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
             let operation = wire.operation().clone();

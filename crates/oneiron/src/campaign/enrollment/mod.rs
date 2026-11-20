@@ -31,6 +31,8 @@
 //! the Dreamer's.
 
 mod approval;
+#[cfg(oneiron_test_support)]
+pub(crate) use approval::retained_request_digest_for_test;
 mod audience;
 mod copy_arms;
 mod copy_review;
@@ -105,8 +107,6 @@ pub use self::storage::{
 // (FIX 2636); `EnrollmentOutboundLeg` and `run_enrollment_outbound_leg` stay
 // module-private, and the `#[cfg(test)]` seam below keeps them reachable to
 // `tests.rs`.
-// FIX [LIBTEST-QUARANTINE-CAMPAIGN-ENROLLMENT-TESTS]: the lib test target's type check fails here (5 errors: E0063 x4, E0308 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
