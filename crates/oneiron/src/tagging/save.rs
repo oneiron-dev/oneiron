@@ -550,6 +550,17 @@ pub(crate) fn sounds_like_in_txn(
     Ok(found.into_iter().collect())
 }
 
+/// The phonetic channel's shipped parameters with the sound match taken
+/// person by person, for the Linker's sound match: the shipped Normalized
+/// Phonetic Distance threshold, with no keep ratio of the nearest distance
+/// and no cap. Whether a person sounds like a name then rests on that person
+/// alone ([`Linker::sound_matches`]).
+const LINKER_SOUND_PARAMS: RetrievalParams = RetrievalParams {
+    phonetic_npd_keep_ratio: f32::INFINITY,
+    phonetic_npd_cap: usize::MAX,
+    ..RetrievalParams::shipped()
+};
+
 /// The names of record `id` at the revision its phonetic postings were
 /// written from ([`ReadMode::Indexed`]), archived or not, for the sound
 /// match: none for a record that is gone, withdrawn or unreadable.
@@ -839,15 +850,17 @@ impl<'v> Linker<'v> {
     /// The sound match (CROSS-ARCH-0013 `#two-uses`: canonicalize at
     /// extraction), for a name the key misses: the canonical heads of the
     /// live or archived persons, each in a world the turn is in, whose
-    /// stored sound keys are within the Normalized Phonetic Distance cut of
-    /// the name's ([`sound_keys`]), by the phonetic channel's
-    /// sound match with the shipped cut, and one of whose names holds a part
-    /// that sounds like each part of the name ([`every_part_sounds_like`]),
-    /// as the code rung asks every part's Soundex code to match. A misheard
-    /// name whose codes differ from the person's still finds them. A row not
-    /// admitted neither sets the cut's nearest distance nor takes a place
-    /// under its cap. A name of one part, and a mention of any other kind,
-    /// take none.
+    /// stored sound keys are within the Normalized Phonetic Distance
+    /// threshold of the name's ([`sound_keys`]), and one of whose names holds
+    /// a part that sounds like each part of the name
+    /// ([`every_part_sounds_like`]), as the code rung asks every part's
+    /// Soundex code to match. A misheard name whose codes differ from the
+    /// person's still finds them. Each person is matched on their own sound
+    /// alone, as the key and the codes match each on their own: the match
+    /// keeps no ratio of the nearest distance and no cap
+    /// ([`LINKER_SOUND_PARAMS`]), so no other person, nearer or one a lane
+    /// serving the ask cannot read, moves a person in or out. A name of one
+    /// part, and a mention of any other kind, take none.
     ///
     /// A save never links by it: a mention only these persons sound like
     /// mints, and the nightly re-check asks whether it is one of them or
@@ -884,7 +897,7 @@ impl<'v> Linker<'v> {
         let hits = store.port_retrieval_phonetic_search_with_deadline(
             txn,
             &sound,
-            &RetrievalParams::shipped(),
+            &LINKER_SOUND_PARAMS,
             None,
             Some(admission),
         )?;

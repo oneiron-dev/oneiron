@@ -706,9 +706,12 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
 /// cleanup archived. The archive is a local visibility marker that keeps
 /// the record's body and indexes
 /// (`Vault::archive_cleanup_candidate_in_txn`), and the entity linker
-/// sees it (ARCH-0055 §10, resolution sees the archive). Every other
-/// refusal stands: an unpublished chunk, a deletion shell, and words a
-/// deletion withdrew or whose recorded sources no longer stand.
+/// sees it (ARCH-0055 §10, resolution sees the archive). The archive's own
+/// deletion mark is read through as the owner's export reads it
+/// ([`crate::ports::raw_exportable_in_txn`]); every other refusal stands: an
+/// unpublished chunk, a deletion shell, a removal, a stale mark, a
+/// legal-hold use limit, and words a deletion withdrew or whose recorded
+/// sources no longer stand.
 pub(crate) fn read_entity_revision_including_archived_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -723,6 +726,24 @@ pub(crate) fn read_entity_revision_including_archived_in_txn(
 enum ArchivedRead {
     Refused,
     Served,
+}
+
+impl ArchivedRead {
+    /// Whether the stored row `raw` of `id` may serve: by the raw doors' rule,
+    /// which refuses an archived row as deleted, or, when an archived record
+    /// serves, by the export's, which reads through the archive alone.
+    fn readable_in_txn(
+        self,
+        store: &impl ManifestDbs,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        match self {
+            Self::Refused => crate::ports::raw_readable_in_txn(store, txn, id, raw),
+            Self::Served => crate::ports::raw_exportable_in_txn(store, txn, id, raw),
+        }
+    }
 }
 
 fn read_revision_from_store_in_txn(
@@ -756,7 +777,7 @@ fn read_revision_from_store_in_txn(
         // stand, never serve, at any selected version. A shell's current
         // header carries none.
         || ((raw.len() > ENTITY_METADATA_HEADER_LEN || mode != ReadMode::Live)
-            && !crate::ports::raw_readable_in_txn(store, txn, id, &raw)?)
+            && !archived.readable_in_txn(store, txn, id, &raw)?)
     {
         return Ok(None);
     }

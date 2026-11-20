@@ -88,7 +88,7 @@ use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
     ModelId, Vault, VaultConfig,
 };
-use oneiron_store::batch::phonetic_codes::linking_codes;
+use oneiron_store::batch::phonetic_codes::{NPD_CAP, linking_codes};
 use serde_json::json;
 
 const CHECKPOINT: &str = "0123456789abcdef";
@@ -488,6 +488,36 @@ fn an_archived_person_is_asked_about_by_their_sound() {
     let saved = save(&vault, "Katherine Smith called.", "Katherine Smith");
 
     assert_asks_whether_it_is(&vault, saved, "Katherine Smith", archived);
+}
+
+/// Each person sounds like a name on their own sound alone: the sound
+/// match keeps no ratio of the nearest distance and no cap, so no other
+/// person, nearer or one a lane cannot read, moves a person out. Eleven
+/// people named Catherine Smith, one more than the phonetic channel's cap,
+/// all sound like "Katherine Smith": the mention mints, and the nightly
+/// re-check asks about every one of them. Main mints and asks nothing.
+#[test]
+fn every_person_a_name_sounds_like_is_asked_about_past_the_channel_cap() {
+    assert_codes_miss("Catherine Smith", "Katherine Smith");
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(&dir);
+    let mut expected: BTreeSet<EntityId> = (0..=NPD_CAP)
+        .map(|_| person(&vault, "Catherine Smith"))
+        .collect();
+    assert_eq!(expected.len(), NPD_CAP + 1, "one more person than the cap");
+
+    let (turn, link) = save(&vault, "Katherine Smith called.", "Katherine Smith");
+
+    let provisional = assert_mints(&vault, link);
+    let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
+    assert_eq!(asks.len(), 1, "one ask for the one mention: {asks:?}");
+    assert_eq!(asks[0].turn, turn);
+    assert_eq!(asks[0].provisional, Some(provisional));
+    expected.insert(provisional);
+    assert_eq!(
+        asks[0].candidates.iter().copied().collect::<BTreeSet<_>>(),
+        expected
+    );
 }
 
 /// A mark standing alone between "Katherine" and "Smith" is no part of the
