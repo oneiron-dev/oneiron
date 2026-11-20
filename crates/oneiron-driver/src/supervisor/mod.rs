@@ -48,6 +48,7 @@ mod inference_device;
 mod inference_worker;
 mod pass;
 mod program_factory;
+mod psych_profile_decisions;
 mod retry;
 #[path = "loop.rs"]
 mod run;
