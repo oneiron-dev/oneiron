@@ -394,6 +394,9 @@ impl RootedNode {
 /// enrolled device holding the vault's authority history. Both folds admit both
 /// machines and both signers are loaded, so each door's facts count on the other.
 /// Mirrors `task_fact_carrier_proof.rs` (`host` plus `device`) on `test_config` vaults.
+/// The device is enrolled as a work or school machine: an `Owned(Yours)` answer needs an
+/// owner-key proof that the hosted vault cannot give, and would land held, so node-a would
+/// admit no fact node-b signs.
 fn rooted_pair() -> (RootedNode, RootedNode) {
     let dir_a = tempfile::tempdir().unwrap();
     let dir_b = tempfile::tempdir().unwrap();
@@ -430,15 +433,19 @@ fn rooted_pair() -> (RootedNode, RootedNode) {
     let proof = vault_a
         .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
         .expect("owner proof");
-    vault_a
+    let landing = vault_a
         .enroll_machine(
             &proof,
             ActSurface::HostedConsole,
             &request,
-            MachineRole::Owned(MachineOwnership::Yours),
+            MachineRole::Owned(MachineOwnership::WorkSchool),
             None,
         )
         .expect("enrol device");
+    assert!(
+        landing.held().is_none(),
+        "FIXTURE: the device's enrolment lands, so node-a admits its carrier"
+    );
     let history = vault_a
         .export_signed_authority_history()
         .expect("host history");

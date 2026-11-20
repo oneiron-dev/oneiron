@@ -133,7 +133,9 @@ impl Device {
     }
 }
 
-/// The owner enrols `device` as theirs on the host.
+/// The owner enrols `device` on the host as a work or school machine of theirs, so its
+/// carrier counts there. An `Owned(Yours)` answer needs an owner-key proof that this hosted
+/// vault cannot give: it would land held, and the host would admit no fact the device signs.
 fn enrol(host: &Host, device: &Device) {
     let key = device
         .vault
@@ -152,15 +154,20 @@ fn enrol(host: &Host, device: &Device) {
             GateDecisionId::now(),
         )
         .expect("the owner's proof");
-    host.vault
+    let landing = host
+        .vault
         .enroll_machine(
             &owner,
             ActSurface::HostedConsole,
             &request,
-            MachineRole::Owned(MachineOwnership::Yours),
+            MachineRole::Owned(MachineOwnership::WorkSchool),
             None,
         )
         .expect("the owner enrols the device as theirs");
+    assert!(
+        landing.held().is_none(),
+        "FIXTURE: the device's enrolment lands, so the host admits its carrier"
+    );
 }
 
 /// A device the owner enrolled, holding the vault's history as it stands now.
