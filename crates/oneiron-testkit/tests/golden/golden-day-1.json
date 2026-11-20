@@ -813,45 +813,34 @@
         ],
         "narrowing": {
           "actor_ceiling": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "applied": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "narrowed_axes": [
-            "entity_types",
-            "max_sensitivity_band",
-            "min_confidence",
-            "min_salience",
-            "deny_all",
             "row_authority"
           ],
           "replan_hint": [
-            "entity_types",
-            "max_sensitivity_band",
-            "min_confidence",
-            "min_salience",
-            "deny_all",
-            "row_authority",
-            "grant_scope"
+            "row_authority"
           ],
           "requested": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "suppressed_count": 6
         },
@@ -885,43 +874,30 @@
       "answer": {
         "narrowing": {
           "actor_ceiling": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "applied": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
-          "narrowed_axes": [
-            "entity_types",
-            "max_sensitivity_band",
-            "min_confidence",
-            "min_salience",
-            "deny_all"
-          ],
-          "replan_hint": [
-            "entity_types",
-            "max_sensitivity_band",
-            "min_confidence",
-            "min_salience",
-            "deny_all",
-            "grant_scope"
-          ],
+          "narrowed_axes": [],
+          "replan_hint": [],
           "requested": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "suppressed_count": 0
         },
@@ -953,35 +929,30 @@
       "answer": {
         "narrowing": {
           "actor_ceiling": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "applied": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
-          "narrowed_axes": [
-            "deny_all"
-          ],
-          "replan_hint": [
-            "deny_all",
-            "grant_scope"
-          ],
+          "narrowed_axes": [],
+          "replan_hint": [],
           "requested": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "suppressed_count": 0
         },
@@ -1031,35 +1002,30 @@
       "answer": {
         "narrowing": {
           "actor_ceiling": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "applied": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
-          "narrowed_axes": [
-            "deny_all"
-          ],
-          "replan_hint": [
-            "deny_all",
-            "grant_scope"
-          ],
+          "narrowed_axes": [],
+          "replan_hint": [],
           "requested": {
-            "deny_all": true,
-            "entity_types": [],
+            "deny_all": false,
+            "entity_types": null,
             "include_stale": false,
-            "max_sensitivity_band": 0,
-            "min_confidence": 1.0,
-            "min_salience": 1.0
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
           },
           "suppressed_count": 0
         },

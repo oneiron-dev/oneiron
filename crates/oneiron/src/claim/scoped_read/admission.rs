@@ -24,6 +24,7 @@ impl crate::vault::Vault {
             records_cover: Default::default(),
             judged_at: None,
             read_filter: None,
+            receipts_include_live_grants: false,
         }
     }
 
@@ -57,6 +58,7 @@ impl crate::vault::Vault {
             records_cover: Default::default(),
             judged_at: None,
             read_filter: None,
+            receipts_include_live_grants: false,
         }
     }
 

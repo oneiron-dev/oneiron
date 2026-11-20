@@ -314,14 +314,6 @@ impl ScopedRead<'_> {
         })
     }
 
-    pub(super) fn resolve_retrieval_filter(
-        &self,
-        requested: Option<&RetrievalFilter>,
-    ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {
-        let txn = self.grant_read_txn()?;
-        self.resolve_retrieval_filter_in(&txn, requested)
-    }
-
     pub(super) fn resolve_retrieval_filter_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -534,12 +526,21 @@ impl ScopedRead<'_> {
         let candidates = self.candidate_filter_in(&txn, policy, filter, requested);
         let fresh_candidates =
             self.candidate_filter_in(&txn, &fresh_policy, &fresh_filter, requested);
-        let mut receipt = self.receipt_for(requested, policy, &candidates, previously_suppressed);
-        receipt.restrict_with(&self.receipt_for(
+        let mut receipt = self.receipt_in(
+            &txn,
+            requested,
+            policy,
+            &candidates,
+            previously_suppressed,
+            Some(&held),
+        );
+        receipt.restrict_with(&self.receipt_in(
+            &txn,
             requested,
             &fresh_policy,
             &fresh_candidates,
             suppressed,
+            Some(&held),
         ));
         Ok(ScopedReadResult { value, receipt })
     }
@@ -648,7 +649,7 @@ impl ScopedRead<'_> {
                 value.push(row);
             }
         }
-        let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
+        let receipt = self.receipt_in(&txn, requested, &policy, &filter, suppressed, Some(&held));
         Ok(ScopedReadResult { value, receipt })
     }
 }
@@ -705,6 +706,7 @@ impl<'v> ScopedRead<'v> {
             records_cover: self.records_cover.clone(),
             judged_at: self.judged_at,
             read_filter: RetrievalFilter::meet_requests(self.read_filter.as_ref(), request),
+            receipts_include_live_grants: self.receipts_include_live_grants,
         })
     }
 }
