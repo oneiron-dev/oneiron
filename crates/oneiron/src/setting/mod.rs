@@ -66,7 +66,9 @@ pub(crate) use self::ask::erase_setting_ask_actor_in_txn;
 pub use self::beside::SettingTravel;
 pub(crate) use self::beside::is_beside_value_body;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
-pub(crate) use self::beside::{beside_row_json, beside_row_of, land_beside_row};
+pub(crate) use self::beside::{
+    beside_row_json, beside_row_of, land_beside_row, land_pack_table, pack_table_bytes,
+};
 pub(crate) use self::born::write_born_rows_in_txn;
 pub(crate) use self::carry::carry_between_in_txn;
 pub(crate) use self::carry::carry_settings_in_txn;
@@ -84,7 +86,9 @@ pub(crate) use self::change::{
 pub use self::learned::{LEARNED_SCOPES, LearnedRange, SettingFitView};
 pub use self::pack::{ENGINE_PACK, ENGINE_PACK_VERSION, PackApplied, ProposedDefaultView};
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
-pub(crate) use self::pack::{delete_layer_row, head_version_and_digest, layer_row_revision};
+pub(crate) use self::pack::{
+    delete_layer_row, head_version_and_digest, layer_row_revision, table_digest_and_bytes,
+};
 pub use self::page_max::PageMax;
 pub use self::project::SettingsProjected;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]

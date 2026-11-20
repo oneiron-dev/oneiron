@@ -88,7 +88,10 @@ use super::beside::{
 };
 use super::born::is_born_value_slot;
 use super::change::{record_change_in_txn, record_receipt_in_txn, record_signed_entry_in_txn};
-use super::pack::{fold_layer, layer_default_in_txn, proved_pack_row_in_txn};
+use super::pack::{
+    fold_layer, layer_default_in_txn, pack_targets_in_txn, project_pack_in_txn,
+    proved_pack_row_in_txn,
+};
 use super::read::{StoredRow, table_of};
 use super::{
     EncodedValue, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, SettingSync,
@@ -109,8 +112,9 @@ const PROJECTIONS: SideTable<Vec<u8>, Projection, Named> =
 
 /// A value no MessagePack decoder reads (the format's one unused byte): the row a quarantined
 /// slot keeps, so every read of it takes the key's strictest value as for any row that does not
-/// decode.
-const UNREADABLE_VALUE: u8 = 0xc1;
+/// decode. A pack's layer row whose yes names a table that cannot be read keeps it too (stage
+/// 7c-3c).
+pub(super) const UNREADABLE_VALUE: u8 = 0xc1;
 
 /// What the projection last wrote for one act target.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -185,8 +189,9 @@ impl BesideReads {
 
 /// What projecting one target did ([`project_target_in_txn`]).
 pub(super) struct TargetProjected {
-    /// The key whose row the pass wrote or removed.
-    pub(super) changed: Option<&'static SettingSpec>,
+    /// The keys whose row the pass wrote or removed: one at most, but for a pack's target, where
+    /// an owner's yes moves the layer rows of every key it accepts (stage 7c-3c).
+    pub(super) changed: Vec<&'static SettingSpec>,
     /// How the acts the row came from stood, and the other live heads its value was met with:
     /// the receipt a door's own change row takes where the pass wrote no change of its own
     /// (stage 7b-3). `None` where the pass left the row as it is.
@@ -196,7 +201,7 @@ pub(super) struct TargetProjected {
 impl TargetProjected {
     /// A pass that read nothing new.
     const UNMOVED: Self = Self {
-        changed: None,
+        changed: Vec::new(),
         receipt: None,
     };
 }
@@ -280,7 +285,7 @@ pub(super) fn append_act_in_txn(
     record_signed_entry_in_txn(&vault.store, txn, recorded, signed)?;
     let now = recorded.at;
     let projected = project_target_in_txn(vault, txn, target, now)?;
-    if projected.changed.is_none()
+    if projected.changed.is_empty()
         && let Some((standing, with)) = projected.receipt
     {
         record_receipt_in_txn(&vault.store, txn, recorded.sequence, standing, with)?;
@@ -475,7 +480,8 @@ fn head_of(head: &SettingSlotHead) -> std::result::Result<Head, Inert> {
         });
     }
     // A pack's head (stage 7c-3a) names no row: each machine's pack door weighs its own
-    // build's defaults.
+    // build's defaults, and the pack's own read lands an owner's yes (stage 7c-3c,
+    // [`project_pack_target_in_txn`]), before any head is read here.
     if head.pack.is_some() {
         return Err(Inert::ForGood);
     }
@@ -1240,6 +1246,9 @@ pub(super) fn project_target_in_txn(
     {
         return Ok(TargetProjected::UNMOVED);
     }
+    if fold.live.iter().any(|head| head.pack.is_some()) {
+        return project_pack_target_in_txn(vault, txn, (target, basis), &fold, now);
+    }
     let inert = |why: Inert| (target, basis, why);
     let reads = BesideReads::default();
     let heads = match fold
@@ -1342,7 +1351,7 @@ pub(super) fn project_target_in_txn(
         },
     )?;
     Ok(TargetProjected {
-        changed: changed.then_some(spec),
+        changed: if changed { vec![spec] } else { Vec::new() },
         receipt: Some((projected.standing, projected.with)),
     })
 }
@@ -1409,6 +1418,30 @@ fn met_with_local(
         None => local.clone(),
     });
     projected
+}
+
+/// Projects a pack's target (stage 7c-3c): its heads name no row, and the pack's own read lands
+/// each owner's yes that counts here ([`project_pack_in_txn`]). Recorded once read, so a pass
+/// over the same revision reads nothing; not while a yes waits for its table's bytes, so a later
+/// pass, and the put of that row, reads them again.
+fn project_pack_target_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    (target, basis): (EntityId, [u8; 32]),
+    fold: &SettingSlotFold,
+    now: u64,
+) -> Result<TargetProjected> {
+    let read = project_pack_in_txn(vault, txn, fold, now)?;
+    let why = if read.awaiting {
+        Inert::ForNow
+    } else {
+        Inert::ForGood
+    };
+    leave_in_txn(vault, txn, (target, basis, why), BesideReads::default())?;
+    Ok(TargetProjected {
+        changed: read.moved,
+        receipt: None,
+    })
 }
 
 /// Leaves the row of `target` as it is (`Inert`), recording its `basis` when no build writes a
@@ -1725,6 +1758,7 @@ impl Vault {
                 return Ok(SettingsProjected::default());
             }
             let mut moved = Vec::new();
+            let packs = pack_targets_in_txn(&self.store, &txn)?;
             for target in self.policy_setting_revisions_in_txn(&txn)? {
                 let fallback = (target.conflict, target.in_force);
                 let counts = (&target.counts, &target.name_counts);
@@ -1738,6 +1772,9 @@ impl Vault {
                     moved.push(target.target);
                 }
             }
+            // The packs first (stage 7c-3c): a birth read in this pass reads the layer rows an
+            // owner's yes lands.
+            moved.sort_by_key(|target| !packs.contains(target));
             moved
         };
         if moved.is_empty() {
@@ -1747,9 +1784,7 @@ impl Vault {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let mut changed = Vec::new();
             for target in &moved {
-                if let Some(spec) = project_target_in_txn(self, txn, *target, now)?.changed {
-                    changed.push(spec);
-                }
+                changed.extend(project_target_in_txn(self, txn, *target, now)?.changed);
             }
             Ok(changed)
         })?;

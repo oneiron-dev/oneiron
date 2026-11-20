@@ -895,6 +895,24 @@ pub fn setting_pack_frontier_of(vault: &Vault, pack: &str) -> Result<SettingFron
     vault.setting_pack_frontier(pack).map(SettingFrontier)
 }
 
+/// The frontier of the owner's yeses to defaults of `pack`'s table `digest` (64 hex digits) now
+/// (stage 7c-3c).
+///
+/// # Errors
+///
+/// `InvalidConfig` for a bad digest; a target that does not encode; storage errors.
+#[cfg(feature = "test-support")]
+pub fn setting_pack_accept_frontier_of(
+    vault: &Vault,
+    (pack, digest): (&str, &str),
+) -> Result<SettingFrontier> {
+    let digest = oneiron_hex::decode_any_case::<32>(digest)
+        .ok_or_else(|| Error::InvalidConfig("a pack digest must be 64 hex digits".into()))?;
+    vault
+        .setting_pack_accept_frontier(pack, &digest)
+        .map(SettingFrontier)
+}
+
 /// A pack's head, as `signer`'s own pack door signs it on `frontier` at `ts`, landed here as a
 /// peer's entry lands (stage 7c-3a). The digest is 64 hex digits. Whether the fold here counts
 /// the entry (valid, and not held back).
@@ -912,18 +930,112 @@ pub fn land_setting_pack_head_from(
 ) -> Result<bool> {
     let digest = oneiron_hex::decode_any_case::<32>(digest)
         .ok_or_else(|| Error::InvalidConfig("a pack digest must be 64 hex digits".into()))?;
+    land_pack_head_from(
+        vault,
+        (signer, frontier),
+        (pack, version, digest, held),
+        None,
+        ts,
+    )
+}
+
+/// The owner `owner`'s yes to `pack`'s defaults `accepted` of the table `digest` names, decided
+/// on `signer` and signed by its install key on `frontier` at `ts`, landed here as a peer's entry
+/// lands (stage 7c-3c): one head act with his act, holding `held`. Whether the fold here counts
+/// the entry (valid, and not held back).
+///
+/// # Errors
+///
+/// As [`land_setting_pack_head_from`].
+#[cfg(feature = "test-support")]
+pub fn land_setting_pack_accept_from(
+    vault: &Vault,
+    (signer, frontier): (&EnrolledMachine, &SettingFrontier),
+    (pack, version, digest, held): (&str, &str, &str, &[&str]),
+    (owner, accepted): (EntityId, &[&str]),
+    ts: u64,
+) -> Result<bool> {
+    let accepted = accepted.iter().map(|name| (*name).to_owned()).collect();
+    land_pack_head_from(
+        vault,
+        (signer, frontier),
+        (pack, version, digest, held),
+        Some((owner, accepted)),
+        ts,
+    )
+}
+
+#[cfg(feature = "test-support")]
+fn land_pack_head_from(
+    vault: &Vault,
+    (signer, frontier): (&EnrolledMachine, &SettingFrontier),
+    (pack, version, digest, held): (&str, &str, &str, &[&str]),
+    accept: Option<(EntityId, Vec<String>)>,
+    ts: u64,
+) -> Result<bool> {
+    let digest = oneiron_hex::decode_any_case::<32>(digest)
+        .ok_or_else(|| Error::InvalidConfig("a pack digest must be 64 hex digits".into()))?;
     let held = held.iter().map(|name| (*name).to_owned()).collect();
     let entry = vault.sign_setting_pack_head_as(
         (signer.machine, &signer.key),
         &frontier.0,
         (pack, version, digest, held),
-        ts,
+        (accept, ts),
     )?;
     let hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
     let at = crate::temporal::TimeRange { start: ts, end: ts };
     vault.put_authority_log_entries(&[(entry, at, ts)])?;
     let fold = vault.authority_fold()?;
     Ok(fold.valid_entries.contains(&hash) && !fold.held_back_entries().contains(&hash))
+}
+
+/// `pack`'s table of `defaults` (each key's name and its default as JSON): its digest, as
+/// lowercase hex, and the bytes that travel beside its head acts (stage 7c-3c).
+///
+/// # Errors
+///
+/// An unknown key or a default its key does not take.
+#[cfg(feature = "test-support")]
+pub fn pack_table_of(
+    pack: &str,
+    defaults: &[(&str, serde_json::Value)],
+) -> Result<(String, Vec<u8>)> {
+    let defaults = defaults
+        .iter()
+        .map(|(key, value)| {
+            let spec = crate::setting::spec_named(key)?;
+            Ok((spec, spec.kind.from_json(value.clone())?))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let (digest, bytes) = crate::setting::table_digest_and_bytes(pack, &defaults)?;
+    Ok((oneiron_hex::encode(&digest), bytes))
+}
+
+/// Puts the row of `pack`'s table whose digest is `digest` (64 hex digits) holding `held`, in a
+/// write of its own, as a peer's row lands: through the batch door, whose commit runs the
+/// setting projection (stage 7c-3c).
+///
+/// # Errors
+///
+/// `InvalidConfig` for a bad digest; the put's refusal; storage errors.
+#[cfg(feature = "test-support")]
+pub fn land_pack_table(vault: &Vault, (pack, digest): (&str, &str), held: &[u8]) -> Result<()> {
+    let digest = oneiron_hex::decode_any_case::<32>(digest)
+        .ok_or_else(|| Error::InvalidConfig("a pack digest must be 64 hex digits".into()))?;
+    crate::setting::land_pack_table(vault, (pack, &digest), held)
+}
+
+/// The bytes the row of `pack`'s table whose digest is `digest` (64 hex digits) holds here;
+/// `None` when no row is here (stage 7c-3c).
+///
+/// # Errors
+///
+/// `InvalidConfig` for a bad digest; storage errors.
+#[cfg(feature = "test-support")]
+pub fn pack_table_here(vault: &Vault, (pack, digest): (&str, &str)) -> Result<Option<Vec<u8>>> {
+    let digest = oneiron_hex::decode_any_case::<32>(digest)
+        .ok_or_else(|| Error::InvalidConfig("a pack digest must be 64 hex digits".into()))?;
+    crate::setting::pack_table_bytes(vault, (pack, &digest))
 }
 
 /// One live head act of a pack, as a test reads it (stage 7c-3a).
@@ -938,6 +1050,10 @@ pub struct PackHeadView {
     pub digest: String,
     /// The keys held at their earlier accepted value, in name order.
     pub held: Vec<String>,
+    /// The owner whose yes the head is (stage 7c-3c); `None` for a pack door's head.
+    pub owner: Option<EntityId>,
+    /// The keys the owner's yes accepts, in name order; empty for a pack door's head.
+    pub accepted: Vec<String>,
 }
 
 /// `pack`'s live head acts, read back from the log and sorted by version and digest (stage 7c-3a).
@@ -948,14 +1064,45 @@ pub struct PackHeadView {
 #[cfg(feature = "test-support")]
 pub fn setting_pack_heads(vault: &Vault, pack: &str) -> Result<Vec<PackHeadView>> {
     let txn = vault.store.env.read_txn()?;
-    let mut heads: Vec<_> = vault
-        .setting_pack_heads_in_txn(&txn, pack)?
+    pack_head_views(vault.setting_pack_heads_in_txn(&txn, pack)?)
+}
+
+/// The owner's live yeses to defaults of `pack`'s table `digest` (64 hex digits), read back from
+/// the log and sorted by version and digest (stage 7c-3c).
+///
+/// # Errors
+///
+/// `InvalidConfig` for a bad digest; a target that does not encode; storage errors.
+#[cfg(feature = "test-support")]
+pub fn setting_pack_accepts(
+    vault: &Vault,
+    (pack, digest): (&str, &str),
+) -> Result<Vec<PackHeadView>> {
+    let digest = oneiron_hex::decode_any_case::<32>(digest)
+        .ok_or_else(|| Error::InvalidConfig("a pack digest must be 64 hex digits".into()))?;
+    let txn = vault.store.env.read_txn()?;
+    pack_head_views(vault.setting_pack_accepts_in_txn(&txn, pack, &digest)?)
+}
+
+#[cfg(feature = "test-support")]
+fn pack_head_views(
+    heads: Vec<(
+        oneiron_authority::authority::AuthorityEntryHash,
+        oneiron_authority::authority::SettingPackHead,
+    )>,
+) -> Result<Vec<PackHeadView>> {
+    let mut heads: Vec<_> = heads
         .into_iter()
         .map(|(_, head)| PackHeadView {
             machine: head.machine,
             version: head.version,
             digest: oneiron_hex::encode(&head.digest),
             held: head.held,
+            owner: head.accept.as_ref().map(|accept| accept.act.owner),
+            accepted: head
+                .accept
+                .map(|accept| accept.accepted)
+                .unwrap_or_default(),
         })
         .collect();
     heads.sort_by(|a, b| (&a.version, &a.digest).cmp(&(&b.version, &b.digest)));
