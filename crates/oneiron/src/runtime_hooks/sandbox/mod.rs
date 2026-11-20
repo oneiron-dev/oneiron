@@ -82,6 +82,10 @@ impl HookBodyRuntime for HookSandbox {
         )
     }
 
+    fn message_limit(&self) -> Option<usize> {
+        Some(self.budget.message_bytes)
+    }
+
     fn run_hook(
         &self,
         body: &str,

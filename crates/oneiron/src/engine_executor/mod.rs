@@ -66,7 +66,9 @@ pub use self::self_brief::{
 pub use self::session_refusal::is_session_act_refusal;
 pub use self::shadow_step::{ArmTypeFeedback, run_shadow_step};
 pub(crate) use self::shadow_step::{run_shadow_callable_branch, shadow_readable_outputs};
-pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
+pub use self::skill_call::{
+    execute_live_skill_call, execute_live_skill_call_listing, spill_admitted_skill_view,
+};
 // FIX 4414: the owner's per-run step evidence.
 pub(crate) use self::step_evidence::step_evidence_page;
 pub use self::store::{RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES};
