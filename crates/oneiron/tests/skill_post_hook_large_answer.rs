@@ -46,12 +46,9 @@
 //!    Red without the fix: the failed blocking hook only records on the
 //!    write, the guest reads a bound `r1` card for the unredacted body,
 //!    and the title survives.
-//! 7. `a_live_post_chain_refuses_a_too_deep_answer_precisely_never_as_non_json`
-//!    (P1-B): through the admitted entry with its outer post chain live, a
-//!    >512 KiB object answer nesting 150 arrays deep (valid JSON the spool
-//!    check accepts, past the whole-answer parser's depth limit) is refused
-//!    with the precise depth cause, never reported as non-JSON. Red without
-//!    the fix: the refusal says non-JSON for valid JSON.
+//! 7. Replaced by 20-22 (part 2b of [SKILL-ANSWER-DEEP-JSON-STACK-SAFE]):
+//!    an admitted deep answer under a live outer post chain is judged as
+//!    JSON text, no longer refused "nests too deep".
 //! 8. `real_sandbox::a_two_mib_skill_answer_reaches_its_blocking_post_hook_redacted`
 //!    ([SKILL-POST-HOOK-INPUT-BODY-CHANNEL]): a 2 MiB answer under a
 //!    blocking Redact post hook running in the real hook sandbox comes back
@@ -101,6 +98,22 @@
 //!     a million levels pass the hook guest's stack: the chain refuses the
 //!     call, naming the nesting, and the caller never reads the answer.
 //!
+//! Part 2b: the admitted outer caller's post chain judges such an answer as
+//! JSON text too. Through the admitted entry with the outer chain live, the
+//! entry returns the 150-deep answer as text (`AdmittedSkillAnswer::Text`),
+//! its real body record-only, and `judge_admitted_skill_text` runs the
+//! outer chain over it as the facade does. Red at the red pin (this head
+//! with the admitted entry's refusal of a deep answer put back): the entry
+//! refuses, "nests too deep".
+//! 20. `a_live_outer_chain_redacts_a_deep_admitted_answer_held_as_text`: a
+//!     Redact of `/pad`: the caller's card `r1` reads back the redacted view,
+//!     its whole depth kept, and no binding names the real body.
+//! 21. `a_live_outer_chain_that_hides_nothing_gives_a_deep_answer_its_card`:
+//!     a Redact naming nothing: the card `r1` reads back the answer itself.
+//! 22. `a_live_outer_chain_that_redacts_the_deep_part_answers_a_value`: a
+//!     Redact of `/deep` leaves a view a value holds: it answers inline, and
+//!     nothing is spilled.
+//!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features
 //! --features oneiron-agent-runtime/code-sandbox-wasmtime
@@ -120,15 +133,16 @@ use oneiron::agent_dispatch::{
 };
 use oneiron::attempt_queue::{AttemptRecord, ClaimAttempt, ClaimOutcome};
 use oneiron::code_run::{
-    CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord, HostSelfDispatcher,
+    CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord, HostSelfDispatcher, ResultFacet,
     ResultOccurrence, SkillCallInput,
 };
 use oneiron::code_sandbox::ComponentBudget;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use oneiron::engine_executor::{
-    EngineExecutorConfig, EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorResult,
-    EngineExecutorStatus, EngineNativeExecutor, JsCodeModeRuntime, execute_live_skill_call,
+    AdmittedSkillAnswer, AdmittedSkillText, EngineExecutorConfig, EngineExecutorLimits,
+    EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus, EngineNativeExecutor,
+    JsCodeModeRuntime, execute_live_skill_call, judge_admitted_skill_text,
 };
 use oneiron::runtime_hooks::{InvocationId, VerbCall, VerbDomain, VerbHookPre, hook_class};
 use oneiron::skill_hub::pack_catalog::HookActorClass;
@@ -151,10 +165,6 @@ const TAG: &str = "secret-title-7";
 /// The answer's `text` length: its JSON is past `RESULT_REPLY_INLINE_BYTES`
 /// (512 KiB) and past `message_bytes` (1 MiB).
 const ANSWER_BYTES: usize = 1_572_864;
-/// The deep answer's `pad` length: its JSON is past `RESULT_REPLY_INLINE_BYTES`
-/// (512 KiB) but well under `message_bytes` (1 MiB), so only its nesting
-/// refuses it.
-const DEEP_PAD_BYTES: usize = 614_400;
 /// The deep answer's nesting: arrays around `0` under `deep`, past the
 /// whole-answer parser's depth limit.
 const DEEP_LEVELS: usize = 150;
@@ -523,7 +533,8 @@ fn admitted_skill_call(
 }
 
 /// [`admitted_skill_call`] for a call whose skill args carry `bytes`,
-/// answering the entry's result itself, so a test can read a refusal.
+/// answering the entry's result itself, so a test can read a refusal; an
+/// answer held as JSON text fails the test.
 #[allow(clippy::too_many_arguments)]
 fn admitted_skill_call_result(
     vault: &Arc<Vault>,
@@ -535,6 +546,35 @@ fn admitted_skill_call_result(
     bytes: usize,
     outer_hooks_live: bool,
 ) -> oneiron::memory::MemoryResult<serde_json::Value> {
+    admitted_skill_call_answer(
+        vault,
+        factory,
+        run_id,
+        actor,
+        leased,
+        skill,
+        bytes,
+        outer_hooks_live,
+    )
+    .map(|answer| match answer {
+        AdmittedSkillAnswer::Value(value) => value,
+        AdmittedSkillAnswer::Text(text) => panic!("the answer is a value, not text: {text:?}"),
+    })
+}
+
+/// [`admitted_skill_call_result`] as the entry answers it: a value, or an
+/// answer held as JSON text for the outer chain.
+#[allow(clippy::too_many_arguments)]
+fn admitted_skill_call_answer(
+    vault: &Arc<Vault>,
+    factory: &QuickJsRuntimeFactory,
+    run_id: EntityId,
+    actor: WriteActor,
+    leased: &AttemptRecord,
+    skill: EntityId,
+    bytes: usize,
+    outer_hooks_live: bool,
+) -> oneiron::memory::MemoryResult<AdmittedSkillAnswer> {
     let binding =
         HostBinding::from_leased(leased, Some(run_id)).expect("the leased run binds its door");
     let record = CodeRunReplayRecord::new(
@@ -589,28 +629,6 @@ fn bridge_output(row: &CodeRunBridgeCall) -> serde_json::Value {
         })
         .expect("a skill call output");
     serde_json::from_str(text).expect("the output parses")
-}
-
-/// A bridge row's failed outcome as its kind and error: the `kind` and
-/// `error` members of the recorded outcome map.
-fn bridge_failed_error(row: &CodeRunBridgeCall) -> (String, String) {
-    let rmpv::Value::Map(entries) = &row.outcome else {
-        panic!("bridge outcome is a map");
-    };
-    let member = |name: &str| {
-        entries
-            .iter()
-            .find_map(|(key, value)| {
-                if key.as_str() == Some(name) {
-                    value.as_str()
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| panic!("a failed outcome names {name}"))
-            .to_owned()
-    };
-    (member("kind"), member("error"))
 }
 
 /// The occurrence refs a guest of run `run_id` derives with no card for
@@ -1113,65 +1131,6 @@ fn a_blocking_post_hook_that_cannot_judge_a_large_answer_refuses_the_call() {
     assert!(
         outcome.replay_record.bridge_calls[0].hook_view_served,
         "the row stands as a view-served row",
-    );
-}
-
-#[test]
-fn a_live_post_chain_refuses_a_too_deep_answer_precisely_never_as_non_json() {
-    let (_dir, vault) = open_vault();
-    let factory = quickjs_factory();
-    let skill = deep_skill(&vault);
-    // A live post chain over the call: the admitted entry reads the answer
-    // whole for it. The runtime caps nothing here; the refusal below comes
-    // from the answer's own nesting, before any hook runs.
-    bind_redact_hook(&vault, vec!["/output/title".to_owned()]);
-    let run_id = fresh_id();
-    let (actor, leased) = leased_actor(&vault, run_id);
-
-    let pre = outer_pre_with_bytes(&vault, actor, skill, DEEP_PAD_BYTES);
-    assert!(
-        !pre.passed_through(),
-        "the outer pre chain found its post hook live",
-    );
-    let refused = admitted_skill_call_result(
-        &vault,
-        &factory,
-        run_id,
-        actor,
-        &leased,
-        skill,
-        DEEP_PAD_BYTES,
-        !pre.passed_through(),
-    )
-    .expect_err("a too-deep answer under a live post chain is refused");
-    assert!(
-        refused.message.contains("nests too deep"),
-        "the refusal names the depth cause:\n{}",
-        refused.message,
-    );
-    assert!(
-        !refused.message.contains("non-JSON"),
-        "valid JSON is never reported as non-JSON:\n{}",
-        refused.message,
-    );
-
-    // The record keeps the refusal's cause on its failed row, and binds no
-    // readable body for the answer no hook judged.
-    let record = admitted_record(&vault, &run_id);
-    assert_eq!(record.bridge_calls.len(), 1);
-    let (kind, error) = bridge_failed_error(&record.bridge_calls[0]);
-    assert_eq!(kind, "failed");
-    assert!(
-        error.contains("nests too deep"),
-        "the failed row names the depth cause:\n{error}",
-    );
-    assert!(
-        !error.contains("non-JSON"),
-        "the failed row never reports non-JSON:\n{error}",
-    );
-    assert!(
-        record.bindings.is_empty(),
-        "no binding names a body for the refused answer",
     );
 }
 
@@ -2088,5 +2047,165 @@ fn a_deep_hook_input_names_a_row_it_spells_through_escapes() {
         handle_doors::rows_named_by_hook_input(&input),
         vec![row],
         "the run names the row its input spells through escapes",
+    );
+}
+
+/// The deep answer's admitted entry with its outer post chain live, after a
+/// Redact post hook of `paths` on `self.skills.call` is bound: the outer
+/// pre chain, the run, and the answer the entry holds as JSON text for that
+/// chain. Asserts the record keeps the real answer record-only, as for an
+/// answer held whole for that chain, and binds no name to it.
+fn admitted_deep_text(
+    vault: &Arc<Vault>,
+    factory: &QuickJsRuntimeFactory,
+    paths: Vec<String>,
+) -> (VerbHookPre, EntityId, AdmittedSkillText) {
+    let skill = deep_skill(vault);
+    bind_redact_hook(vault, paths);
+    let run_id = fresh_id();
+    let (actor, leased) = leased_actor(vault, run_id);
+    let pre = outer_pre_with_bytes(vault, actor, skill, DEEP_SMALL_PAD_BYTES);
+    assert!(
+        !pre.passed_through(),
+        "the outer pre chain found its post hook live",
+    );
+    // Red at the red pin: the entry refuses the answer, "nests too deep".
+    let answer = admitted_skill_call_answer(
+        vault,
+        factory,
+        run_id,
+        actor,
+        &leased,
+        skill,
+        DEEP_SMALL_PAD_BYTES,
+        !pre.passed_through(),
+    )
+    .expect("the admitted deep answer arrives for its outer chain");
+    let text = match answer {
+        AdmittedSkillAnswer::Text(text) => text,
+        AdmittedSkillAnswer::Value(value) => {
+            panic!("the deep answer is held as JSON text for the outer chain: {value}")
+        }
+    };
+    let record = admitted_record(vault, &run_id);
+    assert_eq!(record.bridge_calls.len(), 1);
+    let row = &record.bridge_calls[0];
+    assert!(row.hook_view_served, "the row stands as a view-served row");
+    let output = bridge_output(row);
+    assert!(
+        output.get("handle").is_some() && output.get("name").is_none(),
+        "the row holds a nameless card of the real answer: {output}",
+    );
+    assert!(
+        record
+            .outputs
+            .iter()
+            .any(|kept| kept.path == "executor/repl/bridge/000000.record-only.json"),
+        "the real body stands record-only",
+    );
+    assert!(record.bindings.is_empty(), "no name binds the real body");
+    (pre, run_id, text)
+}
+
+/// The whole text of run `run`'s result `reference`, paged through its
+/// slices.
+fn read_result_text(vault: &Vault, run: EntityId, reference: &str) -> String {
+    let mut input = serde_json::json!({"bytes": [0]});
+    let mut text = String::new();
+    loop {
+        let reply = vault
+            .read_code_run_result(run, reference, Some(ResultFacet::Slice), input, |_| {
+                Ok(false)
+            })
+            .expect("the result reads");
+        let piece = reply.get("output").expect("a slice serves its output");
+        text.push_str(
+            piece
+                .get("text")
+                .and_then(serde_json::Value::as_str)
+                .expect("a slice serves text"),
+        );
+        if piece
+            .get("done")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            return text;
+        }
+        input = piece
+            .get("next")
+            .cloned()
+            .expect("an unfinished slice names its next");
+    }
+}
+
+/// The card `view` names and the body it reads back: the spilled view,
+/// bound to `r1`, never the real body.
+fn spilled_view(vault: &Vault, run_id: EntityId, view: &serde_json::Value) -> String {
+    assert_eq!(
+        view.get("name").and_then(serde_json::Value::as_str),
+        Some("r1"),
+        "a view too deep for a value goes out as its card: {view}",
+    );
+    let record = admitted_record(vault, &run_id);
+    assert_eq!(record.bindings.len(), 1);
+    assert!(
+        !record.bindings[0].path.ends_with(".record-only.json"),
+        "the card binds the spilled view, not the real body",
+    );
+    read_result_text(vault, run_id, "r1")
+}
+
+#[test]
+fn a_live_outer_chain_redacts_a_deep_admitted_answer_held_as_text() {
+    let (_dir, vault) = open_vault();
+    let factory = quickjs_factory();
+    let (pre, run_id, text) = admitted_deep_text(&vault, &factory, vec!["/pad".to_owned()]);
+    let view = judge_admitted_skill_text(&vault, pre, text, None)
+        .expect("the outer chain judges the answer as text");
+    let body = spilled_view(&vault, run_id, &view);
+    assert!(
+        !body.contains("\"pad\""),
+        "the card serves the redacted view: {body}"
+    );
+    assert!(
+        body.contains(&format!(
+            "{}0{}",
+            "[".repeat(DEEP_LEVELS),
+            "]".repeat(DEEP_LEVELS)
+        )),
+        "the view keeps its whole depth",
+    );
+}
+
+#[test]
+fn a_live_outer_chain_that_hides_nothing_gives_a_deep_answer_its_card() {
+    let (_dir, vault) = open_vault();
+    let factory = quickjs_factory();
+    let (pre, run_id, text) = admitted_deep_text(&vault, &factory, vec!["/absent".to_owned()]);
+    let view = judge_admitted_skill_text(&vault, pre, text, None)
+        .expect("the outer chain judges the answer as text");
+    assert_eq!(
+        spilled_view(&vault, run_id, &view),
+        deep_answer_text(DEEP_SMALL_PAD_BYTES),
+        "the card reads back the answer itself",
+    );
+}
+
+#[test]
+fn a_live_outer_chain_that_redacts_the_deep_part_answers_a_value() {
+    let (_dir, vault) = open_vault();
+    let factory = quickjs_factory();
+    let (pre, run_id, text) = admitted_deep_text(&vault, &factory, vec!["/deep".to_owned()]);
+    let view = judge_admitted_skill_text(&vault, pre, text, None)
+        .expect("the outer chain judges the answer as text");
+    assert_eq!(
+        view,
+        serde_json::json!({"pad": "b".repeat(DEEP_SMALL_PAD_BYTES)}),
+        "a view a value holds answers inline",
+    );
+    assert!(
+        admitted_record(&vault, &run_id).bindings.is_empty(),
+        "nothing is spilled",
     );
 }

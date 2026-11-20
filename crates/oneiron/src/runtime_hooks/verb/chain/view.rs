@@ -42,12 +42,14 @@ impl PostView for Value {
     }
 }
 
-/// A skill answer's view held as JSON text, framed as the code-mode bridge
-/// frames its reply, `{"output": <answer>}`, so a Redact names the paths it
-/// names in a value view. Such a view is a write's result
-/// (`self.skills.call`) and no pack, so a hook's input takes it whole and
-/// it serves no row ([`super::super::served::rows`] needs a top-level
-/// `pack_version`).
+/// A skill answer's view held as JSON text, framed as its chain frames a
+/// value answer, so a Redact names the paths it names in a value view: the
+/// call's own chain reads it as the code-mode bridge frames its reply,
+/// `{"output": <answer>}`, and an admitted call's outer chain reads the
+/// answer unframed. Such a view is a write's result (`self.skills.call`)
+/// and no pack, so a hook's input takes it whole and it serves no row
+/// ([`super::super::served::rows`] needs a top-level `pack_version`).
+#[derive(Clone)]
 pub(crate) struct TextView {
     text: Box<RawValue>,
     /// Whether a Redact hid anything in it.
@@ -70,9 +72,23 @@ impl TextView {
         })
     }
 
+    /// The view of skill answer `answer` unframed, as an admitted call's
+    /// outer chain reads a value answer.
+    pub(crate) fn of_answer(answer: Box<RawValue>) -> Self {
+        Self {
+            text: answer,
+            narrowed: false,
+        }
+    }
+
     /// The view's JSON text.
     pub(crate) fn text(&self) -> &str {
         self.text.get()
+    }
+
+    /// The view's JSON text, owned.
+    pub(crate) fn into_text(self) -> Box<RawValue> {
+        self.text
     }
 
     /// Whether a Redact hid anything, so the view differs from the answer.

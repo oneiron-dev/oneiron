@@ -300,6 +300,12 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
         } else {
             format!("let output = {door}.map_err(mcp_facade_error)?;\n")
         };
+        // The admitted skill call's answer held as JSON text waits for the
+        // row's post chain in the call's own served state
+        // (SKILL-ANSWER-DEEP-JSON-STACK-SAFE).
+        if name_value.is_str("self.skills.call") {
+            body += "let output = served.hold_admitted_skill_answer(output);\n";
+        }
     } else if flag(row, "server_door") {
         // A server door runs the verb with the host's execution inputs, as on REST.
         let home = name_value
@@ -759,9 +765,18 @@ const VERB_LISTING_TAIL: &str = ") {
     } else {
         None
     };
-    let output = crate::api::facade::row_hooks_post(server, hooks, output).await
-        .map_err(|error| mcp_facade_error(error).with_hook_notice(hook_notice.clone()))?;
-    let output = crate::api::facade::host_doors::spill_admitted_skill_view(server, spill_run, output, served.rows().map(<[oneiron::EntityId]>::to_vec)).await;
+    let rows = served.rows().map(<[oneiron::EntityId]>::to_vec);
+    let output = match served.take_admitted_skill_text() {
+        // An admitted skill answer held as JSON text meets its post chain as
+        // text (SKILL-ANSWER-DEEP-JSON-STACK-SAFE).
+        Some(text) => crate::api::facade::host_doors::admitted_skill_text_post(server, hooks, text, spill_run, rows).await
+            .map_err(|error| mcp_facade_error(error).with_hook_notice(hook_notice.clone()))?,
+        None => {
+            let output = crate::api::facade::row_hooks_post(server, hooks, output).await
+                .map_err(|error| mcp_facade_error(error).with_hook_notice(hook_notice.clone()))?;
+            crate::api::facade::host_doors::spill_admitted_skill_view(server, spill_run, output, rows).await
+        }
+    };
     // The row's turn ends after its post hooks.
     drop(task_work_turn);
     Ok((output, source, carrier, epoch, hook_notice))

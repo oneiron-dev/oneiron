@@ -1,15 +1,19 @@
 //! One callable bridge entry between turns of an attached, leased run.
 //! The host holds the same live-run guard as the model executor. Its bridge
 //! rows and result bodies join that run; it creates no run or model turn.
+use serde_json::value::RawValue;
+
 use crate::code_run::{
     CodeRunReplayRecord, CodeRunResultBinding, ExecutorStorage, GatedActorWrite, SelfCall,
     SelfDispatchOutcome, SelfSkillCall, result_card,
 };
 use crate::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
-use crate::task_verb::HostBinding;
+use crate::runtime_hooks::VerbHookPre;
+use crate::store::BodySink;
+use crate::task_verb::{HostBinding, verb_hook_boundary};
 use crate::{EntityId, ModelId, Vault};
 
-use super::host::{CallableChecks, RecordingJsHost};
+use super::host::{CallableChecks, RecordingJsHost, text_nests_past_whole_depth};
 use super::store::{
     ByteCount, RESULT_REPLY_INLINE_BYTES, store_ordinal_base, store_result_output_path, write_json,
 };
@@ -20,13 +24,51 @@ use super::{JsCodeModeHost, JsCodeModeRuntime, TypeFeedback};
 /// the view inline.
 const ADMITTED_VIEW_SPILL_RETRIES: u8 = 8;
 
+/// An admitted skill call's answer as its caller's post chain takes it: one
+/// value, or, for an answer nesting past what a value may hold that the
+/// caller's live post chain must judge whole, its JSON text, which no value
+/// is built from (SKILL-ANSWER-DEEP-JSON-STACK-SAFE). The caller judges
+/// that text with [`judge_admitted_skill_text`].
+#[derive(Debug)]
+pub enum AdmittedSkillAnswer {
+    Value(serde_json::Value),
+    Text(AdmittedSkillText),
+}
+
+/// A skill answer held as JSON text for the admitted call's caller, and the
+/// run its call recorded it on, record-only.
+pub struct AdmittedSkillText {
+    run: EntityId,
+    text: Box<RawValue>,
+}
+
+impl AdmittedSkillText {
+    /// Answer `text` of the admitted call on run `run`.
+    pub(super) fn new(run: EntityId, text: Box<RawValue>) -> Self {
+        Self { run, text }
+    }
+}
+
+/// Its size, never its text: the answer is the caller's to read.
+impl std::fmt::Debug for AdmittedSkillText {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AdmittedSkillText")
+            .field("run", &self.run)
+            .field("bytes", &self.text.get().len())
+            .finish()
+    }
+}
+
 /// Executes the host projection of `self.skills.call`. The caller has already
 /// admitted its credential and verb hooks; nested calls keep their normal
 /// hooks and this dispatcher's credential door. `outer_hooks_live` is that
 /// caller's own pre chain's state (`!VerbHookPre::passed_through()`), which
 /// its post chain's running stands on: while it stands, a large answer is
 /// held whole for that chain and recorded record-only, whatever the
-/// bindings read when the skill returns. The sealed binding supplies
+/// bindings read when the skill returns; one nesting past what a value may
+/// hold is held as its JSON text ([`AdmittedSkillAnswer::Text`]), which the
+/// caller judges with [`judge_admitted_skill_text`]. The sealed binding supplies
 /// the lease and run identity, never request text. Each callable it runs is
 /// type-checked on `type_feedback`, the host's service, its feedback kept
 /// beside the run and never in the answer (FIX 10389).
@@ -38,7 +80,7 @@ pub fn execute_live_skill_call(
     input: crate::code_run::SkillCallInput,
     (runtime, type_feedback): (&mut dyn JsCodeModeRuntime, Option<&TypeFeedback>),
     outer_hooks_live: bool,
-) -> MemoryResult<serde_json::Value> {
+) -> MemoryResult<AdmittedSkillAnswer> {
     let lent = (runtime, type_feedback);
     execute_live_skill_call_listing(
         vault,
@@ -67,7 +109,7 @@ pub fn execute_live_skill_call_listing(
     input: crate::code_run::SkillCallInput,
     lent: (&mut dyn JsCodeModeRuntime, Option<&TypeFeedback>),
     outer_hooks_live: bool,
-) -> (MemoryResult<serde_json::Value>, Option<Vec<EntityId>>) {
+) -> (MemoryResult<AdmittedSkillAnswer>, Option<Vec<EntityId>>) {
     let mut rows = Some(Vec::new());
     let answer = live_skill_call(
         vault,
@@ -95,7 +137,7 @@ fn live_skill_call(
     (runtime, type_feedback): (&mut dyn JsCodeModeRuntime, Option<&TypeFeedback>),
     rows: &mut Option<Vec<EntityId>>,
     outer_hooks_live: bool,
-) -> MemoryResult<serde_json::Value> {
+) -> MemoryResult<AdmittedSkillAnswer> {
     let leased = binding.leased_record(vault)?;
     let run = binding
         .executor_run()
@@ -139,10 +181,11 @@ fn live_skill_call(
     // The dispatch held the call's whole answer for this caller when its
     // outer post chain may still run on it: the recorded outcome below is
     // then its record-only card, and this entry returns the whole answer
-    // in its place, as a small answer is returned. Taken before the
-    // record takes the host's calls. An answer the row's store withheld
-    // left none to hold, and no hook's view of it goes out either: the
-    // recorded output, its typed unavailable content, does.
+    // in its place, as a small answer is returned, or its JSON text when
+    // it nests past what a value may hold. Taken before the record takes
+    // the host's calls. An answer the row's store withheld left none to
+    // hold, and no hook's view of it goes out either: the recorded output,
+    // its typed unavailable content, does.
     let outer_answer = host.admitted_skill_answer.take();
     let withheld = host.admitted_skill_withheld;
     // Read before the record takes the step's calls, failed or not: the
@@ -167,9 +210,17 @@ fn live_skill_call(
     let answer = answer?;
     let view = answer.view.filter(|_| !withheld);
     match answer.outcome {
-        SelfDispatchOutcome::SkillCall(result) => {
-            shown_skill_output(vault, run, result.output, view, outer_answer)
-        }
+        SelfDispatchOutcome::SkillCall(result) => match outer_answer {
+            // No chain of this call ran on it, so no view stands in its
+            // place: the caller's own chain judges the text.
+            Some(AdmittedSkillAnswer::Text(text)) => Ok(AdmittedSkillAnswer::Text(text)),
+            Some(AdmittedSkillAnswer::Value(outer)) => {
+                shown_skill_output(vault, run, result.output, view, Some(outer))
+                    .map(AdmittedSkillAnswer::Value)
+            }
+            None => shown_skill_output(vault, run, result.output, view, None)
+                .map(AdmittedSkillAnswer::Value),
+        },
         SelfDispatchOutcome::Denied(denied) => Err(MemoryError::new(
             &denied.outcome,
             "the skill call was refused",
@@ -215,6 +266,46 @@ fn shown_skill_output(
         (None, _) => return Ok(output),
     };
     masked_in_run(vault, run, &shown)
+}
+
+/// What an admitted skill call's caller reads of answer `answer`, held as
+/// JSON text ([`AdmittedSkillAnswer::Text`]), once its post chain `pre`
+/// judged it ([`verb_hook_boundary::row_post_text`]). The view is masked as
+/// a value view goes out ([`masked_in_run`]), over its text. A view that
+/// nests no deeper than a value may hold, as a Redact may leave it, is then
+/// read into one; its caller spills it past the inline size as it spills a
+/// value view ([`spill_admitted_skill_view`]). Any other view, the answer as
+/// it was among them, is spilled now as a readable result of the run, bound
+/// to its next free name (`rows`, the rows it was produced from, as
+/// [`spill_admitted_skill_view`] takes them), and its card goes out, as a
+/// deep answer no live hook judges arrives. The answer itself stays
+/// record-only, as the admitted entry left it.
+///
+/// # Errors
+///
+/// A hook's stop, as the refusal the caller reads; storage errors, a spill
+/// that fails (no value can hold the view inline) among them.
+pub fn judge_admitted_skill_text(
+    vault: &Vault,
+    pre: VerbHookPre,
+    answer: AdmittedSkillText,
+    rows: Option<Vec<EntityId>>,
+) -> MemoryResult<serde_json::Value> {
+    let AdmittedSkillText { run, text } = answer;
+    let view = verb_hook_boundary::row_post_text(vault, pre, text)?;
+    // A flat sweep of the text: no recursion follows the view's nesting.
+    let masked =
+        crate::guest_error::mask_run_known_values(vault.run_known_source(run)?, view.get())?;
+    if text_nests_past_whole_depth(&masked) {
+        return spill_admitted_body(vault, run, rows, |sink| sink.write(masked.as_bytes()));
+    }
+    serde_json::from_str(&masked).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_INTERNAL,
+            "a judged skill answer view does not read",
+            &[],
+        )
+    })
 }
 
 /// `value` with each custody and PERSON value the run `run` knows replaced
@@ -266,6 +357,19 @@ pub fn spill_admitted_skill_view(
     if size.0 <= RESULT_REPLY_INLINE_BYTES {
         return Ok(view);
     }
+    spill_admitted_body(vault, run_id, rows, |sink| write_json(sink, &view))
+}
+
+/// A body `write` writes, spilled as a readable result of run `run_id` as
+/// [`spill_admitted_skill_view`] spills a large view: through the sweeping
+/// result sink, bound to the run's next free `r<n>` name, the record append
+/// generation-guarded. Its card.
+fn spill_admitted_body(
+    vault: &Vault,
+    run_id: EntityId,
+    rows: Option<Vec<EntityId>>,
+    write: impl Fn(&mut BodySink) -> crate::Result<()>,
+) -> MemoryResult<serde_json::Value> {
     let storage = ExecutorStorage::Canonical(vault);
     for _ in 0..ADMITTED_VIEW_SPILL_RETRIES {
         let Some(mut record) = vault.get_code_run_replay_record(&run_id)? else {
@@ -273,7 +377,7 @@ pub fn spill_admitted_skill_view(
         };
         let generation = record.generation()?;
         let mut sink = vault.code_run_output_sink()?;
-        write_json(&mut sink, &view)?;
+        write(&mut sink)?;
         sink.finalize_sweep()?;
         let digest = sink.digest()?;
         let ordinal = store_ordinal_base(&record) + record.outputs.len();
