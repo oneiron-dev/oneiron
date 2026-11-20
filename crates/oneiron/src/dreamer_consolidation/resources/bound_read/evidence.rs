@@ -5,8 +5,8 @@
 //! in. Whole turns and unmasked ranges bind directly to stored bytes. Masked
 //! ranges map from served coordinates to stored coordinates through the native
 //! lifted-key masking exactly, so no span is refused and none falls back. A
-//! cited claim binds as a claim reference and reads on the ordinary lane, since
-//! the TURN reader serves TURN projections only.
+//! cited claim binds as a claim reference and reads on the ordinary lane; the
+//! TURN reader is used for TURN projections only.
 
 use super::BoundBranchRead;
 use crate::Vault;

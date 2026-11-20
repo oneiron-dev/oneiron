@@ -15,6 +15,7 @@ use super::super::super::{ConflictSet, PriorHead};
 use super::super::ConsolidationExecutor;
 use super::ParsedCandidate;
 use crate::attempt_queue::AttemptId;
+use crate::dreamer_consolidation::call_labels::LabelKind;
 use crate::dreamer_runner::DreamerConsolidationScope;
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
@@ -212,7 +213,7 @@ pub(crate) async fn native_extraction_decisions_for_test(
 
 /// Builds one parsed candidate per operand as the reply parser builds it for a reply naming the same candidate.
 ///
-/// Each operand cites turns of exactly one native slice; that slice's scope and sources become the candidate's. A cited claim binds as its label binds in a reply: the slice must read the claim's pinned version, and an operand that cites only claims takes the first slice that reads them all. Confidence and prospective queries ride no decision, so they stay at their neutral values. An operand that proposes a relationship is refused: no parity case carries one, and the oracle maps none.
+/// Each operand cites turns of exactly one native slice; that slice's scope and sources become the candidate's. A cited claim binds as a reply's CLAIM label binds: the slice's call must label the claim and its scope must read the claim's branch pin, so an operand takes the first slice whose turns hold its cited TURNs and whose call labels its cited claims. The pin version an operand offers is not read here, since a native reply names a label and no version, and the checked step's citation check is not run. Confidence and prospective queries ride no decision, so they stay at their neutral values. An operand that proposes a relationship is refused: no parity case carries one, and the oracle maps none.
 fn parse_operands<'s>(
     operands: &[CandidateOperand],
     slices: &'s [ExtractionSlice],
@@ -237,10 +238,9 @@ fn parse_operands<'s>(
             .iter()
             .find(|slice| {
                 locators.iter().all(|entry| match entry {
-                    EvidenceLocator::Claim { claim_id, .. } => resources
-                        .pins()
-                        .source_version(claim_id)
-                        .is_ok_and(|version| slice.scope.allows_read(&version)),
+                    EvidenceLocator::Claim { claim_id, .. } => {
+                        slice.labels.label(LabelKind::Claim, *claim_id).is_some()
+                    }
                     turn => slice.turns.contains(&turn.source_id()),
                 })
             })

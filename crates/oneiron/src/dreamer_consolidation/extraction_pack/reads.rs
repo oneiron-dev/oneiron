@@ -207,8 +207,9 @@ fn restates(operand: &CandidateOperand, bound: &BoundBranchRead, claim: EntityId
 
 /// The listed heads `operand` cites as evidence, sorted and deduped: each
 /// reference parsed canonically and each head admitted by the bound read's
-/// cited-head rule, so a candidate never rests on a claim no native call
-/// could have labelled or one that may not corroborate.
+/// cited-head rule, so a candidate never rests on a claim outside the
+/// branch's listing or one that may not corroborate. Which call showed the
+/// head is not checked: `BoundBranchRead::cited_head` says why.
 fn cited_claims(operand: &CandidateOperand, bound: &BoundBranchRead) -> Result<Vec<EntityId>> {
     let mut cited = operand
         .claim_evidence

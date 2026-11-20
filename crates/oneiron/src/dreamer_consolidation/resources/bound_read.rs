@@ -123,13 +123,15 @@ impl BoundBranchRead {
         self.priors.get(&id)
     }
 
-    /// The listed head `claim` a candidate may cite as evidence, under the
-    /// widest rule one native extraction call applies: the rebuilt listing
-    /// shows it, the branch holds it as a prior head, this scope grants its
-    /// pinned version read, and it may corroborate (GATE-11 refuses a
-    /// generated-origin head). A native call labels only the claims of its
-    /// own listing page. The page a lent candidate came from is not known
-    /// here, so the whole listing is the bound.
+    /// The listed head `claim` a candidate may cite as evidence, by a
+    /// branch-wide bound: the rebuilt listing shows it, the branch holds it
+    /// as a prior head, this scope grants its pinned version read, and it
+    /// may corroborate (GATE-11 refuses a generated-origin head). The bound
+    /// is wider than native's: a native call labels only the claims of its
+    /// own listing page and reads under its own child scope. The call a lent
+    /// candidate came from is not known here, so the whole branch listing is
+    /// the bound, and a head no one call showed beside the candidate's TURNs
+    /// is admitted.
     pub(crate) fn cited_head(&self, claim: EntityId) -> Result<&PriorHead> {
         if !self.neighbourhood.shows(claim) {
             return Err(invalid_consolidation(

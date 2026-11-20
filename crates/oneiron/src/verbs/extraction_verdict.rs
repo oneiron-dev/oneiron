@@ -120,7 +120,8 @@ pub struct CandidateOperand {
     /// read. The engine rechecks every pin under the job actor's own read at verdict time
     /// and admits only a head the rebuilt listing shows that may corroborate. A candidate
     /// that cites a listed claim and carries its predicate and value restates it, so the
-    /// correction read never asks about that pair, as the native read never asks it.
+    /// correction read never asks about that pair, as the native read never asks it. A
+    /// candidate that cites only claims still sends `evidence`, as an empty list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub claim_evidence: Vec<PinnedClaim>,
 }
