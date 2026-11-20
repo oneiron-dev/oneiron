@@ -122,6 +122,9 @@ struct BoundReplySources<'p> {
     correctable: &'p BTreeMap<EntityId, Vec<EntityId>>,
     /// Borrows the frozen prior heads behind the call's claim labels.
     heads: &'p BTreeMap<EntityId, ListedHead>,
+    /// Borrows the frozen landing project of each cited TURN and each
+    /// labelled prior head.
+    projects: &'p BTreeMap<EntityId, Option<EntityId>>,
     /// Borrows the versions the request names, a cited claim's among them
     /// when the job's read serves that claim.
     inputs: &'p [SourceVersion],
@@ -228,7 +231,10 @@ impl BoundReplySources<'_> {
     /// label that bound nothing is remembered by its first named result
     /// while the others still bind. A cited claim is carried only at a
     /// version the request names, so a claim the job's read does not serve
-    /// leaves its candidate a skip.
+    /// leaves its candidate a skip. The sources that bound must share one
+    /// branch project, as native's reader asks of them
+    /// (`executor/extraction/wire.rs`), so a candidate whose quotes and
+    /// cited claims span projects is a skip here and never reaches a pack.
     ///
     /// # Errors
     ///
@@ -282,6 +288,7 @@ impl BoundReplySources<'_> {
         let mut evidence = Vec::with_capacity(refs.len());
         let mut claim_evidence = Vec::new();
         let mut cited_claims = Vec::new();
+        let mut cited_turns = Vec::new();
         let mut unbound = None;
         for cited in refs {
             let bound = decode_ref(cited, self).map_err(|error| error.to_string())?;
@@ -321,6 +328,7 @@ impl BoundReplySources<'_> {
             let (start, end) = reference.byte_range.ok_or_else(|| {
                 "the bound wire carries labels, TURN quotes and listed claims only".to_owned()
             })?;
+            cited_turns.push(piece.turn);
             evidence.push(BoundTurnEvidence {
                 turn: piece.turn.to_hex(),
                 version: piece.version.clone(),
@@ -329,6 +337,23 @@ impl BoundReplySources<'_> {
                     end: piece.start + end as u64,
                 },
             });
+        }
+        let mut landing: Option<EntityId> = None;
+        for source in cited_turns.iter().chain(&cited_claims) {
+            let project = self
+                .projects
+                .get(source)
+                .copied()
+                .ok_or_else(|| "unadmitted evidence source".to_owned())?;
+            match (project, landing) {
+                (Some(project), None) => landing = Some(project),
+                (Some(project), Some(landing)) if project == landing => {}
+                _ => {
+                    return Err(
+                        "extracted candidate's sources share no one branch project".to_owned()
+                    );
+                }
+            }
         }
         Ok(ReadCandidate {
             candidate: BoundExtractionCandidate {
@@ -442,8 +467,9 @@ impl BoundReplySources<'_> {
     }
 }
 
-/// Owns a checked call's labels, pieces, correctable claims, listed heads
-/// and input versions so the durable check can outlive this borrow.
+/// Owns a checked call's labels, pieces, correctable claims, listed heads,
+/// landing projects and input versions so the durable check can outlive
+/// this borrow.
 pub(super) fn check_bound_reply(
     prepared: &PreparedExtractionStep,
 ) -> impl Fn(&LlmResponse) -> Result<(), String> + Send + Sync + 'static {
@@ -451,6 +477,7 @@ pub(super) fn check_bound_reply(
     let pieces = prepared.pieces.clone();
     let correctable = prepared.correctable.clone();
     let heads = prepared.heads.clone();
+    let projects = prepared.projects.clone();
     let inputs = prepared.inputs.clone();
     move |response| {
         check_extraction_reply(response)?;
@@ -462,6 +489,7 @@ pub(super) fn check_bound_reply(
             pieces: &pieces,
             correctable: &correctable,
             heads: &heads,
+            projects: &projects,
             inputs: &inputs,
         }
         .decode(response)
@@ -479,6 +507,7 @@ pub(super) fn decode_bound_reply(
         pieces: &prepared.pieces,
         correctable: &prepared.correctable,
         heads: &prepared.heads,
+        projects: &prepared.projects,
         inputs: &prepared.inputs,
     }
     .decode(response)

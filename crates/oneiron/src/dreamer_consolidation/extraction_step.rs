@@ -42,7 +42,9 @@ use oneiron_model::llm::Scope;
 /// ids whose step scope holds a correctable claim, with those claims, and
 /// the heads freeze each labelled claim the branch holds as a prior head,
 /// so the reply check applies native's restatement rule and its
-/// claim-evidence rule without a read. The inputs name the
+/// claim-evidence rule without a read. The projects freeze where a claim
+/// drawn from each cited TURN or labelled prior head may land, so the reply
+/// check folds a candidate's sources as native's reader does. The inputs name the
 /// version of every row whose words the transcript shows, so a receipt
 /// answers only while each still reads at it. No person-mint namespace
 /// binds the request; the decoded reply retains declared persons without
@@ -64,6 +66,11 @@ pub(crate) struct PreparedExtractionStep {
     /// Holds each claim the call labelled that the branch holds as a prior
     /// head, as the reply check reads it.
     heads: BTreeMap<EntityId, ListedHead>,
+    /// Holds, for each cited TURN and each labelled prior head, the one
+    /// project a claim drawn from that row alone may land in under the
+    /// branch's rule: `None` where the row lies outside the branch's
+    /// project or its project stamp does not decode.
+    projects: BTreeMap<EntityId, Option<EntityId>>,
     /// Holds the version of every row whose words the transcript shows,
     /// in id order, as the request names them.
     inputs: Vec<SourceVersion>,
@@ -324,6 +331,13 @@ pub(crate) fn prepare_bound_step(
             ))
         })
         .collect();
+    let projects = pieces
+        .iter()
+        .map(|piece| piece.turn)
+        .chain(heads.keys().copied())
+        .map(|id| bound.evidence_project(&[id]).map(|project| (id, project)))
+        .collect::<Result<BTreeMap<EntityId, Option<EntityId>>, crate::Error>>()
+        .map_err(bound_branch_error)?;
     Ok(PreparedExtractionStep {
         transcript,
         labels,
@@ -332,6 +346,7 @@ pub(crate) fn prepare_bound_step(
         sources,
         correctable,
         heads,
+        projects,
         inputs,
     })
 }

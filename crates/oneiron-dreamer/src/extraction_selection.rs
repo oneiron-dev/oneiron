@@ -258,6 +258,13 @@ fn native_keys(candidate: &CandidateObservation) -> (&str, &str, &str) {
 /// [`CandidateGroup::corrects`]. The engine recounts verified citations, times and
 /// diversity on these unions; none are summed.
 ///
+/// One cited claim stays out of the union: the head the representative corrects,
+/// when only another member cites it. The engine asks a correction about a head only
+/// while the candidate does not restate it, and a candidate restates a head it cites
+/// with the head's own predicate and value. A union that gained that citation from a
+/// member could restate the head its representative was asked about and answered,
+/// and the engine would refuse its `corrects` as naming an unlisted claim.
+///
 /// # Panics
 ///
 /// Panics if a group's member index does not name an operand in the supplied request.
@@ -268,6 +275,9 @@ pub fn union_operands(operands: &[Value], groups: &CandidateGroups) -> Vec<Value
         .iter()
         .map(|group| {
             let mut operand = operands[group.representative_index].clone();
+            let corrected = operand["corrects"]
+                .as_str()
+                .filter(|head| !cited_claims(&operand).any(|claim| claim == *head));
             let mut evidence = Vec::new();
             let mut claim_evidence = Vec::new();
             for index in &group.member_indexes {
@@ -277,7 +287,10 @@ pub fn union_operands(operands: &[Value], groups: &CandidateGroups) -> Vec<Value
                 ] {
                     if let Some(entries) = operands[*index][key].as_array() {
                         for entry in entries {
-                            if !merged.contains(entry) {
+                            let corrected_head = key == "claim_evidence"
+                                && corrected.is_some()
+                                && entry["claim"].as_str() == corrected;
+                            if !corrected_head && !merged.contains(entry) {
                                 merged.push(entry.clone());
                             }
                         }
@@ -291,6 +304,15 @@ pub fn union_operands(operands: &[Value], groups: &CandidateGroups) -> Vec<Value
             operand
         })
         .collect()
+}
+
+/// Names each listed claim `operand` cites as evidence.
+fn cited_claims(operand: &Value) -> impl Iterator<Item = &str> {
+    operand["claim_evidence"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|pin| pin["claim"].as_str())
 }
 
 /// Selects verified group unions with native scoring, holds, ordering and retry arithmetic.

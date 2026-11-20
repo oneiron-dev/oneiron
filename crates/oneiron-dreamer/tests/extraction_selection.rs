@@ -337,6 +337,80 @@ fn union_carries_the_cited_claims_of_every_member() {
     );
 }
 
+/// The head a representative corrects stays out of its union when only another member
+/// cites it, so the union still does not restate the head it was asked about. A
+/// representative that cites the head it corrects keeps that citation, and every other
+/// cited claim joins the union as before.
+#[test]
+fn union_leaves_out_a_member_citation_of_the_head_its_representative_corrects() {
+    let pin = |claim: &str| {
+        json!({
+            "claim": claim,
+            "version": {
+                "entity": claim,
+                "entity_type": 0,
+                "learned_at": 7,
+                "revision": format!("blake3:{}", "ab".repeat(32)),
+            },
+        })
+    };
+    let corrected = "c1".repeat(16);
+    let other = "c2".repeat(16);
+    let operand = |corrects: Option<&str>, cited: Option<Value>| {
+        let mut built = json!({
+            "subject": "b1".repeat(16),
+            "predicate": "likes",
+            "value": "tea",
+            "evidence": [],
+        });
+        if let Some(corrects) = corrects {
+            built["corrects"] = json!(corrects);
+        }
+        if let Some(cited) = cited {
+            built["claim_evidence"] = cited;
+        }
+        built
+    };
+    let operands = vec![
+        operand(Some(&corrected), None),
+        operand(None, Some(json!([pin(&corrected), pin(&other)]))),
+        operand(Some(&corrected), Some(json!([pin(&corrected)]))),
+        operand(None, Some(json!([pin(&corrected), pin(&other)]))),
+        operand(Some(&corrected), None),
+        operand(None, Some(json!([pin(&corrected)]))),
+    ];
+    let group = |representative_index: usize| CandidateGroup {
+        representative_index,
+        member_indexes: vec![representative_index, representative_index + 1],
+        corrects: None,
+    };
+    let groups = CandidateGroups {
+        groups: vec![group(0), group(2), group(4)],
+        pending_bindings: Vec::new(),
+    };
+    let unions = union_operands(&operands, &groups);
+    assert_eq!(unions.len(), 3, "one union per bound group");
+    assert_eq!(
+        unions[0]["corrects"],
+        json!(corrected),
+        "the union keeps its representative's correction"
+    );
+    assert_eq!(
+        unions[0]["claim_evidence"],
+        json!([pin(&other)]),
+        "a member's citation of the corrected head stays out; its other citation joins"
+    );
+    assert_eq!(
+        unions[1]["claim_evidence"],
+        json!([pin(&corrected), pin(&other)]),
+        "a representative that cites the head it corrects keeps that citation"
+    );
+    assert!(
+        unions[2].get("claim_evidence").is_none(),
+        "a union left with no cited claim keeps the key absent"
+    );
+}
+
 #[test]
 fn required_policy_fields_and_policy_pin_are_enforced() {
     let fixture = load_fixture();
