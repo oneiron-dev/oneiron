@@ -1496,7 +1496,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scope_stamp/tests.rs` | test | m | — | — | Observable Scope identity, codec, selector and replay acceptance |
 | `src/claim/scoped_read/access_class.rs` | src | m | 2 crate-vis | — | FIX 11915 stage B: a CLAIM row's admission judged once per access class |
 | `src/claim/scoped_read/access_gate.rs` | src | L | 1 fn · 31 crate-vis | — | Relationship access checks share the row read transaction with grant resolution |
-| `src/claim/scoped_read/actor_key.rs` | src | L | 1 struct · 11 fn · 1 re-export · 78 crate-vis | ScopedReadActorKey | Authenticated identity carried by a scoped read |
+| `src/claim/scoped_read/actor_key.rs` | src | L | 1 struct · 11 fn · 1 re-export · 79 crate-vis | ScopedReadActorKey | Authenticated identity carried by a scoped read |
 | `src/claim/scoped_read/actor_key/weave_admin.rs` | src | s | 1 crate-vis | — | The weave Admin's read key (OF-499 A3, L02 seam): the Admin's verified request instrument as every slip key… |
 | `src/claim/scoped_read/admission.rs` | src | m | 8 fn · 28 crate-vis | — | — |
 | `src/claim/scoped_read/admission/audience.rs` | src | m | 6 crate-vis | — | The audience conjunct of a scoped read: device-local worlds, private threads, an unbound agent's own entry… |
@@ -4426,7 +4426,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/questions/route_calibration/split.rs` | src | s | 1 crate-vis | — | The fit and check halves of a question's pairs, by source case |
 | `src/llm/decision/questions/saved_reader.rs` | src | s | 12 crate-vis | — | OF-506 (FIX 1712, 1857, 2116): a standing question reads inside the lane its version was saved under |
 | `src/llm/decision/questions/standing.rs` | src | L | 1 struct · 2 fn · 1 re-export · 17 crate-vis | StandingAnswer | Explicit graph-unit backfill with same-snapshot authority and source pins |
-| `src/llm/decision/questions/standing/left_facet.rs` | src | s | 1 crate-vis | — | A standing answer never stays in a facet its room no longer reads (FIX STANDING-ANSWER-STAYS-IN-LEFT-FACET… |
+| `src/llm/decision/questions/standing/left_facet.rs` | src | s | 2 crate-vis | — | A standing answer never stays in a facet its room no longer reads (FIX STANDING-ANSWER-STAYS-IN-LEFT-FACET… |
 | `src/llm/decision/questions/standing/public_admit.rs` | src | s | 2 fn | — | Public standing-answer work keeps the actual caller and the measured frontier |
 | `src/llm/decision/questions/standing_tests.rs` | test | L | — | — | — |
 | `src/llm/decision/questions/store.rs` | src | m | 7 fn · 17 crate-vis | — | Immutable question versions and a CAS-updated scheduling head in the typed `TYPED_QUESTION` side table: one… |
@@ -8876,6 +8876,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/project/review_tests.rs` | test | s | — | — | Acceptance regressions for indexed project origin and policy narrowing |
 | `src/workspace_roster/project/revision.rs` | src | m | 1 struct · 1 enum · 3 fn · 1 re-export · 23 crate-vis | ProjectRevision, ProjectRevisionProof | Immutable, content-addressed project revisions (decision 8) |
 | `src/workspace_roster/project/room_facet_set.rs` | src | s | 2 struct · 3 fn | ProjectRoomFacetsSetRequest, ProjectRoomFacetsState | The owner's door for the facets a project's home room reads through (L7-39: Engine RULINGS… |
+| `src/workspace_roster/project/room_narrowing.rs` | src | s | 4 crate-vis | — | A standing answer never stays in a facet its room no longer reads, whichever act narrows the room (FIX… |
 | `src/workspace_roster/project/roster.rs` | src | s | 2 struct · 2 fn | ProjectRosterWriteOutcome, ProjectRosterWriteRequest | The authenticated roster-update door (OF-417 slice 2) |
 | `src/workspace_roster/project/tests.rs` | test | XL | 4 crate-vis | — | — |
 | `src/workspace_roster/project/tests/authority.rs` | test | L | 17 crate-vis | — | Leader and board authority over PROJECT rows: live doors refuse a bad proof, replay stores it, and the read… |
@@ -9234,6 +9235,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/claims_project_narrowing.rs` | test | s | — | — | L1-12 PR O-1 (OPUS-FIX-E): `vault.claims.list_filtered` and `vault.claims.read_filtered` take `project_refs`… |
 | `tests/claims_read_gate_cutover.rs` | test | m | — | — | ARCH-0057 §3 cutover (census L6-21): the send gate asks the claims-read door for registry-selected… |
 | `tests/cleanup_auto_posture.rs` | test | s | — | — | L1-30 (FIX [SAFETYISM-CLEANUP-AUTO-ARM-409]; Engine ruling L1-30-AUTO-POSTURE, Fri 13 Nov 22:39 = A): a… |
+| `tests/cleanup_restore_row_deletion_fence.rs` | test | s | — | — | FIX [CLEANUP-RESTORE-DOOR-MISSES-ROW-DELETION-FENCE]: the cleanup's restore door brings back no record whose… |
 | `tests/cleanup_spares_minted_person_between_tries.rs` | test | s | — | — | FIX [CLEANUP-ARCHIVES-MINTED-PERSON-BETWEEN-TRIES]: an attempt mints a PERSON before the claims about it… |
 | `tests/coach_budgets.rs` | test | m | — | — | The Coach's work-budget changes stay inside the owner's caps (untangle 6.6b, the B1 and B2 families… |
 | `tests/coach_engine_controls.rs` | test | s | — | — | The Coach's default grant (untangle 6.6a; S66-MAP ruled A, A, A, A): `read` and the four `engine.controls`… |
@@ -9998,7 +10000,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/sandbox_egress_body_floor.rs` | test | s | — | — | FIX 7946 (RULING FIX-SERVER-7946-EGRESS-BODY = B, Engine 15 Nov 19:27): a code sandbox's egress reads a… |
 | `tests/sandbox_vendor_switch.rs` | test | m | — | — | The vault's sandbox provider switch (L8-43; provider-adapter-architecture-v1 #default-switch-off; Engine… |
 | `tests/saved_access_gate_lane.rs` | test | L | — | — | A saved lane keeps the access gate its live key read under (FIX SAVED-PRINCIPAL-LANE-DROPS-ACCESS-GATE, Sol… |
-| `tests/saved_lane_actor_class.rs` | test | m | — | — | A saved lane reads under the actor class its live key was proved as (FIX… |
+| `tests/saved_lane_actor_class.rs` | test | L | — | — | A saved lane reads under the actor class its live key was proved as (FIX… |
 | `tests/saved_lane_floor_owner_liveness.rs` | test | s | — | — | A saved lane rebuilt over the vault owner's own key reads no more than that key does: once the owner's… |
 | `tests/saved_lane_owner_basis.rs` | test | L | — | — | A saved lane never reads past the owner standing its live key held (FIX 14344, Astra F2 on #8029; Engine… |
 | `tests/saved_member_lane_read_scope.rs` | test | m | — | — | A member credential's saved lane reads while its membership grant still confers what the lane reads (round 2… |

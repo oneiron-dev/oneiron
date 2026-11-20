@@ -17319,7 +17319,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 78,
+      "crate-vis": 79,
       "fn": 11,
       "re-export": 1,
       "struct": 1
@@ -52122,7 +52122,7 @@
      "path": "src/llm/decision/questions/standing/left_facet.rs",
      "purpose": "A standing answer never stays in a facet its room no longer reads (FIX STANDING-ANSWER-STAYS-IN-LEFT-FACET…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -103536,6 +103536,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/room_narrowing.rs",
+     "purpose": "A standing answer never stays in a facet its room no longer reads, whichever act narrows the room (FIX…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ProjectRosterWriteOutcome",
       "ProjectRosterWriteRequest"
@@ -107017,6 +107027,14 @@
      "notable": [],
      "path": "tests/cleanup_auto_posture.rs",
      "purpose": "L1-30 (FIX [SAFETYISM-CLEANUP-AUTO-ARM-409]; Engine ruling L1-30-AUTO-POSTURE, Fri 13 Nov 22:39 = A): a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/cleanup_restore_row_deletion_fence.rs",
+     "purpose": "FIX [CLEANUP-RESTORE-DOOR-MISSES-ROW-DELETION-FENCE]: the cleanup's restore door brings back no record whose…",
      "surface": {}
     },
     {
@@ -113252,7 +113270,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/saved_lane_actor_class.rs",
@@ -116786,7 +116804,7 @@
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
     },
     "workspace_roster": {
-     "files": 146,
+     "files": 147,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116802,8 +116820,8 @@
    },
    "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8233,
-   "test_files": 1982
+   "source_files": 8234,
+   "test_files": 1983
   },
   "oneiron-agent-runtime": {
    "files": [
