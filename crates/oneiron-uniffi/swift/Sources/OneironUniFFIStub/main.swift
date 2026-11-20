@@ -158,7 +158,7 @@ func claimsCompile(client: Oneiron) throws {
 // MARK: Deletion and consent
 
 func deletionAndConsentCompile(client: Oneiron) throws {
-    let _: DeleteReceipt = try client.safeDelete(
+    let _: DeleteReceipt = try client.vaultDelete(
         entityRef: "entity:compile-only",
         reason: .userDelete,
         checkInRef: nil

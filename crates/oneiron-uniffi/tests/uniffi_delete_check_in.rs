@@ -1,6 +1,6 @@
 //! The native `vault.delete` carries the check-in it runs on (FIX
 //! [CHECK-IN-DELETE-SURFACES-NO-CHECK-IN-REF], the uniffi part; ROLES-CHECKIN
-//! 2k5, P25-SHAPE Q1 = A): `safe_delete` takes `check_in_ref` and hands it to
+//! 2k5, P25-SHAPE Q1 = A): `vault_delete` takes `check_in_ref` and hands it to
 //! the engine's door, and its `DeleteReceipt` names the decision the delete
 //! ran on, as the verb's receipt does. A person whose delete waits finishes
 //! the approved delete through the native call that names the check-in.
@@ -8,10 +8,10 @@
 //! Fixture: an owned vault the embedded owner wrote one claim in, closed,
 //! then opened through the native handle, which acts as that owner.
 //!
-//! On the base (0aedc807c526) this file does not build: `safe_delete` takes
+//! On the base (0aedc807c526) this file does not build: `vault_delete` takes
 //! no `check_in_ref`, and the native `DeleteReceipt` has no `check_in`.
 //!
-//! `cargo test --locked -p oneiron-uniffi --all-features --test uniffi_delete_check_in`.
+//! `cargo test --locked -p oneiron-uniffi --test uniffi_delete_check_in` (default features).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -70,7 +70,7 @@ fn the_owners_native_delete_names_their_own_proof() -> TestResult {
     let dir = fresh_dir("own-proof")?;
     let claim = vault_with_owner_claim(&dir)?;
     let client = Oneiron::open(Some(dir.to_string_lossy().into_owned()), None, None)?;
-    let receipt = client.safe_delete(claim, SafeDeleteReason::UserDelete, None)?;
+    let receipt = client.vault_delete(claim, SafeDeleteReason::UserDelete, None)?;
     assert!(receipt.existed, "the claim existed: {receipt:?}");
     assert_eq!(receipt.state, DeleteRequestState::Applied);
     assert_eq!(
@@ -95,7 +95,7 @@ fn a_native_delete_hands_its_check_in_ref_to_the_engine() -> TestResult {
     let client = Oneiron::open(Some(dir.to_string_lossy().into_owned()), None, None)?;
     // An Owner's delete goes on their own proof and spends no check-in, so
     // the engine refuses one that names a check-in: the ref reached it.
-    let named = client.safe_delete(
+    let named = client.vault_delete(
         claim.clone(),
         SafeDeleteReason::UserDelete,
         Some(EntityId::now().to_hex()),
@@ -104,7 +104,7 @@ fn a_native_delete_hands_its_check_in_ref_to_the_engine() -> TestResult {
         named.is_err(),
         "the engine's door refuses an Owner's delete that names a check-in: {named:?}"
     );
-    let receipt = client.safe_delete(claim, SafeDeleteReason::UserDelete, None)?;
+    let receipt = client.vault_delete(claim, SafeDeleteReason::UserDelete, None)?;
     assert!(
         receipt.existed,
         "the refused call deleted nothing: {receipt:?}"
