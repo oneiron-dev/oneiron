@@ -91,6 +91,10 @@ pub(in crate::dreamer_runner::maintenance) struct SettleInverse {
     mentions: Vec<MentionChange>,
     /// Each provisional entity the mention named, as it stood before.
     provisionals: Vec<HeldProvisional>,
+    /// The cleanup archive the settle's pick lifted, when it lifted one. A
+    /// settle stored before kept none, and an erase of the entity takes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    restored: Option<RestoredPick>,
     /// The name's context hint for `entity` before (none: unsaved) and after.
     hint_before: Option<StoredIdentityHint>,
     hint_after: Option<StoredIdentityHint>,
@@ -99,20 +103,6 @@ pub(in crate::dreamer_runner::maintenance) struct SettleInverse {
     /// Each distinct assertion a someone-new answer made, at its revision
     /// then.
     distinct: Vec<(EntityId, [u8; 32])>,
-    /// The cleanup archive the settle's pick lifted, when it lifted one.
-    /// None once an erase reached the entity.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    restored: Option<RestoredPick>,
-}
-
-/// A person the cleanup had archived that the settle's pick restored: the
-/// archive as the restore found it, and the key of each saved span that
-/// named the person then.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RestoredPick {
-    archive: PersonArchive,
-    named_by: BTreeSet<[u8; 32]>,
 }
 
 impl SettleInverse {
@@ -160,6 +150,16 @@ struct HeldProvisional {
     /// Its row; none once an erase reached the entity, its origin turn or
     /// that span.
     entity: Option<ProvisionalEntity>,
+}
+
+/// A person the cleanup had archived that the settle's pick restored: the
+/// archive as the restore found it, and the key of each saved span that
+/// named the person then.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RestoredPick {
+    archive: PersonArchive,
+    named_by: BTreeSet<[u8; 32]>,
 }
 
 /// The heads the ask's candidates resolve to now: who a someone-new answer
@@ -266,6 +266,18 @@ pub(super) fn settle_in_txn(
             entity: Some(entity),
         });
     }
+    // A pick under a cleanup archive: the archive and the spans naming the
+    // person before the settle restores it.
+    let archived = match answer {
+        Answer::Is(chosen) => match vault.person_archive_in_txn(txn, &chosen)? {
+            Some(archive) => Some(RestoredPick {
+                archive,
+                named_by: spans_naming_in_txn(vault, txn, &chosen)?,
+            }),
+            None => None,
+        },
+        Answer::SomeoneNew => None,
+    };
     let hinted = match answer {
         Answer::Is(chosen) => Some(chosen),
         Answer::SomeoneNew => ask.provisional,
@@ -284,23 +296,7 @@ pub(super) fn settle_in_txn(
         (Answer::SomeoneNew, None) => (heads_in_txn(vault, txn, ask)?, BTreeSet::new(), false),
         (Answer::Is(_), _) => (BTreeSet::new(), BTreeSet::new(), true),
     };
-    // A pick under a cleanup archive: the archive and the spans naming the
-    // person before the settle restores it.
-    let archived = match answer {
-        Answer::Is(chosen) => match vault.person_archive_in_txn(txn, &chosen)? {
-            Some(archive) => Some(RestoredPick {
-                archive,
-                named_by: spans_naming_in_txn(vault, txn, &chosen)?,
-            }),
-            None => None,
-        },
-        Answer::SomeoneNew => None,
-    };
     let entity = apply_in_txn(vault, txn, ask, answer, said, now)?;
-    let restored = match archived {
-        Some(pick) if vault.archive_tombstone_in_txn(txn, &entity)?.is_none() => Some(pick),
-        _ => None,
-    };
     let mut mentions = Vec::new();
     for ((turn, message, start, end), before) in spans {
         let Some(after) = vault.saved_mention_link_in_txn(txn, &turn, (&message, start, end))?
@@ -330,6 +326,11 @@ pub(super) fn settle_in_txn(
             .ok_or_else(|| invalid("a distinct assertion has no body"))?;
         distinct.push((claim, revision));
     }
+    // Kept only when the settle lifted the archive.
+    let restored = match archived {
+        Some(pick) if vault.archive_tombstone_in_txn(txn, &entity)?.is_none() => Some(pick),
+        _ => None,
+    };
     let confirmed = (!was_present
         && EntityStoreRead::port_entity_present(&vault.store, txn, &entity)?)
     .then_some(entity);
@@ -340,11 +341,11 @@ pub(super) fn settle_in_txn(
         settled_at: now,
         mentions,
         provisionals,
+        restored,
         hint_before: hint_before.filter(|_| hinted == Some(entity)),
         hint_after: hint_in_txn(vault, txn, ask, entity)?,
         confirmed,
         distinct,
-        restored,
     };
     let actor = vault.dreamer_authority_in_txn(txn, now)?;
     applied::record_disposition_in_txn(
@@ -367,9 +368,7 @@ pub(super) fn settle_in_txn(
 /// the settle left it and it, its message and the entities it linked stand
 /// (a held entity's origin turn first), a held entity no restored span names
 /// goes again, the hint and the resolution go back where they still hold
-/// what the settle saved, the cleanup archive the pick lifted goes back
-/// where the cleanup's rule still holds and no span the settle did not find
-/// names the person, and each distinct assertion it made is retracted
+/// what the settle saved, and each distinct assertion it made is retracted
 /// where it stands at its revision then. Once the mention links as before,
 /// still reads as it did and no ask is open on it, the ask goes to the owner
 /// as today's question. What an erase took is listed as left alone.
@@ -482,20 +481,6 @@ pub(in crate::dreamer_runner::maintenance) fn revert_settle_in_txn(
             inverse.settled_at,
         )?;
     }
-    if let Some(pick) = &inverse.restored {
-        // A span that names the person now and did not before the settle is
-        // a later mention, which keeps the person restored.
-        let named_later = spans_naming_in_txn(vault, txn, &inverse.entity)?
-            .iter()
-            .any(|span| !pick.named_by.contains(span));
-        if !named_later
-            && vault.rearchive_restored_person_in_txn(txn, &inverse.entity, &pick.archive)?
-        {
-            out.closed.push(inverse.entity);
-        } else {
-            out.left_alone.push(inverse.entity.to_hex());
-        }
-    }
     for (claim, revision) in &inverse.distinct {
         let stands = vault
             .get_claim_in_txn(&*txn, claim)?
@@ -505,6 +490,21 @@ pub(in crate::dreamer_runner::maintenance) fn revert_settle_in_txn(
             out.closed.push(*claim);
         } else {
             out.left_alone.push(claim.to_hex());
+        }
+    }
+    // The cleanup archive the pick lifted goes back by the cleanup's own
+    // rule. A span that names the person now and did not before the settle
+    // is a later mention, which keeps the person restored.
+    if let Some(pick) = &inverse.restored {
+        let named_later = spans_naming_in_txn(vault, txn, &inverse.entity)?
+            .iter()
+            .any(|span| !pick.named_by.contains(span));
+        if !named_later
+            && vault.rearchive_restored_person_in_txn(txn, &inverse.entity, &pick.archive)?
+        {
+            out.closed.push(inverse.entity);
+        } else {
+            out.left_alone.push(inverse.entity.to_hex());
         }
     }
     if let Some(person) = inverse.confirmed {
