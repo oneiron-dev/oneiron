@@ -125,9 +125,12 @@ impl<'g> TombstoneExport<'g> {
     /// one world it was in that the grant's and the selector's world ceilings
     /// both hold ([`note_world::position_at`], FIX-LIST 9433), so a NOTE in
     /// W and X travels under a World(W) selector, as it did live
-    /// (REVIEW-10024). The capture's world axis is the row's position
-    /// ([`NoteWorlds::axis`]); every other row, and a capture with no type,
-    /// keeps its captured scope.
+    /// (REVIEW-10024). Its worlds are every world the capture kept it in
+    /// ([`DeletedRecordScope::live_worlds`]), so a NOTE in base reality and W
+    /// travels to a grant that reads only W, as it did live (REVIEW-10042);
+    /// a capture older than that field holds the captured world axis, the
+    /// row's one position ([`NoteWorlds::axis`]). Every other row, and a
+    /// capture with no type, keeps its captured scope.
     fn held_position(&self, captured: &DeletedRecordScope) -> Scope {
         if !captured
             .entity_type
@@ -135,10 +138,10 @@ impl<'g> TombstoneExport<'g> {
         {
             return captured.scope.clone();
         }
-        let worlds = match &captured.scope.worlds {
-            ScopeAxis::Some(worlds) => NoteWorlds::In(worlds.clone()),
-            ScopeAxis::All => NoteWorlds::NoSingleWorld,
-            ScopeAxis::Bottom => return captured.scope.clone(),
+        let worlds = match (&captured.live_worlds, &captured.scope.worlds) {
+            (Some(worlds), _) | (None, ScopeAxis::Some(worlds)) => NoteWorlds::In(worlds.clone()),
+            (None, ScopeAxis::All) => NoteWorlds::NoSingleWorld,
+            (None, ScopeAxis::Bottom) => return captured.scope.clone(),
         };
         note_world::position_at(
             &captured.scope,
