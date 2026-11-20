@@ -19,7 +19,7 @@
 //! (`machine_answers.rs` `append_owner_answer_ending_keys_in_txn` and
 //! `carried_act.rs` `append_carried_act_in_txn` sign with no proof): B's
 //! import of A's removal refuses with `AuthorityLogFull`, and A's setting act
-//! either is not counted at A or waits at B. The third test passes there too:
+//! either is not counted at A or waits at B. The second test passes there too:
 //! it shows the act A carries unproven waits at B.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test authority_log_owner_reserve_carry`.
