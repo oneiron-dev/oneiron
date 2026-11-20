@@ -80,8 +80,7 @@ pub fn project(
     let slides: Vec<NodeId> = deck
         .nodes
         .get(&NodeId(0))
-        .map(|root| root.children.clone())
-        .unwrap_or_default();
+        .map_or_default(|root| root.children.clone());
     let order = deck.descendants(NodeId(0));
 
     // 1. Live-born slides, each after its live predecessor, over the
@@ -162,7 +161,7 @@ pub fn project(
         for id in copied.values() {
             work.raise_shape(&to, *id);
         }
-        for (other, place) in work.at.iter_mut() {
+        for (other, place) in &mut work.at {
             if place.0 == part
                 && home.get(other) == Some(&to)
                 && let Some(new) = copied.get(&place.1)
@@ -335,6 +334,9 @@ pub fn project(
 
     // 9. Own geometry and text, in model-identity order.
     for (id, node) in &deck.nodes {
+        fn changed<T: PartialEq + Copy>(live: Option<T>, held: Option<T>) -> Option<T> {
+            live.filter(|value| Some(*value) != held)
+        }
         if matches!(node.kind, NodeKind::Root | NodeKind::Slide) {
             continue;
         }
@@ -342,9 +344,6 @@ pub fn project(
         let current = work.view()?;
         let shape = shape_at(&current, &part, native).ok_or(LiveError::UnknownNode)?;
         let held = geometry_of(shape);
-        fn changed<T: PartialEq + Copy>(live: Option<T>, held: Option<T>) -> Option<T> {
-            live.filter(|value| Some(*value) != held)
-        }
         let xfrm = Xfrm {
             offset: changed(node.geometry.offset, held.offset),
             extent: changed(node.geometry.extent, held.extent),

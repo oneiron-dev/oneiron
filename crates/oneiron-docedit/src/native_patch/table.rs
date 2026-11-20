@@ -28,7 +28,7 @@ pub(super) fn graphic_frame(frame: &Frame<'_>, uri: &str, inner: &str) -> String
     format!(
         "<p:graphicFrame xmlns:p=\"{PML}\" xmlns:a=\"{DML}\"><p:nvGraphicFramePr><p:cNvPr id=\"{id}\" name=\"{}\"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp=\"1\"/></p:cNvGraphicFramePr><p:nvPr>{}</p:nvPr></p:nvGraphicFramePr><p:xfrm><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/></p:xfrm><a:graphic><a:graphicData uri=\"{uri}\">{inner}</a:graphicData></a:graphic></p:graphicFrame>",
         escape_text(name),
-        placeholder.map(placeholder_xml).unwrap_or_default(),
+        placeholder.map_or_default(placeholder_xml),
         bounds.x,
         bounds.y,
         bounds.cx,

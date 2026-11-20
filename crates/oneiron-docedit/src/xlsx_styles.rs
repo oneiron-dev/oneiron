@@ -83,6 +83,9 @@ const SHEET_ORDER: &[&str] = &[
 
 type Result<T> = std::result::Result<T, XlsxBodyError>;
 
+/// Written formats' cell format indices, new bytes and added style names.
+pub(crate) type WrittenFormats = (Vec<u32>, Option<Vec<u8>>, Vec<String>);
+
 /// Write `formats` into the stylesheet `bytes`, whose `cellXfs` holds the
 /// `styles` cell formats the body read: each format's index in `cellXfs`, in
 /// order, the stylesheet's new bytes when any record was added, and the
@@ -92,7 +95,7 @@ pub(crate) fn write_formats(
     resources: &crate::resource::Resources,
     formats: &[XlsxFormat],
     styles: usize,
-) -> Result<(Vec<u32>, Option<Vec<u8>>, Vec<String>)> {
+) -> Result<WrittenFormats> {
     let tree = XmlTree::parse(bytes, resources)?;
     tree.root(SML, "styleSheet")
         .map_err(|_| refused("the stylesheet is not SpreadsheetML"))?;
@@ -238,14 +241,12 @@ struct List {
 impl List {
     fn read(tree: &XmlTree, name: &'static str, entry: &str) -> Result<Self> {
         let node = tree.child(0, SML, name)?.map(|(index, _)| index);
-        let entries: Vec<Element> = node
-            .map(|list| {
-                tree.children(list)
-                    .filter(|(_, node)| node.is(SML, entry))
-                    .map(|(index, _)| Element::read(tree, index))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let entries: Vec<Element> = node.map_or_default(|list| {
+            tree.children(list)
+                .filter(|(_, node)| node.is(SML, entry))
+                .map(|(index, _)| Element::read(tree, index))
+                .collect()
+        });
         Ok(Self {
             name,
             node,

@@ -23,7 +23,7 @@ pub fn preserve_missing_root_extensions(
     let names: Vec<String> = after
         .names()
         .filter(|n| is_worksheet_part(n))
-        .map(|s| s.to_owned())
+        .map(std::borrow::ToOwned::to_owned)
         .collect();
     for name in names {
         let (Some(b), Some(a)) = (before.part(&name), after.part(&name)) else {
@@ -584,10 +584,14 @@ fn parse_worksheet(xml: &[u8]) -> Result<Parsed, &'static str> {
         extlsts,
     })
 }
+
+/// An element's namespace, local and qualified names with its declarations.
+type ElementDescription = (Option<String>, String, String, BTreeMap<String, String>);
+
 fn describe(
     reader: &NsReader<&[u8]>,
     tag: &BytesStart<'_>,
-) -> Result<(Option<String>, String, String, BTreeMap<String, String>), &'static str> {
+) -> Result<ElementDescription, &'static str> {
     let (res, local) = reader.resolver().resolve_element(tag.name());
     let ns = match res {
         ResolveResult::Bound(n) => Some(n.as_ref().to_owned()),

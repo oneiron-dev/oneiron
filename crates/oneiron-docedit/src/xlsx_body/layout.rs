@@ -7,6 +7,9 @@ use super::titles::TitleMoves;
 use super::*;
 use crate::xlsx_shift::retarget_linked_sheets;
 
+/// A formula text rewrite, given a cell formula's own cell.
+pub(super) type FormulaRewrite<'a> = dyn Fn(&str, Option<(u32, u32)>) -> Option<String> + 'a;
+
 impl Book {
     /// Write a sheet layout: rename, reorder, add and delete worksheets in the
     /// sheet list; carry each defined name's scope and the workbook view's
@@ -229,7 +232,7 @@ impl Book {
             if kept_state(*at) != *state {
                 match (state.state(), node.attr_spans.get("state")) {
                     (Some(value), _) => {
-                        sheet_edits.push(set_attribute(&bytes, node, "state", value))
+                        sheet_edits.push(set_attribute(&bytes, node, "state", value));
                     }
                     (None, Some(span)) => {
                         let start = if bytes[span.start - 1].is_ascii_whitespace() {
@@ -485,7 +488,7 @@ impl Book {
                 match fate(node) {
                     SourceFate::Keep => {}
                     SourceFate::Sheet(name) => {
-                        edits.push(set_attribute(&bytes, node, "sheet", &name))
+                        edits.push(set_attribute(&bytes, node, "sheet", &name));
                     }
                     SourceFate::Range(reference) => {
                         edits.push(set_attribute(&bytes, node, "ref", &reference));
@@ -527,7 +530,7 @@ impl Book {
     pub(super) fn rewrite_formulas(
         &mut self,
         part: &str,
-        rewrite: &dyn Fn(&str, Option<(u32, u32)>) -> Option<String>,
+        rewrite: &FormulaRewrite<'_>,
     ) -> Result<()> {
         let bytes = self
             .package

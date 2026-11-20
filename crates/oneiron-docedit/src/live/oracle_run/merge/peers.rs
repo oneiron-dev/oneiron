@@ -96,7 +96,11 @@ pub(super) fn loro_peers(
             let free = deck.nodes.get(&p.free);
             let kept = [na, nb].iter().all(|node| deck.nodes.contains_key(node))
                 && free.is_some_and(|node| node.geometry == moved)
-                && deck.texts.get(&p.free).map(|text| text.plain()) == Some(rewritten.plain());
+                && deck
+                    .texts
+                    .get(&p.free)
+                    .map(crate::live::pptx::TextBody::plain)
+                    == Some(rewritten.plain());
             if !kept {
                 failures.push(format!(
                     "{order}: the merge does not hold both peers' work (two new shapes, peer A's geometry and peer B's text of the free shape)"

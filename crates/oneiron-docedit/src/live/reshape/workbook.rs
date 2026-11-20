@@ -339,12 +339,15 @@ struct Planned {
     like: Option<Key>,
 }
 
+/// Each table's corners with whether the chart reads a cell in it.
+type TableRanges = Vec<((u32, u32), (u32, u32), bool)>;
+
 /// A worksheet as the edit reads it.
 struct Sheet<'b> {
     cells: BTreeMap<(u32, u32), &'b XlsxCell>,
     locked: &'b [XlsxArea],
     /// Each table's corners, and whether the chart reads a cell in it.
-    tables: Vec<((u32, u32), (u32, u32), bool)>,
+    tables: TableRanges,
     /// The sheet as read, whose table headers a series name may rename.
     held: &'b XlsxSheet,
 }

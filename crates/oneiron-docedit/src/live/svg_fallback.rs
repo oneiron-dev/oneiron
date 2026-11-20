@@ -285,7 +285,7 @@ fn show_raster(
         return Ok(false);
     }
     let svg = image_rel(package, slide, media)?;
-    let raster = image_rel(package, slide, &raster)?;
+    let raster = image_rel(package, slide, raster)?;
     // The SVG into the blip's extension, then the raster into its embed.
     let edit = match (svg_at, xml::child(&tree, blip, A, "extLst")) {
         (Some(at), _) => {

@@ -70,6 +70,10 @@ pub(super) fn rebuilt(
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one ordered render whose closures share many locals"
+)]
 fn rebuilt_pass(
     bytes: &[u8],
     tree: &XmlTree,
@@ -190,16 +194,14 @@ fn rebuilt_pass(
         let property_xml =
             |property: Option<(usize, &Node)>, copied_sources: &mut Vec<std::ops::Range<usize>>| {
                 let mut xml = template_property(property, copied_sources);
-                if moved_wrapper {
-                    if let Some((at, node)) = property {
-                        let mut bindings = crate::edit::xml::inherited_bindings(bytes, tree, at);
-                        if clear_unbound_default
-                            && crate::edit::xml::default_namespace(tree, at).is_none()
-                        {
-                            bindings.push_str(" xmlns=\"\"");
-                        }
-                        xml.insert_str(1 + node.qualified.len(), &bindings);
+                if moved_wrapper && let Some((at, node)) = property {
+                    let mut bindings = crate::edit::xml::inherited_bindings(bytes, tree, at);
+                    if clear_unbound_default
+                        && crate::edit::xml::default_namespace(tree, at).is_none()
+                    {
+                        bindings.push_str(" xmlns=\"\"");
                     }
+                    xml.insert_str(1 + node.qualified.len(), &bindings);
                 }
                 xml
             };
@@ -328,13 +330,16 @@ fn rebuilt_pass(
             let mut previous: Option<(usize, &Node)> = None;
             for (ordinal, at, node, text) in &segments {
                 // Only original neighbors inside this unchanged interval keep their gap.
-                if let Some((prior, previous_node)) = previous {
-                    if field_free && prior + 1 == *ordinal && from < position && position < to {
-                        runs.push_str(
-                            std::str::from_utf8(&bytes[previous_node.span.end..node.span.start])
-                                .ok()?,
-                        );
-                    }
+                if let Some((prior, previous_node)) = previous
+                    && field_free
+                    && prior + 1 == *ordinal
+                    && from < position
+                    && position < to
+                {
+                    runs.push_str(
+                        std::str::from_utf8(&bytes[previous_node.span.end..node.span.start])
+                            .ok()?,
+                    );
                 }
                 let start = position.max(from);
                 let end = (position + text.len()).min(to);

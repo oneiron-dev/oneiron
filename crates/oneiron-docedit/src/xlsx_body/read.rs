@@ -33,7 +33,7 @@ pub fn read_xlsx_cells(
         date1904: book.date1904,
         sheets,
         names: book.names.clone(),
-        styles: book.styles.clone(),
+        styles: book.styles,
     })
 }
 
@@ -123,7 +123,7 @@ impl Book {
                     .map(|(_, node)| node.text.clone());
                 let value = match (node.attr("t").unwrap_or("n"), stored) {
                     ("inlineStr", _) => match tree.child(index, SML, "is")? {
-                        Some((item, _)) => XlsxValue::Text(string_item(&tree, item)),
+                        Some((item, _)) => XlsxValue::Text(string_item(tree, item)),
                         None => XlsxValue::Blank,
                     },
                     (_, None) => XlsxValue::Blank,

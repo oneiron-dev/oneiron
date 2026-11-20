@@ -341,6 +341,9 @@ pub fn mark_full_calc(
     Ok(book.package.export()?)
 }
 
+/// Defined-name writes waiting for their list elements, keyed by name and sheet.
+type PendingNames<'a> = Vec<((String, Option<usize>), Option<retain::NameWrite<'a>>)>;
+
 impl Book {
     /// Write the body's cell formats into the stylesheet: each one's index in
     /// `cellXfs`, in order. A workbook with none gets a minimal one first.
@@ -419,7 +422,7 @@ impl Book {
             .ok_or(refused("the workbook part is missing"))?;
         let tree = XmlTree::parse(&bytes, self.package.resources())?;
         let root = &tree.nodes[0];
-        let mut pending: Vec<((String, Option<usize>), Option<retain::NameWrite<'_>>)> = Vec::new();
+        let mut pending: PendingNames<'_> = Vec::new();
         for change in changes {
             let (name, sheet, write) = match change {
                 XlsxChange::SetName {

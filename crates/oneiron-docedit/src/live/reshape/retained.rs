@@ -177,6 +177,13 @@ fn kept_look(tree: &XmlTree, ser: usize) -> Option<(usize, usize)> {
     Some((ext, look))
 }
 
+/// A surviving series' source and target plots with whether it moved.
+pub(super) type PlotMove = (
+    (ChartKind, Option<PlotGrouping>),
+    (ChartKind, Option<PlotGrouping>),
+    bool,
+);
+
 /// The survivor `ser`, drawn in a `from` plot laid out as `was`, written as
 /// a series of a `to` plot laid out as `now` (`moved` out of the plot
 /// element that held it): its `idx` and `order` values set, its slots
@@ -194,11 +201,7 @@ pub(super) fn retained(
     ser: usize,
     (idx, place): (u32, u32),
     writer: &Writer,
-    ((from, was), (to, now), moved): (
-        (ChartKind, Option<PlotGrouping>),
-        (ChartKind, Option<PlotGrouping>),
-        bool,
-    ),
+    ((from, was), (to, now), moved): PlotMove,
     slots: &Slots<'_>,
     points: &Points,
     dropped: &mut Vec<String>,
@@ -289,8 +292,7 @@ pub(super) fn retained(
         let own = |name: &str| -> Vec<u8> {
             look.and_then(|(_, at)| xml::child(tree, at, C, name))
                 .filter(|_| order(to).contains(&name))
-                .map(|at| piece(bytes, tree, at).to_vec())
-                .unwrap_or_default()
+                .map_or_default(|at| piece(bytes, tree, at).to_vec())
         };
         entries.push(("spPr", own("spPr")));
         entries.push(("marker", own("marker")));
