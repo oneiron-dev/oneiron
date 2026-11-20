@@ -3,7 +3,7 @@
   "description": "The owner rejects the exact pending compliance proposal hash without changing the effective rules.",
   "input": "crate::campaign::compliance::ComplianceApprovalRequest",
   "output": "crate::campaign::compliance::ComplianceReceipt",
-  "call": "memory.vault().store.record_hooks.compliance_reject_as(memory, &memory.embedded_owner(\"vault.campaign.compliance.reject\")?, &input)?",
+  "call": "memory.with_owner_or_delegate(\"vault.campaign.compliance.reject\", |who, _credential| match who { crate::authority::OwnerOrDelegate::Owner(owner) => memory.vault().store.record_hooks.compliance_reject_as(memory, owner, &input), crate::authority::OwnerOrDelegate::Delegate(_agent) => memory.compliance_reject_as_delegate(&input) })?",
   "scope": "Write",
   "act_class": "reversible_work",
   "admission": {
@@ -14,5 +14,5 @@
   "host_door": true,
   "host_door_caller": true,
   "host_door_lists": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "owner_delegate"
 }

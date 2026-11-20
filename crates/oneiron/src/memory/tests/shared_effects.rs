@@ -23,7 +23,7 @@ fn shared() -> (tempfile::TempDir, Vault, EntityId, EntityId, Vec<String>) {
             crate::store::GateDecisionId::now(),
         )
         .unwrap();
-    let created = vault
+    vault
         .initialize_shared_vault(
             &authenticated,
             42,
@@ -45,7 +45,15 @@ fn shared() -> (tempfile::TempDir, Vault, EntityId, EntityId, Vec<String>) {
             1,
         )
         .unwrap();
-    (dir, vault, member, viewer, created.grant_refs)
+    let grant_refs = crate::test_util::accept_founding_invitation(
+        &vault,
+        42,
+        member,
+        FederationGrantRole::Member,
+    );
+    crate::test_util::grant_founding_writer_reads(&vault, member);
+    crate::test_util::accept_founding_invitation(&vault, 42, viewer, FederationGrantRole::Viewer);
+    (dir, vault, member, viewer, grant_refs)
 }
 
 fn change_member_grant(
@@ -159,8 +167,6 @@ fn blob_creation_replacement_and_scoped_old_new_positions_fail_closed() {
     assert!(private.get_raw(&personal_id).unwrap().is_some());
 }
 
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SHARED-EFFECTS-ITEMS]: the lib test target's type check fails here (1 errors: E0593 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn nested_raw_batch_cannot_escape_the_actor_content_transaction() {
     let (_dir, vault, member, _, refs) = shared();
@@ -180,7 +186,7 @@ fn nested_raw_batch_cannot_escape_the_actor_content_transaction() {
     assert!(
         memory
             .with_actor_content_write_txn(|content| {
-                content.update_note(note_id, |txn| {
+                content.update_note(note_id, |txn, _lane| {
                     // A nested call to the ordinary batch method cannot hide its
                     // BLOB effect behind the NOTE's already-authorized position.
                     vault

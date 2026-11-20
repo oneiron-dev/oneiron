@@ -1,0 +1,17 @@
+{
+  "name": "vault.worlds.vectors",
+  "description": "The owner, or a holder of a Steward grant naming read, reads where each world's text vectors are made on the install that answers: the vault's space, the world's own space, or none.",
+  "input": "crate::embed::world_vectors::WorldVectorsRequest",
+  "output": "crate::embed::world_vectors::WorldVectorsAnswer",
+  "call": "crate::embed::world_vectors::read_world_vectors_embedded(memory, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "substrate_reader"
+}

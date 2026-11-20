@@ -5,7 +5,9 @@
 //! card 3 = A). It is a row of `vault_meta`, never an entity row, so sync
 //! never carries it and another device of the vault never sees it. Its name
 //! is indexed beside it the way the engine's identity index keys a name, so
-//! the next lookup of the same key finds it instead of minting a twin. The
+//! the next lookup of the same key finds it instead of minting a twin. A
+//! role phrase's (`my manager`) is its possessor's alone: only that
+//! speaker's next lookup finds it (FIX LINKER-ROLE-PROVISIONAL-PER-SPEAKER). The
 //! Dreamer's or an actor's confirmation makes the real, synced entity, under
 //! the same id, or names an existing entity in its place.
 
@@ -13,11 +15,14 @@
 use std::collections::BTreeSet;
 use std::ops::Bound;
 
+use super::role::{self, ConfirmedBy};
 use super::tags;
+use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
+use crate::write_envelope::WriteEnvelope;
 use crate::{EntityId, TimeRange, Vault};
 
 /// A provisional entity. Key: its id.
@@ -48,6 +53,7 @@ impl Vault {
             origin: *origin,
             facet: None,
             minted_at: 1,
+            possessor: None,
         };
         self.with_write_txn(|txn| mint_in_txn(&self.store, txn, id, &entity))
     }
@@ -90,10 +96,35 @@ impl Memory<'_> {
     /// named by the text a turn still holds for it, and syncs as any entity
     /// does. Every tag set that named the provisional entity now names the
     /// real one. A provisional entity no readable text names any more is not
-    /// found: no copy of a deleted name becomes synced truth.
+    /// found: no copy of a deleted name becomes synced truth. A role
+    /// phrase's person (`my manager`) is labelled by the words and asserted
+    /// as its possessor's role edge ([`confirm_in_txn`]): Approved under the
+    /// owner's own proof, unsure for any other confirm.
     pub fn confirm_provisional_entity(&self, id: &EntityId) -> MemoryResult<()> {
+        let owner = self.owner_authorship();
+        let source = if owner.is_some() {
+            ClaimSource::UserStated
+        } else {
+            ClaimSource::Inferred
+        };
+        // An unsure edge is this session's own claim: its host origin's
+        // envelope when one is bound, as every claim door of a Memory writes.
+        let envelope = match self.host_envelope(ClaimApprovalStatus::Auto)? {
+            Some(host) => host,
+            None => WriteEnvelope::new(
+                self.write_actor(),
+                source,
+                role::role_edge_provenance()?,
+                ClaimApprovalStatus::Auto,
+            ),
+        };
+        let by = ConfirmedBy {
+            owner,
+            envelope: Some(envelope),
+            source,
+        };
         self.with_verified_actor_write_txn(|txn| {
-            if !confirm_in_txn(self.vault(), txn, id)? {
+            if confirm_in_txn(self.vault(), txn, id, by)?.is_none() {
                 return Err(MemoryError::not_found("no provisional entity"));
             }
             Ok(())
@@ -135,12 +166,72 @@ pub(super) fn exists_in_txn(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId)
     PROVISIONAL.contains(store, txn, id)
 }
 
-/// The provisional entities of `kind` whose name keys as `mention` does.
+/// The provisional entities of `kind` whose name keys as `mention` does,
+/// whatever their possessor.
 pub(super) fn lookup_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     kind: u8,
     mention: &str,
+) -> Result<Vec<EntityId>> {
+    lookup_where_in_txn(store, txn, kind, mention, |_| true)
+}
+
+/// The provisional entities of `kind` whose name keys as `mention` does, for
+/// a mention of `possessor`: a role phrase's possessor finds only its own
+/// (FIX LINKER-ROLE-PROVISIONAL-PER-SPEAKER). With no possessor (a mention
+/// that is no role phrase, or a role phrase of no single author) every one,
+/// as [`lookup_in_txn`].
+pub(super) fn lookup_possessed_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    kind: u8,
+    mention: &str,
+    possessor: Option<EntityId>,
+) -> Result<Vec<EntityId>> {
+    lookup_where_in_txn(store, txn, kind, mention, |entity| {
+        possessor.is_none() || entity.possessor == possessor
+    })
+}
+
+/// Whether any of `entities` is a provisional person minted for a role
+/// phrase of a possessor other than `possessor`, when `possessor` names one:
+/// a role phrase's link never names another speaker's (FIX
+/// LINKER-ROLE-PROVISIONAL-PER-SPEAKER). A role phrase's row minted before
+/// possessors were kept is no one's own, so it counts as another's. Real
+/// entities, a provisional person minted for any other mention, and every
+/// provisional entity when `possessor` is `None`, name no other.
+pub(super) fn names_other_possessor_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entities: &[EntityId],
+    possessor: Option<EntityId>,
+) -> Result<bool> {
+    if possessor.is_none() {
+        return Ok(false);
+    }
+    for id in entities {
+        if PROVISIONAL
+            .get(store, txn, id)?
+            .is_some_and(|entity| match entity.possessor {
+                Some(own) => Some(own) != possessor,
+                None => super::role::role_word(entity.kind, &entity.name).is_some(),
+            })
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The provisional entities of `kind` whose name keys as `mention` does and
+/// that `keep` takes.
+fn lookup_where_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    kind: u8,
+    mention: &str,
+    keep: impl Fn(&ProvisionalEntity) -> bool,
 ) -> Result<Vec<EntityId>> {
     let digest = crate::ingest::identity_hint_digest(mention);
     let mut prefix = vec![kind];
@@ -150,7 +241,9 @@ pub(super) fn lookup_in_txn(
         // The index is checked against the row it points at, as the
         // identity index is checked against the record.
         if PROVISIONAL.get(store, txn, &id)?.is_some_and(|entity| {
-            entity.kind == kind && crate::ingest::identity_hint_digest(&entity.name) == digest
+            entity.kind == kind
+                && crate::ingest::identity_hint_digest(&entity.name) == digest
+                && keep(&entity)
         }) {
             found.push(id);
         }
@@ -319,18 +412,36 @@ pub(crate) fn resolve_in_txn(
     Ok(true)
 }
 
+/// A confirmed provisional entity ([`confirm_in_txn`]).
+pub(crate) struct Confirmed {
+    /// The role edge its confirm asserted on its possessor, when it
+    /// asserted one ([`role::assert_role_edge_in_txn`]).
+    pub(crate) role_edge: Option<EntityId>,
+}
+
 /// Confirms the provisional entity `id` in the caller's transaction, as
 /// [`Memory::confirm_provisional_entity`] does: the real entity is born
 /// under its id, named by the text a turn still holds for it. The identity
-/// re-check's "someone new" (OF-123); `false` when `id` is no provisional
+/// re-check's "someone new" (OF-123); `None` when `id` is no provisional
 /// entity or no readable text names it any more.
+///
+/// A role phrase's person (`my manager`, with a possessor) is its
+/// possessor's alone (FIX LINKER-ROLE-CONFIRMED-PERSON-KEY-ACROSS-SPEAKERS;
+/// Engine ruling LINKER-ROLE-CONFIRM-ASSERTS-ROLE-EDGE = A): the words label
+/// it as its `display_name` and are no identity name, so no speaker's phrase
+/// finds it by the identity key, and the confirm asserts the relation they
+/// name as the possessor's role edge, with `by`'s word, in this same write.
+/// The possessor's next phrase reads the edge; another speaker's reads its
+/// own speaker's edges. A provisional entity with no possessor is named as
+/// before. A person confirmed before keeps its stored name.
 pub(crate) fn confirm_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-) -> Result<bool> {
+    by: ConfirmedBy<'_>,
+) -> Result<Option<Confirmed>> {
     if !PROVISIONAL.contains(&vault.store, txn, id)? {
-        return Ok(false);
+        return Ok(None);
     }
     if crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, id)? {
         return Err(Error::InvariantViolation(
@@ -338,9 +449,17 @@ pub(crate) fn confirm_in_txn(
         ));
     }
     let Some(entity) = sourced_in_txn(vault, txn, id)? else {
-        return Ok(false);
+        return Ok(None);
     };
-    let mut fields = vec![("name".into(), entity.name.as_str().into())];
+    let role = entity
+        .possessor
+        .zip(role::role_word(entity.kind, &entity.name));
+    let label = if role.is_some() {
+        "display_name"
+    } else {
+        "name"
+    };
+    let mut fields = vec![(label.into(), entity.name.as_str().into())];
     // Born under the audience of the words that name it (OPUS-LEAKS): a name
     // read only in a relationship's or a private MESSAGE is read only where
     // one of those MESSAGEs is.
@@ -354,6 +473,12 @@ pub(crate) fn confirm_in_txn(
     let at = TimeRange {
         start: entity.minted_at,
         end: entity.minted_at,
+    };
+    let source = match &role {
+        Some((possessor, _)) => {
+            possessor_naming_message_in_txn(vault, txn, id, &entity.name, *possessor)?
+        }
+        None => None,
     };
     retire_in_txn(&vault.store, txn, id)?;
     vault
@@ -371,7 +496,33 @@ pub(crate) fn confirm_in_txn(
             facet,
         )?;
     }
-    Ok(true)
+    let role_edge = match (role, source) {
+        (Some((possessor, word)), Some(message)) => {
+            let role = (possessor, word.as_str());
+            role::assert_role_edge_in_txn(vault, txn, role, *id, message, by, now)?
+        }
+        _ => None,
+    };
+    Ok(Some(Confirmed { role_edge }))
+}
+
+/// The first MESSAGE, in id order, whose words name the provisional entity
+/// `id` by `name` and whose one author is `possessor`: the words a role
+/// person's edge is derived from. `None` when no such MESSAGE is left.
+fn possessor_naming_message_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    name: &str,
+    possessor: EntityId,
+) -> Result<Option<EntityId>> {
+    let digest = crate::ingest::identity_hint_digest(name);
+    for message in tags::naming_messages_in_txn(vault, txn, id, &digest)? {
+        if role::speaker_in_txn(vault, txn, &message)? == Some(possessor) {
+            return Ok(Some(message));
+        }
+    }
+    Ok(None)
 }
 
 /// Who may read the words that name the provisional entity `id` by `name`
@@ -387,19 +538,37 @@ fn naming_audience_in_txn(
     id: &EntityId,
     name: &str,
 ) -> Result<Option<rmpv::Value>> {
-    use crate::claim::RelationshipRead;
     let digest = crate::ingest::identity_hint_digest(name);
     let messages = tags::naming_messages_in_txn(vault, txn, id, &digest)?;
     if messages.is_empty() {
         return Ok(None);
     }
+    naming_rows_audience_in_txn(vault, txn, &messages)
+}
+
+/// The source audience of an entity named by the words of the rows `rows`
+/// (MESSAGEs, or a TURN holding its own words), as `naming_audience_in_txn`
+/// reads it for a provisional entity's confirmation: `None` when one of them
+/// is open, otherwise the relationships whose members read one of them and
+/// whether every one is private. A row whose audience does not resolve
+/// counts as private. A derivation's Person item is born under it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn naming_rows_audience_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    rows: &BTreeSet<EntityId>,
+) -> Result<Option<rmpv::Value>> {
+    use crate::claim::RelationshipRead;
     let mut relationships = std::collections::BTreeSet::new();
     let mut private = true;
-    for message in &messages {
-        let Some(raw) = vault.get_raw_in(txn, message)? else {
+    for row in rows {
+        let Some(raw) = vault.get_raw_in(txn, row)? else {
             continue;
         };
-        match crate::claim::relationship_read(&vault.store, txn, message, &raw)? {
+        match crate::claim::relationship_read(&vault.store, txn, row, &raw)? {
             RelationshipRead::Decided(true)
             | RelationshipRead::Gated {
                 space: None,
@@ -430,13 +599,14 @@ fn naming_audience_in_txn(
 
 /// Mints a provisional entity named `name` from the turn `origin`, for a
 /// span the identity re-check found to be someone new (OF-123): local and
-/// unsynced, under the turn's facet, as a save mints one.
+/// unsynced, under the turn's facet, as a save mints one, with the role
+/// phrase's `possessor` ([`super::role::possessor_in_txn`]).
 pub(crate) fn mint_for_span_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    kind: u8,
-    name: &str,
+    (kind, name): (u8, &str),
     origin: EntityId,
+    possessor: Option<EntityId>,
     now: u64,
 ) -> Result<EntityId> {
     let id = vault.new_entity_id()?;
@@ -452,6 +622,7 @@ pub(crate) fn mint_for_span_in_txn(
             origin,
             facet,
             minted_at: now,
+            possessor,
         },
     )?;
     Ok(id)

@@ -165,7 +165,8 @@ struct AdmittedWrites {
     /// 17207).
     derived_floors: BTreeMap<EntityId, BTreeSet<EntityId>>,
     /// Every entity id the update's history inserts, and a snapshot's root
-    /// winners (census L6-05, [`super::UpdateInserts`]).
+    /// winners (census L6-05, [`super::UpdateInserts`]), with both ends of
+    /// each edge among them (HELD-ENTITY-DOCUMENT-DEFERRED).
     inserted: BTreeSet<EntityId>,
 }
 
@@ -628,6 +629,7 @@ fn check_window_update(
         ContainerID::new_root(crate::sync::ingest::PEER_ORIGIN_MAP, ContainerType::Map);
     let writers =
         ContainerID::new_root(crate::sync::ingest::MESSAGE_WRITER_MAP, ContainerType::Map);
+    let mut edge_endpoints = BTreeSet::new();
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
             key: map_key,
@@ -638,6 +640,14 @@ fn check_window_update(
         };
         // FIX 6520: no peer writes under a barrier key; its removal still ships.
         super::shallow::refuse_barrier_write(&op.container, &map_key)?;
+        // An edge insert names both its ends: the sweep drops an edge with an
+        // erased end, so its re-put owes a compaction as a row's does
+        // (HELD-ENTITY-DOCUMENT-DEFERRED).
+        if op.container == edges
+            && let Some((source, _, target)) = crate::sync::bridge::parse_edge_key(&map_key)
+        {
+            edge_endpoints.extend([source, target]);
+        }
         if op.container == births {
             crate::sync::row_birth::validate_carried_birth(
                 &candidate,
@@ -743,12 +753,18 @@ fn check_window_update(
     // that drops or changes it, wherever it comes in the range.
     audiences.refuse_dropped_obligations(vault, doc)?;
     let mut inserted: BTreeSet<EntityId> = historical.keys().copied().collect();
+    inserted.extend(edge_endpoints);
     if metadata.mode.is_snapshot()
         && let Some(Some(root)) = encoded_root_state(update)
     {
         root.get_map("entities").for_each(|raw_key, _| {
             if let Ok(id) = EntityId::from_hex(raw_key) {
                 inserted.insert(id);
+            }
+        });
+        root.get_map("edges").for_each(|raw_key, _| {
+            if let Some((source, _, target)) = crate::sync::bridge::parse_edge_key(raw_key) {
+                inserted.extend([source, target]);
             }
         });
     }

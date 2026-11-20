@@ -13,7 +13,7 @@ use crate::authority::{VerifiedSlip, WorldPrivacyView, federation_grant_activati
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
-use crate::federation::{FederationGrantScope, decode_federation_grant_body};
+use crate::federation::{FederationGrantScope, Scope, ScopeAxis, decode_federation_grant_body};
 use crate::gate::PolicyManifestResolution;
 use crate::machine_destination::{Destination, PeerMachine};
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
@@ -116,6 +116,64 @@ impl<'v> ResidenceReadContext<'v> {
             .read
             .is_entity_readable_with_policy_in(txn, &self.policy, id)?
             && self.row_may_leave(txn, id)?)
+    }
+
+    /// Whether the credential's own bounds leave in the row `id` that the
+    /// tombstone `value` removed, with no row left to read
+    /// (FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS): its records and channel caveats
+    /// by the id alone (blind review 1 of #9592), and, for a credential that
+    /// narrows a read axis or asked for worlds, the scope the row held when
+    /// that delete took it (the capture bound to the delete's request, FIX
+    /// 10161), under the credential's Scope and its world ceiling. A narrowed
+    /// credential with no such capture takes no id, so a slip held to one
+    /// world learns of no delete in another (blind review 2 of #9592).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; a credential whose owner no longer stands.
+    pub fn credential_admits_deleted_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        value: &[u8],
+    ) -> Result<bool> {
+        if !self.read.credential_allows_id(id) {
+            return Ok(false);
+        }
+        self.read.every_lane_in(txn, |read| {
+            read.owner_live_in(txn)?;
+            if !read.proof_live_in(txn)? {
+                return Ok(false);
+            }
+            let key = &read.actor_key;
+            let narrowed = key.asked_world_ceiling().is_some()
+                || key.authority_scope().is_some_and(|scope| {
+                    Scope {
+                        verbs: ScopeAxis::All,
+                        ..scope.clone()
+                    } != Scope::top()
+                });
+            if !narrowed {
+                return Ok(true);
+            }
+            let Some(request) = crate::deletion::decode_tombstone_value(value).request_id else {
+                return Ok(false);
+            };
+            let Some(captured) = crate::deletion::tombstone_scope::deleted_scope_in(
+                &read.vault.store,
+                txn,
+                id,
+                &request,
+            )?
+            else {
+                return Ok(false);
+            };
+            Ok(super::actor_key::world_only(captured.worlds.clone())
+                .is_narrowing_of(&key.world_ceiling())
+                && key
+                    .authority_scope()
+                    .is_none_or(|granted| granted.admits("read", &captured, &Scope::top())))
+        })
     }
 
     /// Whether this credential's world ceiling covers the complete metadata

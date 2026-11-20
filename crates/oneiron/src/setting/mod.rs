@@ -35,11 +35,14 @@
 //! Stage 0.1 lands the primitive unused: no engine key is in the catalogue yet, and no value in
 //! force moves.
 
+pub(crate) mod archive_restore;
+mod ask;
 mod carry;
 mod catalogue;
 mod change;
 mod learned;
 mod pack;
+mod page_max;
 mod project;
 mod publish;
 mod read;
@@ -55,6 +58,8 @@ pub use oneiron_setting_contract::{
     SettingSource, SettingStanding, SettingSync, SettingValue,
 };
 
+pub use self::ask::SettingAsk;
+pub(crate) use self::ask::erase_setting_ask_actor_in_txn;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::carry::carry_between_in_txn;
 pub(crate) use self::carry::carry_settings_in_txn;
@@ -66,13 +71,14 @@ pub use self::change::SettingChange;
 pub(crate) use self::change::change_in_txn;
 pub(crate) use self::change::{
     erase_setting_change_actor_in_txn, erase_setting_content_actor_in_txn,
-    erase_setting_entity_in_txn, erase_setting_row_actor_in_txn, settings_after_in_txn,
-    settings_head_in_txn,
+    erase_setting_entity_in_txn, erase_setting_row_actor_in_txn, setting_change_records,
+    settings_after_in_txn, settings_head_in_txn,
 };
 pub use self::learned::{LEARNED_SCOPES, LearnedRange, SettingFitView};
 pub use self::pack::{ENGINE_PACK, PackApplied, ProposedDefaultView};
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::pack::{delete_layer_row, layer_row_revision};
+pub use self::page_max::PageMax;
 pub use self::project::SettingsProjected;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::project::forget_projected_rows_in_txn;
@@ -82,7 +88,9 @@ pub(crate) use self::publish::settings_published_in_txn;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::read::put_stored_bytes;
 pub use self::read::{Requested, SettingCatalogueEntry, SettingRowView, SettingView};
-pub(crate) use self::read::{SettingListFilter, SettingReader, reader_reads_key_in_txn};
+pub(crate) use self::read::{
+    SettingListFilter, SettingReadCaller, SettingReader, reader_reads_key_in_txn,
+};
 pub(crate) use self::set::run_after_commit;
 pub use self::set::{EngineSetting, SetSetting, SetSettingOutcome, SettingCaller};
 use crate::Vault;
@@ -163,16 +171,41 @@ pub struct ItemDomain {
     pub admits: fn(&str) -> bool,
 }
 
+/// The line the owner's confirm sheet shows as the reason of a loosening change to the row at a
+/// scope, for one item of a key (`None`: a change that names no item), read in the sheet's own txn
+/// so it states the vault as the owner sees it at that moment (RESTRICTION-WAVE-11-CAP-NOTE Q1 =
+/// A; CAP-SCOPE = B: the row's scope picks what it states). `Ok(None)`: no line for that item.
+pub type LooseningNote =
+    fn(&Vault, &heed::RoTxn<'_>, &SettingScope, Option<&str>) -> Result<Option<String>>;
+
 /// The one hook a key may run in the write that changes it: re-arm a schedule, clear parks that
 /// wait on the key, or refuse the change on state the value's own check cannot see. It runs only
 /// on an applied change, after its rows are put; its `Err` fails the whole write, so neither row
-/// lands and the caller sees that error. A row that arrives by sync or a restore never passes
-/// through it, so a refusal here needs its reader to hold the same line.
+/// lands and the caller sees that error. A row that arrives by sync or a checkpoint restore never
+/// passes through it, so a refusal here needs its reader to hold the same line. The owner's
+/// archive restore passes an absent row through it as a change with no prior, in a savepoint: a
+/// refusal there leaves the row out and its archived copy retained (`archive_restore`).
 pub type OnChange = fn(&Vault, &mut heed::RwTxn<'_>, &SettingChange) -> Result<()>;
 
 /// The one hook a key may run once the write that changed it has committed: wake a host that
 /// reads the key (a reader woken inside the write would see the last commit's value).
 pub type OnCommitted = fn(&Vault);
+
+/// The turn a key's change takes before its write opens, held until the write and its
+/// `after_commit` are done: for a key whose hook must not land while another holder of that turn
+/// runs several writes. [`Vault::set_setting`] takes it, and so does the owner's archive restore
+/// for each key its archive holds a row of, which it can install through the key's hook
+/// (`archive_restore::take_write_turns`). A change made in a caller's own write
+/// (`Vault::set_setting_in_txn`) takes none, since waiting for a turn inside a write could wait on
+/// a holder that waits on the writer. Such a key is set through those two doors alone.
+#[derive(Clone, Copy)]
+pub struct WriteTurn {
+    /// Names the turn. Keys that take one turn name it alike, so a write that can change several
+    /// of them takes it once.
+    pub name: &'static str,
+    /// Waits for, then holds, the turn, until the returned guard drops.
+    pub take: fn(&Vault) -> Result<Box<dyn std::any::Any>>,
+}
 
 /// One catalogue row: everything the engine knows about a key. Data, not code.
 #[derive(Clone, Copy)]
@@ -198,10 +231,15 @@ pub struct SettingSpec {
     pub read_by: ReadBy,
     pub restore: Restore,
     pub sync: SettingSync,
+    /// The confirm sheet's reason line for a loosening change, for a key whose loosening the
+    /// owner should read a fact about first (the spend cap in force for a payment item).
+    pub loosening_note: Option<LooseningNote>,
     pub on_change: Option<OnChange>,
     /// Run after the commit of each write that applied a change to the key (not on an equal
     /// value, not on a change that waits on a check-in).
     pub after_commit: Option<OnCommitted>,
+    /// Taken before the write of a change to the key opens ([`WriteTurn`]).
+    pub write_turn: Option<WriteTurn>,
 }
 
 impl SettingSpec {
@@ -220,8 +258,10 @@ impl SettingSpec {
         read_by: ReadBy::Holders,
         restore: Restore::Live,
         sync: SettingSync::Vault,
+        loosening_note: None,
         on_change: None,
         after_commit: None,
+        write_turn: None,
     };
 
     /// Whether a row may sit at `kind`.
@@ -268,6 +308,36 @@ impl SettingSpec {
                 self.name
             ))),
         }
+    }
+}
+
+impl Vault {
+    /// The confirm sheet's reason line for loosening `key`'s row at `scope` (at `item` of a family
+    /// key), read now: what the key's [`SettingSpec::loosening_note`] states, or `None` for a key
+    /// that states none.
+    ///
+    /// # Errors
+    ///
+    /// An unknown key, a scope or an item the key does not admit; storage errors.
+    pub fn setting_loosening_note(
+        &self,
+        key: &str,
+        scope: &SettingScope,
+        item: Option<&str>,
+    ) -> Result<Option<String>> {
+        let spec = spec_named(key)?;
+        if !spec.admits_scope(scope.kind()) {
+            return Err(Error::InvalidConfig(format!(
+                "`{key}` takes no row at a {} scope",
+                scope.kind().as_str()
+            )));
+        }
+        spec.check_item(item)?;
+        let Some(note) = spec.loosening_note else {
+            return Ok(None);
+        };
+        let txn = self.store.env.read_txn()?;
+        note(self, &txn, scope, item)
     }
 }
 

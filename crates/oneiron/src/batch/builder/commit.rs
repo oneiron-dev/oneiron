@@ -569,6 +569,10 @@ impl BatchBuilder<'_> {
             vault.store.notify_proactivity_changes();
             vault.verb_hook_bindings_changed();
         }
+        // A batch commits outside the write door: a task-held inquiry
+        // answer of a TASK it ended leaves memory here (FIX
+        // INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE).
+        vault.evict_inquiry_answers_after_commit(&tasks);
         vault.store.notify_task_updates(tasks);
         vault.store.notify_attempt_observers();
         #[cfg(feature = "sync")]
@@ -672,6 +676,7 @@ fn apply_admitted(
     // that TURN after it (ARCH-0026 #sieve-open).
     let rewired =
         crate::dreamer_consolidation::redirty::RewiredTurnEdges::before(vault, wtxn, &batch.ops)?;
+    let claims = crate::vault_cleanup::candidate_claim_subjects(&batch.ops);
     apply_ops_with_origin(
         &vault.store,
         &vault.config,
@@ -682,6 +687,9 @@ fn apply_admitted(
         batch.gate_mode,
         batch.origin,
     )?;
+    // A claim about a PERSON the cleanup archived restores her in this write
+    // (FIX PUT-CLAIM-LANDS-ON-ARCHIVED-PERSON).
+    vault.restore_subjects_of_landed_claims_in_txn(wtxn, &claims)?;
     rewired.redirty_in_txn(vault, wtxn)?;
     // Each NOTE's document is born with its core row (FIX 7783).
     for (id, markdown) in &batch.note_births {
@@ -691,6 +699,9 @@ fn apply_admitted(
     let changes_claims = changes_claims || !routed_rows.is_empty();
     let pad_windows = pad_scope.finish().pad_windows;
     after_apply(wtxn)?;
+    // A room the batch narrowed leaves no standing answer wider than its
+    // rows (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS).
+    vault.mark_answers_in_narrowed_rooms_in_txn(wtxn)?;
     derived.include_source_dependents_in(&vault.store, wtxn, &put_roots)?;
     crate::embed::finalize_repo_derived_index_copies_in_txn(vault, wtxn, derived)?;
     crate::secret_custody::raise_found_key_notices_in_txn(vault, wtxn)?;

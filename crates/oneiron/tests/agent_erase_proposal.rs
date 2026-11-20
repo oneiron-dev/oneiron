@@ -21,6 +21,29 @@
 //! `vault.records.erase_propose`, so the agent has no door to ask through
 //! (the check-in preflight answers its erase `propose` and nothing takes it).
 //!
+//! The personal vault's ask offers its owner one tap, the record's erase
+//! preview, while the record is live, and none once it is erased (FIX
+//! AGENT-ERASE-PROPOSAL-INBOX-TAP). On main after #8340 that case fails at
+//! its first assertion: the ask offers no tap.
+//!
+//! The record that case erases is a child project with its own live goal: the
+//! owner's erase retires the goal with the project it tears, and recreates
+//! nothing (FIX ROOT-PROJECT-ERASE-REPUT-REFUSED). On main the confirm fails:
+//! the goal's retirement re-puts the project after its hard-delete marker, and
+//! the put guard refuses that id. The root project is the vault itself
+//! (ARCH-0067) and no delete door takes it: its ask offers no erase preview,
+//! the preview and the delete rail refuse it before any writer commits (a
+//! privacy erase's audience-edit write included), and it stays with its
+//! goal. On main its ask offers the preview, which its erase then fails
+//! behind.
+//!
+//! A project another live project names as its parent refuses a hard delete
+//! before any writer commits, so its erase leaves it readable with its child
+//! (round-2 P1 of #9494). On main the owner's erase publishes the tombstone
+//! and its read fence, the purge then refuses, and the parent stays fenced:
+//! the case fails where the parent should still read. A new project never
+//! names a parent whose hard delete published; on main its put stands.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test agent_erase_proposal`.
 #![cfg(oneiron_test_support)]
@@ -30,6 +53,7 @@ use std::collections::BTreeSet;
 
 use oneiron::authority::ActSurface;
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::deletion::DeleteReason;
 use oneiron::federation::{
     EraseAskStatus, FederationGrantRole as Role, InitialSharedMember,
     NOTIFICATION_PRODUCER_ERASE_ASK, Scope, ScopeAxis, ScopeId,
@@ -38,14 +62,28 @@ use oneiron::inbox::NotificationKind;
 use oneiron::memory::MEMORY_CODE_FORBIDDEN;
 use oneiron::registry::ENTITY_TYPE_CLAIM;
 use oneiron::task_verb::sdk::invoke;
-use oneiron::test_doors::coach::{define_agent, write_root_goal};
+use oneiron::test_doors::coach::{
+    define_agent, fence_row_for_hard_delete, last_committed_txn_id, write_project_goal,
+    write_root_goal,
+};
 use oneiron::test_doors::derive::grant_core_read_of_kinds;
+use oneiron::test_doors::room_facet_set::create_owner_project;
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
-use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
+use oneiron::test_support::{bind_host_owner, test_host_issuer};
+use oneiron::verbs::{
+    AgentGrantMintRequest, OwnerConfirmPreviewRequest, RecordEraseConfirmRequest,
+    confirm_record_erase, mint_agent_grant_as, preview_owner_confirm,
+};
+use oneiron::workspace_roster::ProjectRecord;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault};
 use serde_json::{Value, json};
 
 const PROPOSE: &str = "vault.records.erase_propose";
+/// The tap a personal vault's erase ask offers its owner: the one-way
+/// confirm preview of the owner's own erase.
+const PREVIEW: &str = "vault.owner_confirm.preview";
+/// The owner's erase the preview shows, and its confirm then calls.
+const ERASE_CONFIRM: &str = "vault.records.erase_confirm";
 /// The inbox producer of a personal vault's agent erase ask.
 const PERSONAL_PRODUCER: &str = "vault.erase_proposal";
 const SHARED: u64 = 42;
@@ -141,6 +179,60 @@ impl Fixture {
         .expect("the owner's read Grant");
         assert!(minted.grant.confers, "the Grant confers");
         agent
+    }
+
+    /// A child project of the root with its own live goal: a project the
+    /// owner may erase, as the root project never is.
+    fn child_project_with_goal(&self) -> EntityId {
+        let root = self.vault.root_project().expect("the root project");
+        let (project, born) = self.put_project_under(root);
+        born.expect("the child project");
+        write_project_goal(&self.vault, &self.owner_proof, project)
+            .expect("the child project's goal");
+        project
+    }
+
+    /// The owner's birth of a new project under `parent`, and its id. A
+    /// rooted vault takes a new project only from an owner-signed birth (a
+    /// bare put is refused: "a new project requires an owner-signed birth"):
+    /// the depth birth is signed with the test host key bound to the owner,
+    /// and the first state with the owner's project signer.
+    fn put_project_under(&self, parent: EntityId) -> (EntityId, oneiron::Result<()>) {
+        let root = self.vault.root_project().expect("the root project");
+        let project = EntityId::now();
+        let record =
+            ProjectRecord::new(project, Some(parent), root, self.owner).expect("a project record");
+        let issuer = test_host_issuer();
+        bind_host_owner(&self.vault, &issuer, self.owner).expect("the owner's host binding");
+        let signer = self
+            .vault
+            .owner_project_signer(&issuer)
+            .expect("the owner's project signer");
+        let born = create_owner_project(
+            &self.vault,
+            &issuer,
+            &self.owner_proof,
+            &signer,
+            self.owner,
+            project,
+            &record,
+        );
+        (project, born)
+    }
+
+    /// The taps each of the owner's personal erase asks offers.
+    fn owner_erase_taps(&self) -> Vec<Value> {
+        self.vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .inbox_list(None, 100)
+            .expect("the owner's inbox")
+            .rows
+            .into_iter()
+            .filter(|row| {
+                row.kind == NotificationKind::Ask && row.source.producer == PERSONAL_PRODUCER
+            })
+            .map(|row| serde_json::to_value(&row.actions).expect("the row's taps"))
+            .collect()
     }
 
     fn propose(&self, agent: EntityId, record: EntityId) -> oneiron::memory::MemoryResult<Value> {
@@ -388,5 +480,164 @@ fn an_agent_does_not_ask_again_what_the_owner_declined() {
         fx.owner_asks(NOTIFICATION_PRODUCER_ERASE_ASK).len(),
         1,
         "and the Owner is not asked again"
+    );
+}
+
+#[test]
+fn the_owners_ask_offers_the_erase_preview_until_the_record_is_erased() {
+    let fx = Fixture::new(false);
+    let project = fx.child_project_with_goal();
+    let agent = fx.project_reader();
+    fx.propose(agent, project)
+        .expect("the agent asks to erase a record it reads");
+    let owner = fx.vault.memory(fx.owner, EdgeActorClass::Human);
+    let offered = fx.owner_erase_taps();
+    assert_eq!(
+        offered,
+        vec![json!([{
+            "verb": PREVIEW,
+            "args": { "verb": ERASE_CONFIRM, "input": { "record": project.to_hex() } },
+        }])],
+        "the owner's ask offers the record's erase preview"
+    );
+    let input: OwnerConfirmPreviewRequest = serde_json::from_value(offered[0][0]["args"].clone())
+        .expect("the tap's args are the preview verb's own input");
+    let shown = preview_owner_confirm(&owner, &fx.owner_proof, input)
+        .expect("the owner previews the erase");
+    assert_eq!(shown.verb, ERASE_CONFIRM, "the preview of the erase");
+    assert_eq!(
+        shown
+            .takes
+            .as_ref()
+            .and_then(|takes| takes["record"].as_str()),
+        Some(project.to_hex().as_str()),
+        "of the record the agent named"
+    );
+    let confirm: RecordEraseConfirmRequest = serde_json::from_value(json!({
+        "record": project.to_hex(),
+        "confirm": shown.confirm,
+    }))
+    .expect("the confirm input");
+    confirm_record_erase(&owner, &fx.owner_proof, confirm)
+        .expect("the owner erases the record on their own proof");
+    assert_eq!(
+        fx.owner_erase_taps(),
+        vec![json!([])],
+        "the ask stays, and an erased record offers no tap"
+    );
+}
+
+#[test]
+fn the_owners_ask_offers_no_erase_of_the_root_project_and_no_door_takes_it() {
+    let fx = Fixture::new(false);
+    let agent = fx.project_reader();
+    fx.propose(agent, fx.project)
+        .expect("the agent asks to erase the root project it reads");
+    assert_eq!(
+        fx.owner_erase_taps(),
+        vec![json!([])],
+        "the owner's ask offers no erase of the root project"
+    );
+    let owner = fx.vault.memory(fx.owner, EdgeActorClass::Human);
+    let input: OwnerConfirmPreviewRequest = serde_json::from_value(json!({
+        "verb": ERASE_CONFIRM,
+        "input": { "record": fx.project.to_hex() },
+    }))
+    .expect("the preview input");
+    preview_owner_confirm(&owner, &fx.owner_proof, input)
+        .expect_err("the root project previews no erase");
+    let committed = last_committed_txn_id(&fx.vault);
+    for reason in [DeleteReason::OwnerErase, DeleteReason::GdprDelete] {
+        let refused = fx
+            .vault
+            .delete_entity_with_reason(&fx.project, reason)
+            .expect_err("the delete rail refuses the root project");
+        assert!(
+            refused.to_string().contains("cannot delete root project"),
+            "the rail refuses it as the root ({reason:?}): {refused}"
+        );
+    }
+    assert_eq!(
+        last_committed_txn_id(&fx.vault),
+        committed,
+        "before any writer commits, a privacy erase's included"
+    );
+    assert_eq!(
+        fx.vault
+            .project(fx.project)
+            .expect("project read")
+            .expect("the root project stays")
+            .goal
+            .as_deref(),
+        Some(fx.goal_claim.to_hex().as_str()),
+        "with its goal"
+    );
+}
+
+#[test]
+fn a_project_with_a_live_child_refuses_its_erase_before_any_writer_and_stays_readable() {
+    let fx = Fixture::new(false);
+    let parent = fx.child_project_with_goal();
+    let (child, put) = fx.put_project_under(parent);
+    put.expect("the parent's live child");
+    let committed = last_committed_txn_id(&fx.vault);
+    for reason in [DeleteReason::OwnerErase, DeleteReason::GdprDelete] {
+        let refused = fx
+            .vault
+            .delete_entity_with_reason(&parent, reason)
+            .expect_err("the delete rail refuses a project with a live child");
+        assert!(
+            refused.to_string().contains("project has live children"),
+            "the rail refuses it for its child ({reason:?}): {refused}"
+        );
+    }
+    assert_eq!(
+        last_committed_txn_id(&fx.vault),
+        committed,
+        "before any writer commits"
+    );
+    let owner = fx.vault.memory(fx.owner, EdgeActorClass::Human);
+    let input: OwnerConfirmPreviewRequest = serde_json::from_value(json!({
+        "verb": ERASE_CONFIRM,
+        "input": { "record": parent.to_hex() },
+    }))
+    .expect("the preview input");
+    if let Ok(shown) = preview_owner_confirm(&owner, &fx.owner_proof, input) {
+        let confirm: RecordEraseConfirmRequest = serde_json::from_value(json!({
+            "record": parent.to_hex(),
+            "confirm": shown.confirm,
+        }))
+        .expect("the confirm input");
+        confirm_record_erase(&owner, &fx.owner_proof, confirm)
+            .expect_err("the owner's erase of a project with a live child refuses");
+    }
+    assert!(
+        fx.vault.get(&parent).expect("the parent's read").is_some(),
+        "the parent still reads: no publication fenced it"
+    );
+    assert!(
+        fx.vault.project(parent).expect("project read").is_some(),
+        "the parent project stays"
+    );
+    assert!(
+        fx.vault.project(child).expect("project read").is_some(),
+        "with its child"
+    );
+}
+
+#[test]
+fn no_new_project_names_a_parent_whose_hard_delete_published() {
+    let fx = Fixture::new(false);
+    let parent = fx.child_project_with_goal();
+    fence_row_for_hard_delete(&fx.vault, parent).expect("the parent's publication fence");
+    let (child, put) = fx.put_project_under(parent);
+    let refused = put.expect_err("a new child of a fenced parent refuses");
+    assert!(
+        refused.to_string().contains("parent project is deleted"),
+        "the put refuses it for its fenced parent: {refused}"
+    );
+    assert!(
+        fx.vault.project(child).expect("project read").is_none(),
+        "and no child stands"
     );
 }

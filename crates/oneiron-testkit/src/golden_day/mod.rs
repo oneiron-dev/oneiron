@@ -9,7 +9,8 @@
 //!    scripted backend, and one owner turn ([`SAID`], `vault.witness`);
 //! 2. the vault opened as its process owner, and a Dreamer turn wake over the
 //!    turn, its model calls answered by [`TURN_WAKE_CALLS`]: the extraction
-//!    lands one claim;
+//!    lands one claim. A pass that leaves its script ends the day here
+//!    ([`run`]);
 //! 3. the owner remembers a claim (`vault.remember`);
 //! 4. the owner makes an agent and grants it reads (`vault.agents.create`,
 //!    `vault.agents.grants.mint`);
@@ -50,15 +51,15 @@ use serde_json::{Value, json};
 use crate::clock::FakeClock;
 use crate::door;
 use crate::dreamer::{
-    DreamerPassError, DreamerPassReport, allow_scripted_extraction, attach_test_host,
+    DreamerPassError, DreamerPassReport, PassStack, allow_scripted_extraction, attach_test_host,
     scripted_backend,
 };
 use crate::fixture::{SeedError, TestVault};
 use crate::provider::{ScriptedBackend, SeenCall};
 use crate::receipt::ReceiptReader;
 
-pub use manifest::{AUTHORITY_CLOCK_KEYS, FieldClass, MANIFEST, SCHEMA_VERSION};
-pub use normalise::{MEASURED, NormaliseError, Normaliser, UnknownKey, mask_measured, render};
+pub use manifest::{FieldClass, MANIFEST, SCHEMA_VERSION};
+pub use normalise::{MEASURED, NormaliseError, Normaliser, UnknownKey, render};
 
 /// The script's name, in the dump and in the golden file's name.
 pub const SCRIPT: &str = "golden-day-1";
@@ -79,7 +80,7 @@ pub const TURN_WAKE_CALLS: &[(&str, &str)] = &[
         r#"{"readings":[{"span":1,"kind":"name","novel":true,"confidence":90,"entity":null},{"span":2,"kind":"name","novel":true,"confidence":90,"entity":null}]}"#,
     ),
     (
-        "78d9143fe540c8d87f9f1c3807d66bd8622baf605aaa7e445e123a51655ea334",
+        "fd552e2249e1dc35060cbe0e05fb6a177cc1603fe5cf9d108e5b310003db8796",
         r#"{"candidates":[{"subject":"P1","predicate":"residence.city","value":"Lisbon","confidence":0.9,"evidence_refs":[{"source":"T1","quote":"I moved to Lisbon last March"}]}],"persons":[]}"#,
     ),
 ];
@@ -190,9 +191,8 @@ impl GoldenDayRun {
 
     /// The golden form: the steps and the model calls named first, in
     /// scenario order; then each receipt stream's rows sorted
-    /// ([`Normaliser::sort_rows`]) and named, the authority rows' clock
-    /// readings ([`AUTHORITY_CLOCK_KEYS`]) masked before the sort; then every
-    /// bound ref replaced inside strings.
+    /// ([`Normaliser::sort_rows`]) and named; then every bound ref replaced
+    /// inside strings.
     ///
     /// # Errors
     /// A key the manifest does not classify, or a value its class does not
@@ -208,9 +208,6 @@ impl GoldenDayRun {
         for stream in ["gate_ledger", "family", "authority_audit"] {
             let mut part = self.raw["streams"][stream].clone();
             if let Some(Value::Array(rows)) = part.get_mut("rows") {
-                if stream == "authority_audit" {
-                    mask_measured(rows, AUTHORITY_CLOCK_KEYS);
-                }
                 let sorted = normaliser.sort_rows(std::mem::take(rows));
                 *rows = sorted;
             }
@@ -235,13 +232,26 @@ pub fn backend() -> ScriptedBackend {
 }
 
 /// Runs the day once on a fresh vault, its model calls answered by
-/// `backend` ([`backend`]). Call `backend.finish()` afterwards: an
-/// unscripted model call fails there, with its prompt and digest.
+/// `backend` ([`backend`]). Call `backend.finish()` afterwards.
 ///
 /// # Errors
-/// The seed, the open or the owner failed: the day did not run. A step that
-/// refuses is recorded, not returned.
+/// The seed, the open or the owner failed: the day did not run. The Dreamer
+/// pass left its script (a model call the script does not answer, with its
+/// prompt and digest, or a step it never asked for): the day ends right after
+/// the pass. The engine answers an unscripted extraction with its empty
+/// fallback, so the rest of the day would run on a pass that read nothing.
+/// A step that refuses is recorded, not returned.
 pub fn run(backend: &ScriptedBackend) -> Result<GoldenDayRun, GoldenDayError> {
+    run_on(backend, PassStack::EngineThread)
+}
+
+/// [`run`] with the day's Dreamer pass polled on `stack`: on
+/// [`PassStack::CallingThread`] the whole day runs on the calling thread's
+/// own stack.
+///
+/// # Errors
+/// As [`run`].
+pub fn run_on(backend: &ScriptedBackend, stack: PassStack) -> Result<GoldenDayRun, GoldenDayError> {
     let mut day = Day::default();
     let test_vault = TestVault::seeded(SCRIPT, |vault, clock| day.seed(vault, clock))
         .map_err(|error| failed("the seed", error))?;
@@ -255,7 +265,11 @@ pub fn run(backend: &ScriptedBackend) -> Result<GoldenDayRun, GoldenDayError> {
     // 2. The Dreamer reads the turn.
     let pass = crate::dreamer::DreamerPass::new(backend)
         .with_run_id(PASS_RUN_ID)
+        .with_stack(stack)
         .run_turn_wake(&vault, clock);
+    backend
+        .check()
+        .map_err(|mismatch| failed("the Dreamer pass left its script", mismatch))?;
     day.record_pass(clock, pass);
     clock.advance(STEP_SECS);
 

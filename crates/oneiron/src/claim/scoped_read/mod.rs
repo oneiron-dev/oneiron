@@ -44,6 +44,7 @@ mod note_visibility;
 mod phone_line;
 mod pinned_reads;
 mod point_reads;
+mod reaction_reactor_redaction;
 mod reactions;
 mod receipt;
 mod retrieval_visibility;
@@ -81,6 +82,8 @@ pub use frozen::FrozenReadLane;
 pub use named_reads::NamedSlot;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
+#[cfg(oneiron_test_support)]
+pub(crate) use weave_correction::WeaveItemKey;
 pub(crate) use weave_correction::erase_weave_decision_labels_in_txn;
 pub use weave_correction::{WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrection};
 pub use weave_report::sieve_score::RedactedSieveDecision;
@@ -144,6 +147,13 @@ pub struct ScopedRead<'a> {
     /// this field is unchanged — the union widens what is VISIBLE, never what
     /// is permitted.
     session_view: Option<&'a crate::store::SessionStoreView<'a>>,
+    /// The room a room stretch's staged rows belong to, set only on a read
+    /// composed over that stretch for a context pack
+    /// (`OwnedScopedRead::into_borrowed_in_room`): each rule that finds a
+    /// row's room maps the stretch's shell to it, and a member reads a
+    /// staged row only inside their own windows. `None` everywhere else, so
+    /// every other read is judged exactly as before.
+    stretch: Option<crate::off_record::StretchRoom>,
     claim_status: ClaimReadStatus,
     recall_authority: Mutex<Option<crate::authority::AuthorityFold>>,
     /// Set only on a member's read a personal room ceiling conjoins (see
@@ -170,6 +180,12 @@ pub struct ScopedRead<'a> {
     /// resolution, own-Grant and owner alternative, candidate envelope and
     /// receipt of this read meets it with the request its door names.
     read_filter: Option<RetrievalFilter>,
+    /// Set only on a verb answer's lane that reports its live Grants
+    /// (`ScopedRead::with_live_grant_receipts`): each receipt it builds in a
+    /// serving snapshot states the key's own floor and its live Grants', the
+    /// reach that admitted its rows. Off elsewhere, so a consumer that caps
+    /// unjudged content by a receipt's applied band keeps the key's own.
+    receipts_include_live_grants: bool,
 }
 
 mod owned;
@@ -188,11 +204,7 @@ pub(crate) use search::SearchPlan;
 mod visibility;
 pub(crate) use visibility::Admitted;
 
-// FIX [LIBTEST-QUARANTINE-CLAIM-SCOPED-READ-SLIP-TESTS]: the lib test target's type check fails here (5 errors: E0061 x3, E0063 x1, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod slip_tests;
-// FIX [LIBTEST-QUARANTINE-CLAIM-SCOPED-READ-TESTS]: the lib test target's type check fails here (2 errors: E0063 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

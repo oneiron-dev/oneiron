@@ -233,11 +233,15 @@ impl SyncTransportCredential {
 
     /// Proves the slip on a WebSocket upgrade with a fresh holder signature.
     /// Each upgrade has its own nonce, so a proof cannot be replayed. An
-    /// enrolled install also names its machine, signed over the same proof.
+    /// enrolled install also names its machine, signed over the same proof;
+    /// `pin`, the checkpoint pin the client config holds, lets a machine that
+    /// joined from an empty vault name itself before its first catch-up
+    /// (`Vault::machine_connection_proof_with_pin`).
     /// Returns the proof, which the home's answer must bind.
     pub(in crate::sync) fn sign_upgrade(
         &self,
         vault: &crate::Vault,
+        pin: Option<&crate::authority::AuthorityCheckpointPin>,
         timestamp: u64,
         request: &mut tokio_tungstenite::tungstenite::handshake::client::Request,
     ) -> Result<crate::sync::home_proof::UpgradeBinding, &'static str> {
@@ -277,7 +281,7 @@ impl SyncTransportCredential {
         );
         // A machine that cannot name itself syncs as an unknown destination.
         if let Ok(Some((machine, proof))) =
-            vault.machine_connection_proof(&self.token, timestamp, &nonce)
+            vault.machine_connection_proof_with_pin(&self.token, timestamp, &nonce, pin)
             && let Ok(value) = crate::authority::machine_proof_header_value(machine, &proof).parse()
         {
             request
@@ -416,6 +420,18 @@ pub enum SyncEvent {
     /// event never proves it. A host holding a shared membership asks the
     /// home through its signed leave check (FIX 12442).
     UpgradeUnauthorized,
+    /// The home answered this device's sync upgrade with HTTP 403: it
+    /// accepted the credential and refuses that credential this socket. The
+    /// connection does not redial on it: it waits for its shutdown or a
+    /// confirmed leave, what the device commits meanwhile queued, and a host
+    /// that renews the credential opens a new connection
+    /// (MEMBER-SELECTOR-SOCKET). A peer session's probe of the home that gets
+    /// it ends that session, and the connection waits the same way. A host holding a shared
+    /// membership asks the home through its signed leave check, as on a 401;
+    /// the event never proves a leave. A 403 to an upgrade that carried no
+    /// credential (FIX 11111) is not told: it refuses nothing this device
+    /// holds, and the connection redials with backoff.
+    UpgradeForbidden,
     Error(String),
 }
 

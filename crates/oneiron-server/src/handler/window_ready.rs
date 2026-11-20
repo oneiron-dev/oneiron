@@ -111,6 +111,27 @@ pub(super) fn window_update_verdict(
     Some((WindowKey::try_new(key), verdict))
 }
 
+/// The notice that asks this socket's peer for a fresh exchange of window
+/// `key` after a door withheld a broadcast change of it from the socket: the
+/// window's ready notice, judged now as a ready window's is, so the peer
+/// takes the window's scrubbed export and the change's other writes with it
+/// (REVIEW-9846 round 2). `None` where the socket may not take it now, and
+/// for an app frame, which goes only through the ready pass with its
+/// credential.
+pub(super) fn withheld_change_notice(
+    server: &SyncServer,
+    state: &ConnState,
+    key: &WindowKey,
+) -> Option<Vec<u8>> {
+    if !ready_window_allowed(state, key) {
+        return None;
+    }
+    match ready_window_notice(server, state, key) {
+        ReadyNotice::Send(frame, None) => Some(frame),
+        ReadyNotice::Send(_, Some(_)) | ReadyNotice::Withheld | ReadyNotice::Retry => None,
+    }
+}
+
 /// Whether window `key`'s ready notice may go to this socket at all: an
 /// owner-lane socket the window is pushed to, or one that follows
 /// `WINDOW_INVALIDATE` and forgot the window's subscription; a residence

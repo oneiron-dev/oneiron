@@ -5,8 +5,27 @@
 //! commits only through the [`oneiron_remote::OneironClient`] its host binds
 //! to one admitted attempt (`OneironClient::for_dreamer_attempt`), so the
 //! engine proves the attempt's lease and the Dreamer's live reach at every
-//! call. The crate's normal dependencies are `oneiron-remote`, `serde` and
+//! call. `strength_archive` archives weak claims; `conflict_settle` chooses parked-conflict rulings and writes derive Settle items; `extraction_reply` reads a bound extraction reply and builds its verdict operands.
+//! `extraction_observations` pages one extraction attempt's consolidation observations.
+//! `extraction_selection` groups their evidence unions and chooses ready candidates.
+//! `extraction_routing` routes ready groups against admitted priors and judge sets.
+//! `conflict_decisions` builds bound verdict packs and reduces their answers as pure policy.
+//! `extraction_decisions` decides one reply through bound reads without landing claims.
+//! `psych_profile` chooses a Psych Mirror profile's source claims and scores its confidence as pure policy.
+//! `psych_profile_job` writes one profile key's three tiers in one bound step and lands them as a PsychProfile item.
+//!
+//! The crate's normal dependencies are `oneiron-remote`, `serde` and
 //! `serde_json` only; `scripts/ci/check_dreamer_crate_deps.sh` holds that
 //! line in CI.
 
+pub mod conflict_decisions;
+pub mod conflict_settle;
+pub mod extraction_decisions;
+pub mod extraction_observations;
+pub mod extraction_reply;
+pub mod extraction_routing;
+pub mod extraction_selection;
+pub mod psych_profile;
+pub mod psych_profile_job;
 pub mod strength_archive;
+mod strength_scoring;

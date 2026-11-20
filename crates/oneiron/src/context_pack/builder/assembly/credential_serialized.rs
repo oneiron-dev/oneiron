@@ -26,6 +26,7 @@ impl ContextPackBuilder<'_> {
             max_item_tokens: self.max_item_tokens,
         };
         let disclosure = self.disclosure.clone();
+        let edge_hops = self.edge_hop;
         let run = self
             .for_destination(lane.actor_key().destination())
             .run_unfinalized()?;
@@ -38,6 +39,7 @@ impl ContextPackBuilder<'_> {
             replay_config: run.replay_config,
             critical: run.critical,
             world_share: run.world_share,
+            edge_hops,
         };
         if let Err(error) = lane.end_recall_plan() {
             pending.discard_telemetry();

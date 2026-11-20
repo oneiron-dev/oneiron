@@ -7,6 +7,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::error::{Error, Result};
 
 use super::anchor::extends;
@@ -323,7 +325,7 @@ pub(super) fn switch_head(
         inventory.update(name.as_encoded_bytes());
         inventory.update(&[0]);
     }
-    inventory.update(blake3::hash(head).as_bytes());
+    inventory.update(ContentHash::of(head).as_bytes());
     Ok(DeletionEvidence {
         kind,
         superseded_removed: removed.saturating_add(u64::from(replaced)),

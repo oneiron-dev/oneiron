@@ -19,6 +19,12 @@
 //! facet and project stamps win over a selector nested in the opaque scope
 //! map (review round 2 of #6972).
 //!
+//! A fourth test checks a reach-out about a PERSON the vault cleanup archived
+//! (ARCH-0073 §6, "a re-mention restores the archived record"; FIX
+//! DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON, review round 1 of
+//! #9767): the reach-out is a new mention of her, and its own write restores
+//! her.
+//!
 //! Each `FIXTURE:` assertion checks the setup, never the leak. The last
 //! assertion of each test is the leak check.
 //!
@@ -29,8 +35,9 @@
 use oneiron::dreamer_runner::maintenance::stewardship::{STEWARDSHIP_PREDICATE, StewardshipRule};
 use oneiron::edge::EdgeActorClass;
 use oneiron::inbox::{INBOX_PAGE_DEFAULT, NotificationKind, NotificationPage};
-use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
+use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use oneiron::temporal::TimeRange;
+use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
 use oneiron::test_doors::label_writers::{
     embedded_owner, grant_dreamer_relationship_claims, open_member_vault, run_stewardship_once,
 };
@@ -335,5 +342,64 @@ fn a_copied_place_keeps_its_canonical_stamps_over_a_nested_selector() {
         (body.scope_facet, body.scope_project),
         (facet, project),
         "LEAK: a nested selector overrode the copied record's canonical facet and project stamps"
+    );
+}
+
+/// ARCH-0073 §6, "a re-mention restores the archived record" (FIX
+/// DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON, review round 1 of #9767): the owner
+/// keeps in touch with Pia, the vault cleanup archives her, and a stated record about her lands
+/// after the archive. The nightly pass lands her reach-out, which cites that record; the
+/// reach-out is a new mention of her, and its own write restores her.
+#[test]
+fn a_reach_out_about_an_archived_person_restores_her() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_member_vault(dir.path(), VaultConfig::device(), &[]).expect("fixture vault");
+    let (_owner, proof) = embedded_owner(&vault).expect("the owner");
+    let pia = person(&vault, "Pia");
+    vault
+        .set_stewardship_rules(
+            &proof,
+            vec![StewardshipRule {
+                id: "pia".to_owned(),
+                person: pia,
+                every_secs: EVERY_SECS,
+                since: 0,
+                draft: None,
+            }],
+            RULES_AT,
+        )
+        .expect("the owner's rule");
+    archive_as_cleanup(&vault, &pia).expect("FIXTURE: the cleanup archives her");
+    assert!(
+        vault.archived_entity(&pia).expect("archive read").is_some(),
+        "FIXTURE: the cleanup's archive marker stands on her"
+    );
+    let open_record = record(&vault, pia, "Pia", None);
+
+    run_stewardship_once(&vault, PASS_AT).expect("one nightly stewardship pass");
+    let reach_outs: Vec<serde_json::Value> = vault
+        .entities_by_type(ENTITY_TYPE_CLAIM)
+        .expect("claims")
+        .into_iter()
+        .filter_map(|id| {
+            let body = vault.get_claim(&id).expect("claim read")?;
+            (body.predicate == STEWARDSHIP_PREDICATE && body.subject == ClaimSubject::Entity(pia))
+                .then(|| {
+                    serde_json::from_str(body.value.as_str().expect("a JSON string value"))
+                        .expect("a JSON value")
+                })
+        })
+        .collect();
+    let [value] = reach_outs.as_slice() else {
+        panic!("FIXTURE: one reach-out about her, found {reach_outs:?}");
+    };
+    assert_eq!(
+        value["last_record"],
+        serde_json::json!(open_record.to_hex()),
+        "FIXTURE: her reach-out cites the record stated after the archive"
+    );
+    assert!(
+        vault.archived_entity(&pia).expect("archive read").is_none(),
+        "the reach-out is a new mention of her: it restored her, and she bears no archive marker"
     );
 }

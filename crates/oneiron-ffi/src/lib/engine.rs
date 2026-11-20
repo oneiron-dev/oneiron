@@ -18,8 +18,8 @@
 use std::{ffi::c_void, path::Path, ptr, sync::Arc, time::SystemTime};
 
 use oneiron_server::embedded::{
-    BlockingConnection, BlockingEngine, EmbeddedRequest, embedded_serve_config, host_limits,
-    unix_millis,
+    BlockingConnection, BlockingEngine, EmbeddedRequest, FetchConditions, embedded_serve_config,
+    host_limits, unix_millis,
 };
 use oneiron_vault_contract::host_adapters::AppHost;
 use zeroize::Zeroizing;
@@ -466,6 +466,36 @@ pub unsafe extern "C" fn oneiron_engine_wake(engine: *mut OneironEngine) -> Onei
     ffi_guard(|| {
         status(with_engine(engine, |handle| {
             handle.engine.wake().map_err(engine_failure)
+        }))
+    })
+}
+
+/// What the app shell observes about fetching predictions on this machine:
+/// `unmetered` is 1 on an unmetered network and `powered` is 1 on power (any
+/// other non-zero value counts as 1). A phone at the predicted level asks and
+/// fetches only while both hold, closed until the app reports; the report
+/// holds across `oneiron_engine_stop`, `oneiron_engine_wake` and every
+/// reconnect. Report again on each change the app's monitors see.
+///
+/// # Safety
+///
+/// `engine` is null or a live handle from `oneiron_engine_start`, not freed
+/// during the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oneiron_engine_set_fetch_conditions(
+    engine: *mut OneironEngine,
+    unmetered: u8,
+    powered: u8,
+) -> OneironStatus {
+    ffi_guard(|| {
+        status(with_engine(engine, |handle| {
+            handle
+                .engine
+                .set_fetch_conditions(FetchConditions {
+                    unmetered: unmetered != 0,
+                    powered: powered != 0,
+                })
+                .map_err(engine_failure)
         }))
     })
 }

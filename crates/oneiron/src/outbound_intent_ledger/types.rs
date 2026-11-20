@@ -29,6 +29,12 @@ pub enum IntentLedgerError {
     Engine(#[from] Error),
     #[error("invalid outbound intent input: {0}")]
     InvalidInput(&'static str),
+    /// The calendar invite admission's own verdict on a `calendar.invite`
+    /// send: a hygiene refusal keeps the law that refused it, so the facade
+    /// answers it as a bad request naming that law, and a store failure as
+    /// an internal one (FIX CALENDAR-COLD-INVITE-INVALID-STATE).
+    #[error("calendar invite admission: {0}")]
+    Calendar(crate::calendar::CalendarError),
     #[error("the verified outbound actor is no longer valid")]
     InvalidBoundActor,
     #[error("the durable step failure is not eligible for an effect")]

@@ -31,6 +31,7 @@ pub mod ai_host;
 mod api;
 mod auth;
 mod big_rung;
+mod booking_deposit;
 mod broadcast;
 mod builtin_host;
 mod byte_line;
@@ -62,6 +63,7 @@ pub mod error;
 pub mod feedback_delivery;
 mod feedback_redaction;
 mod files_intake;
+mod gpu_host;
 mod handler;
 mod home_candidacy;
 mod hook_decisions;
@@ -82,6 +84,7 @@ pub mod logging;
 #[cfg(target_os = "macos")]
 mod mac_worker_bootstrap;
 mod machine;
+pub mod machine_capacity;
 mod mail_host;
 pub mod managed;
 mod managed_owner_check;
@@ -98,7 +101,9 @@ mod protocol;
 pub mod replay_judge;
 mod residence_machines;
 pub mod runtime;
+mod sandbox_vendor;
 mod saved_query_sweep;
+mod selector_release;
 pub mod server;
 mod shared_envs;
 mod skills_pack;
@@ -210,6 +215,20 @@ pub fn build_app_for_position(
         ))
 }
 
+/// The `/ws` route alone, for a listener that serves sync and nothing else
+/// (the macOS app's mesh listener, L7-47); every slip, machine proof and
+/// grant check of `ws_routes` runs unchanged.
+#[cfg(feature = "mesh")]
+pub(crate) fn build_sync_router(server: Arc<SyncServer>) -> Router {
+    Router::new()
+        .merge(handler::ws_routes(server.clone()))
+        // Outermost, so a hatch server's off-device caller reaches no route.
+        .layer(axum::middleware::from_fn_with_state(
+            server,
+            auth::refuse_off_device_hatch_callers,
+        ))
+}
+
 /// Builds the artifact-only app: `/a/` and nothing else, for a listener of
 /// its own, so a code bundle's scripts run on an origin that holds no API.
 /// Serve it beside [`build_app`] over the same server, and record its port
@@ -225,4 +244,9 @@ pub fn build_artifact_app(server: Arc<SyncServer>) -> Router {
 #[path = "../tests/support/fake_llm.rs"]
 mod fake_llm;
 #[cfg(test)]
+#[path = "../tests/support/owner_only_file.rs"]
+mod owner_only_file;
+#[cfg(test)]
 mod test_credentials;
+#[cfg(test)]
+mod test_engine_stack;

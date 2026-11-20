@@ -8028,6 +8028,7 @@ dependencies = [
  "oneiron-lens-wire",
  "oneiron-linkedin-policy",
  "oneiron-model",
+ "oneiron-persistent-collections",
  "oneiron-policy-vocabulary",
  "oneiron-records",
  "oneiron-retrieval",
@@ -8156,6 +8157,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "zeroize",
 ]
 
@@ -8186,12 +8188,14 @@ dependencies = [
  "criterion",
  "ed25519-dalek 2.2.0",
  "futures-util",
+ "half",
  "loro",
  "oneiron",
  "oneiron-hex",
  "oneiron-llm",
  "oneiron-organ-protocol",
  "oneiron-remote",
+ "oneiron-ruler",
  "oneiron-server",
  "parking_lot",
  "rand 0.8.8",
@@ -8208,6 +8212,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-tungstenite 0.26.2",
+ "tracing",
 ]
 
 [[package]]
@@ -8298,6 +8303,7 @@ dependencies = [
  "oneiron-authority",
  "oneiron-base",
  "oneiron-contracts",
+ "oneiron-hex",
  "oneiron-model",
  "oneiron-store",
  "rmpv",
@@ -8441,6 +8447,7 @@ dependencies = [
  "oneiron-dreamer",
  "oneiron-llm",
  "oneiron-remote",
+ "oneiron-testkit",
  "rmpv",
  "serde_json",
  "tempfile",
@@ -8723,6 +8730,7 @@ dependencies = [
  "rmpv",
  "rsa",
  "serde",
+ "sha1",
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.20",
@@ -8744,6 +8752,17 @@ dependencies = [
  "serde",
  "serde_bytes",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "oneiron-persistent-collections"
+version = "0.1.0"
+dependencies = [
+ "im",
+ "proptest",
+ "rmp-serde",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -8884,6 +8903,7 @@ dependencies = [
  "oneiron-model",
  "schemars 0.8.22",
  "serde",
+ "serde_json",
  "thiserror 2.0.20",
 ]
 
@@ -8895,6 +8915,8 @@ version = "0.1.0"
 name = "oneiron-schedule-contract"
 version = "0.1.0"
 dependencies = [
+ "oneiron-contracts",
+ "oneiron-setting-contract",
  "schemars 0.8.22",
  "serde",
 ]
@@ -9139,11 +9161,15 @@ dependencies = [
  "futures-core",
  "libc",
  "oneiron",
+ "oneiron-contracts",
  "oneiron-keystore",
  "oneiron-spawn",
+ "rmpv",
  "serde_json",
+ "stacker",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
+ "zip 0.6.6",
 ]
 
 [[package]]
@@ -9173,6 +9199,7 @@ dependencies = [
  "libc",
  "oneiron-fingerprint",
  "oneiron-hex",
+ "oneiron-spawn",
  "serde",
  "serde_json",
  "subtle",
@@ -10207,8 +10234,6 @@ dependencies = [
 [[package]]
 name = "pkix-path-builder"
 version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16a5a90f17f74b968ff011c3c9b51a8b5692467abc7552d35c4311592f76ffec"
 dependencies = [
  "der 0.7.10",
  "pkix-path",

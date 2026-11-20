@@ -209,6 +209,24 @@ pub(super) fn offer_for(
     })
 }
 
+/// What a new Connect this vault offers names: the grant that governs it,
+/// the peer, and the scope pair.
+pub(crate) struct ConnectOfferTerms {
+    /// This vault's Connect guest grant for the peer.
+    pub(crate) grant_ref: EntityId,
+    /// The peer's vault.
+    pub(crate) peer_vault_id: AuthorityVaultId,
+    /// What this vault shares: the grant's scope, projected.
+    pub(crate) outbound: FederationDirectionScope,
+    /// What the peer shares.
+    pub(crate) inbound: FederationDirectionScope,
+}
+
+/// A fresh pact id for a new Connect.
+pub(crate) fn fresh_pact_id() -> [u8; 32] {
+    random_slip_id()
+}
+
 impl Vault {
     /// This vault's half of a new Connect with `peer_vault_id`, approved by
     /// `owner`: a fresh pact id and nonce, the scope pair (`outbound` is what
@@ -226,7 +244,33 @@ impl Vault {
     ) -> Result<ConnectOffer> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let terms = ConnectOfferTerms {
+            grant_ref,
+            peer_vault_id,
+            outbound,
+            inbound,
+        };
+        self.propose_connect_in_txn(&txn, issuer, terms, fresh_pact_id())
+    }
+
+    /// [`Self::propose_connect_as`] in the caller's transaction, its
+    /// approval the caller's, under the pact id `pact_id`: a door that mints
+    /// the grant and offers it in one writer (an inquiry edge offered at
+    /// joining) writes both or neither.
+    pub(crate) fn propose_connect_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        issuer: &HostSlipIssuer,
+        terms: ConnectOfferTerms,
+        pact_id: [u8; 32],
+    ) -> Result<ConnectOffer> {
+        let ConnectOfferTerms {
+            grant_ref,
+            peer_vault_id,
+            outbound,
+            inbound,
+        } = terms;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let local = local_vault_id(&fold, issuer)?;
         if peer_vault_id == local {
             return Err(Error::InvalidConfig(
@@ -235,7 +279,7 @@ impl Vault {
         }
         // The grant is this vault's Connect guest grant for the peer, and
         // `outbound` is its scope's projection; one live Connect per peer.
-        require_connect_grant_in_txn(self, &txn, &grant_ref, &peer_vault_id, &outbound)?;
+        require_connect_grant_in_txn(self, txn, &grant_ref, &peer_vault_id, &outbound)?;
         require_peer_slice(&inbound)?;
         require_one_connect_per_peer(&fold, &peer_vault_id, None)?;
         if fold.federation_grant_bindings.contains_key(&grant_ref) {
@@ -262,7 +306,7 @@ impl Vault {
         let action = connect_action(
             grant_ref,
             peer_vault_id,
-            random_slip_id(),
+            pact_id,
             pact_nonce,
             pact_scope,
             &scope_key,
@@ -284,70 +328,84 @@ impl Vault {
     ) -> Result<(FederationPactState, ConnectOffer)> {
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
-            let fold = self.authority_view_readonly_in_txn(txn)?;
-            let local = local_vault_id(&fold, issuer)?;
-            if offer.to_vault != local || offer.from_vault == local {
-                return Err(Error::InvalidConfig(
-                    "this Connect offer is not for this vault".into(),
-                ));
-            }
-            // The local outbound half is the one the fold's
-            // `local_outbound_scope` reads back: lo_to_hi when this vault's
-            // id is the smaller.
-            let (outbound, inbound) = if local <= offer.from_vault {
-                (&offer.pact_scope.lo_to_hi, &offer.pact_scope.hi_to_lo)
-            } else {
-                (&offer.pact_scope.hi_to_lo, &offer.pact_scope.lo_to_hi)
-            };
-            require_connect_grant_in_txn(self, txn, &grant_ref, &offer.from_vault, outbound)?;
-            require_peer_slice(inbound)?;
-            // An exact retry of this pact passes; any other live Connect with
-            // the peer refuses.
-            require_one_connect_per_peer(&fold, &offer.from_vault, Some(&offer.pact_id))?;
-            let mut action = connect_action(
-                grant_ref,
-                offer.from_vault,
-                offer.pact_id,
-                offer.pact_nonce,
-                offer.pact_scope.clone(),
-                &offer.scope_key,
-            )?;
-            require_offer_signs(&action, offer, &local)?;
-            action.gesture = Some(offer.gesture.clone());
-            let counter = offer_for(issuer, &action, local, &offer.scope_key)?;
-            let logged = fold.federation_pacts.get(&offer.pact_id).filter(|pact| {
-                pact.grant_ref == grant_ref
-                    && pact.peer_vault_id == offer.from_vault
-                    && Some(pact.scope_digest) == action.scope_digest
-                    && pact.peer_owner_key == offer.gesture.signer
-            });
-            if let Some(pact) = logged {
-                // The offer's opening key re-checks the logged commitment
-                // (FIX 7907): a live pact that logs another scope under this
-                // keyed digest was never dual-signed over it.
-                if !pact.status.is_terminal() && pact.pact_scope != offer.pact_scope {
-                    return Err(invalid_authority());
-                }
-                return Ok((pact.clone(), counter));
-            }
-            self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
-            let pact = self
-                .authority_view_readonly_in_txn(txn)?
-                .federation_pacts
-                .get(&offer.pact_id)
-                .cloned()
-                .ok_or_else(invalid_authority)?;
-            // The opening key enters custody with the Connect it keys, once
-            // the fold admitted it.
-            grant_scope_custody::install_scope_key(
-                &self.store,
-                txn,
-                &grant_ref,
-                &offer.pact_id,
-                1,
-                offer.scope_key.expose(),
-            )?;
-            Ok((pact, counter))
+            self.accept_connect_in_txn(txn, issuer, grant_ref, offer)
         })
+    }
+
+    /// [`Self::accept_connect_as`] in the caller's writer, its approval the
+    /// caller's: a door whose own writer approves the Connect (a member
+    /// seat's inquiry edge, accepted with the seat) logs it there, so the
+    /// Connect lands with that door's other writes or not at all.
+    pub(crate) fn accept_connect_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        grant_ref: EntityId,
+        offer: &ConnectOffer,
+    ) -> Result<(FederationPactState, ConnectOffer)> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let local = local_vault_id(&fold, issuer)?;
+        if offer.to_vault != local || offer.from_vault == local {
+            return Err(Error::InvalidConfig(
+                "this Connect offer is not for this vault".into(),
+            ));
+        }
+        // The local outbound half is the one the fold's
+        // `local_outbound_scope` reads back: lo_to_hi when this vault's
+        // id is the smaller.
+        let (outbound, inbound) = if local <= offer.from_vault {
+            (&offer.pact_scope.lo_to_hi, &offer.pact_scope.hi_to_lo)
+        } else {
+            (&offer.pact_scope.hi_to_lo, &offer.pact_scope.lo_to_hi)
+        };
+        require_connect_grant_in_txn(self, txn, &grant_ref, &offer.from_vault, outbound)?;
+        require_peer_slice(inbound)?;
+        // An exact retry of this pact passes; any other live Connect with
+        // the peer refuses.
+        require_one_connect_per_peer(&fold, &offer.from_vault, Some(&offer.pact_id))?;
+        let mut action = connect_action(
+            grant_ref,
+            offer.from_vault,
+            offer.pact_id,
+            offer.pact_nonce,
+            offer.pact_scope.clone(),
+            &offer.scope_key,
+        )?;
+        require_offer_signs(&action, offer, &local)?;
+        action.gesture = Some(offer.gesture.clone());
+        let counter = offer_for(issuer, &action, local, &offer.scope_key)?;
+        let logged = fold.federation_pacts.get(&offer.pact_id).filter(|pact| {
+            pact.grant_ref == grant_ref
+                && pact.peer_vault_id == offer.from_vault
+                && Some(pact.scope_digest) == action.scope_digest
+                && pact.peer_owner_key == offer.gesture.signer
+        });
+        if let Some(pact) = logged {
+            // The offer's opening key re-checks the logged commitment
+            // (FIX 7907): a live pact that logs another scope under this
+            // keyed digest was never dual-signed over it.
+            if !pact.status.is_terminal() && pact.pact_scope != offer.pact_scope {
+                return Err(invalid_authority());
+            }
+            return Ok((pact.clone(), counter));
+        }
+        self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
+        let pact = self
+            .authority_view_readonly_in_txn(txn)?
+            .federation_pacts
+            .get(&offer.pact_id)
+            .cloned()
+            .ok_or_else(invalid_authority)?;
+        // The opening key enters custody with the Connect it keys, once
+        // the fold admitted it.
+        grant_scope_custody::install_scope_key(
+            &self.store,
+            txn,
+            &grant_ref,
+            &offer.pact_id,
+            1,
+            offer.scope_key.expose(),
+        )?;
+        Ok((pact, counter))
     }
 }

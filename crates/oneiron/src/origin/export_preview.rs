@@ -12,6 +12,7 @@
 //! store failures stay errors. The caller's credential, sight and Grant
 //! are judged above it, at the door (`memory::origin_doors::preview`).
 mod handles;
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_store::origin::export_preview::types;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -520,7 +521,7 @@ fn pin_leaves(
         let file = files.remove(path).ok_or_else(differs)?;
         if file.mode != blob.mode
             || file.content.len() as u64 != blob.size_bytes
-            || blake3::hash(&file.content).as_bytes() != &blob.content_hash
+            || ContentHash::of(&file.content).as_bytes() != &blob.content_hash
         {
             return Err(differs());
         }

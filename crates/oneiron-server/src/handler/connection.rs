@@ -38,7 +38,11 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
 /// Handles WebSocket upgrade requests.
 ///
 /// Auth: the upgrade request must present an owner-grade credential in the
-/// `Authorization: Bearer` header — a logged, holder-bound top-scope slip.
+/// `Authorization: Bearer` header — a logged, holder-bound top-scope slip —
+/// that the owner door proves is the vault owner's: his own full slip, a
+/// self-hosted root or the dev mode acting as him, or a managed vault's live
+/// owner. A full-scope slip another holder carries is refused 403
+/// (OWNER-GRADE-IS-NOT-OWNERSHIP).
 /// Neither the issuer secret nor a device lease grants socket access.
 /// An unauthenticated upgrade is rejected with 401 BEFORE the socket upgrade
 /// (fail-closed) — without this gate any network peer could pull the full
@@ -73,11 +77,18 @@ async fn ws_upgrade_handler(
     extensions: axum::http::Extensions,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Response, Response> {
+    // The macOS app's device link serves its peers sync and nothing else
+    // (L7-47): no MCP carrier, booking or facade socket, so each socket it
+    // opens is a replication socket the peer gates admitted.
+    let device_link = server.runs_device_link();
     // The MCP carrier serves no sync state, so it admits any holder-bound
     // slip rather than only an owner-grade one, and on a managed vault the
     // owner his supervisor attested. There each call it carries is admitted
     // under the reap freeze as one `POST /mcp` is (FIX 5128).
     if super::mcp_socket::requested(&ws) {
+        if device_link {
+            return Err(StatusCode::FORBIDDEN.into_response());
+        }
         // A member whose supervisor signed the upgrade holds a socket that
         // reaches the member doors and nothing more (FIX 1302 stage 2).
         if let Some(holder) =
@@ -103,7 +114,12 @@ async fn ws_upgrade_handler(
     // socket's life. A slip or a bearer beside him is never him, so a slip
     // that fails below never falls back to him. A booking socket is never a
     // peer session (FIX 4748).
-    let mode = match super::mcp_socket::stale_booking_holder(&headers, &extensions, &server) {
+    let booking = if device_link {
+        None
+    } else {
+        super::mcp_socket::stale_booking_holder(&headers, &extensions, &server)
+    };
+    let mode = match booking {
         Some(holder) => {
             run::SocketMode::Booking(run::BookingCaller::upgraded(holder, &extensions)?)
         }
@@ -176,7 +192,7 @@ async fn ws_upgrade_handler(
 }
 
 /// The full-replication socket an upgrade opens for the caller whose upgrade
-/// proved `machine`: its owner-grade credential and its peer session, the
+/// proved `machine`: the owner's credential and its peer session, the
 /// facade socket of a caller whose own slip is narrower ([`facade_mode`]),
 /// or the refusal it is answered with before the upgrade.
 fn replication_mode(
@@ -193,17 +209,27 @@ fn replication_mode(
         Some(Err(refused)) => return Err(refused.into_response()),
         None => match require_owner_auth(headers, &server.config, server.vault().as_ref()) {
             Ok(auth) => auth,
+            // The macOS app's device link opens no facade socket (L7-47).
+            Err(_) if server.runs_device_link() => {
+                return Err(sync_upgrade_refused(headers, server));
+            }
             Err(_) => {
                 return facade_mode(headers, server)
                     .ok_or_else(|| sync_upgrade_refused(headers, server));
             }
         },
     };
-    // Full replication reads the whole vault, an owner act: a hosted
-    // operator's root is refused before the upgrade (FIX 2222), with its
-    // typed body (FIX 6032). Every refusal stays this door's 403.
-    crate::api::host_action::require_host_owner_act(server, &auth).map_err(|refused| {
-        if refused.status() == StatusCode::FORBIDDEN {
+    // Full replication reads the whole vault, an owner act, so the owner door
+    // admits it: a self-hosted root or the dev mode acting as the owner, a
+    // managed vault's live owner, or the owner's own full slip. A full-scope
+    // slip another holder carries is a scope, not ownership, and is refused
+    // before the upgrade (OWNER-GRADE-IS-NOT-OWNERSHIP). A hosted operator's
+    // root is refused too (FIX 2222), with its typed body (FIX 6032). Every
+    // refusal stays this door's 403, which the sync client stops on; a host
+    // fault the check met stays its 500, which the client redials
+    // (MEMBER-SELECTOR-SOCKET).
+    crate::api::owner(&auth, server).map_err(|refused| {
+        if refused.status() == StatusCode::FORBIDDEN || refused.status().is_server_error() {
             refused.into_response()
         } else {
             StatusCode::FORBIDDEN.into_response()
@@ -411,10 +437,25 @@ fn window_broadcast_allowed(
     }
 }
 
+/// What a broadcast window frame becomes on this socket.
+pub(super) enum WindowDelivery {
+    /// The frame itself, or the notice that stands for it.
+    Send(Vec<u8>),
+    /// The last door withheld the change from a socket the window is pushed
+    /// to. It may carry writes the peer may take beside one it may not, so
+    /// the socket asks its peer for a fresh exchange of the window, whose
+    /// answer is the window's scrubbed export
+    /// (`window_ready::withheld_change_notice`; REVIEW-9846 round 2).
+    Withheld(oneiron::sync::WindowKey),
+    /// Nothing goes.
+    Nothing,
+}
+
 /// What a broadcast window frame becomes on this socket: itself where the
 /// socket is pushed the window, a `WINDOW_INVALIDATE` where it forgot the
 /// window's subscription past `max_windows_per_connection`, or nothing. A
-/// frame this server withholds as device-only is neither.
+/// frame this server withholds is neither: on a socket it is pushed to, it
+/// is [`WindowDelivery::Withheld`].
 ///
 /// A socket served as a peer (FIX 4748) is sent no operation, live ones
 /// included: a change of a window it is pushed, or forgot, reaches it as the
@@ -428,12 +469,32 @@ fn window_delivery(
     protocol_version: u8,
     state: &super::conn_state::ConnState,
     frame: Vec<u8>,
-) -> Option<Vec<u8>> {
+) -> WindowDelivery {
     let pushed = window_broadcast_allowed(protocol_version, state, &frame);
     if pushed && !state.peer_served {
         let peer = state.peer_machine(server.vault());
-        return (!window_update_withheld(server, peer, &frame)).then_some(frame);
+        if !window_update_withheld(server, peer, &frame) {
+            return WindowDelivery::Send(frame);
+        }
+        return frame
+            .get(1..)
+            .and_then(|payload| protocol::decode_window_sync(payload).ok())
+            .and_then(|(key, _, _)| oneiron::sync::WindowKey::try_new(key))
+            .map_or(WindowDelivery::Nothing, WindowDelivery::Withheld);
     }
+    window_invalidation(server, protocol_version, state, &frame, pushed)
+        .map_or(WindowDelivery::Nothing, WindowDelivery::Send)
+}
+
+/// The `WINDOW_INVALIDATE` notice a broadcast window frame becomes on a
+/// socket that takes notices and is not sent the frame itself.
+fn window_invalidation(
+    server: &SyncServer,
+    protocol_version: u8,
+    state: &super::conn_state::ConnState,
+    frame: &[u8],
+    pushed: bool,
+) -> Option<Vec<u8>> {
     if !protocol::takes_window_invalidations(protocol_version) {
         return None;
     }
@@ -442,7 +503,7 @@ fn window_delivery(
         .and_then(|payload| protocol::decode_window_sync(payload).ok())?;
     let window = oneiron::sync::WindowKey::try_new(key)?;
     if !(pushed || state.invalidates_window(&window))
-        || window_update_withheld(server, state.peer_machine(server.vault()), &frame)
+        || window_update_withheld(server, state.peer_machine(server.vault()), frame)
         || !super::peer_serve::notices_change(state, &window)
     {
         return None;

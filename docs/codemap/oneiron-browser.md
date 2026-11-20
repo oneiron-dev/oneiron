@@ -11,7 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/answer.rs` | src | s | 6 struct · 2 enum · 2 fn | BrowserAnswer, DesktopAnswer, SessionFenceProof, SessionManifest, SessionSeccomp, TakeoverRecord, WindowSwitch, WindowSwitchCause | What the run's door adds to a guest's answer (CUA-001): the record of a person's takeover that ended, and… |
+| `src/answer.rs` | src | s | 6 struct · 3 enum · 2 fn | BrowserAnswer, DesktopAnswer, SessionFenceProof, SessionGuestPressure, SessionManifest, SessionSeccomp, TakeoverRecord, WindowSwitch +1 | What the run's door adds to a guest's answer (CUA-001): the record of a person's takeover that ended, and… |
 | `src/capture.rs` | src | s | 13 crate-vis | — | Repeat screenshots (AB-004) |
 | `src/cdp.rs` | src | m | 16 crate-vis | — | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
 | `src/cdp/deep.rs` | src | s | 3 crate-vis | — | A CDP message nested past serde_json's recursion limit (FIX 6963): a `DOM.getDocument` at `depth: -1` of a… |
@@ -100,4 +100,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/stop.rs` | src | m | 3 struct · 4 enum · 3 fn · 1 const · 9 crate-vis | AskUpReason, BatchStopCause, CheckReceipt, ClockScope, FailedStepReceipt, StrictDenial, StrictDenied | Why a batch stopped (CUA E2): one typed cause per stop, beside the stable refusal code a program already… |
 | `src/switch.rs` | src | s | 6 struct · 5 enum | EngineSwitchRecord, SnapshotBounds, StoragePhase, SwitchCarried, SwitchComponent, SwitchEngineInput, SwitchEngineOutput, SwitchLoss +3 | An engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the model moves the run's browser to the other engine… |
 | `src/verbs.rs` | src | m | 26 struct · 4 enum · 7 fn | ClickInput, CropInput, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput, HotkeyInput +22 | — |
+| `tests/answer_manifest_guest_pressure.rs` | test | s | — | — | A browser or desktop answer's typed manifest keeps the guest's pressure (FIX… |
+| `tests/draft_from_steps.rs` | test | m | — | — | These tests hold the rule-tier draft contract (FIX [BROWSER-CRATE-RUNS-NO-TEST]) |
+| `tests/draft_from_steps_gaps.rs` | test | m | — | — | These tests cover draft spans, gaps, and input refusals (FIX [BROWSER-CRATE-RUNS-NO-TEST]) |
+| `tests/draft_from_steps_literal_opens_slot.rs` | test | m | — | — | These tests cover FIX [BROWSER-DRAFT-LITERAL-TEXT-WITH-SLOT-BRACES-READS-AS-A-SLOT] |
 | `tests/guest_pressure_answer.rs` | test | m | — | — | A browser or desktop guest's pids-limit hits reach its session's manifest (FIX 8013 follow-up… |
+| `tests/library_run_mode_and_model_free.rs` | test | s | — | — | These tests hold the run mode and model-free contract (FIX [BROWSER-LIBRARY-PLAIN-FUNCTIONS-HELD-BY-NO-TEST]) |
+| `tests/program_origin_and_filled_checks.rs` | test | s | — | — | These tests hold the plain origin and check-filling rules (FIX… |
+| `tests/replay_args_held_out.rs` | test | s | — | — | Tests for the replay held-out check (FIX [BROWSER-LIBRARY-PLAIN-FUNCTIONS-HELD-BY-NO-TEST]) |
+| `tests/switch_source_pressure.rs` | test | m | — | — | A switched engine's receipt names the pids pressure its source guest showed before the switch dropped it… |
+| `tests/workflow_program_shape_and_fill.rs` | test | m | — | — | These tests hold the program shape and fill contract (FIX [BROWSER-LIBRARY-PLAIN-FUNCTIONS-HELD-BY-NO-TEST]) |

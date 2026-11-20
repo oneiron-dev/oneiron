@@ -2,6 +2,7 @@
 //! memo, saved intents, the Hook receipts and the run index (ARCH-0080 §4
 //! Delivery, Crash-safe outcomes; §6 receipt; §8 golden set).
 
+mod archive_restore;
 mod cursor;
 mod erase;
 
@@ -541,25 +542,66 @@ pub(super) fn receipt_id(key: &RunKey) -> String {
     ReceiptRef::hook(*key).to_string()
 }
 
-/// The rows the run a Hook receipt names (`run_key`, 64 hex) read: a fact
-/// run's memo's reads and the rows each of its verdicts' evidence resolved
-/// to (FIX 5459), every verdict's included, whether or not its pin fit the
-/// byte bound (FIX 5764), else a verb run's saved record's reads. `None`
-/// when the key names no kept run, or a fact run heard a verdict without its
-/// evidence rows. The receipt family screens a Hook receipt on them for a
-/// caller off this device (FIX 1119).
+/// The rows the run a Hook receipt names (`run_key`, 64 hex) stands on: a
+/// fact run's memo's reads and the rows each of its verdicts' evidence
+/// resolved to (FIX 5459), every verdict's included, whether or not its pin
+/// fit the byte bound (FIX 5764); else a verb run's saved record's reads,
+/// the rows whose content its input showed, and each row this vault holds
+/// that the call's args and result named as its hook saw them (review round
+/// 2 of #9535): its body can copy any of them into the receipt's `note` or
+/// `reason`. `None` when the key names no kept run, a fact run heard a
+/// verdict without its evidence rows, or a verb run's input showed content
+/// that names no row this vault holds: a host verb's free text, a pack item
+/// whose refs did not resolve, or a read result with a value outside a row
+/// object that names its held rows (VERB-HOOK-RECEIPT-UNNAMED-SOURCE-PROVENANCE;
+/// a run saved before that field, only the host's free text). The receipt
+/// family screens a Hook receipt on them for a caller off this device (FIX
+/// 1119) and for a credential-bound reader (HOOKS-04); a verb hook's input
+/// tail on them too (review round 1 of #9643).
 pub(crate) fn hook_run_read_rows(vault: &Vault, run_key: &str) -> Result<Option<Vec<EntityId>>> {
     let rtxn = vault.store.env.read_txn()?;
-    hook_run_read_rows_in(&vault.store, &rtxn, run_key)
+    let holds =
+        |row: &EntityId| -> Result<bool> { Ok(vault.entity_header_in_txn(&rtxn, row)?.is_some()) };
+    hook_run_read_rows_in(&vault.store, &rtxn, run_key, holds)
+}
+
+/// The Hook receipt the run `run_key` keeps and every row it names
+/// ([`crate::receipt::referenced_rows`]: its record's binding and CODE, and
+/// the rows its run stood on), read in one snapshot, as a verb hook's
+/// receipt tail shows it (review round 2 of #9643): a payload read before an
+/// erase scrubbed it still names the erased row. `None` when the run keeps
+/// no receipt; its rows `None` when they cannot be known.
+pub(super) fn hook_receipt_with_rows(
+    vault: &Vault,
+    run_key: &str,
+) -> Result<Option<(ReceiptRecord, Option<Vec<EntityId>>)>> {
+    let Some(key) = crate::deletion::parse_hex::<32>(run_key) else {
+        return Ok(None);
+    };
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(receipt) = RECEIPTS.get(&vault.store, &rtxn, &key)? else {
+        return Ok(None);
+    };
+    let holds =
+        |row: &EntityId| -> Result<bool> { Ok(vault.entity_header_in_txn(&rtxn, row)?.is_some()) };
+    let rows = hook_run_read_rows_in(&vault.store, &rtxn, run_key, holds)?.map(|read| {
+        let mut rows = crate::receipt::record_rows(&receipt);
+        rows.extend(read);
+        rows
+    });
+    Ok(Some((receipt, rows)))
 }
 
 /// [`hook_run_read_rows`] read in `dbs` within `rtxn`, an explicit read
 /// target: the vault's store here, and a room's composed view for a reader of
-/// the Hook receipts a room keeps (WILL L11-01 S01-2c).
+/// the Hook receipts a room keeps (WILL L11-01 S01-2c). A row a verb run's
+/// call named counts when `holds` answers true for it: a 32-hex value that
+/// names no row (a nonce, a foreign id) withholds nothing.
 fn hook_run_read_rows_in(
     dbs: &impl SideTableDbs,
     rtxn: &heed::RoTxn<'_>,
     run_key: &str,
+    holds: impl Fn(&EntityId) -> Result<bool>,
 ) -> Result<Option<Vec<EntityId>>> {
     let Some(key) = crate::deletion::parse_hex::<32>(run_key) else {
         return Ok(None);
@@ -570,7 +612,23 @@ fn hook_run_read_rows_in(
         Some(memo) if !memo.verdict_evidence_known => return Ok(None),
         Some(memo) => (memo.reads, memo.derivation.verdict_evidence),
         None => match super::verb::VERB_RUNS.get(dbs, rtxn, &key)? {
-            Some(run) => (run.reads, Vec::new()),
+            // An erased run's payload is gone from its record and its
+            // receipt alike (FIX 10080).
+            Some(run) if run.history_erased => (run.reads, Vec::new()),
+            Some(run)
+                if run.unattributed && (run.unnamed_content || run.verb.starts_with("host.")) =>
+            {
+                return Ok(None);
+            }
+            Some(run) => {
+                let mut input = run.dependencies;
+                for row in run.named_rows {
+                    if holds(&row)? {
+                        input.push(row);
+                    }
+                }
+                (run.reads, input)
+            }
             None => return Ok(None),
         },
     };
@@ -640,225 +698,4 @@ pub(crate) fn hook_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<R
     }
     count.finish(vault);
     Ok(out)
-}
-
-/// Whether `text` is `len` lowercase hex characters.
-fn is_lower_hex(text: &str, len: usize) -> bool {
-    text.len() == len
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
-/// Whether a usage count spells a number or the unmeasured marker.
-fn archived_usage_holds(text: &str) -> bool {
-    text == "unavailable" || text.parse::<u64>().is_ok()
-}
-
-/// Whether a decoded Hook receipt keeps the writer's pure row invariants.
-fn archived_hooks_receipt_holds(key: &RunKey, receipt: &ReceiptRecord) -> bool {
-    if receipt.receipt_kind != crate::receipt::ReceiptKind::Hook {
-        return false;
-    }
-    match receipt.outcome.as_str() {
-        "continue" | "rewrite" | "skip" | "ask" | "add_block" | "annotate" | "redact"
-        | "propose" | "enqueue" | "effect" | "nothing" | "refused" | "failed" => {}
-        _ => return false,
-    }
-    let key_hex = hex_lower(key);
-    if receipt.receipt_id != format!("hook:{key_hex}") {
-        return false;
-    }
-    if receipt.job_ref.is_some() {
-        return false;
-    }
-    if !receipt.policy_trace.is_empty() {
-        return false;
-    }
-    let Some(actor) = receipt.actor.as_deref() else {
-        return false;
-    };
-    if !is_lower_hex(actor, 32) {
-        return false;
-    }
-    if let Some(caller) = receipt.on_behalf_of.as_deref()
-        && caller != crate::receipt::ERASED_CALL_IDENTITY
-        && !is_lower_hex(caller, 32)
-    {
-        return false;
-    }
-    let Some(trigger) = receipt.trigger_ref.as_deref() else {
-        return false;
-    };
-    if !is_lower_hex(trigger, 32) {
-        return false;
-    }
-    let Some(run_key) = receipt.fields.get("run_key") else {
-        return false;
-    };
-    if run_key != &key_hex {
-        return false;
-    }
-    let (Some(binding), Some(code), Some(body_hash)) = (
-        receipt.fields.get("binding"),
-        receipt.fields.get("code"),
-        receipt.fields.get("body_hash"),
-    ) else {
-        return false;
-    };
-    if !is_lower_hex(binding, 32) || !is_lower_hex(code, 32) || !is_lower_hex(body_hash, 64) {
-        return false;
-    }
-    let (Some(hook), Some(version)) = (
-        receipt.fields.get("hook"),
-        receipt.fields.get("hook_version"),
-    ) else {
-        return false;
-    };
-    if hook.is_empty() || !hook.contains('/') || version.is_empty() {
-        return false;
-    }
-    let (Some(duration), Some(now), Some(rows)) = (
-        receipt.fields.get("duration_ms"),
-        receipt.fields.get("now"),
-        receipt.fields.get("rows_read"),
-    ) else {
-        return false;
-    };
-    if duration.parse::<u64>().is_err()
-        || now.parse::<u64>().is_err()
-        || rows.parse::<u64>().is_err()
-    {
-        return false;
-    }
-    let (Some(fuel), Some(calls)) = (
-        receipt.fields.get("fuel_used"),
-        receipt.fields.get("host_calls"),
-    ) else {
-        return false;
-    };
-    if !archived_usage_holds(fuel) || !archived_usage_holds(calls) {
-        return false;
-    }
-    if receipt.fields.contains_key("invocation") {
-        let (Some(invocation), Some(verb), Some(phase), Some(class)) = (
-            receipt.fields.get("invocation"),
-            receipt.fields.get("verb"),
-            receipt.fields.get("phase"),
-            receipt.fields.get("class"),
-        ) else {
-            return false;
-        };
-        if !is_lower_hex(invocation, 32) || verb.is_empty() {
-            return false;
-        }
-        match phase.as_str() {
-            "pre" | "post" | "fact" => {}
-            _ => return false,
-        }
-        match class.as_str() {
-            "human" | "agent" | "system" => {}
-            _ => return false,
-        }
-        if receipt.fields.contains_key("fact")
-            || receipt.fields.contains_key("source")
-            || receipt.fields.contains_key("position")
-        {
-            return false;
-        }
-    } else {
-        let (Some(fact), Some(source), Some(position)) = (
-            receipt.fields.get("fact"),
-            receipt.fields.get("source"),
-            receipt.fields.get("position"),
-        ) else {
-            return false;
-        };
-        if fact.is_empty() || source.is_empty() || position.is_empty() {
-            return false;
-        }
-        if receipt.fields.contains_key("verb")
-            || receipt.fields.contains_key("phase")
-            || receipt.fields.contains_key("class")
-        {
-            return false;
-        }
-    }
-    let overrun = [
-        receipt.fields.get("budget_ms"),
-        receipt.fields.get("elapsed_ms"),
-        receipt.fields.get("overrun_ms"),
-        receipt.fields.get("callback_ms"),
-        receipt.fields.get("read_overruns"),
-        receipt.fields.get("verdict_overruns"),
-    ];
-    let present = overrun.iter().filter(|slot| slot.is_some()).count();
-    if present != 0 && present != 6 {
-        return false;
-    }
-    if present == 6
-        && (overrun[0].is_some_and(|text| text.parse::<u32>().is_err())
-            || overrun[1].is_some_and(|text| text.parse::<u64>().is_err())
-            || overrun[2].is_some_and(|text| text.parse::<u64>().is_err())
-            || overrun[3].is_some_and(|text| text.parse::<u64>().is_err())
-            || overrun[4].is_some_and(|text| text.parse::<u32>().is_err())
-            || overrun[5].is_some_and(|text| text.parse::<u32>().is_err()))
-    {
-        return false;
-    }
-    true
-}
-
-/// Lands one archived Hook receipt, preserving erased callers and retired payloads.
-fn land_archived_hooks_receipt_row_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    permit: &crate::batch::export::OwnerArchiveRestorePermit,
-    row: &crate::batch::export::ArchiveRetainedSideRow,
-) -> Result<crate::batch::export::archive_side_install::ArchivedSideRowOutcome> {
-    use crate::batch::export::RetainedSideHeldBackReason;
-    use crate::batch::export::archive_side_install::{
-        ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
-    };
-    let (key, receipt) = match decode_archived_row(&RECEIPTS, row) {
-        Ok(decoded) => decoded,
-        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
-    };
-    if !archived_hooks_receipt_holds(&key, &receipt) {
-        return Ok(ArchivedSideRowOutcome::HeldBack(
-            RetainedSideHeldBackReason::InvalidValue,
-        ));
-    }
-    install_archived_row(&RECEIPTS, vault, txn, permit, &key, row)
-}
-
-impl Vault {
-    /// Lands the owner's archived Hook and regen receipts in input order, never touching runs or
-    /// packs.
-    pub(crate) fn land_archived_runtime_hooks_rows_in_txn(
-        vault: &Vault,
-        txn: &mut heed::RwTxn<'_>,
-        permit: &crate::batch::export::OwnerArchiveRestorePermit,
-        rows: &[crate::batch::export::ArchiveRetainedSideRow],
-    ) -> Result<Vec<crate::batch::export::archive_side_install::ArchivedSideRowOutcome>> {
-        use crate::batch::export::RetainedSideHeldBackReason;
-        use crate::batch::export::archive_side_install::ArchivedSideRowOutcome;
-        let mut outcomes = Vec::with_capacity(rows.len());
-        for row in rows {
-            if row.source_table.as_str() == crate::side_table::HOOKS_RECEIPT.name {
-                outcomes.push(land_archived_hooks_receipt_row_in_txn(
-                    vault, txn, permit, row,
-                )?);
-            } else if row.source_table.as_str() == crate::side_table::HOOKS_REGEN_RECEIPT.name {
-                outcomes.push(crate::Vault::land_archived_hooks_regen_receipt_row_in_txn(
-                    vault, txn, permit, row,
-                )?);
-            } else {
-                outcomes.push(ArchivedSideRowOutcome::HeldBack(
-                    RetainedSideHeldBackReason::InvalidEncoding,
-                ));
-            }
-        }
-        Ok(outcomes)
-    }
 }

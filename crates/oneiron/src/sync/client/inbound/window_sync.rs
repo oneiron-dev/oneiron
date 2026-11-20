@@ -175,6 +175,12 @@ impl SyncClient {
                     return Err(TransportError::InvalidPayload("invalid follow refusal"));
                 }
                 self.follows_refused.insert(key.clone());
+                // The residence upkeep asks for its tombstone id set
+                // again, held here or not (FOLLOWED-TOMBSTONE-HELD-WINDOW-
+                // REFUSED-LIVE): the home lane's refusals only.
+                if self.peer_session.is_none() && self.config.federation_peer.is_none() {
+                    self.manager.note_follow_refused(&key);
+                }
                 Ok(Vec::new())
             }
             window_sub_tags::RESIDENCE_ACK | window_sub_tags::RESIDENCE_HELD

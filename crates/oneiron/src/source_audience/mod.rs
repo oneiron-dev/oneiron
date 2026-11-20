@@ -74,7 +74,7 @@ pub(crate) use wake::{
 #[cfg(feature = "sync")]
 pub(crate) use walk::derived_travel_in;
 pub(crate) use walk::{
-    LineagePass, ReplicationScope, read_audience_in, readable_with_read_in,
+    LineagePass, ReplicationScope, lineage_held_in, read_audience_in, readable_with_read_in,
     withheld_from_replication_in,
 };
 
