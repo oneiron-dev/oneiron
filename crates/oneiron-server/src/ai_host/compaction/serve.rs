@@ -310,7 +310,8 @@ impl ServedCompactionBackend {
                 }
             })
         };
-        let may_send: &(dyn Fn() -> bool + Sync) = &*fresh;
+        // SCRATCH RED (not for merge): the ladder's ask always says yes.
+        let may_send: &(dyn Fn() -> bool + Sync) = &|| true;
         // Admit on the original generation before sending. The owned ticket
         // also settles zero if unwinding drops this call before a response.
         let generation = match &self.meter {
@@ -341,8 +342,9 @@ impl ServedCompactionBackend {
                     ..Default::default()
                 },
             })
-            .sourced(union_source_rows([sources, home_rows]))
-            .within_text_dispatch_release(release);
+            .sourced(union_source_rows([sources, home_rows]));
+        // SCRATCH RED (not for merge): no dispatch release on the run.
+        drop(release);
         // A chat turn that keeps no model-call record keeps none for its
         // flight's calls: their runs name no rows, so no run receipt names
         // the retained window's worlds (census L5-25; Astra delta 2).
