@@ -214,4 +214,29 @@ mod tests {
             }
         }
     }
+
+    /// A hosted private-network refusal names both things the hosting
+    /// operator can allow: a private network (`--hosted-private-network`)
+    /// and a named private origin (`--hosted-private-origin`), in its
+    /// message, its fetch error and its suggestion.
+    #[test]
+    fn a_hosted_private_network_refusal_names_the_operator_networks_and_origins() {
+        let refused = HostedEgressRefusal::PrivateNetwork;
+        for text in [
+            refused.to_string(),
+            refused.fetch_error("https://example.com/page").to_string(),
+            refused.suggestion().to_owned(),
+        ] {
+            assert!(
+                text.contains("outside the private networks and origins"),
+                "{text}"
+            );
+            assert!(
+                text.contains(
+                    "the hosting operator can allow its private network or its named private origin"
+                ),
+                "{text}"
+            );
+        }
+    }
 }
