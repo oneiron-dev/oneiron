@@ -1,8 +1,8 @@
 //! MEMORIES projection with source labels, world fences, and one shared render budget.
 
 use super::memories::{
-    CompanionAssembly, MEMORIES_SECTION_VERSION_V4, MemoriesBudget, MemoriesSection, MemoryRow,
-    MemorySlot, MemorySource, MemoryTier,
+    CompanionAssembly, MEMORIES_SECTION_VERSION_V4, MemoriesBudget, MemoriesCut, MemoriesSection,
+    MemoryRow, MemorySlot, MemorySource, MemoryTier,
 };
 use crate::context_pack::{ContextEntity, ContextPack};
 use crate::disclosure::DisclosureAssembly;
@@ -63,17 +63,29 @@ pub(super) fn finish_projection(
     clamp_held_pairs(&mut rows);
 
     let mut used = MemoriesBudget::default();
+    let mut cut = MemoriesCut::default();
     let mut filtered = Vec::with_capacity(rows.len());
     for mut row in rows {
         if row.tier != MemoryTier::Pinned
             && (used.get(row.slot) >= budget.get(row.slot)
                 || budget.shared_total.is_some_and(|cap| filtered.len() >= cap))
         {
+            cut.increment(row.slot);
             continue;
         }
         used.increment(row.slot);
         row.row_index = filtered.len();
         filtered.push(row);
+    }
+    if !cut.is_empty() {
+        tracing::debug!(
+            claims = cut.claims,
+            turns = cut.turns,
+            summaries = cut.summaries,
+            facets = cut.facets,
+            other = cut.other,
+            "the MEMORIES projection cut optional rows past their slot or shared cap"
+        );
     }
 
     filtered.sort_by(|a, b| {
@@ -92,6 +104,7 @@ pub(super) fn finish_projection(
         rows: filtered,
         companion,
         disclosure,
+        cut,
     }
 }
 

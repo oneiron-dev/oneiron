@@ -149,6 +149,7 @@ fn memories() -> MemoriesSection {
         ],
         companion: None,
         disclosure: None,
+        cut: Default::default(),
     }
 }
 
