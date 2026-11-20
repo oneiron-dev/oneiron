@@ -55,7 +55,7 @@ pub(super) fn consent_void_digest(void: &VoiceConsentVoid) -> [u8; 16] {
 
 /// The digest of one consent event's stored encoding: two events with one id and any other
 /// difference (date, purposes, basis, recorder, state) have different fingerprints.
-fn consent_event_fingerprint(event: &VoiceConsentEventV1) -> Result<[u8; 16]> {
+pub(super) fn consent_event_fingerprint(event: &VoiceConsentEventV1) -> Result<[u8; 16]> {
     Ok(digest16(
         b"voice_identity.consent_void.event",
         &CONSENT.encode_value(event)?,

@@ -17,4 +17,7 @@ crate::side_table::side_tables! {
     /// Enrollment sample row. Key: digest16.
     VOICE_IDENTITY_SAMPLE: VaultMeta b"voice_identity.sample.v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// The date a withdrawal recorded at the vault's clock asked for. Key: id16 + digest16.
+    VOICE_IDENTITY_WITHDRAWAL_REQUESTED_AT: VaultMeta b"voice_identity.withdrawal_requested_at.v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
 }

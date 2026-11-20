@@ -74,6 +74,17 @@ pub(crate) enum HumanCredentialReach {
     Ordinary,
 }
 
+/// Whether `left` and `right` name the same purposes, in any order.
+fn same_purposes(left: &[VoicePrintPurpose], right: &[VoicePrintPurpose]) -> bool {
+    let names = |purposes: &[VoicePrintPurpose]| {
+        purposes
+            .iter()
+            .map(VoicePrintPurpose::as_str)
+            .collect::<BTreeSet<_>>()
+    };
+    names(left) == names(right)
+}
+
 /// Both consent doors compare inside the transaction that holds the event
 /// write and any hard deletion.
 fn put_consent_event_once(
@@ -101,11 +112,13 @@ fn put_consent_event_once(
 /// [`put_consent_event_once`] for a withdrawal `event` whose request asked
 /// for the date `asked` and which is recorded at `event.occurred_at`, the
 /// asked date met with this vault's clock (VOICE-FUTURE-DATED-WITHDRAWAL =
-/// B). The replay compares with that clamp applied: a stored withdrawal under
-/// the same id that differs only by a date at or before `asked` is this
-/// request recorded before, so the recorder's retry stays idempotent after
-/// the clock has moved. Answers the stored date on a replay and `None` on the
-/// first insertion; any other decision stored under the id is refused.
+/// B). A stored withdrawal under the same id is a replay only when it is the
+/// same decision and its own request asked for `asked`
+/// ([`super::withdrawal_requested_at`] keeps that date when the clock moved
+/// it), so the recorder's retry stays idempotent after the clock has moved,
+/// and a request under the same id with another date is refused
+/// (REVIEW-10046 P1). Answers the stored date on a replay and `None` on the
+/// first insertion, which also keeps the asked date where it differs.
 fn put_withdrawal_once(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
@@ -116,25 +129,24 @@ fn put_withdrawal_once(
         event.subject_ref,
         digest16(b"voice_identity.consent", event.event_id.as_bytes()),
     );
-    match CONSENT.get(store, txn, &key)? {
-        Some(stored)
-            if stored.occurred_at <= asked
-                && stored
-                    == (VoiceConsentEventV1 {
-                        occurred_at: stored.occurred_at,
-                        ..event.clone()
-                    }) =>
+    if let Some(stored) = CONSENT.get(store, txn, &key)? {
+        let same_decision = stored
+            == (VoiceConsentEventV1 {
+                occurred_at: stored.occurred_at,
+                ..event.clone()
+            });
+        if same_decision
+            && super::withdrawal_requested_at::requested_date(store, txn, &stored)? == asked
         {
-            Ok(Some(stored.occurred_at))
+            return Ok(Some(stored.occurred_at));
         }
-        Some(_) => Err(invalid_voice(
+        return Err(invalid_voice(
             "voice consent event id already names another decision",
-        )),
-        None => {
-            CONSENT.put(store, txn, &key, event)?;
-            Ok(None)
-        }
+        ));
     }
+    CONSENT.put(store, txn, &key, event)?;
+    super::withdrawal_requested_at::record_requested_date_in_txn(store, txn, event, asked)?;
+    Ok(None)
 }
 
 impl Vault {
@@ -1193,7 +1205,9 @@ impl Vault {
     /// own restore of their withdrawal `withdrawal` while it is open to
     /// disown ([`Self::voice_withdrawal_open_to_disown_in_txn`]): recorded by
     /// the subject, a grant, dated one second after the withdrawal, for its
-    /// purposes. A stored identical event is a replay. It runs in the grant's
+    /// purposes in any order (the consent door orders a grant's purposes by
+    /// name; a withdrawal keeps its recorder's order, REVIEW-10046 P1). A
+    /// stored identical event is a replay. It runs in the grant's
     /// write transaction, so a decision recorded after the tap was offered,
     /// such as the subject's own withdrawal, closes the tap (REVIEW-10022 P1).
     fn admit_consent_restore_in_txn(
@@ -1213,7 +1227,7 @@ impl Vault {
                 .voice_withdrawal_open_to_disown_in_txn(txn, subject, withdrawal)?
                 .is_some_and(|open| {
                     event.occurred_at == open.occurred_at.saturating_add(1)
-                        && event.purposes == open.purposes
+                        && same_purposes(&event.purposes, &open.purposes)
                 });
         if restores {
             Ok(())

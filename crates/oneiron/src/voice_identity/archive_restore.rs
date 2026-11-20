@@ -12,6 +12,7 @@ use super::ref_bank::{
     VoiceRefSubjectKind, VoiceRenderConsent, banked_identity_admits_decision_in,
 };
 use super::storage_admission::CONSENT;
+use super::withdrawal_requested_at::WITHDRAWAL_REQUESTED_AT;
 use crate::Vault;
 use crate::batch::export::archive_side_install::{
     ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
@@ -35,8 +36,8 @@ const RENDER_CONSENT: SideTable<String, VoiceRenderConsent, Named> =
 const OWNER_INDEX: SideTable<(EntityId, Vec<u8>), Vec<u8>, Raw> =
     SideTable::new(&side_table::VOICE_OWNER_REF_OWNER_INDEX);
 
-/// Lands archived voice consent, consent void and render consent rows in input order, one
-/// outcome per row.
+/// Lands archived voice consent, consent void, withdrawal requested-date and render consent
+/// rows in input order, one outcome per row.
 pub(crate) fn land_archived_voice_rows_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -51,6 +52,9 @@ pub(crate) fn land_archived_voice_rows_in_txn(
             }
             name if name == side_table::VOICE_IDENTITY_CONSENT_VOID.name => {
                 land_archived_voice_consent_void_row_in_txn(vault, txn, permit, row)?
+            }
+            name if name == side_table::VOICE_IDENTITY_WITHDRAWAL_REQUESTED_AT.name => {
+                land_archived_voice_withdrawal_requested_at_row_in_txn(vault, txn, permit, row)?
             }
             name if name == side_table::VOICE_REF_RENDER_CONSENT.name => {
                 land_archived_voice_render_row_in_txn(vault, txn, permit, row)?
@@ -116,6 +120,37 @@ fn land_archived_voice_consent_void_row_in_txn(
         return Ok(ArchivedSideRowOutcome::HeldBack(reason));
     }
     install_archived_row(&CONSENT_VOID, vault, txn, permit, &key, row)
+}
+
+/// Lands one archived requested date of a withdrawal recorded at the vault's clock
+/// (REVIEW-10046 P1) for a live person subject. The key must be the subject and the digest of
+/// the withdrawal's event id it names. It lands as written: it answers a replay only for the
+/// exact withdrawal row it fingerprints, which the read takes from the consent log, so a row
+/// whose withdrawal stays out, or is held here under the same id with other content, changes no
+/// replay.
+fn land_archived_voice_withdrawal_requested_at_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, requested) = match decode_archived_row(&WITHDRAWAL_REQUESTED_AT, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    let event_digest = digest16(
+        b"voice_identity.consent",
+        requested.withdrawal_event_id.as_bytes(),
+    );
+    if key.1 != event_digest {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    if let Some(reason) = live_person_held_back(vault, txn, &key.0)? {
+        return Ok(ArchivedSideRowOutcome::HeldBack(reason));
+    }
+    install_archived_row(&WITHDRAWAL_REQUESTED_AT, vault, txn, permit, &key, row)
 }
 
 /// Why a voice consent row of `subject` stays back: the subject is no live person here.

@@ -53,6 +53,7 @@ mod storage_admission;
 mod stored;
 mod types;
 mod vault;
+mod withdrawal_requested_at;
 
 pub use self::enrollment_law::{
     VoiceEnrollmentLegalContext, VoiceJurisdiction, VoicePrintLegalEvidence, WrittenReleaseRef,
