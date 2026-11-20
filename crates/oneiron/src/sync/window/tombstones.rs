@@ -69,6 +69,37 @@ pub(crate) fn mark_removed_carriers_first(
     Ok(())
 }
 
+/// The half of [`mark_removed_carriers_first`] a local delete's publication
+/// ([`CarrierRemoval::LocalPublication`]) commits before it touches the
+/// document: the task-authority suppression alone. The records of who brought
+/// or wrote each carrier leave in its publish transaction, once that
+/// transaction's refusals have passed ([`forget_removed_carrier_records_in_txn`]):
+/// a refused publication keeps its carrier, and a peer's row stays the peer's.
+/// The suppression it keeps leaves the task reading as a refusal, as the
+/// removal it refused would have.
+pub(crate) fn suppress_published_carriers_first(
+    vault: &Vault,
+    carriers: &[(EntityId, Vec<u8>)],
+) -> Result<()> {
+    crate::task_authority::mark_removed_carriers(vault, carriers)?;
+    #[cfg(test)]
+    fail_after_carrier_mark(CarrierRemoval::LocalPublication)?;
+    Ok(())
+}
+
+/// Forgets, in `wtxn`, a peer's record of each removed carrier and the record
+/// of which machine wrote a removed MESSAGE (FIX 12113): the other half of
+/// [`mark_removed_carriers_first`], run by a local delete's publication in
+/// the transaction that publishes it.
+pub(crate) fn forget_removed_carrier_records_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    carriers: &[(EntityId, Vec<u8>)],
+) -> Result<()> {
+    crate::sync::ingest::forget_peer_rows_in_txn(vault, wtxn, carriers)?;
+    crate::sync::ingest::forget_written_rows_in_txn(vault, wtxn, carriers)
+}
+
 #[cfg(test)]
 thread_local! {
     static FAIL_AFTER_CARRIER_MARK: std::cell::Cell<Option<CarrierRemoval>> =
@@ -283,18 +314,29 @@ fn marker_ids(
 }
 
 /// The `pt:` markers staged in `window_key`. A malformed marker key is left
-/// in place and logged: a deletion intent is never silently dropped.
+/// in place and logged: a deletion intent is never silently dropped. A
+/// marker whose soft delete is still publishing it is that publication's,
+/// which re-proves the delete first, and is left to it. The held set is
+/// locked before the snapshot opens: a marker read is still held, or its
+/// publication ended before the snapshot, which then shows its withdrawal.
 fn pending_tombstone_markers(
     vault: &Vault,
     window_key: &WindowKey,
 ) -> Result<Vec<(crate::sync::window_rows::WindowEntityHexKey, Vec<u8>)>> {
     let mut markers: Vec<(crate::sync::window_rows::WindowEntityHexKey, Vec<u8>)> = Vec::new();
+    let held = vault.store.tombstone_publications_in_flight.lock();
     let rtxn = vault.store.env.read_txn()?;
     for entry in vault
         .store
         .port_pending_tombstones_in_window(&rtxn, WindowAddress::new(window_key.as_str()))?
     {
         match entry {
+            Ok(row) if held.holds_marker(&row.window_label, &row.id, &row.raw) => {
+                tracing::debug!(
+                    entity = %row.id.to_hex(),
+                    "pt replay: marker left to its own publication"
+                );
+            }
             Ok(row) => markers.push((
                 crate::sync::window_rows::WindowEntityHexKey {
                     window: row.window_label,

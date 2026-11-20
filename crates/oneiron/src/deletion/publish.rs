@@ -210,7 +210,6 @@ impl Vault {
         use super::delete_bearing_update::export_tombstone_commit_delta;
         use crate::store::loro_document::{doc_version_vector, entity_carriers};
         use crate::store::window_protocol::DELETION_TOMBSTONE_ORIGIN;
-        use crate::store::window_rows::CarrierRemoval;
         use crate::sync::bridge::with_deletion_tombstone_observer_a_suppressed;
         use crate::sync::schema::create_window_doc;
         use crate::sync::window::{load_window_from_state, merge_persisted_state_into_doc};
@@ -257,7 +256,7 @@ impl Vault {
             // therefore ordered strictly before this delete (seen — nothing
             // is published) or strictly after it (LMDB's single writer makes
             // it wait for this commit). The steps that need their own write
-            // txn — the mode scrub, the gate staging and the carrier mark —
+            // txn — the mode scrub, the gate staging and the suppression mark —
             // run before it opens, since LMDB admits no nested writer. Lock order
             // materializer → LMDB txn matches every other holder; the registry
             // lock is NOT held here (manager lock-order pin).
@@ -275,14 +274,14 @@ impl Vault {
                     gate_decision.map(|decision| decision.decision_id),
                 );
                 super::tombstone_scope::capture_deleted_scope(self, id, value);
-                // Marked before the publish txn opens, which LMDB cannot nest:
-                // a failed publish keeps the mutated live doc, and a later
-                // persist would make its removal durable without the mark.
-                self.store.sync_hooks.mark_removed_carriers_first(
-                    self,
-                    CarrierRemoval::LocalPublication,
-                    &entity_carriers(&window.doc, &[*id]),
-                )?;
+                // Suppressed before the publish txn opens, which LMDB cannot
+                // nest: a failed publish keeps the mutated live doc, and a
+                // later persist would make its removal durable without the
+                // mark. The carrier's records leave in the publish txn.
+                let removed_carriers = entity_carriers(&window.doc, &[*id]);
+                self.store
+                    .sync_hooks
+                    .suppress_published_carriers_first(self, &removed_carriers)?;
                 let mut wtxn = self.begin_tombstone_publish_txn(
                     id,
                     window_ts,
@@ -292,6 +291,7 @@ impl Vault {
                     gate,
                     due,
                     owner,
+                    &removed_carriers,
                 )?;
                 let vv_before = window.doc.oplog_vv();
                 let (delete_update, (snapshot, owes_compaction), vv) =
@@ -375,11 +375,10 @@ impl Vault {
             gate_decision.map(|decision| decision.decision_id),
         );
         super::tombstone_scope::capture_deleted_scope(self, id, value);
-        self.store.sync_hooks.mark_removed_carriers_first(
-            self,
-            CarrierRemoval::LocalPublication,
-            &entity_carriers(&doc, &[*id]),
-        )?;
+        let removed_carriers = entity_carriers(&doc, &[*id]);
+        self.store
+            .sync_hooks
+            .suppress_published_carriers_first(self, &removed_carriers)?;
         // Same authority boundary as the live path: the transient doc is
         // mutated only after this txn's re-fold passes, and its bytes reach
         // `d:w:`/`u:w:`/`q:` in that same txn.
@@ -392,6 +391,7 @@ impl Vault {
             gate,
             due,
             owner,
+            &removed_carriers,
         )?;
         let vv_before = doc.oplog_vv();
         self.store
@@ -568,6 +568,12 @@ impl Vault {
     /// A due owner-confirmed erase (`due`) re-proves here that it still
     /// waits, and a hold's refusal names the owner its row records. None
     /// waiting cancels it, withdrawn as a refusal is (FIX 6337).
+    ///
+    /// The records of who brought or wrote each of `removed_carriers`, the
+    /// carriers this publication takes out of the document, leave in this
+    /// txn once its refusals pass: a refused publication keeps the carrier, so
+    /// a peer's row it brought must still read as the peer's. Only their
+    /// task-authority suppression committed before this txn opened.
     #[cfg(feature = "sync")]
     #[allow(clippy::too_many_arguments)]
     fn begin_tombstone_publish_txn(
@@ -580,6 +586,7 @@ impl Vault {
         gate: Option<&GatedDeletion<'_>>,
         due: Option<&PendingConfirmedErase>,
         owner: Option<OwnerAtPublication<'_>>,
+        removed_carriers: &[(EntityId, Vec<u8>)],
     ) -> Result<heed::RwTxn<'_>> {
         let mut wtxn = self.store.env.write_txn()?;
         if let Err(refusal) =
@@ -681,6 +688,9 @@ impl Vault {
                 &Vec::new(),
             )?;
         }
+        self.store
+            .sync_hooks
+            .forget_removed_carrier_records_in_txn(self, &mut wtxn, removed_carriers)?;
         Ok(wtxn)
     }
 

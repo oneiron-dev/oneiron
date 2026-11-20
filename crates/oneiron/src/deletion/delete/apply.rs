@@ -150,6 +150,15 @@ impl Vault {
                 false,
             )?;
         }
+        // The pt: marker this scrub commits is its own publication's, below,
+        // which re-proves the delete first: no replay publishes it meanwhile.
+        // Held until this arm returns, after the marker's retirement.
+        #[cfg(feature = "sync")]
+        let _publication_in_flight = (existed && reason.publishes_crdt_tombstone()).then(|| {
+            self.store
+                .tombstone_publications_in_flight
+                .hold(window_label, id, &tombstone)
+        });
         wtxn.commit()?;
         if existed {
             self.notify_local_delete_materialized(&changed);
