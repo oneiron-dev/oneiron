@@ -8,7 +8,9 @@
 //! decision. Every retained table states its rule in [`RETAINED_SUBJECT_RULES`], and a
 //! compile-time check refuses a retained table with no rule, or with two.
 
-use self::RetainedSubjectRule::{Evidence, HexIds, NoRecord, ParsedKey, RawIds, Value};
+use self::RetainedSubjectRule::{
+    Evidence, HexIds, KeyAndValue, NoRecord, ParsedKey, RawIds, Value,
+};
 use super::archive_side_dispositions::{ArchiveSideDisposition, SIDE_TABLE_DISPOSITIONS};
 use crate::entity_id::EntityId;
 
