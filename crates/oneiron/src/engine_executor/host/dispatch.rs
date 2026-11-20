@@ -323,7 +323,15 @@ impl RecordingJsHost<'_, '_> {
         };
         let output = match storage.publish_code_run_reply(path, sink, self.run_id, sources, None)? {
             Ok(output) => output,
-            Err(unavailable) => return Ok(unavailable),
+            Err(unavailable) => {
+                // The admitted caller reads what the row keeps: an answer
+                // the wall withheld reaches it withheld too.
+                if self.admitted_skill_seq == Some(seq) {
+                    self.admitted_skill_answer = None;
+                    self.admitted_skill_withheld = true;
+                }
+                return Ok(unavailable);
+            }
         };
         let mut card = result_handle_json(self.run_id, &output);
         if shown == Shown::Result {

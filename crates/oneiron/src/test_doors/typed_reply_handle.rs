@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord, ExecutorStorage, GatedActorWrite,
-    ProgramStepFeedback, ProgramStepIdentity, SelfCall, SelfDispatchOutcome, TaskWaitFinding,
-    TaskWaitSetCall, TaskWaitSetResult, TypeDiagnostics, code_run_replay_abi_layout_checks,
+    ProgramStepFeedback, ProgramStepIdentity, ReaderReadCapture, SelfCall, SelfDispatchOutcome,
+    SelfSkillCall, StepContextCapture, StepReplayContext, TaskWaitFinding, TaskWaitSetCall,
+    TaskWaitSetResult, TypeDiagnostics, code_run_replay_abi_layout_checks,
     decode_code_run_replay_record, encode_code_run_replay_record,
 };
 use crate::consent::AuthenticatedOwner;
@@ -442,4 +443,32 @@ fn stored_program_steps_len(outcome: &rmpv::Value) -> Result<usize> {
     let steps: Vec<ProgramStepFeedback> = serde_json::from_str(text)
         .map_err(|_| Error::InvalidClaimBody("probe program steps do not decode"))?;
     Ok(steps.len())
+}
+
+/// Whether a hook view kept for one skill call leaves a step replay
+/// context that reads back. Answers whether the capture kept the view and
+/// is complete, and whether the encoded context decodes to itself.
+pub fn replay_context_view_reads_back(view: serde_json::Value) -> (bool, bool) {
+    let mut capture = StepContextCapture::new(None);
+    let call = SelfCall::SkillsCall(SelfSkillCall {
+        skill: EntityId::now(),
+        args: serde_json::json!({}),
+    });
+    capture
+        .guest_responses
+        .keep(&call, Some(0), Some(&view), None);
+    let kept = capture.guest_responses.complete && capture.guest_responses.at(0).is_some();
+    let context = StepReplayContext {
+        run: EntityId::now(),
+        step: 1,
+        bridge_start: 0,
+        bridge_end: 1,
+        guest_responses: capture.guest_responses,
+        reader_reads: ReaderReadCapture::new(None),
+        callables: Vec::new(),
+        deliveries: Vec::new(),
+    };
+    let bytes = context.encode().expect("the step replay context encodes");
+    let reads_back = StepReplayContext::decode(&bytes) == Some(context);
+    (kept, reads_back)
 }

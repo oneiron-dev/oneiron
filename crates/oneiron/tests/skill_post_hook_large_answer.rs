@@ -1114,3 +1114,193 @@ fn a_live_post_chain_refuses_a_too_deep_answer_precisely_never_as_non_json() {
         "no binding names a body for the refused answer",
     );
 }
+
+/// The custody value the masking tests hold: one test secret carries it,
+/// so the run-known sweep stands it in wherever it appears.
+const SECRET_CANARY: &str = "admitted-mask-canary-9f31-orchard-lantern";
+
+/// Stores the active callable whose answer is `title`, the custody
+/// `secret` and a `text` of `skillArgs.bytes` bytes of `b`, and answers
+/// its id.
+fn large_secret_skill(vault: &Vault, secret: &str) -> EntityId {
+    let literal = serde_json::to_string(secret).expect("the secret encodes");
+    let source = format!(
+        "finish(JSON.stringify({{title:\"secret-title-7\",secret:{literal},text:\"b\".repeat(skillArgs.bytes)}}));",
+    );
+    callable_skill::put_active_callable(
+        vault,
+        "fixture.large-secret-answer",
+        &source,
+        &serde_json::json!({"bytes":"integer"}),
+        &serde_json::json!({"title":"string","secret":"string","text":"string"}),
+    )
+    .expect("the large secret callable is stored and active")
+}
+
+/// Registers [`SECRET_CANARY`] as the custody value the run knows: one
+/// portable test secret holding it, so the run-known sweep masks it.
+fn hold_secret_canary(vault: &Vault) {
+    vault
+        .register_test_secret(
+            "admitted-mask-canary",
+            SECRET_CANARY.as_bytes(),
+            Vec::new(),
+            1,
+        )
+        .expect("the custody value registers");
+}
+
+/// An admitted large answer goes out with its run-known values masked:
+/// the whole answer held for the live outer post chain carries the
+/// custody value's stand-in, never the value itself.
+#[test]
+fn an_admitted_large_answer_goes_out_with_its_run_known_values_masked() {
+    let (_dir, vault) = open_vault();
+    let factory = quickjs_factory();
+    bind_redact_hook(&vault, vec!["/title".to_owned()]);
+    let skill = large_secret_skill(&vault, SECRET_CANARY);
+    hold_secret_canary(&vault);
+    let run_id = fresh_id();
+    let (actor, leased) = leased_actor(&vault, run_id);
+
+    let pre = outer_pre(&vault, actor, skill);
+    assert!(
+        !pre.passed_through(),
+        "the outer pre chain found its post hook live",
+    );
+    let answer = admitted_skill_call(
+        &vault,
+        &factory,
+        run_id,
+        actor,
+        &leased,
+        skill,
+        !pre.passed_through(),
+    );
+    let text = answer.to_string();
+    assert!(
+        !text.contains(SECRET_CANARY),
+        "the whole answer masks the custody value: {}",
+        text.chars().take(200).collect::<String>(),
+    );
+    let secret = answer
+        .get("secret")
+        .and_then(serde_json::Value::as_str)
+        .expect("the whole answer carries its secret field");
+    assert_ne!(secret, SECRET_CANARY, "the secret field holds the stand-in");
+    assert_eq!(
+        answer.get("title").and_then(serde_json::Value::as_str),
+        Some(TAG),
+        "no hook changed the answer",
+    );
+}
+
+/// An admitted large answer's hook view goes out masked: the outer post
+/// chain's redacted view hides the title and carries the custody value's
+/// stand-in, never the value itself.
+#[test]
+fn an_admitted_large_answers_hook_view_goes_out_masked() {
+    let (_dir, vault) = open_vault();
+    let factory = quickjs_factory();
+    bind_redact_hook(&vault, vec!["/title".to_owned()]);
+    let skill = large_secret_skill(&vault, SECRET_CANARY);
+    hold_secret_canary(&vault);
+    let run_id = fresh_id();
+    let (actor, leased) = leased_actor(&vault, run_id);
+
+    let pre = outer_pre(&vault, actor, skill);
+    assert!(
+        !pre.passed_through(),
+        "the outer pre chain found its post hook live",
+    );
+    let answer = admitted_skill_call(
+        &vault,
+        &factory,
+        run_id,
+        actor,
+        &leased,
+        skill,
+        !pre.passed_through(),
+    );
+    let view = outer_post(&vault, pre, answer);
+    assert!(
+        view.get("title").is_none(),
+        "the outer post chain hides the title: {}",
+        view.to_string().chars().take(200).collect::<String>(),
+    );
+    let text = view.to_string();
+    assert!(
+        !text.contains(SECRET_CANARY),
+        "the hook view masks the custody value: {}",
+        text.chars().take(200).collect::<String>(),
+    );
+}
+
+/// A small admitted answer goes out as recorded: the entry returns the
+/// recorded output itself, matching its bridge row.
+#[test]
+fn a_small_admitted_answer_goes_out_as_recorded() {
+    let (_dir, vault) = open_vault();
+    let factory = quickjs_factory();
+    bind_redact_hook(&vault, vec!["/title".to_owned()]);
+    let skill = large_secret_skill(&vault, SECRET_CANARY);
+    hold_secret_canary(&vault);
+    let run_id = fresh_id();
+    let (actor, leased) = leased_actor(&vault, run_id);
+
+    let pre = outer_pre_with_bytes(&vault, actor, skill, 32);
+    assert!(
+        !pre.passed_through(),
+        "the outer pre chain found its post hook live",
+    );
+    let answer = admitted_skill_call_result(
+        &vault,
+        &factory,
+        run_id,
+        actor,
+        &leased,
+        skill,
+        32,
+        !pre.passed_through(),
+    )
+    .expect("the admitted skill call answers");
+    let record = admitted_record(&vault, &run_id);
+    assert_eq!(record.bridge_calls.len(), 1);
+    assert_eq!(
+        answer,
+        bridge_output(&record.bridge_calls[0]),
+        "the small answer goes out as recorded",
+    );
+}
+
+/// A deep hook view keeps a readable step replay context: a view nested
+/// to the read-back limit is kept, and the context decodes to itself.
+#[test]
+fn a_deep_hook_view_keeps_a_readable_step_replay_context() {
+    let mut rows = serde_json::Value::String("deep-leaf".to_owned());
+    for _ in 0..125 {
+        rows = serde_json::Value::Array(vec![rows]);
+    }
+    let view = serde_json::json!({"output": {"rows": rows}});
+    assert_eq!(
+        handle_doors::replay_context_view_reads_back(view),
+        (true, true),
+        "the deep view is kept and its context reads back",
+    );
+}
+
+/// A hook view too deep to read back leaves the capture incomplete: the
+/// view is not kept, and the context without it still reads back.
+#[test]
+fn a_hook_view_too_deep_to_read_back_leaves_the_capture_incomplete() {
+    let mut rows = serde_json::Value::String("deep-leaf".to_owned());
+    for _ in 0..126 {
+        rows = serde_json::Value::Array(vec![rows]);
+    }
+    let view = serde_json::json!({"output": {"rows": rows}});
+    assert_eq!(
+        handle_doors::replay_context_view_reads_back(view),
+        (false, true),
+        "the too-deep view is not kept and its context reads back",
+    );
+}

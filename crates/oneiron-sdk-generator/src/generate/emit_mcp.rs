@@ -751,8 +751,17 @@ const VERB_LISTING_TAIL: &str = ") {
         }
     };
     let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks);
+    // The admitted skill call's post-hook view spills to its run past the
+    // inline size, bound as a readable result; any other row answers its
+    // post chain's view as it did.
+    let spill_run = if tool == \"self.skills.call\" {
+        crate::api::facade::host_doors::skill_call_spill_run(&hooks)
+    } else {
+        None
+    };
     let output = crate::api::facade::row_hooks_post(server, hooks, output).await
         .map_err(|error| mcp_facade_error(error).with_hook_notice(hook_notice.clone()))?;
+    let output = crate::api::facade::host_doors::spill_admitted_skill_view(server, spill_run, output, served.rows().map(<[oneiron::EntityId]>::to_vec)).await;
     // The row's turn ends after its post hooks.
     drop(task_work_turn);
     Ok((output, source, carrier, epoch, hook_notice))

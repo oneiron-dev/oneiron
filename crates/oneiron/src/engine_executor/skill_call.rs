@@ -2,14 +2,23 @@
 //! The host holds the same live-run guard as the model executor. Its bridge
 //! rows and result bodies join that run; it creates no run or model turn.
 use crate::code_run::{
-    ExecutorStorage, GatedActorWrite, SelfCall, SelfDispatchOutcome, SelfSkillCall,
+    CodeRunReplayRecord, CodeRunResultBinding, ExecutorStorage, GatedActorWrite, SelfCall,
+    SelfDispatchOutcome, SelfSkillCall, result_card,
 };
 use crate::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
 use crate::task_verb::HostBinding;
 use crate::{EntityId, ModelId, Vault};
 
 use super::host::{CallableChecks, RecordingJsHost};
+use super::store::{
+    ByteCount, RESULT_REPLY_INLINE_BYTES, store_ordinal_base, store_result_output_path, write_json,
+};
 use super::{JsCodeModeHost, JsCodeModeRuntime, TypeFeedback};
+
+/// How many times the admitted view spill re-reads the run record and
+/// appends again when another writer lands first: past it the caller keeps
+/// the view inline.
+const ADMITTED_VIEW_SPILL_RETRIES: u8 = 8;
 
 /// Executes the host projection of `self.skills.call`. The caller has already
 /// admitted its credential and verb hooks; nested calls keep their normal
@@ -131,8 +140,11 @@ fn live_skill_call(
     // outer post chain may still run on it: the recorded outcome below is
     // then its record-only card, and this entry returns the whole answer
     // in its place, as a small answer is returned. Taken before the
-    // record takes the host's calls.
+    // record takes the host's calls. An answer the row's store withheld
+    // left none to hold, and no hook's view of it goes out either: the
+    // recorded output, its typed unavailable content, does.
     let outer_answer = host.admitted_skill_answer.take();
+    let withheld = host.admitted_skill_withheld;
     // Read before the record takes the step's calls, failed or not: the
     // run's result rows already hold the callable rows (FIX 5460).
     *rows = host.result_rows();
@@ -153,10 +165,10 @@ fn live_skill_call(
     }
     vault.put_code_run_replay_record_if_generation(&record, Some(generation))?;
     let answer = answer?;
-    let view = answer.view;
+    let view = answer.view.filter(|_| !withheld);
     match answer.outcome {
         SelfDispatchOutcome::SkillCall(result) => {
-            Ok(shown_skill_output(result.output, view, outer_answer))
+            shown_skill_output(vault, run, result.output, view, outer_answer)
         }
         SelfDispatchOutcome::Denied(denied) => Err(MemoryError::new(
             &denied.outcome,
@@ -182,21 +194,132 @@ fn live_skill_call(
 /// outer caller's own post chain, else the recorded output itself, its
 /// card for a large answer included. The run record this entry persisted
 /// binds no name to the real body in the first two cases: its dispatch
-/// recorded that body record-only.
+/// recorded that body record-only, its run-known values swept. So what
+/// stands in the recorded output's place goes out masked as that sweep
+/// masks a body ([`masked_in_run`]). The whole answer of a small call is
+/// its recorded output itself, and goes out as recorded.
 fn shown_skill_output(
+    vault: &Vault,
+    run: EntityId,
     output: serde_json::Value,
     view: Option<serde_json::Value>,
     outer: Option<serde_json::Value>,
-) -> serde_json::Value {
-    match (view, outer) {
+) -> MemoryResult<serde_json::Value> {
+    let shown = match (view, outer) {
         (Some(serde_json::Value::Object(mut fields)), _) => match fields.remove("output") {
             Some(output) => output,
             None => serde_json::Value::Object(fields),
         },
         (Some(view), _) => view,
-        (None, Some(answer)) => answer,
-        (None, None) => output,
+        (None, Some(answer)) if answer != output => answer,
+        (None, _) => return Ok(output),
+    };
+    masked_in_run(vault, run, &shown)
+}
+
+/// `value` with each custody and PERSON value the run `run` knows replaced
+/// by its stand-in, over the value's JSON text, as the run's output sweep
+/// replaces them in a body it stores (FIX 9209). A value that cannot be
+/// encoded, masked or read back fails the call: its plaintext never goes
+/// out.
+fn masked_in_run(
+    vault: &Vault,
+    run: EntityId,
+    value: &serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    let unmasked = |error: serde_json::Error| {
+        MemoryError::new(
+            MEMORY_CODE_INTERNAL,
+            format!("the skill answer could not be masked: {error}"),
+            &[],
+        )
+    };
+    let text = serde_json::to_string(value).map_err(unmasked)?;
+    let masked = crate::guest_error::mask_run_known_values(vault.run_known_source(run)?, &text)?;
+    serde_json::from_str(&masked).map_err(unmasked)
+}
+
+/// An admitted skill call's post-hook view as its caller reads it: the view
+/// itself while its JSON fits one reply, else its readable card. A large
+/// view spills as a body of the run through the sweeping result sink, as the
+/// guest's own spill does (`store_reply`): custody-known values are replaced
+/// by their handles as they stream, and the body carries the secret marks
+/// its later reads are withheld by. The body binds to the run's next free
+/// `r<n>` name, and the record append is generation-guarded: a writer that
+/// lands first makes the spill re-read the record and allocate its name and
+/// path again, so no two spills bind one name and no append loses another
+/// writer's rows. Past [`ADMITTED_VIEW_SPILL_RETRIES`] conflicting appends,
+/// or when the run's record is gone, the spill fails and the caller keeps
+/// the view inline: the view was already judged for this caller, so a failed
+/// spill never refuses it. Only the post-hook view is ever stored readable;
+/// the pre-hook answer stays record-only, as the admitted entry left it.
+pub fn spill_admitted_skill_view(
+    vault: &Vault,
+    run_id: EntityId,
+    view: serde_json::Value,
+    rows: Option<Vec<EntityId>>,
+) -> MemoryResult<serde_json::Value> {
+    let mut size = ByteCount::default();
+    serde_json::to_writer(&mut size, &view).map_err(|error| {
+        crate::Error::InvalidConfig(format!("skill view encoding failed: {error}"))
+    })?;
+    if size.0 <= RESULT_REPLY_INLINE_BYTES {
+        return Ok(view);
     }
+    let storage = ExecutorStorage::Canonical(vault);
+    for _ in 0..ADMITTED_VIEW_SPILL_RETRIES {
+        let Some(mut record) = vault.get_code_run_replay_record(&run_id)? else {
+            return Err(MemoryError::bad_request("no live run record"));
+        };
+        let generation = record.generation()?;
+        let mut sink = vault.code_run_output_sink()?;
+        write_json(&mut sink, &view)?;
+        sink.finalize_sweep()?;
+        let digest = sink.digest()?;
+        let ordinal = store_ordinal_base(&record) + record.outputs.len();
+        let output = vault.publish_code_run_output_produced(
+            store_result_output_path(&digest, ordinal),
+            sink,
+            true,
+            Some(run_id),
+            rows.clone(),
+            None,
+        )?;
+        let name = next_spill_name(&record);
+        let mut card = result_card(&storage, run_id, &output, Some(name.as_str()))?;
+        // An outside caller reads the card back by its name, handle or ref;
+        // the guest read path is none of its business.
+        if let Some(fields) = card.as_object_mut() {
+            fields.remove("read");
+        }
+        record.outputs.push(output.clone());
+        record.bindings.push(CodeRunResultBinding::new(
+            name,
+            output.handle.clone(),
+            output.path.clone(),
+        ));
+        match vault.put_code_run_replay_record_if_generation(&record, Some(generation)) {
+            Ok(_) => return Ok(card),
+            Err(crate::Error::ConcurrentWrite(_)) => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(MemoryError::new(
+        MEMORY_CODE_INTERNAL,
+        "the run changed under its skill view spill",
+        &[],
+    ))
+}
+
+/// The run record's next free automatic result name: `r<n>`, counting from
+/// one past its bindings, past any name taken. The spill allocates from the
+/// generation it writes, recomputed on every retry, so the name it binds is
+/// free in the record that keeps it.
+fn next_spill_name(record: &CodeRunReplayRecord) -> String {
+    (record.bindings.len() + 1..)
+        .map(|n| format!("r{n}"))
+        .find(|name| !record.bindings.iter().any(|binding| binding.name == *name))
+        .unwrap_or_default()
 }
 
 fn engine_error(error: super::EngineExecutorError) -> MemoryError {

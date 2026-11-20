@@ -159,6 +159,12 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// entry (`skill_call`) returns this answer to that caller instead of
     /// the recorded card. Taken by that entry after its one dispatch.
     pub(super) admitted_skill_answer: Option<serde_json::Value>,
+    /// Whether the admitted call's answer was withheld where its bridge row
+    /// stores it: the side-row wall could not place a secret it holds, so
+    /// the row keeps the typed unavailable content and nothing of the
+    /// answer. The admitted entry then returns that content, never the
+    /// answer whole nor a hook's view of it.
+    pub(super) admitted_skill_withheld: bool,
     /// Each stored skill this host's callable calls read and loaded, and the
     /// rows of every result a read took from another run (`None` once one
     /// kept no set): what a callable's answer stands on, counted in
@@ -258,6 +264,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             admitted_skill_seq: None,
             admitted_outer_hooks_live: false,
             admitted_skill_answer: None,
+            admitted_skill_withheld: false,
             callable_rows: (Vec::new(), Some(Vec::new())),
             injection: None,
             program_callables: Vec::new(),
