@@ -9,7 +9,9 @@ use rmpv::Value;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::memory::state_index::StateWindow;
+use crate::memory::state_index::{
+    COMPOSITE_EVIDENCE_ENGAGEMENT_SIGNAL, COMPOSITE_EVIDENCE_GOAL_VELOCITY_SIGNAL, StateWindow,
+};
 use crate::vault::Vault;
 
 /// The claims one refresh left: the composite index and the two signal
@@ -25,13 +27,13 @@ pub struct RefreshedStateSignals {
 /// Measures `subject`'s window ending at `at` and refreshes its composite
 /// index in one write (`Vault::refresh_state_index_in_txn`). `None` when a
 /// source family is missing. The signal ids are read from the composite's
-/// evidence, which lists the annotated turns, then the goal-velocity signal,
-/// then the engagement signal.
+/// evidence, which counts the annotated turns and names the goal-velocity
+/// and engagement signals.
 ///
 /// # Errors
 ///
-/// The vault's and the refresh's; a composite whose evidence does not end in
-/// two claim ids.
+/// The vault's and the refresh's; a composite whose evidence names no signal
+/// pair.
 pub fn refresh_state_signals(
     vault: &Vault,
     subject: &EntityId,
@@ -45,21 +47,20 @@ pub fn refresh_state_signals(
     };
     let body = vault.get_claim(&composite)?.ok_or(Error::EntityNotFound)?;
     let malformed = || Error::InvalidClaimBody("state index evidence names no signal pair");
-    let Some(Value::Array(refs)) = body.evidence else {
+    let Some(Value::Map(fields)) = body.evidence else {
         return Err(malformed());
     };
-    let [.., goal_velocity, engagement] = refs.as_slice() else {
-        return Err(malformed());
-    };
-    let id = |value: &Value| {
-        value
-            .as_str()
+    let id = |key: &str| {
+        fields
+            .iter()
+            .find(|(name, _)| name.as_str() == Some(key))
+            .and_then(|(_, value)| value.as_str())
             .ok_or_else(malformed)
             .and_then(EntityId::from_hex)
     };
     Ok(Some(RefreshedStateSignals {
         composite,
-        goal_velocity: id(goal_velocity)?,
-        engagement: id(engagement)?,
+        goal_velocity: id(COMPOSITE_EVIDENCE_GOAL_VELOCITY_SIGNAL)?,
+        engagement: id(COMPOSITE_EVIDENCE_ENGAGEMENT_SIGNAL)?,
     }))
 }

@@ -9,6 +9,10 @@ use crate::claim::{
 };
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
+use crate::memory::state_index::{
+    COMPOSITE_EVIDENCE_ANNOTATED_TURNS, COMPOSITE_EVIDENCE_ENGAGEMENT_SIGNAL,
+    COMPOSITE_EVIDENCE_GOAL_VELOCITY_SIGNAL,
+};
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, TimeRange, Vault};
 
@@ -24,7 +28,8 @@ pub use crate::memory::state_index::{
 impl Vault {
     /// Blend the mean VAD trajectory, goal velocity and engagement with equal weight.
     /// VAD is normalized to the unit interval; high arousal alone is not judged adverse.
-    /// All three signal families are required. Repeating identical evidence is a no-op.
+    /// All three signal families are required. Repeating identical evidence (the same
+    /// numbers, annotated-turn count and signal claims) is a no-op.
     /// Every VAD turn is read; past `limits.state_vad_turns` the vault asks.
     pub fn derive_state_index(
         &self,
@@ -120,13 +125,22 @@ impl Vault {
             ),
             (Value::from("engagement"), Value::F32(inputs.engagement)),
         ]);
-        let refs = Value::Array(
-            turns
-                .iter()
-                .chain([&evidence.goal_velocity, &evidence.engagement])
-                .map(|id| Value::from(id.to_hex()))
-                .collect(),
-        );
+        // A count of the annotated turns, never their ids: a reader of the
+        // composite's facet may not read the rooms they sit in.
+        let cited = Value::Map(vec![
+            (
+                Value::from(COMPOSITE_EVIDENCE_ANNOTATED_TURNS),
+                Value::from(turns.len() as u64),
+            ),
+            (
+                Value::from(COMPOSITE_EVIDENCE_GOAL_VELOCITY_SIGNAL),
+                Value::from(evidence.goal_velocity.to_hex()),
+            ),
+            (
+                Value::from(COMPOSITE_EVIDENCE_ENGAGEMENT_SIGNAL),
+                Value::from(evidence.engagement.to_hex()),
+            ),
+        ]);
         let mut previous = Vec::new();
         let mut matching = None;
         for id in self.claims_for_subject_in_txn(txn, subject)? {
@@ -149,7 +163,7 @@ impl Vault {
                     "state index refuses a stale projection",
                 ));
             }
-            if body.value == value && body.evidence.as_ref() == Some(&refs) {
+            if body.value == value && body.evidence.as_ref() == Some(&cited) {
                 matching = Some(id);
             }
             previous.push(id);
@@ -168,7 +182,7 @@ impl Vault {
         )?;
         body.source = Some(ClaimSource::Observed);
         body.valid_from = Some(at);
-        body.evidence = Some(refs);
+        body.evidence = Some(cited);
         // Only a PERSON subject has a substrate FACET; any other subject takes
         // the vault default facet (a birth gate refusal otherwise, #4389).
         body.scope_facet = self.claim_put_facet_keeping_in_txn(txn, &id, body.scope_facet)?;
