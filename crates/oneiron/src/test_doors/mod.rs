@@ -253,6 +253,7 @@ pub mod outbound_wait_setting_keys;
 pub mod own_device_grant;
 pub mod own_device_message_replay;
 pub mod owner_device_answer;
+pub mod owner_exemption_judgements;
 pub mod owner_key_enrolment_read;
 pub mod owner_key_line;
 pub mod owner_key_release;
