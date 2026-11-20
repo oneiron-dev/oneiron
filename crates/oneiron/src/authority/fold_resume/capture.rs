@@ -133,6 +133,9 @@ pub(in crate::authority) struct OnceParts<'a> {
     pub(in crate::authority) retired_keys: BTreeSet<AuthorityKey>,
     pub(in crate::authority) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     pub(in crate::authority) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// The revocations whose fences closed in a conflict
+    /// (`Retirements::crossed_revocations`).
+    pub(in crate::authority) crossed_revocations: BTreeSet<AuthorityEntryHash>,
     /// The rows of each closed conflict (`Retirements::closed_conflicts`).
     pub(in crate::authority) closed_conflicts: Vec<BTreeSet<AuthorityEntryHash>>,
     pub(in crate::authority) unsettled: bool,
@@ -148,6 +151,7 @@ pub(super) struct Settlement {
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
     pub(super) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    pub(super) crossed_revocations: BTreeSet<AuthorityEntryHash>,
     pub(super) unsettled: bool,
     pub(super) issues: Vec<AuthorityFoldIssue>,
     /// Parents a judged row names that no judged row is.
@@ -203,6 +207,7 @@ impl Once {
             retired_keys,
             handoff_or_appointment_retired_keys,
             closed_handoffs,
+            crossed_revocations,
             closed_conflicts: _,
             unsettled,
             counted_ancestor_pairs,
@@ -301,6 +306,7 @@ impl Once {
                 retired_keys,
                 handoff_or_appointment_retired_keys,
                 closed_handoffs,
+                crossed_revocations,
                 unsettled,
                 issues,
                 missing_parents,

@@ -113,6 +113,11 @@ pub(super) struct CheckpointSafety {
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
     pub(super) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// The revocations whose fences closed in a conflict, as the projected
+    /// fold holds them. Absent when empty, as in every history where no two
+    /// removals cross.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) crossed_revocations: BTreeSet<AuthorityEntryHash>,
     pub(super) unsettled: bool,
     pub(super) issues: Vec<AuthorityFoldIssue>,
     pub(super) missing_parents: BTreeSet<AuthorityEntryHash>,
@@ -451,6 +456,8 @@ impl AuthorityCheckpointV2 {
         if !aggregate.fold.valid_entries.iter().all(covered)
             || !safety.uncounted.iter().all(covered)
             || !safety.closed_handoffs.iter().all(covered)
+            || !safety.crossed_revocations.iter().all(covered)
+            || safety.crossed_revocations != aggregate.fold.crossed_revocations
             || safety.handoff_or_appointment_retired_keys
                 != aggregate.fold.handoff_or_appointment_retired_keys
             || !safety

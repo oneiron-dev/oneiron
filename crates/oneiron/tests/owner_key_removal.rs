@@ -48,6 +48,7 @@ use oneiron::error::RecordError;
 use oneiron::recovery::{
     KitIssue, KitSecretKind, PassphraseCost, PieceHome, issue_recovery_root_kit, restore_kit,
 };
+use oneiron::test_doors::authority_adopted_fold::fold_past_prefix_image;
 use oneiron::test_doors::host_root_row_signature::sign_authority_row_as_host_root;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::owner_key_release::release_owner_keys;
@@ -3183,4 +3184,59 @@ fn a_ring_of_three_removals_shows_each_removal_in_the_changes_list() {
         "guard: a later enrolment counts"
     );
     assert_ring_listed("after a later counted row");
+}
+
+/// The fold names a ring's removals as crossed, and so does an image of the
+/// whole log: its safety index and its fold carry them, and a fold past it
+/// names what the whole fold names (row OWNER-KEY-CHANGES-RING-CROSSING-UNLISTED).
+#[test]
+fn an_image_of_a_ring_of_removals_names_each_crossed_removal() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let ring = land_removal_ring(&removal_vault);
+    let crossed: BTreeSet<AuthorityEntryHash> =
+        ring.iter().map(|(removal, _, _)| *removal).collect();
+    assert_eq!(
+        removal_vault
+            .vault
+            .authority_fold()
+            .expect("authority fold")
+            .crossed_revocations,
+        crossed,
+        "the fold names the ring's three removals as crossed"
+    );
+    let covered: BTreeSet<AuthorityEntryHash> = removal_vault
+        .vault
+        .export_signed_authority_history()
+        .expect("the signed history")
+        .iter()
+        .map(|bytes| {
+            authority_entry_hash(&decode_authority_log_entry_body(bytes).expect("a row"))
+                .expect("a hash")
+        })
+        .collect();
+    let folded = fold_past_prefix_image(&removal_vault.vault, &covered)
+        .expect("the vault builds an image of every row and folds past it");
+    assert_eq!(
+        folded.whole.crossed_revocations, crossed,
+        "guard: the door's whole fold names the ring"
+    );
+    assert_eq!(
+        folded.whole_captured.fold.crossed_revocations, crossed,
+        "an image of the whole log names the ring's removals as crossed"
+    );
+    let adopted = folded
+        .adopted
+        .expect("an image of every row leaves no tail that needs history");
+    assert_eq!(
+        adopted.crossed_revocations, crossed,
+        "a fold past the image names the ring's removals as crossed"
+    );
+    let captured = folded
+        .captured
+        .expect("a capture past the image leaves no tail that needs history");
+    assert_eq!(
+        captured.fold.crossed_revocations, crossed,
+        "a later image keeps the ring's removals as crossed"
+    );
 }
