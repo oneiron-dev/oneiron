@@ -25,7 +25,11 @@
 //! a relay room's locker token is root's, at 0440, and the room reads it
 //! through its own private group. So it is refused when any user outside its
 //! owner and its group can read or write it (FIX
-//! RELAY-ACCESS-TOKEN-FILE-NOT-ADMITTED).
+//! RELAY-ACCESS-TOKEN-FILE-NOT-ADMITTED), and when it carries an access
+//! control list: a list's entries let in users its mode does not show, and
+//! on Linux its group bits then show the list's mask, not the group's reach
+//! (REVIEW-9811). An owner-alone credential needs no such check off macOS,
+//! because its group bits of zero mask every entry.
 //!
 //! Each is read from the open handle the text is then read from, so the
 //! file checked is the file read. A link is followed: its target is that
@@ -74,6 +78,19 @@ const READ_OR_WRITE_BY_ANY_USER: Reach = Reach {
     acts: "read or written",
     mend: "chmod o-rw",
 };
+
+/// The command that removes a file's access control list.
+#[cfg(target_os = "macos")]
+const ACCESS_CONTROL_LIST_MEND: &str = "chmod -N";
+/// The command that removes a file's access control list.
+#[cfg(all(unix, not(target_os = "macos")))]
+const ACCESS_CONTROL_LIST_MEND: &str = "setfacl -b";
+
+/// The extended attribute a Linux file system keeps a file's POSIX access
+/// ACL in. A list the mode alone can say is not kept, so a file that has
+/// this attribute carries an entry its mode does not show.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const POSIX_ACCESS_ACL_ATTRIBUTE: &str = "system.posix_acl_access";
 
 /// A file this server will not read because of who else can reach it. Its
 /// text names the file, its mode and the command that mends it, and never
@@ -140,9 +157,9 @@ pub(crate) fn read_host_placed_config_file(path: &Path) -> anyhow::Result<String
 
 /// The text of the credential file at `path` that its host shares with one
 /// group (a relay room's locker token), from one open handle, once no user
-/// outside that handle's file's owner and group can read or write it. A
-/// refusal names the file, its mode and the command that mends it; it never
-/// repeats the file's text.
+/// outside that handle's file's owner and group can read or write it, by its
+/// mode and with no access control list. A refusal names the file, its mode
+/// and the command that mends it; it never repeats the file's text.
 pub(crate) fn read_group_shared_credential_file(path: &Path) -> anyhow::Result<String> {
     read_admitted(path, Role::GroupSharedCredential).map(|admitted| admitted.text)
 }
@@ -194,6 +211,16 @@ impl Role {
             Self::GroupSharedCredential => READ_OR_WRITE_BY_ANY_USER,
         }
     }
+
+    /// Whether a file that carries an access control list is refused: one
+    /// whose mode shuts out every user outside its owner and group says who
+    /// may reach it only without a list. A file any user may read is not
+    /// made safer by one, and a list that shares write is its owner's grant,
+    /// as a group's write is.
+    #[cfg(unix)]
+    fn refuses_access_control_list(self) -> bool {
+        matches!(self, Self::GroupSharedCredential)
+    }
 }
 
 /// A file read to its end from the handle its admission checked.
@@ -206,7 +233,7 @@ struct Admitted {
 
 /// The file at `path`, opened once and read from that handle when the
 /// handle's file keeps out what `role` refuses: any user's write, and for a
-/// group-shared credential any user's read too.
+/// group-shared credential any user's read too, and any access control list.
 fn read_admitted(path: &Path, role: Role) -> anyhow::Result<Admitted> {
     let mut file = File::open(path).with_context(|| unread(path, role))?;
     let metadata = file.metadata().with_context(|| unread(path, role))?;
@@ -228,11 +255,55 @@ fn read_admitted(path: &Path, role: Role) -> anyhow::Result<Admitted> {
             ))
             .into());
         }
+        if role.refuses_access_control_list()
+            && carries_access_control_list(&file)
+                .with_context(|| format!("check who can read {} {}", role.noun(), path.display()))?
+        {
+            return Err(FileRefused(format!(
+                "{} {} has an access control list, whose entries can let in users its mode \
+                 ({:o}) does not show, and {}; run `{}` on it",
+                role.noun(),
+                path.display(),
+                mode & 0o777,
+                role.stake(),
+                ACCESS_CONTROL_LIST_MEND
+            ))
+            .into());
+        }
     }
     let mut text = String::new();
     file.read_to_string(&mut text)
         .with_context(|| unread(path, role))?;
     Ok(Admitted { file, stored, text })
+}
+
+/// Whether the open `file` carries a POSIX access ACL. A file system that
+/// keeps no extended attributes keeps no such list.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn carries_access_control_list(file: &File) -> std::io::Result<bool> {
+    use rustix::io::Errno;
+    match rustix::fs::fgetxattr(file, POSIX_ACCESS_ACL_ATTRIBUTE, &mut [0u8; 0]) {
+        Ok(_) => Ok(true),
+        Err(error) if error == Errno::NODATA || error == Errno::NOTSUP => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Whether the open `file` carries an ACL entry, which macOS never masks by
+/// the mode. A list that cannot be read counts as one.
+#[cfg(target_os = "macos")]
+fn carries_access_control_list(file: &File) -> std::io::Result<bool> {
+    Ok(credential_file::has_extended_acl(file))
+}
+
+/// Whether the open `file` carries an access control list: none is read on
+/// this system, as for a credential file.
+#[cfg(all(
+    unix,
+    not(any(target_os = "linux", target_os = "android", target_os = "macos"))
+))]
+fn carries_access_control_list(_: &File) -> std::io::Result<bool> {
+    Ok(false)
 }
 
 /// Whether `raw` reads as a TOML table that sets the issuer key. A text
