@@ -371,7 +371,7 @@ impl Vault {
         let Some(carried) = carry(wtxn, &bytes)? else {
             return Ok(None);
         };
-        let digest = *blake3::hash(&carried).as_bytes();
+        let digest = *oneiron_contracts::fingerprint::ContentHash::of(&carried).as_bytes();
         let (base, pin) = if RAW_OUTPUTS
             .get(&self.store, wtxn, &body_handle(&digest))?
             .is_some()
