@@ -436,7 +436,7 @@ pub(super) fn hand_over_hosted(
     policy_ref: String,
     deadline: Instant,
 ) -> anyhow::Result<()> {
-    let session = transcript::read_log(log.to_path_buf())?;
+    let session = transcript::read_hook_log(log)?;
     let mut remote = Hosted::open(oneiron, vault, policy_ref, Stdio::null(), deadline)?;
     let imported = remote.call::<HookTranscriptImportView>(
         "vault.imports.hook_transcript",

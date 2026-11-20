@@ -122,15 +122,24 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
 starts a server and prints no line of its own. A pinned or selected vault that does not answer one probe gets no recall, so a
 vault that is down costs a prompt at most 2 seconds. `hand-over` queues into the queue of `--config` if you give it;
 else, with a pin, of the running local vault at the pin; with no pin, of the
-newest running local vault; else, when a hosted vault is selected, it sends
-the session's log and its subagents' logs to that vault through
+newest running local vault; else of the default config. A pin is never
+swapped for another vault. One case sends instead of queueing: when the
+session's own `session-start` bound your selected hosted vault, and it is
+still the one selected, a Claude Code session's `hand-over` sends its log and
+its subagents' logs (every `agent-*.jsonl` under `<session>/subagents/`, a
+workflow run's folder included) to that vault through
 `vault.imports.hook_transcript`, as the credential the selection names, in its
-own mode, and queues nothing here; else of the default config. A pin is never
-swapped for another vault. A send the hosted vault does not take (it does not
-answer, or the credential has no Grant naming the verb) is dropped without a
-word; the session's next hand-over sends the whole log again, and the import
-lands only what is new. The hosted vault takes only a Claude Code log: a
-Codex, Cursor or Copilot session queues locally as before.
+own mode, and queues nothing here. `session-start` records that binding as
+`hook-sessions/<session id>.json` in the run folder (the vault's origin and
+id, never a credential; owner-only, kept 30 days). With no record, or once
+another hosted vault is selected, the log queues locally as above: a log never
+goes to a vault its session did not bind. The logs are read below Claude
+Code's `projects` folder, every folder and log there opened through no
+symbolic link, as `serve` reads a queued log. A send the hosted vault does not
+take (it does not answer, or the credential has no Grant naming the verb) is
+dropped without a word; the session's next hand-over sends the whole log
+again, and the import lands only what is new. The hosted vault takes only a
+Claude Code log: a Codex, Cursor or Copilot session queues locally as before.
 
 A pin in `hook.toml` counts only when no one but you can write it: your own
 regular file, not a link, with no write bit for others and, on macOS, no ACL

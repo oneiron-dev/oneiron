@@ -7,8 +7,8 @@
 //!   and recalls a short block for the project ([`recall`]).
 //! - `prompt` recalls a short block for the prompt from the bound vault.
 //! - `hand-over` queues the session's log for the running `serve` to import,
-//!   or sends a Claude Code log to the selected hosted vault the session
-//!   bound ([`hand_over`]).
+//!   or sends a Claude Code log to the selected hosted vault the session's
+//!   start bound and recorded ([`hand_over`], [`session_binding`]).
 //! - `bind` binds a vault as `session-start` does and prints it as JSON, for
 //!   a plugin that runs inside its host (Hermes's memory provider).
 //!
@@ -32,6 +32,7 @@ mod hosted_command;
 mod hosted_selection;
 mod hosted_sign_in;
 mod recall;
+mod session_binding;
 
 pub use self::continue_command::continue_work;
 #[cfg(oneiron_test_support)]
@@ -50,7 +51,6 @@ use self::bind::HandOverTarget;
 use self::hosted_selection::{HostedDiscovery, HostedVault};
 use self::recall::RecallAuth;
 use crate::cli::{HookArgs, HookBindArgs, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs};
-use crate::commands::ConfigFiles;
 
 /// The most of the host's event read from stdin.
 const MAX_EVENT_BYTES: u64 = 1 << 20;
@@ -138,6 +138,11 @@ fn session_start(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
         args.common.settings_file.as_deref(),
         deadline,
     );
+    // The session's hand-over sends its log to a hosted vault only when
+    // this start bound it.
+    if let Some(session) = session_id(&event) {
+        session_binding::record(session, bound.hosted.as_ref());
+    }
     let mut said = bound.lines;
     let Some(url) = bound.url else {
         return said;
@@ -248,12 +253,12 @@ fn recall_auth<'a>(
 /// config named, else of the running local vault, else of the default
 /// config, under the settings file named, else the running vault's own when
 /// the import takes that vault's config. With no config named, a Claude
-/// Code log goes instead to the selected hosted vault where a session binds
-/// that vault ([`bind::hand_over_target`]): through
-/// `vault.imports.hook_transcript`, as the selection's own credential, with
-/// nothing queued here. A send that fails is sent again whole by the
-/// session's next hand-over, and the import lands only what is new. Its
-/// output is not the host's.
+/// Code log goes instead to the selected hosted vault where the session's
+/// start bound that vault and it is still selected
+/// ([`bind::hand_over_target`]): through `vault.imports.hook_transcript`, as
+/// the selection's own credential, with nothing queued here. A send that
+/// fails is sent again whole by the session's next hand-over, and the import
+/// lands only what is new. Its output is not the host's.
 fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     let Some(event) = read_event() else {
         return;
@@ -267,11 +272,11 @@ fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     };
     let oneiron = oneiron(args.common.oneiron.as_deref());
     let deadline = deadline(args.common.timeout);
-    let running = match bind::hand_over_target() {
-        HandOverTarget::Hosted(vault)
-            if args.config.is_none()
-                && matches!(import_source(host), HistorySource::ClaudeCode) =>
-        {
+    // The hosted vault takes only a Claude Code log, and a config named here
+    // is a local queue's.
+    let may_send = args.config.is_none() && import_source(host) == HistorySource::ClaudeCode;
+    let running = match bind::hand_over_target(session_id(&event).filter(|_| may_send)) {
+        HandOverTarget::Hosted(vault) => {
             let policy_ref = format!("policy:{}-hooks", host.as_str());
             let _ = continue_command::hand_over_hosted(
                 &oneiron,
@@ -282,11 +287,7 @@ fn hand_over(host: HookHost, args: &HookHandOverArgs) {
             );
             return;
         }
-        // The hosted vault takes only a Claude Code log, and a config named
-        // here is a local queue's: queued as before, with no local vault
-        // running.
-        HandOverTarget::Hosted(_) | HandOverTarget::Local(None) => ConfigFiles::default(),
-        HandOverTarget::Local(Some(running)) => running,
+        HandOverTarget::Local(running) => running.unwrap_or_default(),
     };
     let mut command = oneiron_spawn::command(oneiron);
     command
@@ -341,6 +342,14 @@ fn read_event() -> Option<Map<String, Value>> {
         Value::Object(event) => Some(event),
         _ => Some(Map::new()),
     }
+}
+
+/// The session the host's event names (`session_id`), when it names one.
+fn session_id(event: &Map<String, Value>) -> Option<&str> {
+    event
+        .get("session_id")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty())
 }
 
 /// The git repository's folder name, else the working directory's.

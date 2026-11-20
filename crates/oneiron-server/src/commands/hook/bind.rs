@@ -22,8 +22,8 @@
 //!
 //! The session's first line names the vault bound. A prompt takes steps 1 to
 //! 3 exactly as a session does ([`choose`]), so it never recalls from a vault
-//! the session would not have bound. A hand-over lands the session's log in
-//! the same order, asking no server ([`hand_over_target`]).
+//! the session would not have bound. A hand-over sends a session's log to a
+//! hosted vault only when that session bound it ([`hand_over_target`]).
 
 use std::io::Read as _;
 use std::net::IpAddr;
@@ -37,6 +37,7 @@ use oneiron::authority::PairingDescriptor;
 use serde::Deserialize;
 
 use super::hosted_selection::{self, HostedDiscovery, HostedVault};
+use super::session_binding;
 use crate::commands::ConfigFiles;
 use crate::commands::local_servers::{self, LocalServer};
 use crate::commands::user_service::{self, InstalledService};
@@ -230,23 +231,37 @@ pub(super) fn quietly(flag: Option<&str>, deadline: Instant) -> Bound {
 /// Where a hand-over lands the session's log ([`hand_over_target`]).
 pub(super) enum HandOverTarget {
     /// The import queue of a running local vault's config, `None` for the
-    /// default config's.
+    /// default config's ([`running_config`]).
     Local(Option<ConfigFiles>),
-    /// The selected hosted vault (step 3).
+    /// The selected hosted vault the session bound (step 3).
     Hosted(HostedVault),
 }
 
-/// Where a hand-over lands the session's log, in the order a session binds
-/// (steps 1 to 3), so a log never lands in a vault the session would not
-/// have bound. With a pin, the running local vault a runtime file names at
-/// the pin, and the default config when no runtime file does (a pin is
-/// never swapped for another vault); with no pin, the newest running local
-/// vault, else the selected hosted vault, else the default config. A local
-/// vault's config file and settings file both come from that one server; a
+/// Where a hand-over lands the log of the session `session`: the selected
+/// hosted vault when that session's start bound it and it is still the one
+/// selected ([`session_binding`]), else the local queue
+/// ([`running_config`]). A session that bound a pin, a local vault or
+/// nothing, one whose start recorded nothing, and one whose hosted vault is
+/// no longer the one selected never send a log to a hosted vault: a log
+/// goes to no vault the session did not bind. No server is asked: a local
+/// hand-over only writes a file, and a hosted one's call is its own probe.
+pub(super) fn hand_over_target(session: Option<&str>) -> HandOverTarget {
+    if let Some(bound) = session.and_then(session_binding::hosted)
+        && let HostedDiscovery::Selected(vault) = hosted_selection::discover()
+        && bound.names(&vault)
+    {
+        return HandOverTarget::Hosted(vault);
+    }
+    HandOverTarget::Local(running_config())
+}
+
+/// The config of the running local vault a hand-over queues to: with a pin,
+/// the one a runtime file names at the pin, and none when no runtime file
+/// does (a pin is never swapped for another vault); with no pin, the newest.
+/// Its config file and its settings file both come from that one server; a
 /// settings file no longer there is dropped, and the hand-over goes on
-/// without it. No server is asked: a local hand-over only writes a file, and
-/// a hosted one's call is its own probe.
-pub(super) fn hand_over_target() -> HandOverTarget {
+/// without it. A hand-over only writes a file, so it asks no server.
+fn running_config() -> Option<ConfigFiles> {
     let pinned = pin(None).map(|pin| pin.url);
     let mut alive: Vec<LocalServer> = local_servers::listed()
         .into_iter()
@@ -255,22 +270,15 @@ pub(super) fn hand_over_target() -> HandOverTarget {
         .collect();
     newest_first(&mut alive);
     let mut alive = alive.into_iter();
-    let chosen = match &pinned {
-        Some(url) => alive.find(|server| server.url == *url),
+    let chosen = match pinned {
+        Some(url) => alive.find(|server| server.url == url),
         None => alive.next(),
     };
-    if let Some(chosen) = chosen {
-        return HandOverTarget::Local(Some(ConfigFiles {
-            config: chosen.config,
-            settings_file: chosen.settings_file.filter(|path| path.is_file()),
-        }));
-    }
-    if pinned.is_none()
-        && let HostedDiscovery::Selected(vault) = hosted_selection::discover()
-    {
-        return HandOverTarget::Hosted(vault);
-    }
-    HandOverTarget::Local(None)
+    let chosen = chosen?;
+    Some(ConfigFiles {
+        config: chosen.config,
+        settings_file: chosen.settings_file.filter(|path| path.is_file()),
+    })
 }
 
 #[derive(Deserialize)]

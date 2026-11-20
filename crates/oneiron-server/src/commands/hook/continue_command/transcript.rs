@@ -2,7 +2,7 @@
 //! and its subagents' logs, each gzip-compressed in standard base64, as
 //! `vault.imports.hook_transcript` takes them. The hooks' hand-over to a
 //! selected hosted vault sends the log its event names the same way
-//! ([`read_log`]).
+//! ([`read_hook_log`]).
 //!
 //! The log is the one `--transcript` names, as the hook's `transcript_path`
 //! does, or else the newest session log of the project folder Claude Code
@@ -12,16 +12,26 @@
 //! or digit as '-'>/<session id>.jsonl`, where `<config>` is
 //! `$CLAUDE_CONFIG_DIR` or `~/.claude`. A log of a folder above the repo, of
 //! a repo nested in it, or of another repo whose path folds to the same
-//! name, is never sent. Its subagents' logs are
-//! `<session id>/subagents/agent-*.jsonl` beside it.
+//! name, is never sent. Its subagents' logs are the `agent-*.jsonl` files
+//! anywhere under `<session id>/subagents/` beside it, a workflow run's
+//! folder included.
 //!
-//! Each log is read through one descriptor, opened without blocking and
-//! checked to be a regular file, so a FIFO or device at the path, even one
-//! put there after it was listed, never blocks the command. A log with a
-//! line that is not a whole JSON record (the last one cut mid-write, say) is
-//! not sent: the importer would land the rest without it.
+//! Below `<config>/projects` (below the folder of a log the person names,
+//! whose path is theirs to follow), every folder on the way to the log, the
+//! session's folder beside it, and every folder and log under that, is
+//! opened relative to the one above and never through a link, as the local
+//! import's drain reads a queued session; a link there is passed over, so
+//! nothing outside the session's own folders is sent. Each log is read
+//! through one descriptor, opened without blocking and checked to be a
+//! regular file, so a FIFO or device at the path, even one put there after
+//! it was listed, never blocks the command. A log with a line that is not a
+//! whole JSON record (the last one cut mid-write, say) is not sent: the
+//! importer would land the rest without it.
 
+use std::ffi::OsStr;
+use std::fs::File;
 use std::io::{BufRead as _, Read as _, Write as _};
+use std::os::fd::OwnedFd;
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -30,6 +40,8 @@ use base64::Engine as _;
 use oneiron::ingest::history::{
     HOOK_TRANSCRIPT_MAX_SUBAGENTS, HookSubagentTranscript, HookTranscriptImportRequest,
 };
+
+use crate::files_intake::confined;
 
 /// A session log, read and encoded.
 pub(super) struct SessionLogs {
@@ -45,48 +57,107 @@ pub(super) fn read(
     dir: &Path,
     deadline: Instant,
 ) -> anyhow::Result<SessionLogs> {
-    let path = match named {
-        Some(path) => path.to_path_buf(),
-        None => newest_session(&claude_config_dir()?.join("projects"), dir, deadline)?,
+    let Some(named) = named else {
+        let projects = projects_dir()?;
+        let path = newest_session(&projects, dir, deadline)?;
+        return read_below(&projects, &path);
     };
-    read_log(path)
+    // The path the person names is theirs to follow, as in any path typed;
+    // nothing below the log's own folder is.
+    let real = std::fs::canonicalize(named)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", named.display()))?;
+    let folder = real.parent().ok_or_else(|| not_a_session_log(named))?;
+    let mut logs = read_below(folder, &real)?;
+    logs.path = named.to_path_buf();
+    Ok(logs)
 }
 
-/// The session log at `path` and its subagents' logs, read and encoded.
-pub(super) fn read_log(path: PathBuf) -> anyhow::Result<SessionLogs> {
+/// The hooks' hand-over: the session log at `path`, which a Claude Code
+/// event names, and its subagents' logs. The log must sit below Claude
+/// Code's `projects` folder, as a queued log must sit below the local
+/// import's root.
+pub(super) fn read_hook_log(path: &Path) -> anyhow::Result<SessionLogs> {
+    read_below(&projects_dir()?, path)
+}
+
+/// The session log at `path`, below `root`, and its subagents' logs, read
+/// and encoded, every folder and log below `root` opened through no link
+/// ([`confined`]).
+fn read_below(root: &Path, path: &Path) -> anyhow::Result<SessionLogs> {
     let session = path
         .file_name()
         .and_then(|name| name.to_str())
         .and_then(|name| name.strip_suffix(".jsonl"))
         .filter(|stem| session_id(stem))
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "{} is not a Claude Code session log (<session id>.jsonl)",
-                path.display()
-            )
-        })?
+        .ok_or_else(|| not_a_session_log(path))?
         .to_owned();
-    let transcript_gzip_base64 = encoded(&path)?;
-    let mut subagents = Vec::new();
-    for log in subagent_logs(&path.with_extension("").join("subagents"))? {
-        let stem = log
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or_default()
-            .to_owned();
-        subagents.push(HookSubagentTranscript {
-            stem,
-            transcript_gzip_base64: encoded(&log)?,
-        });
-    }
+    let relative = path.strip_prefix(root).map_err(|_| {
+        anyhow::anyhow!(
+            "{} is not under {}, where Claude Code keeps its session logs",
+            path.display(),
+            root.display()
+        )
+    })?;
+    let (folder, session_log) = confined::open_below(root, relative)?;
+    let transcript_gzip_base64 = encoded(session_log, path)?;
+    let subagents = match confined::open_dir_in(&folder, OsStr::new(&session))? {
+        Some(own) => subagent_logs(&own, &path.with_extension(""))?,
+        None => Vec::new(),
+    };
     Ok(SessionLogs {
-        path,
+        path: path.to_path_buf(),
         request: HookTranscriptImportRequest {
             session,
             transcript_gzip_base64,
             subagents,
         },
     })
+}
+
+/// The subagents' logs of the session whose folder is open at `own`, shown
+/// as `shown`: every `agent-*.jsonl` anywhere under its `subagents` folder,
+/// in name order, a workflow run's folder included; none when it has no
+/// such folder.
+fn subagent_logs(own: &OwnedFd, shown: &Path) -> anyhow::Result<Vec<HookSubagentTranscript>> {
+    let Some(folder) = confined::open_dir_in(own, OsStr::new("subagents"))? else {
+        return Ok(Vec::new());
+    };
+    let shown = shown.join("subagents");
+    let mut logs: Vec<HookSubagentTranscript> = Vec::new();
+    let mut visit = |log: &Path, file: File| -> anyhow::Result<()> {
+        let Some(stem) = log
+            .file_stem()
+            .and_then(OsStr::to_str)
+            .filter(|stem| subagent_stem(stem))
+        else {
+            return Ok(());
+        };
+        anyhow::ensure!(
+            logs.len() < HOOK_TRANSCRIPT_MAX_SUBAGENTS,
+            "{} holds more than the {HOOK_TRANSCRIPT_MAX_SUBAGENTS} subagent logs one call carries",
+            shown.display()
+        );
+        anyhow::ensure!(
+            !logs.iter().any(|sent| sent.stem == stem),
+            "two subagent logs under {} are named {stem}.jsonl, and the vault takes one",
+            shown.display()
+        );
+        logs.push(HookSubagentTranscript {
+            stem: stem.to_owned(),
+            transcript_gzip_base64: encoded(file, log)?,
+        });
+        Ok(())
+    };
+    confined::walk(&folder, &shown, confined::LOGS, &mut visit)?;
+    Ok(logs)
+}
+
+/// The refusal of a log at `path` not named as a session's own.
+fn not_a_session_log(path: &Path) -> anyhow::Error {
+    anyhow::anyhow!(
+        "{} is not a Claude Code session log (<session id>.jsonl)",
+        path.display()
+    )
 }
 
 /// The newest session log under `projects` of the project folder Claude
@@ -171,6 +242,11 @@ fn recorded_dir(log: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Claude Code's folder of project folders, in its config folder.
+fn projects_dir() -> anyhow::Result<PathBuf> {
+    Ok(claude_config_dir()?.join("projects"))
+}
+
 /// Claude Code's config folder: `$CLAUDE_CONFIG_DIR`, else `~/.claude`.
 fn claude_config_dir() -> anyhow::Result<PathBuf> {
     if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|dir| !dir.is_empty()) {
@@ -194,32 +270,9 @@ fn project_folder_name(dir: &Path) -> String {
         .collect()
 }
 
-/// The subagent logs in `folder`, by name; none when it does not exist.
-fn subagent_logs(folder: &Path) -> anyhow::Result<Vec<PathBuf>> {
-    let entries = match std::fs::read_dir(folder) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => anyhow::bail!("read {}: {error}", folder.display()),
-    };
-    let mut logs: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .and_then(|name| name.strip_suffix(".jsonl"))
-                .is_some_and(|stem| stem.len() > "agent-".len() && stem.starts_with("agent-"))
-        })
-        .collect();
-    logs.sort();
-    anyhow::ensure!(
-        logs.len() <= HOOK_TRANSCRIPT_MAX_SUBAGENTS,
-        "{} holds {} subagent logs, more than the {HOOK_TRANSCRIPT_MAX_SUBAGENTS} one call carries",
-        folder.display(),
-        logs.len()
-    );
-    Ok(logs)
+/// Whether `stem` names a subagent's log: `agent-<id>`.
+fn subagent_stem(stem: &str) -> bool {
+    stem.len() > "agent-".len() && stem.starts_with("agent-")
 }
 
 /// A session id as Claude Code names its logs: 36 hex digits and dashes.
@@ -227,12 +280,11 @@ fn session_id(stem: &str) -> bool {
     stem.len() == 36 && stem.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 
-/// `path`'s bytes, gzip-compressed, in standard base64, once every record
-/// of them is whole ([`whole_records`]).
-fn encoded(path: &Path) -> anyhow::Result<String> {
+/// The bytes of the log `file`, shown as `path`, gzip-compressed, in
+/// standard base64, once every record of them is whole ([`whole_records`]).
+fn encoded(mut file: File, path: &Path) -> anyhow::Result<String> {
     let mut bytes = Vec::new();
-    open_log(path)?
-        .read_to_end(&mut bytes)
+    file.read_to_end(&mut bytes)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
     whole_records(path, &bytes)?;
     let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
