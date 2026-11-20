@@ -94,15 +94,18 @@ pub(super) fn score_query_terms(
                 counted
             }
         };
-        let df = counted as f64;
-        if df > n && !union {
+        // The list's own length checks the index and floors a union's count,
+        // clamp or none; only the IDF takes the audience's count.
+        let postings = entries.len() as f64;
+        if postings > n && !union {
             return Err(corrupted_with_diagnostic(
                 diagnostics,
                 "posting list length exceeds total_docs",
                 Bm25DiagnosticKind::MalformedPostingAlignment,
             ));
         }
-        let n = n.max(df);
+        let n = n.max(postings);
+        let df = counted as f64;
         let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
         'entries: for entry in entries {
             let id = entry.id;

@@ -37,11 +37,13 @@ where
     pub(crate) private_note_ids: Option<&'a crate::claim::ScopedDiaryCandidates>,
     /// A clamped read's own-row test: whether its audience could not read a
     /// row whatever its status. A posting that scores for such a row counts
-    /// in no query term's document frequency, so rows the audience may not
-    /// read move no score of a row it may (REVIEW-9980 round 2). The posting
-    /// still scores: the read's admission keeps it out, and a clamped pack
-    /// counts it among the rows its clamp withheld. `None` counts every
-    /// posting.
+    /// in no query term's document frequency, so no word of a row the
+    /// audience may not read moves the score of a row it may (REVIEW-9980
+    /// round 2). The document count and the fields' average lengths stay the
+    /// vault's, hidden rows included: they carry no word of any row (FIX
+    /// [CLAMPED-BM25-IDF-COUNTS-HIDDEN-POSTINGS]). The posting still scores:
+    /// the read's admission keeps it out, and a clamped pack counts it among
+    /// the rows its clamp withheld. `None` counts every posting.
     pub(crate) hidden_row: Option<&'a mut dyn FnMut(&EntityId) -> Result<bool>>,
 }
 

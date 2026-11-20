@@ -178,7 +178,8 @@ impl PipelineBuilder<'_> {
     /// ([`crate::bm25::Bm25SearchOptions::hidden_row`]), `None` without a
     /// clamp. Each row it judges is a deadline checkpoint, as at the scope's
     /// admission: under a clamp a term's document frequency asks it of every
-    /// posting.
+    /// posting. It answers each row once across the stage's reads (the turn
+    /// fold's longer reads ask again of the same postings).
     fn hidden_row_test<'t>(
         &'t self,
         rtxn: &'t RoTxn<'_>,
@@ -186,11 +187,17 @@ impl PipelineBuilder<'_> {
         metadata: &'t mut EntityMetadataCache,
     ) -> Option<Box<dyn FnMut(&EntityId) -> Result<bool> + 't>> {
         let clamp = clamp?;
+        let mut answers = std::collections::HashMap::<EntityId, bool>::new();
         Some(Box::new(move |id: &EntityId| {
+            if let Some(&hidden) = answers.get(id) {
+                return Ok(hidden);
+            }
             if let Some(deadline) = self.deadline {
                 deadline.checkpoint()?;
             }
-            clamp_hides_row(&self.read, rtxn, id, Some(clamp), metadata)
+            let hidden = clamp_hides_row(&self.read, rtxn, id, Some(clamp), metadata)?;
+            answers.insert(*id, hidden);
+            Ok(hidden)
         }))
     }
 
@@ -613,9 +620,12 @@ impl PipelineBuilder<'_> {
             // out of the run (REVIEW-9980 round 1), so the clamp asks first.
             // Read best first, a hidden row among the first `limit` lane rows
             // it judges held a place the window gave it before, and the pack
-            // counts it as it did then. With a port walk pending the read
-            // judges every posting in index order, so there the owner-side
-            // count takes the first `limit` hidden lane rows it meets. Each
+            // counts it as it did then. The read scores with the audience's
+            // document frequencies, so those places are that ranking's: a
+            // hidden row's own words weigh more there than they did without
+            // the clamp. With a port walk pending the read judges every
+            // posting in index order, so there the owner-side count takes
+            // the first `limit` hidden lane rows it meets. Each
             // judged row under a clamp is a deadline checkpoint, as at the
             // scope's admission: a read past many hidden rows stops there.
             let mut clamp_metadata = EntityMetadataCache::default();
