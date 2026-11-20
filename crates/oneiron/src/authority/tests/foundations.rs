@@ -450,6 +450,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         passkey_contexts: BTreeMap::new(),
         passkey_vouched_keys: BTreeSet::new(),
         passkey_vouch_confirmations: BTreeSet::new(),
+        host_vouched_passkey_owners: BTreeMap::new(),
     };
     let entry = cosign_ed(
         unsigned_entry(
