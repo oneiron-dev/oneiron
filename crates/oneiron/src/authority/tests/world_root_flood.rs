@@ -11,7 +11,7 @@ use super::support::{authority_key_from_ed, ed_key, owner_act, sign_ed, unsigned
 use super::world_key_doors::{Fresh, fresh_install, own_request};
 use super::world_key_store_gate::put_replicated;
 use super::world_privacy::{settings, stored_entries, world_row};
-use super::world_reissue::{admit, issue, pinned, set_on, with_predecessor};
+use super::world_reissue::{admit, issue, pinned, profiled, set_on, with_predecessor};
 use super::*;
 use crate::Vault;
 use crate::authority::log_budget::with_rows_per_signer_for_test;
@@ -244,6 +244,7 @@ fn a_root_held_behind_a_flood_pins_in_two_steps() {
         let host = host();
         let world = world_row(&host);
         let [issuer, b] = [(); 2].map(|()| fresh_install(&host));
+        profiled(&host, &b.vault, MachineRole::Owned(MachineOwnership::Yours));
         with_predecessor(&host, &issuer.vault, &issuer.owner);
         let r0 = issue(&issuer, &[]);
         admit(&issuer, &r0, &b);
@@ -307,6 +308,7 @@ fn a_carried_re_pin_whose_marks_wait_finishes_on_the_second_pin() {
             let host = host();
             let world = world_row(&host);
             let [issuer, b] = [(); 2].map(|()| fresh_install(&host));
+            profiled(&host, &b.vault, MachineRole::Owned(MachineOwnership::Yours));
             with_predecessor(&host, &issuer.vault, &issuer.owner);
             let r0 = issue(&issuer, &[]);
             admit(&issuer, &r0, &b);

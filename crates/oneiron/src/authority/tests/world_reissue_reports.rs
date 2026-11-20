@@ -8,7 +8,7 @@ use super::support::ed_key;
 use super::world_key_doors::{Fresh, enrol_own, fresh_install, keyed_machine};
 use super::world_privacy::{settings, stored_entries, world_row};
 use super::world_reissue::{
-    admit, edit_on, issue, pinned, read_on, revision, set_on, sync, with_predecessor,
+    admit, edit_on, issue, pinned, profiled, read_on, revision, set_on, sync, with_predecessor,
 };
 use super::*;
 use crate::world_keys::RecoveryRootSeed;
@@ -23,6 +23,12 @@ fn a_carried_machine_re_pins_with_its_keys() {
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
     let b = fresh_install(&host);
+    profiled(
+        &host,
+        &a.vault,
+        MachineRole::Owned(MachineOwnership::WorkSchool),
+    );
+    profiled(&host, &b.vault, MachineRole::Owned(MachineOwnership::Yours));
     with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
@@ -122,6 +128,8 @@ fn a_model_order_conflict_is_reported_and_never_resolved_by_the_engine() {
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
     let b = fresh_install(&host);
+    profiled(&host, &a.vault, MachineRole::Owned(MachineOwnership::Yours));
+    profiled(&host, &b.vault, MachineRole::Owned(MachineOwnership::Yours));
     with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
@@ -211,6 +219,7 @@ fn a_clones_widening_is_never_offered_for_re_assertion() {
     let (host, world) = host_with_world();
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
+    profiled(&host, &a.vault, MachineRole::Owned(MachineOwnership::Yours));
     with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);

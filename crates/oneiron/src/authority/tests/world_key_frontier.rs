@@ -13,7 +13,7 @@ use super::world_key_doors::{
     Fresh, Keyed, enrol_own, fresh_install, key_records, keyed_machine, kit_seed, own_request, set,
 };
 use super::world_privacy::{settings, world_row};
-use super::world_reissue::{admit, issue, set_on, sync, with_predecessor};
+use super::world_reissue::{admit, issue, profiled, set_on, sync, with_predecessor};
 use super::*;
 use crate::Vault;
 use crate::error::{Error, SecretError};
@@ -260,6 +260,8 @@ fn a_skipped_pre_wrap_keeps_the_key_for_a_re_run() {
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
     let b = fresh_install(&host);
+    profiled(&host, &a.vault, MachineRole::Owned(MachineOwnership::Yours));
+    profiled(&host, &b.vault, MachineRole::Owned(MachineOwnership::Yours));
     with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);

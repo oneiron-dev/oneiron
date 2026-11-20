@@ -30,13 +30,18 @@ pub(super) fn sync(from: &Vault, to: &Vault) {
     }
 }
 
-/// Gives `vault` a live Device predecessor for its next kit activation
-/// (WAYBACK-R4-NO-PREDECESSOR = A): enrols `vault`'s machine via `host` when
-/// the roster holds no live profile of it, syncs that row, then enrols this
-/// install's device owner key under `host`'s root. Idempotent: a machine
-/// already live is not enrolled again, and a key already live is only held.
-/// `vault` is `host.vault` or a `Fresh` install's; `owner` is its owner.
-pub(super) fn with_predecessor(host: &Host, vault: &Vault, owner: &AuthenticatedOwner) {
+/// Gives `vault`'s machine a live roster profile via `host`: enrols it in
+/// `role` when the roster holds no live profile of it, then syncs that row
+/// host -> vault. A `Fresh` install is born of a restore, so its anchor
+/// marks stay held, and it carries no owner act, until a live machine's
+/// entry joins it (RESTORED-COPIES-ENROL-EACH-OTHER); the host's enrolment
+/// is that join (REVIEW-9674 P1). Call it before the install is anchored,
+/// and before the anchoring install syncs from `host`, so the anchor's mark
+/// sees the roster and supersedes it. Idempotent: a machine already live is
+/// not enrolled again. `role` is `Yours` unless the test needs the machine
+/// not mine under a later pin that leaves it out (`WorkSchool` still
+/// carries).
+pub(super) fn profiled(host: &Host, vault: &Vault, role: MachineRole) {
     let request = own_request(vault);
     let fold = host.vault.authority_fold().unwrap();
     let live = matches!(
@@ -45,16 +50,20 @@ pub(super) fn with_predecessor(host: &Host, vault: &Vault, owner: &Authenticated
     );
     if !live {
         host.vault
-            .enroll_machine(
-                &host.owner,
-                ActSurface::ThisInstall,
-                &request,
-                MachineRole::Owned(MachineOwnership::Yours),
-                None,
-            )
+            .enroll_machine(&host.owner, ActSurface::ThisInstall, &request, role, None)
             .unwrap();
     }
     sync(&host.vault, vault);
+}
+
+/// Gives `vault` a live Device predecessor for its next kit activation
+/// (WAYBACK-R4-NO-PREDECESSOR = A): profiles `vault`'s machine via `host`,
+/// then enrols this install's device owner key under `host`'s root.
+/// Idempotent: a machine already live is not enrolled again, and a key
+/// already live is only held. `vault` is `host.vault` or a `Fresh`
+/// install's; `owner` is its owner.
+pub(super) fn with_predecessor(host: &Host, vault: &Vault, owner: &AuthenticatedOwner) {
+    profiled(host, vault, MachineRole::Owned(MachineOwnership::Yours));
     vault
         .enrol_device_owner_signing_key(
             &ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall),
@@ -184,6 +193,11 @@ fn a_re_issue_without_carry_never_widens() {
     let second_pin = fresh_install(&host);
     let third_pin = fresh_install(&host);
     let unpinned = fresh_install(&host);
+    profiled(
+        &host,
+        &a.vault,
+        MachineRole::Owned(MachineOwnership::WorkSchool),
+    );
     with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
@@ -261,6 +275,7 @@ fn re_assertion_keeps_a_widening() {
     let world = world_row(&host);
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
+    profiled(&host, &a.vault, MachineRole::Owned(MachineOwnership::Yours));
     with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
@@ -313,6 +328,7 @@ fn the_narrowed_report_lists_every_world_at_scale() {
     let worlds: BTreeSet<_> = (0..WORLDS).map(|_| world_row(&host)).collect();
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
+    profiled(&host, &a.vault, MachineRole::Owned(MachineOwnership::Yours));
     with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
@@ -361,6 +377,7 @@ fn a_compromised_old_roots_late_widening_is_never_promoted() {
     let world = world_row(&host);
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
+    profiled(&host, &a.vault, MachineRole::Owned(MachineOwnership::Yours));
     with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
@@ -372,6 +389,16 @@ fn a_compromised_old_roots_late_widening_is_never_promoted() {
     let vault_id = a.vault.authority_fold().unwrap().vault_id.unwrap();
     let h_key = ed_key(81);
     let h = request_for(vault_id, EntityId::now(), &h_key);
+    host.vault
+        .enroll_machine(
+            &host.owner,
+            ActSurface::ThisInstall,
+            &h,
+            MachineRole::Owned(MachineOwnership::WorkSchool),
+            None,
+        )
+        .unwrap();
+    sync(&host.vault, &a.vault);
     let mark = AuthorityOp::MachineProfile(MachineProfile {
         machine: h.machine,
         owner: a.owner.actor(),
@@ -433,6 +460,11 @@ fn a_left_out_machine_anchors_itself_back_and_keeps_its_key() {
         let world = world_row(&host);
         let issuer = fresh_install(&host);
         let mut a = fresh_install(&host);
+        profiled(
+            &host,
+            &a.vault,
+            MachineRole::Owned(MachineOwnership::WorkSchool),
+        );
         with_predecessor(&host, &issuer.vault, &issuer.owner);
         let first = issue(&issuer, &[]);
         admit(&issuer, &first, &a);
@@ -484,6 +516,12 @@ fn a_left_out_recipient_anchors_itself_back_from_records_another_signed() {
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
     let b = fresh_install(&host);
+    profiled(&host, &a.vault, MachineRole::Owned(MachineOwnership::Yours));
+    profiled(
+        &host,
+        &b.vault,
+        MachineRole::Owned(MachineOwnership::WorkSchool),
+    );
     with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
@@ -536,6 +574,8 @@ fn a_recipients_key_survives_an_explicit_re_assertion() {
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
     let b = fresh_install(&host);
+    profiled(&host, &a.vault, MachineRole::Owned(MachineOwnership::Yours));
+    profiled(&host, &b.vault, MachineRole::Owned(MachineOwnership::Yours));
     with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);
@@ -589,6 +629,7 @@ fn a_restore_with_no_earlier_admitter_reports_the_local_settings() {
     let issuer = fresh_install(&host);
     let a = fresh_install(&host);
     let b = fresh_install(&host);
+    profiled(&host, &a.vault, MachineRole::Owned(MachineOwnership::Yours));
     with_predecessor(&host, &issuer.vault, &issuer.owner);
     let first = issue(&issuer, &[]);
     admit(&issuer, &first, &a);

@@ -9,7 +9,7 @@ use super::machine_identity::host;
 use super::support::authority_key_from_ed;
 use super::world_key_doors::{enrol_own, fresh_install, key_records, set};
 use super::world_privacy::{edit_by, land, settings, stored_entries, world_row};
-use super::world_reissue::{admit, issue, sync, with_predecessor};
+use super::world_reissue::{admit, issue, profiled, sync, with_predecessor};
 use super::*;
 use crate::Vault;
 use crate::error::ErrorKind;
@@ -108,6 +108,7 @@ fn the_first_recovery_root_activates() {
 fn an_anchors_machine_mark_lands_locally_and_through_sync() {
     let host = host();
     let [issuer, a, peer] = [(); 3].map(|()| fresh_install(&host));
+    profiled(&host, &a.vault, MachineRole::Owned(MachineOwnership::Yours));
     with_predecessor(&host, &issuer.vault, &issuer.owner);
     let root = issue(&issuer, &[]);
     admit(&issuer, &root, &a);
