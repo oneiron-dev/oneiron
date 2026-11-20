@@ -20,10 +20,25 @@
 //!   restricts the row instead, and the device's edit arrives while it stands. The review lifts
 //!   the restriction without rewriting the row, and the hub recovers the window, whose entities
 //!   map still carries the dropped edit: the hub keeps its stored copy (REVIEW-9881 round 1).
+//! * `a_device_receipt_carrier_at_the_kept_row_leaves_the_kept_copy_and_the_rest_lands`: the
+//!   device sends, at the kept row's id, an envelope-valid served-form receipt record beside a new
+//!   row. Its receipt binds the id, not the kind stored there, so it takes the receipt door, whose
+//!   put would refuse it as absent. The hub drops it as it drops any other carrier of the row, and
+//!   the new row lands (REVIEW-9881 round 1).
+//! * `a_birth_carried_for_the_restricted_row_is_not_stamped_before_or_after_the_lift`: the device
+//!   sends, in one delta, an edit of a restricted row the hub holds with no birth and a well-formed
+//!   birth for it. Neither the entity pass nor the birth-map observer stamps the birth while the
+//!   restriction stands, and the forward rematerialization after the lift does not either: the
+//!   carrier the birth rides beside was dropped (REVIEW-9881 round 1).
 //!
 //! The first two run red at main 6f0800329f2, whose ingest hands the carrier to the put door, and
 //! green at the fix. The third runs red at ca7a0807956, whose ingest drops the carrier only while
 //! the restriction stands, so the recovery after the lift puts it, and green at the round-1 fix.
+//! The fourth runs red where the receipt branch hands the carrier to the receipt door without the
+//! drop, and green at main. The fifth runs red before the lift where the birth gate leaves out
+//! both its limit conjuncts (or where the entity pass or the birth-map observer alone skips the
+//! gate's limit conjuncts), red after the lift where it leaves out only the dropped-carrier
+//! conjunct, and green at main.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test sync_ingest_drops_a_use_limited_carrier`.
 
 #![cfg(all(feature = "sync", feature = "test-support", oneiron_test_support))]
@@ -34,13 +49,18 @@ mod sync_harness;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::LegalHoldTarget;
 use oneiron::memory::{EraseOptions, EraseReason};
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::provenance::birth::RowBirth;
+use oneiron::receipt::{ReceiptKind, ReceiptRecord};
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RECEIPT_RECORD};
 use oneiron::store::GateDecisionId;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, WindowExport};
 use oneiron::test_doors::campaign_member_index::{lift_restriction, restrict_record};
 use oneiron::test_doors::media_vector_replica::stored_row;
+use oneiron::write_envelope::provenance::made_by::{MadeBy, MadeByClass, MadeByProcess};
 use oneiron::{EdgeActorClass, EntityId, HostingPrivacyPosture, Vault, VaultConfig};
+use oneiron_store::receipt_ref::ReceiptRef;
+use std::collections::BTreeMap;
 
 use crate::sync_harness::{
     T0, TestNode, WINDOW, make_entity_blob, map_insert_bytes, sync_through_doors, test_config,
@@ -124,6 +144,66 @@ fn restrict(vault: &Vault, record: EntityId) {
     restrict_record(vault, record).expect("FIXTURE: restrict the record");
 }
 
+/// [`restrict`], for a row the hub holds with no birth of its own: a window put stamps none.
+fn restrict_row_without_birth(vault: &Vault, record: EntityId) {
+    assert!(
+        vault
+            .row_birth(&record)
+            .expect("FIXTURE: read the hub's row birth")
+            .is_none(),
+        "FIXTURE: the hub holds the row with no birth of its own"
+    );
+    restrict(vault, record);
+}
+
+/// A served-form record at `id`, as a peer's window carries one: an image served to a holder at
+/// `at`, in the carrier the record door writes (`{receipt}`, no intent id). Its receipt binds the
+/// id alone, never the kind stored there, so it passes the receipt door's envelope check at the
+/// id of a PERSON row.
+fn served_form_carrier(id: &EntityId, at: u64) -> Vec<u8> {
+    let receipt = ReceiptRecord {
+        receipt_id: ReceiptRef::served_form(*id).to_string(),
+        receipt_kind: ReceiptKind::ServedForm,
+        occurred_at: at,
+        actor: Some(EntityId::now().to_hex()),
+        on_behalf_of: None,
+        outcome: "served".to_owned(),
+        job_ref: None,
+        trigger_ref: None,
+        policy_trace: Vec::new(),
+        fields: BTreeMap::from([
+            ("asset_ref".to_owned(), EntityId::now().to_hex()),
+            ("form".to_owned(), "image".to_owned()),
+        ]),
+    };
+    let body = rmp_serde::to_vec_named(&BTreeMap::from([("receipt", &receipt)]))
+        .expect("FIXTURE: the served-form carrier encodes");
+    make_entity_blob(ENTITY_TYPE_RECEIPT_RECORD, at, &body)
+}
+
+/// One canonical row birth, as a window's `row_births` map carries it: stated by a fresh actor,
+/// with no trigger and no input.
+fn row_birth_carrier() -> Vec<u8> {
+    let birth = RowBirth {
+        made_by: MadeBy {
+            inputs: Vec::new(),
+            process: MadeByProcess {
+                actor: EntityId::now(),
+                class: MadeByClass::Stated,
+                identity: "device-birth-fixture".to_owned(),
+                version: "1".to_owned(),
+                params_hash: "0".repeat(64),
+            },
+            at: T0,
+            trigger: None,
+        },
+        content_hash: String::new(),
+        withheld: Vec::new(),
+        room_evidence: None,
+    };
+    rmp_serde::to_vec_named(&birth).expect("FIXTURE: the row birth encodes")
+}
+
 /// A hosted hub and an own device whose shared window carries a row the hub then limits, and
 /// the device's edit of that row, sent with a new row in one delta before the hub answered the
 /// device again.
@@ -134,12 +214,31 @@ struct Sent {
     new_row: EntityId,
 }
 
+/// What the device sends for the hub's limited row: its carrier of the row, and the birth it
+/// carries for the row beside it, if any.
+struct DeviceSend {
+    carrier: Vec<u8>,
+    birth: Option<Vec<u8>>,
+}
+
 fn device_edit_sent_after_the_keep() -> Sent {
     device_edit_sent_after(keep_use_limited)
 }
 
 /// [`Sent`], with `limit` placed on the hub's row before the device edits it.
 fn device_edit_sent_after(limit: fn(&Vault, EntityId)) -> Sent {
+    device_sent_after(limit, |_| DeviceSend {
+        carrier: make_entity_blob(ENTITY_TYPE_PERSON, T0 + 5, EDITED_WORDS),
+        birth: None,
+    })
+}
+
+/// [`Sent`], with `limit` placed on the hub's row before the device sends `send`'s carrier of it
+/// (and its birth) beside the new row.
+fn device_sent_after(
+    limit: fn(&Vault, EntityId),
+    send: impl FnOnce(&EntityId) -> DeviceSend,
+) -> Sent {
     let mut hub = TestNode::with_config("hub", 2, hosted_config());
     mint_machine_id(&hub.vault);
     hub.open_window(WINDOW);
@@ -167,20 +266,24 @@ fn device_edit_sent_after(limit: fn(&Vault, EntityId)) -> Sent {
         .expect("FIXTURE: read the hub's stored row")
         .expect("FIXTURE: the hub stores the kept row");
 
-    // The device has not heard of the limit: it edits the row and meets a new person, in one
-    // commit, so both travel in one delta.
+    // The device has not heard of the limit: it sends its carrier of the row (and a birth for
+    // it) and meets a new person, in one commit, so all of it travels in one delta.
     let new_row = EntityId::now();
+    let DeviceSend { carrier, birth } = send(&kept);
     let entities = device.doc(WINDOW).get_map("entities");
-    map_insert_bytes(
-        &entities,
-        &kept.to_hex(),
-        &make_entity_blob(ENTITY_TYPE_PERSON, T0 + 5, EDITED_WORDS),
-    );
+    map_insert_bytes(&entities, &kept.to_hex(), &carrier);
     map_insert_bytes(
         &entities,
         &new_row.to_hex(),
         &make_entity_blob(ENTITY_TYPE_PERSON, T0 + 6, NEW_WORDS),
     );
+    if let Some(birth) = birth {
+        map_insert_bytes(
+            &device.doc(WINDOW).get_map("row_births"),
+            &kept.to_hex(),
+            &birth,
+        );
+    }
     device.doc(WINDOW).commit();
     assert!(
         device
@@ -313,5 +416,81 @@ fn a_device_edit_dropped_under_a_restriction_stays_out_after_the_lift() {
             .expect("read the hub's new row")
             .is_some(),
         "the recovered window's new row stands on the hub"
+    );
+}
+
+#[test]
+fn a_device_receipt_carrier_at_the_kept_row_leaves_the_kept_copy_and_the_rest_lands() {
+    let Sent {
+        hub,
+        kept,
+        kept_copy,
+        new_row,
+    } = device_sent_after(keep_use_limited, |kept| DeviceSend {
+        carrier: served_form_carrier(kept, T0 + 5),
+        birth: None,
+    });
+
+    assert!(
+        hub.vault
+            .get_raw(&new_row)
+            .expect("read the hub's new row")
+            .is_some(),
+        "the new row the device sent beside its receipt carrier at the kept row lands on the hub"
+    );
+    assert_kept_copy_stays(&hub, &kept, &kept_copy);
+}
+
+#[test]
+fn a_birth_carried_for_the_restricted_row_is_not_stamped_before_or_after_the_lift() {
+    let Sent {
+        mut hub,
+        kept,
+        kept_copy,
+        new_row,
+    } = device_sent_after(restrict_row_without_birth, |_| DeviceSend {
+        carrier: make_entity_blob(ENTITY_TYPE_PERSON, T0 + 5, EDITED_WORDS),
+        birth: Some(row_birth_carrier()),
+    });
+    assert!(
+        hub.vault
+            .get_raw(&new_row)
+            .expect("read the hub's new row")
+            .is_some(),
+        "FIXTURE: the new row the device sent beside its edit and birth lands"
+    );
+    assert_eq!(
+        stored_row(&hub.vault, &kept)
+            .expect("read the hub's stored row")
+            .as_deref(),
+        Some(kept_copy.as_slice()),
+        "FIXTURE: while the restriction stands the hub keeps its stored copy"
+    );
+    assert!(
+        hub.vault
+            .row_birth(&kept)
+            .expect("read the hub's row birth")
+            .is_none(),
+        "a birth the device carried beside its dropped edit of the restricted row is not stamped on it"
+    );
+
+    // The review lifts the restriction; the hub's next open rematerializes the window, whose maps
+    // still carry the dropped edit and the birth beside it.
+    lift_restriction(&hub.vault, kept).expect("FIXTURE: lift the restriction");
+    hub.recover(WINDOW);
+
+    assert!(
+        hub.vault
+            .row_birth(&kept)
+            .expect("read the hub's row birth")
+            .is_none(),
+        "a birth riding beside a carrier the hub dropped is not stamped once the restriction lifts"
+    );
+    assert_eq!(
+        stored_row(&hub.vault, &kept)
+            .expect("read the hub's stored row")
+            .as_deref(),
+        Some(kept_copy.as_slice()),
+        "the hub keeps its stored copy after the lift"
     );
 }

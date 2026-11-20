@@ -400,11 +400,12 @@ path = "tests/managed_mode.rs"
 required-features = ["oneiron/test-hooks"]
 
 # Serves its vault from a `MemoryKeystore` (`oneiron-keystore/test-keystore`, forwarded by
-# `oneiron/test-support`); its live-fork doors are `--cfg oneiron_test_support`.
+# `oneiron/test-support`); its live-fork doors are `--cfg oneiron_test_support`; its broker
+# case answers from the broker's TLS fake provider (`oneiron-broker/test-support`).
 [[test]]
 name = "live_fork_refuses_erased_prefix_source"
 path = "tests/live_fork_refuses_erased_prefix_source.rs"
-required-features = ["oneiron/test-support"]
+required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
 # The skill library's facade doors serve the owner's root from a `MemoryKeystore` too.
 [[test]]
@@ -621,6 +622,12 @@ required-features = ["oneiron/test-hooks"]
 [[test]]
 name = "member_sync_socket"
 path = "tests/member_sync_socket.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
+# The member lane's client half uses the same HOME fixture and grant hook.
+[[test]]
+name = "member_sync_lane"
+path = "tests/member_sync_lane.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
 # L1-02's named-client OAuth acceptance roots its served vault on a `MemoryKeystore`.

@@ -46,7 +46,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/compaction/chat_flights.rs` | src | s | 3 crate-vis | — | One chat compaction flight per conversation at a time (FIX 5030) |
 | `src/ai_host/compaction/live_fork.rs` | src | m | 9 crate-vis | — | The agent's own compaction from its live context (FIX 4465 C) |
 | `src/ai_host/compaction/live_fork/input.rs` | src | s | 1 crate-vis | — | The live fork's span input (FIX 4931): the house document the sealed request renders, with each window step… |
-| `src/ai_host/compaction/pass_door.rs` | src | s | 1 struct · 4 fn | PassAnswer | Doors for `tests/compaction_seat_exact_model.rs` (FIX-LIST SELF-WRITER-HOUSE-FALLBACK-SEAT-EXACT-REFUSED)… |
+| `src/ai_host/compaction/pass_door.rs` | src | s | 1 struct · 5 fn | PassAnswer | Doors for `tests/compaction_seat_exact_model.rs` (FIX-LIST SELF-WRITER-HOUSE-FALLBACK-SEAT-EXACT-REFUSED)… |
 | `src/ai_host/compaction/profiled.rs` | src | s | 1 crate-vis | — | A compaction seat on a host-profiled child's original generation |
 | `src/ai_host/compaction/self_writer.rs` | src | m | 6 crate-vis | — | The agent's own compaction writer (FIX 4465, owner 10-19: "the toggle sets WHO writes, not which model") |
 | `src/ai_host/compaction/serve.rs` | src | m | 14 crate-vis | — | The house compaction route's call (moved from `compaction.rs`): one pass's request, admitted on the role's… |
@@ -268,8 +268,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/context_board/history.rs` | src | m | 8 crate-vis | — | Board history on the board's own surface (ARCH-0067 §3) |
 | `src/api/context_board/layout.rs` | src | s | 6 crate-vis | — | The actor's own board layout on the HTTP, chat and MCP boards (BOARD-LAYOUT = A, owner 2026-11-03 20:25) |
 | `src/api/context_board/mcp_self.rs` | src | s | 7 crate-vis | — | An MCP connection's own `describe(self)` (FIX 17594): the self brief of the agent a registered connector… |
-| `src/api/context_board/memories.rs` | src | m | 31 crate-vis | — | MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly |
+| `src/api/context_board/memories.rs` | src | m | 24 crate-vis | — | MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly |
 | `src/api/context_board/memories/replay.rs` | src | s | 1 crate-vis | — | Re-admit kept room pins through the same projection and P7 as fresh pins |
+| `src/api/context_board/memories/schema.rs` | src | s | 9 crate-vis | — | The OpenAPI mirror of the MEMORIES section a context board serves (`oneiron::MemoriesSection`): what a… |
 | `src/api/context_board/mod.rs` | src | L | 31 crate-vis | — | The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional… |
 | `src/api/context_board/prefix.rs` | src | s | 7 crate-vis | — | Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter |
 | `src/api/context_board/reply.rs` | src | m | 1 crate-vis | — | The actual context-bearing text emit behind the generated `ai.reply` door |
@@ -562,7 +563,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/skill_default_doors.rs` | src | s | 4 crate-vis | — | The owner's first-hub and bootstrap reads and explicit defaults re-import |
 | `src/api/facade/skill_doors.rs` | src | m | 17 crate-vis | — | Selected-message conversion and the skill library, through the same facade and MCP doors: the owner reads… |
 | `src/api/facade/skill_doors/refine_window.rs` | src | s | 3 crate-vis | — | The tokens one skill-conversion refiner request may fill: the engine's count of a text, and the window a… |
-| `src/api/facade/skill_execution_doors.rs` | src | m | 7 crate-vis | — | Skill calls on the caller's attached run and owner-anchored pack outcomes |
+| `src/api/facade/skill_execution_doors.rs` | src | m | 8 crate-vis | — | Skill calls on the caller's attached run and owner-anchored pack outcomes |
 | `src/api/facade/skill_merge_doors.rs` | src | s | 1 crate-vis | — | The owner's ingress door for a shared-skill merge offer under the caller's owner proof (FIX… |
 | `src/api/facade/skill_pack_load_doors.rs` | src | s | 1 crate-vis | — | A run's own skill pack load on the caller's attached live run (FIX [SKILL-HUB-PROMOTION-VERBS])… |
 | `src/api/facade/slim_doors.rs` | src | s | 6 crate-vis | — | Owner-bound lifecycle doors; each transport reaches the same engine transaction |
@@ -690,7 +691,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/person_call.rs` | src | s | 6 crate-vis | — | A managed shared vault's member on `/mcp` (FIX 1302 stage 2) |
 | `src/api/mcp_gateway/question_answers_result.rs` | src | s | 1 crate-vis | — | `vault.questions.answers` on MCP (FIX 9175): its untagged reply counted as the rows it holds |
 | `src/api/mcp_gateway/read_result.rs` | src | s | 1 crate-vis | — | The MCP `read_result` door: one read of a result of a durable run under the caller's credential |
-| `src/api/mcp_gateway/served_rows.rs` | src | s | 11 crate-vis | — | The rows an MCP call's result was derived from, as its producers listed them (DEC-0005; SCAN C018, FIX… |
+| `src/api/mcp_gateway/served_rows.rs` | src | s | 13 crate-vis | — | The rows an MCP call's result was derived from, as its producers listed them (DEC-0005; SCAN C018, FIX… |
 | `src/api/mcp_gateway/skill_execution.rs` | src | s | 4 crate-vis | — | The original MCP credential context lent to a callable skill's host door |
 | `src/api/mcp_gateway/stream_reads.rs` | src | s | 4 crate-vis | — | Own-task STREAM lines as one connection's credential may read them now: the board publisher admits each… |
 | `src/api/mcp_gateway/tasks_response.rs` | src | L | 18 crate-vis | — | Tasks verb and response shaping |
@@ -1411,7 +1412,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/lfs_chunks.rs` | src | s | 2 crate-vis | — | Versioned owner-authenticated chunk requests, disjoint from selector window mode |
 | `src/handler/mcp_socket.rs` | src | m | 7 crate-vis | — | MCP on the app-tier socket: `oneiron mcp` holds one `/ws` connection and sends every JSON-RPC message over… |
 | `src/handler/mcp_socket/person_socket.rs` | src | s | 2 crate-vis | — | A managed vault member's held MCP socket (FIX 1302 stage 2) |
-| `src/handler/member_lane.rs` | src | m | 15 crate-vis | — | MEMBER-SYNC D1, D4: a shared-vault member's selector-only sync lane |
+| `src/handler/member_lane.rs` | src | m | 14 crate-vis | — | MEMBER-SYNC D1, D4: a shared-vault member's selector-only sync lane |
 | `src/handler/mesh.rs` | src | m | 30 crate-vis | — | The paired-machine mesh listener (OF-535) |
 | `src/handler/mesh/home_pin.rs` | src | s | 4 crate-vis | — | FIX 3374: the home a device enrolled with, pinned on the device's mesh listener |
 | `src/handler/mesh/pressure.rs` | src | s | 6 crate-vis | — | The mesh sync route's floor in its own pressure check (FIX 7737, [`PoolPressure::mesh`]) |
@@ -1427,7 +1428,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/selector_scope.rs` | src | s | 7 crate-vis | — | Single-vault selector grant scope shared by handler and livequery (FIX 9251), and the scope each socket… |
 | `src/handler/socket_stop.rs` | src | s | 5 crate-vis | — | An upgraded socket's transport under its server's stop (OF-237) |
 | `src/handler/tests.rs` | test | XL | — | — | — |
-| `src/handler/transport.rs` | src | L | 19 crate-vis | — | Guarded socket chokepoint with revocation consults on queue and flush |
+| `src/handler/transport.rs` | src | m | 13 crate-vis | — | Guarded socket chokepoint with revocation consults on queue and flush |
+| `src/handler/transport/construction.rs` | src | s | 6 crate-vis | — | The guarded transport's constructors: the socket, its revocation registry, and what each consult then asks… |
 | `src/handler/transport/live_person.rs` | src | s | 4 crate-vis | — | The roster lifetime of a managed person socket, not an admission gate |
 | `src/handler/window_copy.rs` | src | s | 2 crate-vis | — | The masked repo copy generation each socket was last sent of a window (FIX 7608 slice 4, C3 of the s4… |
 | `src/handler/window_pads.rs` | src | s | 8 crate-vis | — | The home's side of the window pad envelope (KS-5, FIX 7107) |
@@ -2405,7 +2407,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/ladder_caller_census.rs` | test | m | — | — | Every file of this crate that reaches a fallback ladder, and where the world of the call it sends comes from… |
 | `tests/lens_frame_state_door.rs` | test | m | — | — | GENUI-STATE-PERSIST at the served door: a card's `$state` lasts for the card's life on the server that holds… |
 | `tests/library_draft_task_type.rs` | test | s | — | — | FIX 10508: a `self.browser.library.draft` call whose caller records its task type and names its checks gives… |
-| `tests/live_fork_refuses_erased_prefix_source.rs` | test | m | — | — | A live compaction fork never resends a row erased since its call went out (FIX-LIST… |
+| `tests/live_fork_refuses_erased_prefix_source.rs` | test | L | — | — | A live compaction fork never resends a row erased since its call went out (FIX-LIST… |
 | `tests/live_lease_overdraft.rs` | test | s | — | — | ARCH-0026 depletion ladder, RUNBUDGET-OVERDRAFT = C and RUNBUDGET-KNOB = A (13 Nov 17:30), review round 1 of… |
 | `tests/live_lease_pending_spend.rs` | test | s | — | — | [RUN-STEP-CHARGE-LOST-ON-PROCESS-DEATH]: a host's live lease stages each settled call's spend on its scope… |
 | `tests/live_run_payer_erased.rs` | test | s | — | — | [LIVE-RUN-PAYER-REQUIRED] (the Engine's ruling of 12 Nov 22:44, OF-531): a live run's model doors read its… |
@@ -2429,6 +2431,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/mcp_wrong_root_pre_resolution.rs` | test | s | — | — | FIX 298 (#1564): a `tools/call` naming a canonical verb under the wrong root is refused before any caller… |
 | `tests/media_job_staged_spend.rs` | test | s | — | — | [MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1: a media job its run's spend scope funds books its own… |
 | `tests/meeting_follow_up_drafting.rs` | test | m | — | — | The host's meeting follow-up drafting worker (CAL-08; Engine RULING CAL-08-FOLLOWUP-APPROVAL = A, Sun 15 Nov… |
+| `tests/member_sync_lane.rs` | test | m | — | — | The client half of the selector-only member lane (MEMBER-SYNC PR 2, D7-D8) |
 | `tests/member_sync_socket.rs` | test | L | — | — | Socket regressions for the shared-vault member lane, using base-public APIs only |
 | `tests/memory_verb_owner_proof_at_commit.rs` | test | m | — | — | The core memory route's owner `retract` and `supersede` check the owner's proof again in the writer that… |
 | `tests/memory_verbs_retract_supersede_authority.rs` | test | m | — | — | The core memory route's `retract` and `supersede` judge their caller (FIX-LIST… |
@@ -2449,6 +2452,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/openai_proxy_exchange_names_recalled_rows.rs` | test | m | — | — | The OpenAI proxy's exchange claim names the recalled row its prompt carried |
 | `tests/openai_proxy_facet_key_remembers.rs` | test | m | — | — | A facet-narrowed OpenAI proxy key saves its exchange, not only answers (FIX… |
 | `tests/openai_proxy_recall_limit_setting.rs` | test | m | — | — | The OpenAI proxy recalls at most the owner's `proxy.openai.recall_limit` memory rows into one turn's… |
+| `tests/openapi_context_board_memories_mirror.rs` | test | s | — | — | The served OpenAPI document's MEMORIES mirror (`ContextBoardMemories`) names every key a served… |
 | `tests/openapi_document_precompute.rs` | test | s | — | — | `serve` assembles the OpenAPI document on a thread of its own at start, so the first `GET /api/openapi.json`… |
 | `tests/openapi_document_reuse.rs` | test | s | — | — | `GET /api/openapi.json` serves the document its process assembled once: a second request reuses it and… |
 | `tests/openapi_off_record_rooms.rs` | test | s | — | — | The participants' off-record room routes (`/v1/core/off-record`) are in the served OpenAPI document, with… |

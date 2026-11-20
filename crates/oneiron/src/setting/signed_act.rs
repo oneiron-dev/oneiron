@@ -12,6 +12,9 @@
 //! after the row, the change row and the key's hook. So a record that cannot be signed (no
 //! carrier, a fold that does not count it, a storage fault) rolls back alone. The change then
 //! stands with `signed` none, as it did before the act existed (rubric 1, no new refusal).
+//!
+//! A row that travels, in a rooted vault, takes the mandatory act of stage 7a-2 instead
+//! ([`super::project`]); this path stays for every other owner's change that names its surface.
 
 use oneiron_authority::authority::{
     ActSurface, AuthorityEntryHash, OwnerAct, OwnerActKind, policy_setting_target,

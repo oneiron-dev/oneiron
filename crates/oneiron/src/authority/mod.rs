@@ -590,6 +590,7 @@ pub(crate) use log_budget::{
 pub(crate) use log_structure::carried_rows_never_applied_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use owner_key_line::tail_reaches_old_parents_past_rows_for_test;
+pub(crate) use owner_proof::OwnerProofSigner;
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 #[cfg(oneiron_test_support)]
@@ -600,7 +601,12 @@ pub(crate) use pinned_root::{
     end_request_wait_in_txn, ended_request_wait, read_pin_and_earlier_in_txn, read_pin_row_in_txn,
     write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
-pub(crate) use policy_setting_choice::PolicySettingAct;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use policy_setting_choice::SettingFrontier;
+pub(crate) use policy_setting_choice::{
+    ChoiceCount, ChoiceCounts, PolicySettingAct, SettingSlotAct, SettingSlotFold, SettingSlotHead,
+    SettingSlotRow,
+};
 pub(crate) use principal_standing::{
     GIT_PUSH_PACT_STANDING_LAPSED, git_push_pact_standing_lapsed_in_txn,
 };

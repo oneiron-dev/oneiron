@@ -27,6 +27,9 @@ use std::collections::BTreeMap;
 pub enum LibraryRunMode {
     /// Only a rule answers: a step only a model could answer goes up to the
     /// planner (`decider_asked_up`, `strict`) before any model is asked.
+    /// A filed program's strict misses in a row (an unmet postcondition or a
+    /// missing locator) retire it `drift` at the vault owner's
+    /// `browser.library.drift_misses` (3 by default).
     Strict,
     /// The decision ladder answers, a model's rung included.
     Assisted,

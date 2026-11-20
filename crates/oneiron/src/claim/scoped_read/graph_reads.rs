@@ -181,7 +181,9 @@ impl ScopedRead<'_> {
     /// A room's row and its turns, anchor or record, show only to a reader
     /// the room itself admits (L9-52, [`crate::Vault::room_structure_admitted`]).
     /// Each snapshot's living rows take the authority it holds, so a live
-    /// Grant of this key admits them as on a point read (FIX 7462).
+    /// Grant of this key admits them as on a point read (FIX 7462), and a
+    /// deleted record's shell shows where one such Grant alone holds its
+    /// place and type (Engine ANSWER GRANT-AGENT-DELETED-SHELLS = A).
     pub fn memory_timeline(&self, anchor: &EntityId) -> Result<ScopedReadResult<MemoryTimeline>> {
         let (filter, policy) = {
             let txn = self.grant_read_txn()?;
@@ -623,14 +625,12 @@ impl ScopedRead<'_> {
         };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        Ok(!filter.deny_all
-            && self.audience_readable_in(txn, id)?
+        Ok(self.audience_readable_in(txn, id)?
             && self
                 .vault
                 .store
                 .validate_entity_type(header.entity_type)
                 .is_ok()
-            && filter.read_scope().bands.contains(&header.entity_type)
             && !matches!(
                 header.entity_type,
                 crate::registry::ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE
@@ -641,89 +641,11 @@ impl ScopedRead<'_> {
                     crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_SUMMARY
                 ))
             && raw.len() == ENTITY_METADATA_HEADER_LEN
-            && self.deleted_shell_position_allowed_in(txn, policy, id, &raw, held)?
+            && self.shell_authority_in(txn, policy, filter, id, &raw, held)?
             && self
                 .vault
                 .store
                 .entity_deletion_present_in_txn(txn, id, header.learned_at)?)
-    }
-
-    /// The type-only fallback above serves a deleted shell's metadata, but a
-    /// TASK may have been born in any world or facet (ARCH-0067 §5). Its
-    /// shell reads at the position a kept stamp proves; one whose stamp went
-    /// with its body reads as if it sat anywhere, so only a reader whose
-    /// ceiling holds every world and facet sees it.
-    fn deleted_shell_position_allowed_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        policy: &PolicyManifestResolution,
-        id: &EntityId,
-        raw: &[u8],
-        held: &HeldAuthority,
-    ) -> Result<bool> {
-        use crate::federation::record_scope::{default_stamp, scope_for_blob};
-        use oneiron_authority::federation::{Scope, ScopeAxis};
-        // A read limited to facets names only a shell that still proves a
-        // place inside them. The credential's records and channel caveats
-        // bound a shell as they bound its live row (FIX 8666).
-        if !self.credential_allows_id(id) || !self.facets_allow_held_in(txn, id, raw, held)? {
-            return Ok(false);
-        }
-        let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != crate::registry::ENTITY_TYPE_TASK {
-            // Any other shell sits in the world its row still proves; one
-            // that proves none reads as if anywhere, so only a read whose
-            // asked and credential worlds hold every world sees it (FIX 8666).
-            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-            let world = match self.session_view {
-                Some(view) => crate::federation::record_scope::record_world_in(
-                    view,
-                    txn,
-                    *id,
-                    header.entity_type,
-                    body,
-                )?,
-                None => crate::federation::record_scope::record_world_in(
-                    &self.vault.store,
-                    txn,
-                    *id,
-                    header.entity_type,
-                    body,
-                )?,
-            };
-            let position = world.map_or_else(Scope::top, super::actor_key::record_world_scope);
-            // One agent Grant alone must hold it too (FIX
-            // AGENT-GRANT-ENVELOPE-ONLY-PATHS).
-            return Ok(position.is_narrowing_of(&self.actor_key.world_ceiling())
-                && self.one_grant_alternative_holds_shell_in(
-                    txn,
-                    &super::access_gate::HeldAuthority::for_request(None),
-                    id,
-                    raw,
-                    &position,
-                )?);
-        }
-        let kept = match self.session_view {
-            Some(view) => scope_for_blob(view, txn, *id, raw)?,
-            None => scope_for_blob(&self.vault.store, txn, *id, raw)?,
-        };
-        let position = kept.unwrap_or_else(|| Scope {
-            worlds: ScopeAxis::All,
-            facets: ScopeAxis::All,
-            verbs: ScopeAxis::Some(["read".to_owned()].into()),
-            ..default_stamp(header.entity_type, *id)
-        });
-        Ok(
-            crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &position)
-                && self.one_grant_alternative_admits_record_in(
-                    txn,
-                    &super::access_gate::HeldAuthority::for_request(None),
-                    policy,
-                    &position,
-                    Some((id, Some(raw))),
-                )?,
-        )
     }
 
     /// A living record takes `held`, the authority the read holds in `txn`;
@@ -745,11 +667,10 @@ impl ScopedRead<'_> {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         // Never combine metadata captured before a rewrite with later authority.
-        // A shell meets this filter's deny_all and bands here; a living record
-        // meets them in the row gate at the end, as does each live Grant.
+        // A shell meets this filter's deny_all and bands in its own gate, as
+        // does each live Grant; a living record meets them in the row gate.
         let shell = record.state == MemoryTimelineRecordState::Deleted;
-        if (shell && filter.deny_all)
-            || !self.audience_readable_in(txn, &record.id)?
+        if !self.audience_readable_in(txn, &record.id)?
             || record.entity_type != Some(header.entity_type)
             || record.occurred_start != Some(header.occurred_start)
             || record.occurred_end != Some(header.occurred_end)
@@ -760,7 +681,6 @@ impl ScopedRead<'_> {
                 .store
                 .validate_entity_type(header.entity_type)
                 .is_err()
-            || (shell && !filter.read_scope().bands.contains(&header.entity_type))
         {
             return Ok(false);
         }
@@ -778,7 +698,7 @@ impl ScopedRead<'_> {
                 ));
             return Ok(!scope_erased
                 && raw.len() == ENTITY_METADATA_HEADER_LEN
-                && self.deleted_shell_position_allowed_in(txn, policy, &record.id, &raw, held)?
+                && self.shell_authority_in(txn, policy, filter, &record.id, &raw, held)?
                 && self.vault.store.entity_deletion_present_in_txn(
                     txn,
                     &record.id,

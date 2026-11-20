@@ -8,4 +8,5 @@
 
 pub use crate::ai_host::pass_door::{
     PassAnswer, house_live_fork_bind, house_live_fork_request, house_pass, self_written_pass,
+    serve_broker,
 };

@@ -237,10 +237,13 @@ fn unquoted(formula: &str) -> String {
     out
 }
 
+/// Each array formula's anchor cell with the range its results fill.
+type ArrayExtents = BTreeMap<(u32, u32), ((u32, u32), (u32, u32))>;
+
 /// Each array formula of worksheet `tree` by its anchor cell (column, row),
 /// with the range its results fill: the `ref` it names, or its own cell when
 /// it names none or one that does not parse.
-fn array_extents(tree: &XmlTree) -> Result<BTreeMap<(u32, u32), ((u32, u32), (u32, u32))>> {
+fn array_extents(tree: &XmlTree) -> Result<ArrayExtents> {
     let mut extents = BTreeMap::new();
     let Some((data, _)) = tree.child(0, SML, "sheetData")? else {
         return Ok(extents);
@@ -332,7 +335,7 @@ impl Book {
     fn unplaced_array_result(
         &self,
         tree: &XmlTree,
-        extents: &BTreeMap<(u32, u32), ((u32, u32), (u32, u32))>,
+        extents: &ArrayExtents,
         present: &BTreeSet<(u32, u32)>,
     ) -> bool {
         let Ok(Some((data, _))) = tree.child(0, SML, "sheetData") else {
