@@ -2324,3 +2324,160 @@ fn a_single_use_slip_holder_gets_no_member_withdrawal_notice() {
         );
     });
 }
+
+/// A tap the member fetched before their own withdrawal in the same second
+/// restores nothing (REVIEW-10022 P1): the consent door admits a restore id
+/// only while the withdrawal it names is still open to disown, checked in the
+/// grant's write. Red before: the cached tap logged a grant dated after both
+/// withdrawals, which the member's own withdrawal, recorded before it, never
+/// voided.
+#[test]
+fn a_cached_tap_restores_nothing_after_the_members_own_withdrawal() {
+    run_on_engine_stack("voices-recognition-withdraw-cached-tap", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("agent-logged-withdrawal", now - 5, Some(member)),
+            )
+            .await;
+        let taps = served.member_withdrawal_taps().await;
+        assert_eq!(
+            taps.len(),
+            1,
+            "setup: one tap on the member's notice: {taps:?}"
+        );
+        let cached = taps[0]["args"].clone();
+
+        served
+            .ok(
+                Caller::Person,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("members-own-withdrawal", now - 5, None),
+            )
+            .await;
+        assert!(
+            served.member_withdrawal_taps().await.is_empty(),
+            "setup: the member's own withdrawal in that second closes the notice's tap"
+        );
+        let (status, body) = served
+            .post(Caller::Person, RECOGNITION_CONSENT, cached.clone())
+            .await;
+        assert!(
+            !status.is_success(),
+            "a cached tap must not restore consent past the member's own later withdrawal: \
+             {status} {body}"
+        );
+        let restore_id = cached["event_id"].as_str().expect("the restore's event id");
+        let at = cached["occurred_at"].as_u64().expect("the restore's date");
+        assert!(
+            served
+                .vault
+                .enroll_voice_print(&enrollment(member, restore_id, &axis_vector(1), at + 10))
+                .is_err(),
+            "no grant stands under the cached tap's id"
+        );
+    });
+}
+
+/// Two agent-logged withdrawals in one second leave the member a tap
+/// (REVIEW-10022 P1): another recorder's withdrawal in the same second is no
+/// later decision, so each notice offers the tap, and the grant one tap logs,
+/// a second later, is the member's latest decision and closes both. Red
+/// before: each withdrawal read the other as later, and neither notice
+/// offered a tap.
+#[test]
+fn two_agent_withdrawals_in_one_second_leave_the_member_a_tap() {
+    run_on_engine_stack("voices-recognition-withdraw-tied-agents", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        for event_id in ["first-agent-withdrawal", "second-agent-withdrawal"] {
+            served
+                .ok(
+                    Caller::Agent,
+                    RECOGNITION_WITHDRAW,
+                    recognition_withdrawal(event_id, now - 5, Some(member)),
+                )
+                .await;
+        }
+        assert_eq!(
+            served.member_withdrawal_notices().await.len(),
+            2,
+            "setup: one notice per agent-logged withdrawal"
+        );
+        let taps = served.member_withdrawal_taps().await;
+        assert_eq!(
+            taps.len(),
+            2,
+            "two agent withdrawals in one second must leave each notice its tap: {taps:?}"
+        );
+        let restored = served
+            .ok(Caller::Person, RECOGNITION_CONSENT, taps[0]["args"].clone())
+            .await;
+        assert_eq!(restored["replayed"], false, "{restored}");
+        assert!(
+            served.member_withdrawal_taps().await.is_empty(),
+            "one tap's grant is the member's latest decision and closes both notices"
+        );
+    });
+}
+
+/// The id a member's tap offers is no other request's (REVIEW-10022 P1): a
+/// withdrawal under a restore id is refused, so no request takes the id
+/// before the tap, which then restores, and a repeated tap replays it. Red
+/// before: the tap's id was an ordinary one, and an agent's withdrawal under
+/// it was logged.
+#[test]
+fn no_withdrawal_takes_the_id_a_members_tap_offers() {
+    run_on_engine_stack("voices-recognition-withdraw-restore-id", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("agent-logged-withdrawal", now - 5, Some(member)),
+            )
+            .await;
+        let taps = served.member_withdrawal_taps().await;
+        assert_eq!(
+            taps.len(),
+            1,
+            "setup: one tap on the member's notice: {taps:?}"
+        );
+        let tap = taps[0]["args"].clone();
+        let restore_id = tap["event_id"].as_str().expect("the restore's event id");
+
+        let (status, body) = served
+            .post(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal(restore_id, now - 5, Some(member)),
+            )
+            .await;
+        assert!(
+            !status.is_success(),
+            "a withdrawal under the id the member's tap offers must be refused: {status} {body}"
+        );
+        let restored = served
+            .ok(Caller::Person, RECOGNITION_CONSENT, tap.clone())
+            .await;
+        assert_eq!(restored["replayed"], false, "{restored}");
+        let replayed = served.ok(Caller::Person, RECOGNITION_CONSENT, tap).await;
+        assert_eq!(
+            replayed["replayed"], true,
+            "a repeated tap replays: {replayed}"
+        );
+    });
+}
