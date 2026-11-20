@@ -204,8 +204,10 @@ fn identity_topology_status(rows: usize) -> Option<String> {
 fn same_as_status(links: usize) -> Option<String> {
     (links > 0).then(|| {
         format!(
-            "{links} identity links were not restored: only a link between two people this \
-             import brought back comes back"
+            "{links} identity links were not restored: a link comes back between two people \
+             this import brought back, or, on your own restore, between two memories your \
+             nightly-link grant lets the Dreamer join; a link between two diary entries stays \
+             out, since an imported diary has no writer here to vouch for it"
         )
     })
 }
