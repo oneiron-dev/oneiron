@@ -1,0 +1,15 @@
+//! Holds the browser workflow library's find, retire, retired and run session doors
+//! (FIX [BROWSER-LIBRARY-SESSION-DOORS-HELD-BY-NO-TEST]).
+//! The attached session is real; its Chromium peer and workflow store are fakes.
+//! These tests do not prove a real browser's answers or the vault store's
+//! filter, order and ownership rules.
+
+#![cfg(all(target_os = "linux", feature = "driver"))]
+
+mod find;
+mod retire;
+mod retired;
+mod run;
+mod scripted_chromium;
+mod session_fixture;
+mod workflow_store;
