@@ -39,40 +39,6 @@ pub enum BookingCancelRequest {
     },
 }
 
-/// Source-redacted occupancy over an inclusive UTC-seconds window.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarFreebusyRequest {
-    pub calendars: Vec<CalendarSel>,
-    pub range: CalendarRangeDto,
-}
-
-/// One constraint-field turn, addressed by a live public booking-page token.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BookingConstraintTurnRequest {
-    pub page_token: String,
-    pub turn: BookingConstraintTurnInput,
-}
-
-/// The existing public constraint-turn body, shared by both transports.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BookingConstraintTurnInput {
-    pub event_type: crate::booking::constraint::EventTypeKey,
-    pub window: BookingConstraintTurnWindow,
-    pub visitor_tz: String,
-    pub free_text: String,
-    pub session_ref: String,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BookingConstraintTurnWindow {
-    pub start: u64,
-    pub end: u64,
-}
-
 /// `vault.booking.deposit.refund`'s input (BK-DEPOSIT-OWNER-RETURN-ACT = A):
 /// the booking, by its EVENT's hex entity id. No amount, actor or provider
 /// id: the refund is always the whole held deposit, and the act is the
@@ -112,4 +78,38 @@ pub struct BookingDepositRefundReceipt {
     /// The deposit terms' currency, frozen at checkout.
     pub currency: String,
     pub queued: bool,
+}
+
+/// Source-redacted occupancy over an inclusive UTC-seconds window.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarFreebusyRequest {
+    pub calendars: Vec<CalendarSel>,
+    pub range: CalendarRangeDto,
+}
+
+/// One constraint-field turn, addressed by a live public booking-page token.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingConstraintTurnRequest {
+    pub page_token: String,
+    pub turn: BookingConstraintTurnInput,
+}
+
+/// The existing public constraint-turn body, shared by both transports.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingConstraintTurnInput {
+    pub event_type: crate::booking::constraint::EventTypeKey,
+    pub window: BookingConstraintTurnWindow,
+    pub visitor_tz: String,
+    pub free_text: String,
+    pub session_ref: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingConstraintTurnWindow {
+    pub start: u64,
+    pub end: u64,
 }
