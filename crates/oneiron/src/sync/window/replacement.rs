@@ -270,12 +270,21 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     written.extend(newest_ops(&candidate, &before, &candidate.oplog_vv())?.into_keys());
     conflicts.extend(keep_hard_deletes(&candidate, &hard, &written)?);
     conflicts.extend(delete_wins(&candidate, &written)?);
+    // A marker whose soft delete is still publishing it is left to that
+    // publication, which re-proves the delete first.
     let pending: Vec<_> = {
         let rtxn = vault.store.env.read_txn()?;
         vault
             .store
             .port_pending_tombstones_in_window(&rtxn, WindowAddress::new(key.as_str()))?
             .filter_map(std::result::Result::ok)
+            .filter(|marker| {
+                !vault.store.tombstone_publications_in_flight.holds_marker(
+                    &marker.window_label,
+                    &marker.id,
+                    &marker.raw,
+                )
+            })
             .collect()
     };
     let tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));

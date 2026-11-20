@@ -158,6 +158,12 @@ fn reverse_rematerialize_scan(
     super::egress::scrub_redacted_attribution_carriers(vault, window_key, doc)?;
     crate::workspace_roster::scrub_audience_edits(vault, doc, Some(window_key))?;
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+    // A soft delete between its scrub and its own publication reads as the
+    // tombstone that publication writes: its shell is never mirrored first.
+    let publishing = vault
+        .store
+        .tombstone_publications_in_flight
+        .entities_in(window_key.as_str());
     let redacted_authors = {
         let rtxn = vault.store.env.read_txn()?;
         crate::identity_topology::redacted_keys_in_txn(&vault.store, &rtxn)?
@@ -395,7 +401,10 @@ fn reverse_rematerialize_scan(
         // restore the carrier. Ordinary rows retain delete-wins semantics,
         // including non-binary values and case-shifted aliases.
         let protected_tombstone = protected_tombstones.contains(id);
-        if !protected_tombstone && tombstones.contains(id) && !retained_shell {
+        if !protected_tombstone
+            && (tombstones.contains(id) || publishing.contains(id))
+            && !retained_shell
+        {
             continue;
         }
 

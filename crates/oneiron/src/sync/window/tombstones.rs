@@ -314,7 +314,9 @@ fn marker_ids(
 }
 
 /// The `pt:` markers staged in `window_key`. A malformed marker key is left
-/// in place and logged: a deletion intent is never silently dropped.
+/// in place and logged: a deletion intent is never silently dropped. A
+/// marker whose soft delete is still publishing it is that publication's,
+/// which re-proves the delete first, and is left to it.
 fn pending_tombstone_markers(
     vault: &Vault,
     window_key: &WindowKey,
@@ -326,6 +328,18 @@ fn pending_tombstone_markers(
         .port_pending_tombstones_in_window(&rtxn, WindowAddress::new(window_key.as_str()))?
     {
         match entry {
+            Ok(row)
+                if vault.store.tombstone_publications_in_flight.holds_marker(
+                    &row.window_label,
+                    &row.id,
+                    &row.raw,
+                ) =>
+            {
+                tracing::debug!(
+                    entity = %row.id.to_hex(),
+                    "pt replay: marker left to its own publication"
+                );
+            }
             Ok(row) => markers.push((
                 crate::sync::window_rows::WindowEntityHexKey {
                     window: row.window_label,

@@ -35,6 +35,10 @@ pub(crate) mod setting_keys;
 mod sweep_queue;
 mod timeline;
 mod tombstone;
+#[cfg(feature = "sync")]
+mod tombstone_publications_in_flight;
+#[cfg(feature = "sync")]
+pub(crate) use tombstone_publications_in_flight::TombstonePublicationsInFlight;
 pub(crate) mod tombstone_scope;
 pub(crate) mod topology_delete_intent;
 #[cfg(feature = "sync")]
