@@ -153,6 +153,7 @@ pub(super) fn source_in_txn(
         kind,
         &raw,
         &scope,
+        &[lane.actor_key()],
     )
     .map(Some)
 }

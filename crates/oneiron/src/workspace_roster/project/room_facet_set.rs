@@ -79,6 +79,18 @@ impl Memory<'_> {
     }
 }
 
+/// The facets a room's read axis names; none for a room that reads none.
+fn room_facet_ids(
+    axis: Option<crate::federation::ScopeAxis<crate::federation::ScopeId>>,
+) -> BTreeSet<EntityId> {
+    match axis {
+        Some(crate::federation::ScopeAxis::Some(facets)) => {
+            facets.into_iter().map(|facet| facet.0).collect()
+        }
+        _ => BTreeSet::new(),
+    }
+}
+
 fn unresolved(project: EntityId, reason: &'static str) -> Error {
     RecordError::ProjectAuthorityUnresolved { project, reason }.into()
 }
@@ -193,6 +205,11 @@ impl Vault {
             next.board = authority.board.clone();
             next.roster = roster;
             next.room_facets = facets;
+            // What the room reads before the act: a standing answer in a
+            // facet it leaves is marked stale once the new head is installed
+            // (FIX STANDING-ANSWER-STAYS-IN-LEFT-FACET).
+            let room = home_room_id(id)?;
+            let before = room_facet_ids(room_facets_in(self, txn, room)?);
             let signed_at = owner_signed_at(self, txn)?;
             self.sign_owner_project_in_txn(
                 txn,
@@ -215,7 +232,15 @@ impl Vault {
                     &encode(&next)?,
                 )
                 .apply(txn)?;
-            self.require_owner_head_in_txn(txn, id, &next)
+            let revision = self.require_owner_head_in_txn(txn, id, &next)?;
+            let left: BTreeSet<EntityId> = before
+                .difference(&room_facet_ids(room_facets_in(self, txn, room)?))
+                .copied()
+                .collect();
+            crate::llm::decision::questions::mark_answers_stale_in_left_facets_in_txn(
+                self, txn, room, &left, signed_at,
+            )?;
+            Ok(revision)
         })
     }
 }

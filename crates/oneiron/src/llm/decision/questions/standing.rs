@@ -22,7 +22,9 @@ use oneiron_contracts::fingerprint::ContentHash;
 use rmpv::Value;
 use std::collections::BTreeSet;
 
+mod left_facet;
 mod public_admit;
+pub(crate) use left_facet::mark_answers_stale_in_left_facets_in_txn;
 pub use public_admit::{admit_standing_answer, prepare_standing_answer};
 
 /// One backfill identity: question id + `backfill` family + version, unit and frontier.
@@ -80,15 +82,17 @@ pub(super) struct Source {
     /// The facets an answer resting on the row may sit in (never empty), its
     /// project and its world.
     position: (BTreeSet<EntityId>, EntityId, EntityId),
+    /// The facets of `position` every reader of the answer reads it at.
+    read: BTreeSet<EntityId>,
     sensitivity: u8,
 }
 
 impl Source {
     /// The row `id` of type `kind`, `raw`, under its record Scope `scope` as
     /// `view` holds it in `txn`: the facets an answer on it may sit in
-    /// ([`answer_facets_in`]), its one project and world, its sensitivity
-    /// and, for a claim, its body. A Scope with no single position bounds no
-    /// answer.
+    /// ([`answer_facets_in`]) and those of them every key of `readers` reads
+    /// an answer at, its one project and world, its sensitivity and, for a
+    /// claim, its body. A Scope with no single position bounds no answer.
     pub(super) fn of_row(
         vault: &Vault,
         view: &(impl ManifestDbs + MachineHistoryScope),
@@ -97,12 +101,16 @@ impl Source {
         kind: u8,
         raw: &[u8],
         scope: &crate::federation::Scope,
+        readers: &[&ScopedReadActorKey],
     ) -> Result<Self> {
-        Self::fitted(vault, view, txn, id, kind, raw, scope)?.map_err(SourceConflict::error)
+        Self::fitted(vault, view, txn, id, kind, raw, scope, readers)?
+            .map_err(SourceConflict::error)
     }
 
     /// [`Self::of_row`], with a Scope no answer can rest on as its conflict
-    /// rather than a refusal. A body that does not decode is still an error.
+    /// rather than a refusal: one with no single position, and a row read
+    /// only in facets no FACET row holds. A body that does not decode is
+    /// still an error.
     pub(super) fn fitted(
         vault: &Vault,
         view: &(impl ManifestDbs + MachineHistoryScope),
@@ -111,6 +119,7 @@ impl Source {
         kind: u8,
         raw: &[u8],
         scope: &crate::federation::Scope,
+        readers: &[&ScopedReadActorKey],
     ) -> Result<std::result::Result<Self, SourceConflict>> {
         let (Some(facet), Some(project), Some(world)) = (
             singleton(&scope.facets),
@@ -120,6 +129,22 @@ impl Source {
             return Ok(Err(SourceConflict::Unrepresentable));
         };
         let facets = answer_facets_in(vault, view, txn, id, kind, facet)?;
+        if facets.is_empty() {
+            return Ok(Err(SourceConflict::Facet));
+        }
+        let mut read = BTreeSet::new();
+        for facet in &facets {
+            let mut all = true;
+            for reader in readers {
+                if !reader.reads_claims_at_facet_in(vault, txn, *facet)? {
+                    all = false;
+                    break;
+                }
+            }
+            if all {
+                read.insert(*facet);
+            }
+        }
         let position = (facets, project, world);
         let sensitivity = match scope.sensitivity {
             crate::federation::SensitivityCeiling::AtMost(level) => match level {
@@ -144,6 +169,7 @@ impl Source {
             kind,
             claim,
             position,
+            read,
             sensitivity,
         }))
     }
@@ -153,10 +179,13 @@ impl Source {
 /// Scope names `facet`, may sit in: `facet` when it is a stored FACET; else
 /// each stored FACET the row is read in
 /// ([`crate::federation::facet_read::placed_facets_in`]), so the answer reads
-/// no wider than the row and its asker reads it back; else the vault default
-/// facet. A non-PERSON row born under the default record stamp sits at its
-/// own derived substrate id, which no FACET row holds, and the CLAIM birth
-/// gate refuses an answer there (FIX STANDING-ANSWER-TAKES-UNSTORED-SUBSTRATE-FACET;
+/// no wider than the row and its asker reads it back; the vault default
+/// facet only for a row read in no facet. A row read only in facets no
+/// FACET row holds gets none: an answer at the default would be read where
+/// the row is not (review round 1 on #9604). A non-PERSON row born under the
+/// default record stamp sits at its own derived substrate id, which no FACET
+/// row holds, and the CLAIM birth gate refuses an answer there (FIX
+/// STANDING-ANSWER-TAKES-UNSTORED-SUBSTRATE-FACET;
 /// STANDING-ANSWER-TWO-FACETLESS-SOURCES-CONFLICT; docs/ops/actor-claim-facets.md).
 fn answer_facets_in(
     vault: &Vault,
@@ -172,14 +201,15 @@ fn answer_facets_in(
     if stored(&facet)? {
         return Ok(BTreeSet::from([facet]));
     }
+    let placed = crate::federation::facet_read::placed_facets_in(vault, view, txn, id, kind)?;
+    if placed.is_empty() {
+        return Ok(BTreeSet::from([vault.default_facet_in_txn(txn)?]));
+    }
     let mut facets = BTreeSet::new();
-    for facet in crate::federation::facet_read::placed_facets_in(vault, view, txn, id, kind)? {
+    for facet in placed {
         if stored(&facet)? {
             facets.insert(facet);
         }
-    }
-    if facets.is_empty() {
-        facets.insert(vault.default_facet_in_txn(txn)?);
     }
     Ok(facets)
 }
@@ -407,6 +437,12 @@ fn sources_with_caller_in_txn(
                 body.to_vec(),
             )?);
         }
+        // The answer lands where its asker reads it back: through the lane
+        // the version was saved under and the live caller's (review round 1
+        // on #9604).
+        let readers: Vec<&ScopedReadActorKey> = std::iter::once(&reader)
+            .chain(caller.map(|lane| lane.actor_key()))
+            .collect();
         sources.push(Source::of_row(
             vault,
             &vault.store,
@@ -415,6 +451,7 @@ fn sources_with_caller_in_txn(
             header.entity_type,
             &raw,
             &scope,
+            &readers,
         )?);
     }
     Ok((frontier.finish(), sources, context))
@@ -862,7 +899,6 @@ fn backfill_answer_with_caller(
         // The fold reads where each source sits now; the frontier hashes rows,
         // not placement, so it is taken before the dedup lookup below.
         let fold = fold_sources(&sources, principal)?;
-        let landing = fold.facet();
         if let Measured::Admitted(decision) = &measurement {
             super::graph_ask::validate_decision(&record.definition.question, principal, decision)?;
             let ids: Vec<_> = context.iter().skip(1).map(|source| source.id).collect();
@@ -933,11 +969,12 @@ fn backfill_answer_with_caller(
             {
                 return Err(Error::EntityNotFound);
             }
-            // The stored answer is this landing's only while it sits in the
-            // facet the sources fold to now. A room's facet set can change
-            // under unchanged rows; then a fresh answer lands where the fold
-            // puts it and takes the dedup key (review round 2 on #9582).
-            if landing == Some(body.scope_facet) {
+            // The stored answer is this landing's only while it sits where
+            // the sources fold to now ([`ScopeFold::holds`]). A room's facet
+            // set can change under unchanged rows; then a fresh answer lands
+            // where the fold puts it and takes the dedup key (review round 2
+            // on #9582).
+            if fold.holds(body.scope_facet) {
                 // FIX 7461: the old gate first, unchanged; then the principal's
                 // own live authority under its bare key, never the writer's class.
                 let facets = crate::claim::facet_refs_in_port(&vault.store, txn, &id)?;
@@ -1090,6 +1127,31 @@ fn backfill_answer_with_caller(
     })
 }
 
+/// The lone unit `id` of type `kind`, `raw`, as the one source an answer
+/// that no graph context bounds rests on, read for `reader` (the asker's
+/// saved lane): so the answer lands where the unit's room reads it now, as
+/// a graph answer on it does (review round 1 on #9604). `None` when its
+/// record Scope bounds no answer on it, which then lands as before; a row
+/// read only in facets no FACET row holds refuses it.
+pub(super) fn lone_unit_source_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    raw: &[u8],
+    reader: &ScopedReadActorKey,
+) -> Result<Option<Source>> {
+    let Some(scope) = crate::federation::record_scope::scope_for_blob(&vault.store, txn, id, raw)?
+    else {
+        return Ok(None);
+    };
+    match Source::fitted(vault, &vault.store, txn, id, kind, raw, &scope, &[reader])? {
+        Ok(source) => Ok(Some(source)),
+        Err(SourceConflict::Facet) => Err(SourceConflict::Facet.error()),
+        Err(_) => Ok(None),
+    }
+}
+
 /// Bounds `candidate` by every source it rests on: their one position, the
 /// highest sensitivity, the claims' scope terms and relationship. Returns the
 /// sources' met taint.
@@ -1121,6 +1183,8 @@ pub(super) struct ScopeFold {
     /// The facets every source folded so far may sit in, their project and
     /// their world.
     position: Option<(BTreeSet<EntityId>, EntityId, EntityId)>,
+    /// The facets of `position` every reader of the answer reads it at.
+    read: BTreeSet<EntityId>,
     rel: crate::claim::RelationshipScope,
     scope: Vec<(Value, Value)>,
     sensitivity: u8,
@@ -1132,6 +1196,7 @@ impl ScopeFold {
             principal: principal.to_hex(),
             taint: ClaimSource::UserStated,
             position: None,
+            read: BTreeSet::new(),
             rel: None,
             scope: Vec::new(),
             sensitivity: 0,
@@ -1165,8 +1230,12 @@ impl ScopeFold {
                 if *world != *w {
                     return Err(SourceConflict::World);
                 }
+                self.read.retain(|facet| source.read.contains(facet));
             }
-            None => self.position = Some((f.clone(), *p, *w)),
+            None => {
+                self.position = Some((f.clone(), *p, *w));
+                self.read = source.read.clone();
+            }
         }
         let Some(body) = &source.claim else {
             self.taint =
@@ -1230,11 +1299,23 @@ impl ScopeFold {
     }
 
     /// The facet an answer on the sources folded so far lands in: the lowest
-    /// every source may sit in.
+    /// every source may sit in and every reader of the answer reads it at,
+    /// else the lowest every source may sit in (review round 1 on #9604).
     fn facet(&self) -> Option<EntityId> {
-        self.position
-            .as_ref()
-            .and_then(|(facets, _, _)| facets.first().copied())
+        let (facets, _, _) = self.position.as_ref()?;
+        self.read.first().or_else(|| facets.first()).copied()
+    }
+
+    /// Whether an answer standing in `facet` sits where this fold lands one:
+    /// in a facet every source may sit in and every reader reads it at, or,
+    /// when the readers read it at none, in the lowest every source may sit
+    /// in.
+    fn holds(&self, facet: EntityId) -> bool {
+        if self.read.is_empty() {
+            self.facet() == Some(facet)
+        } else {
+            self.read.contains(&facet)
+        }
     }
 
     /// Bounds `candidate` by every source folded in; returns their met taint.
