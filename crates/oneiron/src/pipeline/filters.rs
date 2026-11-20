@@ -599,6 +599,41 @@ fn active_set_admits(
     Ok(record_world(store, rtxn, id, Some(&holds))?.is_some_and(holds))
 }
 
+/// Whether the owner's ALLOWED-SET of an ActiveSet turn, `allowed`, keeps
+/// the stored row `id` from the turn, for the statistics a BM25 scan scores
+/// with (FIX WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS): its world, placed
+/// as [`active_set_admits`] places it, lies outside `allowed`. A claim whose
+/// body does not decode places at no world and is kept: a statistic fails
+/// no run, and the run's admission judges that claim as before. False for a
+/// row `store` does not hold.
+pub(super) fn allowed_set_withholds_row(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    allowed: &WorldAuthoritySet,
+) -> Result<bool> {
+    let holds = |world: Option<EntityId>| allowed.admits(world);
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
+        return Ok(false);
+    };
+    if raw.entity_type == ENTITY_TYPE_CLAIM {
+        return Ok(
+            !crate::claim::decode_claim_body(&raw.body, true).is_ok_and(|body| holds(body.world))
+        );
+    }
+    Ok(
+        !crate::federation::record_scope::note_world::record_world_where(
+            store,
+            rtxn,
+            *id,
+            raw.entity_type,
+            &raw.body,
+            Some(&holds),
+        )?
+        .is_some_and(holds),
+    )
+}
+
 pub(super) fn apply_filters(
     scores: &mut Vec<ScoredEntity>,
     store: &StoreRead<'_>,
