@@ -392,6 +392,8 @@ fn goal_owner_delete_uses_soft_and_hard_rails_without_stranding_project() -> Res
     for hard in [false, true] {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+        vault.prepare_install_signing().expect("install signing");
         let root = vault.root_project()?;
         let root_record = vault.project(root)?.unwrap();
         let human = vault.ensure_embedded_owner_actor().unwrap();
@@ -473,6 +475,8 @@ fn replayed_goal_tombstone_retains_no_dangling_pointer() -> Result<()> {
     ] {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+        vault.prepare_install_signing().expect("install signing");
         let project = vault.root_project()?;
         let human = vault.ensure_embedded_owner_actor().unwrap();
         let owner = vault.authenticate_owner(
@@ -552,6 +556,8 @@ fn superseded_goal_erases_after_its_project_is_deleted() -> Result<()> {
     for hard in [false, true] {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+        vault.prepare_install_signing().expect("install signing");
         let root = vault.root_project()?;
         let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
         let human = vault.ensure_embedded_owner_actor().unwrap();

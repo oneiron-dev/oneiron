@@ -39,8 +39,10 @@ use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
 const AT: TimeRange = TimeRange { start: 1, end: 1 };
 
-/// A rooted vault as a host starts one: the owner bound under the host root
-/// and this install profiled, so it carries the owner's answers.
+/// A rooted vault as a host starts one: the owner bound under the host root,
+/// this install profiled, so it carries the owner's answers, and the handle
+/// holding the host's root as a serving host does, so those answers are
+/// proven (row CARRIER-OWNER-PROOF).
 struct Rooted {
     _dir: tempfile::TempDir,
     vault: Vault,
@@ -59,6 +61,11 @@ fn rooted() -> Rooted {
         .expect("this install's live machine profile");
     let owner = vault.ensure_embedded_owner_actor().expect("the owner");
     oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
+    // The host root cosigns the owner's machine answers, so the machine the
+    // owner admits as theirs stands instead of being held for an owner
+    // device. `test_host_issuer` is the same root `issuer` is, which the test
+    // keeps for the owner key enrollments.
+    vault.hold_checkpoint_root_signer(Arc::new(oneiron::test_support::test_host_issuer()));
     let proof = vault
         .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
         .expect("an owner proof");
@@ -101,6 +108,7 @@ fn admit_machine(rooted: &Rooted) -> EntityId {
         device_class: MachineDeviceClass::Computer,
         encryption_key,
         machine_proof,
+        restored_from: None,
     };
     let folded = rooted
         .vault

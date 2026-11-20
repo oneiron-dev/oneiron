@@ -14,6 +14,8 @@
 //! custody metadata, and authority comes from host and slip standing.
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
+
 use super::*;
 
 pub(super) use super::entry_transition_predicates::{
@@ -69,13 +71,53 @@ pub(super) fn fold_entry_state(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     context: FoldContext<'_>,
 ) -> EntryFold {
+    transition_entry(entry, hash, states, context, Signatures::Verify)
+}
+
+/// [`fold_entry_state`] of the row `rows` holds at `hash`, or None when it
+/// holds none. The fold judged that row (`fold_engine::judged_entries`):
+/// its signatures held then and are a function of its bytes alone, so they
+/// are not verified again (row [ROSTER-KEY-LOG-FLOOD], PR 3).
+pub(super) fn fold_judged_entry_state(
+    rows: &JudgedRows,
+    hash: AuthorityEntryHash,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    context: FoldContext<'_>,
+) -> Option<EntryFold> {
+    let entry = rows.get(&hash)?;
+    Some(transition_entry(
+        entry,
+        hash,
+        states,
+        context,
+        Signatures::Judged,
+    ))
+}
+
+/// Whether a transition verifies its row's signatures, or reads the
+/// verdict the fold took when it judged the row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Signatures {
+    Verify,
+    Judged,
+}
+
+fn transition_entry(
+    entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    context: FoldContext<'_>,
+    signatures: Signatures,
+) -> EntryFold {
     #[cfg(test)]
     TRANSITIONED_FOR_TEST.with(|rows| {
         if let Some(rows) = rows.borrow_mut().as_mut() {
             rows.push(hash);
         }
     });
-    if entry.validate_shape().is_err() || verify_entry_signatures(entry).is_err() {
+    if entry.validate_shape().is_err()
+        || (signatures == Signatures::Verify && verify_entry_signatures(entry).is_err())
+    {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
     // A counted root appointment's line folds as its proof fold folded it,
@@ -103,6 +145,12 @@ pub(super) fn fold_entry_state(
     // operations survive only as verified pre-handoff ancestry: a later
     // client enrollment or rotation gains no authority.
     if entry_is_retired(entry, hash, context) {
+        return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+    }
+    // An enrolment of an owner's key outside the line of the enrolment that
+    // made it the owner's (row CARRIER-PROOF-OLD-PARENTS, OLDPARENTS-ENROL-DODGE
+    // = A): the roster merge would otherwise narrow the key on every branch.
+    if context.refuses_off_the_line_enrolment(&hash) {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
 
@@ -173,30 +221,31 @@ pub(super) fn fold_entry_state(
         let mut state = FoldState {
             slips: SlipAuthorityState::default(),
             vault_id,
-            roster: BTreeMap::new(),
+            roster: PersistentMap::new(),
             genesis_recovery_dismissed: recovery.dismissed(),
             recovery_redundancy_established: false,
-            federation_pacts: BTreeMap::new(),
-            federation_confirms: BTreeMap::new(),
-            critical_write_confirms: BTreeMap::new(),
-            consumed_critical_write_confirm_nonces: BTreeSet::new(),
-            critical_write_confirm_nonce_provenance: BTreeMap::new(),
-            conflicted_critical_write_confirms: BTreeSet::new(),
-            federation_grant_bindings: BTreeMap::new(),
-            actor_bindings: BTreeMap::new(),
-            actor_binding_revocations: BTreeMap::new(),
-            actor_revocation_hashes: BTreeMap::new(),
-            seqs: BTreeMap::new(),
-            machines: BTreeMap::new(),
-            machine_keys: BTreeMap::new(),
-            held_machine_answers: BTreeMap::new(),
-            root_anchors: BTreeMap::new(),
-            anchor_entries: BTreeSet::new(),
-            host_custody_keys: BTreeSet::new(),
-            worlds: BTreeMap::new(),
-            refused_world_edits: BTreeSet::new(),
-            grant_travel: BTreeMap::new(),
-            refused_grant_travel: BTreeSet::new(),
+            federation_pacts: PersistentMap::new(),
+            federation_confirms: PersistentMap::new(),
+            critical_write_confirms: PersistentMap::new(),
+            consumed_critical_write_confirm_nonces: PersistentSet::new(),
+            critical_write_confirm_nonce_provenance: PersistentMap::new(),
+            conflicted_critical_write_confirms: PersistentSet::new(),
+            federation_grant_bindings: PersistentMap::new(),
+            actor_bindings: PersistentMap::new(),
+            actor_binding_revocations: PersistentMap::new(),
+            actor_revocation_hashes: PersistentMap::new(),
+            seqs: PersistentMap::new(),
+            machines: PersistentMap::new(),
+            machine_keys: PersistentMap::new(),
+            held_machine_answers: PersistentMap::new(),
+            restored_enrolments: BTreeMap::new(),
+            root_anchors: PersistentMap::new(),
+            anchor_entries: PersistentSet::new(),
+            host_custody_keys: PersistentSet::new(),
+            worlds: PersistentMap::new(),
+            refused_world_edits: PersistentSet::new(),
+            grant_travel: PersistentMap::new(),
+            refused_grant_travel: PersistentSet::new(),
             checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState::default(),
             home_pick: super::home_pick::HomePickChoiceState::default(),
             origin_cut: super::origin_cut::OriginCutChoiceState::default(),
@@ -206,17 +255,17 @@ pub(super) fn fold_entry_state(
             conversation_training_vault:
                 super::conversation_training_vault::ConversationTrainingVaultState::default(),
             policy_settings: super::policy_setting_choice::PolicySettingChoiceState::default(),
-            refused_export_acts: BTreeSet::new(),
-            agent_carried_acts: BTreeMap::new(),
+            refused_export_acts: PersistentSet::new(),
+            agent_carried_acts: PersistentMap::new(),
             home_candidacy: super::home_candidacy::HomeCandidacyState::default(),
             full_copy_mark: super::full_copy_mark::FullCopyMarkState::default(),
             owner_work: super::owner_work::OwnerWorkState::default(),
-            world_keys: BTreeMap::new(),
-            refused_world_keys: BTreeSet::new(),
-            key_admitters: BTreeMap::new(),
+            world_keys: PersistentMap::new(),
+            refused_world_keys: PersistentSet::new(),
+            key_admitters: PersistentMap::new(),
             hosted: context.hosted,
-            actor_rows: BTreeSet::new(),
-            residence_directives: BTreeMap::new(),
+            actor_rows: PersistentSet::new(),
+            residence_directives: PersistentMap::new(),
             passkey_contexts: BTreeMap::new(),
             passkey_vouched_keys: BTreeSet::new(),
             passkey_vouch_confirmations: BTreeSet::new(),
@@ -242,10 +291,38 @@ pub(super) fn fold_entry_state(
             None => state.clone(),
         });
     }
-    let Some(mut state) = parent_state else {
+    let Some(state) = parent_state else {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidAncestry(hash));
     };
+    // A held enrolment of a machine born of a restore, among this entry's
+    // ancestors, joins when a live machine signs the entry (row
+    // RESTORED-COPIES-ENROL-EACH-OTHER): judged on the parents, applied only
+    // to an entry its own transition accepts. A row that lands as
+    // restriction only (past its signer's floor, or held back) grants
+    // nothing, so it joins nothing (REVIEW-9509 round 2 P1).
+    let witnessed = if restriction_only {
+        Vec::new()
+    } else {
+        super::restored_join::witnessed(&state, entry, (context.pin, context.machine_standing))
+    };
+    match fold_merged_entry(entry, hash, state, context, restriction_only) {
+        EntryFold::Ready(mut state) => {
+            super::restored_join::join(&mut state, &witnessed, hash);
+            EntryFold::Ready(state)
+        }
+        other => other,
+    }
+}
 
+/// [`fold_entry_state`] past the parent merge: the vault and passkey checks
+/// and each op's transition on its parents' merged `state`.
+fn fold_merged_entry(
+    entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
+    mut state: FoldState,
+    context: FoldContext<'_>,
+    restriction_only: bool,
+) -> EntryFold {
     if entry.vault_id != Some(state.vault_id) {
         return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
     }
@@ -312,6 +389,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -327,6 +405,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -343,6 +422,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -359,6 +439,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -375,6 +456,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -391,6 +473,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -437,6 +520,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -465,13 +549,25 @@ pub(super) fn fold_entry_state(
     if let AuthorityOp::MachineProfile(profile) = &entry.op
         && profile.act.is_some()
     {
-        if let Err(issue) = super::machine_profile::apply_owner_answer(
+        // Carried by a live machine, so it stands on a restored target's
+        // held enrolments, which its entry joins.
+        if let Err(issue) = super::restored_join::fold_revision(
             &mut state,
-            entry,
             profile,
             hash,
-            (context.pin, context.machine_standing),
+            true,
             restriction_only,
+            |state, parents| {
+                super::machine_profile::apply_owner_answer(
+                    state,
+                    entry,
+                    profile,
+                    hash,
+                    (context.pin, context.machine_standing),
+                    restriction_only,
+                    (context.needs_owner_proof_off_the_line(&hash), parents),
+                )
+            },
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -501,8 +597,9 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
-    // A machine's residence result, signed by its own install key under a
-    // chain the owner marked "yours" (OF-534). It changes no state.
+    // A machine's residence result, signed by its own install key, which
+    // that machine's live, answered roster head names (OF-534). It changes
+    // no state.
     if let AuthorityOp::ResidenceResult(result) = &entry.op {
         if let Err(issue) = residence_result_stands(&state, entry, result, hash) {
             return EntryFold::Invalid(issue);
@@ -563,6 +660,26 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
+    // The owner's word that no other machine is left joins one held
+    // enrolment of a machine born of a restore; a key of the owner's signs
+    // it alone (row RESTORED-COPIES-ENROL-EACH-OTHER). An inline enrolment
+    // is that key's own act-free roster revision, filed under this entry as
+    // a roster row's is and held, then joined (KIT-JOIN-ONE-R-ROW = A).
+    if let AuthorityOp::RestoredMachineJoin(record) = &entry.op {
+        let signer = entry.signer_key().clone();
+        let file_inline = |state: &mut FoldState, profile: &MachineProfile| {
+            super::restored_join::fold_revision(state, profile, hash, false, false, |state, _| {
+                apply_machine_profile(state, &signer, profile, hash, context, false)
+            })
+        };
+        if let Err(issue) =
+            super::restored_join::apply_owner_join(&mut state, entry, record, hash, file_inline)
+        {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     let signer = entry.signer_key().clone();
     if let Some(folded) =
         super::anchor_fold::fold_anchor_entry(&mut state, entry, &signer, hash, restriction_only)
@@ -606,6 +723,14 @@ pub(super) fn fold_entry_state(
         if old_root.roles & ROLE_OWNER == 0
             || new_device.roles & !(old_root.roles | ROLE_CLOUD) != 0
         {
+            return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+        }
+        // A key the host does not hold never re-roots a hosted vault whose
+        // host root is live (FIX [HOSTED-REROOT-FOLD-RULE]).
+        if super::entry_transition_predicates::re_root_passes_over_a_serving_host(
+            &state.roster,
+            &signer,
+        ) {
             return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
         }
     }
@@ -666,21 +791,23 @@ pub(super) fn fold_entry_state(
             | AuthorityOp::RemovalArchiveConsume { .. }
     ) {
         // A consent cosigner cannot launder an agent primary into a mint issuer.
-        if !roster_has_live_owner(&state.roster, &signer) || state.slips.apply(entry, hash).is_err()
-        {
+        if !state.has_live_owner(&signer) || state.slips.apply(entry, hash).is_err() {
             return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
         }
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
     }
     if let AuthorityOp::MachineProfile(profile) = &entry.op {
-        if let Err(issue) = apply_machine_profile(
+        // A restored machine's root-signed enrolment is held until it joins.
+        if let Err(issue) = super::restored_join::fold_revision(
             &mut state,
-            &signer,
             profile,
             hash,
-            context,
-            restriction_only,
+            false,
+            false,
+            |state, _| {
+                apply_machine_profile(state, &signer, profile, hash, context, restriction_only)
+            },
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -734,9 +861,11 @@ pub(super) fn fold_entry_state(
 }
 
 /// Whether a residence result's signer is the install key of the machine it
-/// names under a chain that says "yours" in the result's parent state, or
-/// under that machine's live, answered roster revision there, mine or not
-/// (FIX 8888), past that key's last sequence there. A result that names its
+/// names under that machine's live, answered roster revision in the
+/// result's parent state, mine or not (FIX 8888), past that key's last
+/// sequence there. Every install judges this row, so an anchor's chain,
+/// which only the installs pinning its root believe, names no signer here
+/// (Fable pass 29); a roster head saying "yours" is a live, answered one. A result that names its
 /// directive's row as a parent stands on that alone, as before; one whose
 /// directive is beneath its parents (FIX 5412, CALLS "FIX 5412 result
 /// parents") stands only where its parent state holds that row as a valid
@@ -756,16 +885,10 @@ fn residence_result_stands(
     {
         return Err(AuthorityFoldIssue::InvalidAncestry(hash));
     }
-    if !super::machine_claims::folded_machine_in(state, result.machine).is_some_and(|machine| {
-        machine
-            .chains()
-            .any(|(_, chain)| chain.says_yours() && chain.profile.machine_key == *signer)
-            || machine.roster.as_ref().is_some_and(|roster| {
-                roster.is_live()
-                    && roster.profile.role.answered()
-                    && roster.profile.machine_key == *signer
-            })
-    }) {
+    if super::machine_claims::folded_machine_in(state, result.machine)
+        .and_then(|machine| machine.residence_signer_key())
+        != Some(*signer)
+    {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }
     if state
@@ -835,7 +958,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::ExportSupplementImported(_)
         | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::FrontierJoin(_)
-        | AuthorityOp::MembershipExecution(_) => false,
+        | AuthorityOp::MembershipExecution(_)
+        | AuthorityOp::RestoredMachineJoin(_) => false,
         // An appointment's successor is judged fresh over its whole ancestry
         // (`root_appointment_judge`, V1).
         AuthorityOp::RootAppointment(_) => false,

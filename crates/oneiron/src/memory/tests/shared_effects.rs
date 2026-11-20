@@ -23,7 +23,7 @@ fn shared() -> (tempfile::TempDir, Vault, EntityId, EntityId, Vec<String>) {
             crate::store::GateDecisionId::now(),
         )
         .unwrap();
-    let created = vault
+    vault
         .initialize_shared_vault(
             &authenticated,
             42,
@@ -45,7 +45,15 @@ fn shared() -> (tempfile::TempDir, Vault, EntityId, EntityId, Vec<String>) {
             1,
         )
         .unwrap();
-    (dir, vault, member, viewer, created.grant_refs)
+    let grant_refs = crate::test_util::accept_founding_invitation(
+        &vault,
+        42,
+        member,
+        FederationGrantRole::Member,
+    );
+    crate::test_util::grant_founding_writer_reads(&vault, member);
+    crate::test_util::accept_founding_invitation(&vault, 42, viewer, FederationGrantRole::Viewer);
+    (dir, vault, member, viewer, grant_refs)
 }
 
 fn change_member_grant(

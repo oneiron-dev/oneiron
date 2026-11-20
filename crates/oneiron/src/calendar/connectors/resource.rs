@@ -97,6 +97,11 @@ pub(super) struct RenderedResource {
     /// of these bytes gives each all-day member this zone, and so does the
     /// settled write.
     pub(super) resource_zone: Option<String>,
+    /// The members whose rendered VEVENT reads cancelled (`STATUS:CANCELLED`).
+    /// The settled write marks each one's passport `written_cancelled`, so the
+    /// seat's later report of the cancellation is the owner's own write coming
+    /// back, not a host cancel that moves deposit money.
+    pub(super) cancelled_members: Vec<EntityId>,
 }
 
 /// Renders the resource for `uid` from the EVENT claims, over `source`.
@@ -239,6 +244,12 @@ pub(super) fn render(
     if parsed.events.len() != member_ids.len() {
         return Err(ingest_error("rendered resource does not match its members"));
     }
+    let cancelled_members = member_ids
+        .iter()
+        .zip(&parsed.events)
+        .filter(|(_, event)| event.cancelled)
+        .map(|(member, _)| *member)
+        .collect();
     let component_hashes = member_ids
         .into_iter()
         .zip(parsed.events.into_iter().map(|event| event.content_hash))
@@ -247,6 +258,7 @@ pub(super) fn render(
         ics,
         component_hashes,
         resource_zone: source_zone.or(collection_zone),
+        cancelled_members,
     })
 }
 

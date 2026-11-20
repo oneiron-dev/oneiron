@@ -145,7 +145,7 @@ impl AgentGrantActRef {
 /// The `AgentGrantAct` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
 /// check: its signer is a machine's install key, never a roster key (FIX
-/// 2222), and some chain of the machine must name the key. The shape check
+/// 2222), and the machine's roster chain must name the key. The shape check
 /// already refused an agent's act, an answered ask and a nonzero `seen`.
 /// It moves no fold state. Whether the one carrier rule admits the machine
 /// and whether its owner is live are the writer's to refuse; a record either
@@ -212,7 +212,12 @@ impl Vault {
         let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?
             .ok_or_else(|| authority_refused(AGENT_GRANT_ACT_NO_CARRIER))?;
         let public_key = key.verifying_key().to_bytes();
-        if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+        if !super::owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(authority_refused(AGENT_GRANT_ACT_NO_CARRIER));
         }
         // FIX 7908: join a frontier wider than one entry names, else today's path.

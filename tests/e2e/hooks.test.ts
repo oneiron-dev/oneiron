@@ -505,7 +505,8 @@ suite.test(test, "HOOKS-03", "Before-hook rewrite and durable ask should work", 
     facets: { kind: "some", values: [position.scope_facet_id] },
     audience: { kind: "some", values: [position.scope_project_id] },
     bands: { kind: "all" }, verbs: { kind: "some", values: ["write"] },
-    sensitivity: { kind: "all" },
+    // The top ceiling in its canonical form (`all` is written back as it).
+    sensitivity: { kind: "at_most", value: "restricted" },
   };
   const mintSupport = (purpose: string) => engine.client.call("vault.support_grants.mint", {
     holder: principal.principal_ref, holder_class: "agent", holder_key: publicKey,
@@ -858,6 +859,9 @@ suite.test(test, "HOOKS-04", "After-hook redaction is monotone should work", asy
  * foreign effect while an independent owner control advances. The original
  * owner call retains its own authority; no private terminal getter is assumed.
  */
+/* HOOKS-05 is a budget case: in the 20 Nov night it reached its §6b receipt poll 20 s into the 30 s
+ * flow, with §6c, the offer, the Ask, the revoke and a restart still to run. Its stated bound is 90 s
+ * until it is measured. */
 suite.test(test, "HOOKS-05", "Hook sandbox and author scope should work", async () => {
   interface SandboxAuthorScenario {
     version: number;
@@ -1169,8 +1173,11 @@ suite.test(test, "HOOKS-05", "Hook sandbox and author scope should work", async 
       scope: {
         worlds: { kind: "all" }, facets: { kind: "all" },
         bands: { kind: "all" }, audience: { kind: "all" },
-        verbs: { kind: "some", values: ["read", "propose"] },
-        sensitivity: { kind: "all" },
+        // The scope's canonical form, as the policy read answers it: the verbs
+        // axis is a sorted set, and the top sensitivity ceiling is written
+        // `at_most` the highest band (`all` reads as it).
+        verbs: { kind: "some", values: ["propose", "read"] },
+        sensitivity: { kind: "at_most", value: "restricted" },
       },
       receipt_required: false,
     };
@@ -1631,7 +1638,7 @@ suite.test(test, "HOOKS-05", "Hook sandbox and author scope should work", async 
       throw new BlockedDoor("inconclusive HOOKS-05 progress proof: the runner reported a drain failure");
     }
   }
-});
+}, 90_000);
 
 /* HOOKS-06 — OF-581, ARCH-0080 host-verbs/verb-outcomes.
  * A real public sitting owns three newly witnessed windows. Independent

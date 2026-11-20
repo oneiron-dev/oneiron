@@ -4,26 +4,31 @@
 //! admissible turns in this extraction's working set, or by the NOTE a
 //! review read, may mint a new row. The id is the engine's, bound once per
 //! reply (`bindings`, FIX 7506), never the reply's. The mint door stamps
-//! Generated provenance and refuses existing/deleted ids.
+//! Generated provenance and refuses existing/deleted ids; a declaration
+//! whose id names a PERSON under a cleanup archive restores that record.
 
 use super::resources::ConsolidationFence;
 use super::support::invalid_consolidation;
 use super::watermark::read_turn_facts_in_txn;
 use crate::Vault;
 use crate::analyzer::normalize::{casefold, nfkc};
-use crate::claim::ClaimSource;
+use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_role};
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
-use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use oneiron_model::llm::ScopeResource;
 
 mod bindings;
 pub(super) use bindings::{MintNamespace, PersonBindings, bind_people, original_try};
 pub(crate) use bindings::{delete_lineage_origin_in_txn, origin_in_txn, pin_lineage_origin_in_txn};
+
+#[cfg(oneiron_test_support)]
+mod mint_door;
+#[cfg(oneiron_test_support)]
+pub(crate) use mint_door::mint_named_person_for_test;
 
 pub(super) fn mint_extracted_people(
     vault: &Vault,
@@ -127,7 +132,7 @@ pub(super) fn mint_extracted_people(
             if !admissible || !mentioned {
                 continue;
             }
-            put_person(vault, txn, &person.id, name, now)?;
+            put_person(vault, txn, &person.id, name, now, person.lineage)?;
         }
         Ok(())
     })
@@ -184,20 +189,30 @@ pub(super) fn mint_note_people(
             {
                 continue;
             }
-            put_person(vault, txn, &person.id, name, now)?;
+            put_person(vault, txn, &person.id, name, now, person.lineage)?;
         }
         Ok(())
     })
 }
 
 /// Writes one extracted PERSON named `name` under `id`, Generated; the door
-/// refuses an existing or deleted id.
+/// writes nothing for an existing or deleted id. The mint records `lineage`,
+/// the first try of the minting attempt's retry lineage.
+///
+/// An id the door wrote nothing for may name a PERSON under a cleanup
+/// archive, as when an earlier try of this lineage or another child of this
+/// parent minted it from this same mention and the vault cleanup archived it
+/// since. The writer has checked that an admissible source of this call
+/// names the person, so the declaration restores that record where
+/// `Vault::restore_mentioned_person_in_txn` finds it restorable (FIX
+/// NATIVE-CLAIM-LANDS-ON-ARCHIVED-PERSON).
 fn put_person(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     name: &str,
     now_ms: u64,
+    lineage: AttemptId,
 ) -> Result<()> {
     // The wake's clock is milliseconds; an entity's times are Unix seconds
     // (FIX 8695).
@@ -208,17 +223,9 @@ fn put_person(
         &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
     )
     .map_err(|_| invalid_consolidation("extracted person body"))?;
-    vault.put_extraction_minted_person_in_txn(
-        txn,
-        id,
-        ClaimSource::Generated,
-        TimeRange {
-            start: now,
-            end: now,
-        },
-        now,
-        &body,
-    )?;
+    if !vault.put_attempt_minted_person_in_txn(txn, id, now, &body, lineage)? {
+        vault.restore_mentioned_person_in_txn(txn, id)?;
+    }
     Ok(())
 }
 

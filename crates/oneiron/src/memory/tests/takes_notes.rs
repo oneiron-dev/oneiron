@@ -390,6 +390,7 @@ fn facade_stale_upsert_rolls_back_new_claim() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x71);
     let subject = put_person(&vault, 0x72);
+    grant_reads(&vault, actor);
     let facade = facade_for(&vault, actor);
 
     let prior_id = EntityId::from_bytes([0x76; 16]).expect("prior id");
@@ -483,6 +484,7 @@ fn facade_stale_retract_exposes_invalid_state_and_successor() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x74);
     let subject = put_person(&vault, 0x75);
+    grant_reads(&vault, actor);
     let facade = facade_for(&vault, actor);
 
     let prior_id = EntityId::from_bytes([0x78; 16]).expect("prior id");
@@ -959,9 +961,15 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
             Ok(())
         })
         .expect("remove archive fixture");
-    vault
-        .delete_entity_with_reason(&owner, crate::deletion::DeleteReason::UserDelete)
-        .expect("soft delete owner");
+    // The last-owner guard refuses deleting the bound owner (L9-52 b): the
+    // owner is deleted under a stand-in binding and bound again.
+    crate::test_util::delete_bound_person(
+        &vault,
+        &issuer,
+        owner,
+        "human",
+        crate::deletion::DeleteReason::UserDelete,
+    );
     assert!(
         owner_read
             .read(&[crate::claim::PointRead::id(id)], None)

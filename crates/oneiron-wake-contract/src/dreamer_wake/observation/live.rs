@@ -50,7 +50,7 @@ impl ActiveWake {
         let live = Arc::new(ActiveCall {
             call,
             guard: guard.clone(),
-            lease_id: lease.id().to_owned(),
+            lease: lease.clone(),
         });
         let mut calls = self.calls.lock().unwrap_or_else(PoisonError::into_inner);
         calls.retain(|_, held| held.strong_count() > 0);
@@ -60,11 +60,13 @@ impl ActiveWake {
     }
 }
 
-/// One admitted call: the guard that issued its lease, and the lease's id.
+/// One admitted call: the guard that issued its lease, and the lease. The
+/// guard keeps only open leases, so a closed call answers through the lease
+/// itself (FIX BUDGET-LINE-LEASE-TABLE-UNBOUNDED).
 pub struct ActiveCall {
     pub call: EntityId,
     pub guard: BudgetGuard,
-    pub lease_id: String,
+    pub lease: BudgetLease,
 }
 
 /// What a bound deadline carries to its clones: the committed wake, and the

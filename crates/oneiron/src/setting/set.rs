@@ -211,7 +211,7 @@ impl Vault {
             .ok()
             .and_then(|spec| spec.write_turn)
         {
-            Some(turn) => Some(turn(self)?),
+            Some(turn) => Some((turn.take)(self)?),
             None => None,
         };
         self.with_write_txn_grouped_after_commit(

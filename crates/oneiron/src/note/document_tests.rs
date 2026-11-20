@@ -131,7 +131,8 @@ fn brief_pins_editor_proposals_purge_and_fresh_views() {
     use crate::lens::{LensPrincipalBinding, LensRenderFrame, LensRenderId};
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
-    let author = person(&vault, 0x41);
+    // NOTE-SCALAR-NO-GRANT=A: scalar edits without a Grant use the embedded owner.
+    let author = vault.ensure_embedded_owner_actor().unwrap();
     vault
         .install_read_permit_for_test(WriteActor::new(author, EdgeActorClass::Human))
         .unwrap();
@@ -397,7 +398,11 @@ fn deleted_quote_anchor_drifts_instead_of_remapping_identical_neighbor() {
 fn shallow_note_admits_only_available_edit_and_citation_frontiers() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
-    let author = person(&vault, 0x51);
+    let author = vault.ensure_embedded_owner_actor().unwrap();
+    crate::conversation_dag::fixtures::grant_reads(
+        &vault,
+        WriteActor::new(author, EdgeActorClass::Human),
+    );
     let claim = EntityId::now();
     let memory = vault.memory(author, EdgeActorClass::Human);
     memory

@@ -6,8 +6,12 @@
 //! verb. Then a credential of the agent's that is bound to a channel, or to named records, decides
 //! no proposal over HTTP, and the agent's own unbounded credential decides.
 //!
-//! Red at 4743562442 (the door decided as the bare agent, so the credential was never asked):
-//! both bounded credentials decide. Guard (green on both): the unbounded credential decides.
+//! Not a red/green pair (FIX CLEANUP-DECIDE-SERVER-RED-PASSES; proof of 19 Nov: 3 of 3 pass at
+//! 2e474d179e and at b1279bf338). The verb's row admits only an unrestricted record scope
+//! (`scripts/sdk/verbs/vault.cleanup.decide.json`), so the server refuses both bounded
+//! credentials before the door runs, also at 4743562442, where the door decided as the bare
+//! agent. These tests pin the served answer. The door's own judgement of the credential stays
+//! behind that refusal. The unbounded credential decides.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features
 //! --features oneiron/test-support --test cleanup_decide_served_credential`.

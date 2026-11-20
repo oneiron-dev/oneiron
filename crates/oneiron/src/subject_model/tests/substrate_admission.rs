@@ -26,13 +26,15 @@ pub(super) fn admit(
     id: &EntityId,
     body: &ClaimBody,
 ) -> Result<()> {
-    let data = encode_claim_body(body)?;
+    let mut stamped = body.clone();
+    crate::test_util::stamp_vault_default_facet(vault, &mut stamped);
+    let data = encode_claim_body(&stamped)?;
     let occurred = TimeRange {
         start: 100,
         end: 100,
     };
     match door {
-        AdmissionDoor::ReservedTyped => put_subject_fixture(vault, id, body),
+        AdmissionDoor::ReservedTyped => put_subject_fixture(vault, id, &stamped),
         AdmissionDoor::ReservedBatch => vault.with_write_txn(|txn| {
             vault
                 .batch_in()
@@ -144,7 +146,12 @@ fn substrate_admission_rejects_non_person_and_edge_subjects() -> Result<()> {
             ENTITY_TYPE_AGENT_DEF,
         ] {
             let (_dir, vault) = test_vault();
-            let subject = seed(&vault, entity(0x91), kind);
+            // PEOPLE ARCH-0067 onboarding anchor; unanchored AGENT_DEF seed per 76cdfce0102.
+            let subject = if kind == ENTITY_TYPE_AGENT_DEF {
+                seed_unanchored_agent_definition(&vault, entity(0x91), "substrate_admission")
+            } else {
+                seed(&vault, entity(0x91), kind)
+            };
             let id = entity(0x92);
             let mut body = subject_fact(
                 PREDICATE_PERSON_SUBSTRATE,
@@ -192,7 +199,10 @@ fn substrate_missing_person_is_rejected_until_the_actual_row_arrives() -> Result
         assert!(vault.claims_for_subject(&person)?.is_empty());
         seed(&vault, person, ENTITY_TYPE_PERSON);
         admit(&vault, door, &id, &body)?;
-        assert_eq!(vault.get_claim(&id)?, Some(body));
+        // `admit` stamps the vault default facet before each door's put.
+        let mut stored = body.clone();
+        crate::test_util::stamp_vault_default_facet(&vault, &mut stored);
+        assert_eq!(vault.get_claim(&id)?, Some(stored));
     }
     Ok(())
 }

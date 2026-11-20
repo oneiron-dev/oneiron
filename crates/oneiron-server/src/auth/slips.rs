@@ -83,10 +83,16 @@ impl CoreAuth {
         let nonce = proof.nonce.as_bytes();
         let verified = vault
             .verify_slip(&slip, proof.timestamp, nonce, &signature)
-            .map_err(|()| {
-                vault
+            .map_err(|error| match error {
+                // A store fault met while judging the slip is this server's
+                // 500, never a refusal as unauthenticated; the proof clock
+                // is not consulted, since it cannot name a fault.
+                SlipVerifyError::StoreFault => ApiError::internal_server_error(
+                    "slip verification did not finish on this server",
+                ),
+                SlipVerifyError::Refused => vault
                     .proof_clock_refusal(&slip, proof.timestamp, nonce, &signature)
-                    .unwrap_or_else(ApiError::unauthorized)
+                    .unwrap_or_else(ApiError::unauthorized),
             })?;
         // These transports can call auth more than once per request; they must
         // not perform one-shot effects. The atomic consuming door owns those.
@@ -196,7 +202,15 @@ impl CoreAuth {
                 &proof.signature()?,
                 proof.nonce.as_bytes(),
             )
-            .map_err(|_| ApiError::unauthorized())?;
+            .map_err(|error| {
+                if slip_verification_store_fault(&error) {
+                    ApiError::internal_server_error(
+                        "slip verification did not finish on this server",
+                    )
+                } else {
+                    ApiError::unauthorized()
+                }
+            })?;
         let mut admitted_auth = Self::from_verified(verified, slip.caveats.is_empty())?;
         admitted_auth.instrument = auth.instrument;
         admitted_auth.invocation_slip = auth.invocation_slip;

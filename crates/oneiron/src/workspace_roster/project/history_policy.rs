@@ -247,6 +247,9 @@ impl Vault {
 
     /// The owner raises (or lowers) the per-project fold budget. The next read
     /// folds against it, and the next write to a project clears its freeze.
+    /// A standing answer whose room the new budget leaves reading less is
+    /// marked stale in the same write (FIX
+    /// STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS, review 2).
     pub fn set_project_history_policy(
         &self,
         owner: &AuthenticatedOwner,
@@ -259,7 +262,13 @@ impl Vault {
         }
         self.with_write_txn(|txn| {
             owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            PROJECT_HISTORY_POLICY.put(&self.store, txn, &(), &policy)
+            super::room_narrowing::queue_rooms_narrowed_by_in(
+                &self.store,
+                txn,
+                self.privacy_posture(),
+                |txn| PROJECT_HISTORY_POLICY.put(&self.store, txn, &(), &policy),
+            )?;
+            self.mark_answers_in_narrowed_rooms_in_txn(txn)
         })
     }
 

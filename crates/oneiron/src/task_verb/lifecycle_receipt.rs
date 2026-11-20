@@ -105,7 +105,16 @@ pub(super) fn stamp_record_in(
             .and_then(|hex| EntityId::from_hex(hex).ok())
         {
             Some(task_ref) => {
-                match task_verb_body_in(vault, &*wtxn, task_ref)?.and_then(|body| body.brief) {
+                // A body no reader decodes places no typeRef, as it holds no
+                // brief anyone can read: the owner's dismissal and cancel of
+                // such a TASK keep their receipt (F15). Any other read fault
+                // still refuses.
+                let stored = match task_verb_body_in(vault, &*wtxn, task_ref) {
+                    Ok(body) => body.and_then(|body| body.brief),
+                    Err(Error::Record(crate::error::RecordError::InvalidTaskBody(_))) => None,
+                    Err(error) => return Err(error.into()),
+                };
+                match stored {
                     Some(stored) => brief_type_ref_in(vault, &*wtxn, &stored.brief)?,
                     None => None,
                 }

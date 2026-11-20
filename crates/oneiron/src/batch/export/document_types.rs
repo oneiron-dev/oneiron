@@ -408,8 +408,17 @@ pub struct WholeVaultImportReceipt {
     /// The archived rows among `omitted_entities` that this vault's state kept
     /// out, beyond the manifest's `import_omissions`: an archived
     /// `vault.default_facet` outside the owner's restore into a fresh vault
-    /// (`TargetDefaultFacetKept`), and a claim about a link the import did not
-    /// bring back before it (`ClaimSubjectEdgeNotRestored`).
+    /// (`TargetDefaultFacetKept`), a claim about a link the import did not
+    /// bring back before it, an edge-provenance claim among them
+    /// (`ClaimSubjectEdgeNotRestored`), a coreference share consent
+    /// (`CoreferenceConsentNotRestored`), a claim about a row kept out
+    /// (`ClaimSubjectNotRestored`), an edge-provenance claim the gate would
+    /// hold for review (`ProvenanceAutoNotPermitted`), and, on every door but
+    /// the owner's restore, a room this vault cannot seat with the TURNs and
+    /// MESSAGEs in it (`RoomNotSeatedHere`). One more entry
+    /// is no omitted row: a provenance claim this vault already holds open,
+    /// whose archived close the gate would hold, stays here as it was and is
+    /// named under `ProvenanceAutoNotPermitted` too.
     pub destination_omissions: Vec<ExportImportOmission>,
     /// Domain-owned identities (currently MODEL name/version) rebound locally.
     pub remapped_entities: std::collections::BTreeMap<String, String>,
@@ -442,6 +451,18 @@ pub struct WholeVaultImportReceipt {
     /// a separate Active row, and the owner may merge it again
     /// (OWNEDGES-SHELL-RESTORE = A).
     pub unrestored_identity_topology_shells: usize,
+    /// Archived `same_as` links that stayed out: every link but one between
+    /// two PERSONs this import inserted, or, on the owner's restore, one
+    /// between two CLAIMs it inserted while a live nightly-link grant of a
+    /// live owner of this vault lets the Dreamer apply it here, each with a
+    /// status claim it puts in too. So a diary NOTE pair stays out on every
+    /// door (its proof is its residents' own submission, and an imported
+    /// diary has no local author here), as do a CLAIM pair on any other door
+    /// or with no such grant, a link naming a row already here or one left
+    /// out, and a link with no status claim restored. A claim about such a
+    /// link, its edge provenance among them, stays archive data
+    /// (`ClaimSubjectEdgeNotRestored`).
+    pub unrestored_same_as_links: usize,
     /// Custody records the archive carried as handles only: secrets to
     /// re-enter through the owner's registration door.
     pub missing_secrets: Vec<crate::secret_record::SecretCustodyMetadata>,

@@ -13,7 +13,7 @@ use super::world_chain_reads::hash;
 use super::world_key_arrival::{Graph, graph, over};
 use super::world_key_doors::{Fresh, fresh_install, own_request};
 use super::world_privacy::{settings, world_row};
-use super::world_reissue::{admit, issue, pinned, set_on, sync};
+use super::world_reissue::{admit, issue, pinned, profiled, set_on, sync, with_predecessor};
 use super::*;
 use crate::world_keys::{Withheld, WorldKey, WorldKeyBinding, WorldKeyStatus, seal_world_key};
 
@@ -24,6 +24,12 @@ const AT: TimeRange = TimeRange { start: 3, end: 3 };
 fn graph_with_c() -> (Graph, Fresh) {
     let graph = graph();
     let c = fresh_install(&graph.host);
+    profiled(
+        &graph.host,
+        &c.vault,
+        MachineRole::Owned(MachineOwnership::Yours),
+    );
+    sync(&graph.host.vault, &graph.issuer.vault);
     admit(&graph.issuer, &graph.root, &c);
     sync(&graph.issuer.vault, &graph.b.vault);
     let status = graph
@@ -207,6 +213,12 @@ fn a_kit_restore_wraps_no_key_only_a_removed_machine_signed() {
 fn a_settings_edit_never_clears_a_key_records_floor() {
     let graph = graph();
     let c = fresh_install(&graph.host);
+    profiled(
+        &graph.host,
+        &c.vault,
+        MachineRole::Owned(MachineOwnership::Yours),
+    );
+    sync(&graph.host.vault, &graph.issuer.vault);
     admit(&graph.issuer, &graph.root, &c);
     sync(&graph.issuer.vault, &graph.a.vault);
     graph
@@ -271,6 +283,7 @@ fn a_re_pin_never_wraps_a_key_whose_signers_the_new_pin_removed() {
     }
     set_on(&a, world, ReadLocation::MyMachines);
     sync(&a.vault, &issuer.vault);
+    with_predecessor(&host, &issuer.vault, &issuer.owner);
     let root = issue(&issuer, &[]);
     admit(&issuer, &root, &a);
     sync(&a.vault, &issuer.vault);
@@ -464,6 +477,12 @@ fn an_own_record_of_a_key_id_vouches_for_no_other_bytes() {
     let host = host();
     let world = world_row(&host);
     let [first, second, a, b] = [(); 4].map(|()| fresh_install(&host));
+    profiled(
+        &host,
+        &b.vault,
+        MachineRole::Owned(MachineOwnership::WorkSchool),
+    );
+    with_predecessor(&host, &first.vault, &first.owner);
     let r0 = issue(&first, &[]);
     admit(&first, &r0, &b);
     set_on(&b, world, ReadLocation::MyMachines);
@@ -472,6 +491,8 @@ fn an_own_record_of_a_key_id_vouches_for_no_other_bytes() {
         let key = fold.current_world_key(world).unwrap();
         (key.id, key.commitment)
     };
+    profiled(&host, &a.vault, MachineRole::Owned(MachineOwnership::Yours));
+    with_predecessor(&host, &second.vault, &second.owner);
     let root = issue(&second, &[]);
     admit(&second, &root, &a);
     sync(&second.vault, &b.vault);
@@ -596,6 +617,8 @@ fn a_pre_wrap_signs_no_bytes_but_those_of_the_pair_that_stands() {
     let host = host();
     let world = world_row(&host);
     let [first, second, a, b] = [(); 4].map(|()| fresh_install(&host));
+    profiled(&host, &b.vault, MachineRole::Owned(MachineOwnership::Yours));
+    with_predecessor(&host, &first.vault, &first.owner);
     let r0 = issue(&first, &[]);
     admit(&first, &r0, &b);
     set_on(&b, world, ReadLocation::MyMachines);
@@ -625,6 +648,8 @@ fn a_pre_wrap_signs_no_bytes_but_those_of_the_pair_that_stands() {
             .is_some_and(|key| fold.world_key_stands(key))
     );
 
+    profiled(&host, &a.vault, MachineRole::Owned(MachineOwnership::Yours));
+    with_predecessor(&host, &second.vault, &second.owner);
     let r1 = issue(&second, &[]);
     admit(&second, &r1, &a);
     let request = own_request(&b.vault);

@@ -421,6 +421,15 @@ fn relationship_message_requires_principal_grant_before_provider_and_at_settle()
     let owner = EntityId::now();
     let principal = EntityId::now();
     let space = EntityId::now();
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    vault.put_entity(
+        &space,
+        crate::registry::ENTITY_TYPE_RELATIONSHIP,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"relationship",
+    )?;
     let message = EntityId::now();
     for id in [owner, principal] {
         vault.put_entity(

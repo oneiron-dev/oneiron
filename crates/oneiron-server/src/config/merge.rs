@@ -43,7 +43,7 @@ mod refusal_origin;
 mod sections;
 mod validation;
 
-pub(crate) use self::file_admission::{read_config_file, read_referenced_file};
+pub(crate) use self::file_admission::{FileRefused, read_config_file, read_referenced_file};
 use self::layers::{merge_layers, read_layers};
 pub use self::sections::default_config_path;
 pub(crate) use self::validation::settings_schema_keys;
@@ -286,6 +286,7 @@ struct FileServeConfig {
     device_sync: Option<super::DeviceSyncConfig>,
     shared_env: Option<Vec<super::SharedEnvConfig>>,
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
+    gpu_jobs: Option<super::gpu_jobs::GpuJobsFile>,
     embedding: Option<super::EmbeddingConfig>,
     line: Option<super::LineConfig>,
     mail: Option<super::MailConfig>,
@@ -300,6 +301,8 @@ struct FileServeConfig {
     maximum_tier: Option<bool>,
     off_record_dump_suppression: Option<bool>,
     device_class: Option<oneiron::authority::MachineDeviceClass>,
+    machine_reported_name: Option<String>,
+    machine_reported_model: Option<String>,
 }
 
 impl From<FileServeConfig> for PartialServeConfig {
@@ -364,6 +367,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             device_sync: value.device_sync,
             shared_env: value.shared_env,
             connectors: value.connectors,
+            gpu_jobs: value.gpu_jobs,
             embedding: value.embedding,
             line: value.line,
             mail: value.mail,
@@ -378,6 +382,8 @@ impl From<FileServeConfig> for PartialServeConfig {
             maximum_tier: value.maximum_tier,
             off_record_dump_suppression: value.off_record_dump_suppression,
             device_class: value.device_class,
+            machine_reported_name: value.machine_reported_name,
+            machine_reported_model: value.machine_reported_model,
             esign_delivery_outbox_dir: None,
             cloud_registration_pins: None,
             publisher_training_outbox_dir: None,
@@ -459,6 +465,8 @@ struct PartialServeConfig {
     shared_env: Option<Vec<super::SharedEnvConfig>>,
     /// `[connectors.<name>]` is file-only, as `[native_mail]` is.
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
+    /// `[gpu_jobs]` is file-only, as `[connectors.<name>]` is.
+    gpu_jobs: Option<super::gpu_jobs::GpuJobsFile>,
     /// `[embedding]` is file-only, as `[models]` is.
     embedding: Option<super::EmbeddingConfig>,
     /// `[line]` is file-only, as `[browser]` is.
@@ -485,6 +493,10 @@ struct PartialServeConfig {
     off_record_dump_suppression: Option<bool>,
     /// `device_class` is file-only, as `maximum_tier` is.
     device_class: Option<oneiron::authority::MachineDeviceClass>,
+    /// `machine_reported_name` is file-only, as `device_class` is.
+    machine_reported_name: Option<String>,
+    /// `machine_reported_model` is file-only, as `device_class` is.
+    machine_reported_model: Option<String>,
     /// `--esign-delivery-outbox-dir` is argv-only: no file key, no env.
     esign_delivery_outbox_dir: Option<PathBuf>,
     /// `--cloud-registration-pins` is argv-only, as the outbox: no file key,
@@ -568,6 +580,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("device_sync", &self.device_sync)
             .field("shared_env", &self.shared_env)
             .field("connectors", &self.connectors)
+            .field("gpu_jobs", &self.gpu_jobs)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
             .field("mail", &self.mail)
@@ -586,6 +599,8 @@ impl fmt::Debug for PartialServeConfig {
                 &self.off_record_dump_suppression,
             )
             .field("device_class", &self.device_class)
+            .field("machine_reported_name", &self.machine_reported_name)
+            .field("machine_reported_model", &self.machine_reported_model)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
             .field("cloud_registration_pins", &self.cloud_registration_pins)
             .field(
@@ -679,6 +694,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             device_sync: None,
             shared_env: None,
             connectors: None,
+            gpu_jobs: None,
             embedding: None,
             line: None,
             mail: None,
@@ -693,6 +709,8 @@ impl From<&ServeArgs> for PartialServeConfig {
             maximum_tier: None,
             off_record_dump_suppression: None,
             device_class: None,
+            machine_reported_name: None,
+            machine_reported_model: None,
             esign_delivery_outbox_dir: value.esign_delivery_outbox_dir.clone(),
             cloud_registration_pins: value.cloud_registration_pins.clone(),
             publisher_training_outbox_dir: value.publisher_training_outbox_dir.clone(),

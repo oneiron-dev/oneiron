@@ -695,6 +695,9 @@ fn apply_admitted(
     let changes_claims = changes_claims || !routed_rows.is_empty();
     let pad_windows = pad_scope.finish().pad_windows;
     after_apply(wtxn)?;
+    // A room the batch narrowed leaves no standing answer wider than its
+    // rows (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS).
+    vault.mark_answers_in_narrowed_rooms_in_txn(wtxn)?;
     derived.include_source_dependents_in(&vault.store, wtxn, &put_roots)?;
     crate::embed::finalize_repo_derived_index_copies_in_txn(vault, wtxn, derived)?;
     crate::secret_custody::raise_found_key_notices_in_txn(vault, wtxn)?;

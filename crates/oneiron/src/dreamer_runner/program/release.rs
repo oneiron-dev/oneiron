@@ -22,17 +22,17 @@
 //! behind its record stays held until its repair (FIX 5881) lands. Nothing
 //! here runs on its own, and no other park is touched.
 
-use crate::Vault;
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord, ForceAttemptCancel,
     ForceCancelAuthority, ForceCancelOutcome, InterveneAttempt,
 };
-use crate::authority::owner_delegate_in_txn;
+use crate::authority::{VerifiedSlip, owner_delegate_in_txn};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::memory::{MemoryError, MemoryResult};
+use crate::{EdgeActorClass, Vault};
 
 use super::super::store::PARKED;
 use super::authority::TurnProgramBound;
@@ -120,26 +120,34 @@ pub fn release_turn_program_hold_as_owner(
 /// Releases one held turn program's try as the owner's delegate: the agent's
 /// binding, its live Grant for `vault.runs.program_hold.release` and the
 /// setting `attempt_queue.agent_may_force_cancel` are checked in the writer,
-/// then the hold releases as the owner's does. Stop force-cancels the try on
-/// the delegate's grounds, naming the agent; resume records the agent's
-/// intervention. After the commit a stopped try's running step stops and a
-/// resumed one is armed.
+/// and the agent's own verified `credential` must read the program the try
+/// is of (`delegate_reads_program_in_txn`); then the hold releases as the
+/// owner's does. Stop force-cancels the try on the delegate's grounds,
+/// naming the agent; resume records the agent's intervention. After the
+/// commit a stopped try's running step stops and a resumed one is armed.
 ///
 /// # Errors
 ///
 /// `FORBIDDEN` when the setting reads false at the agent or no live Grant
-/// lists the verb; a malformed attempt id; a try no program stamped, or one
-/// the program runtime does not hold; a hold that changed since it was read;
-/// a resume the try does not let; a note the queue refuses; storage errors.
+/// lists the verb; a malformed attempt id; `NOT_FOUND` for a program the
+/// credential does not read, as for a try no program stamped, or one the
+/// program runtime does not hold; a hold that changed since it was read; a
+/// resume the try does not let; a note the queue refuses; storage errors.
 pub fn release_turn_program_hold_as_delegate(
     vault: &Vault,
     agent: EntityId,
+    credential: Option<&VerifiedSlip>,
     input: &ReleaseTurnProgramHoldRequest,
 ) -> MemoryResult<ProgramHoldReleaseView> {
     let attempt = attempt_id(&input.attempt).map_err(MemoryError::from)?;
     let now = vault.now_recorded_at();
     let released = vault.try_with_write_txn_grouped(|wtxn| {
         let delegate = owner_delegate_in_txn(vault, wtxn, agent, PROGRAM_HOLD_RELEASE_VERB)?;
+        if !delegate_reads_program_in_txn(vault, wtxn, delegate.agent, credential, attempt)
+            .map_err(MemoryError::from)?
+        {
+            return Err(MemoryError::from(Error::EntityNotFound));
+        }
         let authority = ForceCancelAuthority::owner_delegate(delegate.agent.to_hex().as_str())
             .map_err(MemoryError::from)?;
         let releaser = Releaser {
@@ -150,6 +158,52 @@ pub fn release_turn_program_hold_as_delegate(
         release_in_txn(vault, wtxn, &releaser, attempt, input, now).map_err(MemoryError::from)
     })?;
     Ok(settled_release(vault, released))
+}
+
+/// Whether the owner's delegate `agent`, on its own verified `credential`,
+/// reads the program `attempt` is a try of, judged in `txn`: a program's
+/// try names no TASK, so no read lane holds it, and its rows read for its
+/// waking actor or the verified owner alone (`read::program_for`). The
+/// credential must still stand in `txn` (a revoke after the door's check
+/// refuses here) and build a read key whose holder is the agent. The try
+/// must be a program's as the program read finds one: its stamp binds the
+/// admission whose wake authority names the stamp's actor, and that
+/// admission queued a root try (FIX W11-PROGRAM-HOLD-RELEASE-ADMISSION-BINDING).
+/// The stamp must name the agent as that waking actor, at the agent class.
+/// No credential, one revoked or expired, one that grants no read, a try no
+/// admission binds, or another actor's program reads none.
+///
+/// # Errors
+///
+/// The refusal building the key gives, and storage errors.
+fn delegate_reads_program_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    agent: EntityId,
+    credential: Option<&VerifiedSlip>,
+    attempt: AttemptId,
+) -> Result<bool> {
+    let Some(credential) = credential else {
+        return Ok(false);
+    };
+    // The door checked the slip in its own snapshot before this writer
+    // opened; the key below checks no revocation (REVIEW-9425 P1).
+    if !vault.capability_slip_is_live_in_txn(txn, credential)? {
+        return Ok(false);
+    }
+    let holder = vault
+        .credential_read_key_in(txn, credential)?
+        .and_then(|key| EntityId::from_hex(key.actor_ref()).ok());
+    if holder != Some(agent) {
+        return Ok(false);
+    }
+    Ok(
+        super::read::program_of_in_txn(vault, txn, attempt)?.is_some_and(|(stamp, record)| {
+            record.attempt.is_some()
+                && stamp.actor == agent
+                && stamp.actor_class == EdgeActorClass::Agent as u8
+        }),
+    )
 }
 
 /// A committed release's aftermath: a stopped try's running step stops, and

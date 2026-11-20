@@ -10,6 +10,7 @@ use crate::llm::decision::{
 };
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_RELATIONSHIP,
 };
 use crate::test_util::open_test_vault_with;
 use crate::{EntityId, TimeRange, Vault, WriteActor};
@@ -784,6 +785,9 @@ fn a_relationship_message_reaches_the_answerer_only_on_the_askers_grant() -> cra
     let owner = EntityId::now();
     put_entity(&vault, owner, ENTITY_TYPE_PERSON, b"owner")?;
     let space = EntityId::now();
+    // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+    // (MESSAGE-REL-NAMES = A).
+    put_entity(&vault, space, ENTITY_TYPE_RELATIONSHIP, b"relationship")?;
     let message = EntityId::now();
     vault
         .memory(owner, EdgeActorClass::Human)

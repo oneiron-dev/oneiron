@@ -271,6 +271,13 @@ name = "esign_editor_draft_fields"
 path = "tests/esign_editor_draft_fields.rs"
 required-features = ["oneiron/test-support"]
 
+# The dial gate under a pinned anchor (#8722 review round 2): its self-host vault roots on a
+# `MemoryKeystore` through `oneiron::test_support`, and the gate is the mesh build's.
+[[test]]
+name = "device_sync_dial_gate_pinned_heads"
+path = "tests/device_sync_dial_gate_pinned_heads.rs"
+required-features = ["oneiron/test-support", "mesh"]
+
 # The console echo guard (`commands/owner/secret_input.rs`, FIX 11387),
 # through the binding the workspace already locks; no SDK at build time.
 [target.'cfg(windows)'.dependencies]
@@ -609,6 +616,13 @@ name = "vault_off_record_rooms_doors"
 path = "tests/vault_off_record_rooms_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# FIX 4748 on the mesh: the devices of one vault serve each other while the home is down. Each
+# device's install keys sit in a `MemoryKeystore`; the listeners need the `mesh` feature.
+[[test]]
+name = "mesh_two_machine_peer_e2e"
+path = "tests/mesh_two_machine_peer_e2e.rs"
+required-features = ["oneiron/test-support", "mesh"]
+
 # GENUI-STATE-PERSIST: the served fixture roots its vault from a `MemoryKeystore`.
 [[test]]
 name = "lens_frame_state_door"
@@ -671,6 +685,13 @@ required-features = ["oneiron/test-hooks"]
 [[test]]
 name = "machine_history_page_controls"
 path = "tests/machine_history_page_controls.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
+# SELECTOR-RELEASE-POINT = B: a selector answer queued before its grant
+# changes never leaves (socket test through the `selector_release` door).
+[[test]]
+name = "selector_release_recheck"
+path = "tests/selector_release_recheck.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
 [lints]
