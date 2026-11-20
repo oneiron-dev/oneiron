@@ -23,17 +23,23 @@
 //! deletes it again in one update owes its window a compaction in the
 //! transaction that makes it durable (census L6-05 round 1).
 //!
+//! A replacement installs a peer's history-free snapshot as a new lineage
+//! and drops the old window's stored snapshot and updates. While a legal hold
+//! keeps a row those carriers hold, it is refused and the old window stays as
+//! it was (OF-470, FIX L6-05-REPLACEMENT-OLD-LINEAGE-HOLD).
+//!
 //! Run: `cargo test --locked -p oneiron --all-features --test
 //! held_window_erasure_drain`.
 #![cfg(feature = "sync")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::collections::HashMap;
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use loro::json::{JsonOpContent, MapOp};
 use loro::{ContainerID, ContainerType, ExportMode, LoroDoc, LoroValue, ValueOrContainer};
-use oneiron::deletion::LegalHoldTarget;
+use oneiron::deletion::{LEGAL_HOLD_REFUSAL, LegalHoldTarget};
 use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
@@ -625,5 +631,129 @@ fn a_history_only_late_reput_owes_its_window_a_compaction_where_it_persists() {
     assert!(
         !carries_erased_row(&vault, &erased),
         "the stored window still carries the re-put"
+    );
+}
+
+/// A window whose stored snapshot keeps row `held`'s older revision in its
+/// history, and the history-free snapshot a peer's export door would send
+/// for it: the window's state at its newest operation, with no history.
+struct ReplacedWindow {
+    manager: Arc<WindowManager>,
+    key: WindowKey,
+    held: EntityId,
+    /// `held`'s older revision, which only the stored history keeps.
+    first: Vec<u8>,
+    snapshot: Vec<u8>,
+}
+
+fn window_with_history_free_peer_snapshot(vault: &Arc<Vault>) -> ReplacedWindow {
+    let held = EntityId::now();
+    put_row(vault, &held, b"held-row-first-body");
+    put_row(vault, &held, b"held-row-second-body");
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(vault),
+        Arc::new(Materializer::new()),
+        "replacement-old-lineage-hold",
+    ));
+    let key = WindowKey::new(WINDOW);
+    let window = manager.open_window(&key).unwrap();
+    window.persist_state(vault).unwrap();
+    let first = older_revision(&persisted_snapshot(vault), &held);
+    let snapshot =
+        oneiron::sync::window::export_window_replacement(vault, &key, &window.doc.fork(), None)
+            .unwrap()
+            .expect("fixture: the window ships a replacement");
+    assert!(
+        !inserted_bodies(&LoroDoc::from_snapshot(&snapshot).unwrap(), &held).contains(&first),
+        "fixture: the peer's snapshot carries no history of the held row"
+    );
+    drop(window);
+    ReplacedWindow {
+        manager,
+        key,
+        held,
+        first,
+        snapshot,
+    }
+}
+
+/// Every pending update row the window stores, by key.
+fn stored_update_keys(vault: &Vault) -> Vec<String> {
+    vault
+        .sync_state_keys_with_prefix(&format!("u:w:{WINDOW}:"))
+        .unwrap()
+}
+
+/// A replacement while a legal hold keeps a row the old window's stored
+/// history carries is refused, and the window's stored snapshot and updates
+/// stay as they were (OF-470, FIX L6-05-REPLACEMENT-OLD-LINEAGE-HOLD): the
+/// install would drop every byte of them, the held row's older revision
+/// among them, which no row of the peer's lineage keeps. At ae9e64de43c the
+/// install stored the peer's history-free snapshot over them.
+#[test]
+fn a_replacement_is_refused_while_a_hold_keeps_a_row_of_the_old_windows_history() {
+    let (_dir, vault) = open_owned_vault();
+    let owner = owner_of(&vault);
+    let ReplacedWindow {
+        manager,
+        key,
+        held,
+        first,
+        snapshot,
+    } = window_with_history_free_peer_snapshot(&vault);
+    vault
+        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(held)], None)
+        .unwrap();
+    let stored = vault
+        .sync_state_get(&format!("d:w:{WINDOW}"))
+        .unwrap()
+        .expect("fixture: the window's stored snapshot");
+    let updates = stored_update_keys(&vault);
+
+    let replaced = manager
+        .replace_window(&key, &snapshot, &HashMap::new())
+        .map(drop);
+
+    assert!(
+        inserted_bodies(&persisted_snapshot(&vault), &held).contains(&first),
+        "the replacement dropped the held row's older revision: {replaced:?}"
+    );
+    let refused = replaced.expect_err("the replacement installed under the hold");
+    assert!(
+        format!("{refused:?}").contains(LEGAL_HOLD_REFUSAL),
+        "not the hold's refusal: {refused:?}"
+    );
+    assert_eq!(
+        vault.sync_state_get(&format!("d:w:{WINDOW}")).unwrap(),
+        Some(stored),
+        "the refused replacement rewrote the stored snapshot"
+    );
+    assert_eq!(
+        stored_update_keys(&vault),
+        updates,
+        "the refused replacement retired stored updates"
+    );
+}
+
+/// With no hold, the same replacement installs the peer's history-free
+/// lineage: the refusal above is the hold's, not the snapshot's.
+#[test]
+fn a_replacement_with_no_hold_installs_the_peers_history_free_lineage() {
+    let (_dir, vault) = open_owned_vault();
+    let ReplacedWindow {
+        manager,
+        key,
+        held,
+        first,
+        snapshot,
+    } = window_with_history_free_peer_snapshot(&vault);
+
+    manager
+        .replace_window(&key, &snapshot, &HashMap::new())
+        .unwrap();
+
+    assert!(
+        !inserted_bodies(&persisted_snapshot(&vault), &held).contains(&first),
+        "the installed window still stores the old lineage's history"
     );
 }
