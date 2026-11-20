@@ -3988,7 +3988,7 @@
      "path": "src/authority/adopted_fold/covered_floors.rs",
      "purpose": "The covered rows a tail floors past an adopted image (FIX [SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY], Astra r4…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 14
      }
     },
     {
@@ -6250,7 +6250,7 @@
      "path": "src/authority/readonly_fold/adopted_door.rs",
      "purpose": "The adopted-fold door (FIX [ADOPTED-FOLD-GATE-TEST] and [SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY]): one…",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 2,
       "type": 1
      }
@@ -9769,7 +9769,7 @@
      "path": "src/batch/secret_scan/mask/body.rs",
      "purpose": "A body as the door reads it (OF-560): JSON, a whole MessagePack value, or text",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -9899,7 +9899,7 @@
      "path": "src/batch/secret_scan/mask/room_carry.rs",
      "purpose": "A save moves the room's secrets its rows name into the vault's custody (ROOM-LOCAL-CUSTODY; the lead's…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -21636,7 +21636,7 @@
      "path": "src/code_run/storage/records/bodies.rs",
      "purpose": "The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish…",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "fn": 1
      }
     },
@@ -61811,13 +61811,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/off_record/promote/result_holds.rs",
      "purpose": "A saved result MESSAGE's hold on its body (FIX 365): the body comes out of the room it was said in, and the…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -81649,7 +81649,7 @@
      "path": "src/snapshot_read/strength_observations.rs",
      "purpose": "Bounded pages of the Dreamer's strength observations, with the effective strength policy and scoring config…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "re-export": 2,
       "struct": 1
@@ -87381,7 +87381,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/federated.rs",
@@ -90638,6 +90638,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/selector/admission/peer_tombstones.rs",
+     "purpose": "The record tombstones a live federation peer's update carries, and which of them this vault admits…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/selector/admission/revalidate.rs",
      "purpose": "Re-admission over already-admitted bytes",
      "surface": {
@@ -90652,7 +90662,7 @@
      "path": "src/sync/selector/admission/routing.rs",
      "purpose": "Routing and world-edge planning of admitted rows",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -94897,7 +94907,7 @@
      "purpose": "The adopted-fold door (FIX [ADOPTED-FOLD-GATE-TEST] and [SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY]): one…",
      "surface": {
       "fn": 1,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -96117,6 +96127,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/extraction_wake.rs",
+     "purpose": "A prepared wake for one admitted extraction attempt, with its listings read for a stated destination bound…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AdmissionOutcome",
       "Classifier"
@@ -97178,7 +97198,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 362,
+      "mod": 364,
       "re-export": 3
      }
     },
@@ -97300,6 +97320,20 @@
      "purpose": "Door for `tests/found_key_note_fork_upload.rs` (REVIEW-7904 second commit F2): whether the NOTE's authority…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomResult",
+      "SavedResult"
+     ],
+     "path": "src/test_doors/off_record_reply_body.rs",
+     "purpose": "Door for `tests/room_custody_reply_bodies.rs` (ROOM-CUSTODY-REPLY-BODIES): a code run's reply body published…",
+     "surface": {
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -103186,6 +103220,7 @@
      "purpose": "`vault.voices.recognition.withdraw` and `vault.voices.recognition.consent`…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 7,
       "re-export": 1
      }
@@ -103846,7 +103881,7 @@
      "path": "src/voice_identity/consent_void.rs",
      "purpose": "Grants a backdated withdrawal voids (FIX [VOICE-WITHDRAWAL-BACKDATED-LEAVES-GRANT]; RULING…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
     },
     {
@@ -103914,7 +103949,7 @@
      "path": "src/voice_identity/mod.rs",
      "purpose": "VOX-02 voice identity substrate: consent log, enrollment, local matching",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 1,
       "re-export": 2
      }
@@ -104104,8 +104139,18 @@
      "path": "src/voice_identity/vault.rs",
      "purpose": "Vault surface for consent, enrollment, segment matching, roster reads, withdrawal, and pruning",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 12,
       "fn": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_identity/withdrawal_requested_at.rs",
+     "purpose": "The date a withdrawal's request asked for, where the vault recorded it at its own clock instead…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -107148,6 +107193,14 @@
      "notable": [],
      "path": "tests/adopted_fold_request_wait.rs",
      "purpose": "FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD], #9476 review round 1 (P1): the fold past an adopted image reads…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/adopted_fold_tail_walk_signer_cost.rs",
+     "purpose": "FIX [ADOPTED-FOLD-TAIL-WALK-SIGNER-COST] (found while fixing [ADOPTED-FOLD-GATE-SIGNER-COST]): past the…",
      "surface": {}
     },
     {
@@ -110316,6 +110369,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/extraction_pack_page_destination_bound.rs",
+     "purpose": "The observations page and the verdict pack check of a bound extraction attempt list for the destination…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/extraction_read_gate.rs",
      "purpose": "Extraction reads use native's relationship gate without opening general reads",
      "surface": {}
@@ -110326,6 +110387,14 @@
      "notable": [],
      "path": "tests/extraction_read_layout.rs",
      "purpose": "Bound Extraction read layout refusals carry the rebuilt pages as a typed field",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_recorded_correction_two_step_labels.rs",
+     "purpose": "A lent correction folded from the candidates of two steps whose words carry different relationship labels is…",
      "surface": {}
     },
     {
@@ -110377,12 +110446,30 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_step_word_bound_relationship.rs",
+     "purpose": "A lent extraction step over words that carry a relationship label holds its scope to that label, and skips a…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/extraction_steps.rs",
      "purpose": "One bound generative extraction step over served TURN spans",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_steps/labelled_turns.rs",
+     "purpose": "Shared helpers for lent step tests over words that carry a relationship label: witnessing labelled MESSAGEs…",
+     "surface": {
+      "crate-vis": 5
+     }
     },
     {
      "bucket": "s",
@@ -110450,6 +110537,14 @@
      "notable": [],
      "path": "tests/fed_delivery_ledger_generic_write.rs",
      "purpose": "FIX FED-DELIVERY-LEDGER-GENERIC-WRITE: a pact's delivery ledger (`feddelivered:<pact>:<epoch>:<record>`) is…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/federated_record_tombstone_admission.rs",
+     "purpose": "A live peer's record tombstone removes the copy its pact delivered (CROSS-VAULT-DELETE-NEVER-ADMITTED = A)",
      "surface": {}
     },
     {
@@ -114411,6 +114506,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/psych_profile_sources_page.rs",
+     "purpose": "The psych profile sources page answers a base agent only under a standing Steward grant",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -115178,6 +115281,14 @@
      "notable": [],
      "path": "tests/room_custody_handle_scope.rs",
      "purpose": "ROOM-LOCAL-CUSTODY (the lead's ruling of 21 Nov): a room handle works only in its room",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/room_custody_reply_bodies.rs",
+     "purpose": "ROOM-CUSTODY-REPLY-BODIES (the lead's ruling ROOM-LOCAL-CUSTODY = A of 21 Nov, \"fingerprint only on save\")…",
      "surface": {}
     },
     {
@@ -119380,7 +119491,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 444,
+     "files": 445,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -119436,7 +119547,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 373,
+     "files": 375,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -119569,7 +119680,7 @@
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
     },
     "voice_identity": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -119618,10 +119729,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 310,
+   "over_bar": 311,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8361,
-   "test_files": 2142
+   "source_files": 8365,
+   "test_files": 2150
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -134179,6 +134290,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/dreamer_extraction_lender_destination.rs",
+     "purpose": "The production extraction lender states the destination bound of the wake its attempt context carries (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/dreamer_extraction_loan.rs",
      "purpose": "Exercises the production extraction lender without switching native extraction jobs",
      "surface": {}
@@ -134224,6 +134343,14 @@
      "surface": {
       "crate-vis": 25
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_decisions_claim_evidence_parity.rs",
+     "purpose": "Native versus crate extraction correction parity for an operand that cites a listed claim (FIX row…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -134342,7 +134469,7 @@
    "over_bar": 3,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
    "source_files": 40,
-   "test_files": 28
+   "test_files": 30
   },
   "oneiron-esign-render": {
    "files": [
