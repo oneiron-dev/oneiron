@@ -16,6 +16,9 @@
 //! too (ROOM-CUSTODY-SAVED-ARTIFACTS), through one [`RoomCarry`]: a NOTE's
 //! texts ([`RoomCarry::text_in_txn`]), a CLAIM's values
 //! ([`RoomCarry::value_in_txn`]), a shell's row ([`RoomCarry::ops_in_txn`]).
+//! A saved result MESSAGE's body is carried whole
+//! ([`RoomCarry::body_in_txn`], ROOM-CUSTODY-REPLY-BODIES): the carried bytes
+//! are a new body in base, which the MESSAGE names in place of the room's.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -130,6 +133,45 @@ impl RoomCarry {
             *data = body;
         }
         Ok(ops.into_ops())
+    }
+
+    /// `body`, the result body a saved MESSAGE of `record` names, with each
+    /// room handle it holds moved (ROOM-CUSTODY-REPLY-BODIES): a text body
+    /// read as one text, a MessagePack body as one value, as a row's are.
+    /// `None` when it moves none; a body that is neither keeps its bytes,
+    /// and a room handle in it stays as written, naming nothing.
+    ///
+    /// # Errors
+    ///
+    /// Custody and storage errors, and a carried body that does not encode
+    /// again.
+    pub(crate) fn body_in_txn(
+        &mut self,
+        vault: &Vault,
+        wtxn: &mut RwTxn<'_>,
+        record: EntityId,
+        body: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
+        if !self.names_kept_handle(body) {
+            return Ok(None);
+        }
+        if let Ok(text) = std::str::from_utf8(body) {
+            return Ok(self
+                .text_in_txn(vault, wtxn, record, text)?
+                .map(|carried| carried.text.into_bytes()));
+        }
+        let mut cursor = body;
+        let Ok(decoded) = rmpv::decode::read_value(&mut cursor) else {
+            return Ok(None);
+        };
+        let mut tree = PlanTree(decoded);
+        if !cursor.is_empty() || !self.value_in_txn(vault, wtxn, record, &mut tree.0)? {
+            return Ok(None);
+        }
+        let mut carried = Vec::with_capacity(body.len());
+        rmpv::encode::write_value(&mut carried, &tree.0)
+            .map_err(|_| Error::InvariantViolation("a carried result body did not encode"))?;
+        Ok(Some(carried))
     }
 
     /// Whether `data` holds, as written, the handle of a secret the room
