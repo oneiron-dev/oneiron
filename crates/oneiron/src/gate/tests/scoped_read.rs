@@ -966,7 +966,7 @@ fn child_of_tree_counts_a_withheld_child_once_and_nothing_below_it() -> Result<(
             &root,
             4,
             None,
-            |_| Ok::<_, crate::Error>(Some(())),
+            |_, _| Ok::<_, crate::Error>(Some(())),
             |_, nodes| {
                 Ok::<_, crate::Error>(
                     nodes.map(|nodes| nodes.into_iter().map(|node| node.id).collect::<Vec<_>>()),

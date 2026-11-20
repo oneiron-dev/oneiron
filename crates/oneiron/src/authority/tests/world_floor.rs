@@ -1352,11 +1352,27 @@ fn voided_narrowing() -> (MarkPastFloor, AuthorityEntryHash) {
     );
     let start = start.landed(std::slice::from_ref(&earlier));
     let retired = start.retired(start.heads(), 232);
+    // A second retired enrollment on the first: until the handoff's line is
+    // verified it has no state of its own (its parent has none), so the
+    // removal on it has no ordinary state either and the narrowing crosses
+    // it with the desk still live. One retired enrollment alone is crossed
+    // with the removal's real state kept, which refuses the narrowing at once.
+    let retired_child = start.owner_row(
+        start.seq + 2,
+        vec![hash(&retired)],
+        AuthorityOp::EnrollDevice {
+            device: device(
+                authority_key_from_ed(&ed_key(233)),
+                ROLE_ADMIN,
+                AuthorityTier::Software,
+            ),
+        },
+    );
     let removal = answer_on(
         &start.host,
         (start.laptop.0, &start.laptop.1),
         next_seq(&start.fold, &start.laptop.1),
-        vec![hash(&retired)],
+        vec![hash(&retired_child)],
         MachineProfile {
             role: MachineRole::Removed,
             revision: 2,
@@ -1372,14 +1388,14 @@ fn voided_narrowing() -> (MarkPastFloor, AuthorityEntryHash) {
         ReadLocation::MyMachines,
     );
     let re_root = start.re_root(
-        start.seq + 2,
+        start.seq + 3,
         vec![hash(&removal)],
         b"world floor narrowing root",
     );
     let graph = start
         .replica(
             "voided narrowing",
-            &[&retired, &removal, &narrowing],
+            &[&retired, &retired_child, &removal, &narrowing],
             Some(re_root),
         )
         .expecting(fresh, EffectiveRead::MyMachines, Some(desk));

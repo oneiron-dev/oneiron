@@ -132,10 +132,11 @@ impl Vault {
     /// the decision it runs on: the Owner on their own proof, and with
     /// `check_in_ref` an asker's approved check-in for this erase
     /// ([`crate::check_in::text_history_erase_effect_digest`]), which the
-    /// Owner applies on their own proof. As the record erase confirm does
-    /// (2j), it is spent in a writer of its own, on the Owner's live proof,
-    /// before the erase or its act: a refusal after it leaves the approval
-    /// spent. A waiting erase's `erase` act records the decision.
+    /// Owner applies on their own proof. It is spent on the Owner's live
+    /// proof in the writer that erases, or in the one that starts the
+    /// `erase` act, so an erase that refuses, or an act that never starts,
+    /// leaves the approval unspent (FIX CHECK-IN-SPEND-BEFORE-ERASE). A
+    /// waiting erase's `erase` act records the decision.
     ///
     /// `erase_now` runs only on the branch that erases at once, before the
     /// check-in is spent. The history purge passes its shared confirm there,
@@ -167,27 +168,20 @@ impl Vault {
             None => erase_now()?,
             Some(_) => None,
         };
-        let act_class = crate::check_in::ActClass::Erase;
-        let decision = match check_in_ref {
-            Some(id) => {
-                let applied = crate::check_in::AppliedCheckIn {
-                    id,
-                    verb: "vault.notes.history_purge",
-                    effect_digest: crate::check_in::text_history_erase_effect_digest(
-                        entity, through,
-                    ),
-                };
-                self.with_write_txn_grouped(|txn| {
-                    owner.revalidate_in_txn(self, txn)?;
-                    crate::check_in::owner_act_decision_in_txn(self, txn, act_class, Some(&applied))
-                })?
-            }
-            None => crate::check_in::owner_own_proof_decision(act_class),
-        };
+        let applied = check_in_ref.map(|id| crate::check_in::AppliedCheckIn {
+            id,
+            verb: "vault.notes.history_purge",
+            effect_digest: crate::check_in::text_history_erase_effect_digest(entity, through),
+        });
         let Some(vault_id) = vault_id else {
             return self
-                .erase_text_history_as(owner, entity, through.or(confirmed.as_deref()))
-                .map(|receipt| (TextHistoryErase::Erased(receipt), decision));
+                .erase_text_history_with_check_in(
+                    owner,
+                    entity,
+                    through.or(confirmed.as_deref()),
+                    applied.as_ref(),
+                )
+                .map(|(receipt, decision)| (TextHistoryErase::Erased(receipt), decision));
         };
         // The other Owners object to an exact range, not to "the head then".
         let note = super::pins::entity_type(self, entity)? == Some(ENTITY_TYPE_NOTE);
@@ -202,13 +196,18 @@ impl Vault {
             through,
         })
         .map_err(|_| Error::InvariantViolation("history erase act payload"))?;
-        let act = self.start_authority_act_recorded(
+        let act = self.start_authority_act_applying(
             owner,
             vault_id,
             ERASE_ACT,
             payload,
-            decision.clone(),
+            crate::check_in::ActClass::Erase,
+            applied.as_ref(),
         )?;
+        let decision = act
+            .check_in
+            .clone()
+            .ok_or(Error::InvariantViolation("history erase act decision"))?;
         Ok((TextHistoryErase::Waiting(act), decision))
     }
 
@@ -355,12 +354,15 @@ impl Vault {
         let Some(through) = through else {
             return Err(Error::CorruptedIndex("history erase act frontier").into());
         };
-        Ok(self.purge_entity_text_history_for(
-            &entity,
-            &through,
-            &DocAuthorization::Owner(owner),
-            self.now_recorded_at(),
-            Some(act_id),
-        )?)
+        Ok(self
+            .purge_entity_text_history_for(
+                &entity,
+                &through,
+                &DocAuthorization::Owner(owner),
+                self.now_recorded_at(),
+                Some(act_id),
+                None,
+            )?
+            .0)
     }
 }

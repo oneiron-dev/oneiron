@@ -34,10 +34,11 @@ use getrandom::SysRng;
 // wrap as it rests: its public facts and its sealed envelope.
 pub(super) use self::state::walk_links;
 use self::state::{
-    AEAD, ARGON2_MAX, ESCROW_RECIPIENT, ESCROW_RETIRED, ESCROW_SEED_LABEL, ESCROW_SPOOLED, KEM,
-    LINKS, PASSKEY_PRF_CONTEXT, PAYLOAD_LABEL, PAYLOAD_LEN, STATE, UnlockSecret, VAULT_KEY_EPOCH,
-    VaultKeyState, WRAPS, WrapSecret, check_name, log_escrow_warnings, open_wrap, passkey_kek,
-    presented_escrow, recipient_fingerprint, seal_link, seal_wrap, wrap_digest,
+    AEAD, ARGON2_MAX, BOX_HOLD_PENDING, ESCROW_RECIPIENT, ESCROW_RETIRED, ESCROW_SEED_LABEL,
+    ESCROW_SPOOLED, KEM, LINKS, PASSKEY_PRF_CONTEXT, PAYLOAD_LABEL, PAYLOAD_LEN, STATE,
+    UnlockSecret, VAULT_KEY_EPOCH, VaultKeyState, WRAPS, WrapSecret, check_name,
+    log_escrow_warnings, open_wrap, passkey_kek, presented_escrow, recipient_fingerprint,
+    seal_link, seal_wrap, wrap_digest,
 };
 use oneiron_crypto::backup::{KeyHeader, KeyHeaderLink, KeyHeaderWrap as StoredWrap};
 pub use oneiron_crypto::backup::{RecoveryPreset, VaultKeyWrapInfo, VaultKeyWrapKind};
@@ -80,7 +81,10 @@ pub use self::generation_proposal::{
     DataKeyGenerationProposal, NOTIFICATION_PRODUCER_DATA_KEY_GENERATION_PROPOSAL,
 };
 pub(super) use self::recovery_preset::EscrowOrigin;
-pub use self::recovery_preset::{RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet};
+pub use self::recovery_preset::{
+    NoRecoveryBox, RecoveryBoxHold, RecoveryBoxHoldPending, RecoveryPresetAnyTwoChange,
+    RecoveryPresetChange, RecoverySheet,
+};
 use self::recovery_preset::{
     admit_delivered_key, admit_escrow_opened_key, admit_presented_capsule, admit_wrap,
 };

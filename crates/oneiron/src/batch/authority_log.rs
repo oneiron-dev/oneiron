@@ -259,13 +259,11 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
     if !resident
         && crate::authority::door_refuses_retired_standing(
             store,
+            posture,
             &local_fold,
             &entry_hash,
             &entry,
             &mut |hash| crate::authority::door_ancestor_row(store, wtxn, evidence.as_deref(), hash),
-            &mut |hash| {
-                crate::authority::authority_row_held(store, wtxn, evidence.as_deref(), hash)
-            },
         )?
     {
         return Err(Error::Record(RecordError::InvalidAuthorityLogBody(

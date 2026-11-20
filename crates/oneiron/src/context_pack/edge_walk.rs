@@ -67,6 +67,29 @@ pub(super) fn load_entity_edges(
     Ok(kept)
 }
 
+/// Whether the walk expands a neighbor across an edge of `kind`.
+/// `child_of` / `assigned_to` / `blocked_by` and the other STRUCTURAL
+/// plumbing kinds have no retrieval scoring (ARCH-0004 edgeKinds: lambda
+/// null, "Not traversed.") and are never neighbor-expanded, regardless of
+/// the stored weight bytes. They still hydrate on the seed's own edge list;
+/// only the walk skips them. The pack filter's neighbor reachability asks the
+/// same, so a filtered pack keeps no neighbor across an edge the walk never
+/// follows (review round 1 of #9849).
+pub(crate) fn walk_expands_edge_kind(kind: EdgeKind) -> bool {
+    !matches!(
+        kind,
+        EdgeKind::ChildOf
+            | EdgeKind::AssignedTo
+            | EdgeKind::BlockedBy
+            | EdgeKind::Parent
+            | EdgeKind::SpawnedBy
+            | EdgeKind::AddressedTo
+            | EdgeKind::RepliesTo
+            | EdgeKind::Regenerates
+            | EdgeKind::Carries
+    )
+}
+
 /// Scans the outbound edge rows for one entity, failing closed on any
 /// malformed row.
 ///
@@ -188,23 +211,9 @@ pub(super) fn walk_edges(
                 if let Some(deadline) = deadline {
                     deadline.answer_checkpoint(Error::IndexOverflow("context pack edge scan"))?;
                 }
-                // `child_of` / `assigned_to` / `blocked_by` are STRUCTURAL
-                // plumbing with no retrieval scoring (ARCH-0004 edgeKinds:
-                // lambda null, "Not traversed.") — never neighbor-expanded
-                // regardless of the stored weight bytes. They still hydrate on
-                // the seed's own edge list; only the walk skips them.
-                if matches!(
-                    edge.kind,
-                    EdgeKind::ChildOf
-                        | EdgeKind::AssignedTo
-                        | EdgeKind::BlockedBy
-                        | EdgeKind::Parent
-                        | EdgeKind::SpawnedBy
-                        | EdgeKind::AddressedTo
-                        | EdgeKind::RepliesTo
-                        | EdgeKind::Regenerates
-                        | EdgeKind::Carries
-                ) {
+                // Structural plumbing is never neighbor-expanded
+                // ([`walk_expands_edge_kind`]).
+                if !walk_expands_edge_kind(edge.kind) {
                     continue;
                 }
                 // D8-consistent: a provenanced edge whose hot flag says

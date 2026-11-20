@@ -1,11 +1,13 @@
 //! Psych Mirror profile attempts for the host's job adapter, and the reads
 //! the named test asserts (untangle 6.9i). The attempt is enqueued by the
 //! production sweep and admitted through the maintenance lane's own
-//! admission. Nothing here mints a binding or commits.
+//! admission. Nothing here mints a binding or commits, except the sweep's
+//! own write, run apart from its read so a test can land rows between them.
 
 use crate::claim::ScopedReadActorKey;
 use crate::companion::CompanionProfileAdmission;
 use crate::dreamer_runner::maintenance::PSYCH_PROFILE_FACET;
+use crate::dreamer_runner::maintenance::psych_profile::PsychProfileSweep;
 use crate::dreamer_runner::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
 };
@@ -36,6 +38,47 @@ pub fn psych_profile_keys(vault: &Vault, person: EntityId) -> Result<Vec<PsychPr
         }
     }
     Ok(keys)
+}
+
+/// What one psych profile sweep's read found, held for its write.
+#[derive(Debug)]
+pub struct PsychProfileSweepRead(PsychProfileSweep);
+
+impl PsychProfileSweepRead {
+    /// How many stored profiles the read found with no eligible claim under
+    /// their key: the profiles its write withdraws unless one lands.
+    #[must_use]
+    pub fn withdrawn(&self) -> usize {
+        self.0.withdrawn.len()
+    }
+}
+
+/// The read of the production sweep (`enqueue_due_psych_profiles`) at
+/// `now`, in one snapshot.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn read_psych_profile_sweep(vault: &Vault, now: u64) -> Result<PsychProfileSweepRead> {
+    crate::dreamer_runner::maintenance::psych_profile::read_psych_profile_sweep(vault, now)
+        .map(PsychProfileSweepRead)
+}
+
+/// The write of the production sweep over `read` at `now`, in a write of
+/// its own, as the sweep runs it after its read. Returns how many attempts
+/// were enqueued.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn write_psych_profile_sweep(
+    vault: &Vault,
+    read: &PsychProfileSweepRead,
+    now: u64,
+) -> Result<usize> {
+    crate::dreamer_runner::maintenance::psych_profile::write_psych_profile_sweep(
+        vault, &read.0, now,
+    )
 }
 
 /// Admits the next maintenance attempt as a psych profile job under

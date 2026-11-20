@@ -142,6 +142,9 @@ pub(super) struct ReadableRows<'p, 'f> {
     predicate: &'p SnapshotCandidateFilter<'f>,
     deadline: Option<&'p RetrievalDeadline>,
     answers: Mutex<HashMap<EntityId, bool>>,
+    /// Whether the window's scans ask it too, so a row it refuses also takes
+    /// no place under a scan's cap ([`Self::new_asked_by_scans`]).
+    asked_by_scans: bool,
 }
 
 impl<'p, 'f> ReadableRows<'p, 'f> {
@@ -153,7 +156,28 @@ impl<'p, 'f> ReadableRows<'p, 'f> {
             predicate,
             deadline,
             answers: Mutex::new(HashMap::new()),
+            asked_by_scans: false,
         }
+    }
+
+    /// A reader the window's scans ask as well: each endpoint scan, the
+    /// query range's scan and the spanner buffer give a place under their cap
+    /// only to a row it reads. A call's made_by slice reads this way, so rows
+    /// the slice drops cannot fill a scan ahead of the rows it keeps
+    /// (REVIEW-9842 round 2). A scope alone keeps [`Self::new`]: its scans
+    /// stay as cheap as before.
+    pub(super) fn new_asked_by_scans(
+        predicate: &'p SnapshotCandidateFilter<'f>,
+        deadline: Option<&'p RetrievalDeadline>,
+    ) -> Self {
+        Self {
+            asked_by_scans: true,
+            ..Self::new(predicate, deadline)
+        }
+    }
+
+    pub(super) fn asked_by_scans(&self) -> bool {
+        self.asked_by_scans
     }
 
     pub(super) fn reads(

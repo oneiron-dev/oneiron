@@ -776,6 +776,10 @@ fn scrub_for_export(
     withhold: super::Withhold<'_>,
 ) -> Result<Scrubbed> {
     crate::sync::note::refresh(vault, doc, key)?;
+    // A row a use limit keeps here leaves first, so the side-row scrubs
+    // below drop its side rows as a row the window no longer carries.
+    let use_limited_scrubbed =
+        super::use_limited::withhold_use_limited_carriers(vault, doc, Some(key))?;
     let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
     let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
     let authors_scrubbed = scrub_redacted_attribution_carriers(vault, key, doc)?;
@@ -823,7 +827,8 @@ fn scrub_for_export(
     if super::project_history::carry_project_history(vault, doc)? {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
-    let check = if secret_scrubbed
+    let check = if use_limited_scrubbed
+        || secret_scrubbed
         || claims_scrubbed
         || authors_scrubbed
         || withdrawn_scrubbed

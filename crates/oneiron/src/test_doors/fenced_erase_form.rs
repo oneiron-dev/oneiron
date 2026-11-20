@@ -2,22 +2,29 @@
 //! FENCE-ERASED-FORM-THROUGH-WALL): the record of a run whose agent is
 //! gone, put in the vault or on a room's route, where the put fence erases
 //! it in its writer before it lands, or of a run whose agent is live, and
-//! its stored call or output read back.
+//! its stored call or output read back. For
+//! `tests/erased_form_step_start.rs` (FIX ERASED-FORM-UNFENCED-REPLAY-PUTS):
+//! a step of a live run captured with its start, and the start's prefix
+//! row read back.
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
 use rmpv::Value;
 
 use crate::agent_dispatch::{AgentDispatchTarget, AgentSpawnContext};
+use crate::attempt_queue::AttemptId;
 use crate::code_run::{
-    CodeRunBridgeCall, CodeRunRawOutput, CodeRunReplayRecord, ExecutorStorage, FoldAnswer,
-    FoldWordRef, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall, SelfDispatchOutcome,
-    SelfFailedResult, SelfMemoryPutClaimCall, SelfMemorySearchCall, SelfMemorySearchResult,
-    SelfSpawnAsk, replay_rows,
+    CapsuleHost, CodeRunBridgeCall, CodeRunRawOutput, CodeRunReplayRecord, ExecutorStorage,
+    FoldAnswer, FoldWordRef, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall,
+    SelfDispatchOutcome, SelfFailedResult, SelfMemoryPutClaimCall, SelfMemorySearchCall,
+    SelfMemorySearchResult, SelfSpawnAsk, StepCapture, StepStartBody, StepStartCapture,
+    capsule_start_body, capture_step, decode_code_run_replay_record, replay_rows,
+    step_replay_capsules,
 };
 use crate::compaction::SelfFoldCall;
 use crate::error::{Error, Result};
+use crate::llm::{ModelLocality, ModelTierRef};
 use crate::off_record::OffRecordSession;
-use crate::{ClaimCandidate, ClaimSubject, EntityId, TimeRange, Vault};
+use crate::{ClaimCandidate, ClaimSubject, EdgeActorClass, EntityId, TimeRange, Vault, WriteActor};
 
 /// The code a failure naming the erase's cause holds as its own
 /// ([`FencedCall::FailedNoteNamingErasure`]).
@@ -377,7 +384,12 @@ pub fn stored_request_custody_names(vault: &Vault, run: EntityId) -> Result<Opti
 ///
 /// The record cannot be read, or holds no call.
 pub fn stored_spawn_reads(vault: &Vault, run: EntityId) -> Result<(bool, bool)> {
-    let call = stored_call(vault, None, run)?;
+    Ok(spawn_reads(&stored_call(vault, None, run)?))
+}
+
+/// Whether `call`'s ask is the marker an erase leaves once it took the
+/// spawn's target, and whether its answer is the typed `target_erased`.
+fn spawn_reads(call: &CodeRunBridgeCall) -> (bool, bool) {
     let ask_erased = match &call.request {
         Value::Map(fields) => fields
             .iter()
@@ -390,7 +402,7 @@ pub fn stored_spawn_reads(vault: &Vault, run: EntityId) -> Result<(bool, bool)> 
             SelfAgentSpawnResult::TargetErased
         ))
     );
-    Ok((ask_erased, answer_erased))
+    (ask_erased, answer_erased)
 }
 
 /// The preview text of the one output `run`'s stored record in the vault
@@ -404,4 +416,134 @@ pub fn stored_preview(vault: &Vault, run: EntityId) -> Result<Option<String>> {
         .get_code_run_replay_record(&run)?
         .and_then(|record| record.outputs.into_iter().next())
         .map(|output| output.preview.text))
+}
+
+/// The intent key of the one spawn call `call` makes, as its request holds
+/// it; `None` when its request holds none as text.
+fn spawn_intent(call: &CodeRunBridgeCall) -> Option<String> {
+    let Value::Map(fields) = &call.request else {
+        return None;
+    };
+    fields
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some("intent_key")).then_some(value))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+/// The intent key of the one spawn call `run`'s stored record in the vault
+/// makes, as the row holds it.
+///
+/// # Errors
+///
+/// The record cannot be read, or holds no call.
+pub fn stored_spawn_intent(vault: &Vault, run: EntityId) -> Result<Option<String>> {
+    Ok(spawn_intent(&stored_call(vault, None, run)?))
+}
+
+/// Puts, in the vault, for a new agent that stays live, the replay record
+/// of a new run making `call`, so the row holds it as written; then has
+/// custody take `held` in a record of its own, and captures a step of the
+/// run with its start, the stored row, as an executor step captures one
+/// before its model call. The run and the custody record, in that order.
+///
+/// # Errors
+///
+/// The agent cannot be put, custody cannot take `held`, or the record
+/// cannot be stored or read back. A capture that fails is logged and
+/// keeps no capsule, as a step's does.
+pub fn capture_start_after_custody_takes(
+    vault: &Vault,
+    call: FencedCall,
+    held: &[u8],
+) -> Result<[EntityId; 2]> {
+    let agent = new_agent(vault)?;
+    let attempt = AttemptId::now();
+    let run = EntityId::from_bytes(*attempt.as_bytes())?;
+    let record = run_record(agent, run, call)?;
+    ExecutorStorage::Canonical(vault)
+        .put_owned_code_run_replay_record(&record, None, run, agent)?;
+    let custody = vault.register_test_secret("held value", held, Vec::new(), 1)?;
+    let stored = vault
+        .get_code_run_replay_record(&run)?
+        .ok_or(Error::CorruptedIndex("the captured run has no stored row"))?;
+    let request = super::code_mode_capture::code_mode_request(
+        "fence fixture system".to_owned(),
+        "fence fixture task",
+    );
+    let tier = ModelTierRef("standard".into());
+    capture_step(
+        vault,
+        &StepCapture {
+            attempt,
+            lease_generation: 1,
+            run,
+            step: 1,
+            host: CapsuleHost::EngineStep,
+            actor: WriteActor::new(agent, EdgeActorClass::Agent),
+            request: &request,
+            task: "fence fixture task",
+            exposures: &[],
+            console: None,
+            source_rows: None,
+            fold_words: Vec::new(),
+            start: Some(StepStartCapture {
+                record: &stored,
+                model: &request.model,
+                model_locality: ModelLocality::OwnServer,
+                seat_effort: None,
+                global_tier: &tier,
+                soft_steps: 1,
+                prompt_fingerprint: "fence fixture prompt",
+            }),
+        },
+    );
+    Ok([run, custody])
+}
+
+/// The one call the prefix row of the start `run`'s one capsule keeps;
+/// `None` when the capsule keeps no start.
+fn start_call(vault: &Vault, run: EntityId) -> Result<Option<CodeRunBridgeCall>> {
+    let capsules = step_replay_capsules(vault, run)?;
+    let [capsule] = capsules.as_slice() else {
+        return Err(Error::InvariantViolation(
+            "the run did not capture exactly one capsule",
+        ));
+    };
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(bytes) = capsule_start_body(vault, &rtxn, capsule)? else {
+        return Ok(None);
+    };
+    let body: StepStartBody = rmp_serde::from_slice(&bytes)
+        .map_err(|_| Error::CorruptedIndex("the capsule's start does not decode"))?;
+    decode_code_run_replay_record(&body.record)?
+        .bridge_calls
+        .into_iter()
+        .next()
+        .map(Some)
+        .ok_or(Error::CorruptedIndex(
+            "the start's prefix row holds no call",
+        ))
+}
+
+/// What the one spawn call the start of `run`'s one capsule keeps reads, as
+/// [`stored_spawn_reads`] reads a stored one; `None` when the capsule keeps
+/// no start.
+///
+/// # Errors
+///
+/// No capsule or more than one, a start that does not decode, and the
+/// store's.
+pub fn start_spawn_reads(vault: &Vault, run: EntityId) -> Result<Option<(bool, bool)>> {
+    Ok(start_call(vault, run)?.as_ref().map(spawn_reads))
+}
+
+/// The intent key of the one spawn call the start of `run`'s one capsule
+/// keeps; the outer `None` when the capsule keeps no start.
+///
+/// # Errors
+///
+/// As [`start_spawn_reads`].
+pub fn start_spawn_intent(vault: &Vault, run: EntityId) -> Result<Option<Option<String>>> {
+    Ok(start_call(vault, run)?.as_ref().map(spawn_intent))
 }

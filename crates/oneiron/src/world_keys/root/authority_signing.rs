@@ -14,6 +14,8 @@ use crate::error::Result;
 use crate::store::recovery_kit::RestoredKitSecret;
 
 const RECOVERY_AUTHORITY_CONTEXT: &str = "oneiron/owner-recovery-authority/v1";
+const RECOVERY_AUTHORITY_GENERATION_CONTEXT: &str =
+    "oneiron/owner-recovery-authority-generation/v1";
 
 /// R's authority seed, handed out once by the kit's activation for the box
 /// deposit (pass 27 R4 PR 2, WAYBACK-BOX-AUTHORITY-SEED = A). Holds
@@ -67,22 +69,46 @@ impl std::fmt::Debug for RecoveryAuthoritySigner {
 impl RecoveryAuthoritySigner {
     /// Derives the same key before and after loss. `vault_id` must come from the
     /// consuming vault's actual authority identity, not a material request's claim.
-    /// No root activation, enrollment or keystore write happens here.
-    pub fn from_seed(seed: &RecoveryRootSeed, vault_id: &AuthorityVaultId) -> Result<Self> {
+    /// No root activation, enrollment or keystore write happens here. Generation 0
+    /// is today's bytes exactly; generation `g >= 1` derives under a separate
+    /// context, so no generation collides with generation 0.
+    pub fn from_seed(
+        seed: &RecoveryRootSeed,
+        vault_id: &AuthorityVaultId,
+        generation: u32,
+    ) -> Result<Self> {
         let source_root = seed.public(vault_id)?.id;
-        Self::from_released_seed(Self::authority_seed(seed, vault_id), vault_id, source_root)
+        Self::from_released_seed(
+            Self::authority_seed(seed, vault_id, generation),
+            vault_id,
+            source_root,
+        )
     }
 
     /// The key's own 32-byte seed, derived from the root's seed for
-    /// `vault_id`: what the recovery box keeps (WAYBACK-BOX-AUTHORITY-SEED =
-    /// A), never the root's seed. It stays in guarded memory.
+    /// `vault_id` at `generation`: what the recovery box keeps
+    /// (WAYBACK-BOX-AUTHORITY-SEED = A), never the root's seed. It stays in
+    /// guarded memory. Generation 0 is today's bytes exactly (the same context
+    /// string and inputs); generation `g >= 1` derives under
+    /// [`RECOVERY_AUTHORITY_GENERATION_CONTEXT`] with the generation's
+    /// big-endian bytes as a third input, so no generation collides with
+    /// generation 0. The kit carries no generation; old kits read as
+    /// generation 0 by construction, and the roster tells.
     pub(crate) fn authority_seed(
         seed: &RecoveryRootSeed,
         vault_id: &AuthorityVaultId,
+        generation: u32,
     ) -> Zeroizing<[u8; 32]> {
+        if generation == 0 {
+            return crate::key_material::derive_guarded(
+                RECOVERY_AUTHORITY_CONTEXT,
+                &[&seed.bytes[..], &vault_id[..]],
+            );
+        }
+        let generation = generation.to_be_bytes();
         crate::key_material::derive_guarded(
-            RECOVERY_AUTHORITY_CONTEXT,
-            &[&seed.bytes[..], &vault_id[..]],
+            RECOVERY_AUTHORITY_GENERATION_CONTEXT,
+            &[&seed.bytes[..], &vault_id[..], &generation[..]],
         )
     }
 
@@ -111,12 +137,14 @@ impl RecoveryAuthoritySigner {
 
     /// Rebuilds from the existing RecoveryRoot kit type. Piece authentication and
     /// confirmation retain their existing meaning; this adds no piece-count gate.
+    /// Generation 0 is today's bytes exactly; see [`Self::authority_seed`].
     pub fn from_restored_kit(
         secret: RestoredKitSecret,
         vault_id: &AuthorityVaultId,
+        generation: u32,
     ) -> Result<Self> {
         let seed = RecoveryRootSeed::from_restored_kit(secret)?;
-        Self::from_seed(&seed, vault_id)
+        Self::from_seed(&seed, vault_id, generation)
     }
 
     #[must_use]

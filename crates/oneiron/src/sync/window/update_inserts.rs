@@ -9,6 +9,13 @@
 //! both its ends: an edge holds no body, but the sweep drops one with an
 //! erased end as residue, so its re-put owes the same compaction
 //! (HELD-ENTITY-DOCUMENT-DEFERRED).
+//!
+//! An update can also become durable inside a snapshot, with no update row:
+//! a client's bulk import or a residence landing imports it into the window's
+//! doc, which then persists whole. So a snapshot writer owes the same, for
+//! the inserts of the history it stores past the window's last stored
+//! snapshot ([`UpdateInserts::past_stored`],
+//! L6-05-SNAPSHOT-PERSIST-ERASED-INSERTS).
 
 use std::collections::BTreeSet;
 
@@ -16,6 +23,7 @@ use loro::json::{JsonOpContent, MapOp};
 use loro::{ContainerID, ContainerType, LoroDoc, VersionVector};
 
 use super::super::types::WindowKey;
+use super::super::window_rows::WINDOW_STATE_VECTOR;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -24,7 +32,8 @@ use crate::error::Result;
 /// map, and both ends of each edge it inserts into its edges map: every
 /// insert, one a later operation of the same update deletes included.
 /// Admission reads them for an update it admits
-/// ([`super::admit_window_update_residence_with_vault`]).
+/// ([`super::admit_window_update_residence_with_vault`]), and a snapshot
+/// writer for the history it stores (`past_stored`).
 #[derive(Debug, Default)]
 pub struct UpdateInserts {
     ids: BTreeSet<EntityId>,
@@ -80,6 +89,31 @@ impl UpdateInserts {
             ids,
             unread: expected.is_none() || expected != read,
         }
+    }
+
+    /// The inserts of the history a snapshot of `doc` stores over window
+    /// `key` that the stored snapshot did not hold: every operation past the
+    /// state vector stored beside the window's last snapshot (`sv:w:{key}`)
+    /// and past `doc`'s shallow root, below which a snapshot keeps state but
+    /// no history. A window with no stored state vector, or one that does not
+    /// decode, reads all the history `doc` holds. The writer reads them after
+    /// the version it stores beside the snapshot, so they cover every
+    /// operation that version names; an operation the stored version already
+    /// named was read by the writer that stored it.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors reading the stored state vector.
+    pub(crate) fn past_stored(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<Self> {
+        let stored = {
+            let rtxn = vault.store.env.read_txn()?;
+            WINDOW_STATE_VECTOR.get(&vault.store, &rtxn, &key.as_str().to_owned())?
+        };
+        let mut base = stored
+            .and_then(|raw| VersionVector::decode(&raw).ok())
+            .unwrap_or_default();
+        base.merge(&doc.shallow_since_vv().to_vv());
+        Ok(Self::past(doc, &base))
     }
 
     /// The entity ids read: an own device's held burst names them as rows

@@ -185,6 +185,37 @@ impl ScopedRead<'_> {
         false
     }
 
+    /// Whether a read that asked nothing of its own ([`Self::held_for`]
+    /// `(None)`) reads no row at all in `rtxn`: `filter` (B) denies all and,
+    /// for a reader A may stand for, none of the live Grants `held` holds in
+    /// `rtxn` reads a row alone either. A door that answers nothing to a
+    /// reader who reads nothing asks this, not B alone, once its rows take
+    /// the held row gate, since an identity agent's own floor reads nothing
+    /// (FIX-LIST SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS). It only skips:
+    /// every row the door serves still takes the row gate.
+    pub(super) fn reads_nothing_held_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        held: &HeldAuthority,
+    ) -> bool {
+        if !filter.deny_all {
+            return false;
+        }
+        let Some(reader) = self.grant_reader() else {
+            return true;
+        };
+        if matches!(held.grants().asked(), AskedFilter::Unknown) {
+            return true;
+        }
+        let grants = held.grants().of(reader, || {
+            reader_grants_or_empty_in(self.vault, rtxn, reader)
+        });
+        self.candidates_under_grants(policy, filter, None, &grants)
+            .deny_all
+    }
+
     /// The candidates a search under `filter` may rank (FIX 7528): the rows
     /// `filter` (B, resolved from `requested`) reads and, for a reader A may
     /// stand for, the rows each of its own live Grants reads alone under
@@ -204,6 +235,26 @@ impl ScopedRead<'_> {
             Some(grants) => self.candidates_under_grants(policy, filter, requested, &grants),
             None => filter.clone(),
         }
+    }
+
+    /// The applied scope a search receipt under `filter` starts from (FIX
+    /// 7528). With `report_live_grants` it is `filter` alone:
+    /// [`Self::live_grant_receipt_scope_in`] joins the Grants the rows' gate
+    /// held, so the ceiling and the applied scope name the same Grants even
+    /// when one lapsed between two loads (review round 1 of #9794).
+    /// Otherwise the candidates, joined with the Grants live in `rtxn`.
+    pub(super) fn receipt_candidates_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        requested: Option<&RetrievalFilter>,
+        report_live_grants: bool,
+    ) -> ResolvedRetrievalFilter {
+        if report_live_grants {
+            return filter.clone();
+        }
+        self.candidate_filter_in(rtxn, policy, filter, requested)
     }
 
     /// The live Grants A may stand on for this key, each with its read
@@ -243,14 +294,16 @@ impl ScopedRead<'_> {
         candidates
     }
 
-    /// The scope a receipt of a lane that reports its live Grants
-    /// ([`ScopedRead::with_live_grant_receipts`]) states, in the serving
-    /// snapshot `rtxn` (FIX GRANT-READ-NARROWING-SAYS-DENY-ALL): the key's
-    /// own floor and each of its own live Grants' floors as its ceiling, and
-    /// `applied` joined with what each live Grant reads alone under
-    /// `requested`, as the search candidates join them (FIX 7528). `None` on
-    /// any other lane and for a key A never stands for. It only reports:
-    /// every row took the row gate, B first, then each Grant alone.
+    /// The scope a receipt that reports its live Grants states, in the
+    /// serving snapshot `rtxn` (FIX GRANT-READ-NARROWING-SAYS-DENY-ALL): the
+    /// key's own floor and each of its own live Grants' floors as its
+    /// ceiling, and `applied` joined with what each live Grant reads alone
+    /// under `requested`, as the search candidates join them (FIX 7528).
+    /// `report_live_grants` is whether this receipt reports them: a lane's
+    /// own setting ([`ScopedRead::with_live_grant_receipts`]), or the
+    /// retrieval loop's, which always does. `None` when it does not, and for
+    /// a key A never stands for. It only reports: every row took the row
+    /// gate, B first, then each Grant alone.
     ///
     /// With `held`, the Grants are the ones the row gate held in this
     /// snapshot (loaded here, and held, when no row asked yet), so the
@@ -263,8 +316,9 @@ impl ScopedRead<'_> {
         applied: &ResolvedRetrievalFilter,
         requested: Option<&RetrievalFilter>,
         held: Option<&HeldAuthority>,
+        report_live_grants: bool,
     ) -> Option<LiveGrantReceiptScope> {
-        if !self.receipts_include_live_grants {
+        if !report_live_grants {
             return None;
         }
         let reader = self.grant_reader()?;

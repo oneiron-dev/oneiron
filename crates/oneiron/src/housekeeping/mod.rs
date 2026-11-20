@@ -372,8 +372,9 @@ fn ran(run: &JobRun) -> Option<SweepOutcome> {
 /// for each carried wake into its live windows (FIX
 /// TURNPROGRAM-LATE-WITHHOLD-DOUBLE-DECIDE); a window that is owed such a
 /// row is first opened if it is not loaded, and stored with the row (FIX
-/// TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN). A failure is logged by
-/// the admission and waits for the next pass.
+/// TURNPROGRAM-RETRACTION-ROW-WAITS-FOR-WINDOW-OPEN). The retraction, the
+/// admission and the row writes each log their own failure, and the merge
+/// logs each window it could not merge; the work waits for the next pass.
 #[cfg(feature = "sync")]
 fn admit_carried_turn_program_wakes(vault: &Vault, deadline: &Deadline) {
     if deadline.stopped() {

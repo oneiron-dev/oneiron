@@ -243,6 +243,13 @@ pub(crate) struct RecoveryPresetSet {
     /// The change committed but the sealed vault's page-seal mirror still
     /// needs repair; the next sealed open repairs it.
     pub(crate) mirror_pending: bool,
+    /// The change committed to `Standard` but the recovery box's release did
+    /// not go through; the box still holds kit-only.
+    pub(crate) box_release_pending: bool,
+    /// The change left "Nobody but me": sign-in and the recovery PIN restore
+    /// no owner control until a new kit's activation deposits its seed in
+    /// the recovery box; the kit itself still serves.
+    pub(crate) box_recovery_needs_new_kit: bool,
 }
 
 impl RecoveryPresetSet {
@@ -268,6 +275,8 @@ impl RecoveryPresetSet {
                 .map(RetiredEscrowView::from)
                 .collect(),
             mirror_pending: change.mirror_pending,
+            box_release_pending: change.box_release_pending,
+            box_recovery_needs_new_kit: change.box_recovery_needs_new_kit,
         };
         (view, change.sheet)
     }

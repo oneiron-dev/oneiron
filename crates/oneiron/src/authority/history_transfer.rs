@@ -217,15 +217,16 @@ impl Vault {
     /// of a vault that stored a stranger's row before #1449 imports without
     /// them.
     pub fn import_signed_authority_history(&self, blobs: &[Vec<u8>]) -> Result<Vec<EntityId>> {
-        self.import_signed_authority_history_judged(blobs, |_| Ok(()), |_| Ok(()))
+        self.import_signed_authority_history_judged(blobs, |_| Ok(()), |_, _| Ok(()))
     }
 
-    /// The import with `prelude` first in its write txn and `judge` on the fold it would commit.
+    /// The import with `prelude` first in its write txn and `judge` on the fold it would commit,
+    /// read in that txn.
     pub(crate) fn import_signed_authority_history_judged(
         &self,
         blobs: &[Vec<u8>],
         prelude: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
-        judge: impl FnOnce(&AuthorityFold) -> Result<()>,
+        judge: impl FnOnce(&heed::RoTxn<'_>, &AuthorityFold) -> Result<()>,
     ) -> Result<Vec<EntityId>> {
         let mut decoded = Vec::with_capacity(blobs.len());
         for bytes in blobs {
@@ -234,12 +235,6 @@ impl Vault {
         }
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
-        // The image this vault had adopted before the write. A prelude may
-        // adopt one in this transaction (a sealed kit restore), which rolls
-        // back with a refused import: a handoff only that image covers is
-        // none this vault holds, so a refusal's evidence never names it
-        // (REVIEW-9572 round 2). The fold and ancestry read the staged image.
-        let (_, held_evidence) = adopted_context_in_txn(&self.store, &txn)?;
         prelude(&mut txn)?;
         let carried: BTreeMap<_, _> = decoded
             .iter()
@@ -318,19 +313,23 @@ impl Vault {
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         if judge_merged {
+            // The fold and ancestry see an image the prelude adopts (e.g. a
+            // sealed kit restore), but it rolls back with a refused import.
+            // The refusal reads committed evidence, so it names no handoff
+            // only that image covers (REVIEW-9572 round 2).
             refuse_retired_standing(
                 &self.store,
+                self.privacy_posture(),
                 &fold,
                 &merged,
                 evidence.as_deref(),
                 &arriving,
-                &mut super::retired_signers::import_row_held(&resident, held_evidence.as_deref()),
             )?;
         }
         if fold.vault_root_is_conflicted() {
             return Err(invalid_authority());
         }
-        judge(&fold)?;
+        judge(&txn, &fold)?;
         #[cfg(feature = "sync")]
         self.mark_pending_mirrors_in_txn(&mut txn, &ids.iter().copied().collect())?;
         txn.commit()?;

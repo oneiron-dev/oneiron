@@ -218,7 +218,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/adversarial.rs` | test | s | — | — | — |
 | `tests/breaker.rs` | test | s | — | — | — |
 | `tests/comment_anchors.rs` | test | m | — | — | Native Word comment ranges for the comment-anchor scenarios (owner ask 2026-10-16; the cases come from… |
-| `tests/contract.rs` | test | L | — | — | — |
+| `tests/contract.rs` | test | XL | — | — | — |
 | `tests/deck_create_oracle_receipt.rs` | test | m | — | — | L4-20 (ARCH-0077 slides lane): the `deck-create-v1` Office receipts committed under… |
 | `tests/deck_fit_evidence.rs` | test | m | — | — | L4-20 PR 2 (ARCH-0077 slides lane, `slides:oracle`): `emit` certifies a unit's fit only from a clean stored… |
 | `tests/docedit_register_names.rs` | test | s | — | — | The names of 2 name lists in `oneiron-docedit`, one line per row, generated from… |
