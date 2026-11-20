@@ -133,6 +133,13 @@ pub(super) fn carry_current_authority<'a>(
         .filter(|(key, _)| claim_of_edge(key).is_some())
         .map(|(key, _)| key.clone())
         .collect();
+    let image_task_links = databases
+        .get("edges_out")
+        .into_iter()
+        .flatten()
+        .filter(|(key, _)| is_scoped_to_edge(key))
+        .map(|(key, _)| key.clone())
+        .collect();
     for (database, live_rows) in &live.rows {
         let is_live =
             |(key, value): &(Vec<u8>, Vec<u8>)| classes.row(database, key, value).0 == Class::Live;
@@ -200,6 +207,7 @@ pub(super) fn carry_current_authority<'a>(
         image_log,
         image_fences,
         image_claim_of,
+        image_task_links,
     };
     Ok((home_notes, live.pad_objects, floors, refused))
 }
@@ -242,6 +250,9 @@ pub(super) struct RefusedFamilies<'a> {
     image_log: BTreeSet<Vec<u8>>,
     image_fences: BTreeSet<Vec<u8>>,
     image_claim_of: Vec<Vec<u8>>,
+    /// The image's `ScopedTo` edge keys (`edges_out`, `source | kind | target`): a task
+    /// fact row counts in a fold only through its link to its task.
+    image_task_links: BTreeSet<Vec<u8>>,
 }
 
 impl RefusedFamilies<'_> {
@@ -275,6 +286,11 @@ impl RefusedFamilies<'_> {
                     "edges_in" => {
                         if claim_of_edge(key).is_some() {
                             self.image_claim_of.push(key.to_vec());
+                        }
+                    }
+                    "edges_out" => {
+                        if is_scoped_to_edge(key) {
+                            self.image_task_links.insert(key.to_vec());
                         }
                     }
                     _ => {}
@@ -600,6 +616,20 @@ fn claim_of_edge(key: &[u8]) -> Option<(&[u8], &[u8])> {
         .then(|| (&key[..16], &key[17..]))
 }
 
+/// Whether an `edges_out` key (`source(16) | kind(1) | target(16)`) is a `ScopedTo` edge.
+fn is_scoped_to_edge(key: &[u8]) -> bool {
+    key.len() == 33 && key[16] == crate::edge::EdgeKind::ScopedTo as u8
+}
+
+/// The `edges_out` key of the fact row `fact`'s `ScopedTo` link to `task`.
+fn task_link_key(fact: &[u8], task: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(33);
+    key.extend_from_slice(fact);
+    key.push(crate::edge::EdgeKind::ScopedTo as u8);
+    key.extend_from_slice(task.as_bytes());
+    key
+}
+
 /// The names of the projected classes whose authority the image would roll
 /// back: an entity both vaults hold whose authority differs; one the image
 /// holds and the live vault deleted, or one only the live vault holds, when
@@ -642,6 +672,18 @@ fn authority_moved(
         let Some(authority) = project(projection, value) else {
             continue;
         };
+        // A fact row the image holds without its `ScopedTo` link counts in no fold of the
+        // restored vault, which reads a task's facts through those links. So the image does
+        // not hold that fact: a live row the live fold counts for it still moves authority,
+        // and the row cannot stand in for a live twin of it below (blind review round 2 P1,
+        // REVIEW-10064).
+        if let Compared::TaskFact(fact) = &authority
+            && !current
+                .image_task_links
+                .contains(&task_link_key(key, &fact.task_ref))
+        {
+            continue;
+        }
         if projection == Projection::Skill {
             image_bytes.extend(skill_bytes(value));
         }
