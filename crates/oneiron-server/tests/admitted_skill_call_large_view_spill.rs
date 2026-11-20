@@ -16,6 +16,15 @@
 //!   skill and hook with a 100-byte answer. The reply is the redacted view
 //!   inline (no `handle`, the text, no title). Green with and without the
 //!   fix.
+//! - `an_admitted_deep_answer_is_judged_by_its_outer_post_hook_as_text`
+//!   ([SKILL-ANSWER-DEEP-JSON-STACK-SAFE] part 2b): an answer with the
+//!   title and 150 arrays nested under `deep`, past what a value may hold,
+//!   under the same Redact. The facade's post chain judges it as JSON text:
+//!   the reply is the readable `r1` card of the redacted view, which reads
+//!   back with no title and its whole depth, while the real answer stays
+//!   record-only under no binding. Red at the red pin (the admitted entry's
+//!   refusal of a deep answer put back): the call is refused, "nests too
+//!   deep".
 //!
 //! The run is the seeded default agent's root run, leased and registered
 //! live through `oneiron_server::test_doors::live_run_step`; its own agent's
@@ -83,6 +92,9 @@ const WORKER: &str = "admitted-skill-call-large-view-spill";
 const BIG_BYTES: usize = 600_000;
 /// The small answer's padding: its redacted view stays inline.
 const SMALL_BYTES: usize = 100;
+/// The deep answer's nesting: arrays around `0` under `deep`, past the
+/// depth a value may hold (127).
+const DEEP_LEVELS: usize = 150;
 
 /// The test's code host provider: the checked-in production QuickJS
 /// component, so skills run real JS, over a backend that answers nothing.
@@ -324,6 +336,20 @@ impl Fixture {
         )?)
     }
 
+    /// The active callable whose answer is `title` and `deep`,
+    /// [`DEEP_LEVELS`] arrays around `0`.
+    fn deep_skill(&self) -> TestResult<EntityId> {
+        Ok(oneiron::test_doors::callable_skill::put_active_callable(
+            &self.vault,
+            "fixture.deep-view",
+            &format!(
+                "let deep = 0;for (let i = 0; i < {DEEP_LEVELS}; i++) deep = [deep];finish(JSON.stringify({{title:\"secret-title-7\",deep}}));"
+            ),
+            &serde_json::json!({"bytes": "integer"}),
+            &serde_json::json!("object"),
+        )?)
+    }
+
     /// The whole text of the run's result `reference`, paged through its
     /// slices.
     fn read_result_text(&self, reference: &str) -> TestResult<String> {
@@ -517,6 +543,72 @@ fn an_admitted_skill_call_keeps_a_small_post_hook_view_inline() -> TestResult {
         assert_eq!(
             body.get("text").and_then(Value::as_str).map(str::len),
             Some(SMALL_BYTES)
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn an_admitted_deep_answer_is_judged_by_its_outer_post_hook_as_text() -> TestResult {
+    on_engine_stack(|| async {
+        let fixture = Fixture::new().await?;
+        let skill = fixture.deep_skill()?;
+        let (status, body) = fixture.call(skill, 0).await?;
+        // Red at the red pin: the call is refused, "nests too deep".
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the admitted deep answer is judged, not refused: {}",
+            short(&body)
+        );
+        assert_eq!(
+            body.get("name").and_then(Value::as_str),
+            Some("r1"),
+            "a view too deep for a value answers its card: {}",
+            short(&body)
+        );
+        let view = fixture.read_result_text("r1")?;
+        assert!(
+            !view.contains("secret-title-7"),
+            "the card serves the redacted view: {}",
+            view.chars().take(300).collect::<String>()
+        );
+        assert!(
+            view.contains(&format!(
+                "{}0{}",
+                "[".repeat(DEEP_LEVELS),
+                "]".repeat(DEEP_LEVELS)
+            )),
+            "the view keeps its whole depth"
+        );
+        // The run's record: one view-served row and one binding naming the
+        // card's body, while the real answer stays record-only under no
+        // binding.
+        let record = fixture
+            .vault
+            .get_code_run_replay_record(&fixture.run)?
+            .ok_or("the run keeps its record")?;
+        assert_eq!(record.bridge_calls.len(), 1);
+        assert!(
+            record.bridge_calls[0].hook_view_served,
+            "the row stands as a view-served row"
+        );
+        assert_eq!(record.bindings.len(), 1);
+        assert!(
+            !record.bindings[0].path.ends_with(".record-only.json"),
+            "the binding names the spilled view, not the real body"
+        );
+        let real = record
+            .outputs
+            .iter()
+            .find(|output| output.path.ends_with(".record-only.json"))
+            .ok_or("the real answer records record-only")?;
+        assert!(
+            record
+                .bindings
+                .iter()
+                .all(|binding| binding.handle != real.handle),
+            "no binding names the real answer's body"
         );
         Ok(())
     })
