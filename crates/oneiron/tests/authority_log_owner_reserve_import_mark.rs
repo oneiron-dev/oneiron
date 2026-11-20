@@ -13,7 +13,7 @@
 //! machine on A (the flooder), registers a portable secret on A (A holds
 //! it), exports the whole vault once for the secret's archive row, and
 //! records an export secret request for it with A as recipient (test door
-//! `export_secret_requests`, as an owner export's audit write records one
+//! `holder_export_requests`, as an owner export's audit write records one
 //! for a secret it met unopened). B then takes A's history and is flooded
 //! until its door holds a row at the reserve (`owner_reserve/two_installs.rs`).
 //! The owner imports the supplement on A (`Vault::import_secret_supplement`;
@@ -43,7 +43,7 @@ use oneiron::secret_custody::{
     CustodyClass, CustodyTier, OwnerSecretRegistration, RequestedBinding,
 };
 use oneiron::settings::ReadDestination;
-use oneiron::test_doors::export_secret_requests::record_export_secret_request;
+use oneiron::test_doors::holder_export_requests::record_export_secret_request;
 use oneiron::{EntityId, ErrorKind, Vault};
 use oneiron_authority::authority::{FrontierJoinFamily, MAX_PARENTS};
 

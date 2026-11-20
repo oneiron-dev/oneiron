@@ -122,7 +122,6 @@ pub mod erased_request_identity;
 pub mod esign_commitments;
 pub mod esign_send_binding;
 pub mod eval_authoring_execution_fault;
-pub mod export_secret_requests;
 pub mod external_effect_binding;
 pub mod extra_room_index;
 pub mod extraction_decisions;
@@ -182,6 +181,7 @@ pub mod held_program;
 pub mod hex_input_policy;
 pub mod hex_sign_digit;
 pub mod history_import_rows;
+pub mod holder_export_requests;
 pub mod holder_slip_revoke;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;
