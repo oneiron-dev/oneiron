@@ -110,6 +110,47 @@
         "law": "A new list of names is declared once as a Register: a plain enum with `#[derive(Register)]` and `#[register(\"lower.dotted\")]` (oneiron_contracts::register), whose names come from the enum's own serde attributes. A hand table is converted when its file is next touched, with a names test generated from `--names` that proves no stored or sent name changed (M-1 keep).",
         "expected_direction": "Down only. Adopting PRs do not edit this count; the Engine lowers it once per train. The count blocks no merge (lead 2026-11-16, REG-1 = B): the merge pipeline reports a raise to the change's author, who lowers it in a follow-up PR. A path joins the allowlist only in a reviewed PR, with its reason on the same line."
       }
+    },
+    "test_lint_sleep": {
+      "description": "Sleep calls in Rust test code under crates/ and apps/: `sleep(`, `sleep_until(` and `sleep_ms(` called as a function (not a method, not a definition), in code only (comments and string literals are blanked first). Test code is every file under a `tests` directory, every tests.rs, *_tests.rs and *_test.rs, every file with an inner `#![cfg(test)]`, and the item after each `#[cfg(test)]`-style attribute in any other file; directories named target, vendor, node_modules, .git and fixtures-out and the vendored crates/heed, crates/paste and crates/loro are skipped. A line opts out with `testkit-lint: allow(sleep) <reason>` on it, or on a comment line just above it; an allow with no reason allows nothing. Recomputed by scripts/ratchet/test_lint.py (no cargo; `--list --rule sleep` prints each finding, `--baseline` the per-file counts in the Rust lint's baseline form). Wait on a barrier, a channel or the fake clock instead.",
+      "count": 331,
+      "_attribution": {
+        "summary": "Moved from oneiron-testkit's Rust test lint (crates/oneiron-testkit/src/lint.rs with lint-baseline.txt, run only by the nightly's test_lint test) by row TEST-LINT-NOT-RUN-PER-PR (Engine ANSWER TEST-LINT-PER-PR = A, 2026-11-20). The five bars are the Rust baseline's totals as main held them: sleep 331, wall-clock 509, network 90, fixed-port 123, real-model 22. Parity: on a clean export of 7eaa6e976106, test_lint.py --baseline gives the Rust lint's write at that commit (git blob 17b3795dfb4f) byte for byte below the header comment: 586 lines, 1087 findings. Main b0b766831e14 measures sleep 336 and wall-clock 518: 14 findings in 8 files that tests merged after the Rust baseline brought, while the lint ran only at night (row TEST-LINT-OVER-BASELINE-ON-MAIN).",
+        "law": "A test waits on a barrier, a channel or oneiron_testkit::clock::FakeClock, reads time from FakeClock, binds port 0, and talks to oneiron_testkit's ScriptedProvider and HashingEmbedder, never a real host or model. A line that must break a rule (a budget test's bound, a sandbox's own timer under test) carries `testkit-lint: allow(<rule>) <reason>`.",
+        "expected_direction": "Down only. Not raised for the findings main gained after the Rust baseline: their row lowers them, or allows each with its reason. The count blocks no merge: the merge pipeline reports a raise to the change's author (AGENTS.md, Ratchets)."
+      }
+    },
+    "test_lint_wall_clock": {
+      "description": "Wall-clock reads in Rust test code: `SystemTime::now`, `Instant::now`, `Utc::now`, `Local::now` and `OffsetDateTime::now_utc`, in code only. Same test-code definition, allow form and scanner as test_lint_sleep (rule name wall-clock). Read time from oneiron_testkit::clock::FakeClock.",
+      "count": 509,
+      "_attribution": {
+        "summary": "Moved from the Rust test lint with test_lint_sleep; see its attribution. Main b0b766831e14 measures 518 against the Rust bar 509.",
+        "expected_direction": "Down only, as test_lint_sleep."
+      }
+    },
+    "test_lint_network": {
+      "description": "http, https, ws and wss URLs in Rust test code, in code and string literals, whose host is not loopback (127.0.0.0/8, localhost, ::1, 0.0.0.0), not a reserved test name (example.com, example.org and example.net with their subdomains; test, example, invalid and localhost with every name under them), not a provider host (test_lint_real_model counts those), and not a host whose URIs are names only (schemas.openxmlformats.org, schemas.microsoft.com, schemas.xmlsoap.org, json-schema.org, www.w3.org, purl.org); a host holding `{` or `$` is a template and is skipped. Same test-code definition, allow form and scanner as test_lint_sleep (rule name network).",
+      "count": 90,
+      "_attribution": {
+        "summary": "Moved from the Rust test lint with test_lint_sleep; see its attribution. Main b0b766831e14 measures 90, the Rust bar.",
+        "expected_direction": "Down only, as test_lint_sleep."
+      }
+    },
+    "test_lint_fixed_port": {
+      "description": "A fixed non-zero port after 127.0.0.1, localhost, [::1] or 0.0.0.0 (`127.0.0.1:8080`) in Rust test code, in code and string literals. Same test-code definition, allow form and scanner as test_lint_sleep (rule name fixed-port). Bind port 0.",
+      "count": 123,
+      "_attribution": {
+        "summary": "Moved from the Rust test lint with test_lint_sleep; see its attribution. Main b0b766831e14 measures 123, the Rust bar.",
+        "expected_direction": "Down only, as test_lint_sleep."
+      }
+    },
+    "test_lint_real_model": {
+      "description": "Real models in Rust test code, in code and string literals: provider key names (OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, OPENROUTER_API_KEY, HF_TOKEN, HUGGING_FACE_HUB_TOKEN), a URL to a provider host or its subdomain (api.openai.com, api.anthropic.com, generativelanguage.googleapis.com, openrouter.ai, huggingface.co, api.together.xyz, api.groq.com, api.mistral.ai), model files (.gguf, .safetensors, .onnx) and local model servers (ollama, llama-server, :11434). Same test-code definition, allow form and scanner as test_lint_sleep (rule name real-model). Use oneiron_testkit's ScriptedProvider and HashingEmbedder.",
+      "count": 22,
+      "_attribution": {
+        "summary": "Moved from the Rust test lint with test_lint_sleep; see its attribution. Main b0b766831e14 measures 22, the Rust bar.",
+        "expected_direction": "Down only, as test_lint_sleep."
+      }
     }
   },
   "_metric_definition_gap_found_2026_09_09": "CLOSED 2026-09-09. The non-test exclusion matched 'tests.rs' and '*_tests.rs' but not 'tests_*.rs', a spelling the repo also uses (branch_store_oracle/tests_leak_sweep.rs, api/git_http/tests_auth.rs, oneiron-bench/beam/tests_*.rs and 15 more), so those 18 files counted as production. check.sh now excludes that spelling too, in both the ripgrep globs and the giant_files find pipeline. NO COUNT MOVED: those 18 files hold zero '#[allow(' and zero print macros and none reaches 800 lines. This closed a latent hole before it could report a test file as a production giant; it did not relax any number.",
