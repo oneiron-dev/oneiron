@@ -1333,8 +1333,8 @@ fn own_carry_bound_in_txn(
     Ok((!projected && spec.kind.decodes(&row.value)).then_some(row.value))
 }
 
-/// `projected` met with the bound a carried row keeps here ([`carried_row_in_txn`], stage 7a-4):
-/// a copy never loosens what this install carried. A quarantined row stays quarantined.
+/// `projected` met with the bound a carried row keeps here ([`own_carry_bound_in_txn`], stage
+/// 7a-4): a copy never loosens what this install carried. A quarantined row stays quarantined.
 fn met_with_local(
     spec: &SettingSpec,
     mut projected: Projected,
