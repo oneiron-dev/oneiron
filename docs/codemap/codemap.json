@@ -80215,7 +80215,7 @@
      "path": "src/skill_reliability/archive.rs",
      "purpose": "Imported reliability history is inert data, not a local posterior or synced base",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -116612,7 +116612,7 @@
     },
     "skill_reliability": {
      "files": 22,
-     "impl_vault": true,
+     "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection"
