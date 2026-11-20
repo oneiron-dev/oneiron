@@ -1,11 +1,12 @@
 //! A policy holder who is not the vault's Owner cannot turn a stored
 //! withholding row off (FIX row CHECK-IN-POLICY-ROW-HOLDER-NO-JUDGE; Engine
-//! rulings 20 Nov 23:56 = A and 21 Nov 00:30 = B). A holder's change inside
-//! its named powers is its own proof and lands at once, in either direction
-//! (ARCH-0082:113, DEC-0005:58). A C act moves only by the Owner's own row
-//! (ARCH-0082:243): on the owner-policy table that is the Remove, or the Edit
-//! to another action, of a stored Block or Reword row. An add, and an edit
-//! that makes a row Block, still land at once.
+//! rulings 20 Nov 23:56 = A, 21 Nov 00:30 = B and 01:29 = B). A holder's change
+//! inside its named powers is its own proof and lands at once, in either
+//! direction (ARCH-0082:113, DEC-0005:58). A C act moves only by the Owner's
+//! own row (ARCH-0082:243): on the owner-policy table that is the Remove of a
+//! stored Block or Reword row, and an Edit of one that changes its text or
+//! makes it neither Block nor its own action. An add, and an edit that keeps
+//! the text and makes a row Block, still land at once.
 //!
 //! The shipped grant rows give the `policy.change` verb to no role, so the
 //! owner first lets the Admin role carry it through the hidden door
@@ -180,6 +181,19 @@ fn an_admin_holder_cannot_remove_a_stored_block_row() {
 fn an_admin_holder_cannot_edit_a_stored_reword_row_down_to_warn() {
     let (_dir, vault, roster) = stored(PolicyRowAction::Reword);
     let result = vault.change_policy_row(&roster.admin, edit(PolicyRowAction::Warn), 11);
+    assert_refused(&vault, result);
+}
+
+#[test]
+fn an_admin_holder_cannot_rewrite_a_stored_block_rows_text() {
+    let (_dir, vault, roster) = stored(PolicyRowAction::Block);
+    let rewrite = PolicyRowChange::Edit {
+        row_ref: ROW.into(),
+        text: "Keep nothing private".into(),
+        action: PolicyRowAction::Block,
+        scope: scope(),
+    };
+    let result = vault.change_policy_row(&roster.admin, rewrite, 11);
     assert_refused(&vault, result);
 }
 
