@@ -59,6 +59,12 @@ struct CalendarConnectorSeatRecord {
     cursor: Option<String>,
     kill_switch: Option<CalendarConnectorKillSwitchState>,
     last_sync: Option<CalendarSyncOutcome>,
+    /// The system of a seat the setting projection took out of service
+    /// ([`seat_setup_changed_in_txn`]): its imported events keep their passports, so the system
+    /// stays its own ([`seat_of_system_in_txn`]), as its seat ref does. Absent on every other
+    /// record, whose bytes it leaves as they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retired_system: Option<String>,
 }
 
 /// The installed seat at `seat_ref` joined with what its syncs and kill switch wrote, or none
@@ -104,13 +110,15 @@ fn put_record_in_txn(
             cursor: row.seat.cursor.clone(),
             kill_switch: row.seat.kill_switch.clone(),
             last_sync: row.last_sync.clone(),
+            retired_system: None,
         },
     )?;
     Ok(())
 }
 
-/// The seat ref of an installed seat whose passports carry `system`, or none, read in `txn`. A
-/// stopped seat still holds its system: its imported events keep their passports.
+/// The seat ref of a seat whose passports carry `system`, or none, read in `txn`: an installed
+/// seat, or one the setting projection took out of service. A stopped seat still holds its
+/// system, and so does one taken out of service: its imported events keep their passports.
 pub(crate) fn seat_of_system_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -124,13 +132,36 @@ pub(crate) fn seat_of_system_in_txn(
             return Ok(Some(seat_ref));
         }
     }
-    Ok(None)
+    Ok(STATES
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .find(|(_, record)| record.retired_system.as_deref() == Some(system))
+        .map(|(seat_ref, _)| seat_ref))
+}
+
+/// Keeps the system of the installed seat at `seat_ref` its own once the setting projection
+/// takes the seat out of service ([`seat_setup_changed_in_txn`]), in its record, which also
+/// keeps the seat ref from being installed again.
+fn retire_seat_system_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    seat_ref: &str,
+    system: &str,
+) -> crate::Result<()> {
+    let seat_ref = seat_ref.to_owned();
+    let mut record = STATES
+        .get(&vault.store, txn, &seat_ref)?
+        .unwrap_or_default();
+    record.retired_system = Some(system.to_owned());
+    STATES.put(&vault.store, txn, &seat_ref, &record)?;
+    Ok(())
 }
 
 /// The `calendar.connector_seat` hook, in the write that changes a seat's row. It keeps the
 /// rules the configure door had: a value row at a seat ref, naming that ref, installed once.
 /// A configured seat is immutable (a change or a clear is refused; a new configuration takes a
-/// new seat ref), and a seat ref that a seat already used is never installed again, so no
+/// new seat ref), but for the setting projection's taking it out of service, which keeps its
+/// system its own; and a seat ref that a seat already used is never installed again, so no
 /// cursor or kill switch outlives its seat. A seat never imports under the system of an
 /// installed ICS feed: each complete poll of the feed cancels every event of its system that
 /// the feed body lacks, the seat's events too. A system whose feed was uninstalled is open to a
@@ -168,17 +199,25 @@ pub(crate) fn seat_setup_changed_in_txn(
             .and_then(Kind::<Option<CalendarSeatSetup>>::decode)
             .flatten()
     };
-    // The setting projection's quarantine of an installed seat (a seat whose value beside its
-    // signed act was erased here, or no longer matches it) takes it out of service: its row then
-    // reads no seat. Nobody's change of an installed seat lands.
-    if decode(change.prior.as_ref()).is_some()
-        && change.standing != Some(ChangeStanding::Quarantined)
-    {
-        return Err(crate::Error::InvalidConfig(
-            "a configured seat is immutable; use a new seat_ref".into(),
-        ));
-    }
     let setup = decode(change.value.as_ref());
+    // The setting projection takes an installed seat out of service where its row reads no
+    // seat: the seat's value beside its signed act was erased here or no longer matches it
+    // (`Quarantined`), or installs at its ref meet with no common predecessor (`Conflict`), so
+    // every machine reads no seat there. Its system stays its own ([`seat_of_system_in_txn`]).
+    // Nobody's change of an installed seat lands.
+    if let Some(installed) = decode(change.prior.as_ref()) {
+        let out_of_service = setup.is_none()
+            && matches!(
+                change.standing,
+                Some(ChangeStanding::Quarantined | ChangeStanding::Conflict)
+            );
+        if !out_of_service {
+            return Err(crate::Error::InvalidConfig(
+                "a configured seat is immutable; use a new seat_ref".into(),
+            ));
+        }
+        return retire_seat_system_in_txn(vault, txn, seat_ref, &installed.config.system);
+    }
     if let Some(setup) = setup {
         if setup.config.seat_ref != seat_ref {
             return Err(crate::Error::InvalidConfig(
