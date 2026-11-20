@@ -21,7 +21,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/budget_ids.rs` | src | s | 4 crate-vis | — | Durable per-pass budget-id derivation and occupied-row index scan |
 | `src/supervisor/budget_tests.rs` | test | m | — | — | Durable budget-id, index-scan, and config-validation tests |
 | `src/supervisor/config.rs` | src | s | 2 struct · 2 fn · 1 type · 6 crate-vis | RestartBackoffConfig, WakeSupervisorConfig | Static config, restart backoff, and budget-id length ceilings |
-| `src/supervisor/dreamer_jobs.rs` | src | s | 2 struct · 2 fn · 2 crate-vis | ConflictSettleCursor, DreamerJobsExecutor | The host adapter for the Dreamer's job crate (untangle 6.9c PR 4, S69-RUN = A): a strength attempt runs… |
+| `src/supervisor/dreamer_jobs.rs` | src | m | 2 struct · 2 fn · 2 crate-vis | ConflictSettleCursor, DreamerJobsExecutor | The host adapter for the Dreamer's job crate (untangle 6.9c PR 4, S69-RUN = A): a strength attempt runs… |
 | `src/supervisor/extraction_decisions.rs` | src | s | 2 struct · 1 trait · 2 fn | ExtractionAttemptLender, ExtractionDecisionGate, ExtractionDecisionResources | Lends a prepared pass's resources to one extraction attempt's bound calls |
 | `src/supervisor/factory.rs` | src | m | 2 struct · 1 trait · 19 fn · 1 type | ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan | Per-pass attempt-executor factory trait and default implementation |
 | `src/supervisor/factory_tests.rs` | test | L | — | — | Factory, planner-routing, and attempt-fixture tests |
@@ -40,6 +40,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/mod.rs` | src | s | 13 re-export | — | The wake-pass supervisor (ONE-1683): the loop that pumps [`DreamerWakeDriver::run_wake_pass`] — the starter… |
 | `src/supervisor/pass.rs` | src | s | 5 crate-vis | — | Single wake-pass assembly and engine delegation |
 | `src/supervisor/program_factory.rs` | src | s | 1 struct · 1 fn | ProgramExecutorFactory | The turn program runtime around a host's executor factory (DOOR-141 PR2) |
+| `src/supervisor/psych_profile_decisions.rs` | src | s | 3 crate-vis | — | Lends a prepared pass's resources to one psych profile attempt's bound generation step (untangle 6.9i) |
 | `src/supervisor/retry.rs` | src | s | 13 crate-vis | — | What a pass's outcome leaves owed, and the debt of owed passes (FIX 8601) |
 | `src/supervisor/session_allocations.rs` | src | s | 2 struct · 2 fn | SessionAllocation, SessionAllocationOwner | Fact-only session ownership rows (FIX10370): which vault sessions hold bytes on a device's worker, as the… |
 | `src/supervisor/shutdown.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | ShutdownHandle | Cooperative shutdown handle and listener channels |
@@ -65,6 +66,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/dreamer_conflict_settle.rs` | test | L | — | — | The production conflict-settlement facet (untangle 6.9d S69D4) |
 | `tests/dreamer_extraction_loan.rs` | test | s | — | — | Exercises the production extraction lender without switching native extraction jobs |
 | `tests/dreamer_extraction_steps.rs` | test | m | — | — | Exercises the production extraction step lender without switching native extraction jobs |
+| `tests/dreamer_psych_profile.rs` | test | m | — | — | MAP-6.9 row 6.9i (untangle 6.9i PR 2): the Dreamer's Psych Mirror job |
 | `tests/dreamer_strength_archive.rs` | test | s | — | — | The production strength facet (untangle 6.9c PR 4, MAP-6.9 row 6.9c): a wake pass through the production… |
 | `tests/extraction_decisions.rs` | test | m | — | — | Bound extraction decision orchestration over lent scripted verdicts |
 | `tests/extraction_decisions/support.rs` | test | m | 25 crate-vis | — | Lent scripted verdict fixtures for bound extraction decision tests |
