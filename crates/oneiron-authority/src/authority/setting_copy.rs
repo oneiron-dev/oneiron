@@ -19,6 +19,14 @@
 //! least one act, each by the row of its own entry it copies: a row of the same key and item, at
 //! a project's scope. Which acts a machine holds, counts and can read, and whether the copy names
 //! every head it replaces, each machine's fold and projection judge.
+//!
+//! A project's birth is a copy too (stage 7c-3b; DESIGN 1.6, `born`): the door that creates the
+//! project copies the row of a `born` key from its source key ([`SettingCopyRow::is_birth`]). Its
+//! row is the project's own value row, and it is the first act there (`seen` is the empty
+//! revision). It names the source key's heads: the live acts of its vault value row, and the
+//! head act of a pack whose layer holds it, by that pack's row of the key. Whether those were the
+//! source's heads, the fold judges; whether the key it copies is the one `born` names, each
+//! machine's projection.
 
 use std::collections::BTreeSet;
 
@@ -49,7 +57,8 @@ pub struct SettingCopy {
 /// One carried row of a copy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingCopyRow {
-    /// The carried row: mode `Carried`, a project's scope.
+    /// The carried row: mode `Carried`, a project's scope; for a birth, the project's own value
+    /// row (stage 7c-3b).
     pub slot: RowKey,
     /// The row's target revision the mover's fold showed
     /// ([`super::policy_setting_revision`]): the copy supersedes exactly those live acts.
@@ -76,22 +85,60 @@ impl SettingCopyRow {
         setting_slot_target(&self.slot)
     }
 
-    /// A carried row of a catalogue key's name, at a project's scope, naming at least one act,
-    /// each once, each on a row of the same key and item at a project's scope.
+    /// Whether the row is a project's birth (stage 7c-3b; module doc): the project's own value
+    /// row, not a carried one.
+    #[must_use]
+    pub fn is_birth(&self) -> bool {
+        self.slot.mode == SettingMode::Value
+    }
+
+    /// A row of a catalogue key's name, at a project's scope, naming at least one act, each
+    /// once. A carried row names acts on rows of the same key and item at a project's scope. A
+    /// birth ([`Self::is_birth`]) has no item and the empty revision as its `seen`, and names acts
+    /// on rows of one other key with no item: its vault value row, or a pack's row.
     fn validate(&self) -> Result<()> {
         if !is_policy_setting_name(&self.slot.name)
             || PolicySetting::parse(&self.slot.name).is_some()
-            || self.slot.mode != SettingMode::Carried
+            || !matches!(self.slot.mode, SettingMode::Carried | SettingMode::Value)
             || !matches!(self.slot.scope, SettingScope::Project(_))
             || self.names.is_empty()
         {
             return Err(invalid_authority());
+        }
+        if self.is_birth() {
+            return self.validate_birth();
         }
         let mut named = BTreeSet::new();
         for name in &self.names {
             if name.slot.name != self.slot.name
                 || name.slot.item != self.slot.item
                 || !matches!(name.slot.scope, SettingScope::Project(_))
+                || !named.insert(name)
+            {
+                return Err(invalid_authority());
+            }
+        }
+        Ok(())
+    }
+
+    /// A birth's shape ([`Self::validate`]): no item, the empty revision, and names on one other
+    /// catalogue key's item-less value rows, at the vault or a pack, each once.
+    fn validate_birth(&self) -> Result<()> {
+        let source = &self.names[0].slot.name;
+        if self.slot.item.is_some()
+            || self.seen != [0; 32]
+            || *source == self.slot.name
+            || !is_policy_setting_name(source)
+            || PolicySetting::parse(source).is_some()
+        {
+            return Err(invalid_authority());
+        }
+        let mut named = BTreeSet::new();
+        for name in &self.names {
+            if name.slot.name != *source
+                || name.slot.item.is_some()
+                || name.slot.mode != SettingMode::Value
+                || !matches!(name.slot.scope, SettingScope::Vault | SettingScope::Pack(_))
                 || !named.insert(name)
             {
                 return Err(invalid_authority());

@@ -60,7 +60,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use oneiron_setting_contract::RowKey;
+use oneiron_setting_contract::{RowKey, SettingMode, SettingScope};
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -201,8 +201,10 @@ pub(super) fn apply_policy_setting(
 /// lands on its target's frontier as an engine statement
 /// ([`choice_landing`] with no owner), its choice the entry's own hash. A row
 /// that leaves out a live act of its target, which it would replace, makes
-/// the entry invalid. Every row is judged against the state before the
-/// entry, and only then do they all land.
+/// the entry invalid. A birth (stage 7c-3b) lands only as the first act on
+/// its row (its `seen` is the empty revision) and only when it names its
+/// source's heads ([`birth_names_source_heads`]). Every row is judged against
+/// the state before the entry, and only then do they all land.
 pub(super) fn apply_setting_copy(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -221,24 +223,29 @@ pub(super) fn apply_setting_copy(
             target,
             row.names
                 .iter()
-                .filter_map(|name| {
-                    let named = oneiron_authority::authority::setting_slot_target(&name.slot);
-                    Some((named.ok()?, name.act))
-                })
+                .filter_map(|name| Some((copy_name_target(&name.slot).ok()?, name.act)))
                 .collect::<BTreeSet<_>>(),
         );
-        let named: BTreeSet<AuthorityEntryHash> = row
-            .names
-            .iter()
-            .filter(|name| name.slot == row.slot)
-            .map(|name| name.act)
-            .collect();
-        if state
-            .policy_settings
-            .live_choices(target)
-            .any(|live| !named.contains(&live))
-        {
-            return Err(AuthorityFoldIssue::InvalidEntry(hash));
+        if row.is_birth() {
+            if !birth_names_source_heads(state, row)
+                .map_err(|_| AuthorityFoldIssue::InvalidEntry(hash))?
+            {
+                return Err(AuthorityFoldIssue::InvalidEntry(hash));
+            }
+        } else {
+            let named: BTreeSet<AuthorityEntryHash> = row
+                .names
+                .iter()
+                .filter(|name| name.slot == row.slot)
+                .map(|name| name.act)
+                .collect();
+            if state
+                .policy_settings
+                .live_choices(target)
+                .any(|live| !named.contains(&live))
+            {
+                return Err(AuthorityFoldIssue::InvalidEntry(hash));
+            }
         }
         let at = ChoiceAt {
             target,
@@ -264,6 +271,60 @@ pub(super) fn apply_setting_copy(
     }
     state.setting_copy_names.insert(hash, names);
     Ok(())
+}
+
+/// The target of the row a copy's name names: a pack's row of a key is read from the pack's
+/// head (stage 7c-3b), so it names the pack's target ([`setting_pack_target`]); any other row its
+/// own ([`setting_slot_target`]).
+///
+/// # Errors
+/// As [`setting_slot_target`].
+fn copy_name_target(slot: &RowKey) -> Result<EntityId> {
+    match &slot.scope {
+        SettingScope::Pack(pack) => setting_pack_target(pack),
+        _ => setting_slot_target(slot),
+    }
+}
+
+/// Whether a birth's names (stage 7c-3b; DESIGN 1.6, `born`) are its source's heads in `state`,
+/// the fold before the entry: its vault names are every live act of the source key's vault value
+/// row, and each pack name is a live head act of its pack. Which key is the source, the shape
+/// check pins (one key, [`SettingCopyRow::is_birth`]), and each machine's projection checks it is
+/// the one the born key's `born` names.
+fn birth_names_source_heads(state: &FoldState, row: &SettingCopyRow) -> Result<bool> {
+    let Some(first) = row.names.first() else {
+        return Ok(false);
+    };
+    let vault_row = RowKey {
+        name: first.slot.name.clone(),
+        item: None,
+        mode: SettingMode::Value,
+        scope: SettingScope::Vault,
+    };
+    let mut vault_named = BTreeSet::new();
+    for name in &row.names {
+        match &name.slot.scope {
+            SettingScope::Vault => {
+                vault_named.insert(name.act);
+            }
+            SettingScope::Pack(pack) => {
+                let pack_target = setting_pack_target(pack)?;
+                if !state
+                    .policy_settings
+                    .live_choices(pack_target)
+                    .any(|live| live == name.act)
+                {
+                    return Ok(false);
+                }
+            }
+            _ => return Ok(false),
+        }
+    }
+    let live: BTreeSet<AuthorityEntryHash> = state
+        .policy_settings
+        .live_choices(setting_slot_target(&vault_row)?)
+        .collect();
+    Ok(live == vault_named)
 }
 
 /// The `SettingPackHead` transition (stage 7c-3a): the head lands on its pack's target as an

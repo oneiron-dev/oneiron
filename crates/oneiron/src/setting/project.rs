@@ -78,7 +78,7 @@ use serde::{Deserialize, Serialize};
 
 use oneiron_authority::authority::{
     ActSurface, AuthorityEntryHash, OwnerActKind, PolicySetting, SettingCopyName,
-    setting_slot_target, setting_value_digest,
+    setting_pack_target, setting_slot_target, setting_value_digest,
 };
 use oneiron_contracts::fingerprint::{Fingerprinter, purposes};
 use oneiron_setting_contract::{ChangeStanding, Order, RowKey, SettingStanding};
@@ -88,7 +88,7 @@ use super::beside::{
 };
 use super::born::is_born_value_slot;
 use super::change::{record_change_in_txn, record_receipt_in_txn, record_signed_entry_in_txn};
-use super::pack::layer_default_in_txn;
+use super::pack::{fold_layer, layer_default_in_txn, proved_pack_row_in_txn};
 use super::read::{StoredRow, table_of};
 use super::{
     EncodedValue, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, SettingSync,
@@ -404,6 +404,8 @@ enum HeadBody {
     Beside([u8; 32]),
     /// A move's copy: the acts it copies (stage 7a-4).
     Copy(Vec<SettingCopyName>),
+    /// A project's birth: the source key's heads it copies (stage 7c-3b, [`birth_value_in_txn`]).
+    Birth(Vec<SettingCopyName>),
 }
 
 impl Head {
@@ -460,11 +462,16 @@ enum Inert {
 /// The head `head` reads as, or why it leaves the row as it is.
 fn head_of(head: &SettingSlotHead) -> std::result::Result<Head, Inert> {
     if let Some(copy) = &head.copy {
+        let body = if copy.is_birth() {
+            HeadBody::Birth(copy.names.clone())
+        } else {
+            HeadBody::Copy(copy.names.clone())
+        };
         return Ok(Head {
             act: head.act,
             decider: None,
             slot: copy.slot.clone(),
-            body: HeadBody::Copy(copy.names.clone()),
+            body,
         });
     }
     // A pack's head (stage 7c-3a) names no row: each machine's pack door weighs its own
@@ -523,6 +530,10 @@ fn value_of(
         HeadBody::Beside(digest) => beside_of(vault, txn, reads, spec, &head.slot, *digest),
         HeadBody::Copy(names) => {
             copy_value_in_txn(vault, txn, (reads, name_counts), spec, names, depth)
+        }
+        HeadBody::Birth(names) => {
+            let read = birth_value_in_txn(vault, txn, (reads, name_counts), spec, names, depth)?;
+            Ok(read.map(|(value, _)| value))
         }
     }
 }
@@ -586,6 +597,98 @@ fn copy_value_in_txn(
         });
     }
     Ok(Ok(met))
+}
+
+/// A birth's value (stage 7c-3b; DESIGN 1.6, `born`), and whether it is a copy of a pack's
+/// default (seeded). The born key `spec` copies the key its `born` names: a birth that names
+/// another key's rows reads as one this install cannot read ([`Short::Unreadable`]). Its vault
+/// names read as a copy of the source's vault value row, under the source's own spec
+/// ([`copy_value_in_txn`]): a bound there is the value, explicit. Else its pack names give the
+/// value ([`pack_name_value_in_txn`]), met as the layer meets them, seeded. A pack name whose
+/// table this install does not prove leaves the row as it is for now ([`Inert::ForNow`]: the
+/// born thing reads strictest, pending, until a pass proves it), and on a row a copy names reads
+/// as one this install cannot read. `None` when no name gives a bound. A value the born key does
+/// not decode is unreadable.
+fn birth_value_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    (reads, name_counts): (&BesideReads, &NameCounts),
+    spec: &SettingSpec,
+    names: &[SettingCopyName],
+    depth: usize,
+) -> Result<std::result::Result<(Option<EncodedValue>, bool), Short>> {
+    let source = match spec.born.map(|born| spec_named(born.from)) {
+        Some(Ok(source)) if names.iter().all(|name| name.slot.name == source.name) => source,
+        _ => return Ok(Err(Short::Unreadable)),
+    };
+    let decoded = |value: EncodedValue, seeded: bool| {
+        if spec.kind.decodes(&value) {
+            Ok((Some(value), seeded))
+        } else {
+            Err(Short::Unreadable)
+        }
+    };
+    let (at_vault, at_packs): (Vec<SettingCopyName>, Vec<SettingCopyName>) = names
+        .iter()
+        .cloned()
+        .partition(|name| name.slot.scope == SettingScope::Vault);
+    if !at_vault.is_empty() {
+        match copy_value_in_txn(vault, txn, (reads, name_counts), source, &at_vault, depth)? {
+            Ok(Some(value)) => return Ok(decoded(value, false)),
+            Ok(None) => {}
+            Err(short) => return Ok(Err(short)),
+        }
+    }
+    let mut rows = Vec::with_capacity(at_packs.len());
+    for name in &at_packs {
+        let SettingScope::Pack(pack) = &name.slot.scope else {
+            return Ok(Err(Short::Unreadable));
+        };
+        let value = match pack_name_value_in_txn(vault, txn, name_counts, source, pack, name.act)? {
+            Some(Some(value)) => value,
+            Some(None) => match source.kind.strictest_value()? {
+                Some(strictest) => strictest,
+                None => return Ok(Err(Short::Unreadable)),
+            },
+            None if depth == 0 => return Ok(Err(Short::Inert(Inert::ForNow))),
+            None => return Ok(Err(Short::Unreadable)),
+        };
+        rows.push((pack.clone(), value));
+    }
+    Ok(match fold_layer(source, &rows) {
+        Some(value) => decoded(value, true),
+        None => Ok((None, false)),
+    })
+}
+
+/// What a birth's name of `pack`'s head act `act` gives a row of `source` here (stage 7c-3b):
+/// where the head counts in full here and names the table this install's own head of the pack
+/// names, this install's row of `source` in that pack ([`proved_pack_row_in_txn`]), the record
+/// of what it accepted from that table. `Some(None)` where this install refused the head, holds
+/// no full count of it, holds no head of the pack under it, or its row is gone: the name reads
+/// as one this install cannot read. `None` where the head names a table this install's head does
+/// not: the table is not proved here.
+fn pack_name_value_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    name_counts: &NameCounts,
+    source: &SettingSpec,
+    pack: &str,
+    act: AuthorityEntryHash,
+) -> Result<Option<Option<EncodedValue>>> {
+    if vault.policy_setting_act_refused_in_txn(txn, act)? {
+        return Ok(Some(None));
+    }
+    let target = setting_pack_target(pack)?;
+    let full = name_counts
+        .get(&target)
+        .and_then(|counts| counts.get(&act))
+        .is_some_and(|named| named.count == ChoiceCount::Full);
+    let head = vault.setting_slot_head_in_txn(txn, target, act)?.pack;
+    let Some(head) = head.filter(|head| full && head.pack == pack) else {
+        return Ok(Some(None));
+    };
+    proved_pack_row_in_txn(&vault.store, txn, pack, &head.digest, source)
 }
 
 /// What the entry `name` names gives the row it names, under `spec`, by what it counts for on
@@ -1180,7 +1283,15 @@ pub(super) fn project_target_in_txn(
         .filter(|bound| spec.kind.decodes(bound));
     let projected = met_with_local(spec, projected, bound.as_ref());
     let local = kept.and_then(|row| row.local);
-    let changed = write_row_in_txn(vault, txn, spec, &slot, &projected, local.as_ref(), now)?;
+    let birth = birth_of_in_txn(vault, txn, (&reads, &fold.name_counts), spec, &heads)?;
+    let changed = write_row_in_txn(
+        vault,
+        txn,
+        (spec, &slot),
+        &projected,
+        (local.as_ref(), birth),
+        now,
+    )?;
     // A pin keeps its release only while every act it comes from counts in full here: one that
     // counts as a safe move keeps its value and is read as a value row (DESIGN 1.6, "The read
     // of one slot", step 3). A pin on a key with no meet never takes a safe move's own value.
@@ -1207,6 +1318,27 @@ pub(super) fn project_target_in_txn(
         changed: changed.then_some(spec),
         receipt: Some((projected.standing, projected.with)),
     })
+}
+
+/// Whether the row's one head is a project's birth that reads here (stage 7c-3b), and if so
+/// whether it reads as a copy of a pack's default ([`birth_value_in_txn`]): `Some(seeded)` for
+/// such a birth; `None` for a birth this install cannot read (its quarantined row is a change
+/// like any other), any other head, or several.
+fn birth_of_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    (reads, name_counts): (&BesideReads, &NameCounts),
+    spec: &SettingSpec,
+    heads: &[Head],
+) -> Result<Option<bool>> {
+    let [head] = heads else {
+        return Ok(None);
+    };
+    let HeadBody::Birth(names) = &head.body else {
+        return Ok(None);
+    };
+    let read = birth_value_in_txn(vault, txn, (reads, name_counts), spec, names, 0)?;
+    Ok(read.ok().map(|(_, seeded)| seeded))
 }
 
 /// The carried row `slot` as stored here, which bounds its projection (stage 7a-4): by the bound
@@ -1341,10 +1473,9 @@ fn moved_since(
 fn write_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    spec: &'static SettingSpec,
-    slot: &RowKey,
+    (spec, slot): (&'static SettingSpec, &RowKey),
     projected: &Projected,
-    local: Option<&EncodedValue>,
+    (local, birth): (Option<&EncodedValue>, Option<bool>),
     now: u64,
 ) -> Result<bool> {
     let deciding = projected.deciding;
@@ -1374,6 +1505,26 @@ fn write_row_in_txn(
     };
     if same {
         return Ok(false);
+    }
+    // A birth over no row is the thing's start, as the door that created it wrote it on its own
+    // install (stage 7c-3b, `born.rs`): no change row, no move.
+    if let (Some(seeded), None, Some(value)) = (birth, &stored, &projected.value) {
+        table.put(
+            &vault.store,
+            txn,
+            &key,
+            &StoredRow {
+                value: value.clone(),
+                by,
+                setter,
+                set_at: now,
+                change: 0,
+                weight_runs: None,
+                local: local.cloned(),
+                seeded,
+            },
+        )?;
+        return Ok(true);
     }
     let prior = stored.flatten().map(|row| row.value);
     let recorded = record_change_in_txn(
@@ -1413,7 +1564,7 @@ fn write_row_in_txn(
                 change: recorded.sequence,
                 weight_runs: None,
                 local: local.cloned(),
-                seeded: false,
+                seeded: birth.unwrap_or(false),
             },
         )?,
         None => {

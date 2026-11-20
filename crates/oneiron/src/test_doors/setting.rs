@@ -672,6 +672,41 @@ pub fn setting_slot_heads(
     vault.setting_slot_live_in_txn(&txn, target)
 }
 
+/// What the live copies on `key`'s row (`item`, `mode`, `scope`) name, each as its row's key and
+/// scope and the act (stage 7c-3b: a birth names its source's heads). Empty when no copy is live
+/// on the row.
+///
+/// # Errors
+///
+/// A key name of another shape; storage errors.
+#[cfg(feature = "test-support")]
+pub fn setting_copy_names(
+    vault: &Vault,
+    (key, item, mode, scope): SlotName<'_>,
+) -> Result<
+    Vec<(
+        String,
+        SettingScope,
+        oneiron_authority::authority::AuthorityEntryHash,
+    )>,
+> {
+    let target =
+        oneiron_authority::authority::setting_slot_target(&row_key(key, item, mode, scope))?;
+    let txn = vault.store.env.read_txn()?;
+    let mut names = Vec::new();
+    for act in vault.setting_slot_live_in_txn(&txn, target)? {
+        if let Some(copy) = vault.setting_slot_head_in_txn(&txn, target, act)?.copy {
+            names.extend(
+                copy.names
+                    .into_iter()
+                    .map(|name| (name.slot.name, name.slot.scope, name.act)),
+            );
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
 /// One carried row a copy lists, with the acts it names, each by its own row.
 #[cfg(feature = "test-support")]
 pub type CopiedRow<'a> = (
