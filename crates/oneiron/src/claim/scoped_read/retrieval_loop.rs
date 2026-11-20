@@ -36,7 +36,9 @@ impl ScopedRead<'_> {
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&admitted)
             .run_for_pack()?;
-        let final_read = self.filter_search_results_with_suppression(
+        // The loop's receipts report the key's live Grants on any lane
+        // (FIX-LIST GRANT-RECEIPT-OTHER-READ-LANES).
+        let final_read = self.filter_search_results_reporting(
             output.scores,
             limit,
             requested,
@@ -47,6 +49,7 @@ impl ScopedRead<'_> {
                 excluded: excluded.snapshot_ids()?,
             },
             &output.revisions,
+            true,
         )?;
         Ok(LoopSearch {
             handles: final_read
@@ -94,24 +97,30 @@ impl ScopedRead<'_> {
     /// receipt's applied scope is the candidates a search under `requested`
     /// ranks, read in the same snapshot, so the loop's next step, asked under
     /// it, never refuses a row this read admitted under one of the reader's
-    /// own live Grants. Every row check is the point read's own.
+    /// own live Grants. Every row check is the point read's own. The receipt
+    /// reports the live Grants the rows' gate held in that snapshot, on any
+    /// lane (FIX-LIST GRANT-RECEIPT-OTHER-READ-LANES).
     fn loop_read_projected<T>(
         &self,
         reads: &[PointRead<'_>],
         requested: &RetrievalFilter,
         project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> Result<T>,
     ) -> Result<ScopedReadResult<T>> {
-        let read = self.read_projected(reads, Some(requested), |txn, rows| {
+        let read = self.read_projected_held(reads, Some(requested), |txn, held, rows| {
             let plan = self.search_plan_in(txn, Some(requested))?;
-            Ok::<_, Error>((project(txn, rows)?, plan))
+            let receipt = self.receipt_reporting_in(
+                txn,
+                Some(requested),
+                &plan.policy,
+                &plan.candidates,
+                0,
+                Some(held),
+                true,
+            );
+            Ok((project(txn, rows)?, receipt))
         })?;
-        let (value, plan) = read.value;
-        let receipt = self.receipt_for(
-            Some(requested),
-            &plan.policy,
-            &plan.candidates,
-            read.receipt.suppressed_count,
-        );
+        let (value, mut receipt) = read.value;
+        receipt.add_suppressed(read.receipt.suppressed_count);
         Ok(ScopedReadResult { value, receipt })
     }
 

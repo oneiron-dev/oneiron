@@ -436,8 +436,38 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
         filter: &ResolvedRetrievalFilter,
         policy: &PolicyManifestResolution,
+        previously_suppressed: SuppressedSearchRows,
+        revisions: &std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
+    ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
+        self.filter_search_results_reporting(
+            results,
+            limit,
+            requested,
+            filter,
+            policy,
+            previously_suppressed,
+            revisions,
+            self.receipts_include_live_grants,
+        )
+    }
+
+    /// [`Self::filter_search_results_with_suppression`], its receipt
+    /// reporting the key's live Grants when `report_live_grants`, whatever
+    /// this lane's own setting ([`Self::receipt_reporting_in`]).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "final scoring admission conjoins plan authority, fresh authority and source frontiers"
+    )]
+    pub(super) fn filter_search_results_reporting(
+        &self,
+        results: Vec<ScoredEntity>,
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+        filter: &ResolvedRetrievalFilter,
+        policy: &PolicyManifestResolution,
         mut previously_suppressed: SuppressedSearchRows,
         revisions: &std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
+        report_live_grants: bool,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
         let txn = self.grant_read_txn()?;
         // The scoring txn may have completed before a revocation. The final
@@ -526,21 +556,23 @@ impl ScopedRead<'_> {
         let candidates = self.candidate_filter_in(&txn, policy, filter, requested);
         let fresh_candidates =
             self.candidate_filter_in(&txn, &fresh_policy, &fresh_filter, requested);
-        let mut receipt = self.receipt_in(
+        let mut receipt = self.receipt_reporting_in(
             &txn,
             requested,
             policy,
             &candidates,
             previously_suppressed,
             Some(&held),
+            report_live_grants,
         );
-        receipt.restrict_with(&self.receipt_in(
+        receipt.restrict_with(&self.receipt_reporting_in(
             &txn,
             requested,
             &fresh_policy,
             &fresh_candidates,
             suppressed,
             Some(&held),
+            report_live_grants,
         ));
         Ok(ScopedReadResult { value, receipt })
     }
