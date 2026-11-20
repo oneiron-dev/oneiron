@@ -238,20 +238,31 @@ fn a_member_lane_syncs_its_granted_window_and_stays_up() {
             )
             .unwrap(),
         );
-        // The run's events by `Debug` form, and the first `Synced` signal.
+        // The run's events by `Debug` form, the first `Synced` signal, and
+        // a signal on a disconnect, error or refused upgrade after it.
         let events = Arc::new(Mutex::new(Vec::new()));
         let synced = Arc::new(tokio::sync::Notify::new());
+        let trouble = Arc::new(tokio::sync::Notify::new());
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
         let run_handle = tokio::spawn({
             let connection = Arc::clone(&connection);
             let events = Arc::clone(&events);
             let synced = Arc::clone(&synced);
+            let trouble = Arc::clone(&trouble);
+            let mut synced_seen = false;
             async move {
                 connection
                     .run_observed(shutdown_rx, move |event: SyncEvent| {
                         let debug = format!("{event:?}");
                         if debug == "StatusChanged(Synced)" {
+                            synced_seen = true;
                             synced.notify_one();
+                        } else if synced_seen
+                            && (debug == "StatusChanged(Disconnected)"
+                                || debug.starts_with("Error(")
+                                || debug.starts_with("Upgrade"))
+                        {
+                            trouble.notify_one();
                         }
                         events.lock().expect("event sink").push(debug);
                     })
@@ -265,7 +276,8 @@ fn a_member_lane_syncs_its_granted_window_and_stays_up() {
         // tick (`EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS = 1`,
         // `crates/oneiron/src/sync/connection/session.rs:42`): 2.5 s covers
         // two ticks, so a forbidden steady frame would have closed the lane.
-        tokio::time::sleep(Duration::from_millis(2_500)).await;
+        // The wait ends early on such a close; the events below show it.
+        let _ = tokio::time::timeout(Duration::from_millis(2_500), trouble.notified()).await;
         let observed: Vec<String> = events.lock().expect("event sink").clone();
         let synced_at = observed
             .iter()
@@ -891,6 +903,289 @@ fn a_thin_copy_home_hard_deleted_is_purged_on_reconnect() {
             member
                 .vault
                 .sync_state_get(&format!("ri:b:{}", fx.item.to_hex()))
+                .unwrap()
+                .is_none(),
+            "the thin body is gone"
+        );
+    });
+}
+
+/// One lane session left running: its events by `Debug` form, a signal on
+/// its first `Synced`, and one on each disconnect or error after it.
+struct LiveLane {
+    events: Arc<Mutex<Vec<String>>>,
+    synced: Arc<tokio::sync::Notify>,
+    trouble: Arc<tokio::sync::Notify>,
+    shutdown: tokio::sync::oneshot::Sender<()>,
+    run: tokio::task::JoinHandle<()>,
+}
+
+impl LiveLane {
+    /// Starts a session over `manager` that reconnects as `open_lane`'s does.
+    fn start(manager: &Arc<WindowManager>, config: &SyncClientConfig) -> Self {
+        let connection = Arc::new(
+            SyncConnection::new(
+                Arc::clone(manager),
+                ConnectionConfig {
+                    client_config: config.clone(),
+                    auto_reconnect: true,
+                },
+            )
+            .unwrap(),
+        );
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let synced = Arc::new(tokio::sync::Notify::new());
+        let trouble = Arc::new(tokio::sync::Notify::new());
+        let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
+        let run = tokio::spawn({
+            let events = Arc::clone(&events);
+            let synced = Arc::clone(&synced);
+            let trouble = Arc::clone(&trouble);
+            let mut synced_seen = false;
+            async move {
+                connection
+                    .run_observed(shutdown_rx, move |event: SyncEvent| {
+                        let debug = format!("{event:?}");
+                        if debug == "StatusChanged(Synced)" {
+                            synced_seen = true;
+                            synced.notify_one();
+                        } else if synced_seen
+                            && (debug == "StatusChanged(Disconnected)"
+                                || debug.starts_with("Error("))
+                        {
+                            trouble.notify_one();
+                        }
+                        events.lock().expect("event sink").push(debug);
+                    })
+                    .await
+                    .expect("the run ends cleanly");
+            }
+        });
+        Self {
+            events,
+            synced,
+            trouble,
+            shutdown,
+            run,
+        }
+    }
+
+    /// Waits (bounded) for the session's first `Synced`.
+    async fn wait_synced(&self) {
+        tokio::time::timeout(Duration::from_secs(30), self.synced.notified())
+            .await
+            .expect("the member lane reaches Synced");
+    }
+
+    /// Whether a disconnect or an error follows `Synced` within `wait`.
+    async fn troubled_within(&self, wait: Duration) -> bool {
+        tokio::time::timeout(wait, self.trouble.notified())
+            .await
+            .is_ok()
+    }
+
+    /// The session's events from its first `Synced` on.
+    fn events_after_synced(&self) -> Vec<String> {
+        let observed = self.events.lock().expect("event sink").clone();
+        let synced_at = observed
+            .iter()
+            .position(|event| event == "StatusChanged(Synced)")
+            .unwrap_or(observed.len());
+        observed[synced_at..].to_vec()
+    }
+
+    /// Shuts the session down and waits (bounded) for its run to end.
+    async fn stop(self) {
+        let _ = self.shutdown.send(());
+        tokio::time::timeout(Duration::from_secs(20), self.run)
+            .await
+            .expect("the run ends on its shutdown")
+            .expect("the run task ends");
+    }
+}
+
+/// Review round 2 of #8364 (P1-1): a read-only member keeps its socket
+/// through a promoted window's round. The member's grant reads and never
+/// writes (`Viewer` under `ReadOnly`); it promotes a world window, then a
+/// session connects: the promotion is granted, the vectors are exchanged,
+/// and the lane stays up after `Synced`, since it sends no update HOME's
+/// vector already covers.
+/// red at ce3d32b70e9: the member answers HOME's vector with an empty
+/// update, HOME judges it a write the grant does not hold and closes the
+/// socket (`RpcNoPrincipal`), so a disconnect follows (or `Synced` never
+/// comes).
+#[test]
+fn a_read_only_member_keeps_its_socket_through_a_promoted_window_round() {
+    run_on_engine_stack(|| async {
+        let home = world_fixture_under(
+            1,
+            FederationGrantRole::Viewer,
+            FederationGrantPreset::ReadOnly,
+        )
+        .await;
+        let data = &home.worlds[0];
+        let member = member_client(home.fx.url.clone(), &home.fx.caller);
+        let doors = lane_connection(&member.manager, &member.config);
+        doors.fetch_item(&data.window, data.item).await.unwrap();
+        doors.promote_window(&data.window, data.item).await.unwrap();
+        assert!(
+            member
+                .vault
+                .sync_state_get(&format!("rp:w:{}", data.window))
+                .unwrap()
+                .is_some(),
+            "the read-only member's world window is promoted"
+        );
+        let lane = LiveLane::start(&member.manager, &member.config);
+        lane.wait_synced().await;
+        // The promoted window's request, grant and vector exchange run over
+        // localhost within milliseconds of the connect; 5 s bounds the wait
+        // for a close that must not come.
+        let troubled = lane.troubled_within(Duration::from_secs(5)).await;
+        let after = lane.events_after_synced();
+        lane.stop().await;
+        assert!(
+            !troubled,
+            "no disconnect or error after Synced (events: {after:?})"
+        );
+        assert_eq!(
+            member_claim_value(&doors, &data.window, data.item)
+                .await
+                .as_deref(),
+            Some("before"),
+            "the read-only member still reads its promoted claim"
+        );
+    });
+}
+
+/// Review round 2 of #8364 (P1-3): a thin copy HOME soft-deleted is dropped
+/// on reconnect. The member opens an item without promoting it, so a thin
+/// copy (`ro:e:`, `ri:b:`) is cached, and disconnects; HOME soft-deletes the
+/// item (`UserDelete`); the reconnect takes the soft tombstone and drops the
+/// thin copy, writing no hard-delete marker (`dt:`).
+/// red at ce3d32b70e9: a soft tombstone with no full local row is skipped as
+/// done, so the thin body (`ri:b:`) stays and the next open serves it.
+#[test]
+fn a_soft_deleted_thin_copy_is_dropped_on_reconnect() {
+    run_on_engine_stack(|| async {
+        let fx = fixture().await;
+        let member = member_client(fx.url.clone(), &fx.caller);
+        assert!(
+            run_lane(&member.manager, &member.config).await,
+            "the lane first reaches Synced"
+        );
+        let doors = lane_connection(&member.manager, &member.config);
+        let opened = doors.open_item(&fx.window, fx.item).await.unwrap();
+        assert!(
+            matches!(opened, OpenedItem::Thin(_)),
+            "the first open caches a thin copy"
+        );
+        let hex = fx.item.to_hex();
+        let thin_key = format!("ro:e:{hex}");
+        let body_key = format!("ri:b:{hex}");
+        assert!(
+            member.vault.sync_state_get(&thin_key).unwrap().is_some(),
+            "the thin copy is cached"
+        );
+        assert!(
+            member.vault.sync_state_get(&body_key).unwrap().is_some(),
+            "the thin body is cached"
+        );
+        assert!(
+            fx.vault
+                .delete_entity_with_reason(&fx.item, DeleteReason::UserDelete)
+                .unwrap()
+                .existed,
+            "HOME soft-deletes the opened item"
+        );
+        assert!(
+            run_lane(&member.manager, &member.config).await,
+            "the lane reconnects to Synced"
+        );
+        assert!(
+            member.vault.sync_state_get(&body_key).unwrap().is_none(),
+            "the thin body is dropped"
+        );
+        assert!(
+            member.vault.sync_state_get(&thin_key).unwrap().is_none(),
+            "the thin copy's window row is dropped"
+        );
+        assert!(
+            member
+                .vault
+                .sync_state_get(&format!("dt:{hex}"))
+                .unwrap()
+                .is_none(),
+            "a soft delete writes no hard-delete marker"
+        );
+    });
+}
+
+/// Review round 2 of #8364 (P1-2): a connected member drops a thin copy HOME
+/// hard-deleted, with no reconnect. The member opens an item without
+/// promoting it while its session runs; HOME hard-deletes the item; the
+/// member lane's own tombstone refresh tick (the sealed relay cadence,
+/// `SEALED_RELAY_INTERVAL_SECS = 300`, first round one period after the
+/// connect) purges the thin copy. The wait is bounded at 360 s, and the
+/// session must stay up throughout, so the purge is the tick's, not a
+/// reconnect's.
+/// red at ce3d32b70e9: a member lane runs no tombstone refresh while
+/// connected, so the thin copy stays until the 360 s wait runs out.
+#[test]
+fn a_connected_member_drops_a_thin_copy_home_hard_deleted() {
+    run_on_engine_stack(|| async {
+        let fx = fixture().await;
+        let member = member_client(fx.url.clone(), &fx.caller);
+        let lane = LiveLane::start(&member.manager, &member.config);
+        lane.wait_synced().await;
+        let doors = lane_connection(&member.manager, &member.config);
+        let opened = doors.open_item(&fx.window, fx.item).await.unwrap();
+        assert!(
+            matches!(opened, OpenedItem::Thin(_)),
+            "the open caches a thin copy"
+        );
+        let hex = fx.item.to_hex();
+        let thin_key = format!("ro:e:{hex}");
+        assert!(
+            member.vault.sync_state_get(&thin_key).unwrap().is_some(),
+            "the thin copy is cached"
+        );
+        assert!(
+            fx.vault
+                .delete_entity_with_reason(&fx.item, DeleteReason::UserHardDelete)
+                .unwrap()
+                .existed,
+            "HOME hard-deletes the opened item"
+        );
+        // A bounded poll paced by an interval: the refresh tick is one
+        // sealed relay period (300 s) after the connect.
+        let mut poll = tokio::time::interval(Duration::from_millis(500));
+        let purged = tokio::time::timeout(Duration::from_secs(360), async {
+            loop {
+                poll.tick().await;
+                if member.vault.sync_state_get(&thin_key).unwrap().is_none() {
+                    return;
+                }
+            }
+        })
+        .await
+        .is_ok();
+        let after = lane.events_after_synced();
+        lane.stop().await;
+        assert!(
+            purged,
+            "the connected member's thin copy is purged (events: {after:?})"
+        );
+        assert!(
+            !after
+                .iter()
+                .any(|event| event == "StatusChanged(Disconnected)"),
+            "the session stayed up, so no reconnect took the tombstone (events: {after:?})"
+        );
+        assert!(
+            member
+                .vault
+                .sync_state_get(&format!("ri:b:{hex}"))
                 .unwrap()
                 .is_none(),
             "the thin body is gone"
