@@ -317,7 +317,6 @@ impl Memory<'_> {
                                 && crate::note::diary_author_in(
                                     &self.vault.store,
                                     txn,
-                                    entry,
                                     note.author_ref,
                                 )? == Some(agent)
                         }

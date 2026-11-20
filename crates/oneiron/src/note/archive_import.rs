@@ -28,10 +28,8 @@ use super::{
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::consent::AuthenticatedOwner;
-use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
-use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::store::note_body::encode_note_body;
 use crate::temporal::TimeRange;
@@ -83,27 +81,28 @@ pub(crate) fn archived_note_body(source: &[u8]) -> Result<Vec<u8>> {
     encode_note_body(&body)
 }
 
-/// The agent who wrote diary NOTE `note`, whose stored author is `author`
+/// The agent who wrote a diary NOTE whose stored author is `author`
 /// (RESTORED-AGENT-KEEPS-IMPORTED-DIARY): its local author, or the source
-/// author of an imported entry once the entry's `AuthoredBy` edge names that
-/// author. An archive never writes that edge; the owner's review of the
-/// restored agent does (`agent_def::restored_diary`). `None` for an erased
-/// author, and for an imported one no review has named: such an entry stays
-/// the owner's evidence.
+/// author of an imported entry once that author is a restored agent the
+/// owner's review made stand
+/// ([`crate::agent_def::restored_diary::restored_agent_stands_in`]). An
+/// `AuthoredBy` edge is no evidence here. `None` for an erased author, and
+/// for an imported one no review has restored: such an entry stays the
+/// owner's evidence.
 ///
 /// # Errors
 /// Storage faults.
 pub(crate) fn diary_author_in(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
-    note: &EntityId,
     author: NoteActor,
 ) -> Result<Option<EntityId>> {
     Ok(match author {
         NoteActor::Actor(author) => Some(author),
-        NoteActor::Imported(author) => store
-            .port_edge_present(txn, note, EdgeDirection::Out, EdgeKind::AuthoredBy, &author)?
-            .then_some(author),
+        NoteActor::Imported(author) => {
+            crate::agent_def::restored_diary::restored_agent_stands_in(store, txn, &author)?
+                .then_some(author)
+        }
         NoteActor::Erased => None,
     })
 }

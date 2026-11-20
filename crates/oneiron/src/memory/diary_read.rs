@@ -361,24 +361,33 @@ pub(crate) fn agent_reviews_diary_reads_in_txn(
 
 /// The live diary entries `agent` wrote, oldest first, with their current
 /// text and the time each was written: those an import brought back count
-/// once the owner's review of the restored agent named it their author
+/// once the owner's review made the restored agent stand
 /// ([`crate::note::diary_author_in`]).
 pub(crate) fn diary_entries_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     agent: EntityId,
 ) -> Result<Vec<(EntityId, NoteBody, u64)>> {
-    let mut entries = Vec::new();
-    for id in vault.filtered_edge_peers(
+    let mut candidates = std::collections::BTreeSet::new();
+    candidates.extend(vault.filtered_edge_peers(
         txn,
         EdgeDirection::In,
         &agent,
         EdgeKind::AuthoredBy,
         Some(ENTITY_TYPE_NOTE),
-    )? {
+    )?);
+    // An imported entry has no `AuthoredBy` edge: a restored agent's listing
+    // finds its own by their stored source author.
+    if crate::agent_def::restored_diary::restored_agent_stands_in(&vault.store, txn, &agent)? {
+        candidates.extend(
+            crate::agent_def::restored_diary::imported_diary_entries_in_txn(vault, txn, &agent)?,
+        );
+    }
+    let mut entries = Vec::new();
+    for id in candidates {
         if let Some((note, learned_at)) = live_note_in_txn(vault, txn, &id)?
             && note.kind == NoteKind::Diary
-            && crate::note::diary_author_in(&vault.store, txn, &id, note.author_ref)? == Some(agent)
+            && crate::note::diary_author_in(&vault.store, txn, note.author_ref)? == Some(agent)
         {
             entries.push((id, note, learned_at));
         }
@@ -393,8 +402,12 @@ fn live_note_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<(NoteBody, u64)>> {
+    // A record kept under a use limit (a legal hold or a cooperative review
+    // restriction) reads to no one, as `Vault::read_imported_note` and every
+    // ordinary read refuse it (REVIEW-9994 round 1).
     if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live()
         || vault.archive_tombstone_in_txn(txn, id)?.is_some()
+        || crate::store::legal_hold::use_limit_in_txn(&vault.store, txn, id)?.is_some()
     {
         return Ok(None);
     }

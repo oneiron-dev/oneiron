@@ -142,7 +142,7 @@ impl ScopedRead<'_> {
         if body.author_ref.is(actor)
             || crate::note::reader_imported_note(&self.vault.store, txn, &body, actor)?
             || (body.kind == crate::note::NoteKind::Diary
-                && crate::note::diary_author_in(&self.vault.store, txn, id, body.author_ref)?
+                && crate::note::diary_author_in(&self.vault.store, txn, body.author_ref)?
                     == Some(actor))
         {
             return Ok(true);

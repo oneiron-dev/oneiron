@@ -340,7 +340,7 @@ impl Memory<'_> {
         // it the entry's author.
         if core.kind == NoteKind::Diary
             && let Some(diary) = &mut gate
-            && match super::diary_author_in(at.store, txn, &note, core.author_ref)? {
+            && match super::diary_author_in(at.store, txn, core.author_ref)? {
                 Some(author) => {
                     diary.admit(self.vault(), txn, author, note)? != DiaryEntryAdmission::Read
                 }

@@ -47,13 +47,27 @@ pub(super) fn author_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> R
             "coreference endpoint is not a diary NOTE",
         ));
     }
-    // An erased author is no one: no candidate, never a fallback author. An
-    // imported one is its restored agent once the owner's review wrote the
-    // edge checked below (RESTORED-AGENT-KEEPS-IMPORTED-DIARY).
+    // An erased author is no one: no candidate, never a fallback author.
     let Some(author) = note.author_ref.id().or(note.author_ref.imported()) else {
         return Err(Error::InvalidClaimBody("diary author is erased"));
     };
-    if !vault.port_edge_present(txn, &id, EdgeDirection::Out, EdgeKind::AuthoredBy, &author)? {
+    // An imported one is its restored agent once the owner's review made
+    // that agent stand; an archive writes it no edge, and an edge is no
+    // evidence for it (RESTORED-AGENT-KEEPS-IMPORTED-DIARY). A local one
+    // carries its edge.
+    if note.author_ref.imported().is_some() {
+        if crate::note::diary_author_in(&vault.store, txn, note.author_ref)? != Some(author) {
+            return Err(Error::InvalidClaimBody(
+                "imported diary author is not restored",
+            ));
+        }
+    } else if !vault.port_edge_present(
+        txn,
+        &id,
+        EdgeDirection::Out,
+        EdgeKind::AuthoredBy,
+        &author,
+    )? {
         return Err(Error::InvalidClaimBody("diary author edge is missing"));
     }
     Ok(author)

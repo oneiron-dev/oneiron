@@ -71,9 +71,7 @@ pub(super) fn admit_source_in(
     // An erased diary author is no agent, so no Grant covers the entry: it
     // stays held, as a NOTE read holds it. So does an imported one no review
     // of its restored agent has named.
-    let Some(author) =
-        crate::note::diary_author_in(&vault.store, txn, &text_source, core.author_ref)?
-    else {
+    let Some(author) = crate::note::diary_author_in(&vault.store, txn, core.author_ref)? else {
         return Err(held(DiaryReadHold::NotCovered));
     };
     if author == actor.entity_ref() {

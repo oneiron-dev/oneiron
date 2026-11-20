@@ -24,7 +24,7 @@ mod plan_mode;
 mod powers;
 mod proposed_change;
 mod refusal;
-mod restored_diary;
+pub(crate) mod restored_diary;
 mod tree_pause;
 mod types;
 mod widening;
