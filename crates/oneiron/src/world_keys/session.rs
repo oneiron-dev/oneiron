@@ -65,7 +65,7 @@ pub(crate) struct WorldKeySession {
     /// through the link chain; wiped with it.
     pub(crate) earlier_vault_keys: Mutex<Vec<Arc<super::vault_key::VaultDataKey>>>,
     /// The checkpoint root signers the host holds here (FIX 4882).
-    pub(crate) checkpoint_roots: Mutex<Vec<Arc<dyn crate::authority::CheckpointRootSigner>>>,
+    pub(crate) checkpoint_roots: Mutex<Vec<crate::authority::HeldRootSigner>>,
     /// The process's device PIN, when the host installed one over this
     /// handle's keystore (row OCS-OWNER-PIN). Cleared when another keystore
     /// is installed.
