@@ -736,9 +736,20 @@ pub(crate) fn store_result_output_path(digest: &[u8; 32], ordinal: usize) -> Str
     )
 }
 
+/// A NOTE's text a summarize call read, named by the NOTE and the text's
+/// digest: the same NOTE with the same words is one output of the run.
+pub(crate) fn summarize_note_output_path(note: EntityId, digest: &[u8; 32]) -> String {
+    format!(
+        "{SCRIPT_OUTPUT_DIR}/summarize/{}.{}.md",
+        note.to_hex(),
+        crate::entity_id::bytes_to_hex_lower(digest)
+    )
+}
+
 /// Whether `path` names a result of the run the guest may read back: a
-/// stored bridge result, a stored value, the reply a parked call resumed
-/// with, a step's observation, or a file a step wrote.
+/// stored bridge result, a stored value, a NOTE's text a summarize call
+/// read, the reply a parked call resumed with, a step's observation, or a
+/// file a step wrote.
 pub(crate) fn is_result_output_path(path: &str) -> bool {
     let Some(rest) = path.strip_prefix(SCRIPT_OUTPUT_DIR) else {
         return false;
@@ -748,6 +759,9 @@ pub(crate) fn is_result_output_path(path: &str) -> bool {
         || rest
             .strip_prefix("/store/")
             .is_some_and(|rest| rest.ends_with(".result"))
+        || rest
+            .strip_prefix("/summarize/")
+            .is_some_and(|rest| rest.ends_with(".md"))
         || resumed_output_wait(path).is_some()
         || is_observation_output_path(path)
         || is_runtime_output_path(path)
@@ -860,10 +874,16 @@ pub(super) fn console_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.console.txt")
 }
 
-/// Where a step's type diagnostics past one reply are kept whole, in a
-/// body the run owns and never in its replay record (FIX 8277).
-pub(super) fn type_diagnostics_output_path(seq: u64, invocation: u64) -> String {
-    format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.{invocation}.type-diagnostics.json")
+/// Where check `check` keeps a step's type diagnostics past one reply
+/// whole, in a body the run owns and never in its replay record (FIX
+/// 8277). Each check of a step has its own path, so its own occurrence: a
+/// failed program's check and the re-entry's at the same step never share
+/// a body descriptor, and releasing one never releases the other's.
+pub(super) fn type_diagnostics_output_path(seq: u64, invocation: u64, check: EntityId) -> String {
+    format!(
+        "{SCRIPT_OUTPUT_DIR}/{seq:06}.{invocation}.{}.type-diagnostics.json",
+        check.to_hex()
+    )
 }
 
 /// The board frames a step's verb answers carried beside their outputs

@@ -213,7 +213,8 @@ struct BatchApplyState {
     pre_analyzed_text: HashMap<EntityId, VecDeque<Option<crate::store::text_index::AnalyzedText>>>,
     nsw_plans: HashMap<EntityId, VecDeque<crate::store::vector_insert_plan::InsertPlan>>,
     masked_files: super::secret_scan::MaskedFiles,
-    masked_claims: HashMap<EntityId, VecDeque<ClaimCandidate>>,
+    masked_claims: HashMap<EntityId, VecDeque<Option<ClaimCandidate>>>,
+    masked_claim_puts: HashMap<EntityId, VecDeque<Option<zeroize::Zeroizing<Vec<u8>>>>>,
     habit_streak_candidates: BTreeSet<EntityId>,
     had_graph_mutation: bool,
     had_vector_mutation: bool,
@@ -313,6 +314,7 @@ pub(super) fn apply_ops_with_authority_beside(
     let hub_admission = gate_mode.hub_admission.take();
     let refinement_admission = gate_mode.refinement_admission.take();
     let owner_archive_restore = gate_mode.owner_archive_restore.take();
+    let owner_archive_restore_annotators = gate_mode.owner_archive_restore_annotators.take();
     let birth_mask = gate_mode.birth_mask;
     let text_births = std::mem::take(&mut gate_mode.text_births);
     let births = std::mem::take(&mut gate_mode.births);
@@ -345,7 +347,10 @@ pub(super) fn apply_ops_with_authority_beside(
     // (FIX 22075).
     let manifests = asset_file_bodies::read_file_bodies(&mut ops.ops, asset_file_bodies);
     let masked = if marked_carriers_only(&marked_carriers, &ops.ops) {
-        Ok((secret_scan::MaskedFiles::default(), Vec::new()))
+        Ok((
+            secret_scan::MaskedFiles::default(),
+            secret_scan::MaskedClaimBodies::default(),
+        ))
     } else {
         secret_scan::mask_batch_ops(
             store,
@@ -361,14 +366,23 @@ pub(super) fn apply_ops_with_authority_beside(
         )
     };
     let asset_file_bodies = asset_file_bodies::restore_manifests(&mut ops.ops, manifests);
-    let (masked_files, masked_claim_pre) = masked?;
-    // The pre-mask body of each MACHINE candidate the mask rewrote in this
-    // transaction (FIX 11356), in op order per id: the candidate apply
-    // renews a proof only over its verified pre-mask body. A replayed batch
-    // reports none, so its proofs stay byte for byte.
-    let mut masked_claims: HashMap<EntityId, VecDeque<ClaimCandidate>> = HashMap::new();
-    for (id, pre) in masked_claim_pre {
+    let (masked_files, masked_claim_bodies) = masked?;
+    // The pre-mask body of each candidate the mask rewrote in this
+    // transaction, one slot per candidate op in op order per id (`None` for
+    // one it left as written): the candidate apply renews a MACHINE proof
+    // only over its verified pre-mask body (FIX 11356), and reads a preflight
+    // receipt against the body it judged. A replayed batch reports none, so
+    // its proofs stay byte for byte.
+    let mut masked_claims: HashMap<EntityId, VecDeque<Option<ClaimCandidate>>> = HashMap::new();
+    for (id, pre) in masked_claim_bodies.candidates {
         masked_claims.entry(id).or_default().push_back(pre);
+    }
+    // The same for each local CLAIM put: the put apply reads a preflight
+    // receipt against the bytes it judged (RAW-CLAIM-PUT-MASK-REPLAY-MISMATCH).
+    let mut masked_claim_puts: HashMap<EntityId, VecDeque<Option<zeroize::Zeroizing<Vec<u8>>>>> =
+        HashMap::new();
+    for (id, pre) in masked_claim_bodies.puts {
+        masked_claim_puts.entry(id).or_default().push_back(pre);
     }
     // FIX 5507: a body file a mark names bands its record as a marked row does.
     let masked_files =
@@ -411,6 +425,14 @@ pub(super) fn apply_ops_with_authority_beside(
         .transpose()?;
     let write_policy = match (write_policy, owner_archive_restore) {
         (Some(policy), Some(permit)) => Some(policy.with_owner_archive_restore_permit(&permit)),
+        (policy, _) => policy,
+    };
+    let write_policy = match (write_policy, owner_archive_restore_annotators) {
+        (Some(policy), Some((permit, annotators))) => {
+            Some(annotators.iter().fold(policy, |policy, annotator| {
+                policy.with_owner_archive_restore_permit_for_annotator(&permit, *annotator)
+            }))
+        }
         (policy, _) => policy,
     };
     let pending_gate_consent_at_batch_start = persist_gate_pending_consent
@@ -457,6 +479,7 @@ pub(super) fn apply_ops_with_authority_beside(
         nsw_plans,
         masked_files,
         masked_claims,
+        masked_claim_puts,
         habit_streak_candidates,
         had_graph_mutation,
         had_vector_mutation,

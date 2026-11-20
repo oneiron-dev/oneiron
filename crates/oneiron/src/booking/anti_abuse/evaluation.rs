@@ -360,8 +360,11 @@ fn evaluate_booking_request_for(
     }
 
     // Email evidence: prompts, never a hard block. A `None` MX reading is no
-    // signal.
+    // signal. Each check runs when any row in scope enables it, and each count
+    // is the lowest any row in scope names, as the strictest row wins. With
+    // no email row in scope every check is off, so no count is met.
     let (mut check_syntax, mut check_mx, mut check_disposable) = (false, false, false);
+    let (mut prompt_at, mut quarantine_at) = (u8::MAX, u8::MAX);
     let mut quarantine_enabled = false;
     for row in &scoped {
         match &row.rule {
@@ -369,10 +372,14 @@ fn evaluate_booking_request_for(
                 check_syntax: syntax,
                 check_mx: mx,
                 check_disposable_domain: disposable,
+                prompt_at_failed_checks,
+                quarantine_at_failed_checks,
             } => {
                 check_syntax |= syntax;
                 check_mx |= mx;
                 check_disposable |= disposable;
+                prompt_at = prompt_at.min(prompt_at_failed_checks.get());
+                quarantine_at = quarantine_at.min(quarantine_at_failed_checks.get());
             }
             BookingAntiAbuseRule::QuarantineBorderline => quarantine_enabled = true,
             _ => {}
@@ -389,20 +396,18 @@ fn evaluate_booking_request_for(
         if check_disposable && evidence.disposable_domain {
             negatives += 1;
         }
-        if negatives >= 2 {
-            if quarantine_enabled {
-                return BookingAbuseVerdict::Quarantine {
-                    reason: "booking contact evidence failed several independent checks".to_owned(),
-                };
-            }
-            // Under-block when quarantine is not seeded: prompt instead.
-            return BookingAbuseVerdict::PromptCorrection {
-                field: "email",
-                message: "that email address needs a second look — please correct it".to_owned(),
+        let quarantine_count_met = negatives >= quarantine_at;
+        if quarantine_count_met && quarantine_enabled {
+            return BookingAbuseVerdict::Quarantine {
+                reason: "booking contact evidence failed several independent checks".to_owned(),
             };
         }
-        if negatives == 1 {
-            let message = if check_syntax && !evidence.syntax_valid {
+        // Under-block when quarantine is not seeded: a met quarantine count
+        // prompts instead.
+        if quarantine_count_met || negatives >= prompt_at {
+            let message = if negatives >= 2 {
+                "that email address needs a second look — please correct it"
+            } else if check_syntax && !evidence.syntax_valid {
                 "that email address does not look complete — please check it"
             } else if check_mx && evidence.mx_present == Some(false) {
                 "that email domain does not accept mail — please check for typos"

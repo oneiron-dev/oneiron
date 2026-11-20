@@ -87,7 +87,7 @@ impl FacadeReleased {
 /// only that feedback's text, never the answer. The owner's own whole-vault
 /// export, as its route and his fresh proof name it, keeps every integrity
 /// hold and no recipient choice (owner ruling 1-EXPORT = B).
-pub(super) fn released_reply(
+pub(crate) fn released_reply(
     server: &SyncServer,
     auth: &CoreAuth,
     verb: &str,
@@ -207,7 +207,7 @@ pub(crate) fn replayed_value(
         );
     }
     if let Some(rows) = release.rows.as_deref()
-        && !rows_still_admitted(vault, auth, rows, owner_whole_vault_export)
+        && !replayed_rows_admitted(vault, auth, verb, rows, owner_whole_vault_export)
     {
         return details_on_device();
     }
@@ -341,18 +341,23 @@ pub(crate) fn released_saved_result(
 /// content-free word that the call ran ([`details_on_device`]). A fresh
 /// answer, or a drained one whose rows are unknown, is `output` as it is.
 /// The destination release follows for every answer ([`released_value`]).
+/// `verb` names the call: a Connect guest's envelope fetch reads its rows
+/// again through its grant ([`replayed_rows_admitted`]).
 /// The owner's own whole-vault export (`owner_whole_vault_export`, chosen
 /// from the call's route) reads its rows as his credential reads them on
 /// this device (owner ruling 1-EXPORT = B).
 pub(super) fn drained_still_admitted(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
+    verb: &str,
     producers: &oneiron::memory::ProducerRows,
     output: serde_json::Value,
     owner_whole_vault_export: bool,
 ) -> serde_json::Value {
     match producers.drained_rows() {
-        Some(rows) if !rows_still_admitted(vault, auth, &rows, owner_whole_vault_export) => {
+        Some(rows)
+            if !replayed_rows_admitted(vault, auth, verb, &rows, owner_whole_vault_export) =>
+        {
             details_on_device()
         }
         _ => output,
@@ -366,6 +371,36 @@ pub(super) fn drained_still_admitted(
 /// admitted again by its door) reads each row as his credential reads it on
 /// this device: his recipient choice keeps none of them (owner ruling
 /// 1-EXPORT = B); the release judges where they go after.
+/// [`rows_still_admitted`] for a replayed answer of `verb`. A Connect
+/// guest's envelope fetch read its rows through its grant's ceiling (ANSWER
+/// FED-CONNECT-STAMPED-HOME = A), so its replay reads them again through the
+/// same grant-bound check
+/// ([`oneiron::sync::selector::guest_document_rows_still_readable`]), never
+/// the credential's ordinary key, which withholds them; an erased row still
+/// keeps the details.
+fn replayed_rows_admitted(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    verb: &str,
+    rows: &[EntityId],
+    owner_whole_vault_export: bool,
+) -> bool {
+    if verb != super::guest_document_doors::GUEST_ENVELOPE_FETCH_VERB {
+        return rows_still_admitted(vault, auth, rows, owner_whole_vault_export);
+    }
+    let Some(proof) = auth.verified_slip() else {
+        return false;
+    };
+    rows.iter().all(|row| {
+        !oneiron::sync::bridge::local_deletion_is_materialized(vault, row).unwrap_or(false)
+    }) && oneiron::sync::selector::guest_document_rows_still_readable(
+        vault,
+        proof,
+        &auth.destination(),
+        rows,
+    )
+}
+
 pub(crate) fn rows_still_admitted(
     vault: &oneiron::Vault,
     auth: &CoreAuth,

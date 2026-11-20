@@ -113,6 +113,7 @@ pub(super) fn apply_policy_setting(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let acts = set
         .row_acts()
@@ -124,6 +125,7 @@ pub(super) fn apply_policy_setting(
             machine: set.machine,
             choice: value.as_ref(),
             context: POLICY_SETTING_REVISION_CONTEXT,
+            needs_proof_off_the_line,
             persons_own_narrowing: false,
         };
         landings.push(owner_choice_landing(
@@ -160,7 +162,7 @@ pub(super) fn folded_policy_settings(
 ) -> FoldedPolicySettings {
     FoldedPolicySettings {
         targets: folded_owner_choices(state, &state.policy_settings, pin, counted),
-        refused: refused_owner_choices(&state.policy_settings).clone(),
+        refused: refused_owner_choices(&state.policy_settings).to_btree_set(),
     }
 }
 

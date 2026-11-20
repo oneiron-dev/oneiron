@@ -3,7 +3,10 @@
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
-use crate::booking::anti_abuse::{BookingAntiAbuseRule, BookingAntiAbuseRuleRow};
+use crate::booking::anti_abuse::{
+    BookingAntiAbuseRule, BookingAntiAbuseRuleRow, email_prompt_at_failed_checks_default,
+    email_quarantine_at_failed_checks_default,
+};
 use crate::claim::ClaimSource;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -122,6 +125,12 @@ pub(super) fn hash_policy_frontier_v0(
     if let Some(policy) = resolution.inquiry_policy {
         hash_str(hasher, "inquiry");
         hash_str(hasher, policy.keep().as_str());
+    }
+    // The erase-request reply row decides whether a filed ask is answered
+    // without the owner: hashed only when present, as the inquiry row.
+    if let Some(policy) = resolution.erase_request_reply_policy {
+        hash_str(hasher, "erase_request_reply");
+        hash_str(hasher, policy.reply().as_str());
     }
     // The common owner-change wait moves start deadlines, so naming one
     // moves the frontier; a manifest that never names it keeps its exact
@@ -1073,11 +1082,22 @@ fn hash_booking_anti_abuse_rows(hasher: &mut Sha256, rows: &[BookingAntiAbuseRul
                 check_syntax,
                 check_mx,
                 check_disposable_domain,
+                prompt_at_failed_checks,
+                quarantine_at_failed_checks,
             } => {
                 hash_str(hasher, "email-prompt-to-correct");
                 hash_bool(hasher, *check_syntax);
                 hash_bool(hasher, *check_mx);
                 hash_bool(hasher, *check_disposable_domain);
+                // The default counts keep the historical frontier bytes, so
+                // standing bindings survive; only a declared count is hashed.
+                if *prompt_at_failed_checks != email_prompt_at_failed_checks_default()
+                    || *quarantine_at_failed_checks != email_quarantine_at_failed_checks_default()
+                {
+                    hash_str(hasher, "failed_check_counts");
+                    hash_u64(hasher, u64::from(prompt_at_failed_checks.get()));
+                    hash_u64(hasher, u64::from(quarantine_at_failed_checks.get()));
+                }
             }
             BookingAntiAbuseRule::QuarantineBorderline => {
                 hash_str(hasher, "quarantine-borderline");

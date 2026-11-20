@@ -17,10 +17,12 @@ use super::super::super::protocol_close::internal_fault_close;
 use super::super::super::socket_stop::StoppingTransport;
 use super::super::super::transport::GuardedTransport;
 use super::super::super::window_pads::{Released, send_released, send_released_outcome};
-use super::super::super::window_ready::{send_ready_window_requests, window_update_verdict};
+use super::super::super::window_ready::{
+    send_ready_window_requests, window_update_verdict, withheld_change_notice,
+};
 use super::super::{
-    ConnEvent, MAX_VERB_CALLS_IN_FLIGHT, privileged_sync_message, session_credential_revoked,
-    session_gone, should_forward_broadcast, window_delivery,
+    ConnEvent, MAX_VERB_CALLS_IN_FLIGHT, WindowDelivery, privileged_sync_message,
+    session_credential_revoked, session_gone, should_forward_broadcast, window_delivery,
 };
 
 use crate::auth::{CoreAuth, RevokedTokenJtis};
@@ -415,7 +417,21 @@ pub(super) async fn handle_connection(
                         // v6 peers cannot decode world-month keys, so they keep
                         // base-month broadcasts but never receive world frames.
                         let frame = if data.first() == Some(&protocol::TAG_WINDOW_SYNC) {
-                            window_delivery(&server, protocol_version, &conn_state, data)
+                            match window_delivery(&server, protocol_version, &conn_state, data) {
+                                WindowDelivery::Send(frame) => Some(frame),
+                                // The withheld change's other writes reach the
+                                // peer through a fresh exchange, asked through
+                                // the direct queue's doors (REVIEW-9846 round 2).
+                                WindowDelivery::Withheld(key) => {
+                                    if let Some(notice) =
+                                        withheld_change_notice(&server, &conn_state, &key)
+                                    {
+                                        let _ = direct_tx.send(notice);
+                                    }
+                                    None
+                                }
+                                WindowDelivery::Nothing => None,
+                            }
                         } else {
                             should_forward_broadcast(protocol_version, &data).then_some(data)
                         };
@@ -443,6 +459,59 @@ pub(super) async fn handle_connection(
             ConnEvent::Direct(direct_msg) => {
                 let Some(data) = direct_msg else {
                     break;
+                };
+                // A queued selector answer leaves only while the grant and
+                // the authority it was made under stand, judged at the
+                // answer's first frame before any part of it leaves
+                // (SELECTOR-RELEASE-POINT = B), and again by the send of each
+                // frame before its bytes leave and after each wait on the peer.
+                let answer = crate::selector_release::queued_answer_frame(&data).map(|answer| {
+                    (
+                        conn_state.selector_answers.release(server.vault(), &answer),
+                        answer.frame.to_vec(),
+                    )
+                });
+                let mut released_answer = None;
+                let data = match answer {
+                    None => data,
+                    Some((Some(released), frame)) => {
+                        released_answer = Some(released);
+                        frame
+                    }
+                    Some((None, frame)) if frame.first() == Some(&protocol::TAG_WINDOW_SYNC) => {
+                        // A federation UPDATE: not sent. A selector socket is
+                        // sent no ready notice, so its next fetch asks again,
+                        // judged under the grant as it is then.
+                        if let Some(key) = frame
+                            .get(1..)
+                            .and_then(|payload| protocol::decode_window_sync(payload).ok())
+                            .and_then(|(key, _, _)| oneiron::sync::WindowKey::try_new(key))
+                        {
+                            ready_windows.retry(&key);
+                        }
+                        continue;
+                    }
+                    // A served body's bytes: not sent. Its End, which carries
+                    // none, still goes below, so the peer's attempt lands
+                    // nothing and is asked for again, served under the grant
+                    // as it is then.
+                    Some((None, frame))
+                        if frame.first()
+                            == Some(&oneiron::sync::transport::TAG_ASSET_BODY_DATA) =>
+                    {
+                        continue;
+                    }
+                    Some((None, frame)) => {
+                        if !crate::livequery::connection::Connection::is_scoped_broadcast(&frame) {
+                            // A refusal or a served body's End, which carry
+                            // no rows.
+                            frame
+                        } else if let Some(refusal) = app_connection.refuse_reply(&frame) {
+                            refusal
+                        } else {
+                            continue;
+                        }
+                    }
                 };
                 let machine_only_reply = app_connection.is_own_machine_reply(&data);
                 let mut data = data;
@@ -556,9 +625,11 @@ pub(super) async fn handle_connection(
                     transport.app_jti = None;
                     continue;
                 }
+                transport.answer = released_answer;
                 let released =
                     send_released_outcome(&server, &conn_state, &mut transport, data).await;
                 transport.app_jti = None;
+                transport.answer = None;
                 match released {
                     Released::Failed => break,
                     // A window answer whose copy or envelope could not be made

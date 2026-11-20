@@ -13,7 +13,7 @@ fn resolve_privacy_layers(
     if let Some(key_ref) = key_refs[0] {
         file.push_str(&format!("hosted_kms_key_ref = \"{key_ref}\"\n"));
     }
-    std::fs::write(&config_path, file)?;
+    crate::owner_only_file::write_owner_only_file(&config_path, file)?;
 
     let mut pairs = Vec::new();
     if let Some(posture) = postures[1] {

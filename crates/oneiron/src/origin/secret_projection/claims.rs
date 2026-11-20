@@ -34,9 +34,10 @@ mod codec;
 mod lookup;
 use rmpv::Value;
 
+pub(crate) use self::codec::digest_from_value;
 use self::codec::{
-    decode_graph, decode_place, digest_of, digest_value, entity, field, fields, git_oid,
-    occurrence_value, oid, optional_binding, packed, place_value, record_fields, text,
+    decode_graph, decode_place, digest_value, entity, field, fields, git_oid, occurrence_value,
+    oid, optional_binding, packed, place_value, record_fields, text,
 };
 use super::recipient::RepoProjectionRevealBinding;
 
@@ -449,7 +450,7 @@ impl RepoProjectionClaim {
             operation: *operation,
             canonical_store: entity(field(map, "canonical_store")?)?,
             ingress_store: text(field(map, "ingress_store")?)?.to_owned(),
-            authority: digest_of(field(map, "authority")?)?,
+            authority: digest_from_value(field(map, "authority")?)?,
             reveal: optional_binding(field(map, "reveal")?)?,
         };
         let claim = Self::of(*graph, RepoProjectionRecord::Ingress(ingress.clone()));

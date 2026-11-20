@@ -57,6 +57,7 @@ impl Memory<'_> {
                         &error,
                         crate::error::Error::Artifact(
                             crate::error::ArtifactError::InvalidSkillBody(_)
+                                | crate::error::ArtifactError::SkillVersionKept(_)
                         )
                     ) =>
                 {
@@ -78,6 +79,7 @@ impl Memory<'_> {
                         &error,
                         crate::error::Error::Artifact(
                             crate::error::ArtifactError::InvalidSkillBody(_)
+                                | crate::error::ArtifactError::SkillVersionKept(_)
                         )
                     ) =>
                 {

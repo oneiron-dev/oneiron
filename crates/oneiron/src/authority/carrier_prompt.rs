@@ -219,11 +219,23 @@ const CHANGE_MACHINE: SentenceForms = SentenceForms {
 };
 /// The line under a held answer's question: its machine key as a code
 /// ([`machine_key_code`]), for the owner to compare with the code that
-/// device shows.
+/// device shows. A name that is only the device's own report is not said:
+/// the line reads as for no name, and the check is said once, in
+/// [`MACHINE_CODE_CHECK`] (CODE-CHECK-SAID-TWICE-FOR-REPORTED-NAME = A).
 const MACHINE_CODE: SentenceForms = SentenceForms {
     named: "Code shown on {name}: {code}",
-    claimed: "Code shown on that {kind}: {code}\nCheck it on the device itself, not by its name.",
+    claimed: "Code shown on that {kind}: {code}",
     by_kind: "Code shown on that {kind}: {code}",
+};
+/// The line under [`MACHINE_CODE`]: what the owner does with the code. A
+/// surface draws it quiet. A device whose name is only its own report is
+/// found by having it at hand, never by that name, so its form names no
+/// device (the UI session's words, Engine TASK 17 Nov 08:32).
+const MACHINE_CODE_CHECK: SentenceForms = SentenceForms {
+    named: "It should match the code on {name}. If they differ, dismiss this.",
+    claimed: "Check the code on the device itself, not by its name. If they differ, dismiss \
+              this.",
+    by_kind: "It should match the code on that {kind}. If they differ, dismiss this.",
 };
 /// In place of who asked, for a held answer a confirm refuses
 /// ([`AuthorityFold::replaces_standing_keys`]).
@@ -252,8 +264,9 @@ pub fn machine_key_code(machine_key: &[u8; 32]) -> String {
 
 /// What a surface shows under a held answer's question: the answer's machine
 /// key as its code, said of a device of `device_class` that `name` names. A
-/// device named only by its own report gets a second line: the owner checks
-/// the code on the device itself.
+/// device named only by its own report is said by its kind, as a device
+/// with no name is; [`machine_code_check_line`] then sends the owner to the
+/// device itself.
 #[must_use]
 pub fn machine_code_line(
     machine_key: &[u8; 32],
@@ -262,6 +275,19 @@ pub fn machine_code_line(
 ) -> String {
     let code = machine_key_code(machine_key);
     MACHINE_CODE.say(device_class, Some(("{code}", &code)), name)
+}
+
+/// What a surface shows, quiet, under a held answer's code
+/// ([`machine_code_line`]): that the code should match the one the device
+/// shows, and to dismiss the answer when the two differ. Said of a device of
+/// `device_class` that `name` names. A served field of its own, so every
+/// surface says it in the same words.
+#[must_use]
+pub fn machine_code_check_line(
+    device_class: MachineDeviceClass,
+    name: PromptDeviceName<'_>,
+) -> String {
+    MACHINE_CODE_CHECK.say(device_class, None, name)
 }
 
 /// The first 128 bits of `id` as 26 Crockford base32 symbols.

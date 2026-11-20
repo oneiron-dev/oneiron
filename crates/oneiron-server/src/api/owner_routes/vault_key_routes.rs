@@ -18,21 +18,28 @@
 //! come from, which this route does not issue: `oneiron recovery-kit
 //! issue-vault-key --any-two-pieces` does, and here the engine refuses it.
 
+pub(super) mod data_key_generation_routes;
+
 use std::fmt;
 use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{FromRequest, Query, Request, State};
-use axum::http::header;
+use axum::http::{Extensions, HeaderMap, header};
 use axum::response::Json;
 use axum::routing::{get, post, put};
+use oneiron::authority::ActAuthority;
 use oneiron::inference_snapshot::SnapshotLockReceipt;
-use oneiron::world_keys::{EscrowRetirement, NewVaultKeyWrap, RecoveryPreset, VaultKeyWrapInfo};
+use oneiron::world_keys::{
+    EscrowRetirement, NewVaultKeyWrap, NoRecoveryBox, RecoveryPreset, VaultKeyWrapInfo,
+};
 use serde::de::{DeserializeOwned, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+use super::machine_routes::act_surface_admitted;
+use super::recovery_kit_target_routes::Kit;
 use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::{OwnerJsonBody, invalid_json};
 use crate::api::query_params;
@@ -44,6 +51,12 @@ use crate::owner::vault_key::{
 };
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
+
+mod recovery_preset_routes;
+use recovery_preset_routes::{
+    recovery_preset, recovery_preset_set_schema, set_recovery_preset,
+    set_recovery_preset_body_schema,
+};
 
 pub(super) fn owner_table() -> OwnerTable {
     vec![
@@ -183,6 +196,9 @@ pub(super) fn owner_table() -> OwnerTable {
             put(set_recovery_preset),
         ),
     ]
+    .into_iter()
+    .chain(data_key_generation_routes::owner_table())
+    .collect()
 }
 
 /// `GET /v1/owner/vault-key`: whether the vault has a data key, whether this
@@ -549,71 +565,6 @@ async fn retire_escrow(
     })
     .await?;
     Ok(Json(retired))
-}
-
-/// `GET /v1/owner/vault-key/recovery-preset`: the owner's recovery preset.
-async fn recovery_preset(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-) -> OwnerReply<RecoveryPresetView> {
-    owner(&auth, &server)?;
-    let view = blocking(move || {
-        Ok(RecoveryPresetView {
-            preset: server.vault().recovery_preset()?,
-        })
-    })
-    .await?;
-    Ok(Json(view))
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct RecoveryPresetRequest {
-    /// `standard` or `nobody_but_me`; `nobody_but_me_any_two` is refused
-    /// here, as it is turned on with its kit.
-    preset: RecoveryPreset,
-}
-
-/// `PUT /v1/owner/vault-key/recovery-preset`: sets the owner's recovery
-/// preset, the owner rechecked in the write. Entering `nobody_but_me` needs
-/// the vault key held, an owner-held key custody and this install's device
-/// wrap, which stays; its answer carries the printed sheet's code, once.
-async fn set_recovery_preset(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<RecoveryPresetRequest>,
-) -> OwnerReply<RecoveryPresetSet> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let set = blocking(move || -> OwnerResult<RecoveryPresetSet> {
-        let vault: &oneiron::Vault = match request.preset {
-            RecoveryPreset::NobodyButMe | RecoveryPreset::NobodyButMeAnyTwo => {
-                held(server.vault())?
-            }
-            RecoveryPreset::Standard => server.vault().as_ref(),
-        };
-        // The answer is the sheet's only hand-over: the engine enters the
-        // preset only while this install's device wrap stays, so a lost
-        // answer locks no one out (review of #7766, round 2).
-        let change = vault.set_recovery_preset_answered_as(&owner, request.preset)?;
-        let (mut set, sheet) = RecoveryPresetSet::of(&vault.vault_key_vault_id(), change);
-        set.sheet_code = sheet.map(|sheet| sheet.code().as_str().to_owned());
-        Ok(set)
-    })
-    .await?;
-    Ok(Json(set))
-}
-
-/// The OpenAPI schema of `PUT /v1/owner/vault-key/recovery-preset`'s body:
-/// [`RecoveryPresetRequest`].
-pub(crate) fn set_recovery_preset_body_schema() -> serde_json::Value {
-    oneiron_contracts::code_run::vault_read::request_schema::<RecoveryPresetRequest>()
-}
-
-/// The OpenAPI schema of `PUT /v1/owner/vault-key/recovery-preset`'s answer:
-/// [`RecoveryPresetSet`].
-pub(crate) fn recovery_preset_set_schema() -> serde_json::Value {
-    oneiron_contracts::code_run::vault_read::request_schema::<RecoveryPresetSet>()
 }
 
 /// The OpenAPI schema of `POST /v1/owner/vault-key/remove`'s body (FIX 11611):

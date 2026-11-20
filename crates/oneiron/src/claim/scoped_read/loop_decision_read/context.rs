@@ -323,6 +323,7 @@ impl ScopedRead<'_> {
             claim.relationship.clone(),
             claim.private,
             &position.scope,
+            &read.held,
         )? {
             return Ok(false);
         }

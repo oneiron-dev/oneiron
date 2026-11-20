@@ -203,6 +203,7 @@ impl Fixture {
                         conversation_ref: fixture_id(CONVERSATION_SEED).to_hex(),
                         turn_ref: Some(turn_id.to_hex()),
                         thread_audience: None,
+                        project: None,
                         messages: vec![WitnessMessage {
                             id: None,
                             author: WitnessAuthor::User,
@@ -437,7 +438,7 @@ fn carries_is_refused_on_the_public_edge_door() {
         .put_edge(&result.summary, EdgeKind::Carries, &fixture.carried[0], 1.0)
         .expect_err("only the epoch mint writes carries");
     assert_eq!(refused.kind(), oneiron::ErrorKind::ReservedEdgeKind);
-    assert!(oneiron::edge::validate_public_edge_creation_kind(EdgeKind::Carries).is_err());
+    assert!(oneiron_base::edge::validate_public_edge_creation_kind(EdgeKind::Carries).is_err());
     assert_eq!(EdgeKind::from_name("carries"), Some(EdgeKind::Carries));
     assert_eq!(EdgeKind::Carries.default_weight(), None);
 }

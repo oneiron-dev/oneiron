@@ -277,8 +277,11 @@ fn filter_results(
     Ok(result)
 }
 
-/// Whether a hit names a row this read returns: not deleted, not stale, and
-/// an ordinary entity or one of the reader's own private notes.
+/// Whether a hit names a row this read returns: not deleted, not stale, not
+/// kept for storage only under a use limit, and an ordinary entity or one of
+/// the reader's own private notes. A use-limited row takes no place among the
+/// hits, the owner's included: search never sees a kept copy (FIX
+/// USE-LIMIT-NOT-ASKED-BY-SERVING-DOORS).
 fn visible_in(
     store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
@@ -287,6 +290,7 @@ fn visible_in(
 ) -> Result<bool> {
     Ok(!store.port_deletion_state(txn, id)?.deleted
         && !stale_in_txn(store, txn, id)?
+        && crate::store::legal_hold::use_limit_in_txn(store, txn, id)?.is_none()
         && (private_note_ids.is_some_and(|ids| ids.contains(id))
             || crate::note::ordinary_entity_visible(store, txn, id)?))
 }

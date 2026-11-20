@@ -193,6 +193,22 @@ impl ContentTypes {
         }
     }
 
+    /// Set a part's Override, replacing its content type if already declared.
+    pub fn set_override(&mut self, part_name: &str, content_type: &str) {
+        let normalized = part_name.strip_prefix('/').unwrap_or(part_name);
+        if let Some(entry) = self.overrides.iter_mut().find(|entry| {
+            entry
+                .part_name
+                .strip_prefix('/')
+                .unwrap_or(&entry.part_name)
+                .eq_ignore_ascii_case(normalized)
+        }) {
+            entry.content_type = content_type.to_string();
+        } else {
+            self.add_override(part_name, content_type);
+        }
+    }
+
     /// Check whether an override for the given part name exists.
     /// Override PartName comparison is ASCII case-insensitive (OPC §7.2).
     pub fn has_override(&self, part_name: &str) -> bool {
@@ -655,6 +671,19 @@ pub fn part_dir(part_name: &str) -> &str {
     }
 }
 
+/// Name a target part from a source part: a bare file name in the same
+/// directory, or a package-absolute target otherwise. Both part names are
+/// archive paths without a leading slash.
+pub fn relationship_target_from(source_part: &str, target_part: &str) -> String {
+    let target_dir = part_dir(target_part);
+    let file_name = &target_part[target_dir.len()..];
+    if part_dir(source_part) == target_dir {
+        file_name.to_string()
+    } else {
+        format!("/{target_part}")
+    }
+}
+
 /// The relationships part path for a part (OPC §9.3.4): the part's siblings
 /// `_rels/` folder plus `<name>.rels`. `"word/document2.xml"` →
 /// `"word/_rels/document2.xml.rels"`; `"document.xml"` →
@@ -731,6 +760,9 @@ fn main_document_part_from_root_rels(
     Ok(part_name)
 }
 
+/// The content type of a relationships part (OPC §9.3).
+const RELATIONSHIPS_CONTENT_TYPE: &str = "application/vnd.openxmlformats-package.relationships+xml";
+
 impl DocxPackage {
     /// Parse all metadata from a `DocxArchive`, consuming the metadata parts
     /// into typed structures and keeping everything else as raw bytes.
@@ -753,11 +785,14 @@ impl DocxPackage {
         let main_part_name = main_document_part_from_root_rels(&root_rels, archive)?;
         let document_rels_path = rels_part_path(&main_part_name);
 
-        // Parse the main part's relationships (required).
-        let doc_rels_bytes = archive
-            .get(&document_rels_path)
-            .ok_or_else(|| PackageError::MissingPart(document_rels_path.clone()))?;
-        let document_rels = RelationshipSet::parse(doc_rels_bytes, &document_rels_path)?;
+        // Parse the main part's relationships. The part is optional: a main
+        // part with no outgoing relationship has none. The empty set is based
+        // at the main part's directory, so a relationship the writer adds
+        // later resolves its relative target there.
+        let document_rels = match archive.get(&document_rels_path) {
+            Some(bytes) => RelationshipSet::parse(bytes, &document_rels_path)?,
+            None => RelationshipSet::empty().rebased(&document_rels_path),
+        };
 
         // Parse every non-root, non-main relationships part. This includes
         // headers/footers as well as customXml and arbitrary extension parts:
@@ -817,8 +852,38 @@ impl DocxPackage {
 
     /// Serialize all metadata back to XML and combine with raw parts into a
     /// `DocxArchive` ready for ZIP writing.
-    pub fn into_archive(self) -> Result<DocxArchive, PackageError> {
+    pub fn into_archive(mut self) -> Result<DocxArchive, PackageError> {
         let mut files = Vec::new();
+
+        // Every relationships part written below carries a content type (OPC
+        // §10.1.2). The relationships content type must be the effective type
+        // (Override first, then the `rels` Default), ignoring ASCII case. Add
+        // or replace an Override where that is not the case, so a part this
+        // writer creates is typed too: the main part's, when the input had none.
+        let mut relationships_parts: Vec<String> = self.story_rels.keys().cloned().collect();
+        // Fresh custom XML relationship parts can still be stored as raw parts.
+        relationships_parts.extend(
+            self.parts
+                .keys()
+                .filter(|part| {
+                    part.rsplit_once('.')
+                        .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("rels"))
+                })
+                .cloned(),
+        );
+        relationships_parts.sort();
+        relationships_parts.insert(0, self.document_rels_path.clone());
+        relationships_parts.insert(0, ROOT_RELS_PATH.to_string());
+        for part in relationships_parts {
+            if !self
+                .content_types
+                .content_type_for_part(&part)
+                .is_some_and(|declared| declared.eq_ignore_ascii_case(RELATIONSHIPS_CONTENT_TYPE))
+            {
+                self.content_types
+                    .set_override(&format!("/{part}"), RELATIONSHIPS_CONTENT_TYPE);
+            }
+        }
 
         // Serialize [Content_Types].xml first (convention: it's the first entry).
         files.push(crate::docx::DocxFile {

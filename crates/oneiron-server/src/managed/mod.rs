@@ -111,6 +111,8 @@ pub use self::vm_outbox::{
     read_vm_outbox_member_statuses, run_vm_outbox,
 };
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::args::decode_hex;
 pub use self::args::{ManagedArgs, ManagedError, ManagedStartMode, NO_FD, SettingsRefusal};
 pub use self::key_sync::{
     KeyInvalidation, KeyInvalidationAck, KeyInvalidationKind, account_keys,
@@ -124,6 +126,7 @@ pub use self::state_serve::{
     ManagedShutdown, ManagedState, ObservedAlarm, ShutdownSignal, WRITES_FROZEN_TAG,
     build_managed_app, final_ledger_push, serve_managed, spawn_sigterm_shutdown,
 };
+pub(crate) use self::state_serve::{REAP_PAUSE_BOUND, ReapPauseBound};
 pub(crate) use self::vault_gates::warn_if_reader_table_short;
 pub use self::vault_gates::{
     CANARY_MARKER_KEY, CANARY_MARKER_VALUE, DEK_MAC_KEY, check_managed_open_gates,

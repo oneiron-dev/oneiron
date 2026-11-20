@@ -6,7 +6,10 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
-use super::{CallEnvelope, ModelId, ReplyAssertions, SegmentManifest};
+use super::{
+    CallEnvelope, FatalLlmError, LlmResult, ModelId, ModelLocality, OWN_SERVER_ONLY_PARAM,
+    ReplyAssertions, SegmentManifest,
+};
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -84,6 +87,31 @@ impl LlmRequest {
             }
         }
         None
+    }
+
+    /// The params a provider's wire sends for this call as its rung bound
+    /// it: [`Self::params`] less [`OWN_SERVER_ONLY_PARAM`], and, when the
+    /// call is bound to a hosted API ([`ModelLocality::ThirdParty`]), less
+    /// every param it names. A name list that is not an array of strings is
+    /// refused.
+    pub fn wire_params(&self) -> LlmResult<BTreeMap<&String, &JsonValue>> {
+        let own_server_only = match self.params.get(OWN_SERVER_ONLY_PARAM) {
+            None => Vec::new(),
+            Some(JsonValue::Array(names)) => names
+                .iter()
+                .map(|name| name.as_str().ok_or(FatalLlmError::InvalidRequest))
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+            Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+        };
+        let hosted = self.envelope.locality == ModelLocality::ThirdParty;
+        Ok(self
+            .params
+            .iter()
+            .filter(|(key, _)| {
+                key.as_str() != OWN_SERVER_ONLY_PARAM
+                    && !(hosted && own_server_only.contains(&key.as_str()))
+            })
+            .collect())
     }
 }
 
@@ -468,6 +496,24 @@ pub enum FinishReason {
     Incomplete {
         reason: IncompleteReason,
     },
+}
+
+/// The [`FinishReason::Other`] name a provider finish string lands under.
+///
+/// A provider string that starts with an engine-authored prefix (`fallback:`
+/// or `authored:`) is stored with a `provider:` prefix in front, so no engine
+/// reader takes it as authored. Every other provider string stays exactly as
+/// the provider sent it.
+pub fn provider_finish_reason(name: &str) -> FinishReason {
+    if name.starts_with("fallback:") || name.starts_with("authored:") {
+        FinishReason::Other {
+            name: format!("provider:{name}"),
+        }
+    } else {
+        FinishReason::Other {
+            name: name.to_owned(),
+        }
+    }
 }
 
 /// Why an answer ended [`FinishReason::Incomplete`].

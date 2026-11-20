@@ -127,6 +127,24 @@ pub(super) fn admit_in_txn(
         }
         return Ok(WakeAdmission::Held);
     }
+    // A wake this machine released as the home is its recording machine's
+    // to admit, and nothing admits it here. A historical restore brings an
+    // owed row back as content while the release it kept stands: that copy
+    // goes, undecided (FIX TURNPROGRAM-LATE-WITHHOLD-DOUBLE-DECIDE).
+    #[cfg(feature = "sync")]
+    if super::retraction::released_here_in_txn(
+        vault,
+        &*txn,
+        wake.authority.actor(),
+        wake.key(),
+        admission,
+    )? {
+        if WAKE.contains(vault, &*txn, &wake.key())? {
+            WAKE.delete(vault, txn, &wake.key())?;
+            super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), wake.key())?;
+        }
+        return Ok(WakeAdmission::Held);
+    }
     if !WAKE.contains(vault, &*txn, &wake.key())? {
         return Ok(WakeAdmission::Held);
     }

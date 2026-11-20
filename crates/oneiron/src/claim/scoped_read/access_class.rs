@@ -322,7 +322,7 @@ fn class_judge_in(
 ) -> Result<bool> {
     let key = reader.key;
     let record = view.record();
-    if reader.grant.is_none() && key.relationship_gated_in(vault, txn)? {
+    if reader.grant.is_none() && key.relationship_gated_held_in(vault, txn, authority)? {
         let read = RelationshipRead::Gated {
             kind: ENTITY_TYPE_CLAIM,
             space: view.rel.clone(),
@@ -401,7 +401,7 @@ impl ScopedRead<'_> {
         if !self.reads_by_class() || raw.len() <= ENTITY_METADATA_HEADER_LEN {
             return Ok(None);
         }
-        if !self.row_stands_in(rtxn, id, raw, header, authority.asks_use_of(id))? {
+        if !self.row_stands_in(rtxn, id, raw, header, authority)? {
             return Ok(Some(false));
         }
         let Ok(body) = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true) else {
@@ -449,9 +449,9 @@ impl ScopedRead<'_> {
             }
         };
         // A provenance Claim's named records, an e-sign Claim's signing
-        // document and originals, and a coreference status Claim's endpoints
-        // are the row's own, never its class's: judged last, for an admitted
-        // row only.
+        // document and originals, and a coreference (status or consent)
+        // Claim's endpoints are the row's own, never its class's: judged
+        // last, for an admitted row only.
         Ok(Some(
             verdict
                 && self.provenance_cited_readable_in(rtxn, policy, &body, authority)?

@@ -1,4 +1,5 @@
 //! Room bodies, membership windows, session presence and audience visibility.
+pub(crate) mod archive_restore;
 mod attendee;
 mod body;
 mod chat_breakpoint;
@@ -21,7 +22,9 @@ mod visibility;
 
 pub use attendee::{ContainerAttendee, ContainerAttendeeEntry, ContainerAttendeeEvent};
 pub use body::{ConversationBody, ConversationKind, RoomPin, RoomPinPolicy, RoomRole};
-pub(crate) use body::{body_in, create_in_txn, fresh_id_in_txn, validate_put_in_txn};
+pub(crate) use body::{
+    body_in, create_in_txn, fresh_id_in_txn, new_room_needs_a_door_in_txn, validate_put_in_txn,
+};
 pub use chat_breakpoint::{
     ChatBreakpoint, ChatBreakpointRung, ChatBreakpointStale, ChatBreakpointUserTurn,
     chat_breakpoint, chat_breakpoint_stands, forget_chat_breakpoint,
@@ -39,6 +42,7 @@ pub(crate) use deletion::{
 };
 pub use live_speakers::{LiveSpeakerCall, RoomLiveSpeakerEntries};
 pub(crate) use live_speakers::{LiveSpeakers, RequiredSpeaker, required_live_speakers};
+pub(crate) use membership::membership_row_named_entities;
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub(crate) use membership_index::rebuild_membership_index_in_txn;
 #[cfg(oneiron_test_support)]
@@ -59,8 +63,8 @@ pub use turn_actions::{
 };
 pub(crate) use visibility::{
     AudienceCache, anchors_own_windows_admit_in, conversation_summary_covers,
-    gate_claim_anchors_in, gate_claim_anchors_store_in, private_thread_word_turns_in,
-    private_threads_readable_with_read_in, room_for_record_in,
+    gate_claim_anchors_in, gate_claim_anchors_store_in, hangs_under_in,
+    private_thread_word_turns_in, private_threads_readable_with_read_in, room_for_record_in,
 };
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -99,8 +103,6 @@ fn authorize(vault: &Vault, txn: &heed::RoTxn<'_>, actor: WriteActor) -> Result<
         .map_err(|_| denied())
 }
 
-// FIX [LIBTEST-QUARANTINE-CONVERSATION-TESTS]: the lib test target's type check fails here (97 errors: E0061 x75, E0599 x10, E0639 x3, E0308 x3, E0063 x2, E0608 x2, E0600 x1, E0277 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

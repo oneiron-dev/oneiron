@@ -198,6 +198,19 @@ pub struct RecoveryKitIssueArgs {
     #[arg(long, value_name = "FILE")]
     pub secret_file: Option<PathBuf>,
 
+    /// With `issue-vault-key --any-two-pieces`: the recovery kit that replaces
+    /// the key the box could release, as `confirm` takes its pieces. Give two
+    /// piece files. Without them the switch is refused while a generation is
+    /// live. Never for `issue`: a world kit issue takes no kit.
+    #[arg(long = "piece", value_name = "FILE")]
+    pub kit_pieces: Vec<PathBuf>,
+
+    /// With `--piece` once: the world kit's passphrase, from this owner-only
+    /// file. Stdin stays for the new kit's passphrase and the unlock, so one
+    /// piece without this file is refused.
+    #[arg(long = "kit-secret-file", value_name = "FILE")]
+    pub kit_secret_file: Option<PathBuf>,
+
     /// How the vault key unlocks (FIX 11386), as `confirm` takes it (FIX
     /// 2201): this install's keystore by default. `issue-vault-key` holds a
     /// locked key through it; `issue` opens a sealed vault with it.
@@ -356,24 +369,10 @@ pub struct RecoveryKitRestoreArgs {
 
 /// A checkpoint pin's digest: exactly 64 hex digits, either case.
 fn pin_digest(text: &str) -> Result<[u8; 32], String> {
-    hex32(text, "a pin digest is 64 hex digits")
+    oneiron_hex::decode_any_case(text).ok_or_else(|| "a pin digest is 64 hex digits".to_owned())
 }
 
-/// A kit root's id as a refusal showed it: exactly 64 hex digits.
+/// A kit root's id as a refusal showed it: exactly 64 hex digits, either case.
 fn root_id(text: &str) -> Result<[u8; 32], String> {
-    hex32(text, "a root id is 64 hex digits")
-}
-
-/// Exactly 64 hex digits, either case; `what` words any other text.
-fn hex32(text: &str, what: &str) -> Result<[u8; 32], String> {
-    let refused = || what.to_owned();
-    if text.len() != 64 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(refused());
-    }
-    let mut digest = [0u8; 32];
-    for (at, byte) in digest.iter_mut().enumerate() {
-        let pair = text.get(2 * at..2 * at + 2).ok_or_else(refused)?;
-        *byte = u8::from_str_radix(pair, 16).map_err(|_| refused())?;
-    }
-    Ok(digest)
+    oneiron_hex::decode_any_case(text).ok_or_else(|| "a root id is 64 hex digits".to_owned())
 }

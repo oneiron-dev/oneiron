@@ -31,7 +31,7 @@ use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessT
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::setting::{
-    ScopeKind, SetBy, SetSetting, SetSettingOutcome, SettingCaller, spec_named,
+    Order, ScopeKind, SetBy, SetSetting, SetSettingOutcome, SettingCaller, spec_named,
 };
 use oneiron::store::GateDecisionId;
 use oneiron::tagging::{HeldTagsOutcome, MentionLink, TaggingMarkerConfig, TaggingMode};
@@ -141,6 +141,7 @@ fn save_as(
         vad: None,
         context_links: Vec::new(),
         speaker_links: Vec::new(),
+        relations: None,
         stack_sha16: None,
         mood_parts: Vec::new(),
     };
@@ -253,17 +254,21 @@ fn assert_pace_key(
         Some(json!(strictest)),
         "{key} reads its strictest value when a row does not decode"
     );
-    assert!(kind.has_direction(), "{key} names its tighter direction");
-    let direction = if lower_is_tighter { "lower" } else { "higher" };
+    let (order, direction) = if lower_is_tighter {
+        (Order::Lower, "lower")
+    } else {
+        (Order::Higher, "higher")
+    };
+    assert_eq!(kind.order(), order, "{key} names its tighter direction");
     let tight = kind.from_json(json!(strictest))?;
     let loose = kind.from_json(json!(default))?;
     assert_eq!(
-        kind.is_tighter(&tight, &loose),
+        kind.no_wider(&tight, &loose),
         Some(true),
         "{key} is tighter {direction}: {strictest} against {default}"
     );
     assert_eq!(
-        kind.is_tighter(&loose, &tight),
+        kind.no_wider(&loose, &tight),
         Some(false),
         "{key} is tighter {direction}: {default} against {strictest}"
     );

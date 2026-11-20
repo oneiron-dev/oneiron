@@ -1,5 +1,7 @@
 use super::*;
 
+use std::collections::{HashMap, HashSet};
+
 use heed::RwTxn;
 
 use crate::edge::EdgeKind;
@@ -31,7 +33,7 @@ pub(super) fn apply_claim_candidate(
         envelope,
         occurred,
         learned_at,
-        decision,
+        mut decision,
         consent,
         indexing,
         write_policy,
@@ -86,7 +88,13 @@ pub(super) fn apply_claim_candidate(
     // the old proof verifies over the pre-mask bytes. Every other envelope
     // reaches admission byte for byte.
     let mut resigned = envelope.clone();
+    let mut offered = None;
     if let Some(pre) = &pre_mask {
+        // The mask writes handles over secrets and never moves the claim:
+        // [`claim_body_after_mask`] stores it at the facet and project the
+        // candidate named as offered, the ones the preflight judged and its
+        // walk over the batch noted (PREFLIGHT-SAME-BATCH-BIRTH-FACET).
+        let pre_body = pre.clone().into_claim_body(envelope, default_facet)?;
         crate::authority::resign_machine_claim_after_mask_in_txn(
             store,
             wtxn,
@@ -94,11 +102,26 @@ pub(super) fn apply_claim_candidate(
             pre,
             &candidate,
             &mut resigned,
-            default_facet,
+            pre_body.scope_facet,
         )?;
+        // A receipt this candidate's preflight recorded names the body before
+        // the mask wrote its handles, under the envelope it was offered with:
+        // the gate reads that receipt against this body's diff
+        // (CHECKER-PREVIEW-READS-UNMASKED-CANDIDATE).
+        if decision.preflight.is_some() {
+            let (diff, _) = crate::gate::claim_consent_binding_parts(store, wtxn, &pre_body)?;
+            decision.pre_mask_diff =
+                Some(<[u8; 32]>::try_from(diff.as_slice()).map_err(|_| {
+                    Error::InvariantViolation("a claim diff handle is not 32 bytes")
+                })?);
+        }
+        offered = Some(pre_body);
     }
     let envelope = &resigned;
-    let body = candidate.into_claim_body(envelope, default_facet)?;
+    let body = match &offered {
+        Some(offered) => claim_body_after_mask(candidate, offered, envelope)?,
+        None => candidate.into_claim_body(envelope, default_facet)?,
+    };
     crate::claim::world_access::admit_world_access_write(
         store,
         wtxn,
@@ -276,6 +299,70 @@ pub(super) fn apply_claim_candidate(
     })
 }
 
+/// The body stored for a candidate the write door's secret mask rewrote, read
+/// against `offered`, the body of that candidate as its writer offered it. The
+/// mask writes handles over secrets and never moves the claim: the stored body
+/// keeps the facet and project `offered` names. A facet or project selector in
+/// the opaque scope whose id the mask rewrote leaves the scope, because the
+/// handle in its place names no id and the body decoder refuses it. A selector
+/// the decoder refuses as offered (no id, or a second of its kind) stays, so
+/// that write is refused as before (PREFLIGHT-SAME-BATCH-BIRTH-FACET). The
+/// MACHINE proof renewal after the mask signs this same body.
+pub(crate) fn claim_body_after_mask(
+    candidate: ClaimCandidate,
+    offered: &crate::write_envelope::claim_body::ClaimBody,
+    envelope: &crate::write_envelope::WriteEnvelope,
+) -> Result<crate::write_envelope::claim_body::ClaimBody> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Selector {
+        Facet,
+        Project,
+    }
+    fn selector(key: &rmpv::Value) -> Option<Selector> {
+        match key.as_str() {
+            Some("facet" | "facet_ref" | "facetRef") => Some(Selector::Facet),
+            Some("scopeProjectId") => Some(Selector::Project),
+            _ => None,
+        }
+    }
+    fn names_id(value: &rmpv::Value) -> bool {
+        match value {
+            rmpv::Value::Binary(bytes) => <[u8; 16]>::try_from(bytes.as_slice())
+                .is_ok_and(|bytes| EntityId::from_bytes(bytes).is_ok()),
+            _ => value
+                .as_str()
+                .is_some_and(|text| EntityId::from_hex(text).is_ok()),
+        }
+    }
+    let mut body = candidate.into_claim_body(envelope, offered.scope_facet)?;
+    body.scope_facet = offered.scope_facet;
+    body.scope_project = offered.scope_project;
+    if let (Some(rmpv::Value::Map(entries)), Some(rmpv::Value::Map(offered_entries))) =
+        (body.scope.as_mut(), offered.scope.as_ref())
+        && entries.len() == offered_entries.len()
+    {
+        let single = |kind: Selector| {
+            offered_entries
+                .iter()
+                .filter(|(key, _)| selector(key) == Some(kind))
+                .count()
+                == 1
+        };
+        let rewritten: Vec<bool> = entries
+            .iter()
+            .zip(offered_entries)
+            .map(|((_, value), (key, offered_value))| {
+                selector(key).is_some_and(&single)
+                    && value != offered_value
+                    && names_id(offered_value)
+            })
+            .collect();
+        let mut rewritten = rewritten.into_iter();
+        entries.retain(|_| !rewritten.next().unwrap_or(false));
+    }
+    Ok(body)
+}
+
 /// The exact birth facet kept by both the final materializer and signer.
 /// FIX 7757: the stored `FacetOf` birth edge is authoritative when present;
 /// the body and the vault default stay as fallback for rows born without one.
@@ -303,6 +390,128 @@ pub(crate) fn claim_candidate_birth_facet(
     match stored_facet {
         Some(facet) => Ok(facet),
         None => crate::claim::default_facet_in(store, txn),
+    }
+}
+
+/// [`claim_candidate_birth_facet`] as apply reads it, for a walk over a
+/// batch's ops before any of them applies (PREFLIGHT-SAME-BATCH-BIRTH-FACET).
+/// Apply runs the ops in order in one transaction: a CLAIM an earlier op
+/// births stamps the facet a later candidate of that id is stored at, and a
+/// delete leaves the id to the vault default. The pre-batch state shows
+/// neither. A write over a stored claim keeps its birth facet (apply refuses
+/// one that names another, `FacetStampImmutable`).
+///
+/// Only an id's own CLAIM births (raw put or candidate) and deletes are
+/// noted. Other writers of a birth facet are not: a birth of another entity
+/// type at the id, a FacetOf edge op, a lexical-hint or delete-cascade
+/// teardown, a gap-decay lapse birth. A later candidate of such an id is
+/// still judged over the pre-batch answer and, held, fails closed at the
+/// replay match, as before.
+pub(crate) struct BatchBirthFacets {
+    /// Ids two or more of the batch's ops write: only a later op on the same
+    /// id reads what an earlier one noted, so no other op is decoded again.
+    repeated: HashSet<EntityId>,
+    /// Each id an earlier op wrote: `Some(facet)` born at it, `None` deleted.
+    written: HashMap<EntityId, Option<EntityId>>,
+}
+
+/// The id `op` writes a CLAIM row at, or deletes.
+fn claim_write_id(op: &BatchOp) -> Option<&EntityId> {
+    match op {
+        BatchOp::Put {
+            id, entity_type, ..
+        } if *entity_type == crate::registry::ENTITY_TYPE_CLAIM => Some(id),
+        BatchOp::ClaimCandidate { id, .. } | BatchOp::Delete { id } => Some(id),
+        _ => None,
+    }
+}
+
+impl BatchBirthFacets {
+    /// The walk state for `ops`, before the first of them.
+    pub(crate) fn new(ops: &[BatchOp]) -> Self {
+        let mut once = HashSet::new();
+        let mut repeated = HashSet::new();
+        for id in ops.iter().filter_map(claim_write_id) {
+            if !once.insert(*id) {
+                repeated.insert(*id);
+            }
+        }
+        Self {
+            repeated,
+            written: HashMap::new(),
+        }
+    }
+
+    /// The facet a candidate for `id` is stored at once the ops noted so far
+    /// have applied.
+    pub(crate) fn birth_facet(
+        &self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<EntityId> {
+        match self.written.get(id) {
+            Some(Some(facet)) => Ok(*facet),
+            Some(None) => crate::claim::default_facet_in(store, txn),
+            None => claim_candidate_birth_facet(store, txn, id),
+        }
+    }
+
+    /// Notes what `op` does to the birth facet of the id it writes; call it
+    /// after the read for `op` itself. A body apply cannot decode aborts the
+    /// batch at that op, so no later op reads it and it is not noted. The op
+    /// is read as offered: apply stores a candidate the mask rewrites at the
+    /// facet it named before the mask.
+    pub(crate) fn note(
+        &mut self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        op: &BatchOp,
+    ) -> Result<()> {
+        if !claim_write_id(op).is_some_and(|id| self.repeated.contains(id)) {
+            return Ok(());
+        }
+        let (id, facet) = match op {
+            BatchOp::Put {
+                id,
+                entity_type,
+                data,
+                ..
+            } if *entity_type == crate::registry::ENTITY_TYPE_CLAIM => {
+                let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(data, true)
+                else {
+                    return Ok(());
+                };
+                (id, body.scope_facet)
+            }
+            BatchOp::ClaimCandidate {
+                id,
+                candidate,
+                envelope,
+                ..
+            } => {
+                let facet = self.birth_facet(store, txn, id)?;
+                let Ok(body) = (**candidate).clone().into_claim_body(envelope, facet) else {
+                    return Ok(());
+                };
+                (id, body.scope_facet)
+            }
+            BatchOp::Delete { id } => {
+                self.written.insert(*id, None);
+                return Ok(());
+            }
+            _ => return Ok(()),
+        };
+        // A birth when no row is stored for `id` at this point of the batch:
+        // apply then stamps the body's facet as the claim's birth edge.
+        let stored = match self.written.get(id) {
+            Some(written) => written.is_some(),
+            None => crate::ports::EntityStoreRead::port_entity_present(store, txn, id)?,
+        };
+        if !stored {
+            self.written.insert(*id, Some(facet));
+        }
+        Ok(())
     }
 }
 

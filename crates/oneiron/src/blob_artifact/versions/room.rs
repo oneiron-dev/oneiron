@@ -20,6 +20,7 @@
 
 use heed::{RoTxn, RwTxn};
 use oneiron_contracts::affect::Vad;
+use oneiron_contracts::fingerprint::ContentHash;
 
 use crate::batch::{BatchOp, EntityMetadataHeader};
 use crate::edge::EdgeKind;
@@ -93,7 +94,7 @@ impl RoomResponseVersion {
         learned_at: u64,
     ) -> Result<Self> {
         validate_provenance(provenance)?;
-        let content_hash = *blake3::hash(bytes).as_bytes();
+        let content_hash = *ContentHash::of(bytes).as_bytes();
         let VersionPlacement::Next(place) =
             place_version_in_txn(view, txn, &artifact_id, None, &content_hash)?
         else {

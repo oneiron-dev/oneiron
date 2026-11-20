@@ -20,7 +20,7 @@
 //! credential again only on that action at the repository's own origin.
 //!
 //! It runs no model and no generated code, and it does not link the engine.
-//! The daemon side ([`BrokerClient`]) and the broker side ([`serve`]) share the
+//! The daemon side ([`BrokerClient`]) and the broker side ([`serve()`]) share the
 //! checks in [`CallHeader::check`], so the daemon refuses a bad request before
 //! it reads any key, and the broker refuses it again before it sends.
 
