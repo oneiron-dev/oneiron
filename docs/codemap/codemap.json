@@ -8628,7 +8628,7 @@
      "path": "src/batch/export/document_import/unseated_rooms.rs",
      "purpose": "Archived rooms this vault cannot seat (fix list rows ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM-REFUSED and…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -8876,7 +8876,7 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "re-export": 15
      }
     },
@@ -19278,7 +19278,7 @@
      "purpose": "Encoding and decoding of durable code-run replay records",
      "surface": {
       "const": 6,
-      "crate-vis": 8,
+      "crate-vis": 11,
       "fn": 2,
       "re-export": 1
      }
@@ -20530,7 +20530,7 @@
      "path": "src/code_run/replay/request_identity.rs",
      "purpose": "A bridge request's identity apart from its words (FIX 6534)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -21064,7 +21064,7 @@
      "path": "src/code_run/spawn_replay.rs",
      "purpose": "The one comparison of a recorded bridge row's request with the request its call makes again (FIX 7447), for…",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -21637,7 +21637,17 @@
      "path": "src/code_run/storage/replay_rows.rs",
      "purpose": "Every raw access to the code-run replay table (FIX CODE-RUN-REPLAY-SPLIT-LAYOUT)",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/replay_rows/fenced.rs",
+     "purpose": "The replay put after a put fence (FIX FENCE-ERASED-FORM-THROUGH-WALL)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -27949,9 +27959,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/conversation/archive_restore.rs",
-     "purpose": "Owner restore of archived room role grants (SIDE-4b G5)",
+     "purpose": "Owner restore of archived room membership ledgers and role grants",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/archive_restore/ledger.rs",
+     "purpose": "Atomic, byte-preserving landing of a whole room membership ledger",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -27977,7 +27997,7 @@
      "path": "src/conversation/body.rs",
      "purpose": "Forward-compatible room body codec and the all-writer membership guard",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 4,
       "re-export": 1
      }
@@ -28063,7 +28083,7 @@
      "path": "src/conversation/membership.rs",
      "purpose": "Append-only membership ledger",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 30,
       "fn": 7,
       "re-export": 2
      }
@@ -28085,7 +28105,7 @@
      "path": "src/conversation/mod.rs",
      "purpose": "Room bodies, membership windows, session presence and audience visibility",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 1,
       "re-export": 10
      }
@@ -76822,7 +76842,7 @@
      "path": "src/side_table/erased.rs",
      "purpose": "The one side-table put that skips the side-row wall (FIX 5718): an erase's own write of a row's erased form",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -76834,7 +76854,7 @@
      "path": "src/side_table/mod.rs",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables",
      "surface": {
-      "crate-vis": 56,
+      "crate-vis": 57,
       "fn": 1,
       "mod": 1,
       "struct": 1
@@ -93730,6 +93750,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/archive_room_ledger.rs",
+     "purpose": "Doors for `tests/archive_import_owner_installs_room_membership.rs` (REVIEW-9446 P1-3, P1-4, round 2 P1-3 to…",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/archive_side_binary_credential.rs",
      "purpose": "Door for `tests/archive_side_family_binary_credential.rs`: plants one blob head side row with a…",
      "surface": {
@@ -94979,6 +95009,20 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FencedCall"
+     ],
+     "path": "src/test_doors/fenced_erase_form.rs",
+     "purpose": "Door for `tests/fenced_erase_form_past_wall.rs` (FIX FENCE-ERASED-FORM-THROUGH-WALL): the record of a run…",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 9
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -95911,7 +95955,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 334,
+      "mod": 336,
       "re-export": 2
      }
     },
@@ -103305,7 +103349,7 @@
      "purpose": "Direct leader chats: same-vault routing, shared-ancestor rule clamp and speaker scope",
      "surface": {
       "const": 1,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 2,
       "re-export": 1
      }
@@ -103337,7 +103381,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 56,
+      "crate-vis": 57,
       "enum": 2,
       "fn": 20,
       "re-export": 20,
@@ -105907,6 +105951,14 @@
      "bucket": "L",
      "kind": "test",
      "notable": [],
+     "path": "tests/archive_import_owner_installs_room_membership.rs",
+     "purpose": "The owner's restore installs the room membership ledger live",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
      "path": "tests/archive_import_owner_installs_setting_rows.rs",
      "purpose": "The owner's archive restore brings back Setting rows (ARCHIVE-SETTING-CATALOGUE-KEYS-NOT-CARRIED)",
      "surface": {}
@@ -108435,6 +108487,14 @@
      "notable": [],
      "path": "tests/feed_verbs.rs",
      "purpose": "The change feed verbs (untangle slice 6.8d) through the generated verb dispatch…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fenced_erase_form_past_wall.rs",
+     "purpose": "FIX FENCE-ERASED-FORM-THROUGH-WALL: a put fence erases, in its writer, the record of a run whose actor is…",
      "surface": {}
     },
     {
@@ -115362,7 +115422,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 273,
+     "files": 274,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -115516,7 +115576,7 @@
      "purpose": "Persisted, deterministic Rust/JavaScript API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -116643,7 +116703,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 343,
+     "files": 345,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116820,8 +116880,8 @@
    },
    "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8234,
-   "test_files": 1983
+   "source_files": 8238,
+   "test_files": 1985
   },
   "oneiron-agent-runtime": {
    "files": [
