@@ -193,8 +193,8 @@ pub(crate) fn dreamer_changes_in_txn(
                         && author(body) == Some(dreamer)
                 })
                 .map(|body| (claim_kind(&body), body.predicate)),
-            ENTITY_TYPE_SUMMARY => (summary_by(&record.body, dreamer)
-                && stands_in_txn(vault, txn, &entry.id)?)
+            ENTITY_TYPE_SUMMARY => (stands_in_txn(vault, txn, &entry.id)?
+                && summary_by_in_txn(vault, txn, &entry.id, &record.body, dreamer))
             .then_some((DreamerChangeKind::Summary, String::new())),
             ENTITY_TYPE_NOTE => match note_by_in_txn(vault, txn, &entry.id, &record.body, dreamer)?
             {
@@ -269,13 +269,13 @@ pub(crate) fn revert_authored_change_in_txn(
             revert_claim_in_txn(vault, txn, change, &body, dreamer, reverter, now)
         }
         ENTITY_TYPE_SUMMARY => {
-            if !summary_by(&record.body, dreamer) {
+            if !stands_in_txn(vault, txn, &change)? {
+                return Err(invalid_consolidation("the change no longer stands"));
+            }
+            if !summary_by_in_txn(vault, txn, &change, &record.body, dreamer) {
                 return Err(invalid_consolidation(
                     "the Dreamer did not write this summary",
                 ));
-            }
-            if !stands_in_txn(vault, txn, &change)? {
-                return Err(invalid_consolidation("the change no longer stands"));
             }
             let (current, header) =
                 crate::scope_summary::roll_back_summary_in_txn(vault, txn, change)?;
@@ -453,10 +453,21 @@ fn claim_kind(body: &ClaimBody) -> DreamerChangeKind {
     }
 }
 
-/// Whether the SUMMARY body `body` is the Dreamer's.
-fn summary_by(body: &[u8], dreamer: EntityId) -> bool {
-    crate::scope_summary::decode_scope_summary_body(body)
-        .is_ok_and(|summary| summary.actor == dreamer.to_hex())
+/// Whether the standing SUMMARY `summary`, stored as `stored`, is the
+/// Dreamer's. A summary with a document stores a pointer row, which is no
+/// summary body: its body is read through the document, as every summary
+/// read does (FIX DREAMER-REVERT-DECODES-SUMMARY-POINTER-ROW). A body that
+/// does not resolve or decode is no Dreamer summary.
+fn summary_by_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    summary: &EntityId,
+    stored: &[u8],
+    dreamer: EntityId,
+) -> bool {
+    crate::entity_doc::resolve_record_body(&vault.store, txn, summary, stored)
+        .and_then(|body| crate::scope_summary::decode_scope_summary_body(&body))
+        .is_ok_and(|body| body.actor == dreamer.to_hex())
 }
 
 /// The NOTE's kind when the Dreamer wrote it: its stored core names both
