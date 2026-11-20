@@ -214,7 +214,7 @@ impl Fixture {
 }
 
 /// One verb call through the public invoke path, as `actor` of `class`.
-fn call(
+fn verb_call(
     vault: &Vault,
     actor: EntityId,
     class: EdgeActorClass,
@@ -231,7 +231,7 @@ fn bind(
     speaker: &str,
     person: EntityId,
 ) -> Result<Value, MemoryError> {
-    call(
+    verb_call(
         &fixture.vault,
         fixture.owner,
         EdgeActorClass::Human,
@@ -242,7 +242,7 @@ fn bind(
 
 /// The owner's unbind of `speaker` of `call_ref`.
 fn unbind(fixture: &Fixture, call_ref: &str, speaker: &str) -> Result<Value, MemoryError> {
-    call(
+    verb_call(
         &fixture.vault,
         fixture.owner,
         EdgeActorClass::Human,
@@ -480,7 +480,7 @@ fn an_agent_is_refused_and_writes_nothing() -> TestResult {
         let pam = fixture.make_person_named("Pam")?;
         let before = fixture.transcript(room)?;
         let agent = define_agent(&fixture.vault).expect("an agent");
-        let refused = call(
+        let refused = verb_call(
             &fixture.vault,
             agent,
             EdgeActorClass::Agent,
@@ -493,7 +493,7 @@ fn an_agent_is_refused_and_writes_nothing() -> TestResult {
             refused.message.contains("is the vault owner's"),
             "the refusal names the owner: {refused:?}"
         );
-        let refused = call(
+        let refused = verb_call(
             &fixture.vault,
             agent,
             EdgeActorClass::Agent,
@@ -609,7 +609,7 @@ fn each_act_mints_a_receipt() -> TestResult {
         assert_ne!(bound, unbound, "each act mints its own receipt");
         assert_ne!(rebound, unbound, "each act mints its own receipt");
         for decision in [bound, rebound, unbound] {
-            let out = call(
+            let out = verb_call(
                 &fixture.vault,
                 fixture.owner,
                 EdgeActorClass::Human,
@@ -759,7 +759,7 @@ fn a_bind_to_no_person_or_a_malformed_call_is_refused() -> TestResult {
         assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
         assert_eq!(fixture.transcript(room)?, before, "nothing is written");
 
-        let refused = call(
+        let refused = verb_call(
             &fixture.vault,
             fixture.owner,
             EdgeActorClass::Human,
@@ -769,7 +769,7 @@ fn a_bind_to_no_person_or_a_malformed_call_is_refused() -> TestResult {
         .expect_err("a malformed call is refused");
         assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
         assert_eq!(fixture.transcript(room)?, before, "nothing is written");
-        let refused = call(
+        let refused = verb_call(
             &fixture.vault,
             fixture.owner,
             EdgeActorClass::Human,
