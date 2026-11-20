@@ -156,6 +156,10 @@ pub(crate) enum Tag {
     /// archived standing grants are in, when such a grant is live
     /// (`document_import::claim_pair_same_as`); absent on every other door.
     NightlyLinkGrant,
+    /// Room or TURN id → (): an archived room this vault cannot seat, kept
+    /// out under `RoomNotSeatedHere`, or a TURN kept out with it
+    /// (`document_import::unseated_rooms`).
+    RoomNotSeatedHere,
 }
 
 /// The import's disk index: one LMDB database in the scratch environment,

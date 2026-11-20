@@ -22,7 +22,9 @@ mod visibility;
 
 pub use attendee::{ContainerAttendee, ContainerAttendeeEntry, ContainerAttendeeEvent};
 pub use body::{ConversationBody, ConversationKind, RoomPin, RoomPinPolicy, RoomRole};
-pub(crate) use body::{body_in, create_in_txn, fresh_id_in_txn, validate_put_in_txn};
+pub(crate) use body::{
+    body_in, create_in_txn, fresh_id_in_txn, new_room_needs_a_door_in_txn, validate_put_in_txn,
+};
 pub use chat_breakpoint::{
     ChatBreakpoint, ChatBreakpointRung, ChatBreakpointStale, ChatBreakpointUserTurn,
     chat_breakpoint, chat_breakpoint_stands, forget_chat_breakpoint,
