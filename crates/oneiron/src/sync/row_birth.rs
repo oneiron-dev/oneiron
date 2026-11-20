@@ -308,6 +308,27 @@ fn carried_row_lands_in_txn(
         && !crate::sync::ingest::carrier_dropped_in_txn(&vault.store, txn, id, &carrier)?)
 }
 
+/// Scratch red pin: [`carried_row_lands_in_txn`] without its limit conjuncts.
+fn carried_row_lands_without_limit_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+    id: &EntityId,
+) -> Result<bool> {
+    let LiveEntityRow::Live { entity_type, .. } = live_entity_row_in_txn(&vault.store, txn, id)?
+    else {
+        return Ok(false);
+    };
+    let Some(carrier) = map_get_bytes(&doc.get_map("entities"), &id.to_hex()) else {
+        return Ok(false);
+    };
+    Ok(EntityMetadataHeader::parse(&carrier)
+        .is_some_and(|header| header.entity_type == entity_type)
+        && entity_type != ENTITY_TYPE_DIAGNOSTIC
+        && !crate::origin::lfs::is_lfs_chunk_blob(id, &carrier)
+        && !crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, txn, id)?)
+}
+
 /// Stamps the birth `doc` carries for `id` in `wtxn`, beside the row the same
 /// transaction admitted. A row with no carried birth stays unknown, and so
 /// does a row the carrier may not lend its birth to. A malformed or
@@ -383,7 +404,7 @@ impl BirthBatch {
     ) -> Result<()> {
         let Self { carried } = self;
         for (id, birth) in carried {
-            if carried_row_lands_in_txn(vault, wtxn, doc, id)? {
+            if carried_row_lands_without_limit_in_txn(vault, wtxn, doc, id)? {
                 stamp_birth_or_warn(vault, wtxn, id, birth)?;
             }
         }
