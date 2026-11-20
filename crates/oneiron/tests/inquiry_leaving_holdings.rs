@@ -1205,3 +1205,83 @@ fn a_removed_record_outranks_a_concurrent_missing_read() {
         CooperativeDeleteRecordState::Removed
     );
 }
+
+/// Review round 1 of #9902: the owner's own delete choice over the setting's
+/// records takes the setting's operation over but carries no reason code,
+/// so a setting delete a pass selected before it no longer runs.
+#[cfg(oneiron_test_support)]
+#[test]
+fn the_owners_delete_choice_over_the_settings_records_stops_the_setting_delete() {
+    let fx = leaving();
+    fx.land_copy();
+    fx.install_erase_request_reply(EraseRequestReply::Honour);
+    let filed = fx.file_leave_ask();
+    let pact = fx.pact();
+    let nonce = request_nonce(&filed.request_id);
+    let answered = fx
+        .company
+        .vault
+        .answer_filed_asks_by_setting(fx.company.vault.now_recorded_at())
+        .expect("the setting answers");
+    let setting = answered[0]
+        .disposition
+        .as_ref()
+        .and_then(|answer| answer.delete_operation.clone())
+        .expect("the setting's operation");
+    assert!(
+        oneiron::test_doors::inquiry::setting_delete_runs(
+            &fx.company.vault,
+            &pact,
+            &nonce,
+            setting.operation_id,
+        )
+        .expect("the check reads"),
+        "the setting's delete runs under its own choice"
+    );
+
+    let records: Vec<EntityId> = setting.records.iter().map(|saved| saved.record).collect();
+    let owners = fx
+        .company
+        .vault
+        .answer_cooperative_deletion_as(
+            &fx.company.proof,
+            &pact,
+            &nonce,
+            &CooperativeDeletionAnswer {
+                kind: CooperativeDeletionDispositionKind::Delete,
+                reason_code: None,
+                review_at: None,
+                delete: records,
+                hold: Vec::new(),
+                retention: None,
+                restrict: Vec::new(),
+                restriction_notice_given: Vec::new(),
+                redact: Vec::new(),
+            },
+            fx.company.vault.now_recorded_at(),
+        )
+        .expect("the company Owner deletes the same copies");
+    let answer = owners.disposition.as_ref().expect("the owner's answer");
+    assert_eq!(
+        answer
+            .delete_operation
+            .as_ref()
+            .map(|operation| operation.operation_id),
+        Some(setting.operation_id),
+        "the owner's choice takes the setting's operation over"
+    );
+    assert!(
+        answer.reason_code.is_none(),
+        "the owner's choice carries no reason code"
+    );
+    assert!(
+        !oneiron::test_doors::inquiry::setting_delete_runs(
+            &fx.company.vault,
+            &pact,
+            &nonce,
+            setting.operation_id,
+        )
+        .expect("the check reads"),
+        "no setting delete runs under the owner's choice"
+    );
+}
