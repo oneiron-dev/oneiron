@@ -317,9 +317,8 @@ pub(super) fn settle_tail(
     // Each device revocation's fence retires its key, as the whole fold's
     // settlement does; one that could refuse a tail row leaves the tail to
     // the whole history.
-    let Some(revoked) = serial_revocation_fences(&judged, &states) else {
-        return Ok(None);
-    };
+    // RED PIN: the fence's refusal removed, to show the revoked-key cosign test pins it.
+    let revoked = serial_revocation_fences(&judged, &states).unwrap_or_default();
     let mut retired_keys = image.safety.retired_keys.clone();
     retired_keys.extend(revoked);
     let mut merged = image.aggregate.merged.clone();
