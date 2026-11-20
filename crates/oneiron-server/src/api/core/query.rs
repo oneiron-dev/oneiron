@@ -151,7 +151,10 @@ pub(crate) async fn core_query_hooked(
         move |body: &Value| admit_core_query(&server, &auth, body)
     };
     let admitted = admit(&body)?;
-    let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
+    // The receipt reports the reach that admitted the hits, an agent key's
+    // live Grants among it; the projection below asks under its applied
+    // scope (FIX-LIST GRANT-RECEIPT-OTHER-READ-LANES).
+    let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?.with_live_grant_receipts();
     let body = NativeReadBody::split(body, CORE_QUERY_ROUTE_CONTROLS);
     native_read_hooked(
         server,

@@ -110,6 +110,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
         Option<std::collections::BTreeMap<String, crate::federation::SharedActPolicy>>,
     pub(in crate::gate) owner_change_wait_secs: Option<u64>,
     pub(in crate::gate) inquiry_policy: Option<crate::inquiry::InquiryPolicy>,
+    pub(in crate::gate) one_vault_policy: Option<crate::workspace_roster::OneVaultPolicy>,
     pub(in crate::gate) erase_request_reply_policy:
         Option<crate::deletion::EraseRequestReplyPolicy>,
     pub(in crate::gate) catastrophe_floor: Option<crate::consent::CatastropheFloor>,

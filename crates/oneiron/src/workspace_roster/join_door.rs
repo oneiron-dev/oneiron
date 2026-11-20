@@ -47,6 +47,8 @@ use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 mod authority;
 mod publish;
 
+#[cfg(feature = "sync")]
+pub(in crate::workspace_roster) use authority::peer_admission_party_in_txn;
 pub(in crate::workspace_roster) use authority::{
     answering_party_in_txn, require_admission_party_in_txn,
 };

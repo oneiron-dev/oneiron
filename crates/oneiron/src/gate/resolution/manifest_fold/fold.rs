@@ -211,45 +211,46 @@ pub(super) fn fold_policy_manifest(
                 // One act-policy table per vault: the same table twice is one
                 // configuration; two different tables have no deterministic
                 // answer, so every act they would govern fails closed.
-                if let Some(rows) = decoded.shared_act_policies {
-                    match &resolution.shared_act_policies {
-                        None => resolution.shared_act_policies = Some(rows),
-                        Some(existing) if *existing == rows => {}
-                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
-                    }
-                }
+                fold_one_per_vault(
+                    &mut resolution.shared_act_policies,
+                    decoded.shared_act_policies,
+                    &mut resolution.diagnostics.malformed_manifest_seen,
+                );
                 // One common owner-change wait per vault: the same scalar
                 // twice is one configuration; two different scalars have no
                 // deterministic answer, so every act they would govern fails
                 // closed.
-                if let Some(secs) = decoded.owner_change_wait_secs {
-                    match &resolution.owner_change_wait_secs {
-                        None => resolution.owner_change_wait_secs = Some(secs),
-                        Some(existing) if *existing == secs => {}
-                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
-                    }
-                }
+                fold_one_per_vault(
+                    &mut resolution.owner_change_wait_secs,
+                    decoded.owner_change_wait_secs,
+                    &mut resolution.diagnostics.malformed_manifest_seen,
+                );
                 // One inquiry row per vault, as the wait above: two different
                 // rows have no deterministic keep, so the policy fails closed
                 // and the vault reads `task`, marked unreadable.
-                if let Some(policy) = decoded.inquiry_policy {
-                    match &resolution.inquiry_policy {
-                        None => resolution.inquiry_policy = Some(policy),
-                        Some(existing) if *existing == policy => {}
-                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
-                    }
-                }
+                fold_one_per_vault(
+                    &mut resolution.inquiry_policy,
+                    decoded.inquiry_policy,
+                    &mut resolution.diagnostics.malformed_manifest_seen,
+                );
+                // One one-vault row per vault, as the inquiry row above:
+                // two different rows have no deterministic mode, so the
+                // policy fails closed and the vault reads no mode, marked
+                // unreadable.
+                fold_one_per_vault(
+                    &mut resolution.one_vault_policy,
+                    decoded.one_vault_policy,
+                    &mut resolution.diagnostics.malformed_manifest_seen,
+                );
                 // One erase-request reply row per vault, as the inquiry row:
                 // two different rows have no deterministic reply, so the
                 // policy fails closed and the vault reads `ask`, marked
                 // unreadable.
-                if let Some(policy) = decoded.erase_request_reply_policy {
-                    match &resolution.erase_request_reply_policy {
-                        None => resolution.erase_request_reply_policy = Some(policy),
-                        Some(existing) if *existing == policy => {}
-                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
-                    }
-                }
+                fold_one_per_vault(
+                    &mut resolution.erase_request_reply_policy,
+                    decoded.erase_request_reply_policy,
+                    &mut resolution.diagnostics.malformed_manifest_seen,
+                );
                 // Every valid row carries its version's pinned membership, so
                 // the newest version among trusted packs is the floor.
                 if let Some(floor) = decoded.catastrophe_floor
@@ -264,13 +265,11 @@ pub(super) fn fold_policy_manifest(
                 // configuration; two different rows have no deterministic
                 // wait, so the policy fails closed and every rung takes the
                 // shipped wait, receipted as unreadable.
-                if let Some(policy) = decoded.check_in_policy {
-                    match &resolution.check_in_policy {
-                        None => resolution.check_in_policy = Some(policy),
-                        Some(existing) if *existing == policy => {}
-                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
-                    }
-                }
+                fold_one_per_vault(
+                    &mut resolution.check_in_policy,
+                    decoded.check_in_policy,
+                    &mut resolution.diagnostics.malformed_manifest_seen,
+                );
                 resolution
                     .owner_policy_rows
                     .extend(decoded.owner_policy_rows);
@@ -348,13 +347,11 @@ pub(super) fn fold_policy_manifest(
                 resolution
                     .skill_tradeoff_rows
                     .extend(decoded.skill_tradeoff_rows);
-                if let Some(on_budget_exhausted) = decoded.on_budget_exhausted {
-                    match resolution.on_budget_exhausted {
-                        None => resolution.on_budget_exhausted = Some(on_budget_exhausted),
-                        Some(existing) if existing == on_budget_exhausted => {}
-                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
-                    }
-                }
+                fold_one_per_vault(
+                    &mut resolution.on_budget_exhausted,
+                    decoded.on_budget_exhausted,
+                    &mut resolution.diagnostics.malformed_manifest_seen,
+                );
                 if let Some(policy) = decoded.project_collaboration {
                     resolution.project_collaboration = Some(
                         resolution
@@ -368,13 +365,11 @@ pub(super) fn fold_policy_manifest(
                 // two manifests naming different checkers is a policy state
                 // nothing downstream could resolve — so it fails closed rather
                 // than picking a winner.
-                if let Some(auto_checker) = decoded.auto_checker {
-                    match &resolution.auto_checker {
-                        None => resolution.auto_checker = Some(auto_checker),
-                        Some(existing) if *existing == auto_checker => {}
-                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
-                    }
-                }
+                fold_one_per_vault(
+                    &mut resolution.auto_checker,
+                    decoded.auto_checker,
+                    &mut resolution.diagnostics.malformed_manifest_seen,
+                );
                 // Deterministic resolved order: type-index manifest scan
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
@@ -586,13 +581,11 @@ pub(super) fn fold_policy_manifest(
                     resolution.wave_handoff =
                         Some(resolution.wave_handoff.map_or(row, |old| old.restrict(row)));
                 }
-                if let Some(precedence) = decoded.operational_precedence {
-                    match resolution.operational_precedence {
-                        None => resolution.operational_precedence = Some(precedence),
-                        Some(existing) if existing == precedence => {}
-                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
-                    }
-                }
+                fold_one_per_vault(
+                    &mut resolution.operational_precedence,
+                    decoded.operational_precedence,
+                    &mut resolution.diagnostics.malformed_manifest_seen,
+                );
                 if let Some(quota) = decoded.weave_correction_policy {
                     match &mut resolution.weave_correction_policy {
                         Some(existing) => existing.restrict(quota),

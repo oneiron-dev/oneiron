@@ -336,7 +336,7 @@ fn class_judge_in(
         }
     }
     if !key.guest_bound_admits_at(vault, txn, || Ok(Some(record.clone())))
-        || !key.facets_allow_placed_in(vault, txn, &view.facets)?
+        || !key.facets_allow_placed_in(vault, txn, &view.facets, Some(authority))?
         || !key.admits_principal(view.principal)
         || (view.mined_preference && view.principal.is_none())
         || !reader.status.admits_status(
@@ -491,7 +491,12 @@ impl ScopedRead<'_> {
         principal: Option<EntityId>,
         authority: &HeldAuthority,
     ) -> Result<bool> {
-        if !crate::claim::has_live_support_in_txn(&self.store_read(), rtxn, body)? {
+        if !crate::claim::evidence_support::has_live_support_under_in_txn(
+            &self.store_read(),
+            rtxn,
+            body,
+            self.cited_support,
+        )? {
             return Ok(false);
         }
         // A mined preference with no principal is the class's to refuse.

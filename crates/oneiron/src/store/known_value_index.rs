@@ -40,6 +40,7 @@
 mod entries;
 use oneiron_store::known_value_index::forms;
 mod rolling;
+mod room;
 mod run;
 mod writer_index;
 

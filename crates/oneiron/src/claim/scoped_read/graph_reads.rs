@@ -17,6 +17,34 @@ type TimelineEntityParts = (u8, u64, Vec<u8>);
 type SupersessionSide = (u8, u64, Vec<u8>, RevisionRef);
 type SupersessionParts = (SupersessionSide, SupersessionSide);
 
+/// What a timeline's projection snapshot admits of one record the timeline
+/// listed in an earlier one ([`ScopedRead::memory_timeline_projection_with_receipt`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TimelineRecordProjection {
+    /// A living record the snapshot admits: its type, its learned-at time
+    /// and its body.
+    Body {
+        /// The record's entity type.
+        entity_type: u8,
+        /// When the vault learned the record.
+        learned_at: u64,
+        /// The record's body, after its header.
+        body: Vec<u8>,
+    },
+    /// A deleted record whose shell the snapshot still admits: its deletion
+    /// metadata may show, never a body.
+    Shell,
+    /// A record the snapshot refuses, or one whose row is gone. `counted`
+    /// when the projection's receipt counts it as one withheld row: the read
+    /// asked a narrower scope than its floor, which still admits it. A row
+    /// gone from the store, or one only another authority admitted, is never
+    /// counted (review round 1 of #10031).
+    Withheld {
+        /// Whether the projection's receipt counts this row.
+        counted: bool,
+    },
+}
+
 impl ScopedRead<'_> {
     /// The graph-ask recipe reads at most `limit` usable outgoing neighbors.
     /// Its semantic scan cap applies after admission, so Empty relations cannot
@@ -181,7 +209,9 @@ impl ScopedRead<'_> {
     /// A room's row and its turns, anchor or record, show only to a reader
     /// the room itself admits (L9-52, [`crate::Vault::room_structure_admitted`]).
     /// Each snapshot's living rows take the authority it holds, so a live
-    /// Grant of this key admits them as on a point read (FIX 7462).
+    /// Grant of this key admits them as on a point read (FIX 7462), and a
+    /// deleted record's shell shows where one such Grant alone holds its
+    /// place and type (Engine ANSWER GRANT-AGENT-DELETED-SHELLS = A).
     pub fn memory_timeline(&self, anchor: &EntityId) -> Result<ScopedReadResult<MemoryTimeline>> {
         let (filter, policy) = {
             let txn = self.grant_read_txn()?;
@@ -227,6 +257,17 @@ impl ScopedRead<'_> {
             receipt.restrict_with(&self.timeline_receipt_in(&txn, None, fresh, 0, &held));
             receipt
         };
+        // An anchor the final snapshot refuses, on entry or in the record
+        // gate, ends the read as it would have on entry: only the anchor is
+        // judged, so the receipt cannot size its chain (review round 2 of
+        // #10031).
+        let anchor_refused = |suppressed| ScopedReadResult {
+            value: MemoryTimeline {
+                anchor: *anchor,
+                records: Vec::new(),
+            },
+            receipt: receipt(suppressed),
+        };
         let rooms = RoomVerdicts::default();
         let anchor_admitted = self.admit_in(&txn, anchor, || {
             Ok(
@@ -245,16 +286,7 @@ impl ScopedRead<'_> {
             )
         })?;
         if !anchor_admitted.visible() {
-            // An anchor the final snapshot refuses ends the read as it would
-            // have on entry: only the anchor is judged, so no record of its
-            // chain counts and the receipt cannot size the chain.
-            return Ok(ScopedReadResult {
-                value: MemoryTimeline {
-                    anchor: *anchor,
-                    records: Vec::new(),
-                },
-                receipt: receipt(anchor_admitted.suppression()),
-            });
+            return Ok(anchor_refused(anchor_admitted.suppression()));
         }
         let mut kept = Vec::new();
         let mut suppressed = 0;
@@ -273,6 +305,9 @@ impl ScopedRead<'_> {
                     )?)
                 .then_some(()))
             })?;
+            if record.id == *anchor && !admitted.visible() {
+                return Ok(anchor_refused(admitted.suppression()));
+            }
             suppressed += admitted.suppression();
             if admitted.visible() {
                 kept.push(record);
@@ -291,17 +326,64 @@ impl ScopedRead<'_> {
         })
     }
 
+    /// The bodies of already-authorized timeline rows,
+    /// [`Self::memory_timeline_projection_with_receipt`] with a withheld row
+    /// as `None`. A deleted record is `None` before any check, so it adds
+    /// no count and no axis to the receipt (review round 2 of #10031).
+    pub fn memory_timeline_parts_with_receipt(
+        &self,
+        records: &[MemoryTimelineRecord],
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<ScopedReadResult<Vec<Option<TimelineEntityParts>>>> {
+        let projected = self.timeline_projection_in(records, requested, false)?;
+        Ok(ScopedReadResult {
+            value: projected
+                .value
+                .into_iter()
+                .map(|part| match part {
+                    TimelineRecordProjection::Body {
+                        entity_type,
+                        learned_at,
+                        body,
+                    } => Some((entity_type, learned_at, body)),
+                    TimelineRecordProjection::Shell | TimelineRecordProjection::Withheld { .. } => {
+                        None
+                    }
+                })
+                .collect(),
+            receipt: projected.receipt,
+        })
+    }
+
     /// Read the bodies of already-authorized timeline rows. This is NOT a
     /// retrieval search: closed claims are history, but their audience,
     /// predicate, world, sensitivity and policy gates still apply. Recheck
     /// each row against the caller's current authority snapshot before giving
     /// its bytes to a renderer. A row takes `requested` and the key's live
     /// Grants; it counts as withheld when the floor or one Grant admits it.
-    pub fn memory_timeline_parts_with_receipt(
+    /// A deleted record's shell takes the timeline's own shell gate in this
+    /// snapshot too, so a shell whose authority went after the timeline
+    /// listed it is [`TimelineRecordProjection::Withheld`] (FIX
+    /// TIMELINE-SHELL-TWO-SNAPSHOT-CAP), counted as a living row is: a shell
+    /// gone from the store, or one the floor no longer admits, adds no count
+    /// (review round 1 of #10031).
+    pub fn memory_timeline_projection_with_receipt(
         &self,
         records: &[MemoryTimelineRecord],
         requested: Option<&RetrievalFilter>,
-    ) -> Result<ScopedReadResult<Vec<Option<TimelineEntityParts>>>> {
+    ) -> Result<ScopedReadResult<Vec<TimelineRecordProjection>>> {
+        self.timeline_projection_in(records, requested, true)
+    }
+
+    /// [`Self::memory_timeline_projection_with_receipt`]; a deleted record
+    /// takes its shell gate only where `judge_shells`, and is otherwise
+    /// withheld uncounted before any check.
+    fn timeline_projection_in(
+        &self,
+        records: &[MemoryTimelineRecord],
+        requested: Option<&RetrievalFilter>,
+        judge_shells: bool,
+    ) -> Result<ScopedReadResult<Vec<TimelineRecordProjection>>> {
         let txn = self.vault.store.env.read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         let held = self.held_for(requested);
@@ -309,34 +391,36 @@ impl ScopedRead<'_> {
         let mut suppressed = 0;
         let mut value = Vec::with_capacity(records.len());
         for record in records {
-            if record.state == MemoryTimelineRecordState::Deleted {
-                value.push(None);
+            if !judge_shells && record.state == MemoryTimelineRecordState::Deleted {
+                value.push(TimelineRecordProjection::Withheld { counted: false });
                 continue;
             }
             let admitted = self.admit_held_in(&txn, &record.id, &held, || {
                 self.timeline_record_allowed_in(&txn, &policy, &filter, record, &held)
                     .map(|visible| visible.then_some(()))
             })?;
-            if admitted.suppression() > 0
+            let counted = admitted.suppression() > 0
                 && requested.is_some()
                 && self
                     .actor_retrieval_floor(&policy)
                     .and_then(|floor| {
                         self.timeline_record_allowed_in(&txn, &policy, &floor, record, &floor_held)
                     })
-                    .unwrap_or(false)
-            {
-                suppressed += 1;
-            }
+                    .unwrap_or(false);
+            suppressed += usize::from(counted);
             if !admitted.visible() {
-                value.push(None);
+                value.push(TimelineRecordProjection::Withheld { counted });
+                continue;
+            }
+            if record.state == MemoryTimelineRecordState::Deleted {
+                value.push(TimelineRecordProjection::Shell);
                 continue;
             }
             let Some(raw) = self
                 .entity_record_in(&txn, &record.id)?
                 .map(|row| row.encode())
             else {
-                value.push(None);
+                value.push(TimelineRecordProjection::Withheld { counted: false });
                 continue;
             };
             // A file-plane ASSET reads as its body, never its manifest.
@@ -346,17 +430,18 @@ impl ScopedRead<'_> {
             let raw = self.redact_reaction_row_in(&txn, raw)?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            value.push(Some((
-                header.entity_type,
-                header.learned_at,
-                raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
-            )));
+            value.push(TimelineRecordProjection::Body {
+                entity_type: header.entity_type,
+                learned_at: header.learned_at,
+                body: raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+            });
         }
         self.charge_served(
             records
                 .iter()
                 .zip(&value)
-                .filter_map(|(record, part)| part.as_ref().map(|_| record.id)),
+                .filter(|(_, part)| matches!(part, TimelineRecordProjection::Body { .. }))
+                .map(|(record, _)| record.id),
         );
         Ok(ScopedReadResult {
             value,
@@ -623,14 +708,12 @@ impl ScopedRead<'_> {
         };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        Ok(!filter.deny_all
-            && self.audience_readable_in(txn, id)?
+        Ok(self.audience_readable_in(txn, id)?
             && self
                 .vault
                 .store
                 .validate_entity_type(header.entity_type)
                 .is_ok()
-            && filter.read_scope().bands.contains(&header.entity_type)
             && !matches!(
                 header.entity_type,
                 crate::registry::ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE
@@ -641,88 +724,11 @@ impl ScopedRead<'_> {
                     crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_SUMMARY
                 ))
             && raw.len() == ENTITY_METADATA_HEADER_LEN
-            && self.deleted_shell_position_allowed_in(txn, policy, id, &raw)?
+            && self.shell_authority_in(txn, policy, filter, id, &raw, held)?
             && self
                 .vault
                 .store
                 .entity_deletion_present_in_txn(txn, id, header.learned_at)?)
-    }
-
-    /// The type-only fallback above serves a deleted shell's metadata, but a
-    /// TASK may have been born in any world or facet (ARCH-0067 §5). Its
-    /// shell reads at the position a kept stamp proves; one whose stamp went
-    /// with its body reads as if it sat anywhere, so only a reader whose
-    /// ceiling holds every world and facet sees it.
-    fn deleted_shell_position_allowed_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        policy: &PolicyManifestResolution,
-        id: &EntityId,
-        raw: &[u8],
-    ) -> Result<bool> {
-        use crate::federation::record_scope::{default_stamp, scope_for_blob};
-        use oneiron_authority::federation::{Scope, ScopeAxis};
-        // A read limited to facets names only a shell that still proves a
-        // place inside them. The credential's records and channel caveats
-        // bound a shell as they bound its live row (FIX 8666).
-        if !self.credential_allows_id(id) || !self.facets_allow_in(txn, id, raw)? {
-            return Ok(false);
-        }
-        let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != crate::registry::ENTITY_TYPE_TASK {
-            // Any other shell sits in the world its row still proves; one
-            // that proves none reads as if anywhere, so only a read whose
-            // asked and credential worlds hold every world sees it (FIX 8666).
-            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-            let world = match self.session_view {
-                Some(view) => crate::federation::record_scope::record_world_in(
-                    view,
-                    txn,
-                    *id,
-                    header.entity_type,
-                    body,
-                )?,
-                None => crate::federation::record_scope::record_world_in(
-                    &self.vault.store,
-                    txn,
-                    *id,
-                    header.entity_type,
-                    body,
-                )?,
-            };
-            let position = world.map_or_else(Scope::top, super::actor_key::record_world_scope);
-            // One agent Grant alone must hold it too (FIX
-            // AGENT-GRANT-ENVELOPE-ONLY-PATHS).
-            return Ok(position.is_narrowing_of(&self.actor_key.world_ceiling())
-                && self.one_grant_alternative_holds_shell_in(
-                    txn,
-                    &super::access_gate::HeldAuthority::for_request(None),
-                    id,
-                    raw,
-                    &position,
-                )?);
-        }
-        let kept = match self.session_view {
-            Some(view) => scope_for_blob(view, txn, *id, raw)?,
-            None => scope_for_blob(&self.vault.store, txn, *id, raw)?,
-        };
-        let position = kept.unwrap_or_else(|| Scope {
-            worlds: ScopeAxis::All,
-            facets: ScopeAxis::All,
-            verbs: ScopeAxis::Some(["read".to_owned()].into()),
-            ..default_stamp(header.entity_type, *id)
-        });
-        Ok(
-            crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &position)
-                && self.one_grant_alternative_admits_record_in(
-                    txn,
-                    &super::access_gate::HeldAuthority::for_request(None),
-                    policy,
-                    &position,
-                    Some((id, Some(raw))),
-                )?,
-        )
     }
 
     /// A living record takes `held`, the authority the read holds in `txn`;
@@ -744,11 +750,10 @@ impl ScopedRead<'_> {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         // Never combine metadata captured before a rewrite with later authority.
-        // A shell meets this filter's deny_all and bands here; a living record
-        // meets them in the row gate at the end, as does each live Grant.
+        // A shell meets this filter's deny_all and bands in its own gate, as
+        // does each live Grant; a living record meets them in the row gate.
         let shell = record.state == MemoryTimelineRecordState::Deleted;
-        if (shell && filter.deny_all)
-            || !self.audience_readable_in(txn, &record.id)?
+        if !self.audience_readable_in(txn, &record.id)?
             || record.entity_type != Some(header.entity_type)
             || record.occurred_start != Some(header.occurred_start)
             || record.occurred_end != Some(header.occurred_end)
@@ -759,7 +764,6 @@ impl ScopedRead<'_> {
                 .store
                 .validate_entity_type(header.entity_type)
                 .is_err()
-            || (shell && !filter.read_scope().bands.contains(&header.entity_type))
         {
             return Ok(false);
         }
@@ -777,7 +781,7 @@ impl ScopedRead<'_> {
                 ));
             return Ok(!scope_erased
                 && raw.len() == ENTITY_METADATA_HEADER_LEN
-                && self.deleted_shell_position_allowed_in(txn, policy, &record.id, &raw)?
+                && self.shell_authority_in(txn, policy, filter, &record.id, &raw, held)?
                 && self.vault.store.entity_deletion_present_in_txn(
                     txn,
                     &record.id,

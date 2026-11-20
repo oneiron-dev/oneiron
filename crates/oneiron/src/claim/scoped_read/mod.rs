@@ -22,6 +22,7 @@ use oneiron_retrieval::pipeline::ScoredEntity;
 
 mod claim_admission;
 mod context_pack_filter;
+mod deleted_shells;
 mod diagnostic_reads;
 mod edge_claims;
 mod exposure;
@@ -41,6 +42,7 @@ mod named_reads;
 mod native_raw;
 pub use native_raw::NativeRawRead;
 mod note_visibility;
+mod person_about_lines;
 mod phone_line;
 mod pinned_reads;
 mod point_reads;
@@ -79,6 +81,7 @@ mod weave_serve;
 mod weave_trigger;
 pub(crate) use claim_admission::{ClaimReadStatus, ClaimReadStatusExt};
 pub use frozen::FrozenReadLane;
+pub use graph_reads::TimelineRecordProjection;
 pub use named_reads::NamedSlot;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
@@ -186,6 +189,11 @@ pub struct ScopedRead<'a> {
     /// reach that admitted its rows. Off elsewhere, so a consumer that caps
     /// unjudged content by a receipt's applied band keeps the key's own.
     receipts_include_live_grants: bool,
+    /// The rule this read applies to a claim whose cited claim the owner
+    /// retracted ([`crate::claim::evidence_support::CitedSupport`]): `History` only on the
+    /// claim history door's lane (`ScopedRead::for_claim_history`), which
+    /// keeps such a claim in the record; `Served` on every other lane.
+    cited_support: crate::claim::evidence_support::CitedSupport,
 }
 
 mod owned;

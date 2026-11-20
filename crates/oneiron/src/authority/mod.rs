@@ -32,6 +32,7 @@
 
 pub use crate::gate::manifest_authenticity::ManifestContribution;
 
+mod account_key_read;
 mod act_standing;
 mod admission;
 mod adopted_build;
@@ -465,9 +466,10 @@ pub use owner_delegate::{OwnerOrDelegate, owner_delegate_admits};
 pub use owner_key_changes::{OwnerKeyChange, OwnerKeyChangeKind};
 pub(crate) use owner_key_enrollment_door::ActivationPredecessor;
 pub use owner_key_enrollment_door::{
-    EnrolledOwnerKey, EnrolledOwnerKeyKind, EnrolledOwnerPasskey, OwnerKeyEnrollment,
-    OwnerKeyEnrollmentReceipt, OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt,
-    PreparedOwnerKeyEnrollment, WaysBack,
+    EnrolledOwnerKey, EnrolledOwnerKeyKind, EnrolledOwnerPasskey, OwnerKeyBindingReceipt,
+    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, OwnerPasskeyBindingReceipt,
+    OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt, PreparedOwnerKeyBinding,
+    PreparedOwnerKeyEnrollment, PreparedOwnerPasskeyBinding, WaysBack,
 };
 pub use owner_key_move_confirm::{
     OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED,
@@ -590,6 +592,7 @@ pub(crate) use log_budget::{
 pub(crate) use log_structure::carried_rows_never_applied_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use owner_key_line::tail_reaches_old_parents_past_rows_for_test;
+pub(crate) use owner_proof::OwnerProofSigner;
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 #[cfg(oneiron_test_support)]
@@ -600,7 +603,12 @@ pub(crate) use pinned_root::{
     end_request_wait_in_txn, ended_request_wait, read_pin_and_earlier_in_txn, read_pin_row_in_txn,
     write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
-pub(crate) use policy_setting_choice::PolicySettingAct;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use policy_setting_choice::SettingFrontier;
+pub(crate) use policy_setting_choice::{
+    ChoiceCount, ChoiceCounts, NameCounts, PolicySettingAct, SettingSlotAct, SettingSlotFold,
+    SettingSlotHead, SettingSlotRow, SlotValue,
+};
 pub(crate) use principal_standing::{
     GIT_PUSH_PACT_STANDING_LAPSED, git_push_pact_standing_lapsed_in_txn,
 };

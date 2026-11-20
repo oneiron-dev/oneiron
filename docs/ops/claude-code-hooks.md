@@ -129,8 +129,11 @@ resume or compaction). Each start records its binding in
 `hook-sessions/<session id>/` in the run folder: `local` for a pin, a local
 vault or no vault, `hosted-<16 hex digits>` for a hosted vault (its origin
 and id, never a credential), and `unknown` when a resumed or compacted
-session had no record yet. Files are owner-only, only ever added, and kept
-30 days.
+session had no record yet. Files are owner-only and only ever added. A
+session whose records are all `local` loses them 30 days after its last
+start, and queues locally as it did with them; every other record is kept,
+so a session that bound a hosted vault hands over by it however long it
+waited.
 
 - Every start bound your selected hosted vault, and it is still the one
   selected: the `hand-over` sends the session's log and its subagents' logs
@@ -155,13 +158,20 @@ call fits the carrier of the selection's sign-in: the owner's socket frame
 (about 8 MiB encoded), else the 64 MiB line `oneiron mcp` reads, and at most
 64 MiB inflated. Subagents' logs that do not fit one call with the session's
 log go in further calls, each with the session's log again, which the import
-lands once. A session's log too long for one call is not sent at all; import
-it on the machine it ran on with `oneiron import claude-code <log>`. A send
+lands once. Over the owner's socket, a session's log too long for one call
+goes in parts (`vault.imports.hook_transcript_part`), up to 64 MiB encoded:
+the hosted vault holds them in memory, at most two sends at once, each for
+at most 10 minutes between parts and 30 minutes in all, and lands the log
+with the last part as one `vault.imports.hook_transcript` call: a verb hook
+on that verb judges the whole log once, and no hook sees a part. A log too
+long even for that, or for a slip's one call,
+is not sent at all; import it on the machine it ran on with `oneiron import
+claude-code <log>`. A send
 the hosted vault does not take (it does not answer, or the credential has no
 Grant naming the verb) is dropped without a word; the session's next
 hand-over sends the whole log again, and the import lands only what is new.
-The hosted vault takes only a Claude Code log: a Codex, Cursor or Copilot
-session queues locally as before.
+Codex, Cursor and GitHub Copilot sessions go the same way, each by its own
+log ([Session hooks for Codex, Cursor and GitHub Copilot](client-session-hooks.md#a-hosted-vault)).
 
 A pin in `hook.toml` counts only when no one but you can write it: your own
 regular file, not a link, with no write bit for others and, on macOS, no ACL
@@ -459,8 +469,9 @@ What the hooks already imported stays in your vault, like any import.
 - `hand-over` takes well under a second: it writes one small file. To a
   hosted vault it sends the whole log, gzip-compressed, in as few calls as
   the sign-in's carrier takes (above), all ending by the same `--timeout`,
-  writing the calls included; a log too long for one call is not sent, and
-  lands only through `oneiron import claude-code <log>`. Claude
+  writing the calls included; over the owner's socket a log too long for
+  one call goes in parts, up to 64 MiB encoded. A log past that is not
+  sent, and lands only through `oneiron import claude-code <log>`. Claude
   Code gives `SessionEnd` hooks 1.5 seconds unless a hook sets its own
   `timeout`; the `timeout` of 5 above raises that budget to 5 seconds.
 - `serve` looks at the queue every 5 seconds and imports what waits there.

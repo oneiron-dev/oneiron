@@ -64,13 +64,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/conflict_decisions_packs.rs` | test | m | — | — | Checks crate-built conflict packs against the bound verdict rebuild |
 | `tests/conflict_decisions_packs/support.rs` | test | m | 6 crate-vis | — | Big-value bound fixtures for crate conflict pack checks |
 | `tests/dreamer_conflict_settle.rs` | test | L | — | — | The production conflict-settlement facet (untangle 6.9d S69D4) |
+| `tests/dreamer_extraction_lender_destination.rs` | test | s | — | — | The production extraction lender states the destination bound of the wake its attempt context carries (FIX… |
 | `tests/dreamer_extraction_loan.rs` | test | s | — | — | Exercises the production extraction lender without switching native extraction jobs |
 | `tests/dreamer_extraction_steps.rs` | test | m | — | — | Exercises the production extraction step lender without switching native extraction jobs |
 | `tests/dreamer_psych_profile.rs` | test | m | — | — | MAP-6.9 row 6.9i (untangle 6.9i PR 2): the Dreamer's Psych Mirror job |
 | `tests/dreamer_strength_archive.rs` | test | s | — | — | The production strength facet (untangle 6.9c PR 4, MAP-6.9 row 6.9c): a wake pass through the production… |
 | `tests/extraction_decisions.rs` | test | m | — | — | Bound extraction decision orchestration over lent scripted verdicts |
 | `tests/extraction_decisions/support.rs` | test | m | 25 crate-vis | — | Lent scripted verdict fixtures for bound extraction decision tests |
+| `tests/extraction_decisions_claim_evidence_parity.rs` | test | s | — | — | Native versus crate extraction correction parity for an operand that cites a listed claim (FIX row… |
 | `tests/extraction_decisions_parity.rs` | test | m | — | — | Native versus crate extraction decision parity over real vaults |
+| `tests/extraction_decisions_step_record.rs` | test | m | — | — | A decisions run over a real lent extraction step names its recorded candidates |
 | `tests/extraction_observed_routing.rs` | test | s | — | — | Checks the observed-beside-stated route before any lender call or write |
 | `tests/extraction_observed_routing/support.rs` | test | s | 1 crate-vis | — | Adapts crate routing to the same small JSON shape as the native red adapter |
 | `tests/extraction_routing_parity.rs` | test | m | — | — | Native versus crate extraction routing parity over real vaults |

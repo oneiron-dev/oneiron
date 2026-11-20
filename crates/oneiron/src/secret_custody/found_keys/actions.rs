@@ -234,6 +234,7 @@ impl Vault {
         self.load_signing_for_revoke()?;
         let (settled, carried) = self.with_write_txn_grouped(|txn| {
             let actor = live_owner_in_txn(self, owner, txn, "only the vault owner rules on it")?;
+            let owner_authored = owner.owner_answer_in_txn(self, txn)?;
             let mut found = Located::find_in_txn(&self.store, txn, handle)?;
             found.refuse_ruled()?;
             let place = found.key().place.clone();
@@ -292,7 +293,8 @@ impl Vault {
             }
             // The ruling's surface is where the request reached this
             // install: audit only.
-            let carried = self.carry_custody_revoke_in_txn(txn, actor, surface, &rec.name, at)?;
+            let author = (actor, owner_authored.as_ref());
+            let carried = self.carry_custody_revoke_in_txn(txn, author, surface, &rec.name, at)?;
             Ok((settled, carried))
         })?;
         self.mirror_custody_change(&carried);

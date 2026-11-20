@@ -65,17 +65,17 @@ mod receipt_page;
 
 pub use dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView,
-    CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews, CommitOutcome, CommitReceipt,
-    ConsolidationJobInput, DeleteReceipt, DeleteRequestState, DreamerJobRef, DreamerJobView,
-    Effort, EntityRead, EntityRefReceipt, EntityView, EntityViews, ExportReceipt, FacadeReceipt,
-    ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem, MemoryPack,
-    MemoryProvenance, MemoryStaleStamp, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
-    OpenOptions, OutboundDraftInput, OutboundIntentReceipt, Paired, PendingWrite, QueryAffect,
-    QuoteSpan, ReadReceipt, ReadScope, RecallMedia, RecallResidence, RecallResidenceHit,
-    RecallResidenceSource, RecallScope, RecordRefusal, RefusalReason, RerankReport, RerankSkip,
-    RetrievalDegradation, RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty,
-    StructuralEdgeSpec, StructuralPutInput, TemporalHint, TextIndexField, WireJson, WitnessAuthor,
-    WitnessMessage, WitnessReceipt, WitnessTurn,
+    CheckInDecision, CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews,
+    CommitOutcome, CommitReceipt, ConsolidationJobInput, DeleteReceipt, DeleteRequestState,
+    DreamerJobRef, DreamerJobView, Effort, EntityRead, EntityRefReceipt, EntityView, EntityViews,
+    ExportReceipt, FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits,
+    MemoryItem, MemoryPack, MemoryProvenance, MemoryStaleStamp, MentionProvenance, NeighborHit,
+    NeighborHits, NeighborOpts, OpenOptions, OutboundDraftInput, OutboundIntentReceipt, Paired,
+    PendingWrite, QueryAffect, QuoteSpan, ReadReceipt, ReadScope, RecallMedia, RecallResidence,
+    RecallResidenceHit, RecallResidenceSource, RecallScope, RecordRefusal, RefusalReason,
+    RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta, RetrievalQuality,
+    SafeDeleteReason, ScopeHonesty, StructuralEdgeSpec, StructuralPutInput, TemporalHint,
+    TextIndexField, WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 #[cfg(feature = "engine")]
 pub use embedded_engine::{

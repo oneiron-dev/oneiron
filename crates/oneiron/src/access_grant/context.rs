@@ -216,6 +216,12 @@ impl AccessContextSnapshot {
             && self.grants == other.grants
     }
 
+    /// The authorization time this snapshot was loaded at: its grants are
+    /// the ones live then, and its checks judge at it.
+    pub(crate) fn observed_at(&self) -> u64 {
+        self.observed_at
+    }
+
     pub(crate) fn allows_at_snapshot(
         &self,
         entity_type: u8,

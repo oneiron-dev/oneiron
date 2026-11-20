@@ -16,8 +16,10 @@
 //!   its erase would take, is left out and named in `excluded`. The deletes
 //!   then run one by one through the delete rail as a live owner of this
 //!   vault. Each delete's writes read again that the row still says
-//!   `honour` and that the answer is still this one, so a changed row or
-//!   the owner's own answer stops the run before its next record. No
+//!   `honour` and that the answer is still this one, the setting's choice
+//!   under its reason code, so a changed row or the owner's own answer
+//!   stops the run before its next record, even an owner's answer that
+//!   takes the same operation over. No
 //!   record-level retention rule exists to leave copies out by (FIX
 //!   HONOUR-RETENTION-RULE). The choice records the reason code
 //!   `owner_setting_honour`, so each later pass knows it as the setting's
@@ -31,7 +33,7 @@
 
 use std::collections::BTreeSet;
 
-use super::answer::{AskKey, running_operation_in};
+use super::answer::AskKey;
 use super::{
     CooperativeDeleteOperation, CooperativeDeletionDisposition, CooperativeDeletionDispositionKind,
     EraseRequestReply, INCOMING, IncomingCooperativeDeletion,
@@ -215,7 +217,7 @@ impl Vault {
         let still_honoured = |txn: &heed::RoTxn<'_>| -> MemoryResult<()> {
             let reply = self.erase_request_reply_in_txn(txn)?.reply;
             if reply == EraseRequestReply::Honour
-                && running_operation_in(self, txn, key, operation_id)?.is_some()
+                && setting_operation_runs_in(self, txn, key, operation_id)?
             {
                 return Ok(());
             }
@@ -233,6 +235,20 @@ impl Vault {
                 &still_honoured,
             )
         })
+    }
+
+    /// Whether the filed ask (`pact_id`, `nonce`) still runs the setting's
+    /// delete operation `operation_id`, as each setting delete's writes read
+    /// it; `test_doors::inquiry::setting_delete_runs` calls it.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn setting_delete_runs(
+        &self,
+        pact_id: &[u8; 32],
+        nonce: &[u8; 16],
+        operation_id: EntityId,
+    ) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        setting_operation_runs_in(self, &txn, &(*pact_id, *nonce), operation_id)
     }
 }
 
@@ -259,10 +275,35 @@ fn setting_decline(now: u64) -> CooperativeDeletionDisposition {
 /// choice among them.
 fn unfinished_setting_delete(answer: &CooperativeDeletionDisposition) -> Option<EntityId> {
     let operation = answer.delete_operation.as_ref()?;
-    (answer.kind == CooperativeDeletionDispositionKind::Delete
+    (is_setting_honour(answer) && !operation.pending().is_empty()).then_some(operation.operation_id)
+}
+
+/// Whether `answer` is a delete choice under the standing setting's reason
+/// code; the owner's own delete choice carries none.
+fn is_setting_honour(answer: &CooperativeDeletionDisposition) -> bool {
+    answer.kind == CooperativeDeletionDispositionKind::Delete
         && answer.reason_code.as_deref() == Some(ERASE_REQUEST_SETTING_HONOUR_CODE)
-        && !operation.pending().is_empty())
-    .then_some(operation.operation_id)
+}
+
+/// Whether the ask `key`'s answer is still the setting's delete choice
+/// running operation `operation_id`. The owner's own delete choice over the
+/// same records takes the operation over but carries no reason code, so no
+/// setting delete runs under it (review round 1 of #9902).
+fn setting_operation_runs_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &AskKey,
+    operation_id: EntityId,
+) -> Result<bool> {
+    Ok(INCOMING
+        .get(&vault.store, txn, key)?
+        .and_then(|filed| filed.disposition)
+        .is_some_and(|answer| {
+            is_setting_honour(&answer)
+                && answer
+                    .delete_operation
+                    .is_some_and(|operation| operation.operation_id == operation_id)
+        }))
 }
 
 /// An honour under the standing setting: one delete choice over `unheld`,

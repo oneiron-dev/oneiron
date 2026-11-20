@@ -2,7 +2,8 @@
 //! and its subagents' logs, each gzip-compressed in standard base64, as
 //! `vault.imports.hook_transcript` takes them. The hooks' hand-over to a
 //! selected hosted vault sends the log its event names the same way
-//! ([`read_hook_log`]).
+//! ([`read_hook_log`]), and another host's one log by its source
+//! ([`read_one_below`]).
 //!
 //! The log is the one `--transcript` names, as the hook's `transcript_path`
 //! does, or else the newest session log of the project folder Claude Code
@@ -29,7 +30,9 @@
 //! line that is not a whole JSON record (the last one cut mid-write, say) is
 //! not sent: the importer would land the rest without it.
 //!
-//! The logs go in calls the selection's carrier takes ([`calls_within`]).
+//! The logs go in calls the selection's carrier takes ([`calls_within`]);
+//! over the owner's socket, a request longer than one call goes in parts
+//! ([`parts`]; FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER).
 
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
@@ -41,8 +44,9 @@ use std::time::{Instant, SystemTime};
 
 use base64::Engine as _;
 use oneiron::ingest::history::{
-    HOOK_TRANSCRIPT_MAX_BYTES, HOOK_TRANSCRIPT_MAX_SUBAGENTS, HookSubagentTranscript,
-    HookTranscriptImportRequest,
+    HOOK_TRANSCRIPT_MAX_BYTES, HOOK_TRANSCRIPT_MAX_SUBAGENTS, HOOK_TRANSCRIPT_STAGED_MAX_BYTES,
+    HookSubagentTranscript, HookTranscriptImportRequest, HookTranscriptPartRequest,
+    HookTranscriptSource,
 };
 use rustix::fs::{CWD, Dir, Mode, OFlags, openat};
 
@@ -99,53 +103,144 @@ pub(super) fn read_hook_log(path: &Path, session: &str) -> anyhow::Result<Sessio
     read_below(&projects_dir()?, path)
 }
 
-/// The calls that land `logs`: each spec at most `carried` bytes, as the
-/// selection's carrier takes one call, and its logs at most
-/// [`HOOK_TRANSCRIPT_MAX_BYTES`] inflated, as the vault takes one. The
-/// session's log goes with all its subagents' logs in one call where they
-/// fit, else with them shared out in order over several calls, each with
-/// the session's log again, which the import lands once. A session's log
-/// too long for a call by itself, or with any one of its subagents' logs,
-/// is refused before anything is sent, so no call goes that could never
-/// land.
+/// The one log at `path`, below `root`, of a host whose log holds its
+/// subagents, as `source`'s import reads the file it names `session`: read
+/// through one descriptor, every folder below `root` and the log opened
+/// through no link ([`confined`]), at most [`HOOK_TRANSCRIPT_MAX_BYTES`],
+/// as one call carries, and encoded.
+pub(super) fn read_one_below(
+    root: &Path,
+    path: &Path,
+    session: String,
+    source: HookTranscriptSource,
+) -> anyhow::Result<SessionLogs> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| anyhow::anyhow!("{} is not under {}", path.display(), root.display()))?;
+    let (_, log) = confined::open_below(root, relative)?;
+    let most = u64::try_from(HOOK_TRANSCRIPT_MAX_BYTES)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut bytes = Vec::new();
+    log.take(most)
+        .read_to_end(&mut bytes)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+    anyhow::ensure!(
+        bytes.len() <= HOOK_TRANSCRIPT_MAX_BYTES,
+        "{} is longer than the {HOOK_TRANSCRIPT_MAX_BYTES} bytes one call to the hosted vault \
+         inflates; import the session on the machine it ran on: oneiron import {} {}",
+        path.display(),
+        source.history_source().source_id(),
+        path.display()
+    );
+    Ok(SessionLogs {
+        path: path.to_path_buf(),
+        request: HookTranscriptImportRequest {
+            session,
+            transcript_gzip_base64: encode(path, &bytes)?,
+            subagents: Vec::new(),
+            source: Some(source),
+        },
+        log_bytes: bytes.len(),
+        subagent_bytes: Vec::new(),
+    })
+}
+
+/// The requests that land `logs`, each in one call or, past one call, in
+/// parts. Each spec is at most `carried` bytes, as the selection's carrier
+/// takes one call, and its logs at most [`HOOK_TRANSCRIPT_MAX_BYTES`]
+/// inflated, as the vault takes one. The session's log goes with all its
+/// subagents' logs in one call where they fit, else with them shared out in
+/// order over several calls, each with the session's log again, which the
+/// import lands once. Where the session's log, alone or with one of its
+/// subagents' logs, is too long for one call and the carrier stages a
+/// longer request in parts (`staged`: the owner's socket,
+/// [`staged_bytes`]), the logs are shared out the same way over requests of
+/// at most `staged` bytes; each one longer than `carried` then goes in
+/// [`parts`]. A request that could never land is refused before anything is
+/// sent.
 pub(super) fn calls_within(
     logs: &SessionLogs,
     carried: usize,
+    staged: Option<usize>,
 ) -> anyhow::Result<Vec<HookTranscriptImportRequest>> {
+    match requests_within(logs, carried)? {
+        Ok(requests) => Ok(requests),
+        Err(too_long) => match staged.filter(|&staged| staged > carried) {
+            Some(staged) => requests_within(logs, staged)?
+                .map_err(|too_long| too_long.refusal(logs, staged, "one staged import")),
+            None => Err(too_long.refusal(logs, carried, "one call")),
+        },
+    }
+}
+
+/// A log too long for the requests [`requests_within`] shares the logs out
+/// over.
+enum TooLong {
+    /// The session's own log.
+    Session,
+    /// The session's log with this subagent's log.
+    Subagent(String),
+}
+
+impl TooLong {
+    /// The refusal of `logs` for requests of at most `bound` bytes, each
+    /// going as `what`.
+    fn refusal(self, logs: &SessionLogs, bound: usize, what: &str) -> anyhow::Error {
+        // The import that lands the session on the machine it ran on.
+        let source = logs
+            .request
+            .source
+            .unwrap_or_default()
+            .history_source()
+            .source_id();
+        let path = logs.path.display();
+        let caps = format!(
+            "(at most {bound} bytes encoded and {HOOK_TRANSCRIPT_MAX_BYTES} inflated); import the \
+             session on the machine it ran on: oneiron import {source} {path}"
+        );
+        match self {
+            Self::Session => anyhow::anyhow!(
+                "{path} is too long for {what} to the hosted vault over this sign-in {caps}"
+            ),
+            Self::Subagent(stem) => anyhow::anyhow!(
+                "{path}'s subagent log {stem} is too long to go with it in {what} to the hosted \
+                 vault over this sign-in {caps}"
+            ),
+        }
+    }
+}
+
+/// The requests that land `logs`, each spec at most `bound` bytes and its
+/// logs at most [`HOOK_TRANSCRIPT_MAX_BYTES`] inflated, as
+/// [`calls_within`] shares them out; the log too long for one, if any.
+fn requests_within(
+    logs: &SessionLogs,
+    bound: usize,
+) -> anyhow::Result<Result<Vec<HookTranscriptImportRequest>, TooLong>> {
     let alone = HookTranscriptImportRequest {
         session: logs.request.session.clone(),
         transcript_gzip_base64: logs.request.transcript_gzip_base64.clone(),
         subagents: Vec::new(),
+        source: logs.request.source,
     };
     let base = serde_json::to_vec(&alone)?.len();
     let fits =
-        |bytes: usize, inflated: usize| bytes <= carried && inflated <= HOOK_TRANSCRIPT_MAX_BYTES;
-    anyhow::ensure!(
-        fits(base, logs.log_bytes),
-        "{} is too long for one call to the hosted vault over this sign-in (at most {carried} \
-         bytes encoded and {HOOK_TRANSCRIPT_MAX_BYTES} inflated); import the session on the \
-         machine it ran on: oneiron import claude-code {}",
-        logs.path.display(),
-        logs.path.display()
-    );
-    let mut calls = Vec::new();
+        |bytes: usize, inflated: usize| bytes <= bound && inflated <= HOOK_TRANSCRIPT_MAX_BYTES;
+    if !fits(base, logs.log_bytes) {
+        return Ok(Err(TooLong::Session));
+    }
+    let mut requests = Vec::new();
     let mut batch = Vec::new();
     let (mut bytes, mut inflated) = (base, logs.log_bytes);
     for (subagent, &raw) in logs.request.subagents.iter().zip(&logs.subagent_bytes) {
         // Its entry and the comma before it.
         let entry = serde_json::to_vec(subagent)?.len() + 1;
-        anyhow::ensure!(
-            fits(base + entry, logs.log_bytes + raw),
-            "{}'s subagent log {} is too long to go with it in one call to the hosted vault \
-             over this sign-in (at most {carried} bytes encoded and {HOOK_TRANSCRIPT_MAX_BYTES} \
-             inflated); import the session on the machine it ran on: oneiron import \
-             claude-code {}",
-            logs.path.display(),
-            subagent.stem,
-            logs.path.display()
-        );
+        if !fits(base + entry, logs.log_bytes + raw) {
+            return Ok(Err(TooLong::Subagent(subagent.stem.clone())));
+        }
         if !fits(bytes + entry, inflated + raw) {
-            calls.push(HookTranscriptImportRequest {
+            requests.push(HookTranscriptImportRequest {
                 subagents: std::mem::take(&mut batch),
                 ..alone.clone()
             });
@@ -155,11 +250,95 @@ pub(super) fn calls_within(
         bytes += entry;
         inflated += raw;
     }
-    calls.push(HookTranscriptImportRequest {
+    requests.push(HookTranscriptImportRequest {
         subagents: batch,
         ..alone
     });
-    Ok(calls)
+    Ok(Ok(requests))
+}
+
+/// The parts `request` goes in over a carrier whose calls take at most
+/// `carried` bytes of spec (`vault.imports.hook_transcript_part`): its JSON
+/// text cut in order under one upload id drawn at random, each part's spec
+/// within `carried`, the last marked so that the vault lands the request.
+pub(super) fn parts(
+    request: &HookTranscriptImportRequest,
+    carried: usize,
+) -> anyhow::Result<Vec<HookTranscriptPartRequest>> {
+    let text = serde_json::to_string(request)?;
+    let upload = mint_upload_id();
+    // A part's spec with no text, at its longest (the longest offset, and
+    // `false` the longer mark): what each part's spec adds to its text.
+    let frame = serde_json::to_vec(&HookTranscriptPartRequest {
+        upload: upload.clone(),
+        offset: u64::MAX,
+        text: String::new(),
+        last: false,
+    })?
+    .len();
+    let room = carried.saturating_sub(frame);
+    anyhow::ensure!(
+        room >= JSON_CHAR_WIDTH_MAX,
+        "a call over this sign-in carries no part of a request ({carried} bytes)"
+    );
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while start < text.len() {
+        let end = part_end(&text, start, room);
+        parts.push(HookTranscriptPartRequest {
+            upload: upload.clone(),
+            offset: u64::try_from(start)?,
+            text: text[start..end].to_owned(),
+            last: end == text.len(),
+        });
+        start = end;
+    }
+    Ok(parts)
+}
+
+/// The most bytes one character takes in a JSON string: `\u001f`.
+const JSON_CHAR_WIDTH_MAX: usize = 6;
+
+/// Where the part of `text` that starts at `start` ends: on a character's
+/// edge, as far as it fits `room` bytes as a JSON string's contents, at
+/// least one character on.
+fn part_end(text: &str, start: usize, room: usize) -> usize {
+    let mut used = 0;
+    for (index, character) in text[start..].char_indices() {
+        let width = json_width(character);
+        if index > 0 && used + width > room {
+            return start + index;
+        }
+        used += width;
+    }
+    text.len()
+}
+
+/// The bytes `character` takes in a JSON string, as `serde_json` writes it.
+fn json_width(character: char) -> usize {
+    match character {
+        '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
+        '\0'..='\u{1f}' => JSON_CHAR_WIDTH_MAX,
+        _ => character.len_utf8(),
+    }
+}
+
+/// A fresh upload id: 32 lowercase hex digits from the OS CSPRNG.
+fn mint_upload_id() -> String {
+    let mut id = [0_u8; 16];
+    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut id);
+    oneiron_hex::encode(&id)
+}
+
+/// The longest request one upload stages for a selection signed in in
+/// `mode`: the owner's, whose calls ride the socket alone, stages a request
+/// up to [`HOOK_TRANSCRIPT_STAGED_MAX_BYTES`] in parts; any other's go over
+/// HTTP, one call each, and stage none.
+pub(super) fn staged_bytes(mode: HostedAuthMode) -> Option<usize> {
+    match mode {
+        HostedAuthMode::Owner => Some(HOOK_TRANSCRIPT_STAGED_MAX_BYTES),
+        HostedAuthMode::Slip | HostedAuthMode::OAuth => None,
+    }
 }
 
 /// What `oneiron mcp` adds to a call's spec on the way: the JSON-RPC line
@@ -208,6 +387,7 @@ fn read_below(root: &Path, path: &Path) -> anyhow::Result<SessionLogs> {
             session,
             transcript_gzip_base64,
             subagents,
+            source: None,
         },
         log_bytes,
         subagent_bytes,
@@ -421,11 +601,16 @@ fn encoded(mut file: File, path: &Path) -> anyhow::Result<(String, usize)> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
-    whole_records(path, &bytes)?;
+    Ok((encode(path, &bytes)?, bytes.len()))
+}
+
+/// `bytes`, the log at `path`, gzip-compressed, in standard base64, once
+/// every record of them is whole ([`whole_records`]).
+fn encode(path: &Path, bytes: &[u8]) -> anyhow::Result<String> {
+    whole_records(path, bytes)?;
     let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-    gzip.write_all(&bytes)?;
-    let text = base64::engine::general_purpose::STANDARD.encode(gzip.finish()?);
-    Ok((text, bytes.len()))
+    gzip.write_all(bytes)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(gzip.finish()?))
 }
 
 /// Refuses a log with a line that is not a whole JSON record as the

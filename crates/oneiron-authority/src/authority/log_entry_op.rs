@@ -200,6 +200,14 @@ pub enum AuthorityOp {
     /// of a live machine of the vault, in any role (FIX 4624, FIX 5660). A
     /// main-log entry, so every machine the owner admits folds it.
     PolicySettingSet(PolicySettingSet),
+    /// One move's carried setting rows as one engine copy, signed by the
+    /// install key of the mover alone, with no owner act (stage 7a-4). A
+    /// main-log entry, so every machine the owner admits folds it.
+    SettingCopy(SettingCopy),
+    /// One pack's head as one engine act, signed by the install key of the
+    /// machine whose pack door weighed it alone, with no owner act (stage
+    /// 7c-3a). A main-log entry, so every machine the owner admits folds it.
+    SettingPackHead(SettingPackHead),
     /// One owner whole-vault export, signed by the install key of a live
     /// machine of the vault, in any role, after the copy left (FIX 4624). A
     /// main-log entry, so every machine the owner admits folds it.
@@ -334,6 +342,23 @@ impl AuthorityLogEntry {
     /// Public so `oneiron`'s authority code calls it across the crate line.
     pub fn signer_key(&self) -> &AuthorityKey {
         &self.signer.public_key
+    }
+
+    /// The signers of an act's entry its carrier signs: one Ed25519 install
+    /// key, the carrier's, alone or beside one cosign, which `oneiron`'s fold
+    /// takes only as a live owner key's proof (row
+    /// OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS; Engine ANSWER
+    /// OWNER-RESERVE-CROSS-INSTALL-GAPS = A). The one shape rule of every
+    /// carried op that once refused any cosign: owner work's request,
+    /// result, cancel, import mark and permit piece, a residence result,
+    /// world key wraps and an install's frontier join. Their owner-anchored
+    /// forms, a kit push, its permit pieces and an anchor's join, stay
+    /// signed alone.
+    pub(super) fn validate_carried_signers(&self) -> Result<()> {
+        if self.signer.suite != AuthoritySignatureSuite::Ed25519 || self.cosigns.len() > 1 {
+            return Err(invalid_authority());
+        }
+        Ok(())
     }
 }
 
@@ -563,6 +588,8 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::FullCopyMark(_) => Ok(()),
         AuthorityOp::AgentGrantAct(record) => record.validate(),
         AuthorityOp::PolicySettingSet(set) => set.validate(),
+        AuthorityOp::SettingCopy(copy) => copy.validate(),
+        AuthorityOp::SettingPackHead(head) => head.validate(),
         AuthorityOp::ExportAct(record) => record.validate(),
         AuthorityOp::OwnerKeyEnroll(enroll) => enroll.validate(),
         AuthorityOp::FrontierJoin(_) => Ok(()),

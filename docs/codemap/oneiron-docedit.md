@@ -38,12 +38,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/design_plan/tests.rs` | test | L | 8 crate-vis | — | ONE-2533 acceptance: the brief schema refuses design choices; content, boundaries, units and pins are… |
 | `src/docx_body.rs` | src | m | 6 struct · 5 enum · 7 fn · 1 const · 2 re-export | DocxAnchor, DocxBlock, DocxBlockKind, DocxCell, DocxCellParagraph, DocxChange, DocxLock, DocxMark +3 | The DOCX face of a live office body (ARCH-0075, "the body is the truth, the file is a projection") |
 | `src/docx_body/cells.rs` | src | m | 5 crate-vis | — | Per-paragraph cell text, separate from the flat current-redline cell read |
-| `src/docx_body/projection.rs` | src | m | 1 re-export · 3 crate-vis | — | In-memory multi-revision DOCX projection and its shared op builder |
+| `src/docx_body/projection.rs` | src | m | 1 re-export · 4 crate-vis | — | In-memory multi-revision DOCX projection and its shared op builder |
 | `src/docx_body/projection/session.rs` | src | m | 2 struct · 6 fn | DocxGroupEvents, DocxProjection | The session: one parse, one tracked transaction for each consecutive actor group, one serialization, and… |
 | `src/docx_body/projection/story_cells.rs` | src | s | 1 crate-vis | — | Scoped native table-cell projection |
 | `src/docx_body/stories.rs` | src | s | 2 struct · 2 enum · 3 fn | DocxHeaderFooterBand, DocxRead, DocxStory, DocxStoryScope | Native non-body stories, kept separate from the document body's id space |
 | `src/edit/check.rs` | src | m | 16 crate-vis | — | The independent passthrough check (ARCH-0077, "Transactions and allowed part changes") |
-| `src/edit/geometry.rs` | src | s | 6 crate-vis | — | `set_preset` and `set_glue`: a shape's, picture's or connector's preset geometry, and a connector's glue |
+| `src/edit/geometry.rs` | src | s | 7 crate-vis | — | `set_preset` and `set_glue`: a shape's, picture's or connector's preset geometry, and a connector's glue |
 | `src/edit/media.rs` | src | m | 9 crate-vis | — | `set_picture`, `set_notes` and `release_media`: verbs whose write sets reach beyond the slide part |
 | `src/edit/mod.rs` | src | m | 7 struct · 3 enum · 1 fn · 2 mod · 2 re-export · 4 crate-vis | AnchorCandidate, EditRefusal, EditReport, Effect, FitUnverified, Picture, RunProps, Target +2 | Narrow value and text edits in place (ARCH-0077, "Edit in place with passthrough"): `set_text`… |
 | `src/edit/structure/arrange.rs` | src | s | 4 crate-vis | — | Projector arrangement verbs and their verification seam |
@@ -93,7 +93,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/deck_export.rs` | src | m | 7 struct · 1 enum · 7 fn · 1 const · 2 re-export | ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
 | `src/live/deck_export/chart.rs` | src | m | 3 crate-vis | — | A chart at export, by series identity: a bound chart's changed data written over its retained chart part… |
 | `src/live/deck_export/evidence.rs` | src | s | 3 fn | — | — |
-| `src/live/deck_export/payload.rs` | src | m | 5 crate-vis | — | — |
+| `src/live/deck_export/payload.rs` | src | m | 6 crate-vis | — | — |
 | `src/live/deck_export/projector.rs` | src | m | 1 fn | — | — |
 | `src/live/deck_export/table.rs` | src | s | 3 crate-vis | — | A table at export, by row and column identity: a bound table's grid rewritten where its rows, columns or… |
 | `src/live/diagram.rs` | src | m | 3 crate-vis | — | SmartArt structure (OF-510, FIX 3697): nodes added, removed, re-levelled or moved, as PowerPoint's text pane… |
@@ -147,7 +147,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/reshape/families.rs` | src | m | 9 crate-vis | — | A rewritten chart's plots and 3D view (OF-510, FIX 3493 D9b): a kept plot with its series replaced and only… |
 | `src/live/reshape/layout.rs` | src | m | 18 crate-vis | — | How a rewritten chart's live series take its held ones (OF-510, FIX 3492): the plots Change Chart Type lays… |
 | `src/live/reshape/points.rs` | src | s | 4 crate-vis | — | A rewritten chart's category points (OF-510, FIX 3493): a multi-level category slot written from its levels… |
-| `src/live/reshape/retained.rs` | src | m | 3 crate-vis | — | A surviving series written over its own retained XML (OF-510, FIX 8594), in its own plot or moved to… |
+| `src/live/reshape/retained.rs` | src | m | 4 crate-vis | — | A surviving series written over its own retained XML (OF-510, FIX 8594), in its own plot or moved to… |
 | `src/live/reshape/retype.rs` | src | s | 5 crate-vis | — | Data labels and point formatting retyped to a new family (OF-510, FIX 9276, 9275): a data label position… |
 | `src/live/reshape/series.rs` | src | s | 2 crate-vis | — | A new series' format (OF-510, FIX 3493) |
 | `src/live/reshape/special.rs` | src | m | 10 crate-vis | — | A rewritten chart's stock, surface and of-pie plots (OF-510, FIX 3493 D9c): the compound settings a plot… |
@@ -199,7 +199,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/xlsx_body/coordinates.rs` | src | m | 1 crate-vis | — | Coordinate XML rewrites after an axis edit |
 | `src/xlsx_body/header.rs` | src | s | 1 fn · 1 crate-vis | — | Renaming a worksheet table's column through its header cell (FIX 6399) |
 | `src/xlsx_body/insert.rs` | src | m | 1 struct · 2 fn · 3 crate-vis | XlsxLines | What inserted rows and columns take from their neighbours, as Excel's insert gives it by default (FIX 3695)… |
-| `src/xlsx_body/layout.rs` | src | m | 6 crate-vis | — | Worksheet layout and pivot/formula retargeting |
+| `src/xlsx_body/layout.rs` | src | m | 7 crate-vis | — | Worksheet layout and pivot/formula retargeting |
 | `src/xlsx_body/links.rs` | src | s | 3 crate-vis | — | The workbook's links to itself (FIX 9080) |
 | `src/xlsx_body/model.rs` | src | m | 10 struct · 5 enum · 14 fn · 2 const · 7 crate-vis | XlsxArea, XlsxBook, XlsxCell, XlsxCellRecalc, XlsxChange, XlsxLock, XlsxName, XlsxProjection +7 | SpreadsheetML model, validation and A1 rules |
 | `src/xlsx_body/project.rs` | src | m | 2 fn · 5 crate-vis | — | Workbook format, cell and name projection |
@@ -211,7 +211,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/xlsx_shift/axis.rs` | src | s | 1 struct · 1 enum · 6 fn | XlsxAxis, XlsxAxisEdit | Moving a formula's references into one sheet when rows or columns are inserted or deleted there: the edit… |
 | `src/xlsx_shift/sheets.rs` | src | s | 1 enum · 1 fn · 1 crate-vis | SheetFate | Retargeting a formula's sheet prefixes when the workbook's sheets are renamed or deleted, and writing a… |
 | `src/xlsx_shift/tables.rs` | src | m | 1 fn · 2 crate-vis | — | Rewriting a formula's structured references when a table loses columns, a column's header changes or the… |
-| `src/xlsx_styles.rs` | src | m | 3 re-export · 2 crate-vis | — | Cell formats a body composes from the workbook's own: an imported cell format with its named cell style… |
+| `src/xlsx_styles.rs` | src | m | 3 re-export · 3 crate-vis | — | Cell formats a body composes from the workbook's own: an imported cell format with its named cell style… |
 | `src/xlsx_styles/cell_format.rs` | src | s | 7 struct · 2 enum | XlsxAlignment, XlsxBorder, XlsxColor, XlsxEdge, XlsxFill, XlsxFont, XlsxFormat, XlsxNumberFormat +1 | The cell format a body composes and its parts: font, fill, border, number format, alignment and protection |
 | `src/xlsx_styles/check.rs` | src | s | 1 fn | — | Refusing a cell format the workbook could not hold, before the projection writes anything: the limits and… |
 | `src/xlsx_styles/dxf.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | XlsxDifferentialFormat | The differential formats (`dxf`) a conditional format draws a matching cell in (FIX 3468): font, fill… |

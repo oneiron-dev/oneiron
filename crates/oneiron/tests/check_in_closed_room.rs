@@ -20,6 +20,14 @@
 //! For the walk-in, [`Room::with_vault_admins`] also shares the vault with
 //! two Admins, one of whom the role door makes an owner of the room.
 //!
+//! The thread opens on the room's conversation DAG (`reply_in_thread`), as
+//! an ordinary room's thread does: the room's witness opens none, and it
+//! refuses a turn that names an audience as an invalid room operation (FIX
+//! row [CLOSED-ROOM-TEST-FIXTURE-THREAD-REFUSED]). The DAG append reads its
+//! trunk turn under the owner's read, so a `core:read` row on the default
+//! policy manifest gives the owner one, as in
+//! `ordinary_room_thread_reply_refused.rs`.
+//!
 //! An add or walk-in that goes at once, or that is not judged, spends no
 //! check-in, so a `check_in_ref` its call names is refused as a bad request
 //! and the check-in stays eligible (FIX row
@@ -35,12 +43,17 @@ use std::collections::BTreeSet;
 use oneiron::check_in::{CheckInMode, Rung};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::conversation::{ConversationBody, ConversationKind, RoomRole};
-use oneiron::federation::{FederationGrantRole, InitialSharedMember};
+use oneiron::conversation_dag::{AddressMode, AppendRecord};
+use oneiron::federation::{FederationGrantRole, InitialSharedMember, Scope};
 use oneiron::memory::{
     CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_CHECK_IN_PENDING, Memory,
     MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessTurn,
 };
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::policy_manifest_doors::{
+    PolicyManifestPut, PolicyManifestRead, PolicyScopedGrantRow, policy_manifests_as_owner,
+    put_policy_manifest_as_owner,
+};
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::workspace_roster::{
@@ -98,6 +111,112 @@ fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
         .expect("a person proof")
 }
 
+/// `owner` reads the vault's records: a `core:read` row added to the
+/// default policy manifest, the shipped rows kept.
+fn grant_owner_reads(vault: &Vault, owner: EntityId) {
+    let proof = vault
+        .memory(owner, EdgeActorClass::Human)
+        .embedded_owner("vault.agents.create")
+        .expect("the owner's proof");
+    let view = policy_manifests_as_owner(vault, &proof, &PolicyManifestRead { manifest_ref: None })
+        .expect("the policy manifests");
+    let default = view
+        .manifests
+        .iter()
+        .find(|entry| entry.manifest_ref == view.default_manifest_ref)
+        .expect("the default policy manifest");
+    let mut manifest = default.manifest.clone();
+    let mut rows = manifest.scoped_grants.clone().unwrap_or_default();
+    rows.push(PolicyScopedGrantRow {
+        // Bare census keys carry no actor class.
+        actor_class: None,
+        actor_ref: Some(owner.to_hex()),
+        effector: "core:read".into(),
+        scope: Scope::top(),
+        selectors: None,
+        budget: None,
+        receipt_required: false,
+    });
+    manifest.scoped_grants = Some(rows);
+    put_policy_manifest_as_owner(
+        vault,
+        &proof,
+        PolicyManifestPut {
+            manifest_ref: Some(default.manifest_ref.clone()),
+            expected_body_hash: Some(default.body_hash.clone()),
+            manifest,
+        },
+    )
+    .expect("the owner's read row");
+}
+
+/// `owner`'s trunk witness turn in `room`, the anchor the thread hangs
+/// from.
+fn speak_on_trunk(vault: &Vault, owner: EntityId, room: EntityId) -> EntityId {
+    let turn = EntityId::now();
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .rooms_speak(&WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
+            messages: vec![WitnessMessage {
+                id: Some(EntityId::now().to_hex()),
+                author: WitnessAuthor::User,
+                message_type: "text".into(),
+                content: "a turn of the room".into(),
+                parts: None,
+                metadata: Some(json!({})),
+                is_visible: true,
+                order: 0,
+                quote: None,
+            }],
+            occurred_at: vault.now_recorded_at(),
+            assertions: Default::default(),
+            project: None,
+        })
+        .expect("the owner speaks on the trunk");
+    turn
+}
+
+/// `owner`'s private thread on `anchor` in `room`, read by `audience`: the
+/// root TURN its reply through the DAG's thread reply door opens.
+fn open_private_thread(
+    vault: &Vault,
+    owner: EntityId,
+    room: EntityId,
+    anchor: EntityId,
+    audience: BTreeSet<EntityId>,
+) -> EntityId {
+    let now = vault.now_recorded_at();
+    let root = AppendRecord {
+        conversation: room,
+        parent: None,
+        reply_to: None,
+        quote: None,
+        address: AddressMode::Broadcast,
+        recipients: vec![],
+        advance: false,
+        kind: ENTITY_TYPE_TURN,
+        containing_turn: None,
+        occurred: TimeRange {
+            start: now,
+            end: now,
+        },
+        learned_at: now,
+        body: rmp_serde::to_vec_named(&json!({ "txt": "a turn of the thread" }))
+            .expect("a TURN body"),
+        text: vec![],
+        session: None,
+        actor: WriteActor::new(owner, EdgeActorClass::Human),
+        thread_audience: Some(audience),
+    };
+    vault
+        .reply_in_thread(&vault.memory(owner, EdgeActorClass::Human), anchor, &root)
+        .expect("the owner opens the private thread")
+        .id
+}
+
 /// Shares the vault, its embedded `owner` its Owner, with `admins` as
 /// Admins, each of whom accepts its founding invitation.
 fn share_with_admins(vault: &Vault, owner: EntityId, admins: [EntityId; 2]) {
@@ -145,6 +264,7 @@ impl Room {
         let dir = tempfile::tempdir().expect("tempdir");
         let vault = Vault::open_owned(dir.path(), VaultConfig::default()).expect("open vault");
         let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+        grant_owner_reads(&vault, owner);
         let co_owner = put_person(&vault);
         let admin = put_person(&vault);
         let newcomers = std::array::from_fn(|_| put_person(&vault));
@@ -188,7 +308,10 @@ impl Room {
                 .set_room_role(room, admins.room_owner, RoomRole::Owner, as_owner)
                 .expect("a vault Admin who owns the room");
         }
-        let fixture = Self {
+        let anchor = speak_on_trunk(&vault, owner, room);
+        let thread =
+            open_private_thread(&vault, owner, room, anchor, [owner, co_owner, admin].into());
+        Self {
             vault,
             owner,
             co_owner,
@@ -196,46 +319,9 @@ impl Room {
             newcomers,
             vault_admins,
             room,
-            thread: EntityId::now(),
+            thread,
             _dir: dir,
-        };
-        let anchor = EntityId::now();
-        fixture.speak(anchor, None);
-        fixture.speak(
-            fixture.thread,
-            Some((anchor, [owner, co_owner, admin].into())),
-        );
-        fixture
-    }
-
-    /// The owner's witness turn `turn`: the trunk turn, or with `thread` the
-    /// root of a private thread on the trunk turn it names.
-    fn speak(&self, turn: EntityId, thread: Option<(EntityId, BTreeSet<EntityId>)>) {
-        let mut metadata = serde_json::Map::new();
-        if let Some((anchor, _)) = &thread {
-            metadata.insert("room_thread_of".into(), anchor.to_hex().into());
         }
-        self.person(self.owner)
-            .rooms_speak(&WitnessTurn {
-                conversation_ref: self.room.to_hex(),
-                turn_ref: Some(turn.to_hex()),
-                thread_audience: thread.map(|(_, audience)| audience),
-                messages: vec![WitnessMessage {
-                    id: Some(EntityId::now().to_hex()),
-                    author: WitnessAuthor::User,
-                    message_type: "text".into(),
-                    content: "a turn of the room".into(),
-                    parts: None,
-                    metadata: Some(serde_json::Value::Object(metadata)),
-                    is_visible: true,
-                    order: 0,
-                    quote: None,
-                }],
-                occurred_at: self.vault.now_recorded_at(),
-                assertions: Default::default(),
-                project: None,
-            })
-            .expect("the owner speaks");
     }
 
     fn person(&self, person: EntityId) -> Memory<'_> {

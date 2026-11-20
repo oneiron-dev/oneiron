@@ -36,7 +36,8 @@ pub use self::record::{
     OWNER_KEY_MOVE_DEVICE_CONFIRM_TEXT, OWNER_KEY_MOVE_ENROL_STEP, OWNER_KEY_MOVE_ENROL_SUGGESTION,
     OWNER_KEY_MOVE_ENROL_TEXT, OWNER_KEY_MOVE_NEXT_STEP, OWNER_KEY_MOVE_REFUSAL_TEXT,
     OWNER_KEY_MOVE_SUGGESTION, OWNER_KEY_NEXT_STEP_REASON_PREFIX, OWNER_KEY_REQUIRED,
-    OwnerKeyMoveStep, RecordError, RoomLiveSpeakersHold, SEAL_STANDING_RECONCILE_TEXT,
+    OWNER_PRESENCE_HERE_REASON_PREFIX, OWNER_PRESENCE_REQUIRED, OwnerKeyMoveStep,
+    OwnerPresenceRefusal, RecordError, RoomLiveSpeakersHold, SEAL_STANDING_RECONCILE_TEXT,
 };
 pub use self::registry::RegistryError;
 pub use self::relay::RelayError;
@@ -102,6 +103,8 @@ pub enum ErrorKind {
     /// An owner choice door could not prove the act the owner's on this
     /// install.
     OwnerKeyRequired,
+    /// This device did not confirm the person for an owner act.
+    OwnerPresenceRequired,
     /// The owner's world recipient choice keeps rows from this destination.
     WorldRecipientLimit,
     /// A world's placement or a result's producing rows cannot be verified.
@@ -116,6 +119,15 @@ pub enum ErrorKind {
     WorkspaceMailboxAutonomyNotReady,
     /// A `require` workspace refused a brought companion.
     WorkCompanionRequired,
+    /// The vault's `one_vault` row is unreadable; onboarding refuses to say
+    /// which joining line applies.
+    OneVaultSettingUnreadable,
+    /// One-vault mode is off, so work talk stays with the member.
+    WorkTalkStaysWithMember,
+    /// The member has not acknowledged the one-vault notice.
+    OneVaultNotTold,
+    /// Work talk needs a brought companion, not a born work companion.
+    NoBroughtCompanion,
     InvalidCounterpartyContactBody,
     InvalidCommRecordBody,
     InvalidDiagnosticBody,

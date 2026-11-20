@@ -132,19 +132,19 @@ impl TemporalCandidates {
     }
 }
 
-/// The rows a scoped call's reader may read: the call's candidate predicate,
-/// asked at most once per row, by the channel's rounds and by the scope walk
-/// after them alike. A row it refuses never counts toward either of the
-/// channel's stops and never takes a place in its bounded rows, so whether
-/// such a row exists cannot move what the reader gets back (DEC-0005: no
-/// name, no count).
+/// The rows a scoped call's reader may read: the call's candidate predicate
+/// (its scope, then its made_by slice), asked at most once per row, by the
+/// window's scans, the channel's rounds and the scope walk after them alike.
+/// A row it refuses never counts toward either of the channel's stops and
+/// never takes a place in its bounded rows. Nor does it hold a place under a
+/// scan's cap that a row it reads is denied: an endpoint scan, the query
+/// range's scan and the spanner buffer ask it once their cap would leave a
+/// row behind (TEMPORAL-READER-SCAN-CAP-REFUSED-ROWS). So whether such a row
+/// exists cannot move what the reader gets back (DEC-0005: no name, no count).
 pub(super) struct ReadableRows<'p, 'f> {
     predicate: &'p SnapshotCandidateFilter<'f>,
     deadline: Option<&'p RetrievalDeadline>,
     answers: Mutex<HashMap<EntityId, bool>>,
-    /// Whether the window's scans ask it too, so a row it refuses also takes
-    /// no place under a scan's cap ([`Self::new_asked_by_scans`]).
-    asked_by_scans: bool,
 }
 
 impl<'p, 'f> ReadableRows<'p, 'f> {
@@ -156,28 +156,7 @@ impl<'p, 'f> ReadableRows<'p, 'f> {
             predicate,
             deadline,
             answers: Mutex::new(HashMap::new()),
-            asked_by_scans: false,
         }
-    }
-
-    /// A reader the window's scans ask as well: each endpoint scan, the
-    /// query range's scan and the spanner buffer give a place under their cap
-    /// only to a row it reads. A call's made_by slice reads this way, so rows
-    /// the slice drops cannot fill a scan ahead of the rows it keeps
-    /// (REVIEW-9842 round 2). A scope alone keeps [`Self::new`]: its scans
-    /// stay as cheap as before.
-    pub(super) fn new_asked_by_scans(
-        predicate: &'p SnapshotCandidateFilter<'f>,
-        deadline: Option<&'p RetrievalDeadline>,
-    ) -> Self {
-        Self {
-            asked_by_scans: true,
-            ..Self::new(predicate, deadline)
-        }
-    }
-
-    pub(super) fn asked_by_scans(&self) -> bool {
-        self.asked_by_scans
     }
 
     pub(super) fn reads(
@@ -257,6 +236,35 @@ impl<'r, 'p, 'f> WindowCut<'r, 'p, 'f> {
             bound,
             scan: Mutex::new((0, 0, None)),
         }
+    }
+
+    /// Whether `id` ranks inside the bound in the window's order: a place
+    /// the bound gives a row with no reader asked, as a call with no reader
+    /// keeps it.
+    pub(super) fn ranks_inside_bound(&self, id: &EntityId) -> bool {
+        self.positions
+            .get(id)
+            .is_some_and(|&position| position < self.bound)
+    }
+
+    /// The first `bound` rows `held` admits, in the window's order: the
+    /// places the bound gives rows when its reader asks only `held`. With a
+    /// `held` that admits every row, these are the rows
+    /// [`Self::ranks_inside_bound`] names.
+    pub(super) fn rows_inside_bound_where(
+        &self,
+        mut held: impl FnMut(&EntityId) -> Result<bool>,
+    ) -> Result<HashSet<EntityId>> {
+        let mut inside = HashSet::new();
+        for id in &self.order {
+            if inside.len() == self.bound {
+                break;
+            }
+            if held(id)? {
+                inside.insert(*id);
+            }
+        }
+        Ok(inside)
     }
 
     pub(super) fn keeps(

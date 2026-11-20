@@ -28,6 +28,30 @@ purposes! {
     /// default's JSON bytes, and a flag for the row it replaces, then that row's content hash
     /// as its hex when there is one.
     PACK_PROPOSAL = "oneiron.setting.pack_proposal.v1";
+
+    /// The target an act on one row of a catalogue key names, for every row but the key's
+    /// vault value row (`oneiron-authority`, `policy_setting::setting_slot_target`; stage
+    /// 7a-2). Parts: the row's stored key (`RowKey::encode`). The target is the first 16
+    /// bytes.
+    SLOT_TARGET = "oneiron.setting.slot_target.v1";
+
+    /// The basis a setting row's projection records while an act a reader of its target
+    /// meets does not count in full on this install (`setting/project.rs`, `basis_of`; stage
+    /// 7b-2). Parts: the target's act revision; the count of counted acts as a u64; then per
+    /// act in hash order, its hash and its count as a u64 (0 in full, 1 a safe move, 2 a safe
+    /// move held by this install's own counting).
+    PROJECTION_BASIS = "oneiron.setting.projection_basis.v1";
+
+    /// The target a pack's head act names (`oneiron-authority`,
+    /// `setting_pack_head::setting_pack_target`; stage 7c-3a): one frontier per pack. Parts: the
+    /// pack's name. The target is the first 16 bytes.
+    PACK_TARGET = "oneiron.setting.pack_target.v1";
+
+    /// The target the owner's yes to a pack's held defaults names (`oneiron-authority`,
+    /// `setting_pack_head::setting_pack_accept_target`; stage 7c-3c): one frontier per pack and
+    /// table, apart from the pack's heads, so no pack door's head replaces a yes. Parts: the
+    /// pack's name, then the table's digest. The target is the first 16 bytes.
+    PACK_ACCEPT_TARGET = "oneiron.setting.pack_accept_target.v1";
 }
 
 legacy_purposes! {}

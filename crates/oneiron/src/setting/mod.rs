@@ -37,12 +37,17 @@
 
 pub(crate) mod archive_restore;
 mod ask;
+mod beside;
+mod born;
 mod carry;
 mod catalogue;
 mod change;
 mod learned;
 mod pack;
 mod page_max;
+mod project;
+mod proposal;
+mod publish;
 mod read;
 mod set;
 mod signed_act;
@@ -51,13 +56,21 @@ pub(crate) mod tables;
 use std::marker::PhantomData;
 
 pub use oneiron_setting_contract::{
-    AbsentEnd, ChainOrder, ChangeDirection, EachOrder, EncodedValue, FitCell, Order, Quorum,
-    ReadBy, Resolved, Restore, ScopeKind, SetOrder, Setter, SettingMode, SettingScope,
-    SettingSource, SettingSync, SettingValue,
+    AbsentEnd, ChainOrder, ChangeDirection, ChangeStanding, EachOrder, EncodedValue, FitCell,
+    Order, Quorum, ReadBy, Resolved, Restore, ScopeKind, SetOrder, Setter, SettingMode,
+    SettingScope, SettingSource, SettingStanding, SettingSync, SettingValue,
 };
 
 pub use self::ask::SettingAsk;
 pub(crate) use self::ask::erase_setting_ask_actor_in_txn;
+pub use self::beside::SettingTravel;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::beside::{
+    beside_row_for, beside_row_json, beside_row_of, land_beside_row, land_pack_table,
+    pack_table_bytes,
+};
+pub(crate) use self::beside::{beside_row_watched_in_txn, notes_projection_pass_in_txn};
+pub(crate) use self::born::write_born_rows_in_txn;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::carry::carry_between_in_txn;
 pub(crate) use self::carry::carry_settings_in_txn;
@@ -73,10 +86,19 @@ pub(crate) use self::change::{
     settings_after_in_txn, settings_head_in_txn,
 };
 pub use self::learned::{LEARNED_SCOPES, LearnedRange, SettingFitView};
-pub use self::pack::{ENGINE_PACK, PackApplied, ProposedDefaultView};
+pub use self::pack::{ENGINE_PACK, ENGINE_PACK_VERSION, PackApplied, ProposedDefaultView};
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
-pub(crate) use self::pack::{delete_layer_row, layer_row_revision};
+pub(crate) use self::pack::{
+    delete_layer_row, head_version_and_digest, layer_row_revision, table_digest_and_bytes,
+};
 pub use self::page_max::PageMax;
+pub use self::project::SettingsProjected;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::project::forget_projected_rows_in_txn;
+pub use self::proposal::SettingProposal;
+pub use self::publish::SettingsPublished;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::publish::settings_published_in_txn;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::read::put_stored_bytes;
 pub use self::read::{Requested, SettingCatalogueEntry, SettingRowView, SettingView};
@@ -232,6 +254,19 @@ pub struct SettingSpec {
     pub after_commit: Option<OnCommitted>,
     /// Taken before the write of a change to the key opens ([`WriteTurn`]).
     pub write_turn: Option<WriteTurn>,
+    /// Each new thing of the key's narrowest scope starts with a row copied from another key
+    /// (stage 7c-2; DESIGN 1.6, `born`): the door that creates the thing writes it, and a thing
+    /// with no row reads the strictest value, never the wider one.
+    pub born: Option<Born>,
+}
+
+/// Where a `born` key's things take their first row from (DESIGN 1.6, "The project-depth
+/// carriers become two keys"): the value in force of the key `from` at the vault when the thing
+/// is created. The row is a copy: of a pack's default it is seeded, of a row someone set explicit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Born {
+    /// The catalogue name of the key the row is copied from.
+    pub from: &'static str,
 }
 
 impl SettingSpec {
@@ -254,6 +289,7 @@ impl SettingSpec {
         on_change: None,
         after_commit: None,
         write_turn: None,
+        born: None,
     };
 
     /// Whether a row may sit at `kind`.
@@ -338,6 +374,7 @@ impl std::fmt::Debug for SettingSpec {
         formatter
             .debug_struct("SettingSpec")
             .field("name", &self.name)
+            .field("born", &self.born)
             .finish_non_exhaustive()
     }
 }
@@ -372,6 +409,11 @@ pub trait ValueKind: Sync {
     fn from_json(&self, json: serde_json::Value) -> Result<EncodedValue>;
     /// The key's order: which side of a change is safe.
     fn order(&self) -> Order;
+    /// Whether the key's value type is closed ([`SettingValue::CLOSED`]): its value travels
+    /// inside the setting's signed act (stage 7a-2).
+    fn travels_inline(&self) -> bool {
+        false
+    }
     /// The stricter of `a` and `b`, encoded; `None` for an order with no meet, or when either
     /// does not decode.
     fn meet(&self, a: &EncodedValue, b: &EncodedValue) -> Option<EncodedValue>;
@@ -679,6 +721,10 @@ impl<T: SettingValue> ValueKind for Kind<T> {
 
     fn order(&self) -> Order {
         self.order
+    }
+
+    fn travels_inline(&self) -> bool {
+        T::CLOSED
     }
 
     fn meet(&self, a: &EncodedValue, b: &EncodedValue) -> Option<EncodedValue> {

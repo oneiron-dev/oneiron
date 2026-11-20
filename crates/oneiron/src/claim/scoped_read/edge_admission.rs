@@ -105,36 +105,7 @@ impl ScopedRead<'_> {
     /// withheld pair never spends a result/scan/dedup slot. In a session the
     /// edge iterator composes its overlay, while consent is base-only and an
     /// overlay cannot manufacture a base-authorized SameAs link.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "snapshot, policy, direction and two visible budgets are distinct axes"
-    )]
-    pub(super) fn admitted_edges_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        policy: &PolicyManifestResolution,
-        filter: &ResolvedRetrievalFilter,
-        center: &EntityId,
-        direction: EdgeDirection,
-        kind: Option<EdgeKind>,
-        limit: usize,
-        scan_limit: usize,
-        unique_targets: bool,
-    ) -> Result<AdmittedEdgeScan> {
-        self.admitted_edges_held_in(
-            txn,
-            policy,
-            filter,
-            center,
-            direction,
-            kind,
-            limit,
-            scan_limit,
-            unique_targets,
-            &HeldAuthority::default(),
-        )
-    }
-
+    ///
     /// The centre and peers use the walk's held authority, so its Grant and own-owner
     /// alternatives see the request it asked (STANDING-GRAPH-OWNER-CENTRE-READ).
     #[expect(

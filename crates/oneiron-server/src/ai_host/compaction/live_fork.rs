@@ -11,7 +11,10 @@
 //! files, lands and is checked as any other self-written pass. Under a row
 //! on `auto` (FIX 6029) the fork is bound only while the live prefix is
 //! still warm on its rung, and its flight's first call goes out only while
-//! it still is; otherwise the cheap writer writes as the agent.
+//! it still is; otherwise the cheap writer writes as the agent. A prefix read
+//! from a row deleted since its call went out is never bound or sent again
+//! (FIX-LIST ERASE-SERVED-KV-CACHE-OUTLIVES-SOURCE): its words would reach
+//! the provider, and its prompt cache, once more.
 
 mod input;
 
@@ -22,7 +25,7 @@ use std::time::Instant;
 use oneiron::EntityId;
 use oneiron::code_run::{
     CacheBoundary, CompactionHome, LiveCompactionFork, LiveForkRung, compaction_home_budget,
-    mark_cache_boundary,
+    mark_cache_boundary, source_rows_withdrawn,
 };
 use oneiron::compaction::{
     CompactionCheck, CompactionHomeRef, CompactionRefusal, CompactionRequest,
@@ -64,9 +67,11 @@ pub(super) enum LiveBind {
 /// through to the cheap route. A prefix that leaves the live model no room
 /// for the window is refused, never cut, and so is one read from rows its
 /// host did not witness whole (`prefix_sources` `None`, FIX 9463): its
-/// summary could not derive from each. Under `auto` every such failure, and
-/// a cold prefix, binds none and says nothing: `None`, so the cheap writer
-/// writes the flight as the agent.
+/// summary could not derive from each. One read from a row deleted since
+/// its call went out is stale (FIX-LIST ERASE-SERVED-KV-CACHE-OUTLIVES-SOURCE),
+/// before anything else is read for it. Under `auto` every such failure,
+/// and a cold prefix, binds none and says nothing: `None`, so the cheap
+/// writer writes the flight as the agent.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one fact the breakpoint binds the fork under"
@@ -87,6 +92,11 @@ pub(super) fn bind_live_compaction_fork(
     let Some(prefix_sources) = prefix_sources else {
         return unbound(SelfCompactionUnavailable::LivePrefixUnwitnessed);
     };
+    // The prefix was rendered when its call went out: a row erased since
+    // would be sent again in it.
+    if source_rows_withdrawn(&route.vault, &prefix_sources) {
+        return unbound(SelfCompactionUnavailable::LiveForkStale);
+    }
     let Ok(call) = admission.admit_live(live.clone()) else {
         return unbound(SelfCompactionUnavailable::LiveRungUnbound);
     };
@@ -167,13 +177,19 @@ impl ServedCompactionBackend {
     /// there and every other step keeps its text (FIX 4931). It takes
     /// the house call's purpose, class and tier, and keeps the live
     /// request's route, effort, scope and reply format, so the prefix's wire
-    /// is the live call's. Its tools are sent, never run.
-    fn fork_request(
+    /// is the live call's. Its tools are sent, never run. A fork whose prefix
+    /// was read from a row deleted since is stale, and none is built: every
+    /// call of its flight, its retries and folds too, asks this again
+    /// (FIX-LIST ERASE-SERVED-KV-CACHE-OUTLIVES-SOURCE).
+    pub(super) fn fork_request(
         &self,
         fork: &LiveCompactionFork,
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
     ) -> Result<LlmRequest, CompactionRefusal> {
+        if fork.prefix_withdrawn(&self.vault) {
+            return Err(SelfCompactionUnavailable::LiveForkStale.refusal());
+        }
         let house = self.llm_request(request, retry);
         let mut call = fork.request().clone();
         if let Some(end) = CacheBoundary::prefix_end(&call) {
@@ -210,12 +226,13 @@ impl ServedCompactionBackend {
     /// the one its room was read against (FIX 4932), then dressed in
     /// `frame` (FIX 4575) and the agent's home in what that context leaves,
     /// both in the current suffix, never in the prefix. A rung the live
-    /// route no longer admits at the captured offer is stale, and nothing is
-    /// sent; a rung with no configured context is not served. `while_warm`
-    /// is the first call of a flight under a row on `auto` (FIX 6029): it
-    /// goes out only while the captured prefix is still warm, and `None`
-    /// says it went cold first, or could not be admitted or bound, before
-    /// anything was sent, so the cheap writer writes the flight instead.
+    /// route no longer admits at the captured offer is stale, and so is a
+    /// prefix read from a row deleted since: nothing is sent. A rung with no
+    /// configured context is not served. `while_warm` is the first call of a
+    /// flight under a row on `auto` (FIX 6029): it goes out only while the
+    /// captured prefix is still warm, and `None` says it went cold first, or
+    /// could not be admitted or bound, or was stale, before anything was
+    /// sent, so the cheap writer writes the flight instead.
     pub(super) fn serve_live_fork(
         &self,
         fork: &LiveCompactionFork,
@@ -273,6 +290,15 @@ impl ServedCompactionBackend {
                     .then_some(request.sources.clone()),
                 Some(fork.prefix_sources().to_vec()),
             ]),
+            // Every row known, whole or not, for the freshness asks: the
+            // prefix's stay known though the window's ids are only asserted
+            // (REVIEW-9900 round 2).
+            request
+                .sources
+                .iter()
+                .chain(fork.prefix_sources())
+                .copied()
+                .collect(),
             request.summary_token_budget,
             |call, room| {
                 let home = home.render(compaction_home_budget(

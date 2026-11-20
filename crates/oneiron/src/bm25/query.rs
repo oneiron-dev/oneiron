@@ -35,7 +35,23 @@ where
     pub(crate) exact_posting_matches_scope: &'a mut F,
     /// The scoped query's transaction-local, authenticated diary NOTE ids.
     pub(crate) private_note_ids: Option<&'a crate::claim::ScopedDiaryCandidates>,
+    /// A read's own-row test: whether its reader may not read a row whatever
+    /// its status, as a clamped pack's audience may not, or as a world keeps
+    /// it from the reader. A posting that scores for such a row counts in no
+    /// query term's document frequency, so no word of a row the reader may
+    /// not read moves the score of a row it may (REVIEW-9980 round 2; FIX
+    /// WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS). The document count and
+    /// the fields' average lengths stay the vault's, hidden rows included:
+    /// they carry no word of any row (FIX
+    /// [CLAMPED-BM25-IDF-COUNTS-HIDDEN-POSTINGS]). The posting still scores:
+    /// the read's admission keeps it out, and a clamped pack counts it among
+    /// the rows its clamp withheld. `None` counts every posting.
+    pub(crate) hidden_row: Option<&'a mut dyn FnMut(&EntityId) -> Result<bool>>,
 }
+
+/// An owned own-row test ([`Bm25SearchOptions::hidden_row`]): whether the
+/// reader may not read a row, so its postings count in no statistic.
+pub(crate) type HiddenRowTest<'t> = Box<dyn FnMut(&EntityId) -> Result<bool> + 't>;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct PrefixExpansionPostingDecision {
@@ -438,6 +454,7 @@ pub(super) fn search_text_with_recency(
             recency,
             exact_posting_matches_scope: &mut exact_posting_matches_scope,
             private_note_ids: None,
+            hidden_row: None,
         },
     )
 }
@@ -474,15 +491,23 @@ where
     )?;
 
     let walks = crate::ports::any_pending_walk(store, rtxn)?;
-    let mut ranked =
-        scoring::score_query_terms(store, rtxn, config, &query_terms, options.recency, |id| {
+    let private_note_ids = options.private_note_ids;
+    let mut ranked = scoring::score_query_terms(
+        store,
+        rtxn,
+        config,
+        &query_terms,
+        options.recency,
+        options.hidden_row,
+        |id| {
             Ok(!crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)?
-                && (options.private_note_ids.is_some_and(|ids| ids.contains(id))
+                && (private_note_ids.is_some_and(|ids| ids.contains(id))
                     || crate::note::ordinary_entity_visible(store, rtxn, id)?)
                 // Withdrawn while a walk is pending: out of the ranking, as
                 // its postings will be.
                 && !(walks && scores_for_withdrawn(store, rtxn, id)?))
-        })?;
+        },
+    )?;
     ranked.sort_by(|a, b| {
         b.1.total_cmp(&a.1)
             .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
@@ -528,6 +553,22 @@ pub(super) fn scores_for_use_limited(
             Ok(crate::store::legal_hold::use_limit_in_txn(store, rtxn, &target)?.is_some())
         }
         LexicalQueryHintResolution::DeadHint | LexicalQueryHintResolution::NonHint => Ok(false),
+    }
+}
+
+/// Whether posting `id` scores for a row `hidden_row` names: itself, or the
+/// claim it is a live lexical query hint for. A dead hint scores for no row
+/// any read admits, and its claim is unknown here, so it counts as hidden.
+pub(super) fn posting_scores_for_hidden_row(
+    store: &impl ManifestDbs,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    hidden_row: &mut (dyn FnMut(&EntityId) -> Result<bool> + '_),
+) -> Result<bool> {
+    match resolve_lexical_query_hint_record(store, rtxn, id)? {
+        LexicalQueryHintResolution::Live { target } => hidden_row(&target),
+        LexicalQueryHintResolution::NonHint => hidden_row(id),
+        LexicalQueryHintResolution::DeadHint => Ok(true),
     }
 }
 

@@ -38,6 +38,9 @@ fn owners(setting: &str, target: EntityId, kind: OwnerActKind) -> PolicySettingS
         setting: setting.to_owned(),
         prior: [3; 32],
         value: Some([4; 32]),
+        slot: None,
+        inline: None,
+        more: Vec::new(),
     }
 }
 

@@ -197,6 +197,7 @@ fn ready_window_notice(server: &SyncServer, state: &ConnState, key: &WindowKey) 
                 server,
                 auth,
                 peer,
+                &state.selector_lane,
                 key,
                 selector,
                 &window.doc,

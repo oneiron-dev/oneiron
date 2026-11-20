@@ -440,6 +440,7 @@ impl Memory<'_> {
                     recency: None,
                     exact_posting_matches_scope: &mut mail_bound,
                     private_note_ids: None,
+                    hidden_row: None,
                 },
             )?;
             let mut hits = Vec::new();
