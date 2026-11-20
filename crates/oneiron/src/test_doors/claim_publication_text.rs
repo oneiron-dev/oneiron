@@ -1,10 +1,10 @@
 //! Door to the text the generic publication paths index for a stored CLAIM
 //! (FIX REACTION-GENERIC-INDEX-TEXT-REACTOR-ID). The idle publication pass and
-//! a room restage publish a row whose text its put did not stage, a reaction
-//! received by sync among them, through `publication_text_fields`; a write
-//! that stages its own text, as `Vault::react` does, never reaches it. This
-//! door runs that step over a stored CLAIM's live revision, so a test reads
-//! what those paths would index for it.
+//! a room restage publish a row whose live revision moved past its indexed one
+//! with no text staged, a later revision of a reaction among them, through
+//! `publication_text_fields`; a birth is indexed as it is written, as
+//! `Vault::react` stages its glyph. This door runs that step over a stored
+//! CLAIM's live revision, so a test reads what those paths would index for it.
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
