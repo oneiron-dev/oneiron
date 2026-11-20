@@ -4,6 +4,7 @@
 //! markers. A defer retains the actual request/update, its grant and principal.
 //! Transport payload, fabricated-window, and malformed-record bounds still apply.
 
+mod device;
 mod documents;
 pub(crate) mod erase;
 mod import_guard;
@@ -31,6 +32,10 @@ pub use schedule::{
 };
 mod selector;
 
+pub use device::{
+    DeviceBurstAdmission, DeviceBurstWork, DevicePeer, admit_device_window_update,
+    ready_device_work, record_device_refusal,
+};
 pub use selector::{PreparedSelectorFetch, prepare_selector_fetch, replay_selector_fetch};
 
 use crate::error::{SyncProtocolValidation, SyncSelectorValidation};
@@ -38,6 +43,8 @@ use crate::sync::{SyncSelector, WindowKey, authorize_sync_selector};
 use crate::{EntityId, Error, FederationGrantScope, Result, Vault};
 use oneiron_model::llm::NormalizedBurstInputs;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use ledger::decode as decode_receipt_row;
 pub(in crate::sync) use queue::{DeferredWork, WorkKind};
 pub(crate) use queue::{earliest_retained_deadline, expire_retained_work};
 
@@ -193,6 +200,81 @@ impl FederationPeer {
     }
 }
 
+/// Whose writes a burst decision counts: a federated peer under its grant,
+/// or one of this vault's own devices at its home. Both get the same
+/// response against their own baseline (arch-0023b
+/// `#decision-federation-26`; L7-41).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BurstPeer<'a> {
+    Federated(&'a FederationPeer),
+    Device(&'a DevicePeer),
+}
+
+impl BurstPeer<'_> {
+    /// A federated peer's grant and acting proof still stand. A device peer
+    /// grants and refuses nothing here: its write's authority is the
+    /// credential its home rechecks where the write lands.
+    pub(in crate::sync) fn revalidate(self, vault: &Vault) -> Result<()> {
+        match self {
+            Self::Federated(peer) => peer.revalidate(vault),
+            Self::Device(_) => Ok(()),
+        }
+    }
+
+    pub(in crate::sync) fn revalidate_in_txn(
+        self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<()> {
+        match self {
+            Self::Federated(peer) => peer.revalidate_in_txn(vault, txn),
+            Self::Device(_) => Ok(()),
+        }
+    }
+
+    /// What retained work is held under: a federated peer's live grant and
+    /// pact scopes, a device's standing here. A change ends the work
+    /// `StaleAuthority` (FIX 7999).
+    pub(in crate::sync) fn authority_digest_in_txn(
+        self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<[u8; 32]> {
+        match self {
+            Self::Federated(peer) => peer.authority_digest_in_txn(vault, txn),
+            Self::Device(peer) => peer.authority_digest_in_txn(vault, txn),
+        }
+    }
+
+    /// The baseline this peer's writes count against.
+    fn digest(self) -> [u8; 32] {
+        match self {
+            Self::Federated(peer) => peer.digest(),
+            Self::Device(peer) => peer.digest(),
+        }
+    }
+
+    /// The bytes that bind retained work to this peer's lane: a federated
+    /// peer's exact selector, a device as its connection proved it.
+    fn lane_bytes(self) -> Result<Vec<u8>> {
+        match self {
+            Self::Federated(peer) => crate::sync::encode_sync_selector(&peer.selector),
+            Self::Device(peer) => Ok(peer.encode()),
+        }
+    }
+
+    /// The peer as its receipts name it.
+    fn receipt_peer(self) -> FederationBurstPeerRef {
+        match self {
+            Self::Federated(peer) => FederationBurstPeerRef::Federated {
+                principal: peer.principal,
+                grant: peer.selector.grant_id,
+            },
+            Self::Device(peer) => peer.receipt_peer(),
+        }
+    }
+}
+
 /// Federation policy has no rate Block or human Pause outcome.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FederationBurstDecision {
@@ -216,10 +298,12 @@ pub enum FederationBurstDecision {
 /// it runs now, defers, or is isolated for review. Isolation keeps
 /// `admitted_update`, every part, as the review's evidence; the work, its
 /// debit and its replay stay the original request's. `carried` names the
-/// rows whose bytes the work carries, which an erase of any scrubs.
+/// rows whose bytes the work carries, which an erase of any scrubs. No work
+/// comes back only for an own device's batch that already settled (landed,
+/// or rejected at review): its receipt is the answer.
 pub(in crate::sync) fn admit_work(
     vault: &Vault,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     key: &WindowKey,
     kind: WorkKind,
     payload: &[u8],
@@ -239,7 +323,7 @@ pub(in crate::sync) fn admit_work(
 
 fn admit_work_at(
     vault: &Vault,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     key: &WindowKey,
     kind: WorkKind,
     payload: &[u8],
@@ -268,13 +352,24 @@ fn admit_work_at(
             None => None,
         };
         if let Some(saved) = saved {
-            let decision = if saved.isolated_update.is_some()
-                && !observations::replay_ready_in_txn(vault, txn, peer, now)?
-            {
-                FederationBurstDecision::IsolateAndPropose {
-                    request_id: saved.id,
-                    bundle_id: peer.digest(),
-                    inputs: saved.inputs,
+            // An isolated update waits for its peer's rate to come back to
+            // its baseline, and so does any retained update of an own
+            // device, as `find_update` holds them: a device that sends the
+            // held bytes again before then is answered as held again, and
+            // its home's drain lands them (L7-41).
+            let waits = saved.isolated_update.is_some() || saved.kind == WorkKind::DeviceUpdate;
+            let decision = if waits && !observations::replay_ready_in_txn(vault, txn, peer, now)? {
+                if saved.isolated_update.is_some() {
+                    FederationBurstDecision::IsolateAndPropose {
+                        request_id: saved.id,
+                        bundle_id: peer.digest(),
+                        inputs: saved.inputs,
+                    }
+                } else {
+                    FederationBurstDecision::Defer {
+                        request_id: saved.id,
+                        inputs: saved.inputs,
+                    }
                 }
             } else {
                 FederationBurstDecision::Allow(saved.inputs)
@@ -288,10 +383,15 @@ fn admit_work_at(
                 rate_ratio: receipt.baseline.rate_ratio,
                 streak: receipt.baseline.streak,
             };
-            return Ok((
-                FederationBurstDecision::Allow(inputs),
-                Some(work.with_inputs(inputs)),
-            ));
+            // An own device's batch that landed, or that its owner rejected
+            // at review, is answered by its receipt: the same bytes sent
+            // again are never work to land again. A federated peer's ingress
+            // answers a settled receipt before it gets here.
+            let work = match peer {
+                BurstPeer::Device(_) => None,
+                BurstPeer::Federated(_) => Some(work.with_inputs(inputs)),
+            };
+            return Ok((FederationBurstDecision::Allow(inputs), work));
         }
         let health = observations::observe_in_txn(vault, txn, peer, writes, now)?;
         let mut work = work.with_inputs(health.inputs);
@@ -336,7 +436,7 @@ fn admit_work_at(
 
 pub(in crate::sync) fn record_outcome(
     vault: &Vault,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     structural_failure: bool,
 ) -> Result<()> {
     observations::record_outcome(vault, peer, structural_failure)

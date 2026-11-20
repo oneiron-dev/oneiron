@@ -38,6 +38,8 @@ mod admit;
 mod arm;
 mod authority;
 mod bodies;
+#[cfg(feature = "sync")]
+mod carried_row_placement;
 mod erase;
 mod hold_index;
 mod index;
@@ -49,6 +51,8 @@ mod release;
 #[cfg(feature = "sync")]
 pub(crate) mod replica;
 mod resume;
+#[cfg(feature = "sync")]
+mod retraction;
 mod run;
 mod stop_recovery;
 mod stop_sends;

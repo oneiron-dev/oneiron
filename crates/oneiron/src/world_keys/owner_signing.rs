@@ -69,6 +69,10 @@ use crate::entity_id::EntityId;
 use crate::error::{DevicePinRefusal, Error, RecordError, Result};
 use crate::vault::Vault;
 
+mod slot;
+
+pub(crate) use self::slot::{OwnerSigningSlot, SlotRenewal};
+
 /// The context the signing key is derived under from its seed.
 const OWNER_SIGNING_CONTEXT: &str = "oneiron/owner-signing-key/v1";
 
@@ -730,52 +734,6 @@ fn slot_owner_signer(
     let seed = super::slot_seed(keystore.as_ref(), slot)?;
     slot_keys_allowed(keystore.as_ref())?;
     Ok(OwnerRootSigner::from_slot(&seed, keystore, slot))
-}
-
-/// An install's owner signing slot ([`Vault::device_owner_signing_slot`]).
-pub(crate) struct OwnerSigningSlot {
-    keystore: Arc<dyn DeviceKeystore>,
-    slot: KeystoreSlot,
-}
-
-impl OwnerSigningSlot {
-    /// The slot's owner signing key, its seed made on first use. The roster
-    /// may name it, live or revoked. Refused on a device with a PIN set or
-    /// forgotten, as [`Self::fresh_key`] is (`slot_owner_signer`'s rule).
-    ///
-    /// # Errors
-    /// The keystore's own refusal; the slot's rule.
-    pub(crate) fn key(&self) -> Result<OwnerRootSigner> {
-        slot_owner_signer(&self.keystore, &self.slot)
-    }
-
-    /// A new owner signing key, made in this slot from the OS CSPRNG after
-    /// the slot's seed is dropped: a root appointment's successor
-    /// (OWNER-ANCHOR-ROOT-RECOVERY), which must be a key no row names. Never
-    /// the slot's existing key, which the roster may name, live or revoked.
-    /// It touches the keystore alone, so the appointment's writer makes it
-    /// once the roster reads rootless there, and the recovery root's door's
-    /// once the roster reads the slot's key revoked there: a door run checked
-    /// before another run's write committed is refused first, and never
-    /// drops the seed of that run's successor, a live root key.
-    ///
-    /// Refused, before any seed is dropped, on a device with a PIN set or
-    /// forgotten (`slot_owner_signer`'s rule; ruling
-    /// ANCHOR-SUCCESSOR-ON-PIN-DEVICE = A): there a seed in the slot is no
-    /// key, and one that still waits to go under the PIN is not dropped.
-    /// The appointment holds the device PIN's step from before its writer to
-    /// the commit ([`Vault::appoint_owner_root`]), so no PIN of this process
-    /// is set between this check and the commit.
-    ///
-    /// # Errors
-    /// The keystore's own refusal; the slot's rule, as
-    /// [`Vault::device_owner_signing_key`] answers it.
-    pub(crate) fn fresh_key(&self) -> Result<OwnerRootSigner> {
-        slot_keys_allowed(self.keystore.as_ref())?;
-        DeviceKeystore::delete(self.keystore.as_ref(), &self.slot)
-            .map_err(super::keystore_error)?;
-        slot_owner_signer(&self.keystore, &self.slot)
-    }
 }
 
 /// `held`, a failure logged by kind and answered as not held.

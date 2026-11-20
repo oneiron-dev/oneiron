@@ -725,6 +725,14 @@ fn fold_merged_entry(
         {
             return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
         }
+        // A key the host does not hold never re-roots a hosted vault whose
+        // host root is live (FIX [HOSTED-REROOT-FOLD-RULE]).
+        if super::entry_transition_predicates::re_root_passes_over_a_serving_host(
+            &state.roster,
+            &signer,
+        ) {
+            return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+        }
     }
 
     // A passkey signs from a page its host serves, and WebAuthn shows no act

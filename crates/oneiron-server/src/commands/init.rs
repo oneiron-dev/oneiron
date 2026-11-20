@@ -17,7 +17,9 @@ mod config_assembly;
 
 #[cfg(test)]
 use self::config_assembly::tagger_table;
-use self::config_assembly::{config_text, endpoint_locality, local_tagger_config, stage_config};
+use self::config_assembly::{
+    config_text, endpoint_locality, local_tagger_config, replay_startup_config, stage_config,
+};
 
 const EMBEDDER_DOCS: &str = "https://oneiron.dev/oneiron/agents/oneiron-arch-0036-runtime-v1/";
 /// The question init asks once, on a terminal, when it creates the vault: the
@@ -419,17 +421,7 @@ pub(crate) fn setup_models_on_open_vault(
         ));
     }
     let env = EnvConfig::from_process().map_err(crate::owner::OwnerError::Host)?;
-    // The startup layers replayed onto this file: a server started with a
-    // settings file or holder overrides compares its live source, not the
-    // bare file, so an unchanged server never reads as Changed.
-    let mut replay = startup.startup_args.clone();
-    replay.config = Some(path.clone());
-    let current = crate::config::resolve_serve_config_with_sources(
-        &replay,
-        env.clone(),
-        crate::config::default_config_path(),
-    )
-    .map_err(crate::owner::OwnerError::Host)?;
+    let current = replay_startup_config(&startup.startup_args, &path, env.clone())?;
     let absolute = |path: &std::path::Path| {
         std::path::absolute(path).map_err(|error| crate::owner::OwnerError::Host(error.into()))
     };
@@ -834,7 +826,7 @@ mod tests {
     fn init_none_preserves_unrelated_config_and_disables_old_provider() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("oneiron.toml");
-        std::fs::write(
+        crate::owner_only_file::write_owner_only_file(
             &path,
             r#"port = 12345
 [embedder]

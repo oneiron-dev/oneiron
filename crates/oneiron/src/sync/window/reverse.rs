@@ -752,10 +752,14 @@ fn reverse_rematerialize_scan(
     // every revision learned since (Astra #1434 F2).
     wrote_any |= super::project_history::carry_project_history(vault, doc)?;
 
-    // FIX 5266: the turn-program armings and disarms of this window's month.
+    // FIX 5266: the turn-program armings and disarms of this window's month,
+    // and the latest row this vault knows for each wake the window carries
+    // or this vault retracted.
     if window_key.world().is_none() {
         wrote_any |=
             crate::sync::turn_programs::mirror_turn_program_armings(vault, doc, window_key)?;
+        wrote_any |=
+            crate::sync::turn_programs::mirror_turn_program_wake_answers(vault, doc, window_key)?;
     }
 
     // Commit all bridge writes with origin tag

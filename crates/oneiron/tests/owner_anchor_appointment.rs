@@ -44,11 +44,24 @@
 //! that is inside its step, and once the PIN is set its writer makes no
 //! successor in the slot. Red with the door taking no step: the appointment
 //! goes on beside the set.
+//!
+//! FIX APPOINTMENT-DROPS-SLOT-SEED-BEFORE-ITS-VERDICT: the door makes the
+//! successor in memory, and the install's owner signing slot takes its seed
+//! only as the writer's last step, so a keystore that refuses that seed
+//! leaves the slot's old seed in place, and the door runs again. Red with
+//! the seed dropped before the verdict: the refused run leaves the slot
+//! empty, and the install's next key is a new one.
+//!
+//! FIX OWNER-SIGNING-SLOT-RENEWAL-OUTSIDE-SLOT-LOCK: the door takes the
+//! vault's owner signing slot lock before its writer, so it waits for a
+//! door that holds that lock while it reads the slot. Red without the lock:
+//! the appointment renews the slot beside that read.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_anchor_appointment`.
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -105,6 +118,11 @@ const KEPT_UNDER_DEVICE_PIN: &str =
 /// How long a test waits for a step to reach the read it pauses at, a
 /// paused read for the test's word, and a second step to wait or go on.
 const PAUSE_WAIT: Duration = Duration::from_secs(30);
+/// How long the slot lock test lets an appointment run beside a door that
+/// holds the lock: far longer than an appointment takes on a test host.
+const SLOT_LOCK_WAIT: Duration = Duration::from_secs(5);
+/// The refusal of a keystore that denied access.
+const KEYSTORE_DENIED: &str = "the keystore denied access";
 
 fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
     vault
@@ -654,10 +672,11 @@ type PausedRead = (mpsc::Sender<()>, mpsc::Receiver<()>);
 /// The process-memory keystore, its hardware counting wrong PINs, with one
 /// read of the owner signing slot that a test pauses in the middle of a
 /// device PIN step (as `SteppedKeystore` of `tests/device_pin.rs` pauses a
-/// call).
+/// call), and one seed of that slot that a test has it refuse.
 struct PausingKeystore {
     inner: MemoryKeystore,
     pause: Mutex<Option<PausedRead>>,
+    refuse_owner_slot_create: AtomicBool,
 }
 
 impl PausingKeystore {
@@ -665,7 +684,13 @@ impl PausingKeystore {
         Self {
             inner: MemoryKeystore::with_counted_auth_bound(32, 1000),
             pause: Mutex::new(None),
+            refuse_owner_slot_create: AtomicBool::new(false),
         }
+    }
+
+    /// Denies the next seed put in the owner signing slot.
+    fn refuse_next_owner_slot_create(&self) {
+        self.refuse_owner_slot_create.store(true, Ordering::SeqCst);
     }
 
     /// Pauses the next read of the owner signing slot before it reaches the
@@ -698,6 +723,11 @@ impl DeviceKeystore for PausingKeystore {
     }
 
     fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<(), KeystoreError> {
+        if slot.kind == SlotKind::OwnerSigning
+            && self.refuse_owner_slot_create.swap(false, Ordering::SeqCst)
+        {
+            return Err(KeystoreError::Denied);
+        }
         DeviceKeystore::create(&self.inner, slot, secret)
     }
 
@@ -841,6 +871,133 @@ fn an_appointment_waits_for_a_first_device_pin_set_and_makes_no_successor() {
         "the refused appointment writes no row"
     );
     assert!(owned.rootless(), "no successor was appointed");
+}
+
+/// FIX APPOINTMENT-DROPS-SLOT-SEED-BEFORE-ITS-VERDICT: the keystore denies
+/// the successor's seed, the last step of the door's writer. The refused
+/// appointment writes no row, and the install's owner signing slot still
+/// holds the key it held before; the door then runs again and the slot
+/// holds the successor the roster names live.
+#[test]
+fn a_refused_successor_seed_leaves_the_slot_its_old_seed() {
+    let keystore = Arc::new(PausingKeystore::hardware_counted());
+    let owned = owned_on(Arc::<PausingKeystore>::clone(&keystore));
+    owned.revoke_unrelated_binding();
+    owned.fork();
+    assert!(owned.rootless(), "the fork leaves no live root key");
+    let held = owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key")
+        .public_key();
+    let stored = owned.history().len();
+
+    keystore.refuse_next_owner_slot_create();
+    let refusal = owned
+        .vault
+        .appoint_owner_root(&proof(&owned.vault, owned.person), &owned.seed, None)
+        .expect_err("the keystore denies the successor's seed");
+
+    assert!(
+        matches!(
+            &refusal,
+            Error::Secret(SecretError::WorldKeyRefused(reason)) if *reason == KEYSTORE_DENIED
+        ),
+        "the keystore's refusal: {refusal}"
+    );
+    assert_eq!(
+        owned.history().len(),
+        stored,
+        "the refused appointment writes no row"
+    );
+    assert!(owned.rootless(), "no successor was appointed");
+    let kept = owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key")
+        .public_key();
+    assert_eq!(
+        kept, held,
+        "the slot keeps the seed it held before the refused appointment"
+    );
+
+    let receipt = owned
+        .vault
+        .appoint_owner_root(&proof(&owned.vault, owned.person), &owned.seed, None)
+        .expect("the door runs again");
+    assert!(owned.live(&AuthorityKey::Ed25519(receipt.successor)));
+    let renewed = owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key")
+        .public_key();
+    assert_eq!(
+        renewed, receipt.successor,
+        "the slot holds the successor the roster names live"
+    );
+    assert!(owned.passes_owner_verbs());
+}
+
+/// FIX OWNER-SIGNING-SLOT-RENEWAL-OUTSIDE-SLOT-LOCK: a read of this
+/// install's owner signing key holds the vault's owner signing slot lock
+/// while it reads the slot, and the test pauses it there. An appointment
+/// started then waits for the lock and renews nothing beside the read; once
+/// the read goes on, it answers the slot's old key, and the appointment
+/// puts its successor in the slot.
+#[test]
+fn an_appointment_waits_for_a_door_that_holds_the_owner_signing_slot() {
+    let keystore = Arc::new(PausingKeystore::hardware_counted());
+    let owned = owned_on(Arc::<PausingKeystore>::clone(&keystore));
+    owned.revoke_unrelated_binding();
+    owned.fork();
+    assert!(owned.rootless(), "the fork leaves no live root key");
+    let held = owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key")
+        .public_key();
+
+    let appointing_owner = proof(&owned.vault, owned.person);
+    let (vault, seed) = (&owned.vault, &owned.seed);
+    let (appointment_ended, ended) = mpsc::channel();
+    let (read, appointment, ended_beside_the_read) = thread::scope(|scope| {
+        let (reached, resume) = keystore.pause_next_owner_slot_read();
+        let read = scope.spawn(move || vault.device_owner_signing_key());
+        reached
+            .recv_timeout(PAUSE_WAIT)
+            .expect("the read reaches the owner signing slot under its lock");
+        let appointment = scope.spawn(move || {
+            let answer = vault.appoint_owner_root(&appointing_owner, seed, None);
+            let _heard = appointment_ended.send(());
+            answer
+        });
+        let ended_beside_the_read = ended.recv_timeout(SLOT_LOCK_WAIT).is_ok();
+        resume.send(()).expect("the read goes on");
+        (
+            read.join().expect("the read's thread ends"),
+            appointment.join().expect("the appointment's thread ends"),
+            ended_beside_the_read,
+        )
+    });
+
+    assert!(
+        !ended_beside_the_read,
+        "the appointment waits for the door that holds the owner signing slot; it renewed the \
+         slot beside that door's read instead"
+    );
+    let read = read.expect("the read answers").public_key();
+    assert_eq!(read, held, "the read answers the slot's key from before");
+    let receipt = appointment.expect("the appointment goes on once the read let the slot go");
+    assert!(owned.live(&AuthorityKey::Ed25519(receipt.successor)));
+    let renewed = owned
+        .vault
+        .device_owner_signing_key()
+        .expect("the install's owner signing key")
+        .public_key();
+    assert_eq!(
+        renewed, receipt.successor,
+        "the slot holds the successor the roster names live"
+    );
 }
 
 /// The owner's second install: enrolled as his through the hosted console,

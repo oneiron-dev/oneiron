@@ -2,8 +2,10 @@
 
 use std::ops::ControlFlow;
 
-use loro::VersionVector;
+use loro::{LoroDoc, VersionVector};
 
+use oneiron::authority::PeerMachine;
+use oneiron::sync::federation_burst::{DeviceBurstAdmission, DevicePeer, FederationBurstWorkState};
 use oneiron::sync::residence::{admit_promoted_window_update, promotion_covers_full_window_for};
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::window::WindowExport;
@@ -14,6 +16,7 @@ use oneiron::sync::{
 
 use super::app_tier::require_bound_app_auth;
 use super::conn_state::{ConnState, WindowSyncMode};
+use super::device_burst_replay::{DeviceBurstEnd, DeviceLandingError};
 pub(crate) use super::selector_scope::selector_grant_scope;
 use crate::auth::CoreAuth;
 use crate::protocol::{self, ProtocolError, window_sub_tags};
@@ -400,7 +403,19 @@ pub(super) async fn handle_window_sync(
                         }
                         return Ok(ControlFlow::Continue(()));
                     }
-                    return Err(map_update_admission_err(error));
+                    // The device's own bytes refused count on its burst
+                    // streak, as a federated peer's do (L7-41); a read fault
+                    // of this home's does not.
+                    let refusal = map_update_admission_err(error);
+                    if !matches!(refusal, ProtocolError::AdmissionReadFailed(_))
+                        && let Err(error) = oneiron::sync::federation_burst::record_device_refusal(
+                            server.vault(),
+                            &device_peer(server, conn_state),
+                        )
+                    {
+                        tracing::warn!(%error, "an own device's refused update was not counted");
+                    }
+                    return Err(refusal);
                 }
             };
             let mut write_auth = None;
@@ -439,19 +454,92 @@ pub(super) async fn handle_window_sync(
                     })?;
                 return Ok(ControlFlow::Continue(()));
             }
-            // FIX 7608 slice 4: a copy edit lands on its source before anything
-            // persists, and is admitted again as the source edit it is. A ruled
-            // hold persists, imports and relays nothing: its held record is
-            // kept and answered, and it is never applied (FIX 10598).
-            let admitted = oneiron::sync::selector::admit_repo_sync_frame(
-                server.vault.as_ref(),
-                window_key,
+            // An own device's write meets the relative burst response a
+            // federated peer's does, here at its home, before anything persists
+            // or relays (arch-0023b `#decision-federation-26`; L7-41): allowed,
+            // it lands below; deferred or isolated, it is answered as held, and
+            // the home's drain lands it once the device's rate is back at its
+            // baseline (`server/device_burst_drain.rs`).
+            let device = device_peer(server, conn_state);
+            let burst = match oneiron::sync::federation_burst::admit_device_window_update(
+                server.vault(),
+                &device,
+                &key,
                 update,
-                Some(&doc),
+                &[],
             )
-            .map_err(|e| ProtocolError::Persistence(format!("copy translation failed: {e}")))?;
-            let oneiron::sync::selector::RepoSyncAdmission::Admit(update, landings) = admitted
-            else {
+            .map_err(map_update_admission_err)?
+            {
+                DeviceBurstAdmission::Allow(burst) => burst,
+                // The same bytes already settled here (#8386 review): landed,
+                // they are acknowledged with nothing persisted, imported or
+                // relayed again; rejected by the owner at review, they are
+                // refused again.
+                DeviceBurstAdmission::Settled { batch_ref, state } => {
+                    if state != FederationBurstWorkState::Imported {
+                        tracing::info!(
+                            window = %key,
+                            batch_ref = %batch_ref,
+                            ?state,
+                            "an own device sent a batch its owner rejected again"
+                        );
+                        return Err(ProtocolError::InvalidPayload(
+                            "own device batch rejected at review",
+                        ));
+                    }
+                    if residence_seq.is_some() || receipt.binding.sidecar_digest.is_some() {
+                        let frame =
+                            super::window_pads::receipt_frame(window_key, sub_tag, &receipt)?;
+                        direct_tx.send(frame).map_err(|_| {
+                            ProtocolError::Persistence(
+                                "residence acknowledgment channel closed".into(),
+                            )
+                        })?;
+                    }
+                    return Ok(ControlFlow::Continue(()));
+                }
+                DeviceBurstAdmission::Defer { batch_ref }
+                | DeviceBurstAdmission::IsolateAndPropose { batch_ref, .. } => {
+                    tracing::info!(
+                        window = %key,
+                        batch_ref = %batch_ref,
+                        "an own device's burst is held at its home"
+                    );
+                    return super::window_copy::acknowledge_held(
+                        conn_state,
+                        &key,
+                        window_key,
+                        sub_tag,
+                        residence_seq,
+                        update,
+                        &doc.oplog_vv(),
+                        &receipt,
+                        direct_tx,
+                    );
+                }
+            };
+            let landing = land_device_update(
+                server,
+                (conn_id, conn_state.peer_machine(server.vault())),
+                (&key, &doc),
+                update,
+                inserts,
+                (
+                    write_auth,
+                    protocol::is_residence_version(conn_state.protocol_version),
+                ),
+            )
+            .await;
+            // The burst core's batch ends as the landing went (L7-41): landed,
+            // held on a copy edit's ruled cause, or durable, it is complete;
+            // its window's refusal of the device's bytes rejects it; a load or
+            // persist that failed keeps it for the drain.
+            if let Err(error) = DeviceBurstEnd::of(&landing).settle(server.vault(), &burst) {
+                tracing::warn!(%error, "an own device's burst batch did not settle");
+            }
+            // FIX 10598: a copy edit held on its ruled cause is answered as
+            // held; nothing of it persisted, imported or relayed.
+            let Some(landed) = landing.map_err(DeviceLandingError::into_protocol)? else {
                 return super::window_copy::acknowledge_held(
                     conn_state,
                     &key,
@@ -464,116 +552,6 @@ pub(super) async fn handle_window_sync(
                     direct_tx,
                 );
             };
-            // The bytes that persist are the translated copy's, when there is
-            // one: its admission reads the inserts they carry.
-            let inserts = if let std::borrow::Cow::Owned(translated) = &update {
-                oneiron::sync::window::admit_window_update_residence_with_vault(
-                    server.vault.as_ref(),
-                    &doc,
-                    translated,
-                    &key,
-                )
-                .map_err(map_update_admission_err)?
-            } else {
-                inserts
-            };
-            let update = update.as_ref();
-            // Durability BEFORE the observed import and fan-out (ARCH-0023b
-            // Observer A duty: "MUST persist synchronously"; FIX 5999).
-            // `subscribe_local_update` does not fire for imports, so the update
-            // bytes, already imported into a fork by admission above, are
-            // appended to sync_state (u:w:*) explicitly, in the transaction
-            // that rechecks the Write credential. A refused or failed append
-            // closes the connection with nothing imported, applied or relayed.
-            // Its pads persist by reference where this home's custody holds
-            // them; it imports and fans out as it came (FIX 7107).
-            let before = doc.oplog_vv();
-            let persisted = oneiron::sync::window::persisted_window_pads(
-                server.vault(),
-                &key,
-                update,
-                Some(&doc),
-            );
-            // Client sending Loro update bytes — import with origin for echo suppression.
-            // The machine this own-device socket proved sent them: their MESSAGE rows
-            // take the own-device lane as they land (FIX 12112).
-            let origin = format!("conn:{conn_id}");
-            // The window is a live window of the reassert manager. Appended,
-            // the bytes are a pending u:w: row that any holder's persist_state
-            // merges into the document without the turn, so the append, the
-            // import and its callbacks hold the live-window turn together: an
-            // indexed pass over the window never meets them halfway (L7-45).
-            let (positions, imported) = oneiron::sync::window::with_live_window_turn(
-                server.reassert_manager.materializer(),
-                || -> Result<_, ProtocolError> {
-                    // A promoted window's write judges its destination in the
-                    // committing transaction, as a document's does: world
-                    // privacy may have changed since the pre-write check.
-                    let stored = if protocol::is_residence_version(conn_state.protocol_version) {
-                        let peer = conn_state.peer_machine(server.vault());
-                        server.persist_promoted_imported_update(
-                            &key, &persisted, &inserts, &landings, write_auth, peer, &doc,
-                        )
-                    } else {
-                        server.persist_imported_update(
-                            &key, &persisted, &inserts, &landings, write_auth,
-                        )
-                    };
-                    stored.map_err(|e| {
-                        ProtocolError::Persistence(format!("update persist failed: {e}"))
-                    })?;
-                    let positions = oneiron::sync::prepare_own_device_push_positions(
-                        server.vault(),
-                        conn_state.peer_machine(server.vault()),
-                        &key,
-                        &doc,
-                        update,
-                    );
-                    let imported = oneiron::sync::with_own_device_push(
-                        server.vault(),
-                        conn_state.peer_machine(server.vault()),
-                        (&key, &doc),
-                        update,
-                        || doc.import_with(update, &origin),
-                    );
-                    Ok((positions, imported))
-                },
-            )?;
-            let imported = match imported {
-                Ok(imported) => imported,
-                Err(e) => {
-                    // The accepted update stays durable: the window reloads
-                    // from d:w:/u:w: state on its next access.
-                    server.evict_window(&key).await;
-                    return Err(ProtocolError::LoroImport(format!("{e}")));
-                }
-            };
-            if imported.pending.is_none()
-                && let Some(positions) = positions.as_ref()
-                && let Err(error) = positions.finish(server.vault(), &doc)
-            {
-                tracing::warn!(%error, "optional own-device position import did not settle");
-            }
-
-            // Each socket's delivery judges the update for the machine it
-            // serves, so a private world's window reaches only the machines
-            // that may read it (`window_delivery`). An update that adds no operation, such as a
-            // catch-up reply to a vector this home already covers, has nothing to relay: relayed,
-            // it would wake every socket that is not pushed the window, and their catch-ups would
-            // wake each other in turn. It is still appended above, since another handler may hold
-            // the same operations in memory before its own append lands, and the acknowledgment
-            // below must name durable bytes.
-            if imported.pending.is_some() || doc.oplog_vv() != before {
-                // An update past one frame goes whole to each socket's release
-                // door, which sends it as its envelope's bounded parts (FIX 8247).
-                let broadcast_msg = oneiron::sync::transport::encode_unsplit_window_sync(
-                    window_key,
-                    window_sub_tags::UPDATE,
-                    update,
-                )
-                .map_err(|e| ProtocolError::ExportFailed(e.to_string()))?;
-                let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
-            }
             // The acknowledgment is the update's receipt; a sealed owner-lane
             // update is answered with its receipt too.
             if residence_seq.is_some() || receipt.binding.sidecar_digest.is_some() {
@@ -582,9 +560,7 @@ pub(super) async fn handle_window_sync(
                     ProtocolError::Persistence("residence acknowledgment channel closed".into())
                 })?;
             }
-            if imported.pending.is_none()
-                && let Some(positions) = positions
-            {
+            if let Some(positions) = landed.settled_positions {
                 conn_state
                     .asset_bodies
                     .get_mut()
@@ -616,6 +592,177 @@ pub(super) async fn handle_window_sync(
     }
 
     Ok(ControlFlow::Continue(()))
+}
+
+/// The own device this socket proved, as its writes' burst baseline names it
+/// (L7-41): the machine it proved, else the slip that bound its credential,
+/// else the one bucket of sockets that proved neither. It grants and refuses
+/// nothing.
+fn device_peer(server: &SyncServer, conn_state: &ConnState) -> DevicePeer {
+    DevicePeer::of_connection(
+        conn_state.peer_machine(server.vault()),
+        conn_state
+            .bound_auth
+            .as_ref()
+            .and_then(CoreAuth::verified_slip)
+            .map(|slip| slip.claims().slip_id),
+    )
+}
+
+/// An own device's update landed at its home.
+pub(super) struct LandedDeviceUpdate {
+    /// The positions it carries, settled: kept for the socket it came on.
+    /// `None` when its import left operations pending, or it carries none.
+    pub(super) settled_positions: Option<oneiron::sync::OwnDevicePositionImport>,
+}
+
+/// Lands an own device's admitted window `update` at its home. A copy edit
+/// lands on its source first and is admitted again as the source edit it is
+/// (FIX 7608 slice 4); a ruled hold persists, imports and relays nothing, its
+/// held record is kept, and it answers `None` (FIX 10598). Otherwise the
+/// bytes persist, then import, under the live-window turn, and go to every
+/// socket but `sender`'s when they add an operation. `sender` is the socket
+/// the update came on, with the machine it proved, or `0` for a burst the
+/// home's drain lands, which no socket sent (L7-41). `inserts` are the
+/// entity ids the update's history inserts as its admission read them, which
+/// owe a compaction when one names a row hard-deleted here (census L6-05); a
+/// translated copy's admission reads its own. `write_auth`, when given, is
+/// rechecked in the writer that persists the update. `promoted` is a socket
+/// on the residence protocol, which writes only promoted windows: the
+/// writer judges the update's destination for `machine` again, as world
+/// privacy may have changed since the pre-write check.
+///
+/// # Errors
+/// The copy translation's store failure; a translated update the window
+/// refuses; a refused or failed persist, with nothing imported or relayed;
+/// an import or relay failure after it, [`DeviceLandingError::durable`]: the
+/// update stays durable and the window reloads on its next access.
+pub(super) async fn land_device_update(
+    server: &SyncServer,
+    (sender, machine): (u32, PeerMachine),
+    (key, doc): (&WindowKey, &LoroDoc),
+    update: &[u8],
+    inserts: oneiron::sync::window::UpdateInserts,
+    (write_auth, promoted): (Option<&CoreAuth>, bool),
+) -> Result<Option<LandedDeviceUpdate>, DeviceLandingError> {
+    let admitted = oneiron::sync::selector::admit_repo_sync_frame(
+        server.vault.as_ref(),
+        key.as_str(),
+        update,
+        Some(doc),
+    )
+    .map_err(|e| ProtocolError::Persistence(format!("copy translation failed: {e}")))?;
+    let oneiron::sync::selector::RepoSyncAdmission::Admit(update, landings) = admitted else {
+        return Ok(None);
+    };
+    // The bytes that persist are the translated copy's, when there is one:
+    // its admission reads the inserts they carry.
+    let inserts = if let std::borrow::Cow::Owned(translated) = &update {
+        oneiron::sync::window::admit_window_update_residence_with_vault(
+            server.vault.as_ref(),
+            doc,
+            translated,
+            key,
+        )
+        .map_err(map_update_admission_err)?
+    } else {
+        inserts
+    };
+    let update = update.as_ref();
+    // Durability BEFORE the observed import and fan-out (ARCH-0023b
+    // Observer A duty: "MUST persist synchronously"; FIX 5999).
+    // `subscribe_local_update` does not fire for imports, so the update
+    // bytes, already imported into a fork by admission, are appended to
+    // sync_state (u:w:*) explicitly, in the transaction that rechecks the
+    // Write credential. A refused or failed append closes the connection
+    // with nothing imported, applied or relayed. Its pads persist by
+    // reference where this home's custody holds them; it imports and fans
+    // out as it came (FIX 7107).
+    let before = doc.oplog_vv();
+    let persisted =
+        oneiron::sync::window::persisted_window_pads(server.vault(), key, update, Some(doc));
+    // Loro update bytes import with their sender as origin, for echo
+    // suppression. The machine this own-device socket proved sent them: their
+    // MESSAGE rows take the own-device lane as they land (FIX 12112).
+    let origin = format!("conn:{sender}");
+    // The window is a live window of the reassert manager. Appended, the
+    // bytes are a pending u:w: row that any holder's persist_state merges
+    // into the document without the turn, so the append, the import and its
+    // callbacks hold the live-window turn together: an indexed pass over the
+    // window never meets them halfway (L7-45).
+    let (positions, imported) = oneiron::sync::window::with_live_window_turn(
+        server.reassert_manager.materializer(),
+        || -> Result<_, ProtocolError> {
+            // A promoted window's write judges its destination in the
+            // committing transaction, as a document's does: world privacy
+            // may have changed since the pre-write check.
+            let stored = if promoted {
+                server.persist_promoted_imported_update(
+                    key, &persisted, &inserts, &landings, write_auth, machine, doc,
+                )
+            } else {
+                server.persist_imported_update(key, &persisted, &inserts, &landings, write_auth)
+            };
+            stored
+                .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
+            let positions = oneiron::sync::prepare_own_device_push_positions(
+                server.vault(),
+                machine,
+                key,
+                doc,
+                update,
+            );
+            let imported = oneiron::sync::with_own_device_push(
+                server.vault(),
+                machine,
+                (key, doc),
+                update,
+                || doc.import_with(update, &origin),
+            );
+            Ok((positions, imported))
+        },
+    )?;
+    let imported = match imported {
+        Ok(imported) => imported,
+        Err(e) => {
+            // The accepted update stays durable: the window reloads from
+            // d:w:/u:w: state on its next access.
+            server.evict_window(key).await;
+            return Err(DeviceLandingError::durable(ProtocolError::LoroImport(
+                format!("{e}"),
+            )));
+        }
+    };
+    let settled = imported.pending.is_none();
+    if settled
+        && let Some(positions) = positions.as_ref()
+        && let Err(error) = positions.finish(server.vault(), doc)
+    {
+        tracing::warn!(%error, "optional own-device position import did not settle");
+    }
+    // Each socket's delivery judges the update for the machine it serves, so
+    // a private world's window reaches only the machines that may read it
+    // (`window_delivery`). An update that adds no operation, such as a
+    // catch-up reply to a vector this home already covers, has nothing to
+    // relay: relayed, it would wake every socket that is not pushed the
+    // window, and their catch-ups would wake each other in turn. It is still
+    // appended above, since another handler may hold the same operations in
+    // memory before its own append lands, and the acknowledgment must name
+    // durable bytes.
+    if !settled || doc.oplog_vv() != before {
+        // An update past one frame goes whole to each socket's release door,
+        // which sends it as its envelope's bounded parts (FIX 8247).
+        let broadcast_msg = oneiron::sync::transport::encode_unsplit_window_sync(
+            key.as_str(),
+            window_sub_tags::UPDATE,
+            update,
+        )
+        .map_err(|e| DeviceLandingError::durable(ProtocolError::ExportFailed(e.to_string())))?;
+        let _ = crate::broadcast::broadcast(&server.broadcast_tx, sender, broadcast_msg);
+    }
+    Ok(Some(LandedDeviceUpdate {
+        settled_positions: positions.filter(|_| settled),
+    }))
 }
 
 /// Asks `max_windows_per_connection`'s question (OF-520): one socket holds `held` windows or
@@ -932,7 +1079,7 @@ fn map_delta_export_err(e: oneiron::Error) -> ProtocolError {
 /// A fault reading the vault's own admission state is the server's
 /// (`AdmissionReadFailed`, FIX 5850), told only by the engine's typed
 /// context, never by its text.
-fn map_update_admission_err(e: oneiron::Error) -> ProtocolError {
+pub(super) fn map_update_admission_err(e: oneiron::Error) -> ProtocolError {
     if protocol::ADMISSION_READ_FAULTS_ARE_INTERNAL
         && matches!(
             e,
