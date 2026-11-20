@@ -290,7 +290,7 @@ pub use oneiron_contracts::memory::{
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     MEMORY_CODE_PACED_HOLD, MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER,
     MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial, MemoryPending, MemoryPolicyDenial,
-    MemoryPolicyExceptionProposal, MemoryResult, MemoryWrongRoot,
+    MemoryPolicyExceptionProposal, MemoryResult, MemoryWrongRoot, TaskAssignmentConflict,
 };
 pub(crate) use people_verbs::grant_requested_scope;
 pub use people_verbs::{

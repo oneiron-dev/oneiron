@@ -1011,6 +1011,7 @@ fn a_forked_owner_companion_does_not_poison_the_board() {
                     assigned_generation: None,
                     answered_heads: None,
                     occurred_at: 121,
+                    maker: None,
                 },
             )
             .map(|_fact_ref| ())

@@ -152,6 +152,10 @@ pub(super) struct OwnerRestore<'a> {
     pub(super) fresh: bool,
     /// The source vault id the archive's manifest names.
     pub(super) source_vault: Option<&'a str>,
+    /// Whether the archive reads as another vault's chain (`ForeignAuthorityChain`, never a
+    /// restore): its task authority facts stay refused (TASK-FACT-ARCHIVE-CROSSING = A).
+    /// The classification only refuses here; it admits nothing.
+    pub(super) foreign_chain: bool,
 }
 
 /// The claim the owner's restore writes through the generic claim door (RULING 00:08

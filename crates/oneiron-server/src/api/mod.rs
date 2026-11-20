@@ -321,6 +321,10 @@ pub(crate) use self::mcp_gateway::{
 // (P38 pending block): the facade-error mapping and the error reply.
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::{mcp_error_response, mcp_facade_error};
+// The integration tests' door to an engine error as a route's direct
+// engine-to-ApiError mapping answers it (REVIEW-10008).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::error_map::core_engine_error as core_engine_error_for_test;
 pub(crate) use self::memory::*;
 pub(crate) use self::memory_reason::*;
 pub(crate) use self::openapi::*;

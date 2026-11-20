@@ -414,6 +414,7 @@ class OneironError(RuntimeError):
     legal_hold: Facade.LegalHoldNotice | None
     room_join_hold: Facade.RoomJoinHold | None
     pending: Facade.MemoryPending | None
+    task_assignment_conflict: Facade.TaskAssignmentConflict | None
     def __init__(
         self,
         code: str,
@@ -427,6 +428,7 @@ class OneironError(RuntimeError):
         legal_hold: Facade.LegalHoldNotice | None = None,
         room_join_hold: Facade.RoomJoinHold | None = None,
         pending: Facade.MemoryPending | None = None,
+        task_assignment_conflict: Facade.TaskAssignmentConflict | None = None,
     ) -> None: ...
 
 class Oneiron(_FacadeVerbs):

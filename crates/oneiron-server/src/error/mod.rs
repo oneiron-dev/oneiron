@@ -404,6 +404,10 @@ pub struct ApiError {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<memory_pending_schema::MemoryPendingSchema>)]
     pending: Option<Box<oneiron::memory::MemoryPending>>,
+    /// A refused second task assignment, typed, when the engine supplied one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<task_assignment_conflict_schema::TaskAssignmentConflictSchema>)]
+    task_assignment_conflict: Option<Box<oneiron::memory::TaskAssignmentConflict>>,
 }
 
 /// The guidance a managed vault's attested holder gets at an owner door
@@ -427,6 +431,7 @@ impl ApiError {
             legal_hold: None,
             room_join_hold: None,
             pending: None,
+            task_assignment_conflict: None,
         }
     }
 
@@ -753,6 +758,8 @@ impl<'de> Deserialize<'de> for ApiError {
             room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
             #[serde(default)]
             pending: Option<Box<oneiron::memory::MemoryPending>>,
+            #[serde(default)]
+            task_assignment_conflict: Option<Box<oneiron::memory::TaskAssignmentConflict>>,
         }
 
         let wire = Wire::deserialize(deserializer)?;
@@ -772,6 +779,7 @@ impl<'de> Deserialize<'de> for ApiError {
             legal_hold: wire.legal_hold,
             room_join_hold: wire.room_join_hold,
             pending: wire.pending,
+            task_assignment_conflict: wire.task_assignment_conflict,
         })
     }
 }
@@ -817,6 +825,13 @@ pub struct ApiErrorEnvelopeBody {
     #[serde(default, rename = "pending", skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<memory_pending_schema::MemoryPendingSchema>)]
     pending: Option<Box<oneiron::memory::MemoryPending>>,
+    #[serde(
+        default,
+        rename = "task_assignment_conflict",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schema(value_type = Option<task_assignment_conflict_schema::TaskAssignmentConflictSchema>)]
+    task_assignment_conflict: Option<Box<oneiron::memory::TaskAssignmentConflict>>,
 }
 
 impl ApiErrorEnvelope {
@@ -832,6 +847,7 @@ impl ApiErrorEnvelope {
                 legal_hold: error.legal_hold,
                 room_join_hold: error.room_join_hold,
                 pending: error.pending,
+                task_assignment_conflict: error.task_assignment_conflict,
             },
         }
     }
@@ -887,6 +903,7 @@ fn next_request_id() -> String {
 pub(crate) mod memory_pending_schema;
 pub(crate) mod room_join_hold_schema;
 mod schema;
+pub(crate) mod task_assignment_conflict_schema;
 mod typed_refusal;
 
 use self::typed_refusal::{CONTROL_SCOPE_REFUSAL_CODE, COURTESY_DELETE_REFUSAL_CODE};

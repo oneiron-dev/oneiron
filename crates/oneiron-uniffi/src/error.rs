@@ -11,6 +11,7 @@ use crate::dto::WireJson;
 use crate::facade_types_generated::LegalHoldNotice;
 use crate::facade_types_generated::MemoryPending;
 use crate::facade_types_generated::RoomJoinHold;
+use crate::facade_types_generated::TaskAssignmentConflict;
 
 /// Every failure that crosses the generated foreign boundary.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -54,6 +55,10 @@ pub enum OneironError {
         /// `pending` block (Engine ruling P38-PENDING-BLOCK-REACH = A). Named
         /// apart because `pending` here is the pending ask's retry payload.
         pending_block: Option<MemoryPending>,
+        /// The refused second assignment behind an `INVALID_STATE` refusal, when
+        /// another device already assigned the task: the task, the assignee it
+        /// keeps, and the one refused.
+        task_assignment_conflict: Option<TaskAssignmentConflict>,
     },
 }
 
@@ -94,6 +99,13 @@ impl From<oneiron::MemoryError> for OneironError {
             },
             None => None,
         };
+        let task_assignment_conflict = match error.task_assignment_conflict {
+            Some(conflict) => match crate::codec::lift_task_assignment_conflict(*conflict) {
+                Ok(conflict) => Some(conflict),
+                Err(error) => return error,
+            },
+            None => None,
+        };
         Self::Failure {
             code: error.code,
             message: error.message,
@@ -108,6 +120,7 @@ impl From<oneiron::MemoryError> for OneironError {
             legal_hold,
             room_join_hold,
             pending_block,
+            task_assignment_conflict,
         }
     }
 }

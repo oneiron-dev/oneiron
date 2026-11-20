@@ -1,0 +1,187 @@
+//! Door for `tests/task_fact_actor_rule.rs` (Fable pass 28 R5 part 2) and
+//! `tests/task_id_commits_to_maker.rs` (FIX TASK-ID-COMMITS-TO-MAKER): writes one TASK
+//! authority fact under this install's carrier, through the mint door or past its actor
+//! check, and reads what a TASK's facts prove about who may act on it. It also hands a
+//! fact row to the step a replicated put takes when it refuses a row deleted here.
+
+use crate::error::Result;
+use crate::task_authority::{
+    TaskAuthorityFact, TaskAuthorityFactKind, TaskMaker, put_task_authority_fact_in_txn,
+    write_unjudged_task_authority_fact_in_txn,
+};
+use crate::{EntityId, Vault};
+
+/// What one TASK's facts prove: its owner, the actor it is addressed to, and its latest
+/// taker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProvedStanding {
+    /// The actor the Owner fact names.
+    pub owner: EntityId,
+    /// The Assigned fact's assignee, else the human-assignment witness's agent.
+    pub assignee: Option<EntityId>,
+    /// The latest Accepted fact's actor.
+    pub taker: Option<EntityId>,
+}
+
+fn fact_at(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    task: EntityId,
+    kind: TaskAuthorityFactKind,
+    actor: EntityId,
+    assigned: Option<EntityId>,
+) -> Result<TaskAuthorityFact> {
+    Ok(TaskAuthorityFact {
+        task_ref: task,
+        kind,
+        actor_ref: actor,
+        assigned_ref: assigned,
+        actor_generation: None,
+        assigned_generation: None,
+        answered_heads: None,
+        occurred_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
+        maker: None,
+    })
+}
+
+/// Mints `actor`'s `kind` fact about `task` through the mint door, naming `assigned` where
+/// the kind names one.
+///
+/// # Errors
+///
+/// As `put_task_authority_fact_in_txn`, which refuses an actor that may not make the fact.
+pub fn mint_fact(
+    vault: &Vault,
+    task: EntityId,
+    kind: TaskAuthorityFactKind,
+    actor: EntityId,
+    assigned: Option<EntityId>,
+) -> Result<EntityId> {
+    vault.with_write_txn(|txn| {
+        let fact = fact_at(vault, txn, task, kind, actor, assigned)?;
+        put_task_authority_fact_in_txn(vault, txn, fact)
+    })
+}
+
+/// [`mint_fact`] past the door's actor check: the fact a member machine whose door lacks
+/// the check would carry, signed by this install's carrier.
+///
+/// # Errors
+///
+/// As the fact's write.
+pub fn write_unjudged_fact(
+    vault: &Vault,
+    task: EntityId,
+    kind: TaskAuthorityFactKind,
+    actor: EntityId,
+    assigned: Option<EntityId>,
+) -> Result<EntityId> {
+    vault.with_write_txn(|txn| {
+        let fact = fact_at(vault, txn, task, kind, actor, assigned)?;
+        write_unjudged_task_authority_fact_in_txn(vault, txn, fact)
+    })
+}
+
+/// An Owner fact naming `owner` as `task`'s owner under the maker commitment of `maker`
+/// and `nonce`.
+fn owner_fact_at(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    task: EntityId,
+    owner: EntityId,
+    maker: EntityId,
+    nonce: EntityId,
+) -> Result<TaskAuthorityFact> {
+    let mut fact = fact_at(vault, txn, task, TaskAuthorityFactKind::Owner, owner, None)?;
+    fact.maker = Some(TaskMaker {
+        maker_ref: maker,
+        nonce,
+    });
+    Ok(fact)
+}
+
+/// Mints an Owner fact naming `owner` as `task`'s owner, under the maker commitment of
+/// `maker` and `nonce`, through the mint door.
+///
+/// # Errors
+///
+/// As `put_task_authority_fact_in_txn`, which refuses an Owner fact whose maker commitment
+/// does not derive `task` with `owner`.
+pub fn mint_owner_fact(
+    vault: &Vault,
+    task: EntityId,
+    owner: EntityId,
+    maker: EntityId,
+    nonce: EntityId,
+) -> Result<EntityId> {
+    vault.with_write_txn(|txn| {
+        let fact = owner_fact_at(vault, txn, task, owner, maker, nonce)?;
+        put_task_authority_fact_in_txn(vault, txn, fact)
+    })
+}
+
+/// [`mint_owner_fact`] past the door's check: the Owner fact a member machine whose door
+/// lacks the check would carry, signed by this install's carrier.
+///
+/// # Errors
+///
+/// As the fact's write.
+pub fn write_unjudged_owner_fact(
+    vault: &Vault,
+    task: EntityId,
+    owner: EntityId,
+    maker: EntityId,
+    nonce: EntityId,
+) -> Result<EntityId> {
+    vault.with_write_txn(|txn| {
+        let fact = owner_fact_at(vault, txn, task, owner, maker, nonce)?;
+        write_unjudged_task_authority_fact_in_txn(vault, txn, fact)
+    })
+}
+
+/// The id of the TASK `maker` mints for `owner` under `nonce`
+/// (`task_authority::task_ref_of_maker`).
+///
+/// # Errors
+///
+/// A derivation that lands in the reserved id range.
+pub fn task_ref_of_maker(maker: EntityId, owner: EntityId, nonce: EntityId) -> Result<EntityId> {
+    crate::task_authority::task_ref_of_maker(maker, owner, nonce)
+}
+
+/// What `task`'s facts prove about who may act on it, or `None` when no Owner fact proves
+/// an owner.
+///
+/// # Errors
+///
+/// As the task's fact read: a forked owner or assignment fails it.
+pub fn proved_standing(vault: &Vault, task: EntityId) -> Result<Option<ProvedStanding>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .task_standing_in(&txn, task)?
+        .map(|standing| ProvedStanding {
+            owner: standing.owner,
+            assignee: standing.assignee,
+            taker: standing.taker.map(|taker| taker.actor),
+        }))
+}
+
+/// The step a replicated put takes when it refuses row `fact` because its id was deleted
+/// here (`task_authority::note_suppressed_fact_in_txn`), with `body` the TASK row's body:
+/// the fact is kept under its task, and the task's facts read as a refusal once the fold
+/// would count it.
+///
+/// # Errors
+///
+/// As the write transaction.
+pub fn note_refused_fact(vault: &Vault, fact: EntityId, body: &[u8]) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        crate::task_authority::note_suppressed_fact_in_txn(
+            &vault.store,
+            txn,
+            &fact,
+            crate::registry::ENTITY_TYPE_TASK,
+            body,
+        )
+    })
+}

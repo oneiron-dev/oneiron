@@ -73,7 +73,7 @@ def committed_artifacts():
         "BAD_REQUEST": "Correct input fields, types and units. Timestamps are Unix seconds.",
         "NOT_FOUND": "Refresh the identifier and current read scope before retrying.",
         "FORBIDDEN": "Respect the gate or identity refusal. Review pending consent; do not widen scope or retry blindly.",
-        "INVALID_STATE": "Read the current lifecycle head, then make a new decision. Do not replay a stale target.",
+        "INVALID_STATE": "Read the current lifecycle head, then make a new decision. Do not replay a stale target. A second-assignment refusal also carries `task_assignment_conflict`: {task_ref: \"<32 hex>\", held_assignee: \"<32 hex>\", offered_assignee: \"<32 hex>\"}, the task, the assignee it keeps, and the one refused.",
         "INTERNAL_SERVER_ERROR": "Check the server endpoint, network and health. Report reproducible SDK boundary failures.",
         "LEASE_REQUIRED": "Use light or medium recall, or present a budget lease.",
         "OFF_RECORD_SESSION_DOOR": "Use the owning off-record session handle. The canonical witness door is not that handle.",

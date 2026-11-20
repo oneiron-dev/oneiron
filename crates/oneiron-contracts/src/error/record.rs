@@ -241,6 +241,11 @@ fn seal_standing_text(seal: Option<&[u8; 32]>, image: Option<&[u8; 32]>) -> Stri
     )
 }
 
+/// The remedy both error projections give [`RecordError::TaskAssignmentConflict`].
+pub const TASK_ASSIGNMENT_CONFLICT_SUGGESTION: &str = "Another device of this vault already \
+    assigned this task. A task takes one assignee: cancel it and create it again to assign it \
+    to someone else.";
+
 /// Record-domain error.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -644,6 +649,23 @@ pub enum RecordError {
         resource: &'static str,
         limit: usize,
     },
+    /// A second, different assignment for one task (FIX
+    /// [TASK-ASSIGNED-FORK-ON-CONCURRENT-AMENDED-SETTLES]): the task is
+    /// already assigned to `held_assignee`, so an assignment to
+    /// `offered_assignee` is refused. The fold fails a fork closed at every
+    /// read, so the mint door refuses the write instead of committing one.
+    /// Nothing was written.
+    #[error(
+        "task {} is already assigned to {}; a second assignment to {} is refused",
+        task_ref.to_hex(),
+        held_assignee.to_hex(),
+        offered_assignee.to_hex()
+    )]
+    TaskAssignmentConflict {
+        task_ref: EntityId,
+        held_assignee: EntityId,
+        offered_assignee: EntityId,
+    },
 }
 
 impl RecordError {
@@ -681,6 +703,7 @@ impl RecordError {
             Self::StreamAlreadyActive { .. } => ErrorKind::StreamAlreadyActive,
             Self::StreamNotActive { .. } => ErrorKind::StreamNotActive,
             Self::StreamLimit { .. } => ErrorKind::StreamLimit,
+            Self::TaskAssignmentConflict { .. } => ErrorKind::TaskAssignmentConflict,
             Self::AccessGrantAlreadyExists => ErrorKind::AccessGrantAlreadyExists,
             Self::OutboundGrantAlreadyExists => ErrorKind::OutboundGrantAlreadyExists,
             Self::ConnectorKeyAlreadyExists => ErrorKind::ConnectorKeyAlreadyExists,

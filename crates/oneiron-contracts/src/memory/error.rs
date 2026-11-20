@@ -193,6 +193,13 @@ pub struct MemoryError {
     /// of `message`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub successor_short_id: Option<String>,
+    /// The refused second assignment behind an `INVALID_STATE` refusal, present only
+    /// when another device of this vault already assigned the task: the task, the
+    /// assignee it keeps, and the one refused, each as 32 hex. A client reads a
+    /// FIELD instead of parsing the message, for the same reason `successor_short_id`
+    /// is one. Boxed for the same reason `gate_denial` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_assignment_conflict: Option<Box<TaskAssignmentConflict>>,
     /// The native layout behind a bound extraction's `BAD_REQUEST` layout refusal.
     ///
     /// A job resubmits by this typed field and never parses `message`.
@@ -286,6 +293,18 @@ pub enum MemoryPending {
     },
 }
 
+/// A refused second assignment for one task: the task, the assignee it keeps,
+/// and the assignee the refused write offered, each as 32 hex.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskAssignmentConflict {
+    /// The task both assignments name, 32 hex.
+    pub task_ref: String,
+    /// The assignee the task keeps, 32 hex.
+    pub held_assignee: String,
+    /// The assignee the refused write offered, 32 hex.
+    pub offered_assignee: String,
+}
+
 /// The native layout a layout refusal carries instead of prose.
 /// A step refusal names the native slices the cited TURNs form, and a
 /// bound read refusal names that read's rebuilt pages, each in native order.
@@ -366,6 +385,7 @@ impl MemoryError {
             message: message.into(),
             suggestions: suggestions.iter().map(|s| (*s).to_owned()).collect(),
             successor_short_id: None,
+            task_assignment_conflict: None,
             extraction_layout: None,
             gate_denial: None,
             read_receipt: None,
