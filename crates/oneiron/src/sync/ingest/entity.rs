@@ -107,8 +107,8 @@ pub(in crate::sync) enum EntityStep {
     /// The remote value is refused. Whatever the door staged must be rolled back and the op
     /// recorded in `x:` (ONE-1124); [`ingest_entity_in_savepoint`] does both.
     Quarantine(EntityRefusal),
-    /// Nothing to write: a delete gate holds, the local bytes already match, or the kind never
-    /// replicates.
+    /// Nothing to write: a delete gate or a use limit holds, the local bytes already match, or
+    /// the kind never replicates.
     Skip,
     /// The replicated row was written.
     Materialized(EntityId),
@@ -450,8 +450,13 @@ fn admit(
     }
     // ONE-1881: a terminal receipt takes its own writer-locked door BEFORE the generic
     // delete-wins and exact-byte shortcuts; the door refuses every tombstone naming it and
-    // neutralizes its `dt:` poison in this transaction.
+    // neutralizes its `dt:` poison in this transaction. A changed receipt at the id of a
+    // use-limited or restricted record is dropped first, as below: the door's shared put would
+    // refuse it as absent, which the window reads as a local failure (REVIEW-9881 round 1).
     if header.entity_type == ENTITY_TYPE_RECEIPT_RECORD {
+        if super::drops_changed_carrier_in_txn(vault, wtxn, &id, blob)? {
+            return Ok(EntityStep::Skip);
+        }
         let wrote = crate::sync::receipt_ingest::ingest_in_txn(
             vault,
             wtxn,
@@ -504,6 +509,17 @@ fn admit(
             header.entity_type,
             &blob[ENTITY_METADATA_HEADER_LEN..],
         )?;
+        return Ok(EntityStep::Skip);
+    }
+    // A record a refused privacy erase kept (C6) or a cooperative review restricts takes no
+    // change from a peer, as it takes none from a named write here (OF-470 C6): a carrier a
+    // device sent before the limit reached it is dropped, and the kept copy stays as it is. The
+    // put door would refuse it as absent, which the window reads as a local failure. A dropped
+    // carrier stays dropped once the limit lifts: the window still carries it, and a later
+    // rematerialization would put it over the kept copy (REVIEW-9881 round 1). It is asked
+    // before every fence below that skips a carrier, so a carrier one of them skips under the
+    // limit is recorded too (REVIEW-9881 round 2: the NOTE purge fence).
+    if super::drops_changed_carrier_in_txn(vault, wtxn, &id, blob)? {
         return Ok(EntityStep::Skip);
     }
     if let Some(step) = withdrawn::withdrawn_generation_step(ctx, wtxn, &id, header, blob)? {
@@ -575,6 +591,11 @@ fn admit(
             );
             return Ok(EntityStep::Skip);
         }
+    }
+    // The stored bytes of a kind the replay skip above leaves to its own door take no door
+    // under the limit either.
+    if vault.store.use_restricted_in_txn(wtxn, &id)?.is_some() {
+        return Ok(EntityStep::Skip);
     }
     // KS-5: a pad reference whose pad is not here waits, pending, for its carrier.
     if let Some(err) = crate::world_keys::pad_reference_waits_in_txn(&vault.store, wtxn, &id, blob)?
