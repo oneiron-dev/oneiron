@@ -173,11 +173,17 @@ fn persist_window_update_in(
 /// `doc` need not be observed: in the same transaction, each stored row its
 /// tombstones delete is fenced as an observed import would fence it, so the
 /// persisted deletes read deleted at once.
+///
+/// The history it stores past the window's last stored snapshot owes the
+/// erasure sweep a compaction of the window in the same transaction when an
+/// insert names a row hard-deleted here, as an appended update's does
+/// (L6-05-SNAPSHOT-PERSIST-ERASED-INSERTS).
 pub fn persist_window_snapshot(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<Vec<u8>> {
     // The export reads the pin; a legal hold read in the writer keeps the
     // history a pinned export dropped (census L6-05).
     let state = crate::sync::window::export_scrubbed_window_state(vault, key, doc)?;
     let vv = doc_version_vector(doc);
+    let inserts = crate::sync::window::UpdateInserts::past_stored(vault, key, doc)?;
     // Its pads persist by reference where custody here holds them (FIX 7107).
     let pads = |bytes: &[u8]| {
         crate::sync::window::persisted_window_pads(vault, key, bytes, None).into_owned()
@@ -201,6 +207,7 @@ pub fn persist_window_snapshot(vault: &Vault, key: &WindowKey, doc: &LoroDoc) ->
         WINDOW_SNAPSHOT.put(&vault.store, wtxn, &key.as_str().to_owned(), stored)?;
         WINDOW_STATE_VECTOR.put(&vault.store, wtxn, &key.as_str().to_owned(), &vv)?;
         WINDOW_SHALLOW_FENCE.put(&vault.store, wtxn, &key.as_str().to_owned(), &[1u8])?;
+        inserts.owe_in_txn(vault, wtxn, key)?;
         Ok(keeps_whole)
     })?;
     if keeps_whole && let Some(whole) = state.whole_bytes() {

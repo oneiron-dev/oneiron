@@ -34,6 +34,10 @@ pub(super) fn dispatch_put_type(
             && prior.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
         {
             crate::blob_artifact::esign::reject_event_delete(store, wtxn, &fixed.id)?;
+            // A peer's rewrite applies as its tombstone does; the guard holds at the origin.
+            if !fixed.replicated {
+                crate::blob_artifact::reject_version_claim_retarget(store, wtxn, &fixed.id, &body)?;
+            }
         }
         if body.predicate.starts_with("esign.") {
             if fixed.replicated {
@@ -143,6 +147,7 @@ pub(super) fn dispatch_put_type(
                     fixed.options.gate_write_mode(),
                     fixed.options.decision.preflight,
                     fixed.options.decision.pre_mask_diff,
+                    &mut dispatch.owner_revision_amendment,
                 );
                 match verdict {
                     Err(Error::Gate(crate::error::GateError::GateWriteRejected {

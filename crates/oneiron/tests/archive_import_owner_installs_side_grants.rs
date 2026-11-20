@@ -28,6 +28,13 @@
 //! * `the_owner_restore_installs_the_voice_consent_and_enrollment_admits`: the owner import
 //!   installs one VOICE_IDENTITY_CONSENT row for its live person, and an enrollment citing
 //!   it is admitted; on the actorless destination the same enrollment is refused.
+//! * `a_restored_consent_void_voids_only_the_exact_grant_it_names` (FIX
+//!   [VOICE-WITHDRAWAL-BACKDATED-LEAVES-GRANT], review P1 of #9986): the source logs a grant,
+//!   then a withdrawal dated before it, which voids the grant. On a fresh destination the owner
+//!   import installs the void and an enrollment citing the restored grant is refused (red on
+//!   main, which has no void). A destination that logged the same withdrawal first and then its
+//!   own later grant under the same event id keeps that grant live, installs the void, and an
+//!   enrollment citing its grant is admitted (red at f4eec5e9, whose void matched the id alone).
 //! * `the_owner_restore_installs_the_voice_render_grant_and_the_actorless_import_leaves_none`:
 //!   the owner import installs one VOICE_REF_RENDER_CONSENT row that reads Granted.
 //! * `a_render_decision_for_a_voice_the_destination_banks_under_another_creator_is_held_back`:
@@ -300,18 +307,12 @@ fn mirror_room_window_into(source: &Vault, dest: &Vault) {
     );
 }
 
-/// Deletes `room` and its Admin grantee `grantee` from `source`: the grant row survives (only
-/// a Leave deletes it) while both entities leave the export, so the archive carries the grant
-/// and neither principal.
-fn delete_room_and_grantee(source: &Vault, room: EntityId, grantee: EntityId) {
+/// Deletes the Admin grantee `grantee` from `source`, before the export: the grant row survives
+/// (only a Leave deletes it) while the grantee leaves the export, so the archive carries the
+/// grant and its room but not the grantee. The room stays: the export withholds the grant of a
+/// room deleted here (Engine ANSWER RETAINED-ROOM-ROWS-WITHHELD Q1 = A).
+fn delete_grantee(source: &Vault, grantee: EntityId) {
     install_keystore(source);
-    assert!(
-        source
-            .delete_entity_with_reason(&room, DeleteReason::UserDelete)
-            .expect("delete the source room")
-            .existed,
-        "the source room existed before its delete"
-    );
     assert!(
         source
             .delete_entity_with_reason(&grantee, DeleteReason::UserDelete)
@@ -420,7 +421,7 @@ fn the_owner_restore_installs_the_room_admin_grant_and_a_repeat_reports_it_uncha
 #[test]
 fn the_actorless_import_installs_nothing_and_retains_the_grant_byte_for_byte() {
     let (_source_dir, source, room, _owen, yuki) = room_source_with_admin_grant();
-    delete_room_and_grantee(&source, room, yuki);
+    delete_grantee(&source, yuki);
     let archive = export_whole(&source);
     let source_tuple = rows_for(&retained_rows(&archive), "CONVERSATION_ROLE_GRANT");
     assert_eq!(
@@ -442,6 +443,8 @@ fn the_actorless_import_installs_nothing_and_retains_the_grant_byte_for_byte() {
         ),
         "the actorless import installs no CONVERSATION_ROLE_GRANT row: {summary}"
     );
+    // The archive carries the room, whose roster seats owen and yuki through a ledger the
+    // bare vault does not hold, so the actorless import keeps it out (`RoomNotSeatedHere`).
     assert!(
         bare.conversation_body(room).is_err(),
         "the actorless import restores no room for the grant"
@@ -469,16 +472,21 @@ fn the_actorless_import_installs_nothing_and_retains_the_grant_byte_for_byte() {
 
 /// A grant without its live grantee is held back missing_live_entity.
 ///
-/// The destination keeps a live room (preseeded, as in the first test) while its grantee is
-/// a deleted shell: deleting a person neither refuses for room membership nor erases the
-/// room. The archive carries the grant and neither principal, so the landing reaches past
-/// the live room and holds the row back for the grantee.
+/// The destination keeps a live room (preseeded and synced, as in the first test) while its
+/// grantee is a deleted shell: deleting a person neither refuses for room membership nor
+/// erases the room. The archive carries the grant and the room but not the grantee. The room
+/// body names yuki's Admin role, so the destination takes that twin through the window sync
+/// first: its room then matches the archived one byte for byte (a room body that differs is
+/// an import collision), and the landing reaches past the live room and holds the row back
+/// for the grantee.
+#[cfg(feature = "sync")]
 #[test]
 fn a_grant_without_its_live_grantee_is_held_back_missing_live_entity() {
     let (_source_dir, source) = open_source_vault();
     let (room, _owen, yuki) = build_admin_grant_room(&source, WINDOW_OCCURRED, WINDOW_LEARNED_AT);
     let (_dest_dir, dest) = open_later_vault();
     preseed_destination_room(&dest);
+    mirror_room_window_into(&source, &dest);
     install_keystore(&dest);
     assert!(
         dest.delete_entity_with_reason(&yuki, DeleteReason::UserDelete)
@@ -504,7 +512,7 @@ fn a_grant_without_its_live_grantee_is_held_back_missing_live_entity() {
     dest.conversation_body(room)
         .expect("the destination room reads live");
 
-    delete_room_and_grantee(&source, room, yuki);
+    delete_grantee(&source, yuki);
     let archive = export_whole(&source);
     let source_tuple = rows_for(&retained_rows(&archive), "CONVERSATION_ROLE_GRANT");
     assert_eq!(
@@ -945,6 +953,116 @@ fn the_owner_restore_installs_the_voice_consent_and_enrollment_admits() {
         ),
         source_tuple,
         "the actorless destination retains the consent tuple byte for byte"
+    );
+}
+
+/// The grant event the void test's source logs: owen's meeting-attribution grant, dated 300.
+fn voided_grant_event(subject: EntityId, recorder: EntityId) -> VoiceConsentEventV1 {
+    VoiceConsentEventV1 {
+        event_id: "consent-owen-voided".to_owned(),
+        occurred_at: 300,
+        ..voice_consent_event(subject, recorder)
+    }
+}
+
+/// A withdrawal of owen's meeting attribution dated 100, before [`voided_grant_event`].
+fn backdated_withdrawal_event(subject: EntityId, recorder: EntityId) -> VoiceConsentEventV1 {
+    VoiceConsentEventV1 {
+        event_id: "withdrawal-owen-backdated".to_owned(),
+        occurred_at: 100,
+        state: VoiceConsentState::Withdrawn,
+        ..voice_consent_event(subject, recorder)
+    }
+}
+
+/// An enrollment of `subject` citing [`voided_grant_event`]'s id, requested after every date.
+fn voided_grant_enrollment(subject: EntityId) -> VoiceEnrollmentRequest {
+    VoiceEnrollmentRequest {
+        consent_event_ref: "consent-owen-voided".to_owned(),
+        requested_at: 500,
+        ..voice_enrollment_request(subject)
+    }
+}
+
+/// A restored void binds the exact grant and withdrawal it was written for (FIX
+/// [VOICE-WITHDRAWAL-BACKDATED-LEAVES-GRANT]; review P1 of #9986).
+#[test]
+fn a_restored_consent_void_voids_only_the_exact_grant_it_names() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let occurred = TimeRange {
+        start: now,
+        end: now,
+    };
+    let subject = fixed_id(0x35);
+    let recorder = fixed_id(0x36);
+    put_person_at(&source, subject, b"owen", occurred, now);
+    put_person_at(&source, recorder, b"yuki", occurred, now);
+    source
+        .record_voice_consent(&voided_grant_event(subject, recorder))
+        .expect("the source records the grant dated 300");
+    source
+        .record_voice_consent(&backdated_withdrawal_event(subject, recorder))
+        .expect("the source accepts the withdrawal dated 100");
+    assert!(
+        source
+            .enroll_voice_print(&voided_grant_enrollment(subject))
+            .is_err(),
+        "setup: the backdated withdrawal voids the grant on the source"
+    );
+    let archive = export_whole(&source);
+
+    // A fresh destination: the void lands with both events and refuses the restored grant.
+    let (_fresh_dir, fresh) = open_later_vault();
+    let fresh_receipt = fresh
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner_proof(&fresh))
+        .expect("the owner import into the fresh destination succeeds");
+    let fresh_summary =
+        serde_json::to_value(&fresh_receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&fresh_summary, "VOICE_IDENTITY_CONSENT", "installed_rows"),
+        Some(2),
+        "the fresh destination installs the grant and the withdrawal: {fresh_summary}"
+    );
+    let refusal = fresh
+        .enroll_voice_print(&voided_grant_enrollment(subject))
+        .expect_err("the restored void refuses an enrollment citing the restored grant");
+    assert!(
+        refusal.to_string().contains("withdrawn"),
+        "the enrollment is refused as withdrawn: {refusal}"
+    );
+
+    // A destination that logged the same withdrawal first and then its own grant dated 400
+    // under the same event id: that yes was recorded after the withdrawal, so it stands.
+    let (_dest_dir, dest) = open_later_vault();
+    dest.record_voice_consent(&backdated_withdrawal_event(subject, recorder))
+        .expect("the destination logs the withdrawal first");
+    dest.record_voice_consent(&VoiceConsentEventV1 {
+        occurred_at: 400,
+        ..voided_grant_event(subject, recorder)
+    })
+    .expect("the destination logs its own later grant under the same event id");
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner_proof(&dest))
+        .expect("the owner import into the logged destination succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "VOICE_IDENTITY_CONSENT", "kept_live_rows"),
+        Some(1),
+        "the destination keeps its own grant live over the archived one: {summary}"
+    );
+    assert_eq!(
+        table_count(&summary, "VOICE_IDENTITY_CONSENT_VOID", "installed_rows"),
+        Some(1),
+        "the void lands as written: {summary}"
+    );
+    let print = dest
+        .enroll_voice_print(&voided_grant_enrollment(subject))
+        .expect("the restored void leaves the destination's own later grant live");
+    assert_eq!(
+        print.consent_event_ref, "consent-owen-voided",
+        "the enrollment cites the destination's own grant"
     );
 }
 

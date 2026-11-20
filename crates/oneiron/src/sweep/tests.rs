@@ -44,11 +44,14 @@ fn h_rows(vault: &Vault) -> Vec<(Vec<u8>, Vec<u8>)> {
     rows
 }
 
+// OF-470/FIX 5844: a sweep appends a linked completion row; the initial receipt never mutates.
 fn receipt_sweep_complete_at(vault: &Vault, receipt_id: &EntityId) -> Option<u64> {
     let raw = vault.get_raw(receipt_id).unwrap().expect("receipt raw");
     let receipt = decode_redaction_audit_receipt(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
         .expect("receipt decode");
-    receipt.sweep_complete_at
+    let rtxn = vault.store.env.read_txn().unwrap();
+    crate::deletion::redaction_sweep_completion_in_txn(&vault.store, &rtxn, receipt_id, &receipt)
+        .expect("completion read")
 }
 
 fn write_h_row(vault: &Vault, seq: u64, value: &[u8]) -> Vec<u8> {

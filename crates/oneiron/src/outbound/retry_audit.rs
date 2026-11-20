@@ -9,7 +9,10 @@ use crate::Vault;
 use crate::attempt_queue::{AttemptQueue, CompleteAttempt, FailAttempt, FailOutcome, RetryAttempt};
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::receipt::{SendReceiptOutcome, persist_admitted_send_receipt_in_txn};
+use crate::receipt::{
+    SendReceiptOutcome, append_superseded_send_receipt_in_txn, delivered_send_exists_in_txn,
+    persist_admitted_send_receipt_in_txn,
+};
 
 /// Fails a connector send's attempt in this write and answers the instant
 /// the queue stamped on it (the store's recorded time, not the drain's
@@ -163,15 +166,7 @@ pub(super) fn persist_terminal_send_receipt_and_fail_in_txn(
         now,
     } = settlement;
     let queue = AttemptQueue::new(vault);
-    if !persist_admitted_send_receipt_in_txn(
-        vault,
-        wtxn,
-        task_ref,
-        receipt,
-        receipt_outcome,
-        transport_dispatched,
-        None,
-    )? {
+    if delivered_send_exists_in_txn(&vault.store, wtxn, task_ref)? {
         // A delivered receipt won the race. Do not replace it with failure.
         project_connector_send_task_outcome_in_txn(
             vault,
@@ -191,16 +186,38 @@ pub(super) fn persist_terminal_send_receipt_and_fail_in_txn(
         )?;
         return Ok(false);
     }
-    if let Some(failed_at) = fail_connector_send_attempt_in_txn(&queue, wtxn, attempt, reason, now)?
-    {
-        project_connector_send_task_attempt_failure_in_txn(
+    // The attempt fails before the receipt is written. When a newer drain
+    // already failed it, that drain's receipt stays the TASK's latest and
+    // this one joins the audit trail only.
+    let Some(failed_at) = fail_connector_send_attempt_in_txn(&queue, wtxn, attempt, reason, now)?
+    else {
+        append_superseded_send_receipt_in_txn(
             vault,
             wtxn,
             task_ref,
-            task_outcome,
-            failed_at,
+            receipt,
+            receipt_outcome,
+            transport_dispatched,
         )?;
-    }
+        return Ok(true);
+    };
+    // No delivered receipt in this write (read above), so this one is written.
+    persist_admitted_send_receipt_in_txn(
+        vault,
+        wtxn,
+        task_ref,
+        receipt,
+        receipt_outcome,
+        transport_dispatched,
+        None,
+    )?;
+    project_connector_send_task_attempt_failure_in_txn(
+        vault,
+        wtxn,
+        task_ref,
+        task_outcome,
+        failed_at,
+    )?;
     Ok(true)
 }
 

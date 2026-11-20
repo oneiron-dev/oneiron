@@ -334,6 +334,9 @@ impl PipelineBuilder<'_> {
                     authority_filter,
                     text_scope_widening_active,
                     private_note_ids: private_note_ids.as_deref(),
+                    world_allowed_set: world_authority
+                        .as_ref()
+                        .map(|resolved| &resolved.allowed_set),
                     claim_gate_widening_probe,
                 },
                 &mut acc,
@@ -401,7 +404,7 @@ impl PipelineBuilder<'_> {
             }
 
             if let Some(config) = &self.temporal_search
-                && let Some(temporal_results) =
+                && let Some((temporal_results, temporal_withheld)) =
                     self.run_stage(RetrievalSignal::Temporal, stages.next(), || {
                         let mut config = config.clone();
                         config.limit = fusion_fetch_limit(config.limit);
@@ -419,6 +422,7 @@ impl PipelineBuilder<'_> {
                     })?
             {
                 diagnostics.succeeded.push(RetrievalSignal::Temporal);
+                acc.clamped_at_fetch.extend(temporal_withheld);
                 acc.admit_channel(
                     RetrievalSignal::Temporal,
                     temporal_results,
@@ -507,9 +511,14 @@ impl PipelineBuilder<'_> {
                 )?;
             }
 
+            // The rows a clamped pack's audience may not read, kept out of
+            // the blend below (exact phonetic hits, the rows of a list no
+            // bounded fetch asked, and the rows a fetch kept out of its
+            // window); the preselection counts them.
+            let mut clamped_before_blend: Vec<crate::EntityId> = Vec::new();
             // Entity-type authority can narrow each channel before fusion.
             // CLAIM scalar constraints use the decoded post-fusion stage below.
-            for scores in &mut acc.ranked_lists {
+            for (index, scores) in acc.ranked_lists.iter_mut().enumerate() {
                 if self.memory_category {
                     super::super::capabilities::retain_memory_candidates(scores, &self.read, rtxn)?;
                 }
@@ -521,7 +530,56 @@ impl PipelineBuilder<'_> {
                     rtxn,
                     &mut metadata_cache,
                 )?;
+                // Exact phonetic codes have no cut and a PPR walk's results
+                // no admission, so their rows reach these lists unasked: the
+                // call's scope keeps an exact hit out of the blend here, and
+                // its made_by slice a walk's result (narrowed walk
+                // visibility asks the rest), once the lane and the authority
+                // above have narrowed the lists, so the run's gate judges
+                // only rows the D19 gate judges anyway (REVIEW-9842 round 2).
+                // A row a clamped pack's audience could not read whatever
+                // its status takes no rank in any list: the run's gate never
+                // judges it, so it counts in no suppression and no empty
+                // reason (D19-GATE-COUNTS-CLAIMS-THE-DISCLOSURE-CLAMP-REFUSES).
+                let clamped = if phonetic_channel_index == Some(index) {
+                    self.retain_phonetic_hits_in_scope(
+                        rtxn,
+                        scores,
+                        filter_config,
+                        &mut metadata_cache,
+                        &mut claim_gate,
+                    )?
+                } else {
+                    let clamped = self.retain_rows_the_clamp_admits(
+                        rtxn,
+                        scores,
+                        filter_config,
+                        &mut metadata_cache,
+                        &claim_gate,
+                    )?;
+                    if ppr_channel_index == Some(index) {
+                        self.retain_made_by_slice(
+                            rtxn,
+                            scores,
+                            &mut metadata_cache,
+                            &mut claim_gate,
+                        )?;
+                    }
+                    clamped
+                };
+                for id in clamped {
+                    if !clamped_before_blend.contains(&id) {
+                        clamped_before_blend.push(id);
+                    }
+                }
             }
+            self.count_rows_clamped_at_fetch(
+                rtxn,
+                std::mem::take(&mut acc.clamped_at_fetch),
+                filter_config,
+                &claim_gate,
+                &mut clamped_before_blend,
+            )?;
             if acc.ranked_lists.is_empty() {
                 return Ok(RetrievalTxnOutput {
                     revisions: HashMap::new(),
@@ -550,7 +608,7 @@ impl PipelineBuilder<'_> {
                     media_evidence: Default::default(),
                     blend_components: HashMap::new(),
                     access_factors: HashMap::new(),
-                    rerank_merged_components: None,
+                    rerank_components: None,
                     retrieval_trace: None,
                     replay_inputs: capture_replay_enabled.then(|| {
                         capture_replay_inputs(
@@ -767,7 +825,7 @@ impl PipelineBuilder<'_> {
             )?;
 
             let RerankApplied {
-                merged_components: rerank_merged_components,
+                rerank_components,
                 reranked_trace_scores,
                 words_revisions,
                 block: mut reranked_block,
@@ -779,7 +837,6 @@ impl PipelineBuilder<'_> {
                 RerankLadderInputs {
                     ladder_scores: rerank_ladder_scores.as_ref(),
                     blend_access_factors: &blend_access_factors,
-                    blend_components: &blend_components,
                     filter_config,
                     rerank_query,
                     capture_retrieval_trace,
@@ -868,15 +925,24 @@ impl PipelineBuilder<'_> {
             let mut emptied_by_policy = false;
             let disclosure_clamped = match self.disclosure_preselect.as_ref() {
                 Some(clamp) => {
-                    let withheld = withhold_undisclosed(
+                    let mut withheld = withhold_undisclosed(
                         &mut scores,
                         clamp,
+                        self.vault,
                         &self.read,
                         rtxn,
                         &mut metadata_cache,
                         &claim_gate,
                     )?;
                     emptied_by_policy |= !withheld.is_empty() && scores.is_empty();
+                    // A row the clamp kept out of the blend, an exact
+                    // phonetic hit or a row of any other list, counts once,
+                    // though another list held it too.
+                    for id in clamped_before_blend {
+                        if !withheld.contains(&id) {
+                            withheld.push(id);
+                        }
+                    }
                     withheld
                 }
                 None => Vec::new(),
@@ -980,7 +1046,7 @@ impl PipelineBuilder<'_> {
                         fused_trace_scores,
                         blended_trace_scores,
                         reranked_trace_scores: reranked_trace_scores.as_deref(),
-                        rerank_merged_components: rerank_merged_components.as_ref(),
+                        rerank_components: rerank_components.as_ref(),
                         blend_components: &blend_components,
                         blend_access_factors: &blend_access_factors,
                         community_trace_identity,
@@ -1094,7 +1160,7 @@ impl PipelineBuilder<'_> {
                 media_evidence: acc.media_evidence,
                 blend_components,
                 access_factors: blend_access_factors,
-                rerank_merged_components,
+                rerank_components,
                 retrieval_trace,
                 replay_inputs,
                 ppr_expand_executed,

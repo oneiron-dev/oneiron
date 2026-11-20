@@ -62,6 +62,18 @@ fn bound_extraction_observations_page(
     input: &ExtractionObservationsPageRequest,
     binding: Option<&DreamerAttemptBinding>,
 ) -> MemoryResult<ScopedReadResult<ExtractionObservationsPage>> {
+    // A step's saved reply is read back only where its receipt is served: on the attempt's
+    // own binding. A reader without one has its operands checked by their own fields.
+    if binding.is_none()
+        && input
+            .candidates
+            .iter()
+            .any(|operand| !operand.from_steps.is_empty())
+    {
+        return Err(MemoryError::bad_request(
+            "an extraction operand names its recorded step candidates only through its own attempt's binding",
+        ));
+    }
     let vault = memory.vault();
     let attempt = extraction_attempt_key(&input.attempt)?;
     let attempt_id = AttemptId::from_bytes(attempt.as_bytes())?;
@@ -94,17 +106,21 @@ fn bound_extraction_observations_page(
     memory.prove_read_authority_in_txn(&txn)?;
     let reader_scope = extraction_reader_scope_in_txn(memory, &txn, owner.as_ref())?;
     read.read_projected_in_txn(&txn, &[], None, |txn, _| {
-        let (branch, bound) = check_extraction_operands_in_txn(
+        let (branch, bound, bounds) = check_extraction_operands_in_txn(
             memory,
             &read,
             txn,
             reader_scope.as_ref(),
-            attempt_id,
+            (
+                attempt_id,
+                binding.and_then(DreamerAttemptBinding::destination_bound),
+            ),
             &input.candidates,
             None,
         )?;
-        let checked = check_pack_candidates(&input.candidates, &bound, attempt_id, &branch)
-            .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+        let checked =
+            check_pack_candidates(&input.candidates, (&bound, &bounds), attempt_id, &branch)
+                .map_err(|error| MemoryError::bad_request(error.to_string()))?;
         // The pin covers exactly the key rules the tokens below hash under.
         let policy = ExtractionPolicy {
             prefilter: vault.prefilter_config_in_txn(txn)?,

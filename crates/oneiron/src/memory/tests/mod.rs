@@ -8,6 +8,7 @@
 mod asset_hydrate;
 mod asset_resolve;
 mod authority_revocation;
+mod brief_delete_fence;
 mod commit_claims;
 mod delete_tombstone;
 mod device_local_receipts;
@@ -20,8 +21,10 @@ mod session_recall;
 mod session_union_reads;
 mod session_witness;
 mod shared_effects;
+mod soft_delete_marker_replay;
 mod support;
 mod takes_notes;
+mod unrooted_owner_deleting_itself;
 mod witness_policy;
 mod witness_turns;
 

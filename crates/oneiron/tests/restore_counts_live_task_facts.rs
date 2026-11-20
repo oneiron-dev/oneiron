@@ -23,6 +23,23 @@
 //! `the_owners_own_assignment_since_the_checkpoint_still_refuses_the_restore` is a guard on
 //! both: a fact the fold admits still holds the restore.
 //!
+//! A row counts only once its `ScopedTo` link to its task stands, as the live fold reads a
+//! task's facts through those links (blind review round 1 P1, REVIEW-10064). Sync can commit
+//! a fact's row before its link, in separate writes; before this fix the restore compare
+//! counted such a row on its carrier's signature alone and refused the restore. Red on the
+//! base (#10064's head 8d4b25c54e6d, plus this file's tests): the restore in
+//! `a_signed_cancel_whose_link_has_not_arrived_does_not_refuse_the_restore` is refused for
+//! "task authority". Green on the head. `the_signed_cancel_once_linked_refuses_the_restore`
+//! is a guard on both: once the link arrives, the signed cancel holds the restore.
+//!
+//! The image side reads a fact row the same way: a row the checkpoint holds without its link
+//! counts in no fold of the restored vault (blind review round 2 P1, REVIEW-10064). Before
+//! this fix the compare found the image's row equal to the live one and let the restore drop
+//! a fact whose link arrived after the checkpoint. Red on the base (#10064's head
+//! 8329957d2f88, plus this test): the restore in
+//! `a_signed_cancel_linked_since_the_checkpoint_refuses_the_restore` goes ahead. Green on the
+//! head: it is refused for "task authority".
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features
 //! --test restore_counts_live_task_facts`.
 #![cfg(all(oneiron_test_support, feature = "sync", feature = "test-support"))]
@@ -30,6 +47,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use oneiron::authority::LocalOpenProfile;
 use oneiron::habit::TaskRole;
 use oneiron::recovery::checkpoint::CheckpointKey;
 use oneiron::registry::ENTITY_TYPE_TASK;
@@ -37,7 +55,7 @@ use oneiron::sync::client::ImportTier;
 use oneiron::sync::replay::{ReplicatedEntity, replay_entity};
 use oneiron::task_verb::TaskCreateSpec;
 use oneiron::test_doors::task_fact_actor::{
-    proved_standing, write_unjudged_fact, write_unjudged_owner_fact,
+    proved_standing, signed_fact_row, write_unjudged_fact, write_unjudged_owner_fact,
 };
 use oneiron::{
     EdgeActorClass, EdgeKind, EntityId, TASK_AUTHORITY_FACT_SCHEMA_VERSION,
@@ -63,6 +81,28 @@ fn checkpointed() -> Checkpointed {
     let live = Vault::open(directory.path().join("vault"), VaultConfig::device())
         .expect("open a fresh device vault");
     live.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    with_task_checkpointed(directory, live)
+}
+
+/// [`checkpointed`] in a vault rooted with this install's signer loaded, so this install's
+/// carrier signs the facts it makes and its fold admits that carrier.
+fn rooted_checkpointed() -> Checkpointed {
+    let directory = oneiron::test_support::restore_tempdir();
+    let live = Vault::open_owned(directory.path().join("vault"), VaultConfig::device())
+        .expect("open a fresh owned vault");
+    live.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    assert_eq!(
+        live.profile_local_open(Some(b"restore-counts-linked-task-facts"), true)
+            .expect("the root door"),
+        LocalOpenProfile::RootedAndProfiled,
+        "the vault roots with this install's signer loaded"
+    );
+    with_task_checkpointed(directory, live)
+}
+
+/// Mints `live`'s vault data key, has its owner make one task, and takes a checkpoint that
+/// holds the task.
+fn with_task_checkpointed(directory: tempfile::TempDir, live: Vault) -> Checkpointed {
     live.ensure_vault_key().expect("mint the vault data key");
     let owner = live
         .ensure_embedded_owner_actor()
@@ -149,6 +189,13 @@ fn unsigned_cancel(task: EntityId, actor: EntityId, at: u64) -> Vec<u8> {
 /// Lands one TASK row as another of the owner's devices sends it, through the own-device
 /// replay door, and its `ScopedTo` link to `task`.
 fn land_replicated_fact(vault: &Vault, row: EntityId, task: EntityId, body: &[u8]) {
+    land_replicated_row(vault, row, body);
+    link_to_task(vault, row, task);
+}
+
+/// Lands one TASK row as another of the owner's devices sends it, through the own-device
+/// replay door, without its link: sync commits a row and its edges in separate writes.
+fn land_replicated_row(vault: &Vault, row: EntityId, body: &[u8]) {
     let now = vault.now_recorded_at();
     replay_entity(
         vault,
@@ -166,6 +213,10 @@ fn land_replicated_fact(vault: &Vault, row: EntityId, task: EntityId, body: &[u8
         ImportTier::OwnDevice,
     )
     .expect("the own-device replay door lands the row");
+}
+
+/// Lands `row`'s `ScopedTo` link to `task`, as sync commits it after the row.
+fn link_to_task(vault: &Vault, row: EntityId, task: EntityId) {
     vault
         .batch()
         .edge(&row, EdgeKind::ScopedTo, &task, SCOPED_TO_WEIGHT)
@@ -289,6 +340,85 @@ fn the_owners_own_assignment_since_the_checkpoint_still_refuses_the_restore() {
     );
     let Err(error) = vault.restore() else {
         panic!("restoring the checkpoint would take the owner's assignment back");
+    };
+    let message = error.to_string();
+    assert!(
+        message.contains("would roll back") && message.contains("task authority"),
+        "{message}"
+    );
+}
+
+/// The owner's cancel of `vault`'s task on a new row, signed by this install's carrier, as
+/// a replica sends it: `(row, body)`.
+fn signed_cancel(vault: &Checkpointed) -> (EntityId, Vec<u8>) {
+    signed_fact_row(
+        &vault.live,
+        vault.task,
+        TaskAuthorityFactKind::Cancelled,
+        vault.owner,
+    )
+    .expect("sign the owner's cancel")
+    .expect("this install signs in a rooted vault with its signer loaded")
+}
+
+#[test]
+fn a_signed_cancel_whose_link_has_not_arrived_does_not_refuse_the_restore() {
+    let vault = rooted_checkpointed();
+    let (row, body) = signed_cancel(&vault);
+    land_replicated_row(&vault.live, row, &body);
+    assert!(
+        !vault.cancelled(),
+        "the live fold reads a task's facts through their links, so a cancel whose link has \
+         not arrived is no fact of the task yet"
+    );
+    if let Err(error) = vault.restore() {
+        panic!(
+            "a fact row with no link to its task moved no task authority, \
+             so the restore goes ahead; it was refused: {error}"
+        );
+    }
+}
+
+#[test]
+fn the_signed_cancel_once_linked_refuses_the_restore() {
+    let vault = rooted_checkpointed();
+    let (row, body) = signed_cancel(&vault);
+    land_replicated_row(&vault.live, row, &body);
+    link_to_task(&vault.live, row, vault.task);
+    assert!(
+        vault.cancelled(),
+        "once its link arrives, the cancel its carrier's signature proves counts"
+    );
+    let Err(error) = vault.restore() else {
+        panic!("restoring the checkpoint would bring the cancelled task back open");
+    };
+    let message = error.to_string();
+    assert!(
+        message.contains("would roll back") && message.contains("task authority"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_signed_cancel_linked_since_the_checkpoint_refuses_the_restore() {
+    let mut vault = rooted_checkpointed();
+    let (row, body) = signed_cancel(&vault);
+    land_replicated_row(&vault.live, row, &body);
+    vault.image = vault.directory.path().join("image-before-the-link");
+    vault
+        .live
+        .snapshot_checkpoint(&vault.image, 150)
+        .expect("snapshot the vault with the cancel's row and not its link");
+    link_to_task(&vault.live, row, vault.task);
+    assert!(
+        vault.cancelled(),
+        "once its link arrives, the cancel its carrier's signature proves counts"
+    );
+    let Err(error) = vault.restore() else {
+        panic!(
+            "the checkpoint holds the cancel's row but not its link, so no fold of the restored \
+             vault counts the cancel: restoring it would bring the cancelled task back open"
+        );
     };
     let message = error.to_string();
     assert!(

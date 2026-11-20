@@ -43,13 +43,34 @@ fn resident_receipt(
         now,
     )?;
     if failed {
-        queue.fail(crate::attempt_queue::FailAttempt {
-            id: row.id,
-            lease_owner: "resident-test".into(),
-            attempt_count: leased.attempt_count,
-            reason: "failed".into(),
-            now: vault.now_recorded_at(),
-        })?;
+        // L16: settlement.rs refuses generic `fail` for a typed dispatch attempt; fail through the typed ladder.
+        let fail_now = vault.now_recorded_at();
+        crate::failure_ladder::FailureLadder::new(vault).handle_attempt_failure(
+            crate::failure_ladder::HandleAttemptFailure {
+                attempt_id: row.id,
+                lease_owner: "resident-test".into(),
+                attempt_count: leased.attempt_count,
+                evidence: crate::failure_ladder::TypedFailureEvidence {
+                    evidence_ref: None,
+                    verdict: crate::failure_ladder::TypedFailureVerdict::Indeterminate,
+                    tier: None,
+                    stable_reason: "failed".into(),
+                },
+                blocked_reports: Vec::new(),
+                pre_fail_checkpoint_ref: EntityId::now(),
+                qa_thread_ref: EntityId::now(),
+                retry_at: fail_now,
+                now: fail_now,
+            },
+            crate::failure_ladder::FailureScopePolicy::auto(crate::failure_ladder::FailureScope {
+                agent_ref: vault
+                    .get_seeded_agent_definition_by_logical_id("sys.default")?
+                    .unwrap()
+                    .0
+                    .to_hex(),
+                skill_ref: None,
+            }),
+        )?;
     } else {
         queue.complete(CompleteAttempt {
             id: row.id,

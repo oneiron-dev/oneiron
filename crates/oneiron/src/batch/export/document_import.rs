@@ -3,9 +3,12 @@
 //! each pass reads one row at a time from it; the dependency queues, id sets
 //! and maps grow in the index as well, so no archive-wide row state stays in
 //! memory. The rows still go in through one write transaction.
+mod claim_pair_same_as;
 mod issue_archive_restore;
 mod owner_archive_restore;
 mod seed_replacement;
+mod topology_restore;
+mod unseated_rooms;
 
 use owner_archive_restore::OwnerRestore;
 pub(crate) use owner_archive_restore::{
@@ -311,6 +314,20 @@ impl Vault {
         } else {
             None
         };
+        // RESTORE-KEEPS-MERGES-AND-SPLITS: an owner's restore into a fresh
+        // vault of an archive naming current merges or splits seals them
+        // again with this install's keys, which load outside every
+        // transaction; with none, each stays archive data. The keys load only
+        // into a vault this read finds fresh, and never by making it forget
+        // its machine: a writer can commit a row after this read (REVIEW-9756
+        // P1-2, rounds 1 and 2). The writer below reads freshness again.
+        let topology_signing = owner.is_some()
+            && !archive.manifest.current_identity_topology_events.is_empty()
+            && {
+                let rtxn = self.store.env.read_txn()?;
+                self.first_non_bootstrap_row_in_txn(&rtxn)?.is_none()
+            }
+            && self.prepare_install_signing_keeping_machine_logged();
         let mut wtxn = self.store.env.write_txn()?;
         let seeds = EngineSeedIdentities::load()?;
         let restore_fresh =
@@ -357,6 +374,22 @@ impl Vault {
         withhold_unborn_projects(self, &wtxn, &mut archive)?;
         let projects = map_project_root(self, &wtxn, &mut archive)?;
         omit_project_revisions(self, &mut archive)?;
+        // ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM = B: every door but the owner's
+        // restore keeps an archived room it cannot seat as archive data; the
+        // owner's restore keeps out a room whose archived ledger seat would
+        // not stand here (REVIEW-9446); and every room the import keeps out
+        // keeps its speech out with it (`unseated_rooms`).
+        let mut room_omissions = if owner.is_none() {
+            unseated_rooms::omit_rooms_not_seated_here(self, &wtxn, &mut archive)?
+        } else {
+            unseated_rooms::omit_rooms_owner_restore_cannot_seat(
+                self,
+                &wtxn,
+                &mut archive,
+                secrets,
+            )?
+        };
+        room_omissions.extend(unseated_rooms::omit_speech_of_omitted_rooms(&mut archive)?);
         // Each runtime pack row maps onto this vault's pack handles; the
         // mapping is read again, alike, as each row goes in.
         let mut after = None;
@@ -598,6 +631,24 @@ impl Vault {
                     )?,
                 )?
             };
+            // The owner's restore puts a room after the PERSON records of its archived roster:
+            // the room guard requires each member to be a PERSON row here.
+            if permit.is_some()
+                && row.entity_type == ENTITY_TYPE_CONVERSATION
+                && let Ok(body) = crate::conversation::ConversationBody::from_bytes(
+                    &row.body.to_bytes_in_with(&archive.files, secrets)?,
+                )
+            {
+                for member in body.member_ids {
+                    if archive
+                        .entity_at(&member)?
+                        .is_some_and(|at| at.entity_type == crate::registry::ENTITY_TYPE_PERSON)
+                        && !waits_on.contains(&member)
+                    {
+                        waits_on.push(member);
+                    }
+                }
+            }
             // Blind-review P1b (REVIEW-4389): an EVENT/TURN born under a
             // non-default facet waits on its archived facet row, so the
             // facet's put lands first and the masked initial put below finds
@@ -649,7 +700,7 @@ impl Vault {
             pending += 1;
         }
         let mut inserted_entities = pending + model_imports.inserted + inserted_descriptors;
-        let mut destination_omissions = Vec::new();
+        let mut destination_omissions = room_omissions;
         // ISSUE stayed omitted through generic indexing; only this owner's permit restores it.
         if let Some(permit) = permit.as_ref() {
             let (inserted, unchanged) = issue_archive_restore::restore_in_txn(
@@ -662,6 +713,34 @@ impl Vault {
             )?;
             inserted_entities += inserted;
             unchanged_entities += unchanged;
+        }
+        // CLAIM-NOTE-SAME-AS-RESTORE-PROOF = A: the owner's archived standing
+        // grants go in before any row or link, so a `same_as` between two
+        // CLAIMs is proven on the nightly-link grant as the Dreamer's own
+        // writer reads it; the grant is read once, here
+        // (`claim_pair_same_as`). Every other door installs no grant.
+        let mut side_refresh = super::archive_side_install::ArchivedSideRowRefresh::default();
+        let grants_landed_first =
+            super::archive_retained_side_rows::land_standing_grants_first_in_txn(
+                self,
+                &mut wtxn,
+                &archive,
+                permit.as_ref(),
+                &mut side_refresh,
+            )?;
+        if let Some(receipt_ref) = receipt_ref.as_deref() {
+            claim_pair_same_as::index_nightly_link_grant(
+                self,
+                &wtxn,
+                &mut archive.index,
+                receipt_ref,
+            )?;
+        }
+        if let Some(permit) = permit.as_ref() {
+            side_refresh.prelanded_rooms =
+                crate::conversation::archive_restore::preland_room_ledgers_in_txn(
+                    self, &mut wtxn, permit, &archive, secrets,
+                )?;
         }
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
@@ -684,13 +763,14 @@ impl Vault {
                             &mut wtxn,
                             &mut archive,
                             secrets,
+                            permit.as_ref(),
                         )?;
-                        destination_omissions.extend(cohort.kept_out.iter().map(|id| {
-                            ExportImportOmission {
+                        destination_omissions.extend(cohort.kept_out.iter().map(
+                            |&(id, reason)| ExportImportOmission {
                                 entity_id: id.to_hex(),
-                                reason: ImportOmissionReason::ClaimSubjectEdgeNotRestored,
-                            }
-                        }));
+                                reason,
+                            },
+                        ));
                         (
                             cohort.inserted.into_iter().collect::<Vec<_>>(),
                             cohort.unchanged,
@@ -736,6 +816,11 @@ impl Vault {
                 }
             }
         }
+        crate::conversation::archive_restore::remove_orphaned_prelanded_rooms_in_txn(
+            self,
+            &mut wtxn,
+            &mut side_refresh.prelanded_rooms,
+        )?;
         let mut agents = archive.spool.rows(ArchiveRecordKind::AgentPack);
         while let Some((_, bundle)) = agents.next_parsed::<AgentForkBinding>(&archive.spool)? {
             let id = parse_id(&bundle.entity_id)?;
@@ -764,9 +849,10 @@ impl Vault {
         // readiness or fulfillment link is proven on its restored rows and
         // their restored `supersedes` chain, so it lands after the plain
         // links too (WHOLE-VAULT-IMPORT-REFUSES-RESERVED-OWNER-EDGES). An
-        // archived `same_as` link is proven on its two restored PERSONs and
-        // its restored status claim, so it lands in the plain pass, or before
-        // a claim about it.
+        // archived `same_as` link is proven on its two restored PERSONs, or
+        // on its two restored CLAIMs and the owner's nightly-link grant, and
+        // on its restored status claim, so it lands in the plain pass, or
+        // before a claim about it.
         let mut skipped_unproven_regenerates_edges = 0;
         let mut unrestored_identity_topology_shells = BTreeSet::new();
         let mut unrestored_same_as_links = 0;
@@ -802,6 +888,22 @@ impl Vault {
                 }
             }
         }
+        // RESTORE-KEEPS-MERGES-AND-SPLITS: the owner's restore into a fresh
+        // vault decides each current merge and split again, once every row
+        // and link it reads is in; a row one shells again is not back
+        // separate.
+        let topology = match owner.filter(|_| restore_fresh) {
+            Some(owner) => topology_restore::restore_identity_topology_in_txn(
+                self,
+                &mut wtxn,
+                &archive,
+                secrets,
+                owner,
+                topology_signing,
+            )?,
+            None => topology_restore::TopologyRestore::default(),
+        };
+        unrestored_identity_topology_shells.retain(|row| !topology.shelled.contains(row));
         let mut archived_receipt_sources = 0;
         let mut envelopes = archive.spool.rows(ArchiveRecordKind::DerivationEnvelope);
         while let Some((_, envelope)) =
@@ -844,8 +946,8 @@ impl Vault {
             restore_secrets_in_txn(self, &mut wtxn, &mut archive)?;
         let owed_secrets = owed_secrets_in_txn(self, &wtxn, &archive.manifest.fold_only_secrets)?;
         // Actor and actorless doors retain only; the owner door installs tables with a
-        // landing group and retains the rest, after imported persons, results and secrets.
-        let mut side_refresh = super::archive_side_install::ArchivedSideRowRefresh::default();
+        // landing group and retains the rest, after imported persons, results and secrets;
+        // the standing grants it landed before the rows count as installed.
         let retained_side_rows =
             super::archive_retained_side_rows::install_or_retain_side_rows_in_txn(
                 self,
@@ -853,6 +955,7 @@ impl Vault {
                 &archive,
                 permit.as_ref(),
                 restore_receipt_hex,
+                &grants_landed_first,
                 &mut side_refresh,
             )?;
         // OF-013: each lineage's floor rises to the archive's and never falls.
@@ -898,6 +1001,8 @@ impl Vault {
             skipped_revoked_secrets,
             skipped_unproven_regenerates_edges,
             unrestored_identity_topology_shells: unrestored_identity_topology_shells.len(),
+            restored_identity_topology: topology.restored,
+            unrestored_identity_topology_events: topology.unrestored,
             unrestored_same_as_links,
             missing_secrets,
             owed_secrets,
@@ -1046,17 +1151,6 @@ fn insert_ready_row<R: Read + Seek>(
                 }
                 Some(ReservedClaimImport::Restore(ReservedClaimRestore::ActorProjection)) => vault
                     .restore_actor_projection_in_txn(wtxn, &id, &claim, occurred, row.learned_at),
-                _ if claim.predicate
-                    == crate::write_envelope::learning_predicate::PREDICATE_LEARNING_RELIABILITY =>
-                {
-                    vault.restore_reliability_claim_in_txn(
-                        wtxn,
-                        &id,
-                        &claim,
-                        occurred,
-                        row.learned_at,
-                    )
-                }
                 // The owner's restore lists each open proposal it inserts in its
                 // inbox group (R1, RULING 02:26 13 Nov). A claim about a link
                 // goes in after its link, staged here; one whose link does not
@@ -1083,8 +1177,22 @@ fn insert_ready_row<R: Read + Seek>(
                         archive.index.remove(Tag::Inserted, id.as_bytes())?;
                         return Ok(Some(ImportOmissionReason::ClaimSubjectEdgeNotRestored));
                     }
+                    let edge_subject_status = claim_pair_same_as::claim_edge_subject_read_status(
+                        vault,
+                        wtxn,
+                        &archive.index,
+                        owner_restore.is_some(),
+                        &claim,
+                    )?;
                     vault
-                        .put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
+                        .put_claim_reading_edge_subject_in_txn(
+                            wtxn,
+                            &id,
+                            &claim,
+                            occurred,
+                            row.learned_at,
+                            edge_subject_status,
+                        )
                         .and_then(|()| match owner_restore {
                             Some(restore) => owner_archive_restore::record_restored_member_in_txn(
                                 vault, wtxn, restore, &id, &claim,
@@ -1248,10 +1356,12 @@ fn insert_ready_row<R: Read + Seek>(
                     &body,
                 );
                 // The owner's restore of the owner's own archive brings a
-                // room's shared pins, the records its unpins removed and its
-                // pin policy back as the room pin doors wrote them: it writes
-                // under their marker (ROOM-SCOPED-PINS, ROOM-PINS-LWW-MERGE).
-                let room_pins = owner_restore.is_some()
+                // room's shared pins, the records its unpins removed, its pin
+                // policy and its closed bit back as the room pin doors and the
+                // room's closed-setting door wrote them: it writes under their
+                // markers (ROOM-SCOPED-PINS, ROOM-PINS-LWW-MERGE,
+                // ARCHIVE-IMPORT-ROOM-PINS-OR-CLOSED-REFUSED).
+                let room_door_markers = owner_restore.is_some()
                     && row.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION;
                 if !sources.is_empty() {
                     let weight =
@@ -1264,15 +1374,20 @@ fn insert_ready_row<R: Read + Seek>(
                         batch = batch.edge(&id, EdgeKind::DerivedFrom, source, weight);
                     }
                 }
-                if room_pins {
+                if room_door_markers {
                     crate::conversation::PIN_UPDATES.put(&vault.store, wtxn, &id, &[1])?;
+                    crate::conversation::CLOSED_UPDATES.put(&vault.store, wtxn, &id, &[1])?;
                 }
                 let applied = batch.apply(wtxn);
-                if room_pins {
+                if room_door_markers {
                     // The apply's own error comes back first.
-                    let cleared = crate::conversation::PIN_UPDATES.delete(&vault.store, wtxn, &id);
+                    let pins_cleared =
+                        crate::conversation::PIN_UPDATES.delete(&vault.store, wtxn, &id);
+                    let closed_cleared =
+                        crate::conversation::CLOSED_UPDATES.delete(&vault.store, wtxn, &id);
                     if applied.is_ok() {
-                        cleared?;
+                        pins_cleared?;
+                        closed_cleared?;
                     }
                 }
                 applied
@@ -2374,12 +2489,21 @@ fn import_edge_with_seeds(
     if let Some(existing) =
         crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
     {
+        // A link this vault held with provenance of its own keeps its own
+        // stamp, since its archived cohort stayed archive data
+        // (`provenance_import::restore`, REVIEW-9652 P1): only its base
+        // fields compare. So do they for a link whose archived cohort the
+        // gate pended (`ProvenanceAutoNotPermitted`): it came back bare.
+        let link_key = edge_key(&source, edge.kind, &target);
+        let base_fields_only = inserted.contains(Tag::OwnHistoryLink, &link_key)?
+            || inserted.contains(Tag::UnpermittedProvenanceLink, &link_key)?;
         let same_body = existing.weight == edge.weight
             && existing.vad.map(|v| [v.valence, v.arousal, v.dominance]) == edge.vad
-            && existing
-                .provenance
-                .map(|p| [p.confirmation_status as u8, p.actor_class as u8])
-                == edge.provenance;
+            && (base_fields_only
+                || existing
+                    .provenance
+                    .map(|p| [p.confirmation_status as u8, p.actor_class as u8])
+                    == edge.provenance);
         let seed_edge = seeds.is_some_and(|seeds| match kind {
             EdgeKind::ClaimOf => seeds.is_subject_claim_edge(&source, &target),
             EdgeKind::FacetOf => seeds.is_carrier_facet_edge(&source, &target),
@@ -2642,16 +2766,24 @@ fn import_readiness_or_fulfillment_edge(
 /// every imported claim does, and its share consents stay archive data
 /// (`CoreferenceConsentNotRestored`), so the link is local here.
 ///
+/// A link between two CLAIMs is applied only under the owner's standing
+/// nightly-link grant (`federation::put_consolidated_same_as_in_txn`), so it
+/// comes back on that proof, read on this vault: on the owner's restore,
+/// once its archived standing grants are in, with an active status claim
+/// that comes back, and the grant's use recorded with a Gate receipt naming
+/// the restore (`claim_pair_same_as`, CLAIM-NOTE-SAME-AS-RESTORE-PROOF = A).
+/// Every other door installs no grant and keeps it out.
+///
 /// A record already here keeps its own links: a link this vault holds is
-/// left as it is, and one naming a PERSON already here stays out, since a
-/// foreign archive would otherwise tell this vault who its own person is.
-/// Every other `same_as` stays out too: a link between two CLAIMs is applied
-/// only under the owner's standing nightly-link grant
-/// (`federation::put_consolidated_same_as_in_txn`), and one between two diary
-/// NOTEs only on its residents' own submission
-/// (`Memory::link_diary_coreference`). The edge passes count each link left
-/// out, and a claim about it, its edge provenance among them, stays archive
-/// data (`ClaimSubjectEdgeNotRestored`).
+/// left as it is, and one naming a PERSON or a CLAIM already here stays out,
+/// since a foreign archive would otherwise tell this vault who its own
+/// person is, or join its own memories. Every other `same_as` stays out
+/// too: one between two diary NOTEs is proven only on its residents' own
+/// submission (`Memory::link_diary_coreference`), and an imported diary has
+/// no local author here (`NoteActor::Imported`), so no resident proof
+/// exists on this vault. The edge passes count each link left out, and a
+/// claim about it, its edge provenance among them, stays archive data
+/// (`ClaimSubjectEdgeNotRestored`).
 fn import_same_as_edge(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -2671,16 +2803,25 @@ fn import_same_as_edge(
     {
         return Ok(EdgeImport::Landed);
     }
-    let restorable = edge.weight == crate::federation::COREFERENCE_LINK_WEIGHT
+    let ends_restored = edge.weight == crate::federation::COREFERENCE_LINK_WEIGHT
         && edge.vad.is_none()
         && edge.provenance.is_none()
         && inserted.contains(Tag::Inserted, source.as_bytes())?
-        && inserted.contains(Tag::Inserted, target.as_bytes())?
-        && crate::federation::person_pair_in_txn(vault, wtxn, source, target)?
-        && same_as_status_restored(inserted, &source, &target)?;
-    if !restorable {
+        && inserted.contains(Tag::Inserted, target.as_bytes())?;
+    if !ends_restored {
         return Ok(EdgeImport::SameAsLeftOut);
     }
+    let claim_pair = if crate::federation::person_pair_in_txn(vault, wtxn, source, target)? {
+        if !same_as_status_restored(inserted, &source, &target)? {
+            return Ok(EdgeImport::SameAsLeftOut);
+        }
+        None
+    } else {
+        match claim_pair_same_as::claim_pair_proof(vault, wtxn, inserted, source, target)? {
+            Some(proof) => Some(proof),
+            None => return Ok(EdgeImport::SameAsLeftOut),
+        }
+    };
     vault
         .batch_in()
         .edge_with_value_fields(
@@ -2695,6 +2836,9 @@ fn import_same_as_edge(
             },
         )
         .apply(wtxn)?;
+    if let Some(proof) = claim_pair {
+        proof.record_use_in_txn(vault, wtxn, source, target)?;
+    }
     Ok(EdgeImport::Landed)
 }
 

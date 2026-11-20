@@ -79,6 +79,28 @@ pub(in crate::task_verb) fn envelope_actor_class(claim: &ClaimBody) -> Option<Ed
     EdgeActorClass::try_from_u8(u8::try_from(class.as_u64()?).ok()?)
 }
 
+/// The error a settlement answers for a refusal: the typed task assignment conflict when
+/// `error` carries one (TASK-ASSIGNED-FORK = C), else an invalid configuration naming it.
+pub(in crate::task_verb) fn settle_refusal(error: MemoryError) -> Error {
+    if let Some(conflict) = error.task_assignment_conflict.as_deref()
+        && let (Ok(task_ref), Ok(held_assignee), Ok(offered_assignee)) = (
+            EntityId::from_hex(&conflict.task_ref),
+            EntityId::from_hex(&conflict.held_assignee),
+            EntityId::from_hex(&conflict.offered_assignee),
+        )
+    {
+        return Error::Record(crate::error::RecordError::TaskAssignmentConflict {
+            task_ref,
+            held_assignee,
+            offered_assignee,
+        });
+    }
+    Error::InvalidConfig(format!(
+        "task proposal settlement refused: {}",
+        error.message
+    ))
+}
+
 pub(super) fn class_of(byte: u8) -> Result<EdgeActorClass> {
     EdgeActorClass::try_from_u8(byte).ok_or(Error::Record(
         crate::error::RecordError::InvalidTaskBody("tasks.proposal.actor_class"),

@@ -4,9 +4,7 @@ use std::ops::ControlFlow;
 
 use super::app_tier::require_bound_app_auth;
 use super::conn_state::{ConnState, WindowSyncMode};
-use super::window_sync::{
-    decode_and_authorize_selector_request, map_selector_filter_err, selector_grant_scope,
-};
+use super::window_sync::{decode_and_authorize_selector_request, map_selector_filter_err};
 use crate::auth::CoreScope;
 use crate::protocol::{self, ProtocolError, window_sub_tags};
 use crate::server::SyncServer;
@@ -41,10 +39,13 @@ pub(super) async fn handle_selector_fetch(
     // live app-tier credential must name the actual granted principal.
     let auth = require_bound_app_auth(server, state)?;
     // The window is the selector grant's, not the credential's lane, so a
-    // credential limited to facets is refused (owner ruling FACET-READ).
+    // credential limited to facets is refused (owner ruling FACET-READ); a
+    // member lane's whole-grant credential holds those rows (MEMBER-SYNC review F2).
     auth.require(CoreScope::Read)
-        .and_then(|()| auth.require_unnarrowed_facets())
         .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+    if !state.selector_lane.admits_export_facets(auth) {
+        return Err(ProtocolError::RpcNoPrincipal);
+    }
     let principal = oneiron::EntityId::from_hex(
         auth.require_registered_principal()
             .map_err(|_| ProtocolError::RpcNoPrincipal)?,
@@ -68,26 +69,19 @@ pub(super) async fn handle_selector_fetch(
     }
     // No queue row, observation, or doc exists before both decoding and
     // authorization.
-    let decoded = decode_and_authorize_selector_request(server, request)?;
+    let decoded = decode_and_authorize_selector_request(server, &state.selector_lane, request)?;
     if decoded.selector.member_ref != principal {
         return Err(ProtocolError::InvalidPayload("selector principal mismatch"));
     }
+    let scope = state
+        .selector_lane
+        .scope_for(&decoded.selector)
+        .map_err(map_selector_filter_err)?;
     let prepared = match retry {
-        Some(id) => replay_selector_fetch(
-            server.vault.as_ref(),
-            principal,
-            selector_grant_scope(),
-            key,
-            &id,
-            request,
-        ),
-        None => prepare_selector_fetch(
-            server.vault.as_ref(),
-            principal,
-            selector_grant_scope(),
-            key,
-            request,
-        ),
+        Some(id) => {
+            replay_selector_fetch(server.vault.as_ref(), principal, scope, key, &id, request)
+        }
+        None => prepare_selector_fetch(server.vault.as_ref(), principal, scope, key, request),
     }
     .map_err(map_selector_filter_err)?;
     if let FederationBurstDecision::Defer { request_id, .. } = prepared.decision {
@@ -117,6 +111,10 @@ pub(super) async fn handle_selector_fetch(
         server.vault.as_ref(),
         prepared.selector.grant_id,
     );
+    let answer_scope = state
+        .selector_lane
+        .scope_for(&prepared.selector)
+        .map_err(map_selector_filter_err)?;
     // It also leaves only while each coreference link the filter lets it
     // carry is still shared into its pact.
     let (filtered, disclosure) = oneiron::sync::recording_coreference_disclosure(|| {
@@ -124,7 +122,7 @@ pub(super) async fn handle_selector_fetch(
             server.vault.as_ref(),
             &doc,
             key,
-            selector_grant_scope(),
+            answer_scope,
             &prepared.selector,
             state.peer_machine(server.vault()),
         )

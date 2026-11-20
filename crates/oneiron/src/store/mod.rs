@@ -377,6 +377,11 @@ mod pending_embedding;
 mod pending_gate_consent;
 mod ppr_community;
 mod ppr_community_indexed;
+pub mod read_shape_policy;
+pub use read_shape_policy::{
+    ReadShape, ReadShapeArm, ReadShapePick, ReadShapePin, ReadShapePins, ReadShapePosterior,
+    ReadShapeStamp, ReadShapeTier,
+};
 pub(crate) mod reader_fold_receipt;
 pub(crate) use oneiron_store::refinement_carrier;
 #[cfg(feature = "sync")]
@@ -543,6 +548,8 @@ pub(crate) use root_directory::arm_after_root_entry_removed;
 
 #[cfg(unix)]
 pub use directory_exchange::{HeldEntry, exchange_held};
+#[cfg(unix)]
+pub(crate) use root_directory::make_vault_root_all;
 #[cfg(unix)]
 pub use root_directory::{
     SharedPath, refuse_shared_path, refuse_shared_vault_root, remove_held_directory, shared_path,

@@ -121,7 +121,7 @@ pub use decay::*;
 pub(crate) use deferred::{
     OwnClaimRetract, claim_has_deferred_action_in_txn, owner_ruling_receipt_fields,
 };
-pub(crate) use evidence_support::has_live_support_in_txn;
+pub(crate) use evidence_support::{has_live_support_in_txn, support_refs};
 pub(crate) use expression_archive::{ArchivedExpressionPreference, ExpressionPreferenceArchive};
 pub use history_handoff::*;
 pub use lexical_query_hint::*;
@@ -150,6 +150,8 @@ pub use scoped_read::*;
 // On its own line so no other change to the re-export list below collides
 // with it (FIX 11766).
 pub(crate) use scoped_read::CompanionProfileSourceJudgement;
+#[cfg(oneiron_test_support)]
+pub(crate) use scoped_read::WeaveItemKey;
 pub(crate) use scoped_read::{
     Admitted, ClaimReadStatusExt, SearchPlan, claim_access_axes,
     erase_weave_decision_labels_in_txn, invalidate_weave_digest_source_in_txn,

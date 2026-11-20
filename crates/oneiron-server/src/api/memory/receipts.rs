@@ -45,28 +45,43 @@ pub(super) fn core_memory_retract_by_facade(
     Ok((id, receipt))
 }
 
-/// The core delete of `id` by a token that is not owner-grade (DEL-2,
-/// ARCH-0043; Engine ruling 13 Nov 02:51 = A). Its actor is resolved as the
-/// facade resolves a writer, and the facade row `vault.delete` runs on
-/// that actor's handle, the credential's proof bound: its verb hooks and
-/// its `/entity_ref` reference admission first (FIX-LIST 25699), then
+/// The core delete of `id` by a caller that holds no proof of the vault
+/// owner, a full-vault slip someone else holds included (DEL-2, ARCH-0043;
+/// Engine ruling 13 Nov 02:51 = A; OWNER-GRADE-IS-NOT-OWNERSHIP). Its actor
+/// is resolved as the facade resolves a writer, and the facade row
+/// `vault.delete` runs on that actor's handle, the credential's proof
+/// bound: its verb hooks and its `/entity_ref` reference admission first
+/// (FIX-LIST 25699), then
 /// `Memory::safe_delete`'s judge: the owner path when the
 /// actor is the vault's owner, else the role table (a Member's own item, an
 /// Admin's in-scope item, an agent under a Grant that names `delete`), each
 /// refusal FORBIDDEN and naming its reason. A token that names no actor is
 /// refused `unresolved_actor`.
 ///
+/// A person whose role makes the delete wait (a Steward's delete of
+/// another's item in scope) gets `CHECK_IN_PENDING` naming the check-in;
+/// once the Owner approves it, the same call naming it as `check_in_ref`
+/// deletes and spends it, and the receipt's `check_in` names it
+/// (ROLES-CHECKIN 2k5; FIX-LIST CHECK-IN-CORE-DELETE-ROUTE-NO-CHECK-IN-REF).
+/// A delete that goes at once spends none, so a check-in it names is refused
+/// `BAD_REQUEST` and nothing is deleted.
+///
 /// An account API key (OF-448) names its person and no actor class: it is
 /// judged as that person, a human (Engine rulings 13 Nov 08:20 and 08:30 =
-/// C). The owner's own key deletes on the owner's path, within its scopes.
-/// The key carries no vault slip, so on a rooted vault no other person
-/// stands by it: the engine's owner refusal there answers
-/// `account_key_unbound`. On a rootless vault the role table judges it.
+/// C), and with `core:read` it reads as that person
+/// (DEL2-ROOTLESS-MEMBER-KEY-READ = B). The owner's own key deletes on the
+/// owner's path, within its scopes. The key carries no vault slip, so on a
+/// rooted vault no other person stands by it: the engine's owner refusal
+/// there answers `account_key_unbound`, and so does the reference
+/// admission's refusal of a target that key cannot read
+/// ([`account_key_target_unreadable`]). On a rootless vault the role table
+/// judges a target the key reads.
 pub(super) fn core_memory_delete_by_role(
     server: &SyncServer,
     auth: &CoreAuth,
     id: &oneiron::EntityId,
     reason: CoreMemoryVerbDeleteReason,
+    check_in_ref: Option<&str>,
 ) -> Result<(Option<String>, Value), DagWriteError> {
     let (actor, class, by_account_key) = core_memory_caller(server, auth, "delete")?;
     let memory = scoped_auth::credential_memory(server.vault(), Some(auth), actor, class);
@@ -76,12 +91,16 @@ pub(super) fn core_memory_delete_by_role(
         CoreMemoryVerbDeleteReason::Gdpr => oneiron::memory::SafeDeleteReason::GdprDelete,
         CoreMemoryVerbDeleteReason::Policy => oneiron::memory::SafeDeleteReason::PolicyDelete,
     };
+    let mut input = serde_json::json!({ "entity_ref": id.to_hex(), "reason": reason.as_str() });
+    if let Some(check_in_ref) = check_in_ref {
+        input["check_in_ref"] = Value::String(check_in_ref.to_owned());
+    }
     let mut committed = None;
     let deleted = oneiron::task_verb::verb_hook_boundary::row(
         &memory,
         &oneiron::task_verb::sdk::VERB_TABLE,
         "vault.delete",
-        serde_json::json!({ "entity_ref": id.to_hex(), "reason": reason.as_str() }),
+        input,
         |value| {
             let input: SafeDeleteRequest = serde_json::from_value(value).map_err(|error| {
                 oneiron::memory::MemoryError::bad_request(format!("invalid SDK request: {error}"))
@@ -99,9 +118,34 @@ pub(super) fn core_memory_delete_by_role(
             Ok(value)
         },
     );
-    let view = deleted
-        .map_err(|refusal| account_key_unbound(server, by_account_key, refusal, "delete"))?;
+    let view = deleted.map_err(|refusal| {
+        if account_key_target_unreadable(server, &memory, by_account_key, &refusal) {
+            return account_key_unbound_refusal("delete");
+        }
+        account_key_unbound(server, by_account_key, refusal, "delete")
+    })?;
     Ok(delete_receipt_view(view, committed.as_ref()))
+}
+
+/// Whether `refusal` is `vault.delete`'s `/entity_ref` reference admission
+/// (FIX-LIST 25699) refusing a target to an account key that is not the
+/// owner's, on a rooted vault. The key reads only what its person reads
+/// (DEL2-ROOTLESS-MEMBER-KEY-READ = B); the admission refuses any other
+/// target before the delete judge, which on a rooted vault stands no person
+/// but the owner by a slip-less key (FIX-LIST
+/// DEL2-DOOR-MEMBER-ACCOUNT-KEY-INVENTED-REFERENCE). The owner's key reads
+/// every row, so its refusal passes unchanged, as does every refusal on a
+/// rootless vault.
+fn account_key_target_unreadable(
+    server: &SyncServer,
+    memory: &oneiron::memory::Memory<'_>,
+    by_account_key: bool,
+    refusal: &oneiron::memory::MemoryError,
+) -> bool {
+    by_account_key
+        && refusal.code == oneiron::memory::MEMORY_CODE_INVENTED_REFERENCE
+        && vault_is_rooted(server)
+        && matches!(memory.is_vault_owner(), Ok(false))
 }
 
 /// An account key's refusal of `act`: the key carries no vault slip, so on a
@@ -116,23 +160,34 @@ fn account_key_unbound(
 ) -> oneiron::memory::MemoryError {
     if by_account_key
         && refusal.code == oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
-        && server
-            .vault()
-            .authority_vault_id()
-            .is_ok_and(|root| root.is_some())
+        && vault_is_rooted(server)
     {
-        let remedy = format!(
-            "Present the person's own paired slip (--principal-ref, --actor-class human) to {act} as that person."
-        );
-        return oneiron::memory::MemoryError::new(
-            oneiron::memory::MEMORY_CODE_FORBIDDEN,
-            format!(
-                "account_key_unbound: this key can't {act} in this vault; use your app login or ask the owner"
-            ),
-            &[remedy.as_str()],
-        );
+        return account_key_unbound_refusal(act);
     }
     refusal
+}
+
+/// The `account_key_unbound` refusal of `act`, naming the person's own slip
+/// as the remedy.
+fn account_key_unbound_refusal(act: &str) -> oneiron::memory::MemoryError {
+    let remedy = format!(
+        "Present the person's own paired slip (--principal-ref, --actor-class human) to {act} as that person."
+    );
+    oneiron::memory::MemoryError::new(
+        oneiron::memory::MEMORY_CODE_FORBIDDEN,
+        format!(
+            "account_key_unbound: this key can't {act} in this vault; use your app login or ask the owner"
+        ),
+        &[remedy.as_str()],
+    )
+}
+
+/// Whether the served vault has an authority root.
+fn vault_is_rooted(server: &SyncServer) -> bool {
+    server
+        .vault()
+        .authority_vault_id()
+        .is_ok_and(|root| root.is_some())
 }
 
 /// The actor a memory verb judges a caller that is not the vault owner on:

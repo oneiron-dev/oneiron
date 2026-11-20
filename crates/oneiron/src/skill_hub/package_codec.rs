@@ -302,6 +302,16 @@ pub(super) fn remove_package_sidecar_in_txn(
     Ok(())
 }
 
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// Removes `entity`'s local package sidecar and keeps its replicated
+    /// carrier, so its package reads from that carrier alone, as on a vault
+    /// the skill reached by sync (`test_doors::skill_package`).
+    pub(crate) fn drop_hub_package_sidecar_for_test(&self, entity: &EntityId) -> Result<()> {
+        self.with_write_txn(|txn| remove_package_sidecar_in_txn(&self.store, txn, entity))
+    }
+}
+
 pub(super) fn remove_matching_package_sidecar_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,

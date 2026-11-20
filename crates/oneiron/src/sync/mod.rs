@@ -94,7 +94,7 @@ pub(crate) mod withdrawn_cutoffs;
 pub use asset_body::session::{
     ASSET_BODY_FRAMES_PER_POLL, AssetBodyLane, AssetBodyPeer, AssetBodySession,
 };
-pub use carrier::{SyncDial, SyncDialer, SyncIo, SyncPeerDialer, SyncStream};
+pub use carrier::{ForbiddenReason, SyncDial, SyncDialer, SyncIo, SyncPeerDialer, SyncStream};
 pub use client::{
     ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined,
     EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,
@@ -109,7 +109,9 @@ pub use connection::{
 pub(crate) use ingest::VerifiedOwnDeviceLane;
 pub(crate) use ingest::forget_stale_peer_origins;
 pub use ingest::with_own_device_push;
-pub(crate) use ingest::{forget_message_writer_in_txn, note_message_put_in_txn};
+pub(crate) use ingest::{
+    forget_dropped_carriers_in_txn, forget_message_writer_in_txn, note_message_put_in_txn,
+};
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
     LEASE_RECORD_VERSION, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP, client_id_hex,

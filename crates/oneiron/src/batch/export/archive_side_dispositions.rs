@@ -63,6 +63,14 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ),
     ("CONSENT_STANDING_GRANT", ArchiveSideDisposition::Retained),
     ("CONSENT_WIDEN_PROPOSAL", ArchiveSideDisposition::Retained),
+    (
+        "CONVERSATION_MEMBERSHIP_ROW",
+        ArchiveSideDisposition::Retained,
+    ),
+    (
+        "CONVERSATION_MEMBERSHIP_SEQ",
+        ArchiveSideDisposition::Retained,
+    ),
     ("CONVERSATION_ROLE_GRANT", ArchiveSideDisposition::Retained),
     ("DRAFTER_POLICY", ArchiveSideDisposition::Retained),
     (
@@ -254,6 +262,12 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         "SYNC_RESIDENCE_BUNDLE_COMMIT_RECEIPT",
         ArchiveSideDisposition::Omitted(ImportOmissionReason::LocalProjectionNotRestored),
     ),
+    // PREDICTED-BOARD-SEED-SIGNAL: the home's touch log, a board's reports among it, travels as
+    // any vault row does; an import keeps it inert, so no prediction seeds from it there.
+    (
+        "SYNC_RESIDENCE_MACHINE_TOUCH",
+        ArchiveSideDisposition::Retained,
+    ),
     (
         "SYNC_SHARED_LEAVE_RECEIPT",
         ArchiveSideDisposition::Retained,
@@ -267,6 +281,10 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         ArchiveSideDisposition::Omitted(ImportOmissionReason::LocalHistoryNotRestored),
     ),
     ("VOICE_IDENTITY_CONSENT", ArchiveSideDisposition::Retained),
+    (
+        "VOICE_IDENTITY_CONSENT_VOID",
+        ArchiveSideDisposition::Retained,
+    ),
     ("VOICE_REF_RENDER_CONSENT", ArchiveSideDisposition::Retained),
     ("WEAVE_DIGEST_SCHEDULE", ArchiveSideDisposition::Retained),
     ("WEAVE_DIGEST_SETTINGS", ArchiveSideDisposition::Retained),

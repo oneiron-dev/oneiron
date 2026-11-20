@@ -72,7 +72,7 @@ pub(in crate::live) fn chart(
                 Ok(read) => match workbook::in_place(&candidate, &part, &read) {
                     Err(reason) => reason,
                     Ok(edit) => {
-                        let planned = Mode::Edit(edit, read);
+                        let planned = Mode::Edit(edit, Box::new(read));
                         match rewrite(&mut candidate, chart, payload, bound, &mut kept, planned) {
                             Ok(written) => {
                                 *package = candidate;
@@ -131,7 +131,7 @@ pub(in crate::live) fn reseed(
 enum Mode {
     /// Edited in place as [`workbook::in_place`] planned it, over the
     /// resolution that plan read.
-    Edit(workbook::InPlace, Resolved),
+    Edit(workbook::InPlace, Box<Resolved>),
     /// Rebuilt from the live data: the chart's own workbook keeps its
     /// sheets, the data on a new one beside them (FIX 6714) or on its own
     /// data sheet rewritten (FIX 9169); one the chart does not own is
@@ -179,6 +179,7 @@ fn rebuilt_sheet(
 /// [`chart`]'s rewrite: into the chart's own workbook as `in_place` edits
 /// it, over the resolution that edit read, or, without an edit, into one
 /// rebuilt from the live data.
+#[expect(clippy::too_many_lines, reason = "its ordered steps share many locals")]
 fn rewrite(
     package: &mut Package,
     chart: &str,
@@ -203,7 +204,7 @@ fn rewrite(
     let (edit, read, book, note) = match mode {
         Mode::Edit(edit, read) => {
             let book = Some(edit.part.clone());
-            (Some(edit), read, book, None)
+            (Some(edit), *read, book, None)
         }
         mode => {
             let (_, first) = xml::read(package, chart)?;

@@ -15,6 +15,10 @@
 //! machine is a direct checkpoint restore of it: it joins as a new machine,
 //! opens unpinned and holds an empty keystore, so no issuer.
 //!
+//! On the kit-only rotation PR the restore signs with the kit's live
+//! generation of R: after the switch to kit-only the same kit restores and
+//! its rotated R puts the machine on the roster.
+//!
 //! Red at the signed merge of R4 PR 2 and #8673 without the fix: the
 //! private-world restore fails, the owner act refuses "no carrier", and the
 //! replaced kit restores. Red at R4 PR 2 alone: no roster row, and the
@@ -33,7 +37,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{
-    ActSurface, AuthorityKey, AuthorityLogEntry, AuthorityOp, EnrolledOwnerKeyKind,
+    ActAuthority, ActSurface, AuthorityKey, AuthorityLogEntry, AuthorityOp, EnrolledOwnerKeyKind,
     MachineOwnership, MachineRole, ReadLocation, WorldPrivacy, decode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
@@ -43,7 +47,8 @@ use oneiron::store::GateDecisionId;
 use oneiron::store::recovery_kit::KitPiece;
 use oneiron::test_support::{bind_host_owner, restore_tempdir};
 use oneiron::world_keys::{
-    ConfirmedWorldKit, IssuedWorldKit, KitConfirmation, RecoveryRootId, WorldKitRestore,
+    ConfirmedWorldKit, IssuedWorldKit, KitConfirmation, NoRecoveryBox, RecoveryPreset,
+    RecoveryRootId, WorldKitRestore,
 };
 use oneiron::{EntityId, ErrorKind, Vault, VaultConfig};
 
@@ -444,4 +449,32 @@ fn a_restored_machines_kit_restore_marks_it_in_the_kits_anchor_chain() {
         mark.says_yours() && mark.profile.machine_key == key,
         "the anchor's own mark stands live, Owned(Yours), under this install's key: {mark:?}"
     );
+}
+
+#[test]
+fn after_the_switch_to_kit_only_the_kits_rotated_r_puts_the_machine_on_the_roster() {
+    let source = source();
+    let issued = source.issue();
+    let confirmed = source.confirm(&issued);
+    let first = source.live_r();
+    let pieces: Vec<&KitPiece> = issued.pieces.iter().take(2).collect();
+    source
+        .vault
+        .set_recovery_preset_with_kit_as(
+            &ActAuthority::Owner(source.owner(), ActSurface::ThisInstall),
+            RecoveryPreset::NobodyButMe,
+            &pieces,
+            None,
+            |_| Ok(()),
+            &NoRecoveryBox,
+        )
+        .expect("the switch to kit-only with the kit");
+    let rotated = source.live_r();
+    assert_ne!(rotated, first, "the switch rotates R");
+    let fresh = source.fresh();
+
+    fresh
+        .restore(&issued, confirmed.activated.root)
+        .expect("the same kit restores after the rotation");
+    fresh.assert_on_roster_by(&rotated);
 }

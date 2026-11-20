@@ -12,13 +12,19 @@
 //! holds the handle, and in the texts a merge lands from, so a land after
 //! the ruling carries the value. A land moves the fork's keys to the NOTE
 //! (`proposals::land`), so an answer after it reaches the NOTE.
+//!
+//! The NOTE's own edit meets the laws every edit of it meets: a sealed NOTE
+//! is frozen, and a span a citation holds is not edited in place. Either
+//! refuses the ruling whole, in its one write, so the key stays open
+//! (REVIEW-9471 F1, F4).
 
-use super::document::{NoteDocument, TITLE, encode_title};
+use super::document::{NoteDocument, NoteScalarEdit, TITLE, encode_title};
 use super::document_store::{load, persist_authoritative};
-use super::documents::{NOTE_PROPOSAL_DOC, proposal_value, snapshot};
-use super::operations::record_authorship;
+use super::documents::{NOTE_PROPOSAL_DOC, invalid, proposal_value, snapshot};
+use super::operations::{cited_by, record_authorship};
 use super::proposals::{NOTE_FORK, replace_fork_row_in_txn};
 use super::token_uses::record_token_uses_in_txn;
+use super::write_gate::check_doc_plane_note_commit_in_txn;
 use super::{NoteActor, NoteAuthorship};
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeActorClass;
@@ -98,12 +104,24 @@ fn restore_live_in_txn(
     if body.is_none() && title.is_none() {
         return Ok(());
     }
+    // A sealed NOTE's document is frozen, as every other in-place writer
+    // keeps it (REVIEW-9471 F1): the ruling is refused whole, in its one
+    // write, so the key stays open and the seal still names the text.
+    check_doc_plane_note_commit_in_txn(&vault.store, txn, note, || Ok(true))?;
     let value = as_text(value)?;
     // The commit names the ruling person's stamp token (FIX 10930).
     let writer = WriteActor::new(actor, EdgeActorClass::Human);
     let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, writer)?;
     if let Some(body) = body {
-        doc.restore_body(&body.replace(text_form, value), stamp)?;
+        // The edit meets the guard every body edit meets: a span a citation
+        // holds, this NOTE's own or another NOTE's, is not edited in place
+        // (REVIEW-9471 F4), so the ruling is refused and every pin stays
+        // mapped.
+        let base = doc.doc.oplog_frontiers().encode();
+        let edits = handle_edits(&body, text_form, value);
+        if !doc.edit(&base, &edits, stamp, &cited_by(vault, txn, note)?)? {
+            return Err(invalid("a citation holds the key's handle in this NOTE"));
+        }
     }
     if let Some(title) = title {
         doc.set_title(&title.replace(text_form, value), stamp)?;
@@ -120,6 +138,23 @@ fn restore_live_in_txn(
         stamp,
     )?;
     persist_authoritative(vault, txn, &doc)
+}
+
+/// One edit per place `body` holds `text_form`, each putting `value` there,
+/// the last place first, so each start is that place's offset in `body` in
+/// Unicode scalar values, as [`NoteDocument::edit`] reads its edits.
+fn handle_edits(body: &str, text_form: &str, value: &str) -> Vec<NoteScalarEdit> {
+    let delete = text_form.chars().count();
+    let mut edits: Vec<_> = body
+        .match_indices(text_form)
+        .map(|(at, _)| NoteScalarEdit {
+            start: body[..at].chars().count(),
+            delete,
+            insert: value.to_owned(),
+        })
+        .collect();
+    edits.reverse();
+    edits
 }
 
 /// The value back in each pending fork of `note` that holds `text_form`:
@@ -172,7 +207,7 @@ fn restore_pending_forks_in_txn(
         } else if fork.rewrite && view.markdown.contains(text_form) {
             let writer = WriteActor::new(actor, EdgeActorClass::Human);
             let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, writer)?;
-            carrier.restore_body(&view.markdown.replace(text_form, as_text(value)?), stamp)?;
+            carrier.restore_body(&[(text_form, as_text(value)?)], stamp)?;
             // Stored as `store_doc` stores a fork that keeps its operations.
             record_token_uses_in_txn(vault, txn, note, &carrier.doc, None)?;
             NOTE_PROPOSAL_DOC.put(&vault.store, txn, &key, &snapshot(&carrier.doc)?)?;
@@ -197,6 +232,56 @@ fn restore_pending_forks_in_txn(
     if restored {
         // The NOTE's subscribers read its pending forks again.
         vault.queue_note_document_update_in_txn(txn, note);
+    }
+    Ok(())
+}
+
+/// Each handle of a key `note` or `fork` holds that the owner ruled no
+/// secret or kept as text takes its value in `candidate`, the text a land of
+/// `fork` puts in `note`, before the write gate reads it. The ruling's edit
+/// put the value in the NOTE and left a merge fork that keeps its operations
+/// as it was, so a handle that fork wrote on its own, or the handle a fork
+/// switched in whole still holds, would land ruled, unrevealable
+/// (REVIEW-9471 F3). One commit stamped by `actor`, the person who lands
+/// it, and no authorship entry, as a rewrite fork takes the value.
+pub(super) fn restore_kept_handles_in_candidate_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    candidate: &NoteDocument,
+    fork: &super::proposals::NoteFork,
+    actor: WriteActor,
+) -> Result<()> {
+    let kept =
+        crate::secret_custody::kept_handles_in_txn(&vault.store, txn, [fork.note, fork.fork])?;
+    let markdown = candidate.view()?.markdown;
+    let title = candidate.title()?;
+    let (mut body, mut titled) = (markdown.clone(), title.clone());
+    for (text_form, value) in &kept {
+        let text_form = text_form.as_str();
+        if body.contains(text_form) {
+            body = body.replace(text_form, as_text(value)?);
+        }
+        if let Some(text) = titled.as_mut().filter(|text| text.contains(text_form)) {
+            *text = text.replace(text_form, as_text(value)?);
+        }
+    }
+    if body == markdown && titled == title {
+        return Ok(());
+    }
+    let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, actor)?;
+    if body != markdown {
+        // The same replacements, in the same order, spliced into the body
+        // with no diff over it (FIX LORO-TEXT-UPDATE-UNBOUNDED-DIFF-CALLERS).
+        let values = kept
+            .iter()
+            .map(|(text_form, value)| Ok((text_form.as_str(), as_text(value)?)))
+            .collect::<Result<Vec<_>>>()?;
+        candidate.restore_body(&values, stamp)?;
+    }
+    if titled != title
+        && let Some(text) = &titled
+    {
+        candidate.set_title(text, stamp)?;
     }
     Ok(())
 }

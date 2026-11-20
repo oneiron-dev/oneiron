@@ -277,7 +277,11 @@ fn plant_synced_claim(
     ));
     body.source = Some(ClaimSource::Observed);
     vault
-        .with_write_txn(|wtxn| vault.put_reserved_claim_in_txn(wtxn, &claim_id, &body, t(at), at))
+        .with_write_txn(|wtxn| {
+            body.scope_facet =
+                vault.claim_put_facet_keeping_in_txn(wtxn, &claim_id, body.scope_facet)?;
+            vault.put_reserved_claim_in_txn(wtxn, &claim_id, &body, t(at), at)
+        })
         .expect("plant synced claim");
     claim_id
 }
@@ -1048,11 +1052,13 @@ fn archived_reliability_does_not_seed_a_posterior_cache_or_local_projection() ->
     let original = source.get_claim(&id)?.unwrap();
     let export = source.export_whole_vault(true)?;
     target.import_whole_vault_archive(export.bytes())?;
-    let imported = target.get_claim(&id)?.unwrap();
-    assert_eq!(imported.value, original.value);
-    assert_eq!(imported.evidence, original.evidence);
-    assert_eq!(imported.source, Some(ClaimSource::Imported));
-    assert_eq!(imported.approval, ClaimApprovalStatus::Proposed);
+    // Archive-only learning row (ARCHIVE-IMPORT-RESERVED-CLAIM-ABORTS = A; LearningCellsRebuiltFromReceipts).
+    assert_eq!(target.get_claim(&id)?, None);
+    // The imported proposal the replica checks below forge from: the archive
+    // keeps it as archive data only, so it is built here, not read back.
+    let mut imported = original;
+    imported.source = Some(ClaimSource::Imported);
+    imported.approval = ClaimApprovalStatus::Proposed;
     assert_eq!(skill_reliability_posterior(&target, &skill)?, None);
     let prior = skill_reliability_prior(&target, &skill)?;
     assert_ne!(prior, native);
@@ -1062,7 +1068,8 @@ fn archived_reliability_does_not_seed_a_posterior_cache_or_local_projection() ->
     );
     let projected = project_skill_reliability_for_executor(&target, &skill, "fixture/model@1", 81)?;
     assert_eq!(projected, prior);
-    assert_eq!(target.get_claim(&id)?, Some(imported.clone()));
+    // Projection mints no head from archive data (ARCHIVE-IMPORT-RESERVED-CLAIM-ABORTS = A).
+    assert_eq!(target.get_claim(&id)?, None);
     // Zero local runs mint no measured head (projector.rs:930-936): the archived
     // proposal stays inert (archive.rs:13-44) and the diagnostic read stays None.
     assert_eq!(skill_reliability_posterior(&target, &skill)?, None);
@@ -1107,6 +1114,7 @@ fn swapping_executor_forks_statistics_without_retiring_skill() -> crate::error::
     project_skill_reliability_for_executor(&vault, &skill, "old@1", 21)?;
     let old_posterior = skill_reliability_posterior_for_executor(&vault, &skill, "old@1")?.unwrap();
     assert_eq!(old_posterior.alpha, prior.alpha + 1.0);
+    // Carried same-question prior (learning/read.rs backoff, ARCH-0003; cap 2.0 via learning_borrowed_prior_runs).
     assert_eq!(
         skill_executor_reliability(
             &vault,
@@ -1115,7 +1123,10 @@ fn swapping_executor_forks_statistics_without_retiring_skill() -> crate::error::
             &reliability_query_for_receipt(&vault, &old)
         )?
         .posterior,
-        prior
+        SkillReliabilityPosterior {
+            alpha: 1.3333334,
+            beta: 0.6666667
+        }
     );
     assert_eq!(
         skill_executor_reliability(
@@ -1172,7 +1183,8 @@ fn swapping_executor_forks_statistics_without_retiring_skill() -> crate::error::
     )?;
     assert_eq!(new.runs, 2.0);
     assert!(!new.new_model);
-    assert_eq!(new.posterior.alpha, prior.alpha + 2.0);
+    // Carried prior captured before first own run (skill_reliability/priors.rs ensure_prior; ARCH-0003).
+    assert_eq!(new.posterior.alpha, 1.3333334 + 2.0);
     assert_eq!(
         skill_reliability_posterior_for_executor(&vault, &skill, "old@1")?,
         Some(old_posterior)
@@ -1207,11 +1219,12 @@ fn swapping_executor_forks_statistics_without_retiring_skill() -> crate::error::
     )?;
     let judgments = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
     project_skill_reliability(&vault, &judgments)?;
+    // Carried prior captured before first own run (skill_reliability/priors.rs ensure_prior; ARCH-0003).
     assert_eq!(
         skill_reliability_posterior_for_executor(&vault, &skill, "new@2")?
             .unwrap()
             .beta,
-        prior.beta + 1.0
+        0.6666667 + 1.0
     );
     assert_eq!(
         skill_reliability_posterior_for_executor(&vault, &skill, "old@1")?,

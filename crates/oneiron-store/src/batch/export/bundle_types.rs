@@ -86,6 +86,23 @@ pub enum ImportOmissionReason {
     /// this list): the claim door reads its subject live, so the claim stays
     /// archive data too.
     ClaimSubjectNotRestored,
+    /// An edge-provenance claim whose restore the gate would pend: the
+    /// import restores it as an Imported Auto claim of its annotator, which
+    /// a policy manifest with no Imported Auto row for that annotator holds
+    /// for review (the shipped manifest has none). Only the owner's own
+    /// restore carries a permit for it, so through any other door the claim
+    /// stays archive data with the rest of its link's provenance history,
+    /// and the link comes back bare. A claim this vault already holds open,
+    /// whose archived close the gate would hold the same way, stays here as
+    /// it was and is named under this reason too.
+    ProvenanceAutoNotPermitted,
+    /// A room this vault does not hold, whose members, shared pins, pin
+    /// policy, closed bit or leader chat binding only a room door of this
+    /// vault writes, kept as archive data by every door but the owner's
+    /// restore, with each TURN that is its child and each MESSAGE that
+    /// belongs to it: no TURN or MESSAGE lands outside the room whose
+    /// members read it.
+    RoomNotSeatedHere,
 }
 
 /// Foundations not stored as vault-owned source. Never fabricate PACK.md/code.

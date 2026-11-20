@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 // A weave Admin's wrong labels, filed under its proof (OF-499 A3).
 mod admin;
 mod item_key;
-pub(super) use item_key::WeaveItemKey;
+pub(crate) use item_key::WeaveItemKey;
 
 /// Wrong-link labels, keyed by the link's edge ref, then the label's receipt id.
 const LABELS: SideTable<([u8; EDGE_REF_LEN], EntityId), StoredCorrection, Named> =

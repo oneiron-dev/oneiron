@@ -135,6 +135,9 @@ pub(crate) struct RunHostDoor {
     /// ceiling from (FIX 17594); empty between entries and for a turn
     /// program, which is bound to no dispatch attempt.
     run_ceiling: Mutex<Option<BriefRunCeiling>>,
+    /// The read shape the run's attempt woke under (census L9-37), which its
+    /// self brief names; empty for a turn program and a run left unstamped.
+    read_shape: Mutex<Option<oneiron::store::ReadShape>>,
     media_step: Mutex<Option<RunMediaStep>>,
     /// The live, verified slip whose turn woke a Dreamer turn program this
     /// door serves (FIX 8717): the reads this door admits for the run take
@@ -172,6 +175,7 @@ impl RunHostDoor {
             lease: Mutex::new(None),
             attempt: Mutex::new(None),
             run_ceiling: Mutex::new(None),
+            read_shape: Mutex::new(None),
             media_step: Mutex::new(None),
             server: Arc::clone(server),
             actor,
@@ -246,6 +250,15 @@ impl RunHostDoor {
             .run_ceiling
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = run_ceiling;
+    }
+
+    /// Binds the read shape the run's attempt woke under (census L9-37), so
+    /// its self brief names it; `None` for a run its pump left unstamped.
+    pub(crate) fn bind_read_shape(&self, shape: Option<oneiron::store::ReadShape>) {
+        *self
+            .read_shape
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = shape;
     }
 
     /// Binds the attempt the run's next entry serves, which keys its media
@@ -781,9 +794,11 @@ fn answer_as_agent_with_run(
         ))
     });
     let producers = ProducerRows::default();
+    // The leased run's graph_fs mount reads name its attempt (census L9-37).
     let memory = agent_memory(server, actor, origin, invocation)
         .with_task_decisions(server.decision_host().task_decisions()?)
-        .listing_producers(&producers);
+        .listing_producers(&producers)
+        .with_dispatch_attempt(dispatch_attempt(attempt));
     let memory = match turn {
         Some(turn) => memory.with_task_work_turn(turn),
         None => memory,
@@ -825,6 +840,13 @@ fn answer_as_agent_with_run(
         rows
     });
     Ok((output, rows))
+}
+
+/// The leased attempt a door's bound attempt hex names (census L9-37); a
+/// hex that does not parse names none, as telemetry never refuses a row.
+fn dispatch_attempt(attempt: Option<&str>) -> Option<oneiron::attempt_queue::AttemptId> {
+    let id = EntityId::from_hex(attempt?).ok()?;
+    oneiron::attempt_queue::AttemptId::from_bytes(id.as_bytes()).ok()
 }
 
 /// The agent's own surface for one call, on this device.

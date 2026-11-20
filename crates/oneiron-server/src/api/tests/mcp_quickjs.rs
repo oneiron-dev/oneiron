@@ -1396,19 +1396,21 @@ const CODE_MODE_DONE: &str = "finish('done');";
 
 /// Runs `execute_code` twice on fresh runs against a fake model scripted with
 /// `replies`, code mode's meter `budget_units` and the generative seat's
-/// ladder `rungs`. Returns how many provider requests the fake saw after the
-/// first run and after the second.
+/// ladder `rungs`. The fake's calls are metered as account work: a keyless
+/// own-server provider is free work (FIX 9482), an unmetered lease no meter
+/// can deny. Returns how many provider requests the fake saw after the first
+/// run and after the second.
 async fn provider_requests_across_two_runs(
     replies: Vec<crate::fake_llm::Reply>,
     budget_units: u64,
     rungs: &str,
 ) -> (usize, usize) {
     let fake = crate::fake_llm::FakeLlm::start(replies, None).await;
-    let models = code_mode_models(
+    let models = crate::ai_host::test_support::metered_models(code_mode_models(
         &fake.base_url,
         &format!("[roles.generative_reasoner]\nrungs = [{rungs}]"),
         budget_units,
-    );
+    ));
     let actor = seeded_test_entity_id(0x0024_6591);
     let credential = "metered-code-mode";
     let (_dir, _vault, server, _host) = serve_with_models(&models, credential, actor).await;

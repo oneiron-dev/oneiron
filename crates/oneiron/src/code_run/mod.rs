@@ -83,7 +83,8 @@ pub(crate) use self::codec::{continuation_prefix_digest, encode_code_run_replay_
 pub use self::compaction_fork::{
     AdmittedLiveFork, CACHE_BOUNDARIES_KEY, CacheBoundary, HOST_PROVIDER_OPTIONS,
     LiveCompactionFork, LiveForkRung, cache_boundaries, live_fork_offer_digest,
-    main_prefix_boundary, mark_cache_boundary, shift_cache_boundaries,
+    main_prefix_boundary, mark_cache_boundary, shift_cache_boundaries, source_rows_withdrawn,
+    withdrawn_source_rows,
 };
 pub use self::compaction_home::{
     CompactionHome, CompactionHostBinding, CompactionIdentity, RenderedHome,
@@ -144,6 +145,7 @@ pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
     RepoRequestWitness, SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
+pub(crate) use self::dispatcher::{HookedCall, TextAnswerPost};
 pub(crate) use self::model_call::{
     erase_model_call_actor_as_in_txn, erase_model_call_actor_in_txn,
 };
@@ -187,6 +189,8 @@ pub(crate) use self::result_read::{
 pub(crate) use self::result_read::{unmarked_secret, unplaced_answer};
 pub use self::run_verb_call::run_verb_call;
 pub use self::storage::ReadWorldUnknown;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::storage::put_record_with_resume_listing_its_calls;
 pub(crate) use self::storage::session_model_heal_count;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
@@ -414,3 +418,8 @@ pub(crate) use self::dispatcher::{
 };
 
 pub use self::dispatcher::workflow_operations;
+
+// Door seams for `test_doors::parked_hook_custody`, apart from the block
+// above, so no other re-export edit meets this one.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dispatcher::{hook_parked_outcome_for_test, parked_note_resumed_for_test};

@@ -55,6 +55,9 @@ mod attached;
 mod carrier_seal;
 mod door_rows;
 mod envelopes;
+#[cfg(oneiron_test_support)]
+mod numbered_test;
+mod relayed;
 mod stream;
 mod surface_seal;
 mod witness;
@@ -70,29 +73,12 @@ use zeroize::Zeroizing;
 
 use crate::Vault;
 use crate::authority::{AuthorityEntryHash, CustodyChange, CustodyPermitSet, WrapRecipient};
-#[cfg(feature = "sync")]
-use crate::authority::{
-    AuthorityFold, AuthorityFoldIssue, AuthorityKey, AuthorityOp, OwnerWorkBody, OwnerWorkRequest,
-    authority_entry_hash, decode_authority_log_entry_body,
-};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::world_keys::MachineSecret;
 use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
-
-#[cfg(oneiron_test_support)]
-use super::super::codec::{decode_register_input, encode_register_input};
-#[cfg(oneiron_test_support)]
-use super::super::types::{
-    CustodyClass, SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord,
-    SecretCustodyStatus,
-};
-#[cfg(oneiron_test_support)]
-use crate::authority::CustodyRecipientPermit;
-#[cfg(oneiron_test_support)]
-use oneiron_crypto::HybridSecretKey;
 
 pub(crate) use self::attached::{
     Attached, AttachedManifest, Attachment, attach_manifest, attach_no_manifest,
@@ -109,6 +95,16 @@ pub(crate) use self::envelopes::{
     frame_envelope_count_for_test, tamper_drop_first_envelope_for_test,
     tamper_rewrite_envelope_count_for_test, tamper_swap_first_two_envelopes_for_test,
 };
+#[cfg(all(oneiron_test_support, feature = "sync"))]
+pub(crate) use self::numbered_test::{
+    KeptNumberedOpen, drop_kept_numbered_part_for_test, keep_numbered_input_for_test,
+    open_kept_numbered_for_test,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::numbered_test::{
+    open_numbered_as_holder_for_test, seal_numbered_register_for_test,
+};
+pub(crate) use self::relayed::{InputPart, RelayedInput};
 pub use self::stream::SealedInput;
 pub(crate) use self::stream::{InputDigests, SealedFrame, kept_input_in_txn};
 pub use self::surface_seal::{CustodyInputBinding, seal_custody_input};
@@ -134,10 +130,6 @@ const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
 /// attached, splits into parts of at most this many bytes. It bounds a row,
 /// never the whole input (FIX 5445).
 pub(crate) const MAX_INPUT_BYTES: usize = 4 << 20;
-/// A relayed input's frame: the second it was sealed at, the request, then
-/// its witness's length. The witness and the row's body follow, each at most
-/// [`MAX_INPUT_BYTES`]: the whole input, or one part of it.
-const FRAME_BYTES: usize = 8 + 32 + 4;
 /// The most bytes of an input one part carries.
 const PART_BYTES: usize = MAX_INPUT_BYTES;
 /// The most parts one split input lists: its part digests fill at most one
@@ -350,251 +342,6 @@ pub(crate) fn custody_input_part_key_for_test(digest: &[u8; 32], index: u32) -> 
     part_key(digest, index)
 }
 
-/// Where one row's bytes sit in a split input: the part's index, and every
-/// part's digest in order, which the digest the request names is over.
-#[derive(Clone, PartialEq, Eq)]
-pub(crate) struct InputPart {
-    index: u32,
-    digests: Vec<[u8; 32]>,
-}
-
-/// One input as it is kept and relayed: the second it was sealed at, whose
-/// month's base window carries it, the request it is for, that request's
-/// witness and its envelope, whole or one part of it.
-#[derive(Clone, PartialEq, Eq)]
-pub(crate) struct RelayedInput {
-    pub(crate) sealed_at: u64,
-    pub(crate) request: AuthorityEntryHash,
-    /// The request's signed authority entry, canonical (FIX 4996). It rides
-    /// outside the envelope's digest, which the request names.
-    pub(crate) witness: Vec<u8>,
-    /// Where `envelope` sits in the input the request names; `None` while
-    /// it is the whole.
-    pub(crate) part: Option<InputPart>,
-    /// The whole input, or this part's bytes.
-    pub(crate) envelope: Vec<u8>,
-}
-
-/// What an input's witness proves: the request, and the install key that
-/// signed it, when it is one.
-#[cfg(feature = "sync")]
-pub(crate) struct Witnessed {
-    key: Option<[u8; 32]>,
-    request: OwnerWorkRequest,
-}
-
-#[cfg(feature = "sync")]
-impl Witnessed {
-    /// Whether `fold` judged the request entry `hash` invalid with its
-    /// signer folded (FIX 4996): a chain of its carrier this install reads
-    /// (never another anchor's: FIX
-    /// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES) names the key
-    /// that signed it, and the fold holds an issue for exactly this entry,
-    /// other than one that waits on a parent not here yet.
-    pub(crate) fn folded_invalid(&self, fold: &AuthorityFold, hash: &AuthorityEntryHash) -> bool {
-        let Some(key) = &self.key else {
-            return false;
-        };
-        fold.machine(self.request.carrier)
-            .is_some_and(|machine| machine.names_key_under(key, fold.pinned_root.as_ref()))
-            && fold.issues.iter().any(|issue| match issue {
-                AuthorityFoldIssue::InvalidEntry(entry)
-                | AuthorityFoldIssue::RetiredSigner(entry)
-                | AuthorityFoldIssue::SignerNotInAncestry(entry)
-                | AuthorityFoldIssue::NonMonotonicSeq(entry)
-                | AuthorityFoldIssue::WrongVault(entry) => entry == hash,
-                _ => false,
-            })
-    }
-}
-
-// Never print the ciphertext.
-impl std::fmt::Debug for RelayedInput {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RelayedInput")
-            .field("sealed_at", &self.sealed_at)
-            .field(
-                "part",
-                &self
-                    .part
-                    .as_ref()
-                    .map(|part| (part.index, part.digests.len())),
-            )
-            .field("bytes", &self.envelope.len())
-            .finish_non_exhaustive()
-    }
-}
-
-impl RelayedInput {
-    /// The frame, the witness, then the body: the envelope, or for a part
-    /// its label, index, part count and part digests, then its bytes. A
-    /// witness longer than a `u32` is never framed: [`Self::decode`] refuses
-    /// one past [`MAX_INPUT_BYTES`].
-    pub(crate) fn encode(&self) -> Vec<u8> {
-        let witness_len = u32::try_from(self.witness.len()).unwrap_or(u32::MAX);
-        let listed = self.part.as_ref().map_or(0, |part| part.digests.len());
-        let mut out = Vec::with_capacity(
-            FRAME_BYTES
-                + self.witness.len()
-                + PART_LABEL.len()
-                + 8
-                + 32 * listed
-                + self.envelope.len(),
-        );
-        out.extend_from_slice(&self.sealed_at.to_be_bytes());
-        out.extend_from_slice(&self.request);
-        out.extend_from_slice(&witness_len.to_be_bytes());
-        out.extend_from_slice(&self.witness);
-        if let Some(part) = &self.part {
-            out.extend_from_slice(PART_LABEL);
-            out.extend_from_slice(&part.index.to_be_bytes());
-            out.extend_from_slice(&u32::try_from(listed).unwrap_or(u32::MAX).to_be_bytes());
-            for digest in &part.digests {
-                out.extend_from_slice(digest);
-            }
-        }
-        out.extend_from_slice(&self.envelope);
-        out
-    }
-
-    /// Decodes a kept or relayed input strictly; `None` for a short frame,
-    /// a zero request, an empty or oversized witness or envelope, or a part
-    /// whose index is outside its list, whose list is empty or past
-    /// [`MAX_PARTS`], or whose bytes are not the digest its list names for
-    /// it. The witness is read, not judged: [`Self::witnessed`] judges it.
-    pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
-        let (sealed_at, rest) = bytes.split_first_chunk::<8>()?;
-        let (request, rest) = rest.split_first_chunk::<32>()?;
-        let (witness_len, rest) = rest.split_first_chunk::<4>()?;
-        let (witness, body) =
-            rest.split_at_checked(usize::try_from(u32::from_be_bytes(*witness_len)).ok()?)?;
-        let (part, envelope) = match body.strip_prefix(PART_LABEL) {
-            None => (None, body),
-            Some(rest) => {
-                let (part, bytes) = InputPart::decode(rest)?;
-                (Some(part), bytes)
-            }
-        };
-        if *request == [0; 32]
-            || witness.is_empty()
-            || witness.len() > MAX_INPUT_BYTES
-            || envelope.is_empty()
-            || envelope.len() > MAX_INPUT_BYTES
-        {
-            return None;
-        }
-        Some(Self {
-            sealed_at: u64::from_be_bytes(*sealed_at),
-            request: *request,
-            witness: witness.to_vec(),
-            part,
-            envelope: envelope.to_vec(),
-        })
-    }
-
-    /// The key this row is kept and relayed under: the digest the request
-    /// names for a whole input, else this part's own key under it.
-    pub(crate) fn row_key(&self) -> [u8; 32] {
-        match &self.part {
-            Some(part) => part_key(&self.digest(), part.index),
-            None => self.digest(),
-        }
-    }
-
-    /// The rows that carry this whole input when it travels in parts: each
-    /// numbered part, in order, every one with the witness and the part
-    /// list. `None` when it fits one row, or is a part already. Refused only
-    /// past the part list's own bound. A door's own input is kept as it is
-    /// read instead (`stream`, FIX 11140).
-    #[cfg(feature = "sync")]
-    fn parts(&self) -> Result<Option<Vec<Self>>> {
-        if self.part.is_some() || !splits(&self.envelope) {
-            return Ok(None);
-        }
-        let digests: Vec<[u8; 32]> = self.envelope.chunks(PART_BYTES).map(part_digest).collect();
-        if digests.len() > MAX_PARTS {
-            return Err(refused(
-                "the custody input splits into more parts than one part list names",
-            ));
-        }
-        Ok(Some(
-            self.envelope
-                .chunks(PART_BYTES)
-                .zip(0_u32..)
-                .map(|(bytes, index)| Self {
-                    sealed_at: self.sealed_at,
-                    request: self.request,
-                    witness: self.witness.clone(),
-                    part: Some(InputPart {
-                        index,
-                        digests: digests.clone(),
-                    }),
-                    envelope: bytes.to_vec(),
-                })
-                .collect(),
-        ))
-    }
-
-    /// The request this input's witness proves (FIX 4996): the witness is a
-    /// canonical authority entry whose signature verifies, it hashes to
-    /// `request`, and it is a custody request naming this input's digest.
-    /// `None` otherwise. It proves the row self-consistent, not its signer
-    /// one of this vault's machines: a row a key no machine here ever holds
-    /// signed is kept until its window retires, so an input that arrives
-    /// before its request still reaches its holder (CALLS
-    /// CUSTODY_INPUT_PRUNE, FIX 5405).
-    #[cfg(feature = "sync")]
-    pub(crate) fn witnessed(&self) -> Option<Witnessed> {
-        let entry = decode_authority_log_entry_body(&self.witness).ok()?;
-        if authority_entry_hash(&entry).ok()? != self.request {
-            return None;
-        }
-        let key = match entry.signer_key() {
-            AuthorityKey::Ed25519(key) => Some(*key),
-            _ => None,
-        };
-        let AuthorityOp::OwnerWorkRequest(request) = entry.op else {
-            return None;
-        };
-        let digest = self.digest();
-        matches!(
-            &request.work,
-            OwnerWorkBody::Custody { input: Some(named), .. } if *named == digest
-        )
-        .then_some(Witnessed { key, request })
-    }
-
-    /// The digest the request names: of the whole input, or for a part,
-    /// over its list of part digests.
-    pub(crate) fn digest(&self) -> [u8; 32] {
-        match &self.part {
-            Some(part) => parts_digest(&part.digests),
-            None => input_digest(&self.envelope),
-        }
-    }
-}
-
-impl InputPart {
-    /// A part's index, part count and part digests, then its bytes, which
-    /// must be the digest its list names for it.
-    fn decode(body: &[u8]) -> Option<(Self, &[u8])> {
-        let (index, rest) = body.split_first_chunk::<4>()?;
-        let (count, rest) = rest.split_first_chunk::<4>()?;
-        let count = usize::try_from(u32::from_be_bytes(*count)).ok()?;
-        if count == 0 || count > MAX_PARTS {
-            return None;
-        }
-        let (listed, bytes) = rest.split_at_checked(count.checked_mul(32)?)?;
-        let digests = listed
-            .chunks_exact(32)
-            .map(|digest| <[u8; 32]>::try_from(digest).ok())
-            .collect::<Option<Vec<_>>>()?;
-        let index = u32::from_be_bytes(*index);
-        let named = digests.get(usize::try_from(index).ok()?)?;
-        (part_digest(bytes) == *named).then_some((Self { index, digests }, bytes))
-    }
-}
-
 /// The witness of the request signed as entry `hash` (FIX 4996): its stored
 /// entry, canonical, which hashes to `hash`.
 ///
@@ -778,223 +525,4 @@ impl Vault {
 
 fn refused(reason: &'static str) -> Error {
     Error::InvalidConfig(format!("{reason}; nothing was written"))
-}
-
-/// The vault id a test numbered input binds.
-#[cfg(oneiron_test_support)]
-const NUMBERED_TEST_VAULT_ID: [u8; 32] = [0x51; 32];
-/// The custody revision a test numbered input binds as seen.
-#[cfg(oneiron_test_support)]
-const NUMBERED_TEST_SEEN: [u8; 32] = [0x53; 32];
-/// The generation a test numbered input approves.
-#[cfg(oneiron_test_support)]
-const NUMBERED_TEST_GENERATION: u32 = 7;
-/// The second a test numbered input is sealed at.
-#[cfg(oneiron_test_support)]
-const NUMBERED_TEST_AT: u64 = 1_780_000_000;
-/// The request hash a kept test numbered input is stored under beside.
-#[cfg(all(oneiron_test_support, feature = "sync"))]
-const NUMBERED_TEST_REQUEST: [u8; 32] = [0x61; 32];
-
-/// The secret id a test numbered input binds.
-#[cfg(oneiron_test_support)]
-fn numbered_test_id() -> EntityId {
-    EntityId::from_bytes_unchecked([0x52; 16])
-}
-
-/// A portable record of `name` holding `value`, as a door seals it.
-#[cfg(oneiron_test_support)]
-fn numbered_test_record(name: &str, value: &[u8]) -> SecretCustodyRecord {
-    SecretCustodyRecord {
-        schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
-        name: name.to_owned(),
-        class: CustodyClass::CustodyPortable,
-        device_only: false,
-        model_reveal_allowed: true,
-        value_bytes: value.to_vec(),
-        status: SecretCustodyStatus::Active,
-        registered_at: NUMBERED_TEST_AT,
-        rotated_at: None,
-        rotation_generation: NUMBERED_TEST_GENERATION,
-        bindings: Vec::new(),
-        manifest_ref: String::new(),
-        declared_paths: Vec::new(),
-        policy_floor_snapshot: SecretCustodyFloor::default(),
-    }
-}
-
-/// The exact permit a test numbered input binds for its holder.
-#[cfg(oneiron_test_support)]
-fn numbered_test_permits(holder: EntityId) -> CustodyPermitSet {
-    let permits = [CustodyRecipientPermit {
-        machine: holder,
-        profile: [0x54; 32],
-        encryption_key: [0x55; 32],
-    }];
-    CustodyPermitSet::from(&permits[..])
-}
-
-/// The binding a test numbered register input seals and opens under.
-#[cfg(oneiron_test_support)]
-fn numbered_test_binding(holder: EntityId, permits: &CustodyPermitSet) -> InputBinding<'_> {
-    InputBinding {
-        vault_id: NUMBERED_TEST_VAULT_ID,
-        id: numbered_test_id(),
-        change: CustodyChange::Register,
-        generation: NUMBERED_TEST_GENERATION,
-        seen: NUMBERED_TEST_SEEN,
-        holder,
-        permits,
-    }
-}
-
-/// The holder's secret: its machine with the key `seed` names.
-#[cfg(oneiron_test_support)]
-fn numbered_test_secret(holder: EntityId, seed: u8) -> MachineSecret {
-    MachineSecret {
-        machine: holder,
-        secret: HybridSecretKey::from_seeds(&[seed; 64], &[seed; 32]),
-    }
-}
-
-/// Seals a register of `name` holding `value`, framed with `manifest`, to
-/// `holder`'s key under the test binding, as a door seals it (FIX 5521),
-/// for `test_doors::custody_numbered_input` (FIX 5624). Returns the sealed
-/// frame, the body length it seals and the frame's envelope count.
-///
-/// # Errors
-/// A body that fits one envelope, so the test seals nothing numbered; a
-/// seal that fails; a sealed frame that states no envelope count.
-#[cfg(oneiron_test_support)]
-pub(crate) fn seal_numbered_register_for_test(
-    holder: EntityId,
-    seed: u8,
-    name: &str,
-    value: &[u8],
-    manifest: Option<&str>,
-) -> Result<(Vec<u8>, usize, u32)> {
-    let record = numbered_test_record(name, value);
-    let body = encode_register_input(&record, manifest)?;
-    if envelopes::fits_one(&body) {
-        return Err(refused(
-            "the test body fits one envelope; grow it past one envelope's bound",
-        ));
-    }
-    let permits = numbered_test_permits(holder);
-    let binding = numbered_test_binding(holder, &permits);
-    let secret = HybridSecretKey::from_seeds(&[seed; 64], &[seed; 32]);
-    let frame = binding.seal(secret.public_key(), &body)?;
-    let count = envelopes::frame_envelope_count_for_test(&frame)
-        .ok_or_else(|| refused("a sealed numbered input states no envelope count"))?;
-    Ok((frame, body.len(), count))
-}
-
-/// Opens `frame` with the holder's secret under the test binding, for
-/// `test_doors::custody_numbered_input` (FIX 5624): the register's value,
-/// framed manifest text and name. `None` when it does not open, or not to
-/// a register body: the arm the executor refuses as `InvalidInput`.
-#[cfg(oneiron_test_support)]
-pub(crate) fn open_numbered_as_holder_for_test(
-    frame: &[u8],
-    holder: EntityId,
-    seed: u8,
-) -> Option<(Vec<u8>, Option<String>, String)> {
-    let permits = numbered_test_permits(holder);
-    let binding = numbered_test_binding(holder, &permits);
-    let secret = numbered_test_secret(holder, seed);
-    let body = binding.open(frame, frame.len() as u64, &secret)?;
-    let (record, manifest) = decode_register_input(&body)?;
-    Some((record.value_bytes, manifest, record.name))
-}
-
-/// What opening a kept test numbered input found.
-#[cfg(all(oneiron_test_support, feature = "sync"))]
-pub(crate) enum KeptNumberedOpen {
-    /// No whole row, or no complete part list, is kept: the request stays
-    /// pending.
-    Missing,
-    /// The kept rows do not open under the holder's key and binding, or not
-    /// to a register body: the arm the executor refuses as `InvalidInput`.
-    Invalid,
-    /// The register's value, framed manifest text and name.
-    Opened(Vec<u8>, Option<String>, String),
-}
-
-/// Keeps `frame` as the test input the digest the request would name,
-/// whole or in numbered parts, for `test_doors::custody_numbered_input`
-/// (FIX 5624). Returns that digest and how many rows keep it.
-///
-/// # Errors
-/// A frame past the part list's bound; storage errors.
-#[cfg(all(oneiron_test_support, feature = "sync"))]
-pub(crate) fn keep_numbered_input_for_test(vault: &Vault, frame: &[u8]) -> Result<([u8; 32], u32)> {
-    let row = RelayedInput {
-        sealed_at: NUMBERED_TEST_AT,
-        request: NUMBERED_TEST_REQUEST,
-        witness: vec![0x62; 64],
-        part: None,
-        envelope: frame.to_vec(),
-    };
-    vault.with_write_txn(|wtxn| keep_input_in_txn(vault, wtxn, &row))?;
-    let digest = input_digest(frame);
-    let txn = vault.store.env.read_txn()?;
-    let mut parts = 0_u32;
-    for (_, bytes) in INPUTS.scan(&vault.store, &txn)? {
-        if RelayedInput::decode(&bytes).is_some_and(|kept| kept.digest() == digest) {
-            parts += 1;
-        }
-    }
-    Ok((digest, parts))
-}
-
-/// Opens the test input kept under `digest` with the holder's secret under
-/// the test binding, for `test_doors::custody_numbered_input` (FIX 5624).
-///
-/// # Errors
-/// Storage errors reading a kept row.
-#[cfg(all(oneiron_test_support, feature = "sync"))]
-pub(crate) fn open_kept_numbered_for_test(
-    vault: &Vault,
-    digest: &[u8; 32],
-    holder: EntityId,
-    seed: u8,
-) -> Result<KeptNumberedOpen> {
-    let permits = numbered_test_permits(holder);
-    let binding = numbered_test_binding(holder, &permits);
-    let secret = numbered_test_secret(holder, seed);
-    let txn = vault.store.env.read_txn()?;
-    let Some(kept) = kept_input_in_txn(&vault.store, &txn, digest)? else {
-        return Ok(KeptNumberedOpen::Missing);
-    };
-    let Some((body, _attached)) = kept.open(&binding, &secret)? else {
-        return Ok(KeptNumberedOpen::Invalid);
-    };
-    let Some((record, manifest)) = decode_register_input(&body) else {
-        return Ok(KeptNumberedOpen::Invalid);
-    };
-    Ok(KeptNumberedOpen::Opened(
-        record.value_bytes,
-        manifest,
-        record.name,
-    ))
-}
-
-/// Forgets part `index` of the test input kept under `digest`, for
-/// `test_doors::custody_numbered_input` (FIX 5624). Returns whether a row
-/// was kept there.
-///
-/// # Errors
-/// Storage errors.
-#[cfg(all(oneiron_test_support, feature = "sync"))]
-pub(crate) fn drop_kept_numbered_part_for_test(
-    vault: &Vault,
-    digest: &[u8; 32],
-    index: u32,
-) -> Result<bool> {
-    vault.with_write_txn(|wtxn| {
-        let key = part_key(digest, index);
-        let kept = INPUTS.get(&vault.store, wtxn, &key)?.is_some();
-        INPUTS.delete(&vault.store, wtxn, &key)?;
-        Ok(kept)
-    })
 }

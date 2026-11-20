@@ -332,12 +332,12 @@ fn a_holders_interval_is_tighter_only_when_it_runs_as_often_and_starts_no_later(
     let default = kind.default_value().expect("the default");
     let far = 4_102_444_800_u64;
     assert_eq!(
-        kind.is_tighter(&value(json!({ "kind": "every", "secs": MINUTE })), &default),
+        kind.no_wider(&value(json!({ "kind": "every", "secs": MINUTE })), &default),
         Some(true),
         "more often, from now: tighter than the default"
     );
     assert_eq!(
-        kind.is_tighter(
+        kind.no_wider(
             &value(json!({ "kind": "every", "secs": 5 * MINUTE, "first_at": far })),
             &default
         ),
@@ -345,7 +345,7 @@ fn a_holders_interval_is_tighter_only_when_it_runs_as_often_and_starts_no_later(
         "as often, first due in 2100: not tighter than the default, which starts now"
     );
     assert_eq!(
-        kind.is_tighter(
+        kind.no_wider(
             &value(json!({ "kind": "every", "secs": MINUTE, "first_at": T0 + 30 * DAY })),
             &default
         ),
@@ -354,7 +354,7 @@ fn a_holders_interval_is_tighter_only_when_it_runs_as_often_and_starts_no_later(
     );
     let owner = value(json!({ "kind": "every", "secs": HOUR, "first_at": T0 + DAY }));
     assert_eq!(
-        kind.is_tighter(
+        kind.no_wider(
             &value(json!({ "kind": "every", "secs": HOUR, "first_at": T0 + HOUR })),
             &owner
         ),
@@ -362,7 +362,7 @@ fn a_holders_interval_is_tighter_only_when_it_runs_as_often_and_starts_no_later(
         "the owner's interval from an earlier first time: tighter"
     );
     assert_eq!(
-        kind.is_tighter(
+        kind.no_wider(
             &value(json!({ "kind": "every", "secs": HOUR, "first_at": T0 + 2 * DAY })),
             &owner
         ),
@@ -370,7 +370,7 @@ fn a_holders_interval_is_tighter_only_when_it_runs_as_often_and_starts_no_later(
         "the owner's interval from a later first time: not tighter"
     );
     assert_eq!(
-        kind.is_tighter(&value(json!({ "kind": "every", "secs": HOUR })), &owner),
+        kind.no_wider(&value(json!({ "kind": "every", "secs": HOUR })), &owner),
         Some(true),
         "the owner's interval from now, before the owner's first time: tighter"
     );

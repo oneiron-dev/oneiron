@@ -4,11 +4,15 @@
 //! server, under the host's pause or off the home node neither lends. The
 //! settlement loan lends the host's live ladder and bands, while the
 //! extraction gate re-reads the owner's route defaults for the prepared
-//! verdict and extraction routes. The prepared models and runs never switch.
+//! verdict, extraction and narrative routes (the narrative route for a psych
+//! profile's bound step, untangle 6.9i). The prepared models and runs never
+//! switch.
 
 use std::sync::Arc;
 
-use oneiron::dreamer_consolidation::{DREAMER_EXTRACTION_ROLE, DREAMER_VERDICT_ROLE};
+use oneiron::dreamer_consolidation::{
+    DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_VERDICT_ROLE,
+};
 use oneiron::dreamer_runner::DreamerDecisionLender;
 use oneiron::llm::decision::{DecisionBandPolicy, DecisionLadder, TypedDecision};
 use oneiron::llm::manifest::ModelRole;
@@ -74,7 +78,7 @@ impl DreamerDecisionLender for ConflictSettleLender {
     }
 }
 
-/// Rechecks live permission for one pass's prepared verdict and extraction routes.
+/// Rechecks live permission for one pass's prepared verdict, extraction and narrative routes.
 ///
 /// The pass's models and runs never switch: every loan re-reads the owner's
 /// route defaults for its prepared route, and refuses when the bound server
@@ -88,12 +92,14 @@ pub(super) struct ExtractionLoanGate {
     verdict: Option<(CallPurpose, ModelLocality)>,
     /// Holds the prepared extraction purpose and locality, or `None` when it was unrouted.
     extraction: Option<(CallPurpose, ModelLocality)>,
+    /// Holds the prepared narrative purpose and locality, or `None` when it was unrouted.
+    narrative: Option<(CallPurpose, ModelLocality)>,
     /// Retains the startup host permission for extraction to leave the device.
     allow_egress: bool,
 }
 
 impl ExtractionLoanGate {
-    /// Captures the prepared verdict and extraction purposes and localities from the pass's routes.
+    /// Captures the prepared verdict, extraction and narrative purposes and localities from the pass's routes.
     ///
     /// Keeps `None` for each unrouted role, which every later admission of that route refuses.
     pub(super) fn new(
@@ -115,11 +121,16 @@ impl ExtractionLoanGate {
                     route.locality,
                 )
             });
+        let narrative = routes
+            .iter()
+            .find(|(role, _)| *role == DREAMER_NARRATIVE_ROLE)
+            .map(|(_, route)| (dreamer_role_purpose(DREAMER_NARRATIVE_ROLE), route.locality));
         Self {
             question_timer,
             admission,
             verdict,
             extraction,
+            narrative,
             allow_egress,
         }
     }
@@ -154,5 +165,10 @@ impl ExtractionDecisionGate for ExtractionLoanGate {
     /// Re-reads the owner's route defaults for the prepared extraction route at every step loan.
     fn admits_step(&self) -> oneiron::Result<bool> {
         self.admits_route(self.extraction.as_ref())
+    }
+
+    /// Re-reads the owner's route defaults for the prepared narrative route at every psych profile step loan.
+    fn admits_narrative_step(&self) -> oneiron::Result<bool> {
+        self.admits_route(self.narrative.as_ref())
     }
 }

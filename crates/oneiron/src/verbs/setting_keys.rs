@@ -2,7 +2,7 @@
 //! from this file.
 
 use super::files::MAX_FILES_PAGE_LIMIT;
-use crate::setting::{Kind, PageMax, lower_is_tighter};
+use crate::setting::{Kind, PageMax};
 
 /// 1,000 files: a Files listing's maximum page before it became a key (FIX 10247).
 fn files_page_max_default() -> PageMax {
@@ -17,6 +17,6 @@ crate::setting::setting_keys! {
     pub(crate) FILES_PAGE_MAX: PageMax = "verbs.files.max_page_limit" {
         kind: Kind::new(files_page_max_default)
             .strictest(files_page_max_default)
-            .tighter(lower_is_tighter::<PageMax>),
+            .lower(),
     };
 }

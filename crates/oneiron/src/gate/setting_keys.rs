@@ -2,7 +2,7 @@
 //! from this file.
 
 use crate::check_in::ActClass;
-use crate::setting::{Kind, ScopeKind, lower_is_tighter};
+use crate::setting::{Kind, ScopeKind};
 
 /// Off: the owner alone settles a Dreamer consent bundle.
 fn owner_alone() -> bool {
@@ -20,7 +20,7 @@ crate::setting::setting_keys! {
     pub(crate) CONSENT_BUNDLE_DELEGATE_RESOLVE: bool = "gate.consent_bundle.delegate_resolution" {
         kind: Kind::new(owner_alone)
             .strictest(owner_alone)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
         scopes: &[ScopeKind::Agent],
         act: ActClass::GrantWiden,
     };

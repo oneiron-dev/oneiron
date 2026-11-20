@@ -1,6 +1,8 @@
 //! Lends a prepared pass's resources to one extraction attempt's bound calls.
 //!
 //! Verdict reads and generation steps share the original attempt's guard and charge tally.
+//! Every lent read lists for the destination bound the pass stated, the bound its wake's
+//! listings were read for.
 
 use std::sync::{Arc, Mutex};
 
@@ -14,6 +16,7 @@ use oneiron::llm::decision::{DecisionBandPolicy, DecisionLadder, TypedDecision};
 use oneiron::llm::model_step::ModelStepReceipt;
 use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding};
 use oneiron::memory::MemoryResult;
+use oneiron::settings::ReadDestination;
 use oneiron::verbs::AiVerdict;
 use oneiron::{BudgetGuard, Error, LlmBackend, ModelId, Result};
 use tokio::runtime::Handle;
@@ -35,6 +38,18 @@ pub trait ExtractionDecisionGate: Send + Sync {
     ///
     /// Returns failures while reading the host's live admission policy.
     fn admits_step(&self) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// Admits the prepared narrative route for one bound psych profile step.
+    ///
+    /// The default refuses so a gate written for extraction never admits a
+    /// profile step.
+    ///
+    /// # Errors
+    ///
+    /// Returns failures while reading the host's live admission policy.
+    fn admits_narrative_step(&self) -> Result<bool> {
         Ok(false)
     }
 }
@@ -74,6 +89,8 @@ pub struct ExtractionAttemptLender {
     now_ms: u64,
     /// Retains the material this wake's admitted pre-hooks already added.
     material: Vec<String>,
+    /// Retains the destination bound this wake's pass stated, which its listings were read for.
+    destination_bound: Option<ReadDestination>,
     /// Retains all terminal generation charges until the job hands off its outcome.
     charges: Mutex<StepChargeTally>,
 }
@@ -94,6 +111,7 @@ impl ExtractionAttemptLender {
             deadline: context.deadline.clone(),
             now_ms: context.now_ms,
             material: context.hook_material().to_vec(),
+            destination_bound: context.destination_bound().cloned(),
             charges: Mutex::new(StepChargeTally::new()),
         }
     }
@@ -114,6 +132,16 @@ impl DreamerDecisionLender for ExtractionAttemptLender {
         Err(Error::InvalidConfig(
             "the extraction lender does not lend conflict settlement decisions".into(),
         ))
+    }
+
+    /// States the bound of the wake this attempt's context was prepared for, the same value
+    /// at every call.
+    ///
+    /// The engine rebuilds each lent extraction listing for it, so the lent reads list for
+    /// the destination the pass's native extraction read for. A context without a prepared
+    /// wake states none.
+    fn destination_bound(&self) -> Option<ReadDestination> {
+        self.destination_bound.clone()
     }
 
     /// Rechecks the gate and lends the admitted attempt's native read resources once.

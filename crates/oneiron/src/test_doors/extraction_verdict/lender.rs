@@ -5,8 +5,9 @@
 //! The fixture owns the pass resources both legs share: a current-thread tokio runtime
 //! driving the read futures, the pass guard, the shipped consolidation decisions, the
 //! verdict model with its advertised host binding, the injected reasoner backend, the
-//! frozen pass deadline and clock, and the shared native charge tally recording both
-//! legs' spend. The lender resolves the verdict role the native way and runs the
+//! frozen pass deadline and clock, the shared native charge tally recording both
+//! legs' spend, and the sourced route recording the rows each call is sent under. The
+//! lender resolves the verdict role the native way and runs the
 //! engine's callback; it never fabricates a decision. The native leg builds a
 //! consolidation executor over the same parts and runs the native resolution oracle over
 //! the same pack operands, returning plain answers the test compares against the bound
@@ -22,9 +23,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use serde_json::Value;
 use tokio::runtime::{Builder, Runtime};
 
+use super::sourced_route::RecordingSourcedRoute;
 use crate::dreamer_consolidation::{
     ConsolidationDecisions, ConsolidationExecutor, DREAMER_VERDICT_ROLE, NativeFixtureMember,
-    NativeResolutionFixture, RoleBackend, RoleBackends, RoleCall, StepChargeTally,
+    NativeResolutionFixture, RoleBackend, RoleBackends, RoleCall, SourcedBackend, StepChargeTally,
     native_resolution_pack_for_test,
 };
 use crate::dreamer_promotion::{DreamerRunContext, PromotionWriterSink};
@@ -40,6 +42,7 @@ use crate::llm::decision::{DecisionBandPolicy, DecisionLadder, TypedDecision};
 use crate::llm::{HostInferenceBinding, HostInferenceContext};
 use crate::memory::MemoryResult;
 use crate::model_step_error::DurableStepError;
+use crate::settings::ReadDestination;
 use crate::vault::Vault;
 use crate::verbs::{AiVerdict, ExtractionPack};
 use crate::write_envelope::WriteActor;
@@ -63,12 +66,17 @@ pub struct ExtractionVerdictFixture {
     binding: HostInferenceBinding,
     /// Routes the verdict role to the scripted reasoner.
     reasoner: Arc<dyn LlmBackend>,
+    /// Sends each call that names its rows on the scripted reasoner and keeps those rows.
+    sourced: Arc<RecordingSourcedRoute>,
     /// Bounds both legs with the attempt's frozen pass deadline.
     deadline: WakePassDeadline,
     /// Freezes the attempt's Unix time in milliseconds for both legs.
     now_ms: u64,
     /// Records both legs' spend in the attempt's shared native tally.
     charges: Mutex<StepChargeTally>,
+    /// Holds the destination bound of the pass these resources stand for; none until a test
+    /// states one.
+    destination_bound: Mutex<Option<ReadDestination>>,
 }
 
 /// Shares the parity fixture's prepared pass resources with a host-lender integration test.
@@ -99,7 +107,7 @@ impl ExtractionVerdictFixture {
                     backend: Arc::clone(&self.reasoner),
                     model: self.model.clone(),
                     binding: self.binding.clone(),
-                    sourced: None,
+                    sourced: Some(self.sourced_route()),
                 },
             ),
             guard: self.guard.clone(),
@@ -120,10 +128,51 @@ impl ExtractionVerdictFixture {
         )
     }
 
+    /// Shares the fixture's sourced route, so every role table built on this fixture
+    /// sends a call that names its rows through the one record.
+    #[must_use]
+    pub fn sourced_route(&self) -> Arc<dyn SourcedBackend> {
+        Arc::<RecordingSourcedRoute>::clone(&self.sourced)
+    }
+
+    /// Returns the rows of every model call sent bound since the last take, in call
+    /// order, each row as 32 lowercase hexadecimal digits in id order, and forgets them.
+    ///
+    /// A call bound to its rows has an entry whether its generation ran or was served
+    /// from the attempt's memo. A call that named no complete set has none.
+    #[must_use]
+    pub fn take_bound_source_rows(&self) -> Vec<Vec<String>> {
+        self.sourced
+            .take()
+            .into_iter()
+            .map(|rows| rows.iter().map(EntityId::to_hex).collect())
+            .collect()
+    }
+
     /// Borrows the fixture's shared native tally for a sibling extraction-step loan.
     #[must_use]
     pub fn charges(&self) -> &Mutex<StepChargeTally> {
         &self.charges
+    }
+
+    /// States `bound` as the destination bound of the pass these resources stand for.
+    ///
+    /// Every lender built on this fixture answers it from then on, as a host's lender answers
+    /// the bound its pass stated. `None`, the start, states no bound.
+    pub fn set_destination_bound(&self, bound: Option<ReadDestination>) {
+        *self
+            .destination_bound
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = bound;
+    }
+
+    /// Returns the destination bound a test stated, for a lender built on this fixture to answer.
+    #[must_use]
+    pub fn destination_bound(&self) -> Option<ReadDestination> {
+        self.destination_bound
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Builds the fixture around `reasoner` and shares it for the lender to own: a
@@ -159,6 +208,7 @@ impl ExtractionVerdictFixture {
             keyless: false,
         };
         let deadline = WakePassDeadline::with_clock(180_000, Arc::new(|| 0));
+        let sourced = Arc::new(RecordingSourcedRoute::new(Arc::clone(&reasoner)));
         Ok(Arc::new(Self {
             runtime,
             guard,
@@ -166,9 +216,11 @@ impl ExtractionVerdictFixture {
             model,
             binding,
             reasoner,
+            sourced,
             deadline,
             now_ms: 1_000_000,
             charges: Mutex::new(StepChargeTally::new()),
+            destination_bound: Mutex::new(None),
         }))
     }
 }
@@ -264,7 +316,7 @@ impl DreamerDecisionLender for FixtureExtractionLender {
                 backend: Arc::clone(&fixture.reasoner),
                 model: fixture.model.clone(),
                 binding: fixture.binding.clone(),
-                sourced: None,
+                sourced: Some(fixture.sourced_route()),
             },
         );
         let call = RoleCall::resolve(
@@ -285,6 +337,11 @@ impl DreamerDecisionLender for FixtureExtractionLender {
             runtime: fixture.runtime.handle(),
         })
         .map(Some)
+    }
+
+    /// Answers the destination bound the test stated on the fixture.
+    fn destination_bound(&self) -> Option<ReadDestination> {
+        self.fixture.destination_bound()
     }
 }
 
@@ -333,9 +390,13 @@ pub fn run_extraction_verdict_native_pack(
     }
     let mut members = Vec::with_capacity(pack.candidates.len());
     for candidate in &pack.candidates {
-        if candidate.rel.is_some() || candidate.topic.is_some() || candidate.corrects.is_some() {
+        if candidate.rel.is_some()
+            || candidate.topic.is_some()
+            || candidate.corrects.is_some()
+            || !candidate.claim_evidence.is_empty()
+        {
             return Err(Error::InvalidConfig(
-                "the parity fixture candidates carry no relationship, topic or corrected claim"
+                "the parity fixture candidates carry no relationship, topic, corrected claim or claim evidence"
                     .into(),
             ));
         }
@@ -396,7 +457,7 @@ pub fn run_extraction_verdict_native_pack(
             backend: Arc::clone(&fixture.reasoner),
             model: fixture.model.clone(),
             binding: fixture.binding.clone(),
-            sourced: None,
+            sourced: Some(fixture.sourced_route()),
         },
     );
     let inference = HostInferenceContext {

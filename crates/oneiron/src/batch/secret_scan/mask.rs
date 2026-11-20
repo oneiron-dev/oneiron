@@ -34,6 +34,8 @@ mod batch_door;
 mod body;
 pub(super) mod carrier;
 mod changed_scan;
+// An erased request's custody identity (FIX ERASED-IDENTITY-ONE-STAND-IN).
+pub(super) mod custody_form;
 // The claim value a checker reads before the door masks it.
 pub(super) mod claim_value_plan;
 // An escaped key's span (FIX 1369).
@@ -45,6 +47,7 @@ mod known_note;
 mod leaf_keys;
 mod promoted_message_parts;
 pub(super) mod retained_repo;
+mod room_carry;
 pub(super) mod side_row;
 mod split_phrase;
 pub(super) mod spool;
@@ -81,6 +84,7 @@ use crate::secret_record::{CustodyWrite, FoundNote};
 use crate::secret_record::{
     SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
 };
+use crate::session_overlay::SessionOverlay;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::store::file_key_masks::{MASKED_FILE_BAND, MaskedFile};
@@ -89,6 +93,7 @@ use crate::store::known_value_index::KnownValues;
 use crate::write_envelope::ClaimCandidate;
 pub(in crate::batch) use batch_door::mask_batch_ops;
 pub(crate) use promoted_message_parts::seal_promoted_message_ops_in_txn;
+pub(crate) use room_carry::{RoomCarry, carry_room_secrets_in_txn};
 use split_phrase::Spread;
 pub(crate) use text_spans::{file_spans, span_placed_for};
 use text_spans::{merged, occurrences, secret_spans};
@@ -538,9 +543,13 @@ struct Masker {
     known_only: bool,
     /// A compare of a held row with its offer: only the values of the
     /// records the row's handles name are read, by their handles (FIX
-    /// RECEIPT-RECORDS-CALL-HELD-INPUT). `None` reads every value `known`
-    /// holds.
+    /// RECEIPT-RECORDS-CALL-HELD-INPUT), and only their handles name a
+    /// record in a text. `None` reads every value `known` holds.
     records: Option<BTreeSet<String>>,
+    /// With `records`, only their values at most this many bytes long are
+    /// read: a custody identity read as its erase read it before a record
+    /// it names took a longer value (blind review round 2 of #9528).
+    records_longest: Option<usize>,
     /// The door's scan read each text this pass reads now by the same text
     /// rules and found no shape: none is sought again (speed).
     shapes_read: bool,
@@ -986,7 +995,8 @@ impl Masker {
     /// does.
     fn known_whole(&self, value: &[u8]) -> Option<String> {
         let known = self.known.as_ref()?;
-        match text::known_spans(known, self.records.as_ref(), value, |_| false).as_slice() {
+        let records = self.records.as_ref();
+        match text::known_spans(known, records, self.records_longest, value, |_| false).as_slice() {
             [hit] if hit.span == (0..value.len()) => Some(hit.handle.to_owned()),
             _ => None,
         }
@@ -1084,6 +1094,19 @@ impl Masker {
         }
         // The owner hears of what was lifted, once per record.
         note_found_keys_in_txn(write.store, wtxn, &notes, at)?;
+        Ok(handles)
+    }
+
+    /// Keeps each found value in `room`'s own custody, in memory only
+    /// (ROOM-LOCAL-CUSTODY): no record, origin row, notice or fingerprint is
+    /// written anywhere. Each value maps to its room handle, the one the
+    /// room already holds it under, if any.
+    fn keep_in_room(self, room: &SessionOverlay) -> Result<PlanValues<String>> {
+        let mut handles = PlanValues::default();
+        for mut found in self.found {
+            let handle = room.keep_room_secret(&found.value, found.reason)?;
+            handles.insert(std::mem::take(&mut *found.value), handle);
+        }
         Ok(handles)
     }
 }

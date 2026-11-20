@@ -213,6 +213,14 @@ impl Store {
         let committed = self
             .prune_bodies_in_txn(write, &mut wtxn, &prune, source)
             .and_then(|()| self.drop_erased_gate_decisions_in_txn(&mut wtxn, custody.erased()))
+            // And the unclear rows filed under their receipts (FIX
+            // [GATE-RECEIPT-UNCLEAR-ROW-OUTLIVES-RECORD-REMOVAL]).
+            .and_then(|()| {
+                let dropped: Vec<_> = custody.erased().iter().map(|(id, _)| *id).collect();
+                crate::skill_attribution::delete_gate_receipt_unclear_in_txn(
+                    write, &mut wtxn, &dropped,
+                )
+            })
             .and_then(|()| crate::world_keys::drop_pad_rows_in_txn(write, &mut wtxn, &erased_pads))
             .and_then(|()| self.read_back_in_txn(&wtxn))
             .and_then(|()| self.read_back_bodies_in_txn(&wtxn, &prune.kept))

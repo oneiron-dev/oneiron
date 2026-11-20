@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::{OWNER_PRESENCE_HERE_REASON_PREFIX, OWNER_PRESENCE_REQUIRED, RecordError};
 
 impl From<Error> for MemoryError {
     fn from(err: Error) -> Self {
@@ -55,6 +56,19 @@ impl From<Error> for MemoryError {
                     MEMORY_CODE_INVALID_STATE,
                     err.to_string(),
                     &[step.suggestion()],
+                )
+            };
+        }
+        if let Error::Record(RecordError::OwnerPresenceRequired { here }) = &err {
+            return Self {
+                reason_codes: vec![
+                    OWNER_PRESENCE_REQUIRED.to_owned(),
+                    format!("{OWNER_PRESENCE_HERE_REASON_PREFIX}{}", here.as_str()),
+                ],
+                ..Self::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    err.to_string(),
+                    &[here.suggestion()],
                 )
             };
         }
@@ -226,6 +240,28 @@ impl From<Error> for MemoryError {
                 MEMORY_CODE_FORBIDDEN,
                 message,
                 &["Start a work companion in this workspace; its policy refuses a brought one."],
+            ),
+            // A policy refusal, not a bad request: the manifest is what
+            // has to change.
+            ErrorKind::OneVaultSettingUnreadable => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Repair the vault's policy manifest, then retry onboarding."],
+            ),
+            ErrorKind::WorkTalkStaysWithMember => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Keep this talk in the member's vault while one-vault mode is off."],
+            ),
+            ErrorKind::OneVaultNotTold => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Acknowledge the one-vault notice in person before opening work talk."],
+            ),
+            ErrorKind::NoBroughtCompanion => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Use the existing company-homed conversation with the work companion."],
             ),
             // FIX 2222: its own code, so a client tells it from a gate's or
             // the owner binding's refusal; the remedy is the customer's.

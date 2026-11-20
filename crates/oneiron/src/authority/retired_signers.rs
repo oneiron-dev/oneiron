@@ -35,6 +35,10 @@
 //!   key: a cycle of them closes every fence in it, and two roots that each
 //!   revoke themselves on sibling branches both stand. No roster row settles
 //!   that state, and the fold names it (`NoRootKey`).
+//! - A carried act's owner key proof that buys only room past another
+//!   install's owner reserve is no signature a fence reads
+//!   ([`entry_signer_keys`]): the act stands or falls by its own signer, as
+//!   it did unproven.
 //! - The pinned root's anchor is the way out (OWNER-ANCHOR-ROOT-RECOVERY): a
 //!   root appointment this install counts closes its fence first, and always.
 //!   It holds every key its ancestry names as a device other than its
@@ -59,6 +63,9 @@ pub(super) struct Retirements {
     anchored: BTreeSet<AuthorityEntryHash>,
     /// The handoffs a counted appointment's proof fold closed in its line.
     recovered_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// The revocations a counted appointment's proof fold closed in a
+    /// conflict in its line (REVIEW-9799 P1).
+    recovered_crossed_revocations: BTreeSet<AuthorityEntryHash>,
     /// Each closed conflict's rows: the handoffs and revocations that fence
     /// one another round a cycle, all of whose fences closed.
     conflicts: Vec<BTreeSet<AuthorityEntryHash>>,
@@ -156,9 +163,10 @@ impl Fence {
         }
     }
 
-    /// Whether `hash` is signed, as primary or co-signer, by a key this
-    /// fence holds, in its vault and outside its line. A genesis is never
-    /// fenced: a second one is a root conflict, which the fold reports.
+    /// Whether `hash` is signed, as primary or co-signer
+    /// ([`entry_signer_keys`]), by a key this fence holds, in its vault and
+    /// outside its line. A genesis is never fenced: a second one is a root
+    /// conflict, which the fold reports.
     fn signed_outside(
         &self,
         hash: &AuthorityEntryHash,
@@ -200,6 +208,15 @@ impl Retirements {
             .collect()
     }
 
+    /// Every key a closed handoff or appointment fence holds.
+    pub(super) fn handoff_or_appointment_retired_keys(&self) -> BTreeSet<AuthorityKey> {
+        self.fences
+            .iter()
+            .filter(|fence| matches!(fence.kind, FenceKind::Handoff | FenceKind::Appointment))
+            .flat_map(|fence| fence.keys.iter().cloned())
+            .collect()
+    }
+
     /// The handoffs whose fences are closed, settled or in conflict, here or
     /// in a counted appointment's proof fold.
     pub(super) fn handoffs(&self) -> BTreeSet<AuthorityEntryHash> {
@@ -208,6 +225,25 @@ impl Retirements {
             .filter(|fence| fence.kind == FenceKind::Handoff)
             .map(|fence| fence.row)
             .chain(self.recovered_handoffs.iter().copied())
+            .collect()
+    }
+
+    /// The revocations whose fences closed in a conflict, here or in a
+    /// counted appointment's proof fold: a closed fence of another member
+    /// holds a signer of each, or of a row below it, so the fold refuses it
+    /// (as `RetiredSigner` when that fence holds its own signer, as
+    /// `InvalidAncestry` when it holds only a signer of a row below; a
+    /// recovered row keeps its proof fold's refusal,
+    /// `Recovered::entry_fold`), and its own fence ended its key all the
+    /// same. The owner's key changes list names the first kind as removed by
+    /// an ended key and the second as removed in conflict
+    /// (`owner_key_changes`).
+    pub(super) fn crossed_revocations(&self) -> BTreeSet<AuthorityEntryHash> {
+        self.fences
+            .iter()
+            .filter(|fence| fence.kind == FenceKind::Revocation && fence.conflict)
+            .map(|fence| fence.row)
+            .chain(self.recovered_crossed_revocations.iter().copied())
             .collect()
     }
 
@@ -467,6 +503,7 @@ fn close_fences(
             .collect(),
         anchored,
         recovered_handoffs: recovered.closed_handoffs.clone(),
+        recovered_crossed_revocations: recovered.crossed_revocations.keys().copied().collect(),
         conflicts: conflicts.into_iter().collect(),
     };
     for hash in states
@@ -507,10 +544,24 @@ fn anchor_signed(entry: &AuthorityLogEntry, anchor: impl Fn(&[u8; 32]) -> bool) 
         }
 }
 
-/// The primary signer and every co-signer of `entry`.
+/// The keys a fence reads as signing `entry`: its primary signer and every
+/// co-signer, but the one owner key proof a carried act carries only for
+/// room past another install's owner reserve
+/// ([`super::owner_proof::proof_judged_at_merge`]; row
+/// OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS). That cosign moves nothing in
+/// any fold, so a revocation or handoff that retires its key on a branch the
+/// act never saw leaves the act standing, as the same act carried unproven
+/// stands: a residence result does not vanish and send its directive round
+/// again (REVIEW-9946 P1). The act's own signer stays fenced. The reserve
+/// door asks the cosign's key to be live itself (`log_budget`
+/// `signs_for_the_owner`), so a retired key's proof buys no reserve.
 pub(super) fn entry_signer_keys(entry: &AuthorityLogEntry) -> impl Iterator<Item = &AuthorityKey> {
-    std::iter::once(&entry.signer.public_key)
-        .chain(entry.cosigns.iter().map(|cosign| &cosign.public_key))
+    let cosigns: &[AuthoritySignature] = if super::owner_proof::proof_judged_at_merge(&entry.op) {
+        &[]
+    } else {
+        &entry.cosigns
+    };
+    std::iter::once(&entry.signer.public_key).chain(cosigns.iter().map(|cosign| &cosign.public_key))
 }
 
 /// The row stored as authority history at `hash`'s id, if one is. A row of
@@ -553,11 +604,11 @@ pub(crate) fn door_ancestor_row(
     }
 }
 
-/// Whether this vault held the row at `hash` before a write: it stores it,
-/// or the checkpoint image it adopted (`evidence`) covers it. A row only the
-/// write brings is not held, so a refused write's sibling rows never stand in
-/// its equivocation evidence as handoffs this vault holds (OF-166).
-pub(crate) fn authority_row_held(
+/// Whether `txn` holds the row at `hash`: the vault stores it, or the adopted
+/// checkpoint image (`evidence`) covers it. The door reads the committed state,
+/// so a row only the write brings is not held. A refused write's sibling rows
+/// never stand in its equivocation evidence as handoffs this vault holds (OF-166).
+pub(super) fn authority_row_held(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     evidence: Option<&super::adopted_evidence::AdoptedEvidence>,
@@ -565,22 +616,6 @@ pub(crate) fn authority_row_held(
 ) -> crate::error::Result<bool> {
     Ok(stored_authority_row(store, txn, hash)?.is_some()
         || evidence.is_some_and(|evidence| evidence.rows().contains_key(hash)))
-}
-
-/// What an import held before its write, as [`authority_row_held`] reads a
-/// vault: whether the row at a hash was resident (`resident`), or covered by
-/// the image the vault had adopted before the import's transaction staged
-/// anything (`held_evidence`). An image the import's own prelude adopts (a
-/// sealed kit restore's) rolls back with a refused import, so a row only it
-/// covers is no handoff this vault holds (REVIEW-9572 round 2).
-pub(super) fn import_row_held<'a>(
-    resident: &'a BTreeSet<AuthorityEntryHash>,
-    held_evidence: Option<&'a super::adopted_evidence::AdoptedEvidence>,
-) -> impl FnMut(&AuthorityEntryHash) -> crate::error::Result<bool> + 'a {
-    move |hash| {
-        Ok(resident.contains(hash)
-            || held_evidence.is_some_and(|evidence| evidence.rows().contains_key(hash)))
-    }
 }
 
 /// Whether `entry` is already in the log at its own id, stored as an

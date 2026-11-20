@@ -103,7 +103,9 @@ fn setup() -> Fixture {
     let vault =
         Vault::open_owned(dir.path(), VaultConfig::device()).expect("open the process-owned vault");
     vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
-    let issuer = vault.load_host_slip_issuer().expect("host slip issuer");
+    let issuer = vault
+        .bootstrap_host_slip_issuer()
+        .expect("this install's host slip issuer");
     vault
         .ensure_host_root_slip(&issuer)
         .expect("owner root slip");
@@ -230,6 +232,7 @@ fn owner_turns_on(fixture: &Fixture, key: &str, item: Option<&str>, agent: Entit
             why: None,
             check_in_ref: None,
             weight_runs: None,
+            surface: None,
         }],
         false,
     )

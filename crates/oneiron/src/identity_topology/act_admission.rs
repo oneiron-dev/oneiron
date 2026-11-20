@@ -265,6 +265,16 @@ impl TopologySeal {
         self.answer = Some(ask);
         self
     }
+
+    /// The owner's proof, when this seal records the owner's own decision:
+    /// what a door the decision also writes through revalidates in its own
+    /// transaction. `None` for an agent's decision and the engine's seal.
+    pub(crate) fn deciding_owner(&self) -> Option<&crate::consent::AuthenticatedOwner> {
+        match &self.by {
+            TopologySealBy::Decision(ActAuthority::Owner(owner, _)) => Some(owner),
+            TopologySealBy::Decision(ActAuthority::Agent(_)) | TopologySealBy::Engine(_) => None,
+        }
+    }
 }
 
 /// What a validated seal context records on each seal its write signs.

@@ -399,8 +399,9 @@ fn program_for(
 }
 
 /// `attempt`'s stamp and the admission it binds, in `txn`. A row that does
-/// not decode reads as absent.
-fn program_of_in_txn(
+/// not decode reads as absent. The delegate's program-hold release judges
+/// its read with this too (`release::delegate_reads_program_in_txn`).
+pub(super) fn program_of_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     attempt: AttemptId,

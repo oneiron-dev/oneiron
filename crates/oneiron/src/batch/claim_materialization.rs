@@ -725,6 +725,20 @@ pub(crate) fn apply_owner_bound_claim_puts_with_transitions(
     transitions: Vec<super::VerifiedClaimTransition>,
     persist_pending: bool,
 ) -> Result<()> {
+    let gate_mode =
+        ApplyOpsGateMode::new(false, persist_pending).with_verified_claim_transitions(transitions);
+    apply_owner_bound_claim_puts_in_mode(vault, txn, ops, bindings, gate_mode)
+}
+
+/// [`apply_owner_bound_claim_puts_with_transitions`] under `gate_mode`, which
+/// gets `bindings` as its claim materializations.
+fn apply_owner_bound_claim_puts_in_mode(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    ops: Vec<BatchOp>,
+    bindings: Vec<ClaimMaterialization>,
+    gate_mode: ApplyOpsGateMode,
+) -> Result<()> {
     let mut remaining = bindings.iter();
     for op in &ops {
         if matches!(
@@ -765,16 +779,16 @@ pub(crate) fn apply_owner_bound_claim_puts_with_transitions(
         vault
             .text_index_trusted
             .load(std::sync::atomic::Ordering::Acquire),
-        ApplyOpsGateMode::new(false, persist_pending)
-            .with_claim_materializations(bindings)
-            .with_verified_claim_transitions(transitions),
+        gate_mode.with_claim_materializations(bindings),
     )
 }
 
 mod demotion;
 mod lifecycle;
+mod provenance_puts;
 mod succession;
 use demotion::demotion_body;
+pub(crate) use provenance_puts::apply_provenance_claim_puts;
 pub(crate) use succession::SuccessionWriter;
 
 #[cfg(test)]
