@@ -705,6 +705,10 @@ pub(in crate::api::ai::chat) async fn start_turn(
     if recalled && let Some(rider_ack) = rider_ack {
         rider_ack.commit(server).await;
     }
+    // A board the admitted call carried goes to this machine's home as prefetch seeds.
+    if recalled && let Some(rows) = &board_rows {
+        crate::board_seed_report::report_delivered_board(server, rows.iter().copied());
+    }
     Ok(Started {
         stream: request.stream,
         conversation_ref: request.conversation_ref,

@@ -203,6 +203,29 @@ fn retained_row_withheld(
     Ok(!exported)
 }
 
+/// The source key and value of each retained tuple from `table` this vault's whole-vault export
+/// carries, in physical key order: the export's own collection
+/// ([`collect_retained_side_rows_in_txn`]), for integration tests.
+///
+/// # Errors
+///
+/// The collection's; a carried row that does not read as its envelope.
+#[cfg(oneiron_test_support)]
+pub(crate) fn exported_retained_tuples(
+    vault: &crate::Vault,
+    table: &str,
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut tuples = Vec::new();
+    for row in collect_retained_side_rows_in_txn(vault, &rtxn)? {
+        let envelope = RETAINED_SIDE_ROWS.decode_value(&row.value)?;
+        if envelope.source_table == table {
+            tuples.push((envelope.source_key, envelope.source_value));
+        }
+    }
+    Ok(tuples)
+}
+
 /// Every retained row this export carries, in physical key order: the live rows of the
 /// retained source tables read raw and marked `source_live`, unioned with the inert envelopes
 /// already stored, deduplicated by [`retained_side_row_key`] with the live row kept. A row about

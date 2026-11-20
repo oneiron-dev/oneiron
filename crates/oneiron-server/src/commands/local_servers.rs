@@ -224,11 +224,13 @@ fn read(path: &Path) -> Option<LocalServer> {
 /// Opens `path` to read when no one but this user can write it: a regular
 /// file, not a link, theirs, with no write bit for anyone else and, on
 /// macOS, no ACL entry that could grant one. What a runtime file or a pin
-/// names is where a hook sends a credential.
+/// names is where a hook sends a credential. The open does not wait, so a
+/// FIFO in place of the file is refused at once (a regular file reads the
+/// same either way).
 pub(super) fn open_own(path: &Path) -> Option<fs::File> {
     let file = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
         .ok()?;
     let metadata = file.metadata().ok()?;

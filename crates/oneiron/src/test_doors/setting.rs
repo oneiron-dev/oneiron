@@ -198,6 +198,31 @@ pub fn setting_change(
     crate::setting::change_in_txn(&vault.store, &txn, sequence)
 }
 
+/// Every change the setting change stream holds, oldest first (stage 7c-1 tests).
+///
+/// # Errors
+///
+/// A change row that does not decode; storage errors.
+#[cfg(feature = "test-support")]
+pub fn setting_changes(vault: &Vault) -> Result<Vec<crate::setting::SettingChange>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(crate::setting::settings_after_in_txn(&vault.store, &txn, None, usize::MAX)?.0)
+}
+
+/// Waits for, then holds, the turn a change of `key` takes before its write opens, until the
+/// returned guard drops (stage 7c-1 tests): a holder of the calendar admission turn.
+///
+/// # Errors
+///
+/// An unknown key, or one that names no turn; the turn's refusal.
+#[cfg(feature = "test-support")]
+pub fn hold_setting_write_turn(vault: &Vault, key: &str) -> Result<Box<dyn std::any::Any>> {
+    let turn = crate::setting::spec_named(key)?
+        .write_turn
+        .ok_or(Error::InvariantViolation("the key names no write turn"))?;
+    (turn.take)(vault)
+}
+
 /// `test.ordered_cap` read where the reader knows `known`, and `ask`, one call's request, met
 /// with it: the request layer of the typed read (stage 6.0).
 ///

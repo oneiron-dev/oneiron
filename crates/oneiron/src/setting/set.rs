@@ -12,7 +12,8 @@ use super::learned::{checked_weight, fits_in_txn};
 use super::pack::layer_default_in_txn;
 use super::project::{append_act_in_txn, rooted_in_txn, travels};
 use super::read::{
-    Loaded, StoredRow, in_force_of, key_line_grant_in_txn, load_in_txn, names_subject, table_of,
+    Loaded, StoredRow, chain_of, in_force_of, key_line_grant_in_txn, load_in_txn, names_subject,
+    table_of,
 };
 use super::signed_act::sign_owner_change_in_txn;
 use super::{
@@ -225,20 +226,25 @@ impl Vault {
     ) -> Result<SetSettingOutcome> {
         // Taken before the write opens, never inside it: a holder of the turn may be waiting on
         // the writer. An unknown key takes none; the write refuses it.
-        let _turn = match spec_named(&request.key)
+        let turn = match spec_named(&request.key)
             .ok()
             .and_then(|spec| spec.write_turn)
         {
             Some(turn) => Some((turn.take)(self)?),
             None => None,
         };
-        self.with_write_txn_grouped_after_commit(
+        let outcome = self.with_write_txn_grouped_after_commit(
             |txn| self.set_setting_in_txn(txn, caller, &request),
             |outcome| {
                 run_after_commit(self, &[(&request, &outcome)]);
                 Ok(outcome)
             },
-        )
+        );
+        // The projection pass this write's commit ran left the rows of keys with this turn for
+        // later: it runs now that the turn is released.
+        drop(turn);
+        super::project::project_deferred_settings(self);
+        outcome
     }
 
     /// [`Self::set_setting`] in the caller's write: the same wall, checks, power, change row and
@@ -647,7 +653,7 @@ fn direction_in_txn(
             (None, _) => ChangeDirection::Looser,
         });
     }
-    let chain = slot_chain(change)?;
+    let chain = slot_chain_in_txn(vault, txn, change)?;
     let item = change.key.item.as_deref();
     let loaded = load_in_txn(&vault.store, txn, spec, &chain, item)?;
     let fits = fits_in_txn(&vault.store, txn, spec, &chain)?;
@@ -678,20 +684,40 @@ fn direction_in_txn(
     Ok(ChangeDirection::of(&after, &before, no_wider))
 }
 
-/// The scopes the readers of `change`'s slot read through: its scope and every wider one the key
-/// admits, narrowest first.
-fn slot_chain(change: &Change<'_>) -> Result<Vec<SettingScope>> {
+/// The scopes the readers of `change`'s slot read through, in `txn`: its scope and every wider
+/// one the key admits, narrowest first. A project's readers walk its whole stored line, the
+/// project and then its ancestors over the stored parents, as a read from it does
+/// ([`chain_of`]): a parent's pin or row changes what the slot's change gives them.
+fn slot_chain_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    change: &Change<'_>,
+) -> Result<Vec<SettingScope>> {
     match &change.key.scope {
         SettingScope::Vault => Ok(vec![SettingScope::Vault]),
+        SettingScope::Project(project) => {
+            let lines: Vec<SettingScope> = vault
+                .project_lines_in_txn(txn, *project)?
+                .into_iter()
+                .map(SettingScope::Project)
+                .collect();
+            chain_of(change.spec, &lines)
+        }
         scope => SettingScope::chain(std::slice::from_ref(scope), change.spec.scopes),
     }
 }
 
-/// Whether the loaded row `row` is `change`'s own slot.
+/// Whether the loaded row `row` is `change`'s own slot: by the mode its row is stored under, so a
+/// pin read as a value row (stage 7b-3) is never the value slot a change of that slot replaces.
 fn is_slot(row: &Loaded, change: &Change<'_>) -> bool {
+    let stored_mode = if row.pin_read_as_value {
+        SettingMode::Pin
+    } else {
+        row.found.mode
+    };
     row.found.at == 0
         && row.found.item == change.key.item.is_some()
-        && row.found.mode == change.key.mode
+        && stored_mode == change.key.mode
 }
 
 /// What `agent` may do to `change`'s row, and in which capacity: A0's reading of the actor, or
@@ -818,7 +844,7 @@ fn one_row_bounds_in_txn(
     if spec.reads_met() {
         return Ok(true);
     }
-    let chain = slot_chain(change)?;
+    let chain = slot_chain_in_txn(vault, txn, change)?;
     let item = change.key.item.as_deref();
     let loaded = load_in_txn(&vault.store, txn, spec, &chain, item)?;
     if loaded

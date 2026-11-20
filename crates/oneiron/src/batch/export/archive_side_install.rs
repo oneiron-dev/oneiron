@@ -246,6 +246,7 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
             Some(Group::Consent)
         }
         name if name == side_table::VOICE_IDENTITY_CONSENT.name
+            || name == side_table::VOICE_IDENTITY_CONSENT_VOID.name
             || name == side_table::VOICE_REF_RENDER_CONSENT.name =>
         {
             Some(Group::Voice)

@@ -763,27 +763,12 @@ fn dreamer_principal() -> Result<WriteActor, Error> {
     ))
 }
 
-/// The owner's live hold on `actor`'s conflict review of `subject`, its own
-/// or the whole vault's, by the Grant's ref (untangle 6.7a-2): a derivation
-/// batch's settlement honours it as the Dreamer's review does.
-///
-/// # Errors
-///
-/// Storage errors.
-pub(crate) fn conflict_review_held_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    actor: WriteActor,
-    subject: EntityId,
-) -> Result<Option<String>, Error> {
-    live_review_bound(vault, txn, actor, HOLD_VERB, subject)
-}
-
 /// The owner's live hold on the Dreamer's conflict review of `subject`, its
 /// own or the whole vault's, by the Grant's ref. It is the one hold an owner
 /// mints ([`Memory::hold_dreamer_conflict_review`]), so the open conflicts
-/// page asks it for every reader but the owner: a held subject's conflicts
-/// are the owner's to answer.
+/// page asks it for every reader but the owner, and a derivation batch's
+/// settlement asks it for every actor: a held subject's conflicts are the
+/// owner's to answer.
 ///
 /// # Errors
 ///
