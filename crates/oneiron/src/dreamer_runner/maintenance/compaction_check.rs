@@ -247,6 +247,9 @@ pub struct CompactionCheckModel<'a> {
     pub role: ModelRole,
     /// The host's rubric: prompt data, never engine prose.
     pub rubric: &'a str,
+    /// The input the judge's model holds, as the host lends it: a judge input
+    /// past it settles unjudged (`span_past_judge_room`); `None` sends it whole.
+    pub window_tokens: Option<u64>,
     /// The host's decision path for the typed support verdict (FIX 8713);
     /// `None` before the host staffs one, when the judge's own verdict
     /// stands, recorded as untyped.
