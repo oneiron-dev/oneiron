@@ -60,7 +60,7 @@ pub(super) fn fence_overlay_replay_in_txn<'r>(
     txn: &mut heed::RwTxn<'_>,
     mut record: Cow<'r, CodeRunReplayRecord>,
     stamped: Option<(EntityId, EntityId)>,
-) -> Result<replay_rows::FencedReplay<'r>> {
+) -> Result<Cow<'r, CodeRunReplayRecord>> {
     let base = canonical_store(dbs);
     let owner = response_owner_in_txn(dbs, txn, &record.run_id)?;
     let live = record.live_run.as_ref().map(|live| live.actor);
@@ -74,7 +74,7 @@ pub(super) fn fence_overlay_replay_in_txn<'r>(
             .chain(live)
             .any(|actor| actor_gone_in_store(base, read, &actor));
     if !erased {
-        return Ok(replay_rows::FencedReplay::kept(record));
+        return Ok(record);
     }
     let run = owner.as_ref().map_or_else(
         || stamped.map_or(record.run_id, |(run, _)| run),
@@ -82,9 +82,9 @@ pub(super) fn fence_overlay_replay_in_txn<'r>(
     );
     // A room decides with its base's custody (FIX 2329): each request keeps
     // the custody records it names (FIX ERASED-IDENTITY-ONE-STAND-IN).
-    let written = erase_replies_in_writer(base, txn, record.to_mut())?;
+    erase_replies_in_writer(base, txn, record.to_mut())?;
     mark_response_erased_in_txn(dbs, txn, record.run_id, run)?;
-    Ok(replay_rows::FencedReplay::erased(record, written))
+    Ok(record)
 }
 
 /// Erases, in every live room's overlay, what it holds of the runs of each

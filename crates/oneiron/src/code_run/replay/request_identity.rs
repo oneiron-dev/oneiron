@@ -283,6 +283,19 @@ pub(in crate::code_run) fn is_erased_request(request: &Value) -> bool {
     ErasedRequest::of(request).is_some()
 }
 
+/// The place of the identity among the erased form's fields: state, cause,
+/// identity, then at most one kept field ([`ErasedRequest::of`]).
+const ERASED_IDENTITY_FIELD: usize = 2;
+
+/// The place among `request`'s fields of the identity its erased form
+/// keeps, when `request` holds that form (FIX
+/// FENCE-ERASED-FORM-THROUGH-WALL). Every other field of the form holds
+/// the erase's fixed words alone: its state, its cause, and a spawn's typed
+/// ask or a verb call's catalog verb.
+pub(in crate::code_run) fn erased_identity_field(request: &Value) -> Option<usize> {
+    ErasedRequest::of(request).map(|_| ERASED_IDENTITY_FIELD)
+}
+
 impl CodeRunBridgeCall {
     /// Whether an erase took this call's request words (FIX 6534): its
     /// request holds the erased form.

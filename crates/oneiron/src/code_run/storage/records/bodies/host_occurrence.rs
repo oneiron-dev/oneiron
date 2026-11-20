@@ -86,7 +86,6 @@ impl Vault {
         let record = fence_replay_in_txn(self, &mut wtxn, Cow::Owned(record))?;
         replay_rows::put_fenced(self, &mut wtxn, &record)?;
         let output = record
-            .record()
             .outputs
             .iter()
             .find(|output| output.path == path)
