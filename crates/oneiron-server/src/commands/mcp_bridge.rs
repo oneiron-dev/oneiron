@@ -68,10 +68,20 @@ use wake::WakePump;
 /// finishes within its deadline.
 const MAX_IN_FLIGHT: usize = 8;
 
-/// The longest message the bridge reads from the client: the server's own
-/// request-body limit on its MCP routes (axum's default), which nothing
-/// longer could pass anyway.
-const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
+/// The longest message the bridge reads from the client: the least body the
+/// server's MCP routes read (`limits.request_body_bytes` never defaults
+/// under it). A server set to read less refuses a longer one itself, in its
+/// typed envelope. A message too long for the server's socket goes over HTTP
+/// ([`link`]).
+const MAX_FRAME_BYTES: usize = crate::config::REQUEST_BODY_FLOOR_MIN_BYTES as usize;
+
+/// The longest request frame the bridge writes to the server's socket: the
+/// server's default bound on an inbound socket frame. The server closes the
+/// socket on a longer one, failing every request in flight on it, so a
+/// longer request goes over HTTP instead, which reads bodies up to the
+/// request floor; the owner's, with no other carrier, is refused unsent. A
+/// server set to a lower bound still closes on a frame between the two.
+const SOCKET_MAX_OUTBOUND_FRAME: usize = crate::config::server_config::DEFAULT_MAX_FRAME_SIZE;
 
 /// The largest answer the bridge takes from the server for one request.
 const MAX_REPLY_BYTES: usize = 16 * 1024 * 1024;
@@ -761,6 +771,7 @@ impl Bridge {
                 Refusal::Auth(json!({ "error": why }))
             }
             link::Cut::Unavailable(why) => Refusal::Unavailable(why),
+            link::Cut::FrameTooLarge => Refusal::FrameTooLarge,
         }
     }
 }
@@ -852,6 +863,9 @@ enum Refusal {
     Unavailable(String),
     /// An answer past [`MAX_REPLY_BYTES`], dropped unread.
     TooLarge,
+    /// Owner mode only: a message too long for the server's MCP socket, not
+    /// sent.
+    FrameTooLarge,
 }
 
 impl Refusal {
@@ -905,6 +919,17 @@ impl Refusal {
                 -32000,
                 "reply_too_large",
                 &format!("the server's answer is over {MAX_REPLY_BYTES} bytes; it was dropped"),
+                None,
+            ),
+            Self::FrameTooLarge => rpc_error(
+                id,
+                -32600,
+                "frame_too_large",
+                &format!(
+                    "a message framed for the server's MCP socket may be at most \
+                     {SOCKET_MAX_OUTBOUND_FRAME} bytes, and owner mode has no other carrier; \
+                     this one was not sent"
+                ),
                 None,
             ),
         }
