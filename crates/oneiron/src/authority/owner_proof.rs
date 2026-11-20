@@ -560,4 +560,23 @@ impl crate::Vault {
             })
             .map(|held| OwnerProofSigner { vault: self, held })
     }
+
+    /// The owner key this install proves a carried act with on `fold`, one
+    /// rule for every carried act whose fold reads no proof of its own (row
+    /// OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS): the act is the owner's
+    /// own write, made in person and revalidated in the writing transaction
+    /// (`owner_authored`, [`crate::consent::OwnerAuthoredWrite`]), and this
+    /// install holds a key that proves now ([`Self::owner_proof_signer`]).
+    /// The proof buys the act room past another install's owner reserve
+    /// ([`super::log_budget`]) and nothing in any fold. An agent's Grant, a
+    /// delegated holder, a narrowed or delegated owner credential, a queued
+    /// retry and automatic upkeep author no such write, so their acts are
+    /// carried unproven and never spend another install's reserve.
+    pub(crate) fn owner_act_proof_signer(
+        &self,
+        fold: &AuthorityFold,
+        owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
+    ) -> Option<OwnerProofSigner<'_>> {
+        owner_authored.and_then(|_| self.owner_proof_signer(fold))
+    }
 }

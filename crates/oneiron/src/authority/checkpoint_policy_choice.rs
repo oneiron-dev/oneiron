@@ -167,7 +167,10 @@ impl Vault {
             return Err(authority_refused(NO_CARRIER));
         }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joiner = FrontierSigner::Install(machine, &key);
+        // The owner key this install holds proves the act and its joins
+        // (row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS).
+        let proof = self.owner_proof_signer(&fold);
+        let joiner = FrontierSigner::install(machine, &key, proof.as_ref());
         let fold = self
             .prepare_authority_frontier_in_txn(&mut txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
@@ -199,7 +202,7 @@ impl Vault {
                 choice,
             }),
             now,
-            self.owner_proof_signer(&fold).as_ref(),
+            proof.as_ref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {

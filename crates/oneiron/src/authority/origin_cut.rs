@@ -289,7 +289,10 @@ impl Vault {
             }
             let seen = fold.origin_cuts.revision(target);
             // FIX 7908: join a frontier wider than one entry names.
-            let joiner = FrontierSigner::Install(machine, &key);
+            // The owner key this install holds proves the act and its joins
+            // (row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS).
+            let proof = self.owner_proof_signer(&fold);
+            let joiner = FrontierSigner::install(machine, &key, proof.as_ref());
             let fold = self
                 .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
                 .unwrap_or(fold);
@@ -313,7 +316,7 @@ impl Vault {
                     writer,
                 }),
                 now,
-                self.owner_proof_signer(&fold).as_ref(),
+                proof.as_ref(),
             )?;
             acts.push((target, authority_entry_hash(&entry)?));
             let at = TimeRange {

@@ -415,7 +415,10 @@ fn host_action_lapse(error: Error) -> Error {
 ///
 /// Only [`AuthenticatedOwner::owner_authored_write_in_txn`] builds one, and
 /// it is neither `Clone` nor stored: the writing door takes it by value into
-/// that transaction's gate mode, so no later write can inherit it.
+/// that transaction's gate mode, so no later write can inherit it. A door
+/// that carries an authority act lends it by reference to pick the owner
+/// key's proof the act carries
+/// ([`crate::Vault::owner_act_proof_signer`]).
 #[derive(Debug)]
 pub(crate) struct OwnerAuthoredWrite {
     actor: EntityId,
