@@ -641,22 +641,26 @@ pub(in crate::sync::selector) fn filter_window_doc(
             }
         });
     }
+    // A copy to another vault carries a record's delete only of a row this
+    // vault released to the grant's peer (CROSS-VAULT-DELETE-NEVER-ADMITTED =
+    // A): that release, not this export's selection, decides it, so a delete
+    // reaches every copy the peer was sent. The peer's admission lands it
+    // only where its own delivery ledger proves the copy; a guest document
+    // drops every one (`strip_guest_share_metadata`).
+    let mut peer_release = other_vault
+        .then(|| super::peer_tombstone_release::PeerTombstoneRelease::new(&selector.grant_id));
     map_for_each_tombstone_value(&source_tombstones, |raw_key, value| {
-        // A copy to another vault carries no tombstone: that vault's
-        // admission refuses every one, so one would fail the whole answer
-        // (`admission::reject_federated_tombstones`), and the guest codec
-        // drops them all (REVIEW-10024). A delete reaches the owner's own
-        // machines alone.
-        if other_vault {
-            return;
-        }
         let Ok(id) = EntityId::from_hex(raw_key) else {
             return;
         };
         if claims_withheld.contains(&id) {
             return;
         }
-        if !kept.contains(&id) && !export.admits(vault, &ttxn, &id, value) {
+        let selected = match peer_release.as_mut() {
+            Some(release) => release.releases(vault, &ttxn, raw_key, &id, value),
+            None => kept.contains(&id) || export.admits(vault, &ttxn, &id, value),
+        };
+        if !selected {
             return;
         }
         // FIX SELECTOR-TOMBSTONE-LABEL (OPUS-LEAKS): a tombstone names the

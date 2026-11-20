@@ -109,12 +109,15 @@ impl SyncClient {
             return Err(refused());
         }
         let window = manager.open_window(&key)?;
+        // The owner's delete of a row this vault released to the peer travels
+        // under the live pact (CROSS-VAULT-DELETE-NEVER-ADMITTED = A).
         let (envelope, rows, travelled) = crate::sync::selector::guest_share_envelope_body_listing(
             vault,
             &window.doc,
             &key,
             grant.scope,
             &selector,
+            crate::sync::selector::GuestTombstones::Released,
         )?;
         let update = match crate::federation::record_scope::witness_connect_positions(
             vault,

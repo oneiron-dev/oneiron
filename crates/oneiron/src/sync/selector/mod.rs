@@ -102,6 +102,7 @@ pub(crate) fn keep_carried_born_with(
 ) -> crate::error::Result<()> {
     born_with::keep_carried(vault, carried)
 }
+pub(crate) use self::authorize::GuestTombstones;
 pub(in crate::sync) use self::codec::granted_window_doc;
 pub(crate) use self::codec::guest_share_envelope_body_listing;
 pub use self::codec::{
