@@ -142,18 +142,46 @@ impl AdmittedIdentityAsk {
     }
 }
 
-/// Whether `admit` reads candidate `id`: a stored entity by its own row,
-/// archived or not, as the resolver that named it sees the archive; a cold
-/// provisional one, which has none, through a span naming it in its origin
-/// turn.
+/// Whether `admit` reads candidate `id` as an option a settle may take: a
+/// stored entity by its own row, archived or not, as the resolver that
+/// named it sees the archive (the settle restores it); a cold provisional
+/// one, which has none, through a span naming it in its origin turn.
 pub(super) fn candidate_in_txn(
     vault: &Vault,
     admit: &Admit<'_, '_>,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
+    entity_in_txn(vault, admit, txn, id, true)
+}
+
+/// Whether `admit` reads the one entity `id` a saved link names, as it
+/// stands: a stored entity by its plain row read, so an archived one is
+/// refused, since an answer that settles nothing restores nothing; a cold
+/// provisional one through a span naming it in its origin turn.
+pub(super) fn linked_in_txn(
+    vault: &Vault,
+    admit: &Admit<'_, '_>,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    entity_in_txn(vault, admit, txn, id, false)
+}
+
+/// [`candidate_in_txn`] (`through_archive`) or [`linked_in_txn`].
+fn entity_in_txn(
+    vault: &Vault,
+    admit: &Admit<'_, '_>,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    through_archive: bool,
+) -> Result<bool> {
     let Some(entity) = crate::tagging::provisional_in_txn(&vault.store, txn, id)? else {
-        return admit.reads_through_archive(txn, id);
+        return if through_archive {
+            admit.reads_through_archive(txn, id)
+        } else {
+            admit.reads(txn, id)
+        };
     };
     for (turn, mention) in vault.mentions_naming_in_txn(txn, id)? {
         if turn == entity.origin && admit.reads_source(txn, &turn, &mention.message)? {

@@ -17,9 +17,17 @@
 //! and the owner's answer naming the archived person is "not one of the
 //! ask's options".
 //!
-//! Guard that holds with and without the fix (the last test): the lift
-//! reaches only the candidate read; the owner's plain read of the archived
-//! person still finds none, and listing the ask restores no one.
+//! The settle restores the person it picks on every path: the third test's
+//! ask has no provisional person of its own, so nothing is absorbed. Red
+//! without the fix (the answer is no option) and with the candidate read
+//! alone (the answer settles, and the person stays archived).
+//!
+//! Guards that hold with and without the fix (the last two tests): the
+//! lift reaches only the candidate read; the owner's plain read of the
+//! archived person still finds none, and listing the ask restores no one.
+//! An act-now on a name whose one saved person is archived answers unknown,
+//! as it did before the fix, since that answer restores no one (red with
+//! the candidate read used there too).
 //!
 //! Each `FIXTURE:` assertion checks the setup, never the fix.
 //!
@@ -30,11 +38,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::claim::{ScopedRead, ScopedReadActorKey};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::dreamer_runner::maintenance::identity::{IdentityAskReason, IdentityAskView};
+use oneiron::dreamer_runner::maintenance::identity::{
+    IdentityActNow, IdentityActNowRequest, IdentityAskReason, IdentityAskView, IdentityEffect,
+};
 use oneiron::edge::EdgeActorClass;
 use oneiron::memory::extraction::{EncoderOutput, NerSpan};
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
@@ -57,12 +66,11 @@ const ARCHIVED: &str = "Owen Smith";
 /// it, but every part sounds like his (Soundex O500 and S530).
 const MENTION: &str = "Owan Smyth";
 
-fn now_seconds() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock after the epoch")
-        .as_secs()
-}
+/// The pass's clock, in seconds. The re-check, the due list and the answer
+/// compare `now` only with the ask's own stamps (it opens with `retry_at` 0
+/// and `opened_at` at `now`), never with a row the vault stamps by its own
+/// clock, so a fixed instant stands in for the wall clock.
+const NOW: u64 = 1_763_600_000;
 
 /// A device config whose tagger saves its tags, mapping the `PERSON` label.
 fn tagging_config() -> VaultConfig {
@@ -128,7 +136,7 @@ fn save_as(vault: &Vault, author: EntityId, text: &str, name: &str) -> (EntityId
         turn_ref: Some(TURN.to_owned()),
         thread_audience: None,
         project: None,
-        occurred_at: now_seconds(),
+        occurred_at: NOW,
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,
@@ -236,7 +244,7 @@ fn archived_owen_is_asked_about(fixture: &Fixture) -> (EntityId, EntityId, Entit
     assert_eq!(kind, ENTITY_TYPE_PERSON);
     let provisional = entity;
 
-    let asks = run_identity_recheck(vault, now_seconds()).expect("recheck");
+    let asks = run_identity_recheck(vault, NOW).expect("recheck");
     assert_eq!(
         asks.len(),
         1,
@@ -292,9 +300,7 @@ fn an_archived_person_a_name_sounds_like_is_an_option_on_the_owners_card() {
         view.options.iter().any(|option| option.entity.is_none()),
         "someone new stays an option: {view:?}"
     );
-    let due = vault
-        .identity_asks_due(&read, now_seconds(), 4)
-        .expect("due asks");
+    let due = vault.identity_asks_due(&read, NOW, 4).expect("due asks");
     assert_eq!(
         due,
         vec![view.ask.clone()],
@@ -320,7 +326,7 @@ fn the_owner_who_picks_the_archived_person_restores_him_and_mints_no_twin() {
             &fixture.proof,
             &view.ask,
             &format!("is:{}", owen.to_hex()),
-            now_seconds(),
+            NOW,
         )
         .expect("the owner's answer names an option of his card");
 
@@ -363,5 +369,112 @@ fn the_archive_stays_hidden_from_every_other_read_of_the_owners_lane() {
     assert!(
         vault.archived_entity(&owen).expect("read").is_some(),
         "listing the ask restores no one"
+    );
+}
+
+#[test]
+fn the_owner_who_picks_an_archived_person_of_two_who_sound_alike_restores_him() {
+    let fixture = open();
+    let vault = &fixture.vault;
+    let owen = person(vault, ARCHIVED);
+    let other = person(vault, "Owen Smyth");
+    let (turn, link) = save_as(vault, fixture.owner, &format!("{MENTION} called."), MENTION);
+    assert_eq!(
+        link.entities().iter().copied().collect::<BTreeSet<_>>(),
+        BTreeSet::from([owen, other]),
+        "FIXTURE: two people who sound alike are both candidates, not a mint: {link:?}"
+    );
+    let asks = run_identity_recheck(vault, NOW).expect("recheck");
+    assert_eq!(
+        asks.len(),
+        1,
+        "FIXTURE: one ask for the one mention: {asks:?}"
+    );
+    assert_eq!(
+        asks[0].provisional, None,
+        "FIXTURE: the ask has no provisional person a settle could absorb"
+    );
+    archive_as_cleanup(vault, &owen).expect("the cleanup archives Owen");
+    let read = owner_read(vault, fixture.owner);
+    let view = the_owners_ask(vault, &read);
+
+    let settled = vault
+        .answer_identity_ask(
+            &read,
+            &fixture.proof,
+            &view.ask,
+            &format!("is:{}", owen.to_hex()),
+            NOW,
+        )
+        .expect("the owner's answer names an option of his card");
+
+    assert_eq!(settled.entity, owen.to_hex(), "the mention is Owen");
+    assert!(
+        vault.archived_entity(&owen).expect("read").is_none(),
+        "the answer restored Owen though it absorbed no provisional person"
+    );
+    assert!(
+        read.is_ref_readable(&owen).expect("named read"),
+        "the owner's plain read finds the restored Owen"
+    );
+    assert_eq!(
+        saved_link(vault, &turn).entities(),
+        [owen],
+        "the mention names Owen alone"
+    );
+    assert!(
+        vault.identity_asks(&read).expect("asks").is_empty(),
+        "the answered ask is closed"
+    );
+}
+
+/// The owner's act-now on `name`: who is it, before a send?
+fn act_now(fixture: &Fixture, name: &str) -> IdentityActNow {
+    fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .identity_act_now(&IdentityActNowRequest {
+            name: name.to_owned(),
+            conversation: None,
+            effect: IdentityEffect::Send,
+            prompt: format!("Which {name}?"),
+            someone_new: "Someone new".to_owned(),
+            provisional: None,
+        })
+        .expect("the act-now answer")
+}
+
+#[test]
+fn an_act_now_on_a_name_whose_one_person_is_archived_answers_unknown() {
+    let fixture = open();
+    let vault = &fixture.vault;
+    let owen = person(vault, ARCHIVED);
+    let (_turn, link) = save_as(
+        vault,
+        fixture.owner,
+        &format!("{ARCHIVED} called."),
+        ARCHIVED,
+    );
+    assert_eq!(
+        link.entities(),
+        [owen],
+        "FIXTURE: the identity key links the mention to Owen alone: {link:?}"
+    );
+    let before = act_now(&fixture, ARCHIVED);
+    assert!(
+        matches!(&before, IdentityActNow::Settled { entity } if *entity == owen.to_hex()),
+        "FIXTURE: before the archive, the one linked person answers at once: {before:?}"
+    );
+    archive_as_cleanup(vault, &owen).expect("the cleanup archives Owen");
+
+    let after = act_now(&fixture, ARCHIVED);
+
+    assert!(
+        matches!(after, IdentityActNow::Unknown),
+        "an archived person no answer restores is no one the act-now names: {after:?}"
+    );
+    assert!(
+        vault.archived_entity(&owen).expect("read").is_some(),
+        "the act-now restores no one"
     );
 }

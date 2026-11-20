@@ -558,9 +558,10 @@ impl Memory<'_> {
                 now,
             )?
             else {
-                // One entity answers only when the lane reads it.
+                // One entity answers only when the lane reads it, as it
+                // stands: nothing here restores an archived one.
                 if let [entity] = current.link.entities()
-                    && admission::candidate_in_txn(vault, &admit, txn, entity)?
+                    && admission::linked_in_txn(vault, &admit, txn, entity)?
                 {
                     return Ok(IdentityActNow::Settled {
                         entity: entity.to_hex(),
