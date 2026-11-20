@@ -357,6 +357,17 @@ pub enum RecordError {
     /// never echoes a token, key or hidden id. Nothing was written.
     #[error("{0}")]
     AuthorityRefused(&'static str),
+    /// A delete of the PERSON that holds the vault's last Active owner
+    /// binding (the lead's L9-52-OWNER-SELF-DELETE = B, 14 Nov 2026): the
+    /// vault would keep no owner, and no ceremony brings the deleted person
+    /// back. The text names the two ways out (Engine
+    /// L9-52-OWNER-GUARD-COOWNER, 14 Nov 2026): erasing the vault, or binding
+    /// another owner, which an added Owner's first owner key enrolment does
+    /// (FIX OWNER-DELETE-GUARD-RECOVERY). Nothing was written.
+    #[error(
+        "this person holds the vault's last owner binding, so deleting them would leave the vault with no owner: erase the vault if ending it is the goal, or bind another owner first"
+    )]
+    LastBoundOwnerDelete,
     /// The vault's checkpoint root policy cannot be fixed, or the owner's
     /// choice of it cannot stand, and the reason names which rule refused
     /// (mesh PR2c, K06): no eligible root, a quorum the roots cannot meet or
@@ -495,6 +506,21 @@ pub enum RecordError {
         "workspace work_companion policy is require: start a work companion; a brought one is refused"
     )]
     WorkCompanionRequired,
+    /// The vault's `one_vault` row is unreadable, so onboarding refuses to
+    /// say which joining line applies. The journal stays resumable: retry
+    /// once the manifest reads again. The Complete step writes nothing on
+    /// this refusal; prior journal progress stays resumable.
+    #[error("workspace one_vault setting is unreadable: repair the policy manifest, then retry")]
+    OneVaultSettingUnreadable,
+    /// The company is not in one-vault mode; work talk stays with the member.
+    #[error("workspace one_vault mode is off: work talk stays with the member")]
+    WorkTalkStaysWithMember,
+    /// The member must acknowledge the company's one-vault notice first.
+    #[error("workspace one_vault notice has not been acknowledged by this member")]
+    OneVaultNotTold,
+    /// A born work companion already holds its talk in the company vault.
+    #[error("work talk requires a brought companion; a work companion is already company-homed")]
+    NoBroughtCompanion,
     /// A CounterpartyContact record failed pinned structural validation.
     /// Nothing was written.
     #[error("invalid counterparty contact body: {0}")]
@@ -663,6 +689,7 @@ impl RecordError {
             Self::InvalidFederationGrantBody(_) => ErrorKind::InvalidFederationGrantBody,
             Self::InvalidAuthorityLogBody(_) => ErrorKind::InvalidAuthorityLogBody,
             Self::AuthorityRefused(_) => ErrorKind::AuthorityRefused,
+            Self::LastBoundOwnerDelete => ErrorKind::LastBoundOwnerDelete,
             Self::CheckpointPolicyRefused(_) => ErrorKind::CheckpointPolicyRefused,
             Self::CheckpointPolicyRevisionStale { .. } => ErrorKind::CheckpointPolicyRevisionStale,
             Self::OwnerKeyRequired | Self::OwnerKeyMoveRefused { .. } => {
@@ -681,6 +708,10 @@ impl RecordError {
                 ErrorKind::WorkspaceMailboxAutonomyNotReady
             }
             Self::WorkCompanionRequired => ErrorKind::WorkCompanionRequired,
+            Self::OneVaultSettingUnreadable => ErrorKind::OneVaultSettingUnreadable,
+            Self::WorkTalkStaysWithMember => ErrorKind::WorkTalkStaysWithMember,
+            Self::OneVaultNotTold => ErrorKind::OneVaultNotTold,
+            Self::NoBroughtCompanion => ErrorKind::NoBroughtCompanion,
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
             Self::InvalidCommRecordBody(_) => ErrorKind::InvalidCommRecordBody,
             Self::InvalidDiagnosticBody(_) => ErrorKind::InvalidDiagnosticBody,

@@ -43,6 +43,7 @@ impl Case {
     ) -> Result<Self> {
         let backups = crate::test_support::restore_tempdir();
         let image = backups.path().join("backup");
+        vault.ensure_vault_key().expect("mint the vault data key");
         vault.snapshot_checkpoint(&image, 100)?;
         Ok(Self {
             row,
@@ -125,6 +126,7 @@ fn a_restore_inside_the_live_vaults_write_transaction_refuses_rather_than_waits(
     let (dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100).expect("backup");
     let (done, outcome) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -231,6 +233,7 @@ fn a_vault_holding_more_claims_of_a_predicate_than_a_list_holds_restores() -> Re
     batch.commit()?;
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100)?;
     Vault::restore_checkpoint_keeping_authority(
         &image,

@@ -1187,6 +1187,7 @@ fn p7_follows_a_conversation_summary_to_the_turns_it_covers() -> Result<()> {
         ClaimApprovalStatus::Approved,
         crate::ClaimLifecycleStatus::Active,
     )?;
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     body.source = Some(ClaimSource::Observed);
     // A reader's grant makes later direct claim writes pend, so the
     // summary lands first.

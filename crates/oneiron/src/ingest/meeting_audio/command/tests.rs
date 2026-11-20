@@ -142,6 +142,14 @@ fn runtime_profile_reaches_the_real_bridge_without_loading_models() {
         workspace: workspace.clone(),
         model_snapshot: workspace,
     };
+    let capabilities = config
+        .inspect_capabilities(Some((&profile, &digest)))
+        .unwrap();
+    for unit in ["asr", "diarization", "alignment_window", "cleanup_group"] {
+        assert_eq!(capabilities.unit_models[unit], Vec::<String>::new());
+    }
+    // A runtime profile loads no model, so a host whose seats name the ASR
+    // model refuses to bind the bridge's capabilities to them.
     let route = AsrRoute {
         role: super::super::AsrRole::Asr,
         model_id: "mlx-community/Qwen3-ASR-1.7B-8bit".into(),
@@ -149,12 +157,14 @@ fn runtime_profile_reaches_the_real_bridge_without_loading_models() {
         route_receipt_ref: "fixture:configuration-not-authorization".into(),
     };
     let seats = fixture_seats(&route.model_id);
-    let mut host = CommandMeetingAudioHost::new(config, route, seats)
+    let host = CommandMeetingAudioHost::new(config, route, seats)
         .unwrap()
         .with_runtime_profile(profile.clone(), digest.clone())
         .unwrap();
-    let capabilities = host.inspect_capabilities().unwrap();
-    assert_eq!(capabilities.runtime_profile_sha256, Some(digest));
+    assert!(
+        matches!(host.inspect_capabilities(),Err(AudioError::Host{code,..}) if code=="CapabilityBindingMismatch")
+    );
+    assert_eq!(capabilities.runtime_profile_sha256, Some(digest.clone()));
     assert!(capabilities.runtime_helper_sha256.is_some());
     assert!(
         capabilities
@@ -171,9 +181,9 @@ fn runtime_profile_reaches_the_real_bridge_without_loading_models() {
     assert!(!capabilities.artifact_capable);
     assert!(!capabilities.e1_e3_evidence);
     assert!(
-        matches!(host.preflight_artifact(),Err(AudioError::Host{code,..}) if code=="ArtifactBackendUnavailable")
+        matches!(capabilities.require_artifact(),Err(AudioError::Host{code,..}) if code=="ArtifactBackendUnavailable")
     );
-    std::fs::write(profile, b"changed").unwrap();
+    std::fs::write(&profile, b"changed").unwrap();
     assert!(
         matches!(host.inspect_capabilities(),Err(AudioError::Host{code,..}) if code=="ProfileDigestMismatch")
     );

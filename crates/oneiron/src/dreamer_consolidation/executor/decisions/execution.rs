@@ -26,6 +26,7 @@ use crate::llm::decision::AskTo;
 use crate::model_decision::{DecisionQuestion, DecisionRung, EvidenceVersion};
 use crate::model_step_context::{DurableStepContext, StepEffectBinding};
 use crate::model_step_error::{DurableStepError, DurableStepResult};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_model::llm::{
     CallClass, CallEnvelope, CallPurpose, LlmRequest, LlmUsage, ModelTierRef, ResponseFormat,
     Scope, TierPrecedence,
@@ -252,6 +253,6 @@ fn verdict_shell(call: &RoleCall<'_>, scope: &Scope) -> Result<LlmRequest> {
 pub(crate) fn evidence_version_for_row(id: EntityId, body: &[u8]) -> EvidenceVersion {
     EvidenceVersion {
         id,
-        body_hash: *blake3::hash(body).as_bytes(),
+        body_hash: *ContentHash::of(body).as_bytes(),
     }
 }

@@ -11,10 +11,15 @@ pub(crate) use credential_filter::{
 pub(crate) use oneiron_store::batch::export::agent_knowledge_format;
 pub(crate) mod agent_knowledge_selection;
 mod archive_index;
+pub(crate) use archive_index::{IndexedArchive, Tag};
 mod archive_project;
 mod archive_read;
+/// The room ledgers a whole-vault export carries or withholds whole.
+mod archive_retained_room_ledgers;
 /// Inert copies of source side-table rows carried by whole-vault archives.
 pub(crate) mod archive_retained_side_rows;
+/// The records each retained side table's rows are about.
+pub(crate) mod archive_retained_subjects;
 /// The archive disposition of each decided canonical side table.
 pub(crate) mod archive_side_dispositions;
 /// Owner-permitted landing groups for retained archive rows.
@@ -26,6 +31,8 @@ pub(crate) use archive_read::{
     ArchiveFileSource, ArchiveFiles, checked_archive_manifest, read_vault_archive_indexed,
 };
 pub use archive_retained_side_rows::ArchiveRetainedSideRow;
+#[cfg(oneiron_test_support)]
+pub(crate) use archive_side_tables::PortableSideTable;
 #[cfg(oneiron_test_support)]
 pub(crate) use archive_side_tables::archive_side_family_table_names;
 pub use archive_side_tables::{

@@ -266,6 +266,7 @@ fold_state_fields!(
     machines,
     machine_keys,
     held_machine_answers,
+    restored_enrolments,
     root_anchors,
     anchor_entries,
     host_custody_keys,

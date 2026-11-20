@@ -15,8 +15,9 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState}
 use crate::claim::ScopedReadActorKey;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::{
-    AgentVerbAnswer, RunCall, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall, SelfDeniedResult,
-    SelfDispatchOutcome, SelfEffect, SelfFailedResult, SelfTaskRefusalResult, SelfTaskRefuseCall,
+    AgentVerbAnswer, CompareKnown, RunCall, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall,
+    SelfDeniedResult, SelfDispatchOutcome, SelfEffect, SelfFailedResult, SelfTaskRefusalResult,
+    SelfTaskRefuseCall,
 };
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::error::{ArtifactError, Error, Result};
@@ -707,6 +708,8 @@ impl<'a> HostSelfDispatcher<'a> {
         if let Some(run_id) = run_id
             && let Some(record) = vault.get_code_run_replay_record(&run_id)?
         {
+            let base_known = || vault.known_values_now();
+            let known = CompareKnown::new(Some(&base_known));
             let request =
                 super::super::payload::self_call_request_value(&SelfCall::TasksWait(handle))?;
             for call in &record.bridge_calls {
@@ -714,7 +717,7 @@ impl<'a> HostSelfDispatcher<'a> {
                 // wait: compare against the effective request (FIX 1442), by
                 // its identity once an erase took its words (FIX 6534).
                 if call.effect == SelfEffect::TasksWait
-                    && call.dispatched_request_is(&request)?
+                    && call.dispatched_request_is(&request, &known)?
                     && let SelfDispatchOutcome::TaskAskStatus(
                         crate::task_verb::TaskAskStatus::Changed { generation, .. },
                     ) = super::super::payload::decode_self_dispatch_outcome(&call.outcome)?

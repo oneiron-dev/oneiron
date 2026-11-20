@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 
 use rmpv::Value;
 
+use crate::EntityId;
 use crate::claim::ScopedReadActorKey;
 use crate::error::{Error, Result};
 use oneiron_authority::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
@@ -50,6 +51,14 @@ pub(crate) struct ResolvedRetrievalFilter {
     /// the pipeline denies outside its worlds or facets adds to no
     /// suppression count (ARCH-0067 §5, DEC-0005).
     pub(crate) credential: Option<oneiron_authority::federation::Scope>,
+    /// The work-talk conversation this filter reads under its binding
+    /// alone (WORK-TALK-BINDING-RECALL-FLOOR): set only by the scoped read's
+    /// own floor resolver, for a reader that holds no read scope of its own
+    /// on a room turn of a talk whose binding names it, and only after the
+    /// request narrowed it. Its kinds are a candidate envelope, never row
+    /// authority: each row must sit in this talk and the binding must admit
+    /// the reader there. Narrowing and the candidate union never set it.
+    pub(crate) work_talk_room: Option<EntityId>,
 }
 
 impl ResolvedRetrievalFilter {
@@ -98,6 +107,9 @@ impl ResolvedRetrievalFilter {
             deny_all: false,
             caller_excludes_stale: self.caller_excludes_stale && other.caller_excludes_stale,
             credential: self.credential.clone(),
+            // A joined envelope is a prefilter: each row still takes the
+            // gate of the one alternative that reads it.
+            work_talk_room: None,
         }
     }
 }
@@ -144,6 +156,20 @@ impl PolicyManifestResolution {
     /// alternative is judged whole: a union of projections can look broad
     /// even when no single grant is. This inspects no rows.
     pub(crate) fn scoped_read_grants_all_bounded(&self, actor: &ScopedReadActorKey) -> bool {
+        self.scoped_read_grants_all_bounded_with_scope(actor, actor.authority_scope())
+    }
+
+    /// [`Self::scoped_read_grants_all_bounded`] for `actor` as if it held a
+    /// proof of `explicit_scope`, as [`Self::retrieval_floor_for_actor_with_scope`]
+    /// reads it: the unchanged shipped house row caps no read carrying an
+    /// explicit Scope, so it is left out then, as the row gate leaves it out
+    /// (review round 1 of #9775: a matching non-house row still caps a read
+    /// under an agent's own full Grant).
+    pub(crate) fn scoped_read_grants_all_bounded_with_scope(
+        &self,
+        actor: &ScopedReadActorKey,
+        explicit_scope: Option<&Scope>,
+    ) -> bool {
         if actor.vault_owner_ref().is_some() {
             return false;
         }
@@ -151,7 +177,7 @@ impl PolicyManifestResolution {
         for grant in self.scoped_grants().iter().filter(|grant| {
             scoped_read_grant_has_read_effector(grant)
                 && scoped_read_actor_matches(grant, actor)
-                && (actor.authority_scope().is_none() || !is_shipped_house_read_row(grant))
+                && (explicit_scope.is_none() || !is_shipped_house_read_row(grant))
                 && !grant.receipt_required
                 && grant.budget.is_none()
         }) {
@@ -233,6 +259,22 @@ impl RetrievalPolicyFloor {
             min_confidence: 0.0,
             min_salience: 0.0,
             deny_all: false,
+        }
+    }
+
+    /// The floor a work-talk binding gives a reader whose own floor is
+    /// deny-all (WORK-TALK-BINDING-RECALL-FLOOR): the talk's own row kinds,
+    /// CONVERSATION, TURN and MESSAGE, under the neutral ceiling. It only
+    /// lets those kinds reach the row gate, which reads each row under the
+    /// binding of the one talk its filter names.
+    pub(crate) fn work_talk_rows() -> Self {
+        Self {
+            allowed_entity_types: Some(BTreeSet::from([
+                crate::registry::ENTITY_TYPE_CONVERSATION,
+                crate::registry::ENTITY_TYPE_TURN,
+                crate::registry::ENTITY_TYPE_MESSAGE,
+            ])),
+            ..Self::legacy()
         }
     }
 
@@ -388,6 +430,20 @@ impl RetrievalPolicyFloor {
             deny_all: self.deny_all || other.deny_all,
         }
         .with_authority(&authority)
+    }
+
+    /// This floor and `other` held as alternatives at once, as one envelope
+    /// for a read receipt's ceiling (FIX GRANT-READ-NARROWING-SAYS-DENY-ALL):
+    /// [`Self::union_envelope`], a deny-all side adding nothing. It reports
+    /// what the alternatives together could read, never an authorization.
+    pub(crate) fn alternative_envelope(&self, other: &Self) -> Self {
+        if other.deny_all {
+            return self.clone();
+        }
+        if self.deny_all {
+            return other.clone();
+        }
+        self.clone().union_envelope(other.clone())
     }
 
     /// A safe prefilter for alternative grants, not a complete authorization.
@@ -566,6 +622,7 @@ pub(crate) fn narrow_retrieval_filter(
         deny_all: narrowed.deny_all,
         caller_excludes_stale: false,
         credential: None,
+        work_talk_room: None,
     })
 }
 

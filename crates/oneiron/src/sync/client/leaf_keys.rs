@@ -39,13 +39,15 @@ impl SyncClient {
     /// [`TransportError::UnknownTag`] on a federation lane; a frame that does
     /// not decode, or an answer custody refuses; [`TransportError::Storage`]
     /// where a fault of this vault's own kept custody from taking an answer
-    /// or a failure.
+    /// or a failure. A member lane takes none either (H8-SHARED-ENV-LANE = B): the
+    /// home admits no leaf-key frame on it, so one stays the unknown tag it
+    /// was, as on a federation lane.
     pub(super) fn handle_leaf_key_frame(
         &mut self,
         tag: u8,
         payload: &[u8],
     ) -> Result<Vec<Vec<u8>>, TransportError> {
-        if self.config.federation_peer.is_some() {
+        if self.config.federation_peer.is_some() || self.config.member_lane {
             return Err(TransportError::UnknownTag(tag));
         }
         match tag {
@@ -145,9 +147,9 @@ impl SyncClient {
     /// The leaf-key requests this client owes its home now: each one secret
     /// custody lists pending that was not sent on this connection and is not
     /// held after a failure. A read that fails is reported and leaves the
-    /// lane up.
+    /// lane up. A member lane owes none (H8-SHARED-ENV-LANE = B).
     fn leaf_key_requests_due(&mut self) -> Vec<Vec<u8>> {
-        if self.config.federation_peer.is_some() {
+        if self.config.federation_peer.is_some() || self.config.member_lane {
             return Vec::new();
         }
         let pending = match self.vault.pending_leaf_key_requests() {

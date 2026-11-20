@@ -4,25 +4,88 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::legal_hold::HoldActor;
 
-use super::super::gate::{GatedDeletion, reverify_deletion_authority_before_publication};
+use super::super::gate::{
+    GatedDeletion, reverify_deletion_authority_before_publication,
+    reverify_owner_proof_before_publication,
+};
 use super::super::rendezvous::{DeleteRendezvous, signal_delete_rendezvous};
 use super::super::tombstone::DeleteReason;
 use super::{DeleteEntityOutcome, PendingConfirmedErase};
+use crate::consent::AuthenticatedOwner;
 use crate::error::RegistryError;
 
-/// What the delete guards decided: the headerful leg's header, or an outcome
-/// that ends the delete before any writer opens.
+/// What the delete guards decided: the headerful leg's header, the
+/// headerless leg, or an outcome that ends the delete before any writer
+/// opens.
 pub(super) enum DeleteGuard {
     Proceed {
         requested_at: u64,
         header: EntityMetadataHeader,
     },
+    /// The id has no header: the headerless leg deletes its residue.
+    Headerless {
+        requested_at: u64,
+    },
     Done(DeleteEntityOutcome),
 }
 
 impl Vault {
+    /// Refuses deleting the PERSON that holds the vault's last Active owner
+    /// binding (the lead's L9-52-OWNER-SELF-DELETE = B, 14 Nov 2026), on
+    /// every delete door: the vault would keep no owner, and no ceremony
+    /// brings the deleted person back ("A deleted owner is not brought back").
+    /// The kit's recovery (`recover_owner_authority_from_kit`) re-roots the
+    /// vault and binds no person, so it brings no deleted owner back either.
+    /// Another live PERSON holding an Active `human` binding lets the delete
+    /// through (an added Owner gains one with their first owner key,
+    /// `enrol_owner_signing_key_as`), as does a row that holds no live owner
+    /// binding. No door writes a `human` binding on an unrooted, hosted or
+    /// relay vault, so the guard refuses nothing there.
+    ///
+    /// The guard phase runs this as the early refusal; each linearizing write
+    /// transaction re-runs it against its own view, which is the check that
+    /// decides (round-1 P1 of #7900).
+    pub(crate) fn refuse_last_bound_owner_delete_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        if !matches!(
+            crate::vault::live_entity_row_in_txn(&self.store, txn, id)?,
+            crate::vault::LiveEntityRow::Live {
+                entity_type: crate::registry::ENTITY_TYPE_PERSON,
+                ..
+            }
+        ) {
+            return Ok(());
+        }
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if fold.vault_id.is_none() || !crate::authority::actor_binding_is_active(&fold, id, "human")
+        {
+            return Ok(());
+        }
+        for binding in fold.actor_bindings.values() {
+            if binding.status == crate::authority::ActorBindingStatus::Active
+                && binding.actor_class == "human"
+                && binding.actor_ref != *id
+                && crate::authority::actor_binding_is_live_in(
+                    &self.store,
+                    txn,
+                    &fold,
+                    &binding.actor_ref,
+                    "human",
+                )?
+            {
+                return Ok(());
+            }
+        }
+        Err(Error::Record(
+            crate::error::RecordError::LastBoundOwnerDelete,
+        ))
+    }
+
     /// Refuses a protected, held or unsafe delete before any tombstone can be
-    /// published; a headerless id runs the headerless leg instead.
+    /// published; a headerless id is handed to the headerless leg instead.
     pub(super) fn delete_guard_phase(
         &self,
         id: &EntityId,
@@ -30,10 +93,20 @@ impl Vault {
         gate: &Option<GatedDeletion<'_>>,
         allow_replay_test: bool,
         due: Option<&PendingConfirmedErase>,
+        owner: Option<&AuthenticatedOwner>,
     ) -> Result<DeleteGuard> {
         crate::store::base_agent::guard_actor_delete(id)?;
         {
             let rtxn = self.store.env.read_txn()?;
+            self.refuse_last_bound_owner_delete_in(&rtxn, id)?;
+            // The root project refuses here, before a privacy erase's
+            // audience-edit write below can commit anything.
+            crate::workspace_roster::reject_root_project_delete(&self.store, &rtxn, id)?;
+            // A hard purge refuses a project with a live child; it refuses
+            // here, before its publication fences the project's reads.
+            if reason.active_store_hard_purge_v1() {
+                crate::workspace_roster::reject_project_with_live_children(&self.store, &rtxn, id)?;
+            }
             crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, &rtxn, id)?;
             self.require_room_delete_gate(&rtxn, id, gate.as_ref(), allow_replay_test)?;
         }
@@ -56,7 +129,10 @@ impl Vault {
                 gate.as_ref()
                     .map_or(HoldActor::UNATTRIBUTED, GatedDeletion::hold_actor),
                 reason,
-                |txn| reverify_deletion_authority_before_publication(gate.as_ref(), txn),
+                |txn| {
+                    reverify_deletion_authority_before_publication(gate.as_ref(), txn)?;
+                    reverify_owner_proof_before_publication(self, owner, txn)
+                },
             )?
         {
             return Ok(DeleteGuard::Done(outcome));
@@ -111,9 +187,7 @@ impl Vault {
         }
         let requested_at = self.store.clock.now_recorded_at();
         let Some(header) = self.read_entity_header(id)? else {
-            return self
-                .delete_entity_without_header(id, reason, requested_at, gate.as_ref(), due)
-                .map(DeleteGuard::Done);
+            return Ok(DeleteGuard::Headerless { requested_at });
         };
         if crate::batch::delete_door_protected(header.entity_type)
             || crate::store::project_kind::is_project_revision_type(&self.store, header.entity_type)

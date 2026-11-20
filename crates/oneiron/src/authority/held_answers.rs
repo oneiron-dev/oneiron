@@ -291,9 +291,9 @@ impl Vault {
                     entry: *entry,
                     answer: answer.clone(),
                     standing: role_of(*machine),
-                    revision: fold
-                        .machine(*machine)
-                        .map_or([0; 32], FoldedMachine::answer_revision),
+                    revision: fold.machine(*machine).map_or([0; 32], |folded| {
+                        folded.answer_revision(fold.pinned_root.as_ref())
+                    }),
                     carrier_reading,
                     carrier_role: carrier_reading.and_then(|reading| reading.role),
                     carrier_is_mine: carrier_reading.is_some_and(|reading| reading.is_mine),
@@ -320,7 +320,11 @@ impl Vault {
     /// never other keys than it stands under on this install
     /// ([`AuthorityFold::replaces_standing_keys`]). His answer about a
     /// machine ends the ask of every held answer about it that it saw. The
-    /// credentials are sealed again for the roster the confirm changed.
+    /// credentials are sealed again for the roster the confirm changed. The
+    /// rows the write counted (each answer, the revocation of each owner key
+    /// a confirmed removal ended, a frontier join) are marked for the
+    /// vault's loaded windows in the write and announced once it committed,
+    /// as at [`Self::remove_machine`].
     ///
     /// `seen` gives, for any named entry, the answer revision of its machine
     /// that his surface listed beside it ([`ListedHeldAnswer::revision`]).
@@ -352,6 +356,7 @@ impl Vault {
         if self.owner_proof_signer(&fold).is_none() {
             return Err(Error::Record(RecordError::OwnerKeyRequired));
         }
+        let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
         if seen.keys().any(|entry| !entries.contains(entry)) {
             return Err(Error::InvalidConfig(UNNAMED_SEEN.to_owned()));
         }
@@ -361,8 +366,12 @@ impl Vault {
             let profile = confirming_profile(&fold, actor, &held)?;
             // The answer door compares it with the machine's revision in
             // this transaction, before it signs.
-            let answer =
-                AnswerAct::by_owner(actor, surface, profile.role, seen.get(&entry).copied());
+            let answer = AnswerAct::by_owner(
+                (actor, proves_joins),
+                surface,
+                profile.role,
+                seen.get(&entry).copied(),
+            );
             if profile.role == MachineRole::Removed {
                 removed.push(machine);
             }
@@ -374,7 +383,9 @@ impl Vault {
         }
         let after = self.authority_view_readonly_in_txn(&txn)?;
         let listing = self.held_answer_listing_in_txn(&txn, &after)?;
+        let rows = self.mark_rows_counted_since_in_txn(&mut txn, &fold)?;
         txn.commit()?;
+        self.note_committed_authority_rows(rows);
         #[cfg(feature = "sync")]
         self.reseal_after_machine_admission()?;
         Ok(ConfirmedHeldAnswers { removed, listing })

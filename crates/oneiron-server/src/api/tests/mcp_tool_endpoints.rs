@@ -652,10 +652,11 @@ async fn mcp_endpoint_tool_args_are_gated_before_execution() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "args-1",
-            "board.expand",
+            "self.focus.refresh",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor_ref, "read_board"),
-                json!({ "arguments": { "frame_epoch": 3 } }),
+                // Refresh accepts an epoch, but no card key.
+                json!({ "arguments": { "key": "VERBS", "frame_epoch": 3 } }),
             ),
         ),
     )

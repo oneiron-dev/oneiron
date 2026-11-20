@@ -1,9 +1,13 @@
 //! Which window tombstones a selector export carries beside the rows it keeps
 //! (FIX 10161). A grant that reads every record takes every tombstone the
 //! open fallback carries, as before. A narrower grant takes one only where the
-//! scope its delete captured is a scope the grant reads. A member who is not
-//! an Owner takes one only of a row it reads at the relationship gate
-//! (OPUS-LEAKS, SELECTOR-TOMBSTONE-LABEL).
+//! scope its delete captured is a scope the grant reads. A selector narrowed
+//! to one world, or to base reality, takes one only where the position its
+//! delete captured lies in the worlds it selects (FOLLOWED-WORLD-TIER1-
+//! TOMBSTONE-IDS, blind review 2 of #9592): a hard delete took the row's
+//! carrier out of the window, so the selector keeps no row to judge. A member
+//! who is not an Owner takes one only of a row it reads at the relationship
+//! gate (OPUS-LEAKS, SELECTOR-TOMBSTONE-LABEL).
 
 use std::collections::BTreeSet;
 
@@ -14,7 +18,7 @@ use crate::access_grant::AccessContext;
 use crate::deletion::decode_tombstone_value;
 use crate::deletion::tombstone_scope::{deleted_relationship_read_in, deleted_scope_in};
 use crate::entity_id::EntityId;
-use crate::federation::{Scope, ScopeAxis};
+use crate::federation::{Scope, ScopeAxis, ScopeId};
 
 /// What a narrower grant gets of a tombstone whose delete left no scope it
 /// can judge here: no captured row, a row bound to another request, a value
@@ -25,16 +29,23 @@ const UNPROVEN_TOMBSTONE_EXPORTED: bool = false;
 /// keep.
 pub(super) struct TombstoneExport<'g> {
     grant: &'g Scope,
-    /// No facet filter, no band filter and the All-world selector: the
-    /// fallback that carries tombstones beyond the kept rows.
+    /// No facet filter and no band filter: the fallback that carries
+    /// tombstones beyond the kept rows.
     open: bool,
+    /// The worlds a selector narrowed to one world or to base reality
+    /// selects; `None` for the All-world selector, which bounds no world.
+    worlds: Option<&'g ScopeAxis<ScopeId>>,
     /// The grant reads every record, so the fallback shows it nothing it
     /// could not read.
     unrestricted: bool,
 }
 
 impl<'g> TombstoneExport<'g> {
-    pub(super) fn new(grant: &'g Scope, open: bool) -> Self {
+    pub(super) fn new(
+        grant: &'g Scope,
+        open: bool,
+        worlds: Option<&'g ScopeAxis<ScopeId>>,
+    ) -> Self {
         // Judged as the kept rows are, with every axis open but the verb.
         let every_record = Scope {
             verbs: ScopeAxis::Some(BTreeSet::from(["read".to_owned()])),
@@ -43,12 +54,16 @@ impl<'g> TombstoneExport<'g> {
         Self {
             grant,
             open,
+            worlds,
             unrestricted: grant.admits("read", &every_record, &Scope::top()),
         }
     }
 
     /// Whether the tombstone `value` of `id`, a row this export does not
-    /// keep, still travels.
+    /// keep, still travels. Under a selector narrowed to some worlds, it
+    /// travels only where its delete's captured position lies in them or in
+    /// base reality, which every such selector selects (`SyncSelectorWorld`),
+    /// so an unrestricted grant's export proves that position too.
     pub(super) fn admits(
         &self,
         vault: &Vault,
@@ -59,14 +74,19 @@ impl<'g> TombstoneExport<'g> {
         if !self.open {
             return false;
         }
-        if self.unrestricted {
+        if self.unrestricted && self.worlds.is_none() {
             return true;
         }
         let Some(request) = decode_tombstone_value(value).request_id else {
             return UNPROVEN_TOMBSTONE_EXPORTED;
         };
         match deleted_scope_in(&vault.store, txn, id, &request) {
-            Ok(Some(scope)) => self.grant.admits("read", &scope, &Scope::top()),
+            Ok(Some(scope)) => {
+                self.worlds.is_none_or(|worlds| {
+                    scope.worlds == crate::federation::base_world_axis()
+                        || scope.worlds.is_narrowing_of(worlds)
+                }) && (self.unrestricted || self.grant.admits("read", &scope, &Scope::top()))
+            }
             Ok(None) | Err(_) => UNPROVEN_TOMBSTONE_EXPORTED,
         }
     }

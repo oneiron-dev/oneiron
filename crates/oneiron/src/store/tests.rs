@@ -25,7 +25,7 @@ mod gate_claim_lookup;
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
     let mut config = VaultConfig::device();
     config.retrieval_telemetry_capture = true;
-    crate::test_util::open_test_vault_with(config)
+    crate::test_util::open_test_vault_with_manifest(config)
 }
 
 fn entity_id(byte: u8) -> EntityId {

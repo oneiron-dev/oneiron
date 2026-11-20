@@ -231,6 +231,27 @@ pub(crate) async fn vault_models_trials_complete(
     )
 }
 
+/// `vault.models.bindings.propose`'s caller as `door_admits` checks it, before any verb hook
+/// runs: the owner's proof, or an actor-bound credential whose own live Grant naming the act the
+/// engine judges here, and again in the proposal's writer. A caller bound to no actor keeps the
+/// owner refusal.
+pub(in crate::api::facade) fn binding_proposer_admits(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> MemoryResult<()> {
+    match owner_proof(auth, server, verb) {
+        Ok(_) => Ok(()),
+        Err(refusal) => {
+            let (actor, _class) = super::owner_binding::facade_caller_or(server, auth, || refusal)?;
+            server
+                .vault()
+                .admit_model_binding_proposer(actor)
+                .map_err(MemoryError::from)
+        }
+    }
+}
+
 pub(crate) async fn vault_models_bindings_propose(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

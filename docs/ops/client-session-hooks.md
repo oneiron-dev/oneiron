@@ -85,6 +85,41 @@ to the shell. Add `--url <origin>` to `session-start` to pin a vault, and
 `--config /path/to/oneiron.toml` to each `hand-over` when `serve` reads
 another config and may be stopped when a session ends.
 
+## A hosted vault
+
+With a hosted vault selected (`oneiron hosted`), a session that binds it
+hands its log over there, as a Claude Code session does
+([Claude Code hooks](claude-code-hooks.md#which-vault-a-session-uses)): every
+`session-start` of the session records what it bound, in
+`hook-sessions-<client>/<session id>/` in the run folder, and a `hand-over`
+sends the log to the selected hosted vault through
+`vault.imports.hook_transcript` only when every start bound that vault and
+it is still selected. A session whose starts bound another vault, or more
+than one, sends its log nowhere; one that bound a pin, a local vault or no
+vault queues locally as above. A Codex or Copilot start whose `source` is
+not a new session's (`startup`, `clear`, `new`) goes on from turns no start
+recorded may have sent elsewhere, so its session sends nowhere until you
+move it; Cursor runs `sessionStart` only for a new conversation. Cursor's
+`stop` names the session as `conversation_id`.
+
+The log goes as one file, read on the vault as the local import reads it,
+and only when it is named for the event's own session and sits below the
+folder its client keeps its logs in, every folder below it and the log
+opened through no symbolic link:
+
+| Client | Log | Folder |
+|---|---|---|
+| Codex | `rollout-<time>-<session id>.jsonl` | `$CODEX_HOME/sessions` (`CODEX_HOME` made absolute, links resolved, as Codex does), else `~/.codex/sessions` |
+| Cursor | `<session id>.jsonl` | `~/.cursor/projects` |
+| Copilot CLI | `<session id>/events.jsonl` | `~/.copilot/session-state` |
+| Copilot in VS Code | `transcripts/<session id>.jsonl` | `User/workspaceStorage` of VS Code or VS Code Insiders, in `~/Library/Application Support` on macOS, else `$XDG_CONFIG_HOME` (`~/.config`) |
+
+The vault must read the log's source: a hosted vault that does not yet
+refuses the call, and a later hand-over sends the whole log again. A log
+longer than one call carries (64 MiB inflated, or the sign-in's carrier) is
+not sent; import it on the machine it ran on (`oneiron import codex <log>`,
+`oneiron import hook-transcript <log>`).
+
 ## Timeouts
 
 Each hook gives up before its client would stop it, so it exits 0 on its

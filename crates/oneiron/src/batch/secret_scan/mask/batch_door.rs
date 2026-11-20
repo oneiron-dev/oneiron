@@ -9,24 +9,25 @@ use super::changed_scan;
 use super::known_note;
 use super::text_log::TextLog;
 use super::wipe::PlanOps;
-use super::{MaskedFiles, Masker, marked_files, op_record, put_file_marks_in_txn, scan_screened};
+use super::{
+    MaskedClaimBodies, MaskedFiles, Masker, marked_files, op_record, put_file_marks_in_txn,
+    scan_screened,
+};
 use crate::batch::BatchOp;
-use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::secret_custody::KeptValues;
 use crate::secret_record::CustodyWrite;
 use crate::store::Store;
 use crate::store::known_value_index::KnownValues;
-use crate::write_envelope::ClaimCandidate;
 
 /// The batch door with mask on write. `masks` is false for a replayed batch,
 /// which keeps the plain door: a hit refuses it, save in a file marked
 /// before. `at` stamps each custody record the batch mints. When it mints,
-/// it also returns each claim candidate op in op order, with its pre-mask
-/// body when the minted pass rewrote it, so the candidate apply can renew a
-/// MACHINE proof over what is stored (FIX 11356) and read its preflight
-/// receipt against the body that receipt judged; a replayed batch reports
-/// none.
+/// it also returns each claim candidate op and each local CLAIM put op in op
+/// order, with its pre-mask body when the minted pass rewrote it, so the
+/// candidate apply can renew a MACHINE proof over what is stored (FIX 11356)
+/// and each apply can read its preflight receipt against the body that
+/// receipt judged; a replayed batch reports none.
 #[expect(
     clippy::too_many_arguments,
     reason = "the batch's own apply parts, its origin and its time"
@@ -40,13 +41,13 @@ pub(in crate::batch) fn mask_batch_ops(
     text_index_trusted: bool,
     masks: bool,
     at: u64,
-) -> Result<(MaskedFiles, Vec<(EntityId, Option<ClaimCandidate>)>)> {
+) -> Result<(MaskedFiles, MaskedClaimBodies)> {
     let refusal = match scan_batch_ops(store, &*wtxn, ops) {
         // A clean batch that is replayed, or that holds no put, claim or
         // text for a pass to read, places nothing whatever custody knows:
         // the index is not loaded (speed).
         Ok(()) if !masks || ops.iter().all(|op| op_record(op).is_none()) => {
-            return Ok((MaskedFiles::default(), Vec::new()));
+            return Ok((MaskedFiles::default(), MaskedClaimBodies::default()));
         }
         Ok(()) => None,
         Err(refusal) => Some(refusal),
@@ -60,12 +61,12 @@ pub(in crate::batch) fn mask_batch_ops(
         None
     };
     if refusal.is_none() && known.is_none() {
-        return Ok((MaskedFiles::default(), Vec::new()));
+        return Ok((MaskedFiles::default(), MaskedClaimBodies::default()));
     }
     // A value the owner ruled no secret or kept as text in a record is no hit there.
     let kept = KeptValues::for_records_in_txn(store, &*wtxn, ops.iter().filter_map(op_record))?;
     if known.is_none() && !kept.is_empty() && scan_screened(store, wtxn, &kept, ops).is_ok() {
-        return Ok((MaskedFiles::default(), Vec::new()));
+        return Ok((MaskedFiles::default(), MaskedClaimBodies::default()));
     }
     // The owner's switch, read once: when it is off the plan places known
     // values only and mints nothing (FIX 8644).
@@ -96,7 +97,7 @@ pub(in crate::batch) fn mask_batch_ops(
         if refusal.is_some() {
             scan_screened(store, wtxn, &plan.kept, ops)?;
         }
-        return Ok((MaskedFiles::default(), Vec::new()));
+        return Ok((MaskedFiles::default(), MaskedClaimBodies::default()));
     }
     // A hit no span places is still in the copy, and refuses as before. A
     // copy of a batch the first scan read clean, with no value kept, is read
@@ -112,7 +113,7 @@ pub(in crate::batch) fn mask_batch_ops(
     let text_log = std::mem::take(&mut plan.text_log).replayed();
     let masked = MaskedFiles(std::mem::take(&mut plan.file_ids));
     if !masks {
-        return Ok((masked, Vec::new()));
+        return Ok((masked, MaskedClaimBodies::default()));
     }
     let write = CustodyWrite {
         store,

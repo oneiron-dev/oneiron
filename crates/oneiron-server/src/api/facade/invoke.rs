@@ -53,9 +53,9 @@ pub(super) fn facade_invoke_concern_move(
     value: serde_json::Value,
     producers: &oneiron::memory::ProducerRows,
 ) -> Result<(serde_json::Value, bool), FacadeApiError> {
+    const VERB: &str = "self.inbox.concern.move";
     let (output, wake) = crate::server::blocking(
         move || -> Result<(serde_json::Value, bool), FacadeApiError> {
-            const VERB: &str = "self.inbox.concern.move";
             let auth = call.auth();
             let memory = facade_invocation(
                 credential_memory(&server.vault, Some(auth), actor, class)
@@ -123,7 +123,7 @@ pub(super) fn facade_invoke_concern_move(
         },
     )?;
     let output =
-        super::drained_still_admitted(&server.vault, call.auth(), producers, output, false);
+        super::drained_still_admitted(&server.vault, call.auth(), VERB, producers, output, false);
     Ok((output, wake))
 }
 
@@ -251,6 +251,7 @@ pub(super) fn facade_invoke_in_turn_with_notice(
         super::drained_still_admitted(
             &server.vault,
             call.auth(),
+            verb,
             producers,
             output,
             owner_whole_vault_export,

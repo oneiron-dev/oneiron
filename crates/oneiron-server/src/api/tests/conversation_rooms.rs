@@ -156,7 +156,8 @@ async fn conversation_member_writes_require_scoped_actor_class() {
         .unwrap();
     let uri = format!("/v1/core/conversations/{}/members", room.to_hex());
     let actor_hex = actor.to_hex();
-    let body = json!({"actor":actor,"person_id":actor,"action":"join","at":2});
+    let body =
+        json!({"actor":actor,"person_id":actor,"action":"join","intent_key":"scoped-actor-join"});
     for claims in [
         "scope=core:write,core:auth".to_owned(),
         format!("scope=core:write,core:auth;principal_ref={actor_hex}"),

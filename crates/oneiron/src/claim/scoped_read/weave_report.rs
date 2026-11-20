@@ -1,6 +1,7 @@
 //! Live weave data for a reader, not a saved digest or a rendered section recipe.
 //! The host/resident supplies predicates and ordering; the engine enforces which
 //! sections and subjects a reader may see in one scoped-read snapshot.
+use super::access_gate::HeldAuthority;
 use super::{ScopedRead, ScopedReadResult};
 use crate::claim::{ClaimBody, ClaimSubject, decode_claim_body};
 use crate::dreamer_runner::maintenance::agent_health::AgentHealthCard;
@@ -214,31 +215,34 @@ impl ScopedRead<'_> {
     /// receipt. The recipe cannot elevate a role or expand the actor's floor.
     /// Past the policy's `max_rows` a scan raises one scan check and reads on
     /// (rule 5). Each sampled audit's decisions serve past the reader's own
-    /// floor (FIX 8322).
+    /// floor (FIX 8322). The projection, its served copy and its receipt
+    /// hold one authority in the read's txn (FIX 7462).
     pub fn weave_report(
         &self,
         reader: WeaveReader<'_>,
         recipe: &[WeaveSectionSpec],
     ) -> Result<ScopedReadResult<WeaveReport>> {
         let txn = self.grant_read_txn()?;
-        let mut report = self.weave_report_in_txn(&txn, reader, recipe)?;
+        let held = self.held_for(None);
+        let mut report = self.weave_report_held_in_txn(&txn, reader, recipe, &held)?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
-        self.redact_sieve_decisions_in(&txn, &policy, &filter, &mut report.value);
-        self.project_card_moves_in(&txn, &policy, &filter, &mut report.value);
+        self.redact_sieve_decisions_in(&txn, &policy, &filter, &held, &mut report.value);
+        self.project_card_moves_in(&txn, &policy, &filter, &held, &mut report.value);
         self.charge_served(report.value.served_rows());
         Ok(report)
     }
 
     /// The live report as a period publishes it: [`Self::weave_report`]'s
-    /// rows with each audit's decisions whole, as the publication recheck
-    /// reads them and the saved period stores them. Never served as is.
+    /// rows with each audit's decisions whole, less each row a reopen of the
+    /// period would refuse, as the publication recheck reads them and the
+    /// saved period stores them. Never served as is.
     pub(super) fn weave_report_snapshot(
         &self,
         reader: WeaveReader<'_>,
         recipe: &[WeaveSectionSpec],
     ) -> Result<ScopedReadResult<WeaveReport>> {
         let txn = self.grant_read_txn()?;
-        self.weave_report_in_txn(&txn, reader, recipe)
+        self.weave_report_publishable_in_txn(&txn, reader, recipe, &self.held_for(None))
     }
 }
 
@@ -308,11 +312,16 @@ impl ScopedRead<'_> {
         Ok(matches)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "snapshot, policy, floor, held authority, anchors, kinds and row count are distinct axes"
+    )]
     fn weave_links_in(
         &self,
         txn: &heed::RoTxn<'_>,
         policy: &crate::gate::PolicyManifestResolution,
         filter: &crate::gate::ResolvedRetrievalFilter,
+        held: &HeldAuthority,
         anchors: (Option<EntityId>, &BTreeSet<EntityId>),
         kinds: &[EdgeKind],
         threshold: u64,
@@ -329,7 +338,7 @@ impl ScopedRead<'_> {
                         // Every admitted row is read: past the policy's row
                         // count the anchor's link read raises one scan check
                         // and reads on (rule 5). Hidden pairs are never counted.
-                        let admitted = self.admitted_edges_in(
+                        let admitted = self.admitted_edges_held_in(
                             txn,
                             policy,
                             filter,
@@ -339,6 +348,7 @@ impl ScopedRead<'_> {
                             usize::MAX,
                             usize::MAX,
                             false,
+                            held,
                         )?;
                         let scope =
                             [&[direction as u8][..], anchor.as_bytes(), &[kind as u8][..]].concat();
@@ -388,7 +398,14 @@ impl ScopedRead<'_> {
                 }
                 let (source, kind, target) = (edge.source, edge.kind, edge.target);
                 if !self
-                    .admit_stored_edge_in(txn, policy, filter, source, edge.into_edge_info())?
+                    .admit_stored_edge_held_in(
+                        txn,
+                        policy,
+                        filter,
+                        source,
+                        edge.into_edge_info(),
+                        held,
+                    )?
                     .visible()
                 {
                     continue;
@@ -409,12 +426,14 @@ impl ScopedRead<'_> {
 
     /// An edge-subject claim is admitted only while its exact edge is live and
     /// passes the same pair admission as a Links row; endpoint readability
-    /// alone is not pair authority. Entity-subject claims pass through.
+    /// alone is not pair authority. Entity-subject claims pass through. Both
+    /// endpoints take the row gate under `held`, the read's own authority.
     pub(super) fn weave_claim_edge_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
         policy: &crate::gate::PolicyManifestResolution,
         filter: &crate::gate::ResolvedRetrievalFilter,
+        held: &HeldAuthority,
         body: &ClaimBody,
     ) -> Result<bool> {
         let ClaimSubject::Edge {
@@ -429,7 +448,7 @@ impl ScopedRead<'_> {
             return Ok(false);
         };
         Ok(self
-            .admit_stored_edge_in(txn, policy, filter, source, edge)?
+            .admit_stored_edge_held_in(txn, policy, filter, source, edge, held)?
             .visible())
     }
 

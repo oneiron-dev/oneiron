@@ -3364,6 +3364,7 @@ fn a_restore_never_brings_back_a_relationship_membership_retracted_since() -> Re
         1,
     )?;
     let backups = crate::test_support::restore_tempdir();
+    vault.ensure_vault_key().expect("mint the vault data key");
     let key = vault.checkpoint_key().expect("derive the checkpoint key");
     let refused = |image: &std::path::Path, name: &str| {
         let destination = backups.path().join(name);

@@ -313,6 +313,19 @@ pub struct StoreCore {
     /// The engine's delete guards, supplied by the open door: a store never
     /// exists without them.
     pub(crate) delete_guards: &'static dyn crate::store::StoreDeleteGuards,
+    /// The user deletes in flight that hold their target's brief delete
+    /// reservation, so a delete refused before it linearizes releases one its
+    /// own flight created. Never persisted: a crash keeps each reservation.
+    pub(crate) brief_delete_fences: crate::deletion::BriefDeleteFences,
+    /// The soft deletes' `pt:` markers whose own publication is in flight,
+    /// which no replay publishes in its stead. Never persisted: a crash
+    /// leaves each marker to the next replay.
+    #[cfg(feature = "sync")]
+    pub(crate) tombstone_publications_in_flight: crate::deletion::TombstonePublicationsInFlight,
+    /// When this home last pushed each machine a prediction, for the push
+    /// spacing. Never persisted: a restarted home answers the next ask.
+    #[cfg(feature = "sync")]
+    pub(crate) predicted_pushes: crate::sync::residence::PredictedPushes,
     /// The engine's record-scope stamp hooks, supplied by the open door with
     /// the delete guards.
     pub(crate) scope_stamps: &'static dyn crate::store::StoreScopeStamps,
