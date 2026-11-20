@@ -8,15 +8,20 @@
 //! SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS, part 2c). After the owner revokes
 //! the Grant the filter keeps none of them. A neighbor stays only across an
 //! edge kind the pack walk itself follows: the anchor's `BlockedBy` edge
-//! never makes a neighbor reachable (review round 1 of #9849).
+//! never makes a neighbor reachable (review round 1 of #9849). A pack walked
+//! two hops out keeps the claim the peer's edge reaches, and an edge retracted
+//! since the assembly reaches no neighbor (review round 2 of #9849).
 //!
 //! Public paths only: the embedded owner's door, `Vault::put_edge`,
+//! `Vault::put_edge_provenance`, `Vault::retract_edge_provenance`,
 //! `Vault::context_pack`, the agent's own `Vault::memory` handle and
 //! `Vault::scoped_read` of its key.
 //!
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test agent_grant_context_pack_edges`
 
+use oneiron::edge::EdgeConfirmationStatus;
 use oneiron::memory::Memory;
+use oneiron::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use oneiron::registry::ENTITY_TYPE_CLAIM;
 use oneiron::{ContextEntity, ContextPack, EdgeActorClass, EdgeKind, EntityId, Vault, VaultConfig};
 use oneiron_testkit::door;
@@ -31,6 +36,21 @@ const ANCHOR_QUERY: &str = "harbour survey lantern";
 
 /// A second claim the anchor's words find, which supports the peer.
 const BRIDGE_VALUE: &str = "The harbour survey lantern was polished on Monday.";
+
+/// A claim the peer supports, which the anchor's words do not find.
+const FAR_VALUE: &str = "The pilot boat leaves at dawn.";
+
+/// Which of the owner's claims and edges a fixture writes.
+#[derive(Clone, Copy, PartialEq)]
+enum Shape {
+    /// The anchor `Supports` the peer.
+    Supported,
+    /// The anchor `BlockedBy` the peer, and a bridge claim the anchor's
+    /// words find supports the peer.
+    Bridged,
+    /// The anchor `Supports` the peer, which `Supports` the far claim.
+    Chained,
+}
 
 /// Runs `verb` as `caller`, panicking with its refusal.
 fn call(caller: &Memory<'_>, verb: &str, input: Value) -> Value {
@@ -57,6 +77,9 @@ struct Fixture {
     /// A claim the anchor's words also find, supporting `peer`
     /// ([`Self::open_bridged`] only).
     bridge: Option<EntityId>,
+    /// A claim `peer` supports, two hops from the anchor
+    /// ([`Self::open_chained`] only).
+    far: Option<EntityId>,
     agent: EntityId,
     grant: String,
     _dir: tempfile::TempDir,
@@ -64,17 +87,23 @@ struct Fixture {
 
 impl Fixture {
     fn open() -> Self {
-        Self::build(EdgeKind::Supports, false)
+        Self::build(Shape::Supported)
     }
 
     /// The anchor `BlockedBy` the peer, and a bridge claim the anchor's
     /// words find supporting the peer: the walk reaches the peer across the
     /// bridge alone.
     fn open_bridged() -> Self {
-        Self::build(EdgeKind::BlockedBy, true)
+        Self::build(Shape::Bridged)
     }
 
-    fn build(anchor_kind: EdgeKind, bridged: bool) -> Self {
+    /// The anchor `Supports` the peer, which `Supports` a far claim the
+    /// anchor's words do not find: a walk two hops out reaches it.
+    fn open_chained() -> Self {
+        Self::build(Shape::Chained)
+    }
+
+    fn build(shape: Shape) -> Self {
         let dir = tempfile::tempdir().expect("temporary vault directory");
         let vault = Vault::open_owned(dir.path(), VaultConfig::device()).expect("fresh vault");
         oneiron_testkit::dreamer::attach_test_host(&vault).expect("the test host");
@@ -98,15 +127,27 @@ impl Fixture {
         };
         let anchor = remember("The harbour survey needs a brass lantern.");
         let peer = remember("Thursday brings the tide tables.");
+        let anchor_kind = if shape == Shape::Bridged {
+            EdgeKind::BlockedBy
+        } else {
+            EdgeKind::Supports
+        };
         vault
             .put_edge(&anchor, anchor_kind, &peer, 0.9)
             .expect("the owner's edge between the two claims");
-        let bridge = bridged.then(|| {
+        let bridge = (shape == Shape::Bridged).then(|| {
             let bridge = remember(BRIDGE_VALUE);
             vault
                 .put_edge(&bridge, EdgeKind::Supports, &peer, 0.9)
                 .expect("the owner's edge from the bridge to the peer");
             bridge
+        });
+        let far = (shape == Shape::Chained).then(|| {
+            let far = remember(FAR_VALUE);
+            vault
+                .put_edge(&peer, EdgeKind::Supports, &far, 0.9)
+                .expect("the owner's edge from the peer to the far claim");
+            far
         });
 
         let agent = vault.new_entity_id().expect("an agent id");
@@ -148,6 +189,7 @@ impl Fixture {
             anchor,
             peer,
             bridge,
+            far,
             agent,
             grant,
             _dir: dir,
@@ -208,9 +250,9 @@ impl Fixture {
     }
 
     /// The agent reads each claim on vault.get under its live Grant.
-    fn assert_agent_reads_both_claims(&self) {
+    fn assert_agent_reads_every_claim(&self) {
         let reader = self.reader();
-        for claim in [self.anchor, self.peer] {
+        for claim in [self.anchor, self.peer].into_iter().chain(self.far) {
             let read = call(&reader, "vault.get", json!({"entity_ref": claim.to_hex()}));
             assert!(
                 read.get("value").is_some_and(|value| !value.is_null()),
@@ -242,7 +284,7 @@ fn supports_peer(pack: &ContextPack, fixture: &Fixture) -> bool {
 #[test]
 fn an_agents_pack_under_a_live_read_grant_keeps_the_anchors_edge_and_its_neighbor() {
     let fixture = Fixture::open();
-    fixture.assert_agent_reads_both_claims();
+    fixture.assert_agent_reads_every_claim();
     let assembled = fixture.assembled_pack(true);
 
     let pack = fixture.filtered_for_agent(assembled.clone());
@@ -278,7 +320,7 @@ fn an_agents_pack_under_a_live_read_grant_keeps_the_anchors_edge_and_its_neighbo
 #[test]
 fn an_agents_pack_without_edges_under_a_live_read_grant_keeps_the_reachable_neighbor() {
     let fixture = Fixture::open();
-    fixture.assert_agent_reads_both_claims();
+    fixture.assert_agent_reads_every_claim();
     let assembled = fixture.assembled_pack(false);
 
     let pack = fixture.filtered_for_agent(assembled);
@@ -333,5 +375,124 @@ fn an_agents_pack_keeps_no_neighbor_across_an_edge_the_walk_never_follows() {
         "the agent's pack keeps the peer across the anchor's BlockedBy edge, which the pack \
          walk never follows: neighbors {:?}",
         ids(&filtered.neighbors),
+    );
+}
+
+#[test]
+fn an_agents_two_hop_pack_keeps_the_claim_past_the_first_hop() {
+    let fixture = Fixture::open_chained();
+    let far = fixture.far.expect("the chained fixture's far claim");
+    fixture.assert_agent_reads_every_claim();
+    let key = fixture.reader().read_key().expect("the agent's read key");
+    let lane = fixture.vault.scoped_read(key);
+    for include_edges in [false, true] {
+        let mut pending = fixture
+            .vault
+            .context_pack()
+            .search_text(ANCHOR_QUERY, 10)
+            .filter_types(&[ENTITY_TYPE_CLAIM])
+            .include_edges(include_edges)
+            .edge_hop(2)
+            .max_neighbors(10)
+            .run_unfinalized_with_telemetry()
+            .expect("the assembled two-hop pack");
+        assert!(
+            row(&pending.value.results, &fixture.anchor).is_some()
+                && row(&pending.value.neighbors, &fixture.peer).is_some()
+                && row(&pending.value.neighbors, &far).is_some(),
+            "FIXTURE: the two-hop walk finds the anchor and hydrates the peer and the far \
+             claim (edges {include_edges}): results {:?}, neighbors {:?}",
+            ids(&pending.value.results),
+            ids(&pending.value.neighbors),
+        );
+        pending
+            .filter_scoped_under(&lane, None)
+            .expect("the agent's pack filter");
+        let pack = &pending.value;
+        assert!(
+            row(&pack.results, &fixture.anchor).is_some()
+                && row(&pack.neighbors, &fixture.peer).is_some(),
+            "the agent's filter keeps the anchor and the peer one hop out (edges \
+             {include_edges}): results {:?}, neighbors {:?}",
+            ids(&pack.results),
+            ids(&pack.neighbors),
+        );
+        assert!(
+            row(&pack.neighbors, &far).is_some(),
+            "the live Grant admits all three claims, yet the agent's two-hop pack drops the \
+             far claim the peer's edge reaches (edges {include_edges}): neighbors {:?}",
+            ids(&pack.neighbors),
+        );
+        pending.discard_telemetry();
+    }
+}
+
+#[test]
+fn an_agents_pack_keeps_no_neighbor_across_an_edge_retracted_since_the_assembly() {
+    let fixture = Fixture::open();
+    fixture.assert_agent_reads_every_claim();
+    let owner_id = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("the owner");
+    let annotated_at = fixture.vault.now_recorded_at();
+    let annotation = fixture
+        .vault
+        .new_entity_id()
+        .expect("a provenance claim id");
+    fixture
+        .vault
+        .put_edge_provenance(
+            &annotation,
+            &EdgeRef::new(fixture.anchor, EdgeKind::Supports, fixture.peer),
+            &EdgeProvenanceClaimBody::new(owner_id, 0.9, SupersessionStatus::Confirmed),
+            EdgeActorClass::Human,
+            annotated_at,
+        )
+        .expect("the owner's provenance claim on the anchor's edge");
+    let assembled = fixture.assembled_pack(true);
+    let status = |pack: &ContextPack| {
+        row(&pack.results, &fixture.anchor)
+            .and_then(|anchor| anchor.edges.as_ref())
+            .and_then(|edges| {
+                edges
+                    .iter()
+                    .find(|edge| edge.kind == EdgeKind::Supports && edge.target == fixture.peer)
+            })
+            .and_then(|edge| edge.provenance)
+            .map(|flags| flags.confirmation_status)
+    };
+    assert!(
+        status(&assembled).is_some_and(|status| status != EdgeConfirmationStatus::Retracted),
+        "FIXTURE: the assembled anchor's edge carries its live provenance: {:?}",
+        status(&assembled),
+    );
+    let before = fixture.filtered_for_agent(assembled.clone());
+    assert!(
+        row(&before.neighbors, &fixture.peer).is_some(),
+        "FIXTURE: before the retraction the agent's pack keeps the peer: neighbors {:?}",
+        ids(&before.neighbors),
+    );
+
+    fixture
+        .vault
+        .retract_edge_provenance(&annotation, annotated_at + 1)
+        .expect("the owner retracts the edge's only provenance claim");
+    let pack = fixture.filtered_for_agent(assembled);
+    assert!(
+        row(&pack.results, &fixture.anchor).is_some(),
+        "the agent's filter keeps the anchor row under the live Grant: results {:?}",
+        ids(&pack.results),
+    );
+    assert!(
+        row(&pack.neighbors, &fixture.peer).is_none(),
+        "the anchor's only edge to the peer was retracted after the assembly, yet the agent's \
+         pack keeps the peer across it: neighbors {:?}",
+        ids(&pack.neighbors),
+    );
+    assert!(
+        status(&pack).is_none_or(|status| status == EdgeConfirmationStatus::Retracted),
+        "the agent's pack shows the retracted edge as current: {:?}",
+        status(&pack),
     );
 }
