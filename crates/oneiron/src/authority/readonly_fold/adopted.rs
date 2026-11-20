@@ -63,21 +63,29 @@ pub(super) fn fold_adopted_in_txn(
         };
         first_seen_at_secs.insert(*hash, first_seen);
     }
-    let rows: Vec<_> = tail
-        .iter()
-        .map(|(hash, entry)| crate::authority::fold_resume::RowMeta::of(Some(*hash), entry))
-        .collect();
     let observations =
-        crate::authority::sequence_observation::authority_local_observations_of_rows_in_txn(
-            store, txn, &rows,
-        )?;
+        crate::authority::sequence_observation::authority_local_observations_in_txn(store, txn)?;
     let peer_consent_roots =
         crate::federation::admitted_peer_consent_roots_for_store_in_txn(store, txn)?;
+    // The tail rows this install believes, judged as the store gate judges
+    // them but with a root request's wait unresolved, since resolving it
+    // reads this fold: the fold refuses only for the gaps these rows rest on
+    // (FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]). The arriving rows count
+    // as stored, as they will once stored, so a fold that answers here does
+    // not refuse after they land (#9476 review round 2).
+    let structure =
+        crate::authority::log_structure::fold_belief_structure_in_txn(store, txn, arriving)?;
+    let believed: BTreeSet<_> = tail
+        .iter()
+        .filter(|(_, entry)| structure.believes(entry))
+        .map(|(hash, _)| *hash)
+        .collect();
     let folded = crate::authority::adopted_fold::fold_adopted_checkpoint_tail(
         adopted,
         crate::authority::adopted_fold::AdoptedTail {
             tail: &tail,
             held_covered: &held_covered,
+            believed: Some(&believed),
             required,
             first_seen_at_secs: &first_seen_at_secs,
             now_secs: key.now_secs,

@@ -10,7 +10,9 @@
 //! candidates may also name a subject by its 32-hex id and cite a source by
 //! its id with a byte range or a claim id (FIX 7577). Its sources bind
 //! through the call's map as a label does, and its subject id is the
-//! resident's own; a model's reply never reads these shapes.
+//! resident's own; a model's reply never reads these shapes. A covered
+//! slice's relation reply (L2-03) is authored by the engine too, from the
+//! saved tags, and cites in the same range shape.
 
 use super::ParsedCandidate;
 use super::quote_binding::{QuoteBinding, bind_quote};
@@ -168,7 +170,7 @@ pub(in crate::dreamer_consolidation) fn check_extraction_reply(
         ));
     }
     let reply = extraction_reply(response).map_err(|error| error.to_string())?;
-    let authored = authored_fallback(response);
+    let authored = authored_fallback(response) || is_relation_reply(response);
     for (index, candidate) in reply.candidates.iter().enumerate() {
         if let Some(field) = contract_fault(candidate, authored) {
             return Err(format!(
@@ -181,10 +183,20 @@ pub(in crate::dreamer_consolidation) fn check_extraction_reply(
 
 /// Whether `response` is a deterministic fallback's reply, whose candidates
 /// were authored before its call (FIX 7577).
-pub(super) fn authored_fallback(response: &LlmResponse) -> bool {
+pub(in crate::dreamer_consolidation) fn authored_fallback(response: &LlmResponse) -> bool {
     matches!(
         &response.finish_reason,
         FinishReason::Other { name } if name.starts_with("fallback:")
+    )
+}
+
+/// Whether `response` is a covered slice's relation reply (`authored:`,
+/// L2-03): the engine authored it from the saved tags, so it cites in the
+/// shapes a fallback's reply reads. It is no provider failure's reply.
+pub(super) fn is_relation_reply(response: &LlmResponse) -> bool {
+    matches!(
+        &response.finish_reason,
+        FinishReason::Other { name } if name.starts_with("authored:")
     )
 }
 
@@ -241,7 +253,10 @@ fn contract_fault(candidate: &serde_json::Value, authored: bool) -> Option<&'sta
     .find_map(|(field, met)| (!met).then_some(field))
 }
 
-fn prospective_queries(candidate: &serde_json::Value) -> Result<Vec<String>> {
+/// Reads and normalizes a candidate's optional prospective query hints.
+pub(in crate::dreamer_consolidation) fn prospective_queries(
+    candidate: &serde_json::Value,
+) -> Result<Vec<String>> {
     let Some(queries) = candidate.get("prospective_queries") else {
         return Ok(Vec::new());
     };
@@ -259,29 +274,11 @@ fn prospective_queries(candidate: &serde_json::Value) -> Result<Vec<String>> {
     crate::claim::normalize_lexical_query_hints(&hints)
 }
 
-/// A 32-hex id. Only a candidate's `rel` that names no listed relationship
-/// label still reads one (FIX 7575).
-pub(super) fn entity_id_from_hex(hex: &str) -> Option<EntityId> {
-    let hex = hex.trim();
-    if hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    let mut raw = [0_u8; 16];
-    for (index, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
-        let high = hex_nibble(chunk[0])?;
-        let low = hex_nibble(chunk[1])?;
-        raw[index] = (high << 4) | low;
-    }
-    EntityId::from_bytes(raw).ok()
-}
-
-const fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
+/// A 32-hex id of either case, untrimmed (a model's output is foreign
+/// input, HEX-CASE-POLICY = A). Only a candidate's `rel` that names no
+/// listed relationship label still reads one (FIX 7575).
+pub(crate) fn entity_id_from_hex(hex: &str) -> Option<EntityId> {
+    EntityId::from_bytes(oneiron_hex::decode_any_case(hex)?).ok()
 }
 
 /// A TURN extraction call's sources: its labels over its branch's pinned

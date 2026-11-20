@@ -1,12 +1,13 @@
 //! Prep eligibility checks and exact-wake planning.
 
+use oneiron_vault_contract::{Schedule, WakeEntry};
 use serde::{Deserialize, Serialize};
 
 use super::pack::DEFAULT_PREP_MAX_WORDS;
 use crate::entity_id::EntityId;
 
 #[doc(hidden)]
-pub use oneiron_records::calendar::prep::wake::{DEFAULT_PREP_LEAD_SECS, PrepWake};
+pub use oneiron_records::calendar::prep::wake::DEFAULT_PREP_LEAD_SECS;
 
 /// Opaque tag the host echoes back when the prep wake fires.
 ///
@@ -14,19 +15,12 @@ pub use oneiron_records::calendar::prep::wake::{DEFAULT_PREP_LEAD_SECS, PrepWake
 /// room to spare.
 pub const PREP_WAKE_REASON_TAG: &str = "calendar.prep.t45";
 
-/// The owner's local hour at which an unanswered check-in is asked once more.
+/// The owner's local hour at which an unanswered check-in is asked once more:
+/// the shipped default of the vault setting `calendar.check_in.re_ask_local_hour`.
 pub const CHECK_IN_RE_ASK_LOCAL_HOUR: u8 = 9;
 
 /// Seconds in one civil day on a fixed-offset clock.
 const SECS_PER_DAY: i64 = 86_400;
-
-/// The `Schedule` arm every prep wake carries.
-///
-/// The contract's `Schedule` is tagged `#[serde(tag = "kind", rename_all =
-/// "snake_case")]`, so `Schedule::Exact` is the wire token `exact`. CAL plans no
-/// window: the fire instant is computed at schedule time and recomputed when the
-/// EVENT moves, which leaves the host nothing to jitter.
-pub const PREP_WAKE_SCHEDULE_KIND: &str = "exact";
 
 /// Tunables for one vault's prep behaviour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,33 +110,44 @@ pub(super) fn prep_fire_at(event: &PrepEvent, policy: PrepPolicy) -> Option<u64>
 /// Plans the T-45 prep wake for one EVENT, or `None` when the EVENT is
 /// ineligible or T-45 cannot be represented.
 ///
+/// The wake is the supervisor contract's own [`WakeEntry`], always on the
+/// [`Schedule::Exact`] arm: the fire instant is computed here and recomputed
+/// when the EVENT moves, so CAL never plans a window for the host to jitter.
+/// The wake id is the entry's `id` and [`PREP_WAKE_REASON_TAG`] its
+/// `reason_tag`.
+///
 /// The engine owns no clock: this only describes the wake the host is asked to
 /// deliver. Call it again when the EVENT is rescheduled — with the same
 /// [`prep_wake_id`], so the new entry replaces the old one rather than
 /// multiplying wakes.
 #[must_use]
-pub fn plan_prep_wake(wake_id: String, event: &PrepEvent, policy: PrepPolicy) -> Option<PrepWake> {
+pub fn plan_prep_wake(wake_id: String, event: &PrepEvent, policy: PrepPolicy) -> Option<WakeEntry> {
     if !prep_is_eligible(event, policy) {
         return None;
     }
     let fire_at = prep_fire_at(event, policy)?;
-    Some(PrepWake {
+    Some(WakeEntry {
         id: wake_id,
-        at_utc: fire_at,
+        at: Schedule::Exact { at: fire_at },
         reason_tag: PREP_WAKE_REASON_TAG.to_owned(),
     })
 }
 
 /// The instant of the one morning re-ask for a check-in first asked at
-/// `asked_at`: [`CHECK_IN_RE_ASK_LOCAL_HOUR`]:00 on the owner's next local
-/// calendar day. `offset_minutes_at` is the owner's UTC offset in minutes at
-/// an instant, so a daylight-saving change overnight still lands the re-ask
-/// on the morning's own clock.
+/// `asked_at`: `hour`:00 on the owner's next local calendar day (the vault's
+/// `calendar.check_in.re_ask_local_hour`, by default
+/// [`CHECK_IN_RE_ASK_LOCAL_HOUR`]). `offset_minutes_at` is the owner's UTC
+/// offset in minutes at an instant, so a daylight-saving change overnight
+/// still lands the re-ask on the morning's own clock.
 ///
 /// The engine owns no clock: like [`plan_prep_wake`], this only names the
 /// instant, and the host asks again once it has passed.
 #[must_use]
-pub fn plan_check_in_re_ask(asked_at: u64, offset_minutes_at: impl Fn(u64) -> i16) -> u64 {
+pub fn plan_check_in_re_ask(
+    asked_at: u64,
+    hour: u8,
+    offset_minutes_at: impl Fn(u64) -> i16,
+) -> u64 {
     let offset_secs = |at: u64| i64::from(offset_minutes_at(at)) * 60;
     let asked = i64::try_from(asked_at).unwrap_or(i64::MAX);
     let morning_local = asked
@@ -150,7 +155,7 @@ pub fn plan_check_in_re_ask(asked_at: u64, offset_minutes_at: impl Fn(u64) -> i1
         .div_euclid(SECS_PER_DAY)
         .saturating_add(1)
         .saturating_mul(SECS_PER_DAY)
-        .saturating_add(i64::from(CHECK_IN_RE_ASK_LOCAL_HOUR) * 3_600);
+        .saturating_add(i64::from(hour) * 3_600);
     let estimate = morning_local.saturating_sub(offset_secs(asked_at));
     let morning_offset = offset_secs(u64::try_from(estimate).unwrap_or(asked_at));
     u64::try_from(morning_local.saturating_sub(morning_offset)).unwrap_or(asked_at)

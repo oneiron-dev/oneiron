@@ -162,6 +162,16 @@ impl Fixture {
         let mut input = publication_input(page, published, from, until);
         input.value["event_config_hashes"]["intro"] =
             json!(oneiron::booking::booking_config_hash(&self.config).expect("hash"));
+        // The card lists the lengths its configuration offers
+        // (BK-VARIABLE-DURATION); the publication gate holds them equal.
+        if !self.config.allowed_durations_min.is_empty() {
+            input.value["event_types"][0]["allowed_durations_min"] =
+                json!(self.config.allowed_durations_min);
+        }
+        // The card states the deposit its configuration asks (BK-DEPOSITS).
+        if let Some(terms) = &self.config.deposit {
+            input.value["event_types"][0]["deposit"] = json!(terms);
+        }
         let receipt = self
             .server
             .vault
@@ -261,6 +271,7 @@ pub(super) fn fixture_config() -> EventTypeConfig {
         booking_window_secs: 7 * 86_400,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: id(0x73),
@@ -275,7 +286,9 @@ pub(super) fn fixture_config() -> EventTypeConfig {
                 .collect(),
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 
@@ -297,8 +310,10 @@ pub(super) fn publication_input(
         event_types: vec![EventTypeCard {
             key: EventTypeKey("intro".to_owned()),
             title: "Fixture event".to_owned(),
+            deposit: None,
             duration_min: 30,
             description: "Fixture description".to_owned(),
+            allowed_durations_min: Vec::new(),
         }],
         constraint_field: ConstraintFieldConfig {
             enabled: true,
@@ -353,7 +368,9 @@ pub(super) fn hold(
         constraint: None,
         session_ref: session.to_owned(),
         checkout_lease_token: lease,
+        deposit_terms: None,
         idempotency_key: format!("hold-{session}"),
+        cap_override_reason: None,
     }))
 }
 
@@ -390,6 +407,7 @@ pub(super) fn availability() -> BookingOperationRequest {
         visitor_tz: "UTC".to_owned(),
         constraint: None,
         session_ref: "fixture".to_owned(),
+        duration_min: None,
     })
 }
 

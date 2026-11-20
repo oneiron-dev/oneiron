@@ -241,6 +241,15 @@ fn transport_memory<'a>(
         // device, and nothing when no proof stood.
         let proved = oneiron::settings::ReadDestination::proved(auth.peer());
         memory = memory.for_destination(&proved);
+        // A verified account API key that holds `core:read` reads as the
+        // person it names, with every bound its lane holds
+        // (DEL2-ROOTLESS-MEMBER-KEY-READ = B, the lead 21 Nov).
+        if auth.account_key_principal() == Some(actor)
+            && class == oneiron::EdgeActorClass::Human
+            && auth.has_scope(crate::auth::CoreScope::Read)
+        {
+            memory = memory.with_account_key_read();
+        }
     }
     if let Some(auth) = auth
         && let Some(session) = auth.off_record_session()
@@ -359,7 +368,10 @@ pub(crate) fn attested_owner_holder(auth: &CoreAuth) -> Option<oneiron::EntityId
 /// explicit local dev mode, reads with the owner's guarded key the one
 /// resolver names; a hosted operator's root is refused (FIX 2222). A managed
 /// vault's attested owner reads with his own key, held to this request's
-/// owner proof ([`managed_owner_read_key`]).
+/// owner proof ([`managed_owner_read_key`]). A verified account API key that
+/// holds `core:read` reads as the person it names, under the engine's one
+/// key for it (`Vault::account_key_read_key`; DEL2-ROOTLESS-MEMBER-KEY-READ
+/// = B).
 pub(crate) fn scoped_read_for_core_auth<'a>(
     vault: &'a oneiron::Vault,
     auth: &CoreAuth,
@@ -375,6 +387,14 @@ pub(crate) fn scoped_read_for_core_auth<'a>(
         let key = credential_read_key(vault, proof)?;
         return Ok(vault.scoped_read(key.for_destination(&auth.destination())));
     }
+    if let Some(person) = auth.account_key_principal()
+        && auth.has_scope(crate::auth::CoreScope::Read)
+    {
+        let key = vault
+            .account_key_read_key(person)
+            .map_err(|error| super::core_engine_error("account key read key failed", error))?;
+        return Ok(vault.scoped_read(key.for_destination(&auth.destination())));
+    }
     let actor_ref = auth.principal_ref().unwrap_or(auth.principal());
     let mut key = oneiron::claim::ScopedReadActorKey::new(actor_ref)
         .ok_or_else(|| ApiError::internal_server_error("scoped read actor key is empty"))?;
@@ -383,6 +403,13 @@ pub(crate) fn scoped_read_for_core_auth<'a>(
             auth.principal_ref()
                 .and_then(|id| oneiron::EntityId::from_hex(id).ok()),
         );
+        // The conversation home binds a slip-less reader as the engine's
+        // credential key binds a slip (RULING SECREAD-HOME-READ-DOORS = B):
+        // one that is not one of the vault's own agents reads no stamped
+        // claim outside a room of this vault.
+        if !super::context_pack::own_agent_credential(vault, auth)? {
+            key = key.homed_unnamed();
+        }
     }
     Ok(vault.scoped_read(key.for_destination(&auth.destination())))
 }

@@ -411,6 +411,33 @@ impl Store {
         Ok(Some((master, entries)))
     }
 
+    /// The entries the index holds for `holder`, each with the generation
+    /// it was written for, read in `txn`, a snapshot taken under the custody
+    /// read guard ([`Store::custody_snapshot`]): the read-side twin of
+    /// [`Self::known_entries_for_in_writer`], for a reader that compares two
+    /// holders' current values and never needs the master (FIX
+    /// [SECRETS-OWNER-LIST-READ]). `None` while the index keys no value or
+    /// the holder has no committed history.
+    ///
+    /// # Errors
+    ///
+    /// Custody lost or damaged under a committed reference, and storage
+    /// faults.
+    pub(crate) fn known_entries_for_in_snapshot(
+        &self,
+        txn: &RoTxn<'_>,
+        holder: &EntityId,
+    ) -> Result<Option<Vec<(u32, KnownEntry)>>> {
+        if INDEX.get(self, txn, &())?.is_none() {
+            return Ok(None);
+        }
+        let Some(refs) = HISTORY.get(self, txn, holder)? else {
+            return Ok(None);
+        };
+        let custody = self.core.key_custody.bind_in_txn(self, txn)?;
+        Ok(Some(read_entries_tagged(custody, holder, refs.tagged())?))
+    }
+
     /// The keyed fingerprint of a run-tree steer intent (FIX 10066): `input`
     /// hashed under a subkey derived from the index's master, read in the
     /// writer `wtxn` as [`Self::known_history_in_writer`] reads it. `None`
@@ -517,7 +544,9 @@ impl Store {
     /// [`RetireCause::Erase`] intent is staged through the newest slot its
     /// custody holds, an aborted writer's included, for the finisher to
     /// destroy once this commits. Another holder's entries and the index's
-    /// master stay. Called for an erase alone.
+    /// master stay. Called for an erase, and for a record a merge revoked,
+    /// its value erased, while another record holds the same bytes
+    /// (FILE-CUSTODY-MERGE-AFTER-REWRAP).
     ///
     /// # Errors
     ///
@@ -599,8 +628,9 @@ impl Store {
     /// interrupted process's included: the custody finisher's order (marker,
     /// unlink, directory sync), then the handoff to the custody journal,
     /// whose obligations carry completion. Only an erase's intent runs, for
-    /// a holder whose permanent hard-delete marker stands and whose history
-    /// no reference names; anything else is refused by name.
+    /// a holder whose permanent hard-delete marker or merge receipt stands
+    /// (FILE-CUSTODY-MERGE-AFTER-REWRAP) and whose history no reference
+    /// names; anything else is refused by name.
     ///
     /// # Errors
     ///
@@ -629,7 +659,12 @@ fn known_retirement_ready(
             "known-value history retires for an erase only",
         ));
     }
-    if !store.port_deletion_marked(txn, DeletionMarker::HardDelete, &holder)? {
+    // An erase writes the permanent hard-delete marker. A merge revokes its
+    // record with the value erased while another record holds the same
+    // bytes, and keeps its receipt instead (FILE-CUSTODY-MERGE-AFTER-REWRAP).
+    if !store.port_deletion_marked(txn, DeletionMarker::HardDelete, &holder)?
+        && !crate::secret_custody::custody_merged_in_txn(store, txn, &holder)?
+    {
         return Err(Error::CorruptedIndex(
             "retiring known-value history has no erase marker",
         ));

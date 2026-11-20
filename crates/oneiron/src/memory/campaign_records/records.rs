@@ -1,5 +1,7 @@
 //! Versioned cohort records, lifecycle values and owner-bound request shapes.
 
+use oneiron_contracts::register::Register;
+
 use crate::entity_id::EntityId;
 use crate::write_envelope::cohort_claims::snooze_policy::SnoozePolicyData;
 
@@ -84,6 +86,36 @@ impl CopyReviewMode {
     }
 }
 
+/// How a campaign's mail goes out, which decides its opt-out form
+/// (ARCH-0059 #opt-out, owner 2026-10-15; Engine ruling
+/// L3-02-SEND-MODE-SCOPE = A).
+///
+/// A genuine 1:1 mail carries a plain opt-out line in its body and no bulk
+/// header, because the header marks mail as bulk. A bulk send carries
+/// List-Unsubscribe, and the compliance gate blocks a bulk send without it.
+///
+/// A Register (`campaign.send_mode`): `as_str` is the token a stored
+/// definition and a frozen send envelope carry, and `Register::named` reads
+/// one back. It has no serde derive, so the register line states the spelling.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Register)]
+#[register("campaign.send_mode", rename_all = "snake_case")]
+pub enum CampaignSendMode {
+    /// Each send is a genuine 1:1 mail: the plain opt-out line, no bulk
+    /// header. A campaign stored before send modes existed reads as this.
+    #[default]
+    OneToOne,
+    /// Each send is bulk mail: it carries List-Unsubscribe, or it blocks.
+    Bulk,
+}
+
+impl CampaignSendMode {
+    /// Parses a wire token, rejecting anything outside the closed set.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        <Self as Register>::named(value)
+    }
+}
+
 /// A versioned campaign definition.
 ///
 /// Not serde-derived for the same reason [`SavedQueryDefinition`](crate::saved_query::SavedQueryDefinition) is not:
@@ -110,6 +142,8 @@ pub struct CampaignDefinition {
     pub voice_guide_ref: Option<EntityId>,
     /// Who reviews this campaign's copy.
     pub copy_review: CopyReviewMode,
+    /// How this campaign's mail goes out, and so its opt-out form.
+    pub send_mode: CampaignSendMode,
 }
 
 impl CampaignDefinition {
@@ -149,6 +183,8 @@ pub struct CreateCampaignRequest {
     pub voice_guide_ref: Option<EntityId>,
     /// Who reviews the copy; absent takes [`CopyReviewMode::Judge`].
     pub copy_review: Option<CopyReviewMode>,
+    /// How the mail goes out; absent takes [`CampaignSendMode::OneToOne`].
+    pub send_mode: Option<CampaignSendMode>,
 }
 
 /// Update request. Also carries no owner field.
@@ -165,4 +201,6 @@ pub struct UpdateCampaignRequest {
     pub voice_guide_ref: Option<Option<EntityId>>,
     /// Replacement review mode; absent keeps the stored one.
     pub copy_review: Option<CopyReviewMode>,
+    /// Replacement send mode; absent keeps the stored one.
+    pub send_mode: Option<CampaignSendMode>,
 }

@@ -21,10 +21,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine.rs` | src | m | 1 struct · 1 fn · 8 const · 1 re-export · 1 crate-vis | FormualizerEngine | The owned formualizer engine behind the [`RecalcEngine`] seam |
 | `src/error.rs` | src | s | 1 enum · 1 fn · 1 type | FormulaError | Typed failures for the formula crate |
 | `src/lib.rs` | src | s | 7 mod · 9 re-export | — | In-process XLSX formula recalculation, the default of the edit round trip |
-| `src/links.rs` | src | L | 8 crate-vis | — | Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the… |
+| `src/links.rs` | src | m | 4 crate-vis | — | Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the… |
+| `src/links/admission.rs` | src | m | 3 crate-vis | — | Admitting a formula's external references: the workbook names that read a linked workbook… |
+| `src/links/parts.rs` | src | m | 2 crate-vis | — | Reading the package for its links: the external relationship targets the engine keeps, the workbook's link… |
 | `src/location.rs` | src | s | 1 struct · 4 fn | DocumentLocation | Where the workbook one recalculation reads was opened from: the folder and file name CELL("filename")… |
 | `src/measure.rs` | src | m | 4 struct · 3 fn · 1 const | CaseResult, CorpusCase, CorpusReport, MeasureOptions | Step-19 corpus runner: honest per-case results over the pinned 834 cases |
 | `src/routing.rs` | src | s | 2 fn · 1 re-export | — | External links on the precision fallback's route |
-| `src/workbook.rs` | src | L | 1 struct · 1 fn · 3 crate-vis | WorkbookRecalc | Recalculate a local XLSX through the fork's retained cache writer |
+| `src/workbook.rs` | src | m | 1 struct · 1 fn · 3 crate-vis | WorkbookRecalc | Recalculate a local XLSX through the fork's retained cache writer |
+| `src/workbook/admission.rs` | src | s | 2 crate-vis | — | Admitting a workbook's formulas for native recalculation (`Formulas::admit`): what the engine must not… |
+| `src/workbook/edit_gate.rs` | src | s | 1 crate-vis | — | The recalculated package against the edit round trip's corruption gate: a result the gate would refuse goes… |
+| `src/workbook/read.rs` | src | m | 1 crate-vis | — | Reading the formulas the writer evaluates (`Formulas::read`), with the reader's checks of malformed content… |
 | `src/xml.rs` | src | s | 4 crate-vis | — | The document organ's namespace-aware reader, with this crate's errors |
 | `tests/workbook.rs` | test | XL | — | — | Actual XLSX in/out tests of the retained engine |

@@ -28,6 +28,11 @@ pub(super) struct ChannelAccumulator {
     pub(super) trace_claim_gate: ClaimStatusGateCache,
     pub(super) capture: bool,
     pub(super) trace_candidate_limit: usize,
+    /// Rows a clamped pack's fetch kept out of its window because the
+    /// audience could not read them whatever their status, among the places
+    /// the window would have given them without the clamp. The pack counts
+    /// those that meet every other check among the rows its clamp withheld.
+    pub(super) clamped_at_fetch: Vec<EntityId>,
 }
 
 /// The signal a channel's results are recorded under. The score components
@@ -62,6 +67,7 @@ impl ChannelAccumulator {
             },
             capture,
             trace_candidate_limit,
+            clamped_at_fetch: Vec::new(),
         }
     }
 

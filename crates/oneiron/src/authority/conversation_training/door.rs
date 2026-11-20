@@ -9,6 +9,11 @@
 //! let people opt out; a choice already made then stays, ignored. This
 //! install carries it under its own live machine profile, in any role the
 //! one carrier rule admits ([`super::super::owner_act_signer_admits`]).
+//! Letting their messages back in widens their own row: where the vault
+//! holds an owner key, an install that is not the owner's machine and holds
+//! no owner key cannot prove it, and the door refuses it, storing nothing
+//! (ruling CARRIER-PERSON-OPT-BACK-IN = A). Leaving them out lands from any
+//! install.
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -66,9 +71,13 @@ impl Vault {
     /// A refusal when the proof is no longer a live person of this vault;
     /// [`crate::error::RecordError::AuthorityRefused`] ("this vault does not
     /// allow opt-outs") while the vault does not let people opt out, and when
-    /// this install cannot carry the choice or its fold does not count it; [`Error::ConcurrentWrite`] when `seen` is not the current
-    /// revision; [`Error::InvalidConfig`] when the choice would name more
-    /// parents than one entry may.
+    /// this install cannot carry the choice or its fold does not count it;
+    /// [`crate::error::RecordError::OwnerKeyRequired`] when they let their
+    /// messages back in where the vault holds an owner key and this install
+    /// neither is the owner's machine nor holds one (nothing is stored);
+    /// [`Error::ConcurrentWrite`] when `seen` is not the current revision;
+    /// [`Error::InvalidConfig`] when the choice would name more parents than
+    /// one entry may.
     pub fn set_conversation_training(
         &self,
         owner: &AuthenticatedOwner,
@@ -93,7 +102,12 @@ impl Vault {
         let key = crate::identity::read_machine_signing_key_in_txn(self, &txn)?
             .ok_or_else(|| authority_refused(NO_CARRIER))?;
         let public_key = key.verifying_key().to_bytes();
-        if !owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+        if !owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(authority_refused(NO_CARRIER));
         }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
@@ -117,7 +131,7 @@ impl Vault {
             current.0,
         );
         let now = self.instant_in_txn(&txn)?.secs();
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &key,
             seq,
@@ -128,6 +142,7 @@ impl Vault {
                 leave_out,
             }),
             now,
+            self.owner_proof_signer(&fold).as_ref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
@@ -136,6 +151,9 @@ impl Vault {
         };
         self.put_authority_log_entries_in_txn(&mut txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(&txn)?;
+        // An opt back in this install cannot prove waits in the fold: the
+        // refusal drops the transaction, so nothing of it is stored.
+        after.refuse_waiting_choice(&entry_hash)?;
         let landed = after
             .conversation_training
             .persons

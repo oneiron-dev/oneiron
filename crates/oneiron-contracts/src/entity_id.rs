@@ -180,6 +180,15 @@ impl EntityId {
         let bytes = oneiron_hex::decode_any_case::<16>(s).ok_or(crate::error::Error::InvalidKey)?;
         Self::from_bytes(bytes)
     }
+
+    /// Parses exactly the 32 lowercase hex characters [`Self::to_hex`] writes,
+    /// the spelling of an id in a stored or wire form (HEX-CASE-POLICY = A).
+    /// Upper case, a sign and any other length are refused, as are the
+    /// sentinel patterns [`Self::from_bytes`] refuses.
+    pub fn from_lower_hex(s: &str) -> crate::error::Result<Self> {
+        let bytes = oneiron_hex::decode::<16>(s).ok_or(crate::error::Error::InvalidKey)?;
+        Self::from_bytes(bytes)
+    }
 }
 
 // Entity references have one wire spelling. Deserialization always re-enters

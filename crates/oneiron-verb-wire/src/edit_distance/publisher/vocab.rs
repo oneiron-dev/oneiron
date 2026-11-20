@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/edit_distance/publisher/vocab.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
 use oneiron_skill_attribution::types::AttributionVerdict;
 
 /// The defect class an issue signature reports (ARCH-0056 §5 routing, §9 UP
@@ -24,8 +25,10 @@ use oneiron_skill_attribution::types::AttributionVerdict;
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("issue.category")]
 pub enum IssueCategory {
     /// The shipped artifact's own content was wrong.
     SkillDefect,
@@ -52,19 +55,6 @@ impl IssueCategory {
         Self::PreferenceShift,
         Self::Unclear,
     ];
-
-    /// The pinned on-disk/wire token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::SkillDefect => "skill_defect",
-            Self::ExecutionLapse => "execution_lapse",
-            Self::Discovery => "discovery",
-            Self::Environment => "environment",
-            Self::PreferenceShift => "preference_shift",
-            Self::Unclear => "unclear",
-        }
-    }
 
     /// Parses a pinned token; `None` for one this engine never wrote.
     #[must_use]

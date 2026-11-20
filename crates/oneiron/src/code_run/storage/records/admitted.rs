@@ -143,14 +143,15 @@ impl Vault {
         ))
     }
 
-    /// Publishes the reply body `spool` took as run `owner`'s output at
-    /// `path`, admitted in the writer that publishes it (see the module
+    /// Publishes the reply body `spool` took as run `owner`'s complete output
+    /// at `path`, admitted in the writer that publishes it (see the module
     /// notes), as a dependent of each of `sources`, the records whose words
-    /// it copies (FIX 18924). An admitted body that spills where its spool
-    /// did not takes the writer again with an instance minted first: a
-    /// writer never mints one. A write receipt's output manifest, when
-    /// supplied, commits beside the body and descriptor, before its later
-    /// answer row settles the write.
+    /// it copies (FIX 18924), with `input_rows` as its occurrence's input
+    /// rows ([`Self::publish_admitted_code_run_output_and`]). An admitted
+    /// body that spills where its spool did not takes the writer again with
+    /// an instance minted first: a writer never mints one. A write receipt's
+    /// output manifest, when supplied, commits beside the body and
+    /// descriptor, before its later answer row settles the write.
     ///
     /// # Errors
     ///
@@ -160,17 +161,18 @@ impl Vault {
         &self,
         path: String,
         spool: BodySink,
-        complete: bool,
         owner: EntityId,
         sources: &[EntityId],
+        input_rows: Option<Vec<EntityId>>,
         receipt: Option<(&mut CodeRunReplayRecord, &mut CodeRunReplayGeneration)>,
     ) -> Result<ReplyBody> {
         self.publish_admitted_code_run_output_and(
             path,
             spool,
-            complete,
+            true,
             owner,
             sources,
+            input_rows,
             receipt,
             |_, _| Ok(()),
         )
@@ -179,7 +181,12 @@ impl Vault {
     /// Publishes the admitted occurrence and `also`'s rows in the SAME writer.
     /// The callback runs once, after mint retries and only for a placed body.
     /// Its reply sources (FIX 18924) and a supplied write receipt's manifest
-    /// commit in that writer too.
+    /// commit in that writer too. `input_rows` are the occurrence's complete
+    /// input rows, or `None` when any constituent is unknown (FIX 7104).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the input rows join the admitted reply's inputs"
+    )]
     pub(crate) fn publish_admitted_code_run_output_and(
         &self,
         path: String,
@@ -187,6 +194,7 @@ impl Vault {
         complete: bool,
         owner: EntityId,
         sources: &[EntityId],
+        input_rows: Option<Vec<EntityId>>,
         receipt: Option<(&mut CodeRunReplayRecord, &mut CodeRunReplayGeneration)>,
         also: impl FnOnce(&mut heed::RwTxn<'_>, &CodeRunRawOutput) -> Result<()>,
     ) -> Result<ReplyBody> {
@@ -206,9 +214,14 @@ impl Vault {
             };
             let mut sink = BodySink::new(self.store.body_dir()?, reply.bound(), Some(mint));
             admitted.feed(&mut sink)?;
-            let finished = finish_output(path, sink, complete, self.limit_watch(), |digest| {
-                self.pin_result_body(digest)
-            })?;
+            let finished = finish_output_sourced(
+                path,
+                sink,
+                complete,
+                input_rows,
+                self.limit_watch(),
+                |digest| self.pin_result_body(digest),
+            )?;
             self.put_code_run_output_in_txn(&mut wtxn, &finished, &finished.output, Some(owner))?;
             super::super::fold_answers::record_reply_sources_in_txn(
                 &self.store,
@@ -218,8 +231,8 @@ impl Vault {
             )?;
             also(&mut wtxn, &finished.output)?;
             if let Some((receipt, generation)) = receipt {
-                let current = REPLAY_RECORDS.get(&self.store, &wtxn, &receipt.run_id)?;
-                replay_generation_matches(current.as_ref(), Some(*generation))?;
+                let stored = stored_replay_generation(&self.store, &wtxn, &receipt.run_id)?;
+                replay_generation_matches(stored, Some(*generation))?;
                 receipt.outputs.push(finished.output.clone());
                 self.put_code_run_replay_record_in_txn(&mut wtxn, receipt)?;
                 let next_generation = receipt.generation()?;

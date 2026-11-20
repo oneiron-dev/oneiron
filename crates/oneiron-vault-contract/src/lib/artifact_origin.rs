@@ -14,7 +14,8 @@
 //! serves nothing answers as a forbidden artifact does.
 //!
 //! A plain serve reads the request's own `Host` (or `:authority`) under its
-//! configured domains ([`ArtifactHost::read`]). A managed vault (its
+//! configured domains ([`ArtifactHost::read`]), and, once it names its vault,
+//! under [`LOCAL_ARTIFACT_DOMAIN`] too. A managed vault (its
 //! `--artifact-http-socket`, or [`crate::vm::VM_ARTIFACT_PORT`] in a vault VM)
 //! is never told its public name (FIX 6716). The edge checks the public
 //! label, one DNS label of at most [`MAX_ARTIFACT_LABEL`] bytes,
@@ -39,6 +40,15 @@ pub const MAX_ARTIFACT_LABEL: usize = 63;
 /// The fixed domain of a managed vault's internal artifact authority. Under
 /// `.invalid`, it names no public host.
 pub const ARTIFACT_INTERNAL_DOMAIN: &str = "artifact.invalid";
+
+/// The domain a local run answers under in the hosted shape (APP-HOST = A,
+/// CROSS-ARCH-0019 #app-host-shape: "A local run uses the same shape on
+/// `*.localhost`"): `<app>--<name>.localhost` for an app, and
+/// `p-<lease>.localhost` for a preview. A browser resolves it and every name
+/// under it to loopback (RFC 6761), and each name keeps its own cookies. The
+/// bare name stays local serving's own, `localhost:<port>/a/<artifact>/`
+/// ([`is_bare_local_host`]).
+pub const LOCAL_ARTIFACT_DOMAIN: &str = "localhost";
 
 /// The revision of the internal artifact authority a managed vault answers
 /// on ([`ArtifactInternalHost`]), which a vault built with it reports on
@@ -381,6 +391,13 @@ impl ArtifactInternalHost {
             ArtifactInternalRead::Unnamed
         }
     }
+}
+
+/// Whether `host` (a port and a trailing dot are dropped, case is ignored) is
+/// the bare [`LOCAL_ARTIFACT_DOMAIN`]: it names no vault, app or preview.
+#[must_use]
+pub fn is_bare_local_host(host: &str) -> bool {
+    normalize_host(host) == LOCAL_ARTIFACT_DOMAIN
 }
 
 /// `host` without a port or a trailing dot, in lower case.

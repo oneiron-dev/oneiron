@@ -8,6 +8,7 @@ use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use ed25519_dalek::{Signature, Signer, VerifyingKey};
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 /// The device's own signing public key. Owned by `crate::identity`, which
@@ -177,7 +178,7 @@ impl Vault {
         if ids.is_empty() && run.policy.is_none() {
             return Ok(ids);
         }
-        let digest = *blake3::hash(&SIGNED_RUN.encode_value(run)?).as_bytes();
+        let digest = *ContentHash::of(&SIGNED_RUN.encode_value(run)?).as_bytes();
         self.with_write_txn_grouped(|txn| {
             SIGNED_RUN.put(&self.store, txn, &digest, run)?;
             for id in &ids {
@@ -199,7 +200,7 @@ impl Vault {
             let Some(raw) = SIGNED_RUN.get_bytes(&self.store, &txn, &digest)? else {
                 return Ok(false);
             };
-            if blake3::hash(&raw).as_bytes() != &digest {
+            if ContentHash::of(&raw).as_bytes() != &digest {
                 return Ok(false);
             }
             let Ok(run) = SIGNED_RUN.decode_value(&raw) else {

@@ -305,7 +305,7 @@ pub(super) fn witness_message_envelope(message: &WitnessMessage) -> WitnessMessa
                 .map(crate::store::witness_message_body::StoredMessagePart::Inline)
                 .collect()
         }),
-        metadata: message.metadata.as_ref().map(json_to_rmpv),
+        metadata: message.metadata.as_ref().map(json_to_msgpack_value),
         is_visible: message.is_visible,
         order: message.order,
     }

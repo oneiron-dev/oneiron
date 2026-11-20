@@ -334,8 +334,8 @@ impl OffRecordSession<'_> {
         if suggestions.len() >= MAX_ROOM_NOTICES {
             suggestions.remove(0);
         }
-        // It waits even where no notice posts: the owner alone with their
-        // own agent still answers it.
+        // It waits for an answer whether or not its notice posts:
+        // `post_notice` posts only where someone in the room hears it.
         suggestions.push(OffRecordSaveSuggestion {
             by: *agent.as_bytes(),
             at: hearing.at,
@@ -364,7 +364,9 @@ impl OffRecordSession<'_> {
     /// does not bind a live human person, or was revoked or expired by the
     /// time the talk is gathered,
     /// [`OffRecordError::OffRecordNotInRoom`] when `person` is not in the
-    /// room by then: either way nothing is released and nobody is told.
+    /// room by then, or `credential` is not the slip this vault minted as it
+    /// shows itself (narrowed or handed on since): either way nothing is
+    /// released and nobody is told.
     pub fn export_talk_by(
         &self,
         person: EntityId,
@@ -377,11 +379,16 @@ impl OffRecordSession<'_> {
             return Err(super::save_grant::not_a_holder(&self.session_ref, person));
         }
         self.export_talk_for(person, Some(credential), |txn| {
-            if crate::consent::person_is_live_in_txn(self.vault, txn, &person)? {
-                Ok(())
-            } else {
-                Err(super::save_grant::not_a_holder(&self.session_ref, person))
+            if !crate::consent::person_is_live_in_txn(self.vault, txn, &person)? {
+                return Err(super::save_grant::not_a_holder(&self.session_ref, person));
             }
+            // The copy outlives the room under the slip's authority, as a
+            // save does (ARCH-0052 #d5-proof-open): only the slip as this
+            // vault minted it takes one. Any other gets an outsider's refusal.
+            if !super::save_grant::minted_as_shown(self.vault, txn, credential)? {
+                return Err(not_in_room(&self.session_ref, person));
+            }
+            Ok(())
         })
     }
 
@@ -816,7 +823,7 @@ pub(super) fn is_member_in_txn(
     {
         return Ok(false);
     }
-    Ok(vault.members_in_txn(txn, room)?.contains(&actor))
+    vault.is_member_in_txn(txn, room, actor)
 }
 
 pub(super) fn not_in_room(session_ref: &str, actor: EntityId) -> Error {

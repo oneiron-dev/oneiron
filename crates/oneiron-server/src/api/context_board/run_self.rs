@@ -20,9 +20,11 @@
 //! out of the brief and named on one unavailable line
 //! ([`oneiron::context_board::SelfBrief::render`]), never stated as a value.
 
+use std::collections::BTreeSet;
+
 use oneiron::authority::CommReach;
 use oneiron::context_board::{
-    BriefCredentialCeiling, BriefRunCeiling, BriefWorkingHandle, BriefWorkingSet,
+    BriefCredentialCeiling, BriefReadShape, BriefRunCeiling, BriefWorkingHandle, BriefWorkingSet,
     CommunicationLimits, SelfBriefState, SessionReadSet, StreamConnectionId,
 };
 use oneiron::llm::run_admission::RunAdmission;
@@ -59,6 +61,10 @@ pub(crate) struct BriefHostFacts {
     /// The working set's pins family as the host's board projection read it
     /// at describe time ([`brief_pins_family`]).
     pub(crate) pins: Option<Vec<BriefWorkingHandle>>,
+    /// The read shape the run's attempt woke under, as its pump stamped it
+    /// (census L9-37). Only a pumped run's wake picks one, so a credential's
+    /// call and a turn program hold none.
+    pub(crate) read_shape: Option<oneiron::store::ReadShape>,
 }
 
 /// The working set's pins family (FIX 17594, WORKING SET A) from the
@@ -349,6 +355,7 @@ pub(super) fn resolved_state(
         class_verdicts,
         budget_lease_id: line.map(|line| line.run().to_owned()),
         budget: line.map(RunAdmission::read),
+        read_shape: host.read_shape.map(BriefReadShape::new),
         clock_ms,
         skill_index,
         working_set: BriefWorkingSet {
@@ -398,15 +405,65 @@ fn run_people(
     server: &SyncServer,
     actor: oneiron::WriteActor,
 ) -> MemoryResult<oneiron::context_board::People> {
+    read_people(server, &run_people_read(server, actor)?)
+}
+
+/// The rows of a pumped run's brief prefix that no longer stand for the
+/// reader its PEOPLE were read under, the agent's own lane on this device
+/// ([`fallen_brief_rows`]).
+///
+/// # Errors
+///
+/// The run's actor key is invalid, or a read failed.
+pub(crate) fn run_brief_fallen_rows(
+    server: &SyncServer,
+    actor: oneiron::WriteActor,
+    sources: &[oneiron::EntityId],
+    resident: &BTreeSet<oneiron::EntityId>,
+) -> MemoryResult<BTreeSet<oneiron::EntityId>> {
+    fallen_brief_rows(server, &run_people_read(server, actor)?, sources, resident)
+}
+
+/// The agent's own lane on this device: the reader a pumped run's PEOPLE
+/// are read under.
+fn run_people_read(
+    server: &SyncServer,
+    actor: oneiron::WriteActor,
+) -> MemoryResult<oneiron::claim::ScopedRead<'_>> {
     let key = oneiron::claim::ScopedReadActorKey::with_actor_class(
         actor.entity_ref().to_hex(),
         actor.actor_class().gate_actor_class(),
     )
     .ok_or_else(|| internal("run actor key invalid"))?;
-    let read = server
+    Ok(server
         .vault
-        .scoped_read(key.at(oneiron::claim::CallerLocality::OnDevice));
-    read_people(server, &read)
+        .scoped_read(key.at(oneiron::claim::CallerLocality::OnDevice)))
+}
+
+/// The rows of a staged brief prefix, kept past the boundary it was
+/// prepared at, that no longer stand for `read`, the reader its PEOPLE were
+/// read under ([BRIEF-PREFIX-STALE-PAST-REVOKE]): each of `sources` that is
+/// deleted, erased or withdrawn now
+/// ([`oneiron::code_run::withdrawn_source_rows`]), and each person its
+/// roster holds, `resident`, that `read` no longer reads, judged as
+/// [`read_people`] admits a person.
+///
+/// # Errors
+///
+/// A read failed.
+pub(crate) fn fallen_brief_rows(
+    server: &SyncServer,
+    read: &oneiron::claim::ScopedRead<'_>,
+    sources: &[oneiron::EntityId],
+    resident: &BTreeSet<oneiron::EntityId>,
+) -> MemoryResult<BTreeSet<oneiron::EntityId>> {
+    let mut fallen = oneiron::code_run::withdrawn_source_rows(&server.vault, sources);
+    for person in resident {
+        if !read.is_entity_readable(person)? {
+            fallen.insert(*person);
+        }
+    }
+    Ok(fallen)
 }
 
 /// The vault's people as `read` reads them, each `about` the stored line of

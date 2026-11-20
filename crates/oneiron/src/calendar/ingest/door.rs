@@ -3,6 +3,7 @@
 
 use super::admission::{PollAdmission, VerdictFold, connector_event_ref};
 use crate::calendar::claims::CalendarPassportSource;
+use crate::calendar::connectors::door::seat_of_system_in_txn;
 use crate::calendar::ics::{ParsedIcsFeed, parse_ics_feed};
 use crate::calendar::passport::{admitted_passport_for_in_txn, resolve_admitted_event_by_uid};
 use crate::calendar::safeguard::CalendarBodyScreener;
@@ -60,7 +61,9 @@ fn read_upload(
 /// existing complete-empty-feed absence law. No poll is scheduled by a file.
 /// The owner's CAL-09 dial decides whether `screener` (or its recorded
 /// absence) screens each imported admission, as an installed feed's poll
-/// screens; with the dial off the receipt reports `skipped`.
+/// screens; with the dial off the receipt reports `skipped`. The upload never
+/// runs under the system of an installed ICS feed, of a CalDAV seat or of a
+/// pack calendar source, whose events its absence sweep would cancel.
 pub fn import_ics_as_owner(
     memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
@@ -76,6 +79,7 @@ pub fn import_ics_as_owner(
         &input.source_blob_ref,
         input.source_version,
     )?;
+    refuse_installed_source_system(memory, &input.system)?;
     apply_upload(
         memory,
         owner,
@@ -86,6 +90,35 @@ pub fn import_ics_as_owner(
         true,
         screener,
     )
+}
+
+/// A complete upload marks absent every live inbound passport of its system whose UID the file
+/// lacks, and cancels each EVENT no live source reports any more. Under the system of an
+/// installed ICS feed, the feed's events would stay cancelled until a poll with a changed body
+/// carries them again; under a CalDAV seat's (a stopped seat's too), until the remote object
+/// changes; under a pack calendar source's, until its next complete listing. So the upload
+/// takes another system, under which its UIDs still attach to the same EVENTs. A system whose
+/// feed was uninstalled is open to an upload, since no poll of that feed runs again. The check
+/// reads the installed sources once, under the upload's admission turn and before its writes. A
+/// feed's install and a seat's take that turn too (`ADMISSION_WRITE_TURN`), an owner archive
+/// restore's among them, so none lands while the upload runs.
+fn refuse_installed_source_system(memory: &Memory<'_>, system: &str) -> MemoryResult<()> {
+    crate::mail_pack::refuse_calendar_source_system(system)?;
+    let vault = memory.vault();
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    if super::feed_door::registration_in_txn(vault, &txn, system)?.is_some() {
+        return Err(MemoryError::bad_request(
+            "an installed ICS feed imports under this system, and a complete upload would \
+             cancel the feed's events that the file lacks; use another system",
+        ));
+    }
+    if let Some(seat_ref) = seat_of_system_in_txn(vault, &txn, system)? {
+        return Err(MemoryError::bad_request(format!(
+            "the CalDAV seat `{seat_ref}` imports under this system, and a complete upload \
+             would cancel its events that the file lacks; use another system"
+        )));
+    }
+    Ok(())
 }
 
 /// The owner applies one sourced instance move. The original key must name an
@@ -226,6 +259,7 @@ fn apply_upload(
         verdict_fold: VerdictFold::default(),
         continuations: Some(Vec::new()),
         owed_booking_moves: 0,
+        admitted_claims: Vec::new(),
     };
     admission.apply_feed(feed).map_err(calendar_error)?;
     if complete {

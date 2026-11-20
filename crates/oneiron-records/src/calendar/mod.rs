@@ -5,7 +5,6 @@ pub use crate::calendar::connectors::seat::CalendarConnectorSyncPayload;
 pub use crate::calendar::invite::payload::CalendarInviteMethod;
 pub use crate::calendar::prep::home_node::PrepHomeNodeJob;
 pub use crate::calendar::prep::wake::DEFAULT_PREP_LEAD_SECS;
-pub use crate::calendar::prep::wake::PrepWake;
 pub use oneiron_base::calendar_body_screen as safeguard;
 pub use oneiron_base::calendar_body_screen::CALENDAR_SAFEGUARD_CONFIG_KEY;
 pub use oneiron_base::calendar_body_screen::CALENDAR_SAFEGUARD_REASON_NO_SCREENER;

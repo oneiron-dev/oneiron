@@ -3,10 +3,14 @@
 
 use crate::authority::*;
 
-/// A signed withdrawal that may cross rejected permissive ancestry.
+/// A signed withdrawal that may cross rejected permissive ancestry. A
+/// device revocation is one (FIX [CONFIRM-COLLISION-SUBTREE-ROLLBACK]): a
+/// key's revocation stays proved on its own signed branch when the fold
+/// drops that branch, as an actor revocation's does.
 pub fn restrictive_withdrawal(op: &AuthorityOp) -> bool {
     match op {
         AuthorityOp::RevokeActor { .. }
+        | AuthorityOp::RevokeDevice { .. }
         | AuthorityOp::SlipRevoke { .. }
         | AuthorityOp::SlipConsume { .. }
         | AuthorityOp::SlipGrantRevoke { .. }

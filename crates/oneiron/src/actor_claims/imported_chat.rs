@@ -36,7 +36,8 @@ pub(super) fn write_imported_chat_in_txn(
     if !imported.imported {
         return Ok(None);
     }
-    let (value, pair_scope) = row.value_and_scope()?;
+    let (value, pair_scope) =
+        row.value_and_scope(super::rows::actor_note_max_bytes_in_txn(vault, txn)?)?;
     let mut body = ClaimBody::new(
         row.predicate(),
         ClaimSubject::Entity(row.actor()),

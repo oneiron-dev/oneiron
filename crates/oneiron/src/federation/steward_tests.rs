@@ -54,6 +54,7 @@ fn install_steward(vault: &Vault, steward: EntityId) -> (EntityId, FederationGra
             ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_federation_grant_body(&grant).unwrap(),
         )
         .commit()
@@ -219,6 +220,7 @@ fn a_shared_vault_steward_cannot_read_a_members_personal_vault() {
             ENTITY_TYPE_CLAIM,
             TimeRange { start: 2, end: 2 },
             2,
+            None,
             &encode_claim_body(&body).unwrap(),
         )
         .commit()

@@ -13,7 +13,7 @@ use super::*;
 /// One entry-progress rule for the ordinary fold and signed-branch proof.
 /// During normal rounds no ancestry is bypassed. After a full stalled round,
 /// only a signed withdrawal may cross proven-rejected permissive parents: a
-/// RevokeActor, a machine removal, or a slip revoke or consume (the ordinary
+/// RevokeActor, a RevokeDevice, a machine removal, or a slip revoke or consume (the ordinary
 /// fold passes only retired client enrollments; the signed-branch proof
 /// rescues only these withdrawals).
 pub(super) enum EvaluationPhase<'a> {

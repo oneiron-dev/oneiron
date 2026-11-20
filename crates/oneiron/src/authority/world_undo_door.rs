@@ -412,6 +412,7 @@ fn request_for(
         device_class,
         encryption_key,
         machine_proof,
+        restored_from: None,
     }
 }
 
@@ -442,6 +443,7 @@ fn mark(
                 seen_world_edits: BTreeSet::new(),
                 carrier: None,
                 act: None,
+                restored_from: None,
             }),
             authority_key_from_ed(signer),
             2,

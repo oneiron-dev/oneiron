@@ -120,7 +120,8 @@ impl ConsolidationHomePickReceipt {
     /// The AUTHORITY_LOG row the pick landed as, which its listing names.
     #[must_use]
     pub fn act_row(&self) -> Option<EntityId> {
-        oneiron_authority::authority::authority_log_entity_id_from_hash(&hex32(&self.act_ref)?).ok()
+        let hash = oneiron_hex::decode::<32>(&self.act_ref)?;
+        oneiron_authority::authority::authority_log_entity_id_from_hash(&hash).ok()
     }
 }
 
@@ -199,16 +200,4 @@ pub struct ConsolidationStepRef {
     pub step_hash: String,
     /// The terminal `dreamer.step` claim that settled it.
     pub claim_ref: EntityId,
-}
-
-/// 32 bytes from 64 ASCII hex digits of either case.
-pub fn hex32(text: &str) -> Option<[u8; 32]> {
-    if text.len() != 64 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    let mut out = [0; 32];
-    for (byte, pair) in out.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
-        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    Some(out)
 }

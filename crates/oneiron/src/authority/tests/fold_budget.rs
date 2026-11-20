@@ -287,16 +287,16 @@ fn a_log_past_its_memory_floor_names_the_floor_and_raising_the_row_restores_it()
     delete().expect("owner verbs work under the default floor");
 }
 
-/// Substrate invariant (rule 5): a key no slip issuer vouches for, here an
-/// admin the owner admitted, stores up to the `authority_log_signer_bound`
-/// policy row. Its next row waits with a typed error naming it, nothing is
-/// written, and the log raises its typed check. Its first revocation of a
-/// device the fold holds live lands; a revocation of a key the fold never
-/// held, a second revocation of the same device, and a machine removal the
-/// fold would never apply wait. The waiting row lands once the owner
-/// cosigns it, and the owner's own rows never meet the bound.
+/// Substrate invariant (rule 5, FIX 8564/8876, 605dad1bf80 #4052): a vouched,
+/// non-stranger signer's stored-row count only asks
+/// (AUTHORITY_LOG_SIGNER_COUNT_ADVISORY, log_budget.rs:82, :520-526): its rows
+/// past the `authority_log_signer_bound` policy row land, and the log raises
+/// its typed SIGNER_BOUND check (log_check.rs:45-49). Revocations land as every
+/// other row does (the first-live-revocation carve-out is deleted). A row no
+/// key may vouch for still waits (SignerPending, mesh PR1b carrier arm), and
+/// the owner's own rows never meet the bound.
 #[test]
-fn a_signer_past_its_bound_waits_but_live_restrictions_and_owner_rows_land() {
+fn a_signer_past_its_bound_lands_with_a_check_but_an_unvouched_removal_waits() {
     const BOUND: usize = 8;
     let host = host();
     let request = request_for(host.vault_id, EntityId::now(), &ed_key(66));
@@ -365,75 +365,95 @@ fn a_signer_past_its_bound_waits_but_live_restrictions_and_owner_rows_land() {
     }
     let before = stored();
     let over = admin_row(BOUND + 1, confirm_op(BOUND), false);
-    let err = host
-        .vault
-        .put_authority_log_entry(&over, at, 1)
-        .unwrap_err();
-    assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
-    assert!(err.to_string().contains(&label), "{err}");
-    assert_eq!(stored(), before);
+    // FIX 8564/8876: the signer count is advisory, so the over-bound row lands.
+    host.vault.put_authority_log_entry(&over, at, 1).unwrap();
+    assert_eq!(stored(), before + 1);
     let checks = host.vault.authority_log_checks().unwrap();
     assert!(
         checks.contains(&AuthorityLogCheck {
             kind: AuthorityLogCheck::SIGNER_BOUND,
             scope: None,
             signer: Some(label),
-            count: BOUND as u64,
+            count: BOUND as u64 + 1,
             threshold: BOUND as u64,
         }),
         "{checks:?}"
     );
 
-    let waits = |entry: AuthorityLogEntry| {
-        let err = host
-            .vault
-            .put_authority_log_entry(&entry, at, 1)
-            .unwrap_err();
-        assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
-    };
-    waits(admin_row(
-        BOUND + 1,
-        AuthorityOp::RevokeDevice {
-            revoked_key: authority_key_from_ed(&ed_key(67)),
-        },
-        false,
-    ));
-    // The fold applies a machine revision only from an owner key, a slip
-    // issuer, so the admin's removal of a live machine restricts nothing
-    // and waits (review round 6, Astra F1).
+    // FIX 8564/8876: revocations land as every other row does (the carve-out is
+    // deleted).
+    host.vault
+        .put_authority_log_entry(
+            &admin_row(
+                BOUND + 2,
+                AuthorityOp::RevokeDevice {
+                    revoked_key: authority_key_from_ed(&ed_key(67)),
+                },
+                false,
+            ),
+            at,
+            1,
+        )
+        .unwrap();
+    // The admin's removal keeps the head's carrier and carries the owner's
+    // removal act (a Removed role takes only that kind), but it is signed by
+    // the admin key, not by the named carrier's install key, which alone the
+    // carrier arm vouches for (mesh PR1b, log_structure.rs:607-612): it waits
+    // with SignerPending, for its lack of a vouch, not for the bound.
     let current = fold()
         .machine(request.machine)
         .unwrap()
         .head()
         .profile
         .clone();
-    waits(admin_row(
-        BOUND + 1,
-        AuthorityOp::MachineProfile(MachineProfile {
-            role: MachineRole::Removed,
-            revision: current.revision + 1,
-            ..current
-        }),
-        false,
-    ));
-    // Its first revocation of a device the fold holds live lands; the same
-    // revocation again waits, whether the fold applied the first or not.
+    let err = host
+        .vault
+        .put_authority_log_entry(
+            &admin_row(
+                BOUND + 3,
+                AuthorityOp::MachineProfile(MachineProfile {
+                    role: MachineRole::Removed,
+                    revision: current.revision + 1,
+                    act: Some(OwnerAct::by_owner(
+                        host.owner.actor(),
+                        OwnerActKind::MachineRemoval,
+                        current.machine,
+                        ActSurface::ThisInstall,
+                        [0; 32],
+                    )),
+                    ..current
+                }),
+                false,
+            ),
+            at,
+            1,
+        )
+        .unwrap_err();
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::AuthorityLogSignerPending
+    );
+    // Its revocations of a device the fold holds live land, the first and the
+    // second alike (FIX 8564/8876: every row lands alike).
     let revoke = AuthorityOp::RevokeDevice {
         revoked_key: host.issuer.public_key(),
     };
     host.vault
-        .put_authority_log_entry(&admin_row(BOUND + 1, revoke.clone(), false), at, 1)
+        .put_authority_log_entry(&admin_row(BOUND + 4, revoke.clone(), false), at, 1)
         .unwrap();
-    waits(admin_row(BOUND + 2, revoke, false));
     host.vault
-        .put_authority_log_entry(&admin_row(BOUND + 2, confirm_op(BOUND), true), at, 1)
+        .put_authority_log_entry(&admin_row(BOUND + 5, revoke, false), at, 1)
+        .unwrap();
+    host.vault
+        .put_authority_log_entry(&admin_row(BOUND + 6, confirm_op(BOUND), true), at, 1)
         .unwrap();
     for n in 0..=BOUND {
         host.vault
             .put_authority_log_entry(&owner_row(confirm_op(100 + n)), at, 1)
             .unwrap();
     }
-    assert_eq!(stored(), before + 2 + BOUND as u64 + 1);
+    // Over, dead, two live revokes and cosigned (5) plus the owner's BOUND + 1.
+    assert_eq!(stored(), before + BOUND as u64 + 6);
     assert!(!fold().authority_log_past_bound());
 }
 
@@ -621,19 +641,21 @@ fn host_cosigned(
     entry
 }
 
-/// Bug repro: no door stores a row that no owner, admin or install key
-/// signed, and a key that is not a slip issuer stores no more than its
-/// bound of its own rows. An agent key the host enrolled, or the key of a
-/// machine the owner holds as theirs, once stored slip revokes and actor
-/// revocations without end, through sync and then through the public local
-/// door (review round 2, F2), and the fold counted each one, so past the
-/// fold's row bound the owner's vault failed closed. The fold applies none
-/// of them, so rows the key signs alone are held at the local door too.
-/// Rows the host cosigns are the owner's work and land past the key's
-/// bound (rule 5). An install key's own world edits wait past its bound,
-/// and a handoff the key signs waits whoever cosigns it.
+/// Bug repro (rule 5, FIX 8564/8876, 605dad1bf80 #4052): no door stores a row
+/// that no owner, admin or install key signed. An agent key the host enrolled,
+/// or the key of a machine the owner holds as theirs, once stored slip revokes
+/// and actor revocations without end, through sync and then through the public
+/// local door (review round 2, F2), and the fold counted each one, so past the
+/// fold's row bound the owner's vault failed closed. The fold applies none of
+/// them, so rows the key signs alone are held at the local door too
+/// (SignerPending: an install key vouches for none of those ops,
+/// log_structure.rs:618). Rows the host cosigns are the owner's work and land
+/// past the key's bound (rule 5). An install key's own world edits land past
+/// its bound (advisory, log_budget.rs:520-526), and a handoff the key signs
+/// waits whoever cosigns it (handoff arm, log_budget.rs:513-519, which asks the
+/// signer, not a cosigner, to be an issuer).
 #[test]
-fn agent_and_machine_keys_rows_land_only_with_the_owner_or_under_their_bound() {
+fn agent_and_machine_keys_slip_rows_land_only_with_the_owner() {
     const BOUND: usize = 8;
     for machine in [false, true] {
         let host = host();
@@ -765,11 +787,9 @@ fn agent_and_machine_keys_rows_land_only_with_the_owner_or_under_their_bound() {
                     }),
                     false,
                 );
-                assert_waits(
-                    host.vault
-                        .put_authority_log_entry(&edit, at, 1)
-                        .unwrap_err(),
-                );
+                // FIX 8564/8876: the signer count is advisory, so the machine
+                // key's world edit lands past its bound (log_budget.rs:520-526).
+                host.vault.put_authority_log_entry(&edit, at, 1).unwrap();
             }
         });
         let handoff = AuthorityOp::ReRoot {
@@ -1233,6 +1253,7 @@ fn a_revision_whose_signers_admission_is_a_sibling_imports_in_any_order() {
                 seen_world_edits: BTreeSet::new(),
                 carrier: None,
                 act: None,
+                restored_from: None,
             }),
             authority_key_from_ed(&next),
             3,
@@ -1737,9 +1758,13 @@ fn the_owners_rows_past_the_signer_bound_land_and_import_in_any_order() {
             .head()
             .profile
             .clone();
+        // The roster arm (mesh PR1b): a root-signed revision carries no act,
+        // as fold_budget.rs:1234-1235 shows.
         let demote = AuthorityOp::MachineProfile(MachineProfile {
             role: MachineRole::Owned(MachineOwnership::WorkSchool),
             revision: current.revision + 1,
+            carrier: None,
+            act: None,
             ..current
         });
         let mut sibling = None;
@@ -1826,10 +1851,14 @@ fn concurrent_demotions_of_one_machine_land_past_the_signer_bound() {
             .head()
             .profile
             .clone();
+        // The roster arm (mesh PR1b): a root-signed revision carries no act,
+        // as fold_budget.rs:1234-1235 shows.
         let revision = |class, revision| {
             AuthorityOp::MachineProfile(MachineProfile {
                 role: MachineRole::Owned(class),
                 revision,
+                carrier: None,
+                act: None,
                 ..current.clone()
             })
         };

@@ -13,6 +13,12 @@ use super::read::{ProjectReader, ProjectVerdict};
 use super::revision::{ProjectRevision, ProjectRevisionHash, RevisionOrigin};
 use super::validity::FoldCx;
 use super::*;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 
 #[doc(hidden)]
@@ -241,6 +247,9 @@ impl Vault {
 
     /// The owner raises (or lowers) the per-project fold budget. The next read
     /// folds against it, and the next write to a project clears its freeze.
+    /// A standing answer whose room the new budget leaves reading less is
+    /// marked stale in the same write (FIX
+    /// STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS, review 2).
     pub fn set_project_history_policy(
         &self,
         owner: &AuthenticatedOwner,
@@ -253,8 +262,32 @@ impl Vault {
         }
         self.with_write_txn(|txn| {
             owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            PROJECT_HISTORY_POLICY.put(&self.store, txn, &(), &policy)
+            self.change_project_history_policy_in_txn(txn, |txn| {
+                PROJECT_HISTORY_POLICY.put(&self.store, txn, &(), &policy)
+            })
         })
+    }
+
+    /// Runs `change`, a write of the vault's history budget, then marks stale
+    /// in `txn` each standing answer whose room the new budget leaves reading
+    /// less. A new budget changes at once what each frozen project serves (a
+    /// raised one folds its whole history again) with no refresh writing its
+    /// record, so no batch end queues its room. The owner's setter and the
+    /// owner's archive restore both write the budget through here (FIX
+    /// STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS, review 2; FIX
+    /// STANDING-ANSWER-ARCHIVED-BUDGET-NARROWING).
+    fn change_project_history_policy_in_txn<'t>(
+        &self,
+        txn: &mut heed::RwTxn<'t>,
+        change: impl FnOnce(&mut heed::RwTxn<'t>) -> Result<()>,
+    ) -> Result<()> {
+        super::room_narrowing::queue_rooms_narrowed_by_in(
+            &self.store,
+            txn,
+            self.privacy_posture(),
+            change,
+        )?;
+        self.mark_answers_in_narrowed_rooms_in_txn(txn)
     }
 
     /// The open questions about projects past their history budget: one per
@@ -375,4 +408,58 @@ pub(super) fn counted_set(cx: &FoldCx<'_, '_, '_>) -> Result<BTreeSet<ProjectRev
         }
     }
     Ok(counted)
+}
+
+/// Lands one archived `PROJECT_HISTORY_POLICY` envelope in `txn`: canonical decode and the
+/// credential predicate, then positive budgets install and anything else is held back. No
+/// project is refolded and no freeze is touched; the next read folds against a new budget on
+/// its own.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_project_history_policy_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&PROJECT_HISTORY_POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.max_revisions == 0 || value.cycle_worlds_max == 0 {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&PROJECT_HISTORY_POLICY, vault, txn, permit, &key, row)
+}
+
+impl Vault {
+    /// Lands the owner's archived `PROJECT_HISTORY_POLICY` envelopes in input order, one
+    /// outcome per row: an absent policy installs, an identical policy is unchanged, and a
+    /// different policy stays live. No project is refolded. A budget that installs marks
+    /// stale, in `txn`, each standing answer whose room it leaves reading less, as the
+    /// owner's setter does: a restore beside rows the vault already holds can raise the
+    /// budget over a frozen project (FIX STANDING-ANSWER-ARCHIVED-BUDGET-NARROWING).
+    ///
+    /// # Errors
+    /// Storage faults; validation stays in the returned outcomes.
+    pub(crate) fn land_archived_project_history_rows_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &OwnerArchiveRestorePermit,
+        rows: &[ArchiveRetainedSideRow],
+    ) -> Result<Vec<ArchivedSideRowOutcome>> {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        vault.change_project_history_policy_in_txn(txn, |txn| {
+            for row in rows {
+                outcomes.push(land_archived_project_history_policy_row_in_txn(
+                    vault, txn, permit, row,
+                )?);
+            }
+            Ok(())
+        })?;
+        Ok(outcomes)
+    }
 }

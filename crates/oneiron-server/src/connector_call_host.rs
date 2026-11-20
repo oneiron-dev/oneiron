@@ -32,6 +32,12 @@
 //! ends or its exchange does. Any other server request is refused as
 //! before, and any other result is the tool's.
 //!
+//! An `mcp_stdio` connector is a child process instead (`stdio`, row L8-27):
+//! the same `tools/call` goes to it as one line on its standard input, and
+//! its answer comes back on its standard output. It runs under the vault's
+//! runner fence, and the call's delivered reply carries its session
+//! manifest. Nothing is presented to it, and it is asked no question.
+//!
 //! A `self.use` call (OF-560) presents the custody record its handle names
 //! in place of the route's own secret, through the same door for the same
 //! effector; the door rechecks the record's binding at each send. A call under
@@ -70,8 +76,10 @@ use crate::config::{ConnectorHostConfig, ConnectorTransport};
 use crate::connector_elicitation::{
     AnswerCommand, ConnectorElicitationRegistry, QuestionBinding, Registered, WorkerEvent,
 };
+use crate::runtime::runner_fence::HostRunnerFence;
 use crate::server::SyncServer;
 
+pub(crate) mod issuer_watch;
 mod json_wire;
 mod live_exchange;
 mod presenting;
@@ -81,16 +89,18 @@ mod reply_read;
 mod resume;
 mod sent;
 mod served_calls;
+pub mod stdio;
 mod stream_pump;
 use json_wire::{KeptWire, post_json};
 use live_exchange::{Continuation, LiveSession, hand_over};
-use presenting::{Intake, KeptRound, KeyAliases, clear_event, clear_questions};
+use presenting::{DoorExchange, Intake, KeptRound, KeyAliases, clear_event, clear_questions};
 pub(crate) use remote_task_poll::poll_remote_tasks;
 use reply_read::{Reply, StreamEvent, open_reply, read_reply, tool_result};
 use resume::RoundResume;
 pub(crate) use resume::resume_exchanges;
 use sent::Sent;
 pub(crate) use served_calls::ServerConnectorCalls;
+use stdio::ConnectorStdioRegistry;
 
 /// Connecting to a connector's endpoint.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -170,38 +180,57 @@ pub struct ServedConnectorCallHost {
     /// The wait the last send's connector asked for when it refused that
     /// send for rate (FIX 11025).
     provider_wait: Option<ProviderWait>,
+    /// The server's stdio connector children (row L8-27).
+    stdio: Arc<ConnectorStdioRegistry>,
+    /// The runner fence a stdio connector's child runs under; `None` when
+    /// no stdio connector is installed, or the vault's trees cannot be
+    /// named.
+    fence: Option<Arc<HostRunnerFence>>,
+    /// The session manifest of the child the last send went to, until
+    /// taken.
+    session_manifest: Option<oneiron_container::SessionManifest>,
+    /// This server's loopback API origin, where a stdio connector's child
+    /// reaches its upstream door; `None` when no listener on loopback is
+    /// recorded.
+    door_origin: Option<String>,
 }
 
 impl ServedConnectorCallHost {
     /// The host for this server's `[connectors]` and vault. Build it on a
     /// blocking worker: it holds a blocking HTTP client.
     pub fn new(server: &SyncServer) -> oneiron::Result<Self> {
+        // The fence is proved at its first use; only a stdio child needs it.
+        let fence = server
+            .config
+            .connectors
+            .values()
+            .any(|connector| connector.transport == ConnectorTransport::McpStdio)
+            .then(|| server.runner_fence())
+            .flatten();
         Self::with_connectors(
             Arc::clone(server.vault()),
             server.config.connectors.clone(),
             Arc::clone(&server.connector_elicitations),
+            Arc::clone(&server.connector_stdio),
+            fence,
+            server.loopback_api_origin(),
         )
     }
 
     /// The host for an explicit set of installed transports, keeping its
     /// connectors' questions in `elicitations`: the server's own registry,
-    /// the one `connector.answer` reads.
+    /// the one `connector.answer` reads. A stdio connector's child is kept
+    /// in `stdio`'s registry and runs under its fence, and reaches its
+    /// upstream door on `door_origin`.
     pub(crate) fn with_connectors(
         vault: Arc<Vault>,
         connectors: BTreeMap<String, ConnectorHostConfig>,
         elicitations: Arc<ConnectorElicitationRegistry>,
+        stdio: Arc<ConnectorStdioRegistry>,
+        fence: Option<Arc<HostRunnerFence>>,
+        door_origin: Option<String>,
     ) -> oneiron::Result<Self> {
-        let client = reqwest::blocking::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(CALL_TIMEOUT)
-            .build()
-            .map_err(|_| {
-                oneiron::Error::InvalidConfig(
-                    "the connector HTTP client could not be built".to_owned(),
-                )
-            })?;
+        let client = connector_client()?;
         Ok(Self {
             vault,
             connectors: connectors
@@ -222,6 +251,10 @@ impl ServedConnectorCallHost {
             remote_task: None,
             held: None,
             provider_wait: None,
+            stdio,
+            fence,
+            session_manifest: None,
+            door_origin,
         })
     }
 
@@ -236,13 +269,14 @@ impl ServedConnectorCallHost {
         let Some(connector) = self.connectors.get(view.server()) else {
             return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None);
         };
-        match connector.transport {
-            ConnectorTransport::McpHttp => {}
-        }
         // The grant admitted the frozen endpoint; this host sends only to
         // the one it installed under the same name.
-        if connector.endpoint != view.endpoint() {
+        if connector.installed_endpoint(view.server()) != view.endpoint() {
             return Sent::not_sent(OutboundFailureKind::EndpointChanged, None);
+        }
+        match connector.transport {
+            ConnectorTransport::McpHttp => {}
+            ConnectorTransport::McpStdio => return self.send_stdio(connector, &view, presented),
         }
         // The route and the credential its send presents are known before
         // the exchange is declared (FIX 7646); a failure answers as before.
@@ -311,6 +345,7 @@ impl OutboundResultSender for ServedConnectorCallHost {
         }
         self.held = sent.held;
         self.provider_wait = sent.provider_wait;
+        self.session_manifest = sent.session_manifest;
         OutboundTransportResult {
             outcome: sent.outcome,
             raw_result: RawOutboundResult::with_body(sent.body, sent.error, None, None),
@@ -330,7 +365,7 @@ impl ConnectorCallHost for ServedConnectorCallHost {
     fn tool_endpoint(&self, route: &ConnectorCallRoute) -> Option<String> {
         self.connectors
             .get(&route.name)
-            .map(|connector| connector.endpoint.clone())
+            .map(|connector| connector.installed_endpoint(&route.name))
     }
 
     fn take_result(&mut self) -> Option<UntrustedToolResult> {
@@ -367,6 +402,10 @@ impl ConnectorCallHost for ServedConnectorCallHost {
 
     fn take_send_hold(&mut self) -> Option<&'static str> {
         self.held.take()
+    }
+
+    fn take_session_manifest(&mut self) -> Option<oneiron_container::SessionManifest> {
+        self.session_manifest.take()
     }
 
     fn take_awaiting_input(&mut self) -> Option<ConnectorAwaitingInput> {
@@ -497,6 +536,20 @@ fn retry_questions(message: &Value) -> Option<(Vec<ConnectorQuestion>, Option<Ke
     ))
 }
 
+/// The one HTTP client a connector send and its issuer watch use: no
+/// redirect followed, no proxy, the call's bounds.
+pub(crate) fn connector_client() -> oneiron::Result<reqwest::blocking::Client> {
+    reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(CALL_TIMEOUT)
+        .build()
+        .map_err(|_| {
+            oneiron::Error::InvalidConfig("the connector HTTP client could not be built".to_owned())
+        })
+}
+
 /// What a send that declares elicitation keeps a question with.
 struct Declared<'a> {
     capability: Value,
@@ -603,6 +656,33 @@ impl<'a> Exchange<'a> {
         }
     }
 
+    /// Reads a refusal at the connector's door for an issuer change (L5-11)
+    /// before the send answers with it: a change found holds the call's
+    /// dependent rows from the next send on, and never changes this answer.
+    fn watch_refusal(
+        &self,
+        status: reqwest::StatusCode,
+        headers: &HeaderMap,
+        presented: Option<&SentValue<'_>>,
+    ) {
+        let Some((vault, key_ref, _)) = &self.issuer else {
+            return;
+        };
+        if let Err(error) = issuer_watch::detect_at_refusal(
+            vault,
+            self.client,
+            self.endpoint,
+            key_ref,
+            status,
+            headers,
+            presented,
+        ) {
+            tracing::warn!(%error, "connector issuer change not recorded");
+        }
+    }
+}
+
+impl DoorExchange for Exchange<'_> {
     /// One send, its answer cleared of `value` when it presents one.
     fn run(&self, auth: Option<HeaderValue>, value: Option<&SentValue<'_>>) -> Sent {
         // Everything before `tools/call` leaves is certain non-delivery.
@@ -630,6 +710,7 @@ impl<'a> Exchange<'a> {
             Err(_) => return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None),
         };
         if !response.status().is_success() {
+            self.watch_refusal(response.status(), response.headers(), value);
             // FIX 11025: a rate refusal keeps the provider's wait.
             return Sent::refused_status(response.status(), response.headers());
         }
@@ -662,7 +743,10 @@ impl<'a> Exchange<'a> {
         match live.post(&notification, Some(HANDSHAKE_TIMEOUT)).send() {
             Ok(response) if response.status().is_success() => {}
             // FIX 11025: a rate refusal keeps the provider's wait.
-            Ok(response) => return Sent::refused_status(response.status(), response.headers()),
+            Ok(response) => {
+                self.watch_refusal(response.status(), response.headers(), value);
+                return Sent::refused_status(response.status(), response.headers());
+            }
             Err(_) => return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None),
         }
 
@@ -705,7 +789,9 @@ impl<'a> Exchange<'a> {
         }
         sent
     }
+}
 
+impl Exchange<'_> {
     /// Reads the `tools/call` reply. A question this send declared for
     /// hands `live` to a worker; any other server request on the stream is
     /// refused.
@@ -722,6 +808,7 @@ impl<'a> Exchange<'a> {
             return Sent::ambiguous("connector_server_error");
         }
         if !status.is_success() {
+            self.watch_refusal(status, response.headers(), value);
             // A refusal at the door: the tool never ran. A rate refusal
             // keeps the provider's wait (FIX 11025).
             return Sent::refused_status(status, response.headers());

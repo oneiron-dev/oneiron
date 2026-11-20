@@ -54,8 +54,7 @@ struct Config {
 fn print_usage() {
     eprintln!(
         "usage: tokenizer_count [--repeats N] [--records R] [--words-per-record W]\n\
-         defaults: repeats={} records={} words-per-record={}",
-        DEFAULT_REPEATS, DEFAULT_RECORDS, DEFAULT_WORDS_PER_RECORD
+         defaults: repeats={DEFAULT_REPEATS} records={DEFAULT_RECORDS} words-per-record={DEFAULT_WORDS_PER_RECORD}"
     );
 }
 
@@ -163,7 +162,7 @@ fn main() {
     let records: Vec<String> = (0..cfg.records)
         .map(|r| make_record(r, cfg.words_per_record))
         .collect();
-    let input_bytes: usize = records.iter().map(|r| r.len()).sum();
+    let input_bytes: usize = records.iter().map(std::string::String::len).sum();
 
     let mut hash = Fnv1a64::new();
     for repeat in 1..=cfg.repeats {

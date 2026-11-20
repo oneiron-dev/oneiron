@@ -11,6 +11,14 @@
 //! the slot files, sealed by DPAPI; a slot's file and a sealed value's file
 //! do not open as each other, nor one value's file under another's name; a
 //! file this home did not write is refused.
+//!
+//! The two Apple tiers, which only an Apple device runs: both name a home,
+//! and a value out of bounds is refused before the keychain is asked. The
+//! cases that reach the keychain (one item per name beside the slot items; a
+//! slot and the sealed value under its name do not read each other; the
+//! hardware tier's values rest apart from the platform tier's) are ignored
+//! by default, because the data-protection keychain answers only a signed
+//! build with a keychain access group.
 
 use oneiron_keystore::{
     DeviceKeystore, KeystoreError, KeystoreLocality, KeystoreSlot, MemoryKeystore,
@@ -518,6 +526,174 @@ mod windows_tier {
             home.get_sealed(&other),
             Ok(Some(b"another value, sealed".to_vec())),
             "a copy of one value's file changed that value"
+        );
+    }
+}
+
+/// The two Apple tiers. Only an Apple device runs these cases: the
+/// cross-target check compiles them
+/// (scripts/ci/check_keystore_apple_target.sh). The cases that reach the
+/// keychain are ignored by default: the data-protection keychain answers only
+/// a signed build with a keychain access group, and a test binary that cargo
+/// built has none. Run them from such a build with `--ignored`.
+#[cfg(target_vendor = "apple")]
+mod apple_tier {
+    use oneiron_keystore::{
+        AppleKeychain, DeviceKeystore, KeystoreError, SEALED_BYTES_MAX, SealedBytesName,
+        SecureEnclaveKeychain,
+    };
+
+    use super::{a_value_out_of_bounds_is_refused, each_name_keeps_its_own_value, owner_slot};
+
+    /// A keychain service of one case of one test process: never the service
+    /// an install keeps its keys under.
+    fn test_service(case: &str) -> String {
+        format!("oneiron-keystore-test.{case}.{}", std::process::id())
+    }
+
+    /// Removes every item a case kept under its service when the case ends,
+    /// also when it fails: the three names the shared cases use, and the one
+    /// slot. Removing a slot's item asks for no enclave key.
+    struct RemovedAtEnd<'a, K: DeviceKeystore>(&'a K);
+
+    impl<K: DeviceKeystore> Drop for RemovedAtEnd<'_, K> {
+        fn drop(&mut self) {
+            if let Some(home) = self.0.sealed_bytes() {
+                for name in [
+                    SealedBytesName::DevicePinKey,
+                    SealedBytesName::Slot(owner_slot(7)),
+                    SealedBytesName::Slot(owner_slot(8)),
+                ] {
+                    let _ = home.delete_sealed(&name);
+                }
+            }
+            let _ = self.0.delete(&owner_slot(7));
+        }
+    }
+
+    /// Runs on every Apple device, in a signed build or not: neither answer
+    /// reaches the keychain, and nothing is kept.
+    #[test]
+    fn both_apple_tiers_name_a_home_that_refuses_a_value_out_of_bounds_before_the_keychain() {
+        let service = test_service("bounds");
+        let platform = AppleKeychain::new(&service).expect("a keychain service name");
+        let hardware = SecureEnclaveKeychain::new(&service).expect("a keychain service name");
+        let tiers: [&dyn DeviceKeystore; 2] = [&platform, &hardware];
+        let too_long = vec![0x5A; SEALED_BYTES_MAX + 1];
+        for keys in tiers {
+            let home = keys
+                .sealed_bytes()
+                .expect("the Apple tier has a home for sealed bytes");
+            for refused in [&[][..], &too_long[..]] {
+                assert!(
+                    matches!(
+                        home.put_sealed(&SealedBytesName::DevicePinKey, refused),
+                        Err(KeystoreError::Unsupported(_))
+                    ),
+                    "a value of {} bytes was not refused before the keychain was asked",
+                    refused.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "needs a signed build with a keychain access group"]
+    fn the_platform_tier_keeps_each_sealed_value_in_a_keychain_item_of_its_own() {
+        let keys =
+            AppleKeychain::new(&test_service("platform-home")).expect("a keychain service name");
+        let _removed = RemovedAtEnd(&keys);
+        let home = keys
+            .sealed_bytes()
+            .expect("the platform tier has a home for sealed bytes");
+        each_name_keeps_its_own_value(home);
+        a_value_out_of_bounds_is_refused(home);
+    }
+
+    #[test]
+    #[ignore = "needs a signed build with a keychain access group"]
+    fn a_slot_and_the_sealed_value_under_its_name_do_not_read_each_other() {
+        let keys =
+            AppleKeychain::new(&test_service("slot-and-value")).expect("a keychain service name");
+        let _removed = RemovedAtEnd(&keys);
+        let home = keys.sealed_bytes().expect("the platform tier's home");
+        let slot = owner_slot(7);
+        let name = SealedBytesName::Slot(slot);
+
+        keys.create(&slot, &[1; 32]).expect("the slot is filled");
+        assert_eq!(
+            home.get_sealed(&name),
+            Ok(None),
+            "a slot read as a sealed value"
+        );
+        home.put_sealed(&name, b"owner seed, sealed")
+            .expect("the sealed value is kept");
+        assert_eq!(
+            keys.get(&slot).expect("the slot reads").as_deref(),
+            Some(&[1; 32]),
+            "a sealed value changed the slot under its name"
+        );
+
+        keys.delete(&slot).expect("the slot is emptied");
+        assert_eq!(keys.get(&slot).expect("the slot reads"), None);
+        assert_eq!(
+            home.get_sealed(&name),
+            Ok(Some(b"owner seed, sealed".to_vec())),
+            "emptying a slot removed the sealed value under its name"
+        );
+
+        home.delete_sealed(&name)
+            .expect("the sealed value is removed");
+        keys.create(&slot, &[2; 32]).expect("the slot fills again");
+        home.delete_sealed(&name)
+            .expect("removing none is not an error");
+        assert_eq!(
+            keys.get(&slot).expect("the slot reads").as_deref(),
+            Some(&[2; 32]),
+            "removing a sealed value emptied the slot under its name"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a signed build with a keychain access group"]
+    fn the_hardware_tier_keeps_its_sealed_values_apart_from_the_platform_tier_s() {
+        let service = test_service("hardware-home");
+        let hardware = SecureEnclaveKeychain::new(&service).expect("a keychain service name");
+        let platform = AppleKeychain::new(&service).expect("a keychain service name");
+        let _removed_hardware = RemovedAtEnd(&hardware);
+        let _removed_platform = RemovedAtEnd(&platform);
+        let hardware_home = hardware
+            .sealed_bytes()
+            .expect("the hardware tier has a home for sealed bytes");
+        let platform_home = platform.sealed_bytes().expect("the platform tier's home");
+        each_name_keeps_its_own_value(hardware_home);
+        a_value_out_of_bounds_is_refused(hardware_home);
+
+        // One name on both tiers of one service: each tier reads its own.
+        let name = SealedBytesName::DevicePinKey;
+        hardware_home
+            .put_sealed(&name, b"kept on the hardware tier")
+            .expect("the hardware tier keeps the value");
+        assert_eq!(
+            platform_home.get_sealed(&name),
+            Ok(None),
+            "the platform tier read the hardware tier's sealed value"
+        );
+        platform_home
+            .put_sealed(&name, b"kept on the platform tier")
+            .expect("the platform tier keeps the value");
+        assert_eq!(
+            hardware_home.get_sealed(&name),
+            Ok(Some(b"kept on the hardware tier".to_vec())),
+            "a put on the platform tier changed the hardware tier's sealed value"
+        );
+        platform_home
+            .delete_sealed(&name)
+            .expect("the platform tier's value is removed");
+        assert_eq!(
+            hardware_home.get_sealed(&name),
+            Ok(Some(b"kept on the hardware tier".to_vec())),
+            "a delete on the platform tier removed the hardware tier's sealed value"
         );
     }
 }

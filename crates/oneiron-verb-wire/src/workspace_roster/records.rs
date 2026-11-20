@@ -24,6 +24,11 @@ pub struct MemberOnboardingOutcome {
     /// companion: a work companion is recommended. Advisory, never a refusal;
     /// read from the policy in force when the outcome is answered.
     pub work_companion_suggested: bool,
+    /// One-vault mode was on when this member joined: the joining client
+    /// shows onboarding line 2's one-vault form. Read from the told mark the
+    /// Complete step stored on the member's roster row, so it always agrees
+    /// with the roster's `one_vault_told`.
+    pub one_vault: bool,
     /// The delegated mailbox identity, when one was bound.
     pub delegated_identity_ref: Option<EntityId>,
     /// Time the journal first reached [`MemberOnboardingStep::Complete`].
@@ -79,4 +84,7 @@ pub struct WorkspaceRosterEntry {
     pub identity_ref: Option<EntityId>,
     /// Runtime display name. Never an engine constant.
     pub display_name: String,
+    /// The time the member was told one-vault mode is on, at joining.
+    /// `None` for the house mind and when the mode was off (plain line 2).
+    pub one_vault_told: Option<u64>,
 }

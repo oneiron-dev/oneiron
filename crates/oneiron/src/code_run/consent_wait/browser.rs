@@ -27,6 +27,7 @@
 //! page a lone act began on, or a batch's answer at its stop, its held
 //! step's own answer as `press.step` once it ran).
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde_json::{Value, json};
 
 use crate::Vault;
@@ -163,7 +164,7 @@ impl Memory<'_> {
             site,
             verb,
             principal: self.code_consent_principal(),
-            frozen_input_digest: *blake3::hash(action.operands.as_bytes()).as_bytes(),
+            frozen_input_digest: *ContentHash::of(action.operands.as_bytes()).as_bytes(),
             holder_settlement: None,
             pending: CodeConsentPendingEffect::BrowserAction(action),
             hold_reasons: vec![hold.to_owned()],
@@ -217,7 +218,7 @@ fn browser_facts_from_row(binding: &CodeConsentBinding) -> Option<BrowserConsent
     }
     let action = binding.pending.browser_action()?;
     let actor_class = EdgeActorClass::try_from_u8(action.actor_class)?;
-    if *blake3::hash(action.operands.as_bytes()).as_bytes() != binding.frozen_input_digest {
+    if *ContentHash::of(action.operands.as_bytes()).as_bytes() != binding.frozen_input_digest {
         return None;
     }
     Some(BrowserConsentFacts {

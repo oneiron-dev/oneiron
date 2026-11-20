@@ -862,6 +862,10 @@ fn seed_reactive_citation(
             b"citation actor",
         )
         .unwrap();
+    // The writer reads the record its claim names (FIX 1218); this bare
+    // fixture actor holds no grant of its own, so the upsert below would
+    // deny with gate.deny.unresolved_record_reference.
+    put_actor_read_grant(server.vault(), actor, None);
     let claim = seeded_test_entity_id(counter + 1);
     let memory = server.vault().memory(actor, oneiron::EdgeActorClass::Human);
     memory
@@ -895,9 +899,23 @@ fn seed_reactive_citation(
     let citing =
         oneiron::EntityId::from_hex(&memory.author_brief("authored text", &[pin]).unwrap().id_hex)
             .unwrap();
-    let other =
-        oneiron::EntityId::from_hex(&memory.author_brief("unrelated text", &[]).unwrap().id_hex)
-            .unwrap();
+    // A brief cites at least one claim span (note/document_store.rs): the
+    // unrelated brief cites a second take, which the erasure never touches.
+    let kept = oneiron::EntityId::from_hex(
+        &memory
+            .author_take(oneiron::note::TakeTarget::Subject(actor), "kept quote")
+            .unwrap()
+            .id_hex,
+    )
+    .unwrap();
+    let kept_pin = server.vault().pin_note_span(kept, claim, 0, 6).unwrap();
+    let other = oneiron::EntityId::from_hex(
+        &memory
+            .author_brief("unrelated text", &[kept_pin])
+            .unwrap()
+            .id_hex,
+    )
+    .unwrap();
     (source, citing, other)
 }
 
@@ -1046,8 +1064,16 @@ async fn local_and_remote_provenance_deletes_refresh_both_edge_endpoints() {
                     100,
                 )
                 .unwrap();
-            // Drain the relay of the fixture's own writes before subscribing;
-            // only the delete below belongs to these retained reads.
+            // Mirror the fixture's own rows into their window before
+            // subscribing: the vault puts leave pending-mirror markers, and
+            // the delete's window cycle would otherwise mirror them batched
+            // with the tombstone, naming the unrelated edge too. Opening the
+            // window now mirrors and forwards them while no read is
+            // subscribed; only the delete below belongs to these reads.
+            let fixture_window = oneiron::sync::WindowKey::from_timestamp(
+                server.vault().get_learned_at(&claim).unwrap(),
+            );
+            server.get_or_create_window(&fixture_window).await.unwrap();
             tokio::task::yield_now().await;
             let output_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let input_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -1109,16 +1135,25 @@ async fn local_and_remote_provenance_deletes_refresh_both_edge_endpoints() {
                     )
                     .unwrap();
             }
-            for (read, count) in [(&mut out, &output_reads), (&mut inn, &input_reads)] {
+            // Which delete and which endpoint is named in each message, so a
+            // red run says which of the four (remote, hard) cases failed.
+            for (endpoint, read, count) in [
+                ("out", &mut out, &output_reads),
+                ("in", &mut inn, &input_reads),
+            ] {
+                let case = format!("remote={remote} hard={hard} endpoint={endpoint}");
                 let current = tokio::time::timeout(
                     std::time::Duration::from_secs(5),
                     read.refresh_on_change(),
                 )
                 .await
-                .expect("subject edge endpoint notice")
-                .expect("read");
-                assert!(current.iter().all(|(_, flags)| flags.is_none()));
-                assert_eq!(reactive_reads(count), 2);
+                .unwrap_or_else(|_| panic!("subject edge endpoint notice: {case}"))
+                .unwrap_or_else(|error| panic!("read: {case}: {error:?}"));
+                assert!(
+                    current.iter().all(|(_, flags)| flags.is_none()),
+                    "{case}: {current:?}"
+                );
+                assert_eq!(reactive_reads(count), 2, "{case}");
             }
             assert!(
                 tokio::time::timeout(

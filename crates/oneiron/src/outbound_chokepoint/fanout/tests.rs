@@ -65,7 +65,11 @@ impl FanoutSurfaceSink for RecordingSink {
         Ok(format!("durable:{}", row.row_ref))
     }
 
-    fn persist_choice_receipt(&mut self, receipt: &ReceiptRecord) -> Result<String> {
+    fn persist_choice_receipt(
+        &mut self,
+        _choice: &FanoutApprovalChoice,
+        receipt: &ReceiptRecord,
+    ) -> Result<String> {
         self.receipts.push(receipt.clone());
         Ok(format!("receipt:{}", receipt.receipt_id))
     }
@@ -275,6 +279,7 @@ fn fanout_estimate_is_deterministic_total_plus_per_peer() {
             malformed,
             Some(default_test_threshold()),
             &[],
+            None,
             &decider,
             &mut sink,
             NOW_MS,
@@ -298,6 +303,7 @@ fn non_canonical_refs_fail_closed_before_any_effect() {
         &canonical,
         Some(default_test_threshold()),
         &[],
+        None,
         &setup_decider,
         &mut setup_sink,
         NOW_MS,
@@ -341,6 +347,7 @@ fn non_canonical_refs_fail_closed_before_any_effect() {
                 malformed,
                 Some(default_test_threshold()),
                 &[],
+                None,
                 &decider,
                 &mut sink,
                 NOW_MS,
@@ -386,6 +393,7 @@ fn non_canonical_refs_fail_closed_before_any_effect() {
             &rate_plan,
             Some(default_test_threshold()),
             &padded_rate,
+            None,
             &padded_rate_decider,
             &mut padded_rate_sink,
             NOW_MS,
@@ -408,6 +416,7 @@ fn non_canonical_refs_fail_closed_before_any_effect() {
         &rate_plan,
         Some(default_test_threshold()),
         &canonical_rate,
+        None,
         &canonical_rate_decider,
         &mut canonical_rate_sink,
         NOW_MS,
@@ -474,6 +483,7 @@ fn approval_choices_are_receipted_and_persistable() {
         &plan,
         Some(default_test_threshold()),
         &[],
+        None,
         &RecordingDecider::allow(),
         &mut sink,
         NOW_MS,
@@ -583,6 +593,7 @@ fn changed_plan_cannot_reuse_approval() {
         &plan,
         Some(default_test_threshold()),
         &[],
+        None,
         &RecordingDecider::allow(),
         &mut sink,
         NOW_MS,
@@ -665,6 +676,7 @@ fn large_real_work_has_no_hard_cap() {
             &star_plan(CheckInMode::NeverAsk, width),
             Some(default_test_threshold()),
             &[],
+            None,
             &RecordingDecider::surface(),
             &mut full_sink,
             NOW_MS,
@@ -680,6 +692,7 @@ fn large_real_work_has_no_hard_cap() {
             &star_plan(CheckInMode::AskWhenUnsure, width),
             Some(default_test_threshold()),
             &[],
+            None,
             &RecordingDecider::allow(),
             &mut auto_sink,
             NOW_MS,
@@ -695,6 +708,7 @@ fn large_real_work_has_no_hard_cap() {
             &manual_plan,
             Some(default_test_threshold()),
             &[],
+            None,
             &RecordingDecider::surface(),
             &mut manual_sink,
             NOW_MS,
@@ -754,6 +768,7 @@ fn pause_is_before_effect_creation() {
             plan,
             Some(default_test_threshold()),
             rates,
+            None,
             &decider,
             &mut sink,
             NOW_MS,
@@ -795,6 +810,7 @@ fn pause_is_before_effect_creation() {
             &manual,
             Some(default_test_threshold()),
             &[],
+            None,
             &RecordingDecider::allow(),
             &mut blank,
             NOW_MS,

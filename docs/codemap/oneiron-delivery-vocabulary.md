@@ -13,5 +13,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/delivery_window/mod.rs` | src | s | 2 mod · 1 re-export | — | The delivery-window modules moved out of `oneiron::delivery_window` |
 | `src/delivery_window/schedule_context.rs` | src | s | 1 struct · 1 fn | OutboundScheduleContext | Host-supplied civil time and delivery level for an outbound schedule |
-| `src/delivery_window/types.rs` | src | m | 2 struct · 7 enum · 15 fn · 18 const | DeliveryWindowApnsInterruptionLevel, DeliveryWindowAppliesTo, DeliveryWindowContextCondition, DeliveryWindowDecision, DeliveryWindowLadderRung, DeliveryWindowMatch, DeliveryWindowResolution, DeliveryWindowResolvedLevel +1 | Claim predicates, key consts, decision/ladder enums and resolution structs |
+| `src/delivery_window/types.rs` | src | s | 2 struct · 7 enum · 13 fn · 18 const | DeliveryWindowApnsInterruptionLevel, DeliveryWindowAppliesTo, DeliveryWindowContextCondition, DeliveryWindowDecision, DeliveryWindowLadderRung, DeliveryWindowMatch, DeliveryWindowResolution, DeliveryWindowResolvedLevel +1 | Claim predicates, key consts, decision/ladder enums and resolution structs |
 | `src/lib.rs` | src | s | 1 mod | — | Delivery-window vocabulary of the oneiron engine: the quiet-hours and channel claim keys, decisions and… |
+| `tests/delivery_vocabulary_register_names.rs` | test | s | — | — | The names of 2 name lists in `oneiron-delivery-vocabulary`, one line per row, generated from… |

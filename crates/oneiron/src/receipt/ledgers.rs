@@ -5,16 +5,16 @@ use serde::{Deserialize, Serialize};
 
 use super::field_set::{
     FIELD_ATTEMPT_CALLER, FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEASE_GENERATION,
-    append_pack_attribution_fields, append_pack_manifest_fields, append_pack_source_rows_fields,
-    append_task_project_field, append_task_type_fields, append_task_type_parent_fields,
-    append_team_receipt_fields,
+    FIELD_SCRATCH_REF, append_pack_attribution_fields, append_pack_manifest_fields,
+    append_pack_source_rows_fields, append_task_project_field, append_task_type_fields,
+    append_task_type_parent_fields, append_team_receipt_fields,
 };
 use super::kernel::{
     FIELD_AUDIT_REGISTER, FIELD_CARE_REGISTER, FIELD_ENGINE_REGISTER, FIELD_INTENT_REF,
     FIELD_MODEL, FIELD_RECEIPT_SCHEMA, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, ReceiptKind,
     ReceiptRecord, ReceiptScan, hex_lower,
 };
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 use super::send_receipt_txn::persist_send_receipt_in_txn;
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
@@ -66,12 +66,28 @@ pub fn attempt_pack_receipt_id(attempt_id: &AttemptId) -> String {
     )
 }
 
+/// The attempt a terminal PACK RECEIPT id names: the inverse of
+/// [`attempt_pack_receipt_id`].
+///
+/// It names an attempt only for the exact id that fn writes: the `attempt:`
+/// prefix, then the 32 lowercase hex digits of an id that is not a reserved
+/// entity id. Another prefix, an extra `:`, upper case or any other length
+/// names none.
+#[must_use]
+pub fn parse_attempt_pack_receipt_id(receipt_id: &str) -> Option<AttemptId> {
+    let (_, hex) = receipt_id.rsplit_once(':')?;
+    let entity = EntityId::from_hex(hex).ok()?;
+    let attempt = AttemptId::from_bytes(entity.as_bytes()).ok()?;
+    (attempt_pack_receipt_id(&attempt) == receipt_id).then_some(attempt)
+}
+
 /// Stamps the terminal pack or resident receipt in the transition's OWN
 /// write transaction. Complete, fail, retry-source finalization, queued/paused
 /// cancel, landing cancellation, force-cancel and abandon all call this seam.
 /// An attempt with no manifest, actor binding, attribution context or team-run
 /// stamp mints no row. A row carries the read set the attempt's producers
-/// recorded, when complete (FIX 6934).
+/// recorded, when complete (FIX 6934), and `scratch`, the pads the attempt's
+/// wake wrote and the same write sealed (OF-548).
 ///
 /// Atomic with the state seal: a terminal attempt with a manifest or actor
 /// binding and no receipt (or the reverse) is not a reachable state. The row
@@ -81,6 +97,7 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     record: &AttemptRecord,
     actor: &str,
+    scratch: &[EntityId],
 ) -> Result<()> {
     let receipt_id = attempt_pack_receipt_id(&record.id);
     // OF-540: the team run the dispatch froze. A team attempt's outcome joins
@@ -195,6 +212,15 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     // on, beside the outcome. Additive, as the lease generation is.
     if let Some(refusal) = &record.budget_refusal {
         super::append_budget_refusal_field(&mut receipt.fields, refusal)?;
+    }
+    // OF-548: the engine records `scratch_ref` on the terminal receipt: the
+    // pads the wake wrote, sealed in this same write. Additive, as the lease
+    // generation is; absent when the wake wrote none.
+    if !scratch.is_empty() {
+        let pads: Vec<String> = scratch.iter().map(EntityId::to_hex).collect();
+        receipt
+            .fields
+            .insert(FIELD_SCRATCH_REF.to_owned(), pads.join(","));
     }
     PACK_RECEIPT.put(store, wtxn, &receipt.receipt_id, &receipt)?;
     Ok(())
@@ -356,7 +382,8 @@ pub(crate) fn attempt_pack_receipt_page(
 }
 
 /// Test fixture for delivered/failed send receipt summary and idempotency.
-#[cfg(test)]
+/// The integration tests reach it through `test_doors::identity_ramp`.
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) fn persist_send_receipt(
     vault: &Vault,
     task_ref: EntityId,
@@ -529,13 +556,7 @@ pub(crate) fn attempt_pack_receipt_in_txn(
     txn: &heed::RoTxn<'_>,
     receipt_id: &str,
 ) -> Result<Option<ReceiptRecord>> {
-    let Some(suffix) = receipt_id.strip_prefix(ATTEMPT_PACK_RECEIPT_ID_PREFIX) else {
-        return Ok(None);
-    };
-    let Ok(id) = EntityId::from_hex(suffix) else {
-        return Ok(None);
-    };
-    if id.to_hex() != suffix {
+    if parse_attempt_pack_receipt_id(receipt_id).is_none() {
         return Ok(None);
     }
     let Some(receipt) = PACK_RECEIPT.get(store, txn, &receipt_id.to_owned())? else {
@@ -545,25 +566,4 @@ pub(crate) fn attempt_pack_receipt_in_txn(
         return Err(Error::CorruptedIndex("attempt receipt key/body identity"));
     }
     Ok(Some(receipt))
-}
-
-/// Test fixture only: emulate a pack receipt imported from the pre-model wire.
-/// Production never removes the immutable executor stamp.
-#[cfg(test)]
-pub(crate) fn make_attempt_receipt_legacy_for_tests(vault: &Vault, receipt_id: &str) -> Result<()> {
-    let key = receipt_id.to_owned();
-    vault.with_write_txn_grouped(|txn| {
-        let mut receipt =
-            PACK_RECEIPT
-                .get(&vault.store, txn, &key)?
-                .ok_or(Error::InvalidClaimBody(
-                    "legacy fixture needs an attempt receipt",
-                ))?;
-        if receipt.fields.remove("model").is_none() {
-            return Err(Error::InvalidClaimBody(
-                "legacy fixture needs a stamped model",
-            ));
-        }
-        PACK_RECEIPT.put(&vault.store, txn, &key, &receipt)
-    })
 }

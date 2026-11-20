@@ -289,6 +289,10 @@ fn write_in_txn(
         )
         .made_by(&id, birth)
         .apply_recording_gate_decisions(txn)?;
+    // A fresh finding is a new mention of its subject: about a PERSON under a
+    // cleanup archive (a stewardship reach-out), it restores her in the
+    // finding's own write (ARCH-0073 §6).
+    vault.restore_mentioned_subject_in_txn(txn, ClaimSubject::Entity(subject))?;
     vault.record_finding_notification_in_txn(txn, id, subject, now)?;
     Ok((id, true))
 }

@@ -122,7 +122,7 @@ impl Supervisor {
         name: String,
         child: &mut std::process::Child,
         relay: Arc<dyn EgressRelay>,
-    ) -> Result<(FenceProof, Guard)> {
+    ) -> Result<(FenceProof, Guard, Option<PathBuf>)> {
         let deadline = Instant::now() + self.config.startup_timeout;
         // FIX 747: any local user can reach the socket, so each connection's
         // peer is checked against the container's own process before a byte
@@ -171,6 +171,9 @@ impl Supervisor {
         }
         let evidence_bytes = serde_json::to_vec(&(&evidence, &hello.routes))
             .map_err(|e| Error::Fence(io::Error::other(e)))?;
+        // The proved container's `pids.events` directory, from the same
+        // evidence: its session's pressure reads need no inspect of their own.
+        let pressure_dir = crate::pressure_cgroup_dir(&evidence);
         let proof = FenceProof {
             ruleset_hash: hello.ruleset_hash.clone(),
             seccomp_hash: hello.seccomp_hash.clone(),
@@ -242,7 +245,7 @@ impl Supervisor {
                 }
             }
         });
-        Ok((proof, guard))
+        Ok((proof, guard, pressure_dir))
     }
     fn proved(&self, hello: &wire::Hello) -> bool {
         hello.generation == self.generation

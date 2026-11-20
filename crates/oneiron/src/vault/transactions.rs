@@ -89,6 +89,20 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
                 .to_owned(),
         ));
     }
+    // A delivery record makes a present record a pact's recipient copy (FIX 321, 2927), and an
+    // intent becomes one when bytes with its digest land (FIX 3498): only the import writes
+    // either (FIX FED-DELIVERY-LEDGER-GENERIC-WRITE).
+    if [
+        crate::side_table::FEDERATION_DELIVERED_RECORD.prefix,
+        crate::side_table::FEDERATION_DELIVERY_INTENT.prefix,
+    ]
+    .iter()
+    .any(|prefix| key.as_bytes().starts_with(prefix))
+    {
+        return Err(Error::InvalidConfig(
+            "federation delivery records and intents are written only by the import".to_owned(),
+        ));
+    }
     if key
         .as_bytes()
         .starts_with(crate::side_table::SYNC_PEER_ORIGIN.prefix)
@@ -286,6 +300,19 @@ impl Vault {
     /// model's vectors.
     pub fn begin_embedding_migration(&mut self, new_model: &str) -> Result<()> {
         self.swap_embedding_space(new_model, None, false)
+    }
+
+    /// Pins `model` as this vault's embedding model, as an open naming it
+    /// does ([`crate::VaultConfig::embedding_model`]), for a host that may
+    /// name it only once its open stands: a host-root open names it after the
+    /// install's profile stands, so a refused open pins nothing (census
+    /// L9-28). The model the vault already holds is kept; another is
+    /// `EmbeddingModelChanged`, and a vault that holds vectors under no model
+    /// is refused, as at open.
+    pub fn pin_embedding_model(&mut self, model: &str) -> Result<()> {
+        crate::store::persist_model_id_if_missing(&self.store, model)?;
+        self.config.embedding_model = Some(model.to_owned());
+        Ok(())
     }
 
     /// [`Self::begin_embedding_migration`] to a model and the embedding
@@ -692,7 +719,8 @@ impl Vault {
     }
 }
 
-#[cfg(feature = "sync")]
+// Every build: an actor's erase deletes its own-rate health check through it
+// (own_rate.rs, FIX FEATURELESS-OWN-RATE-SYNC-DELETE).
 mod sync_state_delete;
 mod sync_state_page;
 #[cfg(feature = "sync")]

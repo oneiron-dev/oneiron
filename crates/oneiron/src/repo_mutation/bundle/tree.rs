@@ -7,6 +7,8 @@
 //! exactly as a reviewed file write does.
 use std::path::Path;
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::super::git::{run_git, validate_relative_repo_path};
 use super::super::proposal::{RepoProposedFile, invalid};
 use super::super::queue::PreparedCommitFile;
@@ -183,5 +185,5 @@ pub(in crate::repo_mutation) fn bundle_post_snapshot(
     }
     post.entries
         .sort_by(|left, right| left.path.cmp(&right.path));
-    Ok(*blake3::hash(&encode_snapshot(&post)?).as_bytes())
+    Ok(*ContentHash::of(&encode_snapshot(&post)?).as_bytes())
 }

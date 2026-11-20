@@ -19,6 +19,7 @@ crates/oneiron-code-check/src/wasm.rs sha256  # wasm component pin minted by com
 crates/oneiron-docedit/src/emit/oracle_cases.rs sha256  # run-manifest digests checked by scripts/office/deck_create_gate.py
 crates/oneiron-docedit/src/live/oracle_run/record.rs sha256  # run-manifest digests checked by scripts/office/deck_create_gate.py
 crates/oneiron-organ-host/src/seal/binding.rs sha256  # PDF ByteRange and CMS signed-attribute digests that PDF readers recompute
+crates/oneiron-organ-host/src/seal/evidence.rs sha256  # RFC 3161 timestamp imprints, CMS message digest (RFC 5652) and ESS signing-certificate-v2 hash (RFC 5035) that the TSA and PDF readers fix
 crates/oneiron-seal/src/native/cms/der.rs sha256  # CMS message digest (RFC 5652)
 crates/oneiron-seal/src/native/profile/material/ocsp.rs sha256  # OCSP CertID issuer name and key hashes (RFC 6960)
 crates/oneiron-server/src/ai_host/training_pack/wire.rs sha256  # training-pack pins that scripts/training_pack/worker.py mints and checks
@@ -32,6 +33,7 @@ crates/oneiron-server/src/oneironer/local/classifier.rs sha256  # question-head 
 crates/oneiron-store/src/origin/lfs/oid.rs sha256  # git-LFS object id (LFS spec)
 crates/oneiron-xlsx-formula/src/measure.rs sha256  # corpus hash that scripts/office/collect_excel_goldens.py recomputes
 crates/oneiron/src/authority/oauth_server/tokens.rs sha256  # PKCE S256 (RFC 7636)
+crates/oneiron-authority/src/authority/webauthn_assertion.rs sha256  # WebAuthn assertion signature scheme (W3C WebAuthn): the clientDataJSON digest it signs and the challenge that client data names
 crates/oneiron/src/authority/step_up/webauthn.rs sha256  # WebAuthn clientDataJSON and rpIdHash (W3C WebAuthn)
 crates/oneiron/src/batch/secret_scan/shapes.rs sha256  # BIP-39 mnemonic checksum
 crates/oneiron/src/build_cache/reapi.rs sha256  # REAPI v2 CAS digest
@@ -45,6 +47,8 @@ crates/oneiron/src/origin/lfs/upload.rs sha256  # git-LFS object id of an upload
 crates/oneiron/src/skill_hub/http_fetch.rs sha256  # agentskills.io publisher sha256 digest
 
 # Class B: part of a signature or key scheme.
+crates/oneiron-authority/src/authority/webauthn_assertion.rs sha256  # WebAuthn ES256 assertion: SHA-256(clientDataJSON) in the signed bytes (W3C WebAuthn), and the challenge, SHA-256 over a domain and the authority transcript, that the passkey signs
 crates/oneiron-organ-host/src/seal/custody_keys.rs sha256  # RSA PKCS#1 v1.5 over SHA-256 signing key
 crates/oneiron-organ-host/src/seal/file_keys.rs sha256  # RSA PKCS#1 v1.5 over SHA-256 signing key
 crates/oneiron-server/src/control_keys.rs sha256  # HMAC-SHA256 API-key digests at rest
+crates/oneiron/src/campaign/one_click_unsubscribe.rs all  # one-click List-Unsubscribe link MAC (RFC 8058): keyed BLAKE3 under the vault's link key

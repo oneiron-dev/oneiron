@@ -1,6 +1,7 @@
 //! One qualified execution shape for both pack admission and foreign launch.
 use std::collections::BTreeMap;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_sandbox_contract::{OutputReservation, ProgramBudget, WorkspacePath, WorkspaceShape};
 use serde_json::Value;
 
@@ -150,7 +151,7 @@ impl ScriptOutputContract {
         };
         let edit = &file.edit;
         if file.path.as_str() != self.reservation.path().as_str()
-            || file.base_content_hash != *blake3::hash(b"").as_bytes()
+            || file.base_content_hash != *ContentHash::of(b"").as_bytes()
             || edit.path != self.reservation.path().relative()
             || edit.start != 0
             || edit.end != 0
@@ -164,8 +165,10 @@ impl ScriptOutputContract {
     }
 }
 
-/// Protocol conformance uses the same output contract as the pack plan.
-#[cfg(all(test, feature = "microvm-firecracker", target_os = "linux"))]
+/// Protocol conformance uses the same output contract as the pack plan. Its one
+/// caller is the door `test_doors::code_sandbox_conformance`, for the guest
+/// protocol test in oneiron-agent-runtime.
+#[cfg(oneiron_test_support)]
 pub(crate) fn script_output_bytes(write: &SandboxProposalWrite) -> Result<Vec<u8>> {
     ScriptOutputContract::new(oneiron_sandbox_contract::MAX_FILE_BYTES)?.bytes(write)
 }
