@@ -365,14 +365,25 @@ impl RecoveryWork {
             .ok_or_else(|| invalid("recovery preflight"))?;
         let prepared = prepare_rebuilt_with_manifest(&self.path, expected, self.budget, doc)?;
         // A task whose fact the source refused reads as a refusal here before
-        // the replay can read its authority.
-        if !self.source.suppressed_tasks.is_empty() {
+        // the replay can read its authority, and each fact the source keeps
+        // refused is kept here, to be judged as the source judged it.
+        if !self.source.suppressed_tasks.is_empty() || !self.source.refused_task_facts.is_empty() {
             vault.with_write_txn(|txn| {
                 crate::task_authority::restore_suppressed_in_txn(
                     &vault.store,
                     txn,
                     &self.source.suppressed_tasks,
-                )
+                )?;
+                for row in &self.source.refused_task_facts {
+                    crate::task_authority::restore_refused_fact_in_txn(
+                        &vault.store,
+                        txn,
+                        row.task,
+                        row.fact,
+                        &row.body,
+                    )?;
+                }
+                Ok(())
             })?;
         }
         let key = WindowKey::new(&self.source.window);

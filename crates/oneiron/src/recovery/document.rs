@@ -357,6 +357,7 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         withdrawn_cutoffs: Vec::new(),
         asset_body_refs: Vec::new(),
         source_audiences: Vec::new(),
+        refused_task_facts: Vec::new(),
     };
     for (key, bytes) in super::canonical::binary_rows(doc, "documents")? {
         let value: CanonicalDocument =
