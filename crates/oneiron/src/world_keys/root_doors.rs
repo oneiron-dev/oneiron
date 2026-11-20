@@ -227,6 +227,14 @@ enum PendingKitRootRule {
 const PENDING_KIT_ROOT_RULE: PendingKitRootRule =
     PendingKitRootRule::ValidMatchingStoredOrCarriedRootWinsLocalPending;
 
+/// What [`Vault::activation_prep`] answers: this install's machine secret,
+/// its enrolment request, and the predecessor of R's enrolment.
+pub(crate) type ActivationPrep = (
+    MachineSecret,
+    MachineEnrolmentRequest,
+    ActivationPredecessor,
+);
+
 impl Vault {
     /// Runs a root door's checks in a read snapshot, before this install's
     /// machine identity is minted.
@@ -362,43 +370,45 @@ impl Vault {
     /// the new anchor's chain and is the machine's trusted identity there,
     /// with the same keys; otherwise nothing is published. On a first issue
     /// `carry` is empty; on a re-issue each carried machine is mine under the
-    /// old pin, and this machine is marked whenever it is. The confirm comes before the
-    /// activation's own read: a refusal of that read can follow a confirm.
+    /// old pin, and this machine is marked whenever it is. The activation's
+    /// own checks ([`Self::activation_prep`]) come before the confirm, so an
+    /// activation they refuse never prompts.
     pub fn activate_owner_root(
         &self,
         owner: &AuthenticatedOwner,
         prepared: PreparedRoot,
         carry: &BTreeSet<EntityId>,
     ) -> Result<ActivatedRoot> {
+        let prep = self.activation_prep(owner, &prepared, carry)?;
         let witness = self.owner_presence(
             OwnerActImportance::Important,
             owner_presence_reasons::KIT_ACTIVATION,
         )?;
         let ground = OwnerProofGround::witnessed(&witness);
         let authority = ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall);
-        self.activate_owner_root_with(&authority, prepared, carry, &ground, |_| Ok(()))
+        self.activate_owner_root_with(&authority, (prepared, prep), carry, &ground, |_| Ok(()))
             .map(|(activated, ())| activated)
     }
 
     /// [`Self::activate_owner_root`], with `also` run in its transaction once
     /// the new root stands: a kit's inventory and its vault-key wrap commit
     /// with the root or not at all. `authority` carries the true act surface
-    /// for R's enrolment row. The predecessor loads in
-    /// [`Self::activation_prep`], before the write txn opens. `ground` is the
-    /// ground the activation's owner proofs are signed on.
+    /// for R's enrolment row. `prep` is what [`Self::activation_prep`]
+    /// answered for `prepared` and `carry`: the door ran it before its
+    /// confirm, so the predecessor loaded before the write txn opens.
+    /// `ground` is the ground the activation's owner proofs are signed on.
     pub(crate) fn activate_owner_root_with<T>(
         &self,
         authority: &ActAuthority,
-        prepared: PreparedRoot,
+        (prepared, prep): (PreparedRoot, ActivationPrep),
         carry: &BTreeSet<EntityId>,
         ground: &OwnerProofGround,
         also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
     ) -> Result<(ActivatedRoot, T)> {
-        let owner = match authority {
-            ActAuthority::Owner(owner, _) => owner,
-            ActAuthority::Agent(_) => return Err(authority_refused(ACTIVATION_OWNER_ONLY)),
-        };
-        let (secret, request, predecessor) = self.activation_prep(owner, &prepared, carry)?;
+        if matches!(authority, ActAuthority::Agent(_)) {
+            return Err(authority_refused(ACTIVATION_OWNER_ONLY));
+        }
+        let (secret, request, predecessor) = prep;
         self.with_write_txn(|txn| {
             let activated = self.activate_owner_root_in_txn(
                 txn,
@@ -424,11 +434,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         prepared: &PreparedRoot,
         carry: &BTreeSet<EntityId>,
-    ) -> Result<(
-        MachineSecret,
-        MachineEnrolmentRequest,
-        ActivationPredecessor,
-    )> {
+    ) -> Result<ActivationPrep> {
         self.precheck_root_door(owner, |txn, fold| {
             let me = crate::identity::read_machine_id_in_txn(self, txn)?;
             carried_marks(fold, prepared, carry, me)?;

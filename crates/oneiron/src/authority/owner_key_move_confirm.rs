@@ -88,6 +88,17 @@ fn not_valid(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidAuthorityLogBody(reason))
 }
 
+/// The distinct parents a move plan's rows name; refused
+/// ([`OWNER_KEY_MOVE_NOT_PLANNED`]) for a plan that ends no key, names no
+/// parent, or names more than one entry carries.
+fn planned_parents(plan: &OwnerKeyMovePlan) -> Result<BTreeSet<AuthorityEntryHash>> {
+    let parents: BTreeSet<AuthorityEntryHash> = plan.parents.iter().copied().collect();
+    if plan.revoked.is_empty() || parents.is_empty() || parents.len() > MAX_PARENTS {
+        return Err(not_valid(OWNER_KEY_MOVE_NOT_PLANNED));
+    }
+    Ok(parents)
+}
+
 /// The `RevokeDevice` rows that confirm `plan`, signed by `signer`, one of
 /// the plan's signers, through `sign` (an owner key's signature over an
 /// authority transcript): one row per revoked key, `signer`'s own last when
@@ -112,10 +123,7 @@ where
         .find(|candidate| candidate.public_key == signer)
         .map(|candidate| candidate.seq)
         .ok_or_else(|| not_valid(OWNER_KEY_MOVE_NOT_PLANNED))?;
-    let mut parents: BTreeSet<AuthorityEntryHash> = plan.parents.iter().copied().collect();
-    if plan.revoked.is_empty() || parents.is_empty() || parents.len() > MAX_PARENTS {
-        return Err(not_valid(OWNER_KEY_MOVE_NOT_PLANNED));
-    }
+    let mut parents = planned_parents(plan)?;
     let signer_key = AuthorityKey::Ed25519(signer);
     let mut keys = plan.revoked.clone();
     // A key that proves the others ends last, after it proved them (as the
@@ -319,6 +327,9 @@ impl Vault {
         if !own || !plan.signers.iter().any(|named| named.public_key == held) {
             return Err(not_valid(OWNER_KEY_MOVE_NO_HELD_KEY));
         }
+        // The plan's shape is judged before the confirm, as every check
+        // above is, so a plan the signing refuses never prompts.
+        planned_parents(plan)?;
         drop(txn);
         let witness = self.owner_presence(
             OwnerActImportance::Important,

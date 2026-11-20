@@ -22,6 +22,7 @@ use oneiron::error::{DevicePinRefusal, OwnerPresenceRefusal, RecordError, Secret
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::llm::model_pack::ModelPackRevertRequest;
 use oneiron::memory::MemoryResult;
+use oneiron::origin::residence::OriginResidence;
 use oneiron::recovery::PassphraseCost;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::label_writers::embedded_owner;
@@ -654,6 +655,36 @@ fn the_doors_of_setting_rows_that_travel_ask_before_they_read() {
         "each prompt shows its door's line"
     );
     assert_eq!(served.stored_rows(), rows, "the refusals store no row");
+}
+
+/// A door's own checks come before its confirm: an origin cut of a
+/// repository this vault does not serve is refused with that reason, and
+/// the person is never asked.
+#[test]
+fn an_origin_cut_of_a_repository_the_vault_does_not_serve_never_prompts() {
+    let served = ServedVault::hosted();
+    let presence = scripted_gate(&served.vault, []);
+    let rows = served.stored_rows();
+    let refused = served.vault.set_served_origin_authority_as_owner(
+        &served.owner,
+        ActSurface::ThisInstall,
+        "a-repository-this-vault-does-not-serve",
+        None,
+        OriginResidence::LocalVault,
+        EntityId::now(),
+        false,
+        None,
+    );
+    assert!(
+        refused.is_err()
+            && !matches!(
+                refused,
+                Err(Error::Record(RecordError::OwnerPresenceRequired { .. }))
+            ),
+        "the door refuses the repository, not the confirm: {refused:?}"
+    );
+    assert_eq!(presence.prompts(), 0, "the door showed no prompt");
+    assert_eq!(served.stored_rows(), rows, "the refusal stores no row");
 }
 
 /// One vault with a device PIN set, over a process-memory keystore, on a

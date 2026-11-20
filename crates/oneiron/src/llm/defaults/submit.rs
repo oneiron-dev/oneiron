@@ -101,6 +101,17 @@ impl Vault {
         holds_vault_policy_power_in_txn(self, txn, actor, &purpose_default_grant_target(), now)
     }
 
+    /// Whether `person` holds the policy power over the defaults now, read
+    /// in its own snapshot before a door's write, so only a person whose
+    /// table can land is asked. The door reads a failure here as "no": the
+    /// write then answers with its own reason, and a landing it met after
+    /// all records its act with no owner proof.
+    fn holds_defaults_power_now(&self, person: &AuthenticatedOwner, now: u64) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let actor = person.revalidate_person_in_txn(self, &txn)?;
+        self.holds_defaults_power_in_txn(&txn, actor, now)
+    }
+
     /// Makes `table` the active defaults in `txn` for the holder `actor`,
     /// recording an owner's act where `surface` names one. The act is signed
     /// on `ground`, which the door asked for where it named a surface; with
@@ -158,11 +169,15 @@ impl Vault {
         table.validate()?;
         // A landing records an act only where a surface names one, and that
         // act takes the owner key's proof, so only then does the door ask. A
-        // principal's table never lands. A person who holds no policy power
-        // is asked too, for a proposal that signs nothing: the door cannot
-        // tell before its write.
+        // principal's table never lands, and a person who holds no policy
+        // power leaves an inert proposal that signs nothing: neither is
+        // asked. The power is read here and again in the write.
         let ground = match (submitter, surface) {
-            (PurposeDefaultSubmitter::Person(_), Some(_)) => Some(surfaced_landing_ground(self)?),
+            (PurposeDefaultSubmitter::Person(person), Some(_))
+                if self.holds_defaults_power_now(person, now).unwrap_or(false) =>
+            {
+                Some(surfaced_landing_ground(self)?)
+            }
             _ => None,
         };
         let mut txn = self.store.env.write_txn()?;
@@ -215,8 +230,12 @@ impl Vault {
         let id = EntityId::from_hex(proposal_id).map_err(|_| Error::EntityNotFound)?;
         // An approval lands the table, and a landing that names a surface
         // records an act that takes the owner key's proof, so only then does
-        // the door ask. A decline lands nothing.
-        let ground = if approve && surface.is_some() {
+        // the door ask. A decline lands nothing, and a person who holds no
+        // policy power is refused in the write: neither is asked.
+        let ground = if approve
+            && surface.is_some()
+            && self.holds_defaults_power_now(holder, now).unwrap_or(false)
+        {
             Some(surfaced_landing_ground(self)?)
         } else {
             None

@@ -662,7 +662,9 @@ impl Vault {
     /// passed, so a refused caller builds nothing (FIX 3217); the writer
     /// checks them again. It answers the act's kind beside the export, `None`
     /// when the act is unknown, already executed or of no known kind, so the
-    /// execution asks only for an ownership move.
+    /// execution asks only for an ownership move. An ownership move with no
+    /// export reads its executor's standing here too, as its writer reads it
+    /// first: a person who cannot run the act never raises the confirm.
     pub(super) fn removal_export(
         &self,
         executor: &AuthenticatedOwner,
@@ -678,12 +680,22 @@ impl Vault {
                 return Ok((None, None));
             }
             let kind = SharedActKind::parse(&act.act);
+            if kind == Some(SharedActKind::TransferOwnership) {
+                super::actor_erase::refuse_an_erased_member_act(&act)?;
+                super::check_vault(self, &txn, act.vault_id)?;
+                let now = self.store.clock.now_recorded_at();
+                self.act_executors_in_txn(&txn, &act, actor, now)?;
+                return Ok((kind, None));
+            }
             if kind != Some(SharedActKind::RemoveOwner) {
                 return Ok((kind, None));
             }
             super::actor_erase::refuse_an_erased_member_act(&act)?;
             let plan: RemoveOwnerPlan = decode(&act.payload)?;
             if !plan.export_first {
+                super::check_vault(self, &txn, act.vault_id)?;
+                let now = self.store.clock.now_recorded_at();
+                self.act_executors_in_txn(&txn, &act, actor, now)?;
                 return Ok((Some(SharedActKind::RemoveOwner), None));
             }
             super::check_vault(self, &txn, act.vault_id)?;

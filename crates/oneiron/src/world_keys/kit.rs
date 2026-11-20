@@ -424,9 +424,10 @@ impl Vault {
 
     /// [`Self::confirm_world_kit`] as `authority`, which carries the true act
     /// surface for R's enrolment row: `ThisInstall` on the CLI chain,
-    /// `act_surface_admitted` on the two HTTP chains. The confirm comes before the
-    /// activation's own read, which runs under the wrap transition: a refusal of that read
-    /// can follow a confirm.
+    /// `act_surface_admitted` on the two HTTP chains. The kit's and the
+    /// activation's own checks come before the confirm, so a confirm they
+    /// refuse never prompts; the confirm comes before the wrap transition,
+    /// so no prompt stands under it.
     pub fn confirm_world_kit_as(
         &self,
         authority: &ActAuthority,
@@ -439,6 +440,7 @@ impl Vault {
             ActAuthority::Agent(_) => return Err(authority_refused(ACTIVATION_OWNER_ONLY)),
         };
         let (row, prepared) = self.draw_kit_confirm(owner, pieces, passphrase)?;
+        let prep = self.activation_prep(owner, &prepared, carry)?;
         let witness = self.owner_presence(
             OwnerActImportance::Important,
             owner_presence_reasons::KIT_ACTIVATION,
@@ -449,7 +451,7 @@ impl Vault {
         // after it commits (OF-570).
         let transition = self.begin_wrap_transition()?;
         let (activated, (replaced, escrow)) =
-            self.activate_owner_root_with(authority, prepared, carry, &ground, |txn| {
+            self.activate_owner_root_with(authority, (prepared, prep), carry, &ground, |txn| {
                 self.confirm_kit_rows_in_txn(txn, &transition, &row)
             })?;
         self.settle_pending_kit_pieces(Some(row.kit));

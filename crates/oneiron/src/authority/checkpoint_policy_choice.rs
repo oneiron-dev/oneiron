@@ -126,6 +126,10 @@ impl Vault {
             ActAuthority::Owner(owner, surface) => (owner, *surface),
             ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
         };
+        // The proof is this handle's before the confirm, as the paced turn's
+        // key read it before the writer: a proof of another handle never
+        // prompts. The turn itself is taken after the confirm.
+        owner.actor_for_read(self)?;
         let witness = self.owner_presence(
             OwnerActImportance::Important,
             owner_presence_reasons::CHECKPOINT_POLICY,
