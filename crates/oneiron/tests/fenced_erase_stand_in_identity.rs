@@ -17,6 +17,12 @@
 //! puts the identical call in a second run, in the vault or on a room's
 //! route, where the put fence erases it in its writer.
 //!
+//! Blind review round 1 of #9692 found two more places the passphrase was
+//! digested as written: a note held as a MessagePack body, which the wall
+//! opens and the admission form read as written, and a pinned entry's
+//! resume page, which listed each call's identity read off its row before
+//! the wall and the fence.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test fenced_erase_stand_in_identity`.
 #![cfg(oneiron_test_support)]
@@ -25,8 +31,10 @@ use std::sync::Arc;
 
 use oneiron::off_record::{OffRecordBackendClass, OffRecordSession};
 use oneiron::test_doors::erased_request_identity::{
-    room_stored_call_erased, room_stored_call_identity, room_stored_call_is,
-    store_note_call_across_delete, stored_call_erased, stored_call_identity, stored_call_is,
+    note_call_identity_as_written, resume_page_request_digest, room_stored_call_erased,
+    room_stored_call_identity, room_stored_call_is, store_note_body_across_delete,
+    store_note_call_across_delete, store_note_call_with_resume, stored_body_call_is,
+    stored_call_erased, stored_call_identity, stored_call_is,
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 
@@ -179,5 +187,129 @@ fn a_fenced_call_made_again_meets_its_row_by_its_custody_identity() -> TestResul
         &words(OTHER_HELD_PASSPHRASE),
         true
     )?);
+    Ok(())
+}
+
+/// The note `text` as a MessagePack map body, `{"text": text}`: bytes that
+/// are no UTF-8 text, which the wall opens as a body of its own.
+fn messagepack_body(text: &str) -> TestResult<Vec<u8>> {
+    let mut body = vec![0x81, 0xa4];
+    body.extend_from_slice(b"text");
+    body.push(0xd9);
+    body.push(u8::try_from(text.len())?);
+    body.extend_from_slice(text.as_bytes());
+    Ok(body)
+}
+
+/// The call writing the held passphrase inside a MessagePack body, stored
+/// and then erased by its agent's delete, and the identical call put after
+/// the delete in the vault: the agent, the scrubbed run and the fenced run.
+fn scrubbed_and_fenced_body(vault: &Vault) -> TestResult<([EntityId; 3], Vec<u8>)> {
+    let body = messagepack_body(&words(HELD_PASSPHRASE))?;
+    let calls = store_note_body_across_delete(vault, &body)?;
+    assert!(
+        stored_call_erased(vault, calls[1])?,
+        "the delete erases the stored call"
+    );
+    assert!(
+        stored_call_erased(vault, calls[2])?,
+        "the put fence erases the call"
+    );
+    Ok((calls, body))
+}
+
+/// The vault's put fence keeps the stand-in identity the scrub of the
+/// identical stored call keeps when the passphrase sits inside a body of its
+/// own. Red on the PR's first head: the fence read the body as written, the
+/// scrub the handle the wall placed in it.
+#[test]
+fn a_fenced_call_with_a_body_keeps_the_stand_in_identity_a_scrub_keeps() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let ([_, scrubbed, fenced], _) = scrubbed_and_fenced_body(&vault)?;
+    assert_eq!(
+        stored_call_identity(&vault, fenced)?,
+        stored_call_identity(&vault, scrubbed)?
+    );
+    Ok(())
+}
+
+/// A guess of the passphrase inside the body, read as written with no
+/// custody read in reach, does not meet the fenced row. Red on the PR's
+/// first head: the stand-in identity digested the body as written.
+#[test]
+fn a_guess_read_as_written_does_not_meet_a_fenced_call_with_a_body() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let ([agent, _, fenced], body) = scrubbed_and_fenced_body(&vault)?;
+    assert!(
+        !stored_body_call_is(&vault, [agent, fenced], &body, false)?,
+        "a guess meets the fenced row"
+    );
+    Ok(())
+}
+
+/// Guard: the call made again with the passphrase inside the body meets the
+/// scrubbed row and the fenced row with custody in reach, by the custody
+/// identity each keeps, and a body with another passphrase custody holds is
+/// another call, on both heads.
+#[test]
+fn a_call_with_a_body_made_again_meets_its_erased_rows_with_custody() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let ([agent, scrubbed, fenced], body) = scrubbed_and_fenced_body(&vault)?;
+    let other = messagepack_body(&words(OTHER_HELD_PASSPHRASE))?;
+    assert!(stored_body_call_is(&vault, [agent, fenced], &body, true)?);
+    assert!(!stored_body_call_is(&vault, [agent, fenced], &other, true)?);
+    assert!(
+        stored_body_call_is(&vault, [agent, scrubbed], &body, true)?,
+        "the call made again misses the scrubbed row"
+    );
+    assert!(!stored_body_call_is(
+        &vault,
+        [agent, scrubbed],
+        &other,
+        true
+    )?);
+    Ok(())
+}
+
+/// A pinned entry's resume page lists the identity of the call's row as the
+/// wall stored it, never the digest of the passphrase as written. Red on
+/// the PR's first head: the page listed the identity read off the row
+/// before the wall.
+#[test]
+fn a_resume_page_lists_the_identity_of_the_stored_row() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let [agent, run] = store_note_call_with_resume(&vault, &words(HELD_PASSPHRASE), false)?;
+    assert!(
+        !stored_call_erased(&vault, run)?,
+        "the agent's call is live"
+    );
+    let listed = resume_page_request_digest(&vault, run)?.ok_or("no resume page")?;
+    assert_ne!(
+        listed,
+        note_call_identity_as_written(agent, &words(HELD_PASSPHRASE))?,
+        "the page digests the passphrase as written"
+    );
+    assert_eq!(listed, stored_call_identity(&vault, run)?);
+    Ok(())
+}
+
+/// A pinned entry's resume page of a call the put fence erased lists the
+/// stand-in identity the erased row keeps. Red on the PR's first head, as
+/// above.
+#[test]
+fn a_resume_page_of_a_fenced_call_lists_its_stand_in_identity() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let [agent, run] = store_note_call_with_resume(&vault, &words(HELD_PASSPHRASE), true)?;
+    assert!(
+        stored_call_erased(&vault, run)?,
+        "the put fence erases the call"
+    );
+    let listed = resume_page_request_digest(&vault, run)?.ok_or("no resume page")?;
+    assert_ne!(
+        listed,
+        note_call_identity_as_written(agent, &words(HELD_PASSPHRASE))?,
+        "the page digests the passphrase as written"
+    );
+    assert_eq!(listed, stored_call_identity(&vault, run)?);
     Ok(())
 }

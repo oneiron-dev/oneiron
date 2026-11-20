@@ -414,3 +414,7 @@ pub(crate) use self::dispatcher::{
 };
 
 pub use self::dispatcher::workflow_operations;
+
+// The door of `test_doors::erased_request_identity` (blind review round 1 of #9692).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::storage::put_record_with_resume_listing_its_calls;

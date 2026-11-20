@@ -262,7 +262,27 @@ pub fn store_note_call_across_delete(
     session: Option<&OffRecordSession<'_>>,
     words: &str,
 ) -> Result<[EntityId; 3]> {
-    let ([agent, scrubbed], record) = new_note_run(vault, Value::from(words))?;
+    store_note_across_delete(vault, session, &Value::from(words))
+}
+
+/// [`store_note_call_across_delete`] in the vault, for a note held as the
+/// bytes of `body`, which the wall reads as a body of its own (blind review
+/// round 1 of #9692).
+///
+/// # Errors
+///
+/// As [`store_note_call_across_delete`].
+pub fn store_note_body_across_delete(vault: &Vault, body: &[u8]) -> Result<[EntityId; 3]> {
+    store_note_across_delete(vault, None, &Value::Binary(body.to_vec()))
+}
+
+/// [`store_note_call_across_delete`] for the note `note`.
+fn store_note_across_delete(
+    vault: &Vault,
+    session: Option<&OffRecordSession<'_>>,
+    note: &Value,
+) -> Result<[EntityId; 3]> {
+    let ([agent, scrubbed], record) = new_note_run(vault, note.clone())?;
     let storage = match session {
         Some(session) => ExecutorStorage::for_session(session, agent)?,
         None => ExecutorStorage::Canonical(vault),
@@ -272,9 +292,7 @@ pub fn store_note_call_across_delete(
     vault.delete_entity(&agent)?;
     let fenced = EntityId::now();
     let mut again = CodeRunReplayRecord::with_determinism(fenced, None);
-    again
-        .bridge_calls
-        .push(note_row(agent, Value::from(words))?);
+    again.bridge_calls.push(note_row(agent, note.clone())?);
     storage.put_owned_code_run_replay_record(&again, None, fenced, agent)?;
     Ok([agent, scrubbed, fenced])
 }
@@ -299,4 +317,49 @@ pub fn room_stored_call_identity(
     run: EntityId,
 ) -> Result<[u8; 32]> {
     room_stored_call(session, run)?.request_identity()
+}
+
+/// Stores, for a new agent, the replay record of a new run whose one call
+/// writes `words` as the agent's note, with the agent as its replies' owner,
+/// in the vault's own writer, and joins there a pinned entry's resume
+/// checkpoint listing that call, read off its row before the put, as a
+/// checkpoint's commit does. With `delete_first`, the agent is deleted
+/// first, so the put fence erases the call (blind review round 1 of #9692):
+/// the agent and the run, in that order.
+///
+/// # Errors
+///
+/// The agent cannot be put or deleted, or the record cannot be stored.
+pub fn store_note_call_with_resume(
+    vault: &Vault,
+    words: &str,
+    delete_first: bool,
+) -> Result<[EntityId; 2]> {
+    let ([agent, run], record) = new_note_run(vault, Value::from(words))?;
+    if delete_first {
+        vault.delete_entity(&agent)?;
+    }
+    crate::code_run::put_record_with_resume_listing_its_calls(vault, &record, run, agent)?;
+    Ok([agent, run])
+}
+
+/// The request digest the first page of `run`'s resume checkpoint lists for
+/// its first call, or `None` when no checkpoint lists one.
+///
+/// # Errors
+///
+/// The checkpoint cannot be read.
+pub fn resume_page_request_digest(vault: &Vault, run: EntityId) -> Result<Option<[u8; 32]>> {
+    Ok(crate::code_run::load_program_checkpoint_tail(vault, run)?
+        .and_then(|tail| tail.calls.first().map(|call| call.request_digest)))
+}
+
+/// The identity of the call `agent` makes writing `words` as its note, its
+/// request read as written: a guess's digest (FIX 6534).
+///
+/// # Errors
+///
+/// The request does not encode.
+pub fn note_call_identity_as_written(agent: EntityId, words: &str) -> Result<[u8; 32]> {
+    note_row(agent, Value::from(words))?.request_identity()
 }

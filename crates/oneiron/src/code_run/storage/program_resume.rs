@@ -458,3 +458,44 @@ impl Vault {
         Ok(None)
     }
 }
+
+/// Puts `record`, the replay record of `actor`'s run `run`, in the vault's
+/// own writer, and joins there a pinned entry's resume checkpoint listing
+/// each of its calls, read off its rows before the put, as a checkpoint's
+/// commit does: the door of `test_doors::erased_request_identity`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_record_with_resume_listing_its_calls(
+    vault: &Vault,
+    record: &CodeRunReplayRecord,
+    run: EntityId,
+    actor: EntityId,
+) -> Result<()> {
+    let calls = record
+        .bridge_calls
+        .iter()
+        .map(|row| program_resume_call(row, None))
+        .collect::<Result<Vec<_>>>()?;
+    let commit = ProgramResumeCommit {
+        attempt: [0; 16],
+        skill: EntityId::now(),
+        content_hash: String::new(),
+        contract_digest: [0; 32],
+        entry_start: 0,
+        calls,
+        injected: 0,
+        wait: None,
+        at: 1,
+        preparation: None,
+    };
+    let mut wtxn = vault.store.env.write_txn()?;
+    super::response_owners::stamp_response_owner_in_txn(
+        vault,
+        &mut wtxn,
+        record.run_id,
+        run,
+        actor,
+    )?;
+    vault.put_code_run_replay_record_in_txn(&mut wtxn, record)?;
+    join_program_resume_in_txn(vault, &mut wtxn, record, &commit);
+    Ok(wtxn.commit()?)
+}
