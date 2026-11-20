@@ -604,7 +604,7 @@ fn percentile(sorted: &[f64], pct: f64) -> f64 {
 }
 
 /// Median and p95 of one reader's wall times, walk shares and expand-only shares.
-fn reader_summary(rows: &[CallRow], reader: &str) -> serde_json::Value {
+fn reader_summary(rows: &[&CallRow], reader: &str) -> serde_json::Value {
     let mut wall = Vec::new();
     let mut share = Vec::new();
     let mut expand = Vec::new();
@@ -636,16 +636,31 @@ fn reader_summary(rows: &[CallRow], reader: &str) -> serde_json::Value {
 
 /// The final summary line: per-reader medians, the corpus, and the stub-reranker caveat.
 fn summary(rows: &[CallRow], settings: &Settings) -> serde_json::Value {
+    let mut arms: Vec<Option<u32>> = Vec::new();
+    for row in rows {
+        if !arms.contains(&row.hub_cap) {
+            arms.push(row.hub_cap);
+        }
+    }
+    let arms: Vec<serde_json::Value> = arms
+        .into_iter()
+        .map(|hub_cap| {
+            let arm: Vec<&CallRow> = rows.iter().filter(|row| row.hub_cap == hub_cap).collect();
+            serde_json::json!({
+                "hub_cap": hub_cap,
+                "owner": reader_summary(&arm, "owner"),
+                "agent": reader_summary(&arm, "agent"),
+            })
+        })
+        .collect();
     serde_json::json!({
         "summary": {
-            "owner": reader_summary(rows, "owner"),
-            "agent": reader_summary(rows, "agent"),
+            "arms": arms,
             "corpus": {
                 "records": settings.records,
                 "requested_edges": settings.records.saturating_mul(settings.edges_per_record),
                 "seed": settings.seed,
             },
-            "hub_cap": settings.hub_cap,
             "note": "stub reranker (no model latency): the share is an upper bound for a recall with a real reranker. Each timed call is one High recall_in_session_with_execution in an off-record session (one pass of the retrieval pipeline through pack assembly). requested_edges counts edge writes; repeated pairs upsert",
         }
     })
