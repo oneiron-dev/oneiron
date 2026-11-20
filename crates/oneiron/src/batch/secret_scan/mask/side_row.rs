@@ -752,48 +752,78 @@ pub(crate) fn admitted_from_known(
 ///
 /// A value the plan cannot read.
 pub(crate) fn admitted_from_plan(held: &Value, raw: &Value) -> Result<bool> {
-    Ok(held == raw || held_form(held) == planned_form(raw, None)?.0)
+    Ok(held == raw || held_form(held)?.0 == planned_form(raw, None, NestedBodies::Read)?.0)
+}
+
+/// How the admission form reads a member that carries a body of its own
+/// ([`mask_nested`]): bytes, binary or an array of byte values.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum NestedBodies {
+    /// As the wall reads it at a write ([`mask_tree`]): each secret the plan
+    /// places in it, and each handle in it, as the plan's one stand-in (FIX
+    /// REQUEST-IDENTITY-NESTED-SHAPED-KEY-AS-WRITTEN). A key a put fence
+    /// erased from such a body before the wall read it so digests as the
+    /// handle a scrub of the stored row reads.
+    Read,
+    /// By the field rule alone, as written when it is no text: the form each
+    /// stand-in identity an erase kept before that fix was taken in, which a
+    /// compare tries once the other misses, so such a row meets its call.
+    AsWritten,
 }
 
 /// `held`, a value the wall may have masked, in the form
-/// [`admitted_from_plan`] reads a held row in: each handle as the plan's one
-/// stand-in, and nothing else changed. A raw offer takes that form through
-/// [`admission_form`].
-fn held_form(held: &Value) -> Value {
-    let mut held = held.clone();
-    stand_in_handles(&mut held);
-    held
+/// [`admitted_from_plan`] reads a held row in: each handle, also inside a
+/// body of its own, as the plan's one stand-in, and nothing else changed. A
+/// raw offer takes that form through [`admission_form`].
+fn held_form(held: &Value) -> Result<PlanTree> {
+    let mut held = PlanTree(held.clone());
+    stand_in_handles(&mut held.0, NestedBodies::Read)?;
+    Ok(held)
 }
 
 /// `value` as the replay plan places it: each secret the plan places, and
 /// each handle, as the plan's one stand-in, and with `known`, each value it
-/// holds too. Nothing is minted. The copy is wiped when it drops (FIX 1101).
-fn planned_form(value: &Value, known: Option<Arc<KnownValues>>) -> Result<PlanTree> {
-    let mut planned = masked_plan(value, known)?;
-    stand_in_handles(&mut planned.0);
+/// holds too, inside a body of its own as `bodies` reads it. Nothing is
+/// minted. The copy is wiped when it drops (FIX 1101).
+fn planned_form(
+    value: &Value,
+    known: Option<Arc<KnownValues>>,
+    bodies: NestedBodies,
+) -> Result<PlanTree> {
+    let mut planned = masked_plan(value, known, bodies)?;
+    stand_in_handles(&mut planned.0, bodies)?;
     Ok(planned)
 }
 
 /// `value` with each secret the plan places as the plan's one stand-in, and
-/// with `known`, each value it holds as its record's handle. Handles already
-/// in `value` are left as written.
-fn masked_plan(value: &Value, known: Option<Arc<KnownValues>>) -> Result<PlanTree> {
+/// with `known`, each value it holds as its record's handle, inside a body
+/// of its own as `bodies` reads it. Handles already in `value` are left as
+/// written.
+fn masked_plan(
+    value: &Value,
+    known: Option<Arc<KnownValues>>,
+    bodies: NestedBodies,
+) -> Result<PlanTree> {
     let mut planned = PlanTree(value.clone());
-    Masker {
+    let mut masker = Masker {
         mints: true,
         at: Some((origin("replay", &[])?, "replay".to_owned())),
         known,
         ..Masker::default()
-    }
-    .mask_value(&mut planned.0)?;
+    };
+    match bodies {
+        NestedBodies::Read => mask_tree(&mut masker, &mut planned.0)?,
+        NestedBodies::AsWritten => masker.mask_value(&mut planned.0)?,
+    };
     Ok(planned)
 }
 
 /// `value` in the one form [`admitted_from_plan`] compares a held row and a raw
 /// offer in (FIX 6534): each secret the plan places, and each handle, as
-/// the plan's one stand-in. A held row and the raw value it was admitted
-/// from read the same here, so a digest of either is one identity. Nothing
-/// is minted, and the plan's copy is wiped. With `known`, the values
+/// the plan's one stand-in, inside a body of its own as `bodies` reads it.
+/// A held row and the raw value it was admitted from read the same here
+/// with [`NestedBodies::Read`], so a digest of either is one identity.
+/// Nothing is minted, and the plan's copy is wiped. With `known`, the values
 /// custody holds now, each of them reads as the stand-in too: the form a
 /// raw offer takes against the identity a row erased while it held such a
 /// value's handle keeps (FIX REPLAY-COMPARE-KNOWN-MATCHER).
@@ -801,19 +831,24 @@ fn masked_plan(value: &Value, known: Option<Arc<KnownValues>>) -> Result<PlanTre
 /// # Errors
 ///
 /// A value the plan cannot read.
-pub(crate) fn admission_form(value: &Value, known: Option<Arc<KnownValues>>) -> Result<Value> {
-    let mut planned = planned_form(value, known)?;
+pub(crate) fn admission_form(
+    value: &Value,
+    known: Option<Arc<KnownValues>>,
+    bodies: NestedBodies,
+) -> Result<Value> {
+    let mut planned = planned_form(value, known, bodies)?;
     Ok(std::mem::replace(&mut planned.0, Value::Nil))
 }
 
 /// `value` with each value `known` holds inside a member that carries a
 /// body of its own ([`mask_nested`]) as its record's handle, as the wall
 /// places it there at a write. Nothing is minted and nothing else changes
-/// (blind review round 1 of #9692). [`admission_form`] reads members by the
-/// field rule alone, so a body that is no text, such as a MessagePack map,
-/// it reads as written: an erase that reads custody reads a request a put
-/// fence erased before the wall in this form first, as a scrub reads the
-/// stored row whose body holds the handle.
+/// (blind review round 1 of #9692). [`admission_form`] with
+/// [`NestedBodies::AsWritten`] reads a body that is no text as written: an
+/// erase that read custody before FIX
+/// REQUEST-IDENTITY-NESTED-SHAPED-KEY-AS-WRITTEN read a request a put fence
+/// erased before the wall in this form first, as a scrub reads the stored
+/// row whose body holds the handle.
 ///
 /// # Errors
 ///
@@ -846,28 +881,88 @@ pub(crate) fn from_named_tree<T: DeserializeOwned>(tree: &Value) -> Option<T> {
 }
 
 /// Every handle in `value`, a whole `sc12` or `[secret sc12]` in text,
-/// spelled as the plan's stand-in.
-fn stand_in_handles(value: &mut Value) {
-    match value {
-        Value::String(text) => {
-            if let Some(spelled) = text.as_str().map(stand_in_text) {
+/// spelled as the plan's stand-in, inside a body of its own as `bodies`
+/// reads it; whether one was spelled anew.
+fn stand_in_handles(value: &mut Value, bodies: NestedBodies) -> Result<bool> {
+    Ok(match value {
+        Value::String(text) => match text.as_str().map(stand_in_text) {
+            Some(spelled) if text.as_str() != Some(spelled.as_str()) => {
                 *text = spelled.into();
+                true
             }
+            _ => false,
+        },
+        Value::Binary(bytes) if bodies == NestedBodies::Read => {
+            stand_in_body(bytes)?.is_some_and(|spelled| {
+                replace_wiped(bytes, spelled);
+                true
+            })
         }
-        Value::Binary(bytes) => {
-            if let Ok(spelled) = std::str::from_utf8(bytes).map(stand_in_text) {
+        Value::Binary(bytes) => match std::str::from_utf8(bytes).map(stand_in_text) {
+            Ok(spelled) if bytes.as_slice() != spelled.as_bytes() => {
                 *bytes = spelled.into_bytes();
+                true
             }
-        }
-        Value::Array(items) => items.iter_mut().for_each(stand_in_handles),
+            _ => false,
+        },
+        Value::Array(items) => match byte_values(items).filter(|_| bodies == NestedBodies::Read) {
+            Some(body) => stand_in_body(&Zeroizing::new(body))?.is_some_and(|spelled| {
+                *items = spelled.into_iter().map(Value::from).collect();
+                true
+            }),
+            None => {
+                let mut changed = false;
+                for item in items {
+                    changed |= stand_in_handles(item, bodies)?;
+                }
+                changed
+            }
+        },
         Value::Map(fields) => {
+            let mut changed = false;
             for (key, member) in fields {
-                stand_in_handles(key);
-                stand_in_handles(member);
+                changed |= stand_in_handles(key, bodies)?;
+                changed |= stand_in_handles(member, bodies)?;
             }
+            changed
         }
-        _ => {}
+        _ => false,
+    })
+}
+
+/// `body`, the bytes a member carries, with each handle in it spelled as the
+/// plan's stand-in, read as the wall reads such a body ([`mask_body`]): a
+/// JSON value, one whole MessagePack value, or a text. `None` when none was
+/// spelled anew, so a body that holds no handle keeps its bytes, and one
+/// the wall placed a handle in, which it wrote again, reads as the body the
+/// plan wrote again.
+fn stand_in_body(body: &[u8]) -> Result<Option<Vec<u8>>> {
+    let json = serde_json::from_slice::<serde::de::IgnoredAny>(body).is_ok();
+    let tree = if json {
+        serde_json::from_slice::<Value>(body).ok()
+    } else {
+        whole_messagepack(body)
+    };
+    let Some(tree) = tree else {
+        let Ok(text) = std::str::from_utf8(body) else {
+            return Ok(None);
+        };
+        let spelled = stand_in_text(text);
+        if spelled == text {
+            return Ok(None);
+        }
+        return Ok(Some(spelled.into_bytes()));
+    };
+    let mut tree = PlanTree(tree);
+    if !stand_in_handles(&mut tree.0, NestedBodies::Read)? {
+        return Ok(None);
     }
+    if json {
+        return serde_json::to_vec(&tree.0)
+            .map(Some)
+            .map_err(|_| Error::InvariantViolation("a JSON body did not encode"));
+    }
+    encoded(&tree.0).map(Some)
 }
 
 fn stand_in_text(text: &str) -> String {
