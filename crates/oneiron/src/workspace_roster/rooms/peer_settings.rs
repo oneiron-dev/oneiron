@@ -97,7 +97,8 @@ fn changes_setting(held: &ConversationBody, body: &ConversationBody) -> bool {
 /// Whether `caller` holds the power over each setting `body` changes on
 /// `held`, each judged as its door judges it: the closed bit as the
 /// closed-setting door ([`super::closed::closes_room_in`]), the pin policy
-/// and the pins as the pin doors ([`super::pins`]), the roles as the role
+/// and the pins as the pin doors ([`super::pins`]), each new pin naming the
+/// sender as the pin door names its caller, the roles as the role
 /// door ([`crate::conversation::person_delegates_roles_in`], a person only),
 /// and the members as [`members_allowed`] says.
 fn changes_allowed(
@@ -116,7 +117,9 @@ fn changes_allowed(
     {
         return Ok(false);
     }
-    if changes_pins(held, body) && !super::pins::changes_pins_in(vault, txn, room, caller)? {
+    if changes_pins(held, body)
+        && !super::pins::changes_pins_in(vault, txn, room, caller, held, body)?
+    {
         return Ok(false);
     }
     if retained_roles(held, body) != body.roles

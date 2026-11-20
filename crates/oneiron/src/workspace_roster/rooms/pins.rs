@@ -255,20 +255,63 @@ fn policy_setter_in(
     Ok(body)
 }
 
-/// Whether `caller` may change `room`'s pins and their unpin records, read
-/// in `txn` against the stored body as the pin and unpin doors read it
-/// ([`pin_writer_in`]). A federation peer's room body is judged by it,
-/// without the doors' write-actor check: the peer's grant authenticated its
-/// sender (ROOM-BODY-REPLICA-SETTINGS).
+/// Whether `caller` may change `room`'s pins and their unpin records from
+/// `held`'s to `body`'s, read in `txn` against the stored body as the pin and
+/// unpin doors read it ([`pin_writer_in`]). A federation peer's room body is
+/// judged by it, without the doors' write-actor check: the peer's grant
+/// authenticated its sender (ROOM-BODY-REPLICA-SETTINGS). An unpin moves a
+/// held pin's record as it is; any other record `body` adds, one `held` holds
+/// neither as a pin nor as an unpin record, is a pin the sender made, so it
+/// must name the writer the pin door writes for `caller` ([`made_by`]).
 #[cfg(feature = "sync")]
 pub(super) fn changes_pins_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
     caller: WriteActor,
+    held: &ConversationBody,
+    body: &ConversationBody,
 ) -> Result<bool> {
-    let body = PinnedBody::read_in(vault, txn, room)?;
-    granted(pin_writer_in(vault, txn, room, caller, &body).map(drop))
+    let stored = PinnedBody::read_in(vault, txn, room)?;
+    let writer = match pin_writer_in(vault, txn, room, caller, &stored) {
+        Ok(writer) => writer,
+        Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. })) => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    for record in body.pins.iter().chain(&body.unpinned) {
+        if held.pins.contains(record) || held.unpinned.contains(record) {
+            continue;
+        }
+        if !made_by(vault, txn, record, writer)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Whether `record`, a pin a federation peer's room body adds, names
+/// `writer`: the PERSON and acting agent the pin door writes for the peer's
+/// sender ([`pin_writer_in`]). The PERSON must match, and so must the agent
+/// when an agent sends. A PERSON's update may also carry a pin made by one of
+/// its own agents: an agent this vault reads as that PERSON's pen.
+#[cfg(feature = "sync")]
+fn made_by(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &RoomPin,
+    (person, agent): (EntityId, Option<EntityId>),
+) -> Result<bool> {
+    if record.pinned_by != person {
+        return Ok(false);
+    }
+    Ok(match (agent, record.acting_agent) {
+        (Some(agent), acting) => acting == Some(agent),
+        (None, None) => true,
+        (None, Some(acting)) => {
+            let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
+            acting != person && person_of_actor_in_txn(vault, txn, acting, at)? == Some(person)
+        }
+    })
 }
 
 /// Whether `caller` may set `room`'s pin policy, read in `txn` as the policy
