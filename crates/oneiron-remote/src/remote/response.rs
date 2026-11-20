@@ -44,6 +44,8 @@ struct ApiErrorBody {
     room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
     #[serde(default)]
     pending: Option<Box<oneiron::memory::MemoryPending>>,
+    #[serde(default)]
+    task_assignment_conflict: Option<Box<oneiron::memory::TaskAssignmentConflict>>,
 }
 
 /// Serializes a request body and enforces the 64 MiB request ceiling.
@@ -190,7 +192,7 @@ fn error_of_envelope(envelope: ApiErrorEnvelope) -> Option<MemoryError> {
         message: envelope.error.message,
         suggestions,
         successor_short_id: None,
-        task_assignment_conflict: None,
+        task_assignment_conflict: envelope.error.task_assignment_conflict,
         extraction_layout: None,
         gate_denial: None,
         read_receipt: envelope.narrowing,

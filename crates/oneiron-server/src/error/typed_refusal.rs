@@ -92,4 +92,13 @@ impl ApiError {
     pub(crate) fn pending(&self) -> Option<&oneiron::memory::MemoryPending> {
         self.pending.as_deref()
     }
+
+    /// A refused second task assignment, typed, when the error carries it.
+    /// There is no `with_` builder: the direct-vocabulary arm names only its
+    /// state, so the block only rides a `MemoryError` that already carries it.
+    pub(crate) fn task_assignment_conflict(
+        &self,
+    ) -> Option<&oneiron::memory::TaskAssignmentConflict> {
+        self.task_assignment_conflict.as_deref()
+    }
 }

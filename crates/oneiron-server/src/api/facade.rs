@@ -326,6 +326,7 @@ use serde::Serialize;
 use super::call_receipt;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
+use crate::error::task_assignment_conflict_schema::TaskAssignmentConflictSchema;
 use crate::server::SyncServer;
 use oneiron::claim::{CallerLocality, ScopedReadActorKey};
 use oneiron::federation::record_scope::BirthPosition;
@@ -540,6 +541,12 @@ struct FacadeErrorBody {
     /// What a pending refusal waits on, typed, when the engine supplied one.
     #[serde(rename = "pending", skip_serializing_if = "Option::is_none")]
     pending: Option<Box<oneiron::memory::MemoryPending>>,
+    /// A refused second task assignment, typed, when the engine supplied one.
+    #[serde(
+        rename = "task_assignment_conflict",
+        skip_serializing_if = "Option::is_none"
+    )]
+    task_assignment_conflict: Option<Box<oneiron::memory::TaskAssignmentConflict>>,
     /// A reap pause's `bound` and `self_hosted` route, flattened beside its
     /// `writes_frozen` code as the managed HTTP body carries them (L9-61).
     /// Boxed for the same reason `narrowing` is.
@@ -591,6 +598,9 @@ pub(crate) struct MemoryErrorBodySchema {
     #[schema(value_type = Option<crate::error::memory_pending_schema::MemoryPendingSchema>)]
     #[serde(rename = "pending")]
     pending: Option<crate::error::memory_pending_schema::MemoryPendingSchema>,
+    #[schema(value_type = Option<TaskAssignmentConflictSchema>)]
+    #[serde(rename = "task_assignment_conflict")]
+    task_assignment_conflict: Option<TaskAssignmentConflictSchema>,
     /// A reap pause's bound: `{kind, resource, phase}` (L9-61).
     #[schema(value_type = Option<Object>)]
     bound: Option<serde_json::Value>,

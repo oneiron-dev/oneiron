@@ -25,7 +25,7 @@ import os
 from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
 if TYPE_CHECKING:
-    from .facade_types import LegalHoldNotice, MemoryPending, RoomJoinHold
+    from .facade_types import LegalHoldNotice, MemoryPending, RoomJoinHold, TaskAssignmentConflict
 
 from ._native import NativeClient as _NativeClient
 
@@ -62,6 +62,7 @@ class OneironError(RuntimeError):
         legal_hold: LegalHoldNotice | None = None,
         room_join_hold: RoomJoinHold | None = None,
         pending: MemoryPending | None = None,
+        task_assignment_conflict: TaskAssignmentConflict | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -79,6 +80,7 @@ class OneironError(RuntimeError):
         self.legal_hold = legal_hold
         self.room_join_hold = room_join_hold
         self.pending = pending
+        self.task_assignment_conflict = task_assignment_conflict
 
 
 def _typed_error(payload: object, fallback: str) -> OneironError:
@@ -124,6 +126,10 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
         room_join_hold = room_join_hold if isinstance(room_join_hold, dict) else None
         pending = payload.get("pending")
         pending = pending if isinstance(pending, dict) else None
+        task_assignment_conflict = payload.get("task_assignment_conflict")
+        task_assignment_conflict = (
+            task_assignment_conflict if isinstance(task_assignment_conflict, dict) else None
+        )
         return OneironError(
             payload["code"],
             payload["message"],
@@ -136,6 +142,7 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
             legal_hold,
             room_join_hold,
             pending,
+            task_assignment_conflict,
         )
     return OneironError(
         "INTERNAL_SERVER_ERROR",

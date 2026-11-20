@@ -204,14 +204,16 @@ pub(crate) fn write_text(path: &Path, text: &str) -> Result<(), GenerateError> {
 
 /// The types no verb row reaches that a hand-written route serves, rooted last (OF-181, FIX 7968, 9891, 365), in this
 /// order. `MemoryPending` is the typed block a refusal carries (P38-PENDING-BLOCK-REACH): `error.ts` and the Python
-/// stubs name it.
-const EXTRA_ROOTS: [&str; 6] = [
+/// stubs name it. `TaskAssignmentConflict` is the refused second assignment a refusal carries
+/// (FIX [TASK-ASSIGNED-FORK-ON-CONCURRENT-AMENDED-SETTLES]).
+const EXTRA_ROOTS: [&str; 7] = [
     "crate::lens::GeneratedUiActionEvent",
     "crate::lens::GeneratedUiSegment",
     "crate::lens::GeneratedUiCatalogDescriptor",
     "crate::memory::TranscriptPage",
     "crate::memory::MessageResultAttachment",
     "crate::memory::MemoryPending",
+    "crate::memory::TaskAssignmentConflict",
 ];
 
 /// The interpreter that runs agent-docs.py: `ONEIRON_PYTHON` when set, else `python3` (`python` on Windows).

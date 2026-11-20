@@ -285,11 +285,13 @@ pub(crate) const UNIFFI_LENS_ROOTS: &[(&str, &str)] = &[
 ];
 
 /// FIX 7968, 9891: roots that reach no row. `MemoryPending` is the typed block `OneironError::Failure` carries as
-/// `pending_block` (P38-PENDING-BLOCK-REACH).
+/// `pending_block` (P38-PENDING-BLOCK-REACH). `TaskAssignmentConflict` is the refused second
+/// assignment a refusal carries (FIX [TASK-ASSIGNED-FORK-ON-CONCURRENT-AMENDED-SETTLES]).
 pub(crate) const UNIFFI_STREAM_ROOTS: &[&str] = &[
     "crate::lens::GeneratedUiSegment",
     "crate::lens::GeneratedUiCatalogDescriptor",
     "crate::memory::MemoryPending",
+    "crate::memory::TaskAssignmentConflict",
 ];
 
 /// The files whose public types a generated type may not be named.

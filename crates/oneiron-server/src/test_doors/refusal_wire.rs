@@ -1,5 +1,6 @@
-//! Door for tests/check_in_pending_block_wire.rs: a MemoryError as the facade
-//! and the MCP gateway answer it.
+//! Door for tests/check_in_pending_block_wire.rs and
+//! tests/task_assignment_conflict_wire.rs: a MemoryError as the facade and
+//! the MCP gateway answer it.
 
 use axum::response::IntoResponse;
 
