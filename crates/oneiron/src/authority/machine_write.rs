@@ -619,13 +619,13 @@ pub(crate) fn machine_history_authority_descends_with_image(
     successor: &[u8; 32],
     image: Option<&super::checkpoint_image::AuthorityCheckpointV2>,
 ) -> Result<bool> {
-    let by_hash = stored_authority_rows_by_hash(store, txn)?;
+    let by_hash = stored_authority_parents_by_hash(store, txn)?;
     let stands = |hash: &[u8; 32]| {
         by_hash.contains_key(hash)
             || image.is_some_and(|image| covered_endpoint_stands(image, hash))
     };
     let parents = |hash: &[u8; 32]| match by_hash.get(hash) {
-        Some(entry) => Some(entry.parent_hashes.as_slice()),
+        Some(parents) => Some(parents.as_slice()),
         None => image
             .and_then(|image| image.rows.get(hash))
             .map(|row| row.parents.as_slice()),
@@ -652,12 +652,12 @@ pub(crate) fn machine_history_authority_descends_with_image(
     Ok(false)
 }
 
-/// Every authority row this vault stores, by its hash, each checked against the key it is
-/// stored under.
-fn stored_authority_rows_by_hash(
+/// The signed parent hashes of every authority row this vault stores, by the row's hash, each
+/// row checked against the key it is stored under.
+fn stored_authority_parents_by_hash(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-) -> Result<std::collections::BTreeMap<[u8; 32], super::AuthorityLogEntry>> {
+) -> Result<std::collections::BTreeMap<[u8; 32], Vec<[u8; 32]>>> {
     let mut by_hash = std::collections::BTreeMap::new();
     for id in
         store.port_entity_ids_by_type(txn, crate::registry::ENTITY_TYPE_AUTHORITY_LOG, None)?
@@ -674,7 +674,7 @@ fn stored_authority_rows_by_hash(
         if super::authority_log_entity_id_from_hash(&hash)? != id {
             return Err(Error::CorruptedIndex("authority history key"));
         }
-        by_hash.insert(hash, entry);
+        by_hash.insert(hash, entry.parent_hashes);
     }
     Ok(by_hash)
 }
@@ -697,13 +697,13 @@ pub(crate) fn any_authority_row_descends(
     let image = adopted
         .as_deref()
         .map(super::VerifiedAuthorityCheckpoint::image);
-    let by_hash = stored_authority_rows_by_hash(store, txn)?;
+    let by_hash = stored_authority_parents_by_hash(store, txn)?;
     let stands = |hash: &[u8; 32]| {
         by_hash.contains_key(hash)
             || image.is_some_and(|image| covered_endpoint_stands(image, hash))
     };
     let parents = |hash: &[u8; 32]| match by_hash.get(hash) {
-        Some(entry) => Some(entry.parent_hashes.as_slice()),
+        Some(parents) => Some(parents.as_slice()),
         None => image
             .and_then(|image| image.rows.get(hash))
             .map(|row| row.parents.as_slice()),
