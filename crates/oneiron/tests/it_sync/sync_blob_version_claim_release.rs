@@ -251,3 +251,105 @@ fn a_held_artifact_keeps_the_version_whose_claim_a_replica_releases() {
         "the uploader dropped the held version's bytes"
     );
 }
+
+/// REVIEW-7640-NO-CHAIN-REPLICA-REPLAY: B, a replica, received the artifact, its claims and both
+/// versions' bytes, and keeps no chain of its own. The owner then releases a version on A, the
+/// uploader, so only the claim's tombstone travels, and B's replay of it takes the released
+/// version's bytes there too, as the owner's release on a vault without the chain does (Engine
+/// ruling 13 Nov 17:56: the release takes the claim and the bytes on every replica).
+///
+/// Red on main af6720cd74e8: B purges the claim alone and keeps its pair and the released
+/// version's bytes.
+#[test]
+fn an_uploaders_release_takes_the_bytes_from_a_replica_that_holds_them() {
+    let (mut a, mut b) = vault_pair();
+    let (_artifact, claims) = upload(&mut a, T0, &[RELEASED, KEPT]);
+    exchange(&a, &b, WINDOW);
+    assert!(
+        stores(&b.vault, RELEASED),
+        "fixture: the replica received the released version's bytes"
+    );
+
+    // The release test above, mirrored: A deletes with its window closed, and B catches up
+    // through A's export door.
+    a.close_window(WINDOW);
+    a.vault
+        .delete_entity_with_reason(&claims[0], DeleteReason::UserHardDelete)
+        .unwrap();
+    a.recover(WINDOW);
+    sync_through_doors(&b, &mut a);
+    b.recover(WINDOW);
+
+    assert!(
+        !stores(&a.vault, RELEASED),
+        "fixture: the owner's release took the bytes on the uploader"
+    );
+    assert!(
+        b.vault.get_raw(&claims[0]).unwrap().is_none(),
+        "fixture: the owner's release reached the replica as the claim's tombstone"
+    );
+    assert!(
+        !stores(&b.vault, RELEASED),
+        "the replica kept the released version's bytes after its claim's tombstone"
+    );
+    assert!(
+        stores(&b.vault, KEPT),
+        "the other version's bytes stay on the replica"
+    );
+}
+
+/// REVIEW-7640-NO-CHAIN-REPLICA-REPLAY under BLOB-VERSION-HELD-PURGE (Engine ruling 15 Nov
+/// 19:25): the owner of B, a replica that keeps no chain, holds the artifact. The uploader A
+/// releases a version, and B's replay of the claim's tombstone is refused as a held version's
+/// is on the uploader: the claim and its bytes stay on B, and the refusal reaches B's hold log.
+///
+/// Red on main af6720cd74e8: B's replay refuses only a hold on the claim id itself, so it purges
+/// the claim of bytes its hold keeps.
+#[test]
+fn a_held_artifact_on_a_replica_keeps_the_claim_whose_version_the_uploader_releases() {
+    let (mut a, mut b) = vault_pair();
+    let (artifact, claims) = upload(&mut a, T0, &[RELEASED, KEPT]);
+    exchange(&a, &b, WINDOW);
+    assert!(
+        b.vault.get_raw(&claims[0]).unwrap().is_some(),
+        "fixture: the replica received the version claim"
+    );
+    let person = b.vault.ensure_embedded_owner_actor().unwrap();
+    let owner = b
+        .vault
+        .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+        .unwrap();
+    let hold = b
+        .vault
+        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(artifact)], None)
+        .unwrap();
+
+    // As in the test above: A deletes with its window closed, and B catches up through A's export
+    // door.
+    a.close_window(WINDOW);
+    a.vault
+        .delete_entity_with_reason(&claims[0], DeleteReason::UserHardDelete)
+        .unwrap();
+    a.recover(WINDOW);
+    sync_through_doors(&b, &mut a);
+    b.recover(WINDOW);
+
+    assert!(
+        a.vault.get_raw(&claims[0]).unwrap().is_none(),
+        "fixture: the uploader released the version claim"
+    );
+    let log = b.vault.legal_hold_log(&owner).unwrap();
+    assert!(
+        log.iter().any(|event| event.hold_id == hold.hold_id
+            && matches!(event.event, LegalHoldEventKind::DeleteRefused)),
+        "the artifact's hold refused no purge on the replica: {log:?}"
+    );
+    assert!(
+        b.vault.get_raw(&claims[0]).unwrap().is_some(),
+        "the replica's replay purged the claim of bytes its hold keeps"
+    );
+    assert!(
+        stores(&b.vault, RELEASED),
+        "the replica dropped the held version's bytes"
+    );
+}
