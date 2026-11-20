@@ -6,6 +6,8 @@
 //!   default the birth copied, the one the yes's table held back;
 //! - a birth made after a yes landed its source's default names that yes beside the pack's head,
 //!   and another machine reads the yes's value;
+//! - a birth names the yes of each table whose landing its source's row still stands on, the
+//!   older table's beside the newest's;
 //! - the fold counts a birth's yes name only where the act is live on the frontier of the table
 //!   its row names, its row spells a table, and the birth names that pack's head too.
 //!
@@ -115,6 +117,24 @@ impl Fixture {
         .expect("new defaults");
         assert_eq!(applied.proposed, vec![BORN_DEFAULT.to_owned()]);
         assert_eq!(self.default_value(), json!(7));
+        pack_head_digest(&self.vault, ENGINE_PACK)
+            .expect("the head row reads")
+            .expect("the door ran")
+    }
+
+    /// The engine pack's door weighs another table at the same version, whose default for
+    /// `test.born_depth_default` is `value`, looser than the row the vault holds: the default
+    /// waits for a holder's yes. The table's digest.
+    fn weighs_another_table(&self, value: i64) -> String {
+        let applied = apply_pack_defaults_at(
+            &self.vault,
+            ENGINE_PACK,
+            ENGINE_PACK_VERSION,
+            &[(BORN_DEFAULT, json!(value))],
+        )
+        .expect("the pack door runs")
+        .expect("new defaults");
+        assert_eq!(applied.proposed, vec![BORN_DEFAULT.to_owned()]);
         pack_head_digest(&self.vault, ENGINE_PACK)
             .expect("the head row reads")
             .expect("the door ran")
@@ -318,6 +338,46 @@ fn a_birth_after_a_yes_names_it_and_another_machine_reads_the_yes() {
     fx.as_another_machine();
     let read = fx.born_at(made);
     assert_eq!(read["value"], json!(9), "{read}");
+    assert_eq!(read["source"], source("seeded", made), "{read}");
+}
+
+#[test]
+fn a_birth_names_the_yes_of_each_table_whose_landing_its_sources_row_stands_on() {
+    let fx = Fixture::rooted();
+    let other = fx.second_machine(0x74);
+    let first = fx.weighs_a_looser_default();
+    assert!(fx.yes_on(&other, &first, T0 + 1), "counted");
+    assert_eq!(fx.default_value(), json!(9));
+    let second = fx.weighs_another_table(11);
+    assert_ne!(second, first);
+    assert!(fx.yes_on(&other, &second, T0 + 2), "counted");
+    assert_eq!(
+        fx.default_value(),
+        json!(11),
+        "the newer yes lands on the older one"
+    );
+    let first_yes = fx.yeses(&first);
+    let second_yes = fx.yeses(&second);
+    assert_eq!(first_yes.len(), 1, "{first_yes:?}");
+    assert_eq!(second_yes.len(), 1, "{second_yes:?}");
+
+    let made = fx.new_project();
+    let read = fx.born_at(made);
+    assert_eq!(read["value"], json!(11), "{read}");
+    let names = fx.birth_names(made);
+    assert!(
+        names.contains(&(BORN_DEFAULT.to_owned(), engine_scope(), second_yes[0].act)),
+        "the newest table's yes: {names:?}"
+    );
+    assert!(
+        names.contains(&(BORN_DEFAULT.to_owned(), engine_scope(), first_yes[0].act)),
+        "the older table's yes, whose landing the newest one's stands on: {names:?}"
+    );
+    assert_eq!(names.len(), 3, "the pack's head and both yeses: {names:?}");
+
+    fx.as_another_machine();
+    let read = fx.born_at(made);
+    assert_eq!(read["value"], json!(11), "{read}");
     assert_eq!(read["source"], source("seeded", made), "{read}");
 }
 
