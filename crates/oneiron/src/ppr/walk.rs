@@ -1,6 +1,6 @@
 //! PPR walk math: frontier rounds, visibility gating, and edge gates.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use heed::RoTxn;
 
@@ -18,6 +18,7 @@ use super::VAD_PROPAGATION_EVIDENCE;
 use super::policy::{
     PprAlphas, SeedWeighting, lambda_for_kind, seed_weights_with_deadline, vad_multiplier,
 };
+use super::setting_keys::narrowed_hub_fanout_cap_in;
 
 pub(crate) use crate::ports::PprNodeVisibility;
 struct PprRoundContext<'a, 'txn, D: ManifestDbs> {
@@ -33,6 +34,11 @@ struct PprRoundContext<'a, 'txn, D: ManifestDbs> {
     visibility: Option<&'a dyn PprNodeVisibility>,
     deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
     push_threshold: f32,
+    /// The most gated, visible edges one (node, kind, direction) group may
+    /// hold and still spread mass: `Some` on the narrowed walk alone, read
+    /// from the owner's Setting in the walk's own transaction. `None` keeps
+    /// the cached unscoped walk's ranking as it was.
+    hub_fanout_cap: Option<u32>,
 }
 #[derive(Debug, Clone)]
 pub(super) struct PprFrontierEntry {
@@ -79,6 +85,15 @@ pub(super) struct PprCacheState {
 ///   skipped entirely, including their `s_out`/`s_in` contribution (D8);
 ///   proposed / confirmed / disputed propagate at full weight in v1.
 /// - `part_of` hops are capped at 2.
+///
+/// Hub cap (narrowed walk only; Engine ANSWER PPR-NARROWED-CACHE-DESIGN
+/// Q2 = A): a (node, kind, direction) group with more than K edges that pass
+/// every gate above and the reader's visibility spreads no mass, where K is
+/// the owner's `retrieval.ppr.narrowed_hub_fanout_cap` Setting. An edge the
+/// reader cannot see never counts toward K, so a hidden row cannot change
+/// what a reader's walk reaches. Once a group passes K, the walk gates none
+/// of that kind's remaining rows at that node. The unscoped walk takes no
+/// cap, so its cached ranking is unchanged.
 ///
 /// Seed mass follows the [`SeedWeighting`] mode: UNIFORM `1/n` for
 /// `expand_ppr` (and the pre-Layer-2 behavior), or ARCH-0039 Layer-2
@@ -142,6 +157,10 @@ pub(super) fn ppr_compute_state_weighted_with_deadline(
         dependencies.insert(*seed);
     }
 
+    let hub_fanout_cap = match visibility {
+        Some(_) => Some(narrowed_hub_fanout_cap_in(store, txn)?),
+        None => None,
+    };
     let round_context = PprRoundContext {
         store,
         txn,
@@ -152,6 +171,7 @@ pub(super) fn ppr_compute_state_weighted_with_deadline(
         visibility,
         deadline,
         push_threshold: SCORE_EPSILON,
+        hub_fanout_cap,
     };
     run_ppr_rounds(
         round_context,
@@ -208,6 +228,7 @@ pub(super) fn ppr_resume_state_weighted(
         visibility: None,
         deadline,
         push_threshold: resume.push_threshold,
+        hub_fanout_cap: None,
     };
     run_ppr_rounds(
         round_context,
@@ -265,6 +286,10 @@ fn run_ppr_rounds(
                 crate::ports::EdgeDirection::In,
             ] {
                 let mut groups = BTreeMap::<u8, Vec<GatedEdge>>::new();
+                // Kinds whose group passed the narrowed walk's hub cap at this
+                // node: they spread no mass, and their remaining rows are not
+                // gated.
+                let mut hub_kinds = BTreeSet::<u8>::new();
                 for entry in crate::ports::EdgeStoreRead::port_edges(
                     context.store,
                     context.txn,
@@ -277,6 +302,9 @@ fn run_ppr_rounds(
                         deadline.checkpoint()?;
                     }
                     let entry = entry?;
+                    if hub_kinds.contains(&(entry.kind as u8)) {
+                        continue;
+                    }
                     if let Some(edge) = gate_edge(context.store, context.txn, &node, &entry, hops)?
                     {
                         // Gate 6 — actor visibility, on scoped walks only.
@@ -289,7 +317,19 @@ fn run_ppr_rounds(
                         // nodes, so gating the neighbour keeps BOTH endpoints
                         // of every traversed edge readable.
                         if visible_neighbor(&context, &edge)? {
-                            groups.entry(edge.kind as u8).or_default().push(edge);
+                            let kind = edge.kind as u8;
+                            let group = groups.entry(kind).or_default();
+                            group.push(edge);
+                            // The hub cap counts only edges that passed every
+                            // gate and the reader's visibility, so a hidden
+                            // row never decides whether a group spreads.
+                            if context
+                                .hub_fanout_cap
+                                .is_some_and(|cap| group.len() > cap as usize)
+                            {
+                                groups.remove(&kind);
+                                hub_kinds.insert(kind);
+                            }
                         }
                     }
                 }
