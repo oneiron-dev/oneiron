@@ -105,7 +105,7 @@ impl Vault {
             return Err(authority_refused(HOLD_NOT_LIVE));
         }
         let now = self.instant_in_txn(&txn)?.secs();
-        let sign = |transcript: &[u8]| answered.sign(transcript);
+        let sign = |fold: &AuthorityFold, transcript: &[u8]| answered.sign(self, fold, transcript);
         self.append_recovery_hold_answer_in_txn(
             &mut txn,
             key,
