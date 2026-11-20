@@ -161,10 +161,7 @@ impl ScopedRead<'_> {
             AskedFilter::Unknown => Some(as_request(filter)),
         };
         let grants = authority.grants().of(reader, || {
-            reader_grants_in(self.vault, rtxn, reader).unwrap_or_else(|error| {
-                warn_grant_errors(1, &[], Some(error.kind()));
-                Vec::new()
-            })
+            reader_grants_or_empty_in(self.vault, rtxn, reader)
         });
         for (grant, scope) in &*grants {
             match self.own_row_under_grant_in(
@@ -211,12 +208,7 @@ impl ScopedRead<'_> {
     /// counted, as A counts it.
     fn live_read_grants_in(&self, rtxn: &heed::RoTxn<'_>) -> Option<Vec<(EntityId, Scope)>> {
         let reader = self.grant_reader()?;
-        Some(
-            reader_grants_in(self.vault, rtxn, reader).unwrap_or_else(|error| {
-                warn_grant_errors(1, &[], Some(error.kind()));
-                Vec::new()
-            }),
-        )
+        Some(reader_grants_or_empty_in(self.vault, rtxn, reader))
     }
 
     /// `filter` joined with the rows each of `grants` reads alone under
@@ -255,27 +247,41 @@ impl ScopedRead<'_> {
     /// `requested`, as the search candidates join them (FIX 7528). `None` on
     /// any other lane and for a key A never stands for. It only reports:
     /// every row took the row gate, B first, then each Grant alone.
+    ///
+    /// With `held`, the Grants are the ones the row gate held in this
+    /// snapshot (loaded here, and held, when no row asked yet), so the
+    /// receipt names the Grants that judged its rows even when one lapsed
+    /// on the running clock since (review round 1 of #9775).
     pub(super) fn live_grant_receipt_scope_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         applied: &ResolvedRetrievalFilter,
         requested: Option<&RetrievalFilter>,
+        held: Option<&HeldAuthority>,
     ) -> Option<LiveGrantReceiptScope> {
         if !self.receipts_include_live_grants {
             return None;
         }
-        let grants = self.live_read_grants_in(rtxn)?;
+        let reader = self.grant_reader()?;
+        let load = || reader_grants_or_empty_in(self.vault, rtxn, reader);
+        let grants: ReaderGrants = match held {
+            Some(held) => held.grants().of(reader, load),
+            None => load().into(),
+        };
         let mut ceiling = policy.retrieval_floor_for_actor(Some(&self.actor_key));
         // A static boundary holds when the key's own floor has one and so
-        // does each live Grant, each judged whole.
+        // does each live Grant, each judged whole: by its own Scope, or by
+        // the policy rows that still cap a read carrying it (gate/grants.rs
+        // applies a matching non-house row to an explicit Scope too).
         let mut statically_bounded = ceiling
             .has_grant_scope_bound(self.actor_key.authority_scope())
             || policy.scoped_read_grants_all_bounded(&self.actor_key);
-        for (_, scope) in &grants {
+        for (_, scope) in grants.iter() {
             let floor =
                 policy.retrieval_floor_for_actor_with_scope(Some(&self.actor_key), Some(scope));
-            statically_bounded &= floor.has_grant_scope_bound(Some(scope));
+            statically_bounded &= floor.has_grant_scope_bound(Some(scope))
+                || policy.scoped_read_grants_all_bounded_with_scope(&self.actor_key, Some(scope));
             ceiling = ceiling.alternative_envelope(&floor);
         }
         Some(LiveGrantReceiptScope {
@@ -473,6 +479,19 @@ fn reader_grants_in(
             )
         })
         .collect())
+}
+
+/// [`reader_grants_in`], with a lookup that fails read as no Grant (an empty
+/// list) and counted, as A counts it.
+fn reader_grants_or_empty_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    reader: EntityId,
+) -> Vec<(EntityId, Scope)> {
+    reader_grants_in(vault, txn, reader).unwrap_or_else(|error| {
+        warn_grant_errors(1, &[], Some(error.kind()));
+        Vec::new()
+    })
 }
 
 /// `filter` as a request: met with a floor, it narrows that floor to what

@@ -135,7 +135,7 @@ impl ScopedRead<'_> {
                 embedding_matches: Default::default(),
                 hits: Vec::new(),
                 revisions: Default::default(),
-                receipt: self.receipt_in(&txn, requested, &policy, &candidates, 0),
+                receipt: self.receipt_in(&txn, requested, &policy, &candidates, 0, None),
             });
         }
         // The search opens its own snapshots: LMDB allows one per thread.
@@ -236,7 +236,7 @@ impl ScopedRead<'_> {
                 embedding_matches: Default::default(),
                 hits: Vec::new(),
                 revisions: Default::default(),
-                receipt: self.receipt_in(&txn, requested, &policy, &candidates, 0),
+                receipt: self.receipt_in(&txn, requested, &policy, &candidates, 0, None),
             });
         }
         // The search opens its own snapshots: LMDB allows one per thread.

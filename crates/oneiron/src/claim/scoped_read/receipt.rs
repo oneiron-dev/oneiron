@@ -1,5 +1,6 @@
 //! Mandatory read receipts. Responses carry the requested/ceiling/intersection tuple.
 use super::ScopedRead;
+use super::access_gate::HeldAuthority;
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalPolicyFloor};
 use oneiron_contracts::gate::RetrievalFilter;
 use std::collections::BTreeSet;
@@ -55,6 +56,8 @@ impl ScopedRead<'_> {
     /// floor alone (FIX GRANT-READ-NARROWING-SAYS-DENY-ALL). It reports and
     /// never authorizes: each row took the row gate, B first, then each
     /// Grant alone. Every other lane reports as [`Self::receipt_for`].
+    /// `held` is the authority the read's row gate held in `rtxn`, when it
+    /// held one: the receipt then reports the Grants that gate judged under.
     pub(super) fn receipt_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -62,8 +65,9 @@ impl ScopedRead<'_> {
         policy: &PolicyManifestResolution,
         applied: &ResolvedRetrievalFilter,
         suppressed_count: usize,
+        held: Option<&HeldAuthority>,
     ) -> ScopedReadReceipt {
-        match self.live_grant_receipt_scope_in(rtxn, policy, applied, requested) {
+        match self.live_grant_receipt_scope_in(rtxn, policy, applied, requested, held) {
             Some(scope) => self.receipt_under(
                 requested,
                 scope.ceiling,
@@ -156,7 +160,14 @@ impl ScopedRead<'_> {
     ) -> crate::Result<ScopedReadReceipt> {
         let txn = self.grant_read_txn()?;
         let plan = self.search_plan_in(&txn, requested)?;
-        Ok(self.receipt_in(&txn, requested, &plan.policy, &plan.candidates, suppressed))
+        Ok(self.receipt_in(
+            &txn,
+            requested,
+            &plan.policy,
+            &plan.candidates,
+            suppressed,
+            None,
+        ))
     }
 
     /// The receipt for a scan that already holds its transaction: the
@@ -168,7 +179,7 @@ impl ScopedRead<'_> {
         suppressed: usize,
     ) -> crate::Result<ScopedReadReceipt> {
         let (applied, policy) = self.resolve_retrieval_filter_in(txn, requested)?;
-        Ok(self.receipt_in(txn, requested, &policy, &applied, suppressed))
+        Ok(self.receipt_in(txn, requested, &policy, &applied, suppressed, None))
     }
 }
 

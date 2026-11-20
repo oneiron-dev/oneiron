@@ -526,14 +526,21 @@ impl ScopedRead<'_> {
         let candidates = self.candidate_filter_in(&txn, policy, filter, requested);
         let fresh_candidates =
             self.candidate_filter_in(&txn, &fresh_policy, &fresh_filter, requested);
-        let mut receipt =
-            self.receipt_in(&txn, requested, policy, &candidates, previously_suppressed);
+        let mut receipt = self.receipt_in(
+            &txn,
+            requested,
+            policy,
+            &candidates,
+            previously_suppressed,
+            Some(&held),
+        );
         receipt.restrict_with(&self.receipt_in(
             &txn,
             requested,
             &fresh_policy,
             &fresh_candidates,
             suppressed,
+            Some(&held),
         ));
         Ok(ScopedReadResult { value, receipt })
     }
@@ -642,7 +649,7 @@ impl ScopedRead<'_> {
                 value.push(row);
             }
         }
-        let receipt = self.receipt_in(&txn, requested, &policy, &filter, suppressed);
+        let receipt = self.receipt_in(&txn, requested, &policy, &filter, suppressed, Some(&held));
         Ok(ScopedReadResult { value, receipt })
     }
 }

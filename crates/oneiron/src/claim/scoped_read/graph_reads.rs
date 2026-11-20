@@ -146,7 +146,7 @@ impl ScopedRead<'_> {
         });
         Ok(ScopedReadResult {
             value,
-            receipt: self.receipt_in(txn, None, &policy, &filter, suppressed),
+            receipt: self.receipt_in(txn, None, &policy, &filter, suppressed, None),
         })
     }
 

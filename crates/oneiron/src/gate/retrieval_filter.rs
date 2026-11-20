@@ -144,6 +144,20 @@ impl PolicyManifestResolution {
     /// alternative is judged whole: a union of projections can look broad
     /// even when no single grant is. This inspects no rows.
     pub(crate) fn scoped_read_grants_all_bounded(&self, actor: &ScopedReadActorKey) -> bool {
+        self.scoped_read_grants_all_bounded_with_scope(actor, actor.authority_scope())
+    }
+
+    /// [`Self::scoped_read_grants_all_bounded`] for `actor` as if it held a
+    /// proof of `explicit_scope`, as [`Self::retrieval_floor_for_actor_with_scope`]
+    /// reads it: the unchanged shipped house row caps no read carrying an
+    /// explicit Scope, so it is left out then, as the row gate leaves it out
+    /// (review round 1 of #9775: a matching non-house row still caps a read
+    /// under an agent's own full Grant).
+    pub(crate) fn scoped_read_grants_all_bounded_with_scope(
+        &self,
+        actor: &ScopedReadActorKey,
+        explicit_scope: Option<&Scope>,
+    ) -> bool {
         if actor.vault_owner_ref().is_some() {
             return false;
         }
@@ -151,7 +165,7 @@ impl PolicyManifestResolution {
         for grant in self.scoped_grants().iter().filter(|grant| {
             scoped_read_grant_has_read_effector(grant)
                 && scoped_read_actor_matches(grant, actor)
-                && (actor.authority_scope().is_none() || !is_shipped_house_read_row(grant))
+                && (explicit_scope.is_none() || !is_shipped_house_read_row(grant))
                 && !grant.receipt_required
                 && grant.budget.is_none()
         }) {
