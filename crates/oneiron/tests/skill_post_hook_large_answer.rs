@@ -2090,3 +2090,31 @@ fn a_deep_hook_input_names_a_row_it_spells_through_escapes() {
         "the run names the row its input spells through escapes",
     );
 }
+
+/// REVIEW-9897 round 1: a 64-digit hex run, such as a digest, names no row,
+/// in a deep hook input as in a decoded value, whether its digits are
+/// spelled through escapes or plain, though its last 32 digits are a row's
+/// id. Red at 1cb524097a3: the escaped run names that row (the scan took
+/// the last 32 digits of a longer run), and so does the plain one.
+#[test]
+fn a_deep_hook_input_names_no_row_inside_a_longer_hex_run() {
+    let (escaped_row, plain_row) = (fresh_id(), fresh_id());
+    let escaped: String = format!("{}{}", fresh_id().to_hex(), escaped_row.to_hex())
+        .chars()
+        .map(|digit| format!("\\u{:04x}", u32::from(digit)))
+        .collect();
+    let plain = format!("{}{}", fresh_id().to_hex(), plain_row.to_hex());
+    let input = format!(
+        "{{\"args\":{{}},\"result\":{{\"output\":{{\"escaped\":\"{escaped}\",\"plain\":\"{plain}\",\"deep\":{}0{}}}}}}}",
+        "[".repeat(DEEP_LEVELS),
+        "]".repeat(DEEP_LEVELS),
+    );
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&input).is_err(),
+        "the input nests past what a value reads",
+    );
+    assert!(
+        handle_doors::rows_named_by_hook_input(&input).is_empty(),
+        "a longer hex run names no row",
+    );
+}
