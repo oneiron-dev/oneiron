@@ -26,7 +26,15 @@ fn archive_subject_facts_wait_for_a_current_owner_review() -> Result<()> {
         assert_eq!(body.source, Some(ClaimSource::Imported));
     }
     let now = crate::unix_seconds_now();
-    assert_eq!(target.actor_subject_anchor(&actor, now)?, None);
+    // FIX 1162: import mints the LOCAL onboarding anchor; archived rows stay Proposed.
+    let local = target
+        .actor_subject_anchor(&actor, now)?
+        .expect("FIX 1162 local onboarding anchor");
+    assert_eq!(
+        local.subject_ref,
+        crate::context_board::agent_person_id(actor)?
+    );
+    assert_ne!(local.subject_ref, person);
     assert_eq!(target.person_substrate(&person, now)?, None);
     assert_eq!(
         target
@@ -45,7 +53,9 @@ fn archive_subject_facts_wait_for_a_current_owner_review() -> Result<()> {
         let request = target.request_subject_restore_review(id, &writer())?;
         assert_eq!(request.claim_id(), id);
         assert_eq!(request.proposal().approval, ClaimApprovalStatus::Proposed);
-        assert_eq!(request.superseded_claim_ids().count(), 0);
+        // FIX 1162: anchor review supersedes the local onboarding anchor only.
+        let expected_priors = usize::from(id == anchor);
+        assert_eq!(request.superseded_claim_ids().count(), expected_priors);
         target.approve_subject_restore_review(&request)?;
         let body = target.get_claim(&id)?.unwrap();
         assert_eq!(body.source, Some(ClaimSource::Imported));
