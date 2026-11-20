@@ -356,6 +356,12 @@ fn install_through_hook_in_txn(
         at: now,
         why: None,
         weight_runs: checked.stored.weight_runs,
+        // The owner's archived row comes back as it was: no move the rule judges (DESIGN 1.5).
+        direction: None,
+        surface: None,
+        signed: None,
+        with: Vec::new(),
+        standing: None,
     };
     if (hooked.on_change)(vault, &mut savepoint, &change).is_err() {
         savepoint.abort();
