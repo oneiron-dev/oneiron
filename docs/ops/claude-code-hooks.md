@@ -160,8 +160,8 @@ it on the machine it ran on with `oneiron import claude-code <log>`. A send
 the hosted vault does not take (it does not answer, or the credential has no
 Grant naming the verb) is dropped without a word; the session's next
 hand-over sends the whole log again, and the import lands only what is new.
-The hosted vault takes only a Claude Code log: a Codex, Cursor or Copilot
-session queues locally as before.
+Codex, Cursor and GitHub Copilot sessions go the same way, each by its own
+log ([Session hooks for Codex, Cursor and GitHub Copilot](client-session-hooks.md#a-hosted-vault)).
 
 A pin in `hook.toml` counts only when no one but you can write it: your own
 regular file, not a link, with no write bit for others and, on macOS, no ACL

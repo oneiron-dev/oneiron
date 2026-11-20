@@ -42,7 +42,7 @@ mod tests;
 pub use hook_transcript::{
     HOOK_TRANSCRIPT_MAX_BYTES, HOOK_TRANSCRIPT_MAX_SUBAGENTS, HistoryImportCaller,
     HookSubagentTranscript, HookTranscriptConversation, HookTranscriptImportRequest,
-    HookTranscriptImportView,
+    HookTranscriptImportView, HookTranscriptSource,
 };
 pub use hosted::{
     HOSTED_IMPORT_SKIPS_LISTED, HostedImportCanceller, HostedImportEmbeddings, HostedImportId,

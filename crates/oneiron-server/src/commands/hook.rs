@@ -7,8 +7,8 @@
 //!   and recalls a short block for the project ([`recall`]).
 //! - `prompt` recalls a short block for the prompt from the bound vault.
 //! - `hand-over` queues the session's log for the running `serve` to import,
-//!   or sends a Claude Code log to the selected hosted vault every start of
-//!   the session bound and recorded ([`hand_over`], [`session_binding`]).
+//!   or sends it to the selected hosted vault every start of the session
+//!   bound and recorded ([`hand_over`], [`session_binding`]).
 //! - `bind` binds a vault as `session-start` does and prints it as JSON, for
 //!   a plugin that runs inside its host (Hermes's memory provider).
 //!
@@ -138,12 +138,10 @@ fn session_start(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
         args.common.settings_file.as_deref(),
         deadline,
     );
-    // A Claude Code session's hand-over sends its log only to the vault
-    // every start of it bound.
-    if import_source(host) == HistorySource::ClaudeCode
-        && let Some(session) = session_id(&event)
-    {
-        session_binding::record(session, bound.hosted.as_ref(), resumed(&event));
+    // A session's hand-over sends its log only to the vault every start of
+    // it bound.
+    if let Some(session) = session_id(host, &event) {
+        session_binding::record(host, session, bound.hosted.as_ref(), resumed(host, &event));
     }
     let mut said = bound.lines;
     let Some(url) = bound.url else {
@@ -254,14 +252,15 @@ fn recall_auth<'a>(
 /// host's logs ([`import_source`]): one small file in the queue of the
 /// config named, else of the running local vault, else of the default
 /// config, under the settings file named, else the running vault's own when
-/// the import takes that vault's config. With no config named, a Claude
-/// Code log goes by what the session's starts bound
-/// ([`bind::hand_over_target`]): to the selected hosted vault where every
-/// start bound that one and it is still selected, through
-/// `vault.imports.hook_transcript` as the selection's own credential, when
-/// the log is the event's own session's, with nothing queued here; nowhere
-/// where they bound a hosted vault no longer selected, or more than one
-/// vault. A send that fails is sent again whole by the session's next
+/// the import takes that vault's config. With no config named, the log goes
+/// by what the session's starts bound ([`bind::hand_over_target`]): to the
+/// selected hosted vault where every start bound that one and it is still
+/// selected, through `vault.imports.hook_transcript` as the selection's own
+/// credential, by the import that reads the host's logs, when the log is the
+/// event's own session's and sits where the host keeps its logs
+/// ([`continue_command::hand_over_hosted`]), with nothing queued here;
+/// nowhere where they bound a hosted vault no longer selected, or more than
+/// one vault. A send that fails is sent again whole by the session's next
 /// hand-over, and the import lands only what is new. Its output is not the
 /// host's.
 fn hand_over(host: HookHost, args: &HookHandOverArgs) {
@@ -277,16 +276,15 @@ fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     };
     let oneiron = oneiron(args.common.oneiron.as_deref());
     let deadline = deadline(args.common.timeout);
-    // The hosted vault takes only a Claude Code log, and a config named here
-    // is a local queue's.
-    let may_send = args.config.is_none() && import_source(host) == HistorySource::ClaudeCode;
-    let session = session_id(&event).filter(|_| may_send);
-    let running = match (session, bind::hand_over_target(session)) {
+    // A config named here is a local queue's.
+    let session = session_id(host, &event).filter(|_| args.config.is_none());
+    let running = match (session, bind::hand_over_target(host, session)) {
         (Some(session), HandOverTarget::Hosted(vault)) => {
             let policy_ref = format!("policy:{}-hooks", host.as_str());
             let _ = continue_command::hand_over_hosted(
                 &oneiron,
                 &vault,
+                host,
                 session,
                 Path::new(transcript),
                 policy_ref,
@@ -352,22 +350,34 @@ fn read_event() -> Option<Map<String, Value>> {
     }
 }
 
-/// The session the host's event names (`session_id`), when it names one.
-fn session_id(event: &Map<String, Value>) -> Option<&str> {
-    event
-        .get("session_id")
-        .and_then(Value::as_str)
-        .filter(|session| !session.is_empty())
+/// The session `host`'s event names, when it names one: Cursor's
+/// `conversation_id`, which every Cursor event names (its `sessionStart`
+/// names it again as `session_id`, its `stop` only so), else `session_id`.
+fn session_id(host: HookHost, event: &Map<String, Value>) -> Option<&str> {
+    let named = |field: &str| {
+        event
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|session| !session.is_empty())
+    };
+    match host {
+        HookHost::Cursor => named("conversation_id").or_else(|| named("session_id")),
+        _ => named("session_id"),
+    }
 }
 
-/// Whether a session start goes on from turns that ran before it: Claude
-/// Code's `source` is not `startup` or `clear` (a resume, a compaction), or
-/// is not named.
-fn resumed(event: &Map<String, Value>) -> bool {
-    !matches!(
-        event.get("source").and_then(Value::as_str),
-        Some("startup" | "clear")
-    )
+/// Whether a session start of `host` goes on from turns that ran before it.
+/// Cursor runs `sessionStart` only when a conversation is created
+/// (cursor.com/docs/agent/hooks), so its starts never do. Any other host's
+/// does unless its `source` names a new session: `startup` or `clear` (Claude
+/// Code, Codex), `startup` or `new` (Copilot); a resume, a compaction, or no
+/// `source` named, goes on.
+fn resumed(host: HookHost, event: &Map<String, Value>) -> bool {
+    host != HookHost::Cursor
+        && !matches!(
+            event.get("source").and_then(Value::as_str),
+            Some("startup" | "clear" | "new")
+        )
 }
 
 /// The git repository's folder name, else the working directory's.
