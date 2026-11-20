@@ -210,8 +210,8 @@ fn restores(body: &ClaimBody) -> Option<EntityId> {
         .and_then(|(_, value)| id_of(value))
 }
 
-/// The copy stands as `member` stood: same predicate, value, source and
-/// author, at `auto`.
+/// The copy stands as `member` stood: same predicate, value, source, facet,
+/// project and author, at `auto`.
 fn assert_copy_of(fixture: &Fixture, copy: EntityId, member: EntityId) {
     let (copy, member) = (fixture.body(copy), fixture.body(member));
     assert_eq!(copy.lifecycle.as_str(), "active");
@@ -219,6 +219,8 @@ fn assert_copy_of(fixture: &Fixture, copy: EntityId, member: EntityId) {
     assert_eq!(copy.predicate, member.predicate);
     assert_eq!(copy.value, member.value);
     assert_eq!(copy.source, member.source);
+    assert_eq!(copy.scope_facet, member.scope_facet);
+    assert_eq!(copy.scope_project, member.scope_project);
     assert_eq!(author(&copy), author(&member));
     assert_eq!(signed(&copy), signed(&member));
     assert_eq!(member.lifecycle.as_str(), "superseded");

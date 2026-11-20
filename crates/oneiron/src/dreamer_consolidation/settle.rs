@@ -861,18 +861,29 @@ pub(crate) fn settlement_revert_lifts_restriction_in(
     }
 }
 
-/// Where a revert's fresh Dreamer copy says it came from: its provenance
-/// surface and its birth reason.
+/// Where a revert's fresh copy says it came from, its provenance surface
+/// and its birth reason, and which members the revert may copy.
 pub(super) struct RevertSurface {
     pub(super) surface: &'static str,
     pub(super) birth: &'static str,
     pub(super) marker: Option<EntityId>,
+    /// Whether an unsigned member may stand again as its author's copy. A
+    /// settlement's copy joins its reopened conflict, whose member list
+    /// reads only the Dreamer's copies (`retained_keep`), so a settlement
+    /// revert writes none.
+    pub(super) unsigned_copies: bool,
+    /// Whether a member about an edge may be copied. Such a copy cannot be
+    /// found again (an edge has no subject index), so only a revert that
+    /// also closes the reverted write, and so runs once, may write it.
+    pub(super) edge_subjects: bool,
 }
 
 const SETTLEMENT_REVERT: RevertSurface = RevertSurface {
     surface: "conflict_settlement_revert",
     birth: "dreamer.settlement_revert",
     marker: None,
+    unsigned_copies: false,
+    edge_subjects: true,
 };
 
 /// How a member a reverted write superseded stands after the revert.

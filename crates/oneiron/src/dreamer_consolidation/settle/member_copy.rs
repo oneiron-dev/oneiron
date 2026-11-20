@@ -10,12 +10,19 @@
 //!
 //! The copy carries the member's predicate, value, confidence, window and
 //! axes under a new id, and is born of the member and of the reverted write.
-//! The Gate judges it as its author's write of today, over the member's whole
-//! recorded lineage: an author whose ceiling or permit no longer stands gets
-//! no copy, and the member stays closed. A member whose row is deleted, being
-//! deleted or under a use limit is never copied, and neither is one a
-//! standing copy already restores (lead ruling 21 Nov, INTENT-17 rows 1+2 =
-//! A; FIX DERIVE-REVERT-SIGNED-CLAIM, DERIVE-REVERT-GENERATED-CLAIM).
+//! An unsigned member's copy is written as the writer the engine attested for
+//! that exact row (never as an actor its evidence merely names), in the
+//! member's own facet and project and over its whole recorded lineage. The
+//! Gate judges it as that writer's write of today: a writer whose ceiling or
+//! permit no longer stands gets no copy, and the member stays closed. A
+//! member whose row is deleted, being deleted or under a use limit is never
+//! copied, and neither is one a standing copy already restores (lead ruling
+//! 21 Nov, INTENT-17 rows 1+2 = A; FIX DERIVE-REVERT-SIGNED-CLAIM,
+//! DERIVE-REVERT-GENERATED-CLAIM).
+//!
+//! Both attempts run in savepoints that hand their post-commit work to the
+//! write's owner ([`crate::batch::savepoint_in_txn`]), so a reopened or
+//! copied claim reaches the live windows as any other write does.
 
 use rmpv::Value;
 
@@ -26,8 +33,8 @@ use crate::error::{Error, GateError, Result};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::write_envelope::{
-    ClaimCandidate, SourceLineage, WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY,
-    WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY, WriteActor, WriteEnvelope, WriteProvenance,
+    ClaimCandidate, SourceLineage, WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY, WriteActor,
+    WriteEnvelope, WriteProvenance,
 };
 use crate::{ClaimBody, EntityId, TimeRange, Vault};
 
@@ -45,44 +52,33 @@ pub(super) fn reopen_in_txn(
     loser: EntityId,
     now: u64,
 ) -> Result<bool> {
-    let mut attempt = vault.store.env.nested_write_txn(txn)?;
-    match vault.restore_superseded_claim_in_txn(&mut attempt, &kept, &loser, now / 1_000) {
-        Ok(true) => {
-            attempt.commit()?;
-            Ok(true)
-        }
-        Ok(false) => {
-            attempt.abort();
-            Ok(false)
-        }
-        Err(error) if gate_refuses(&error) => {
-            attempt.abort();
-            Ok(false)
-        }
-        Err(error) => {
-            attempt.abort();
-            Err(error)
-        }
-    }
+    let reopened = crate::batch::savepoint_in_txn(vault, txn, |attempt| {
+        Ok(vault
+            .restore_superseded_claim_in_txn(attempt, &kept, &loser, now / 1_000)?
+            .then_some(()))
+    });
+    Ok(unless_refused(reopened)?.is_some())
 }
 
-/// Whether `error` is the Gate's refusal of a claim write: its rejected
-/// decision, or the source trust check's refusal of an `auto` claim whose
-/// source no row answers for.
-fn gate_refuses(error: &Error) -> bool {
-    matches!(
-        error,
-        Error::Gate(
-            GateError::GateWriteRejected { .. } | GateError::SourceNotTrustedForAuto { .. }
-        )
-    )
+/// `attempt`, with the Gate's refusal of its claim write read as nothing
+/// written: its rejected decision, or the source trust check's refusal of an
+/// `auto` claim whose source no row answers for. The savepoint the attempt
+/// ran in has rolled back.
+fn unless_refused<T>(attempt: Result<Option<T>>) -> Result<Option<T>> {
+    match attempt {
+        Err(Error::Gate(
+            GateError::GateWriteRejected { .. } | GateError::SourceNotTrustedForAuto { .. },
+        )) => Ok(None),
+        attempt => attempt,
+    }
 }
 
 /// Stands `loser` again as a fresh copy written as its original author, when
 /// `kept` superseded it and it is still closed; the copy's id. `None`, with
-/// nothing written, for a member that names no such author, whose row may
-/// not be copied, that a standing copy already restores, or, when unsigned,
-/// whose copy the Gate refuses. `now` is milliseconds.
+/// nothing written, for a member that has no such author, that `surface`
+/// does not copy, whose row may not be copied, that a standing copy already
+/// restores, or, when unsigned, whose copy the Gate refuses. `now` is
+/// milliseconds.
 pub(super) fn copy_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -96,11 +92,20 @@ pub(super) fn copy_in_txn(
     let Some(body) = vault.get_claim_in_txn(txn, &loser)? else {
         return Ok(None);
     };
-    if body.lifecycle != ClaimLifecycleStatus::Superseded {
+    if body.lifecycle != ClaimLifecycleStatus::Superseded
+        || !(surface.edge_subjects || matches!(body.subject, ClaimSubject::Entity(_)))
+    {
         return Ok(None);
     }
     let signed = crate::authority::machine_claim_needs_history(&vault.store, txn, &body)?;
-    let Some(author) = copy_author(&body, signed)? else {
+    let author = if signed {
+        dreamer_author(&body)?
+    } else if surface.unsigned_copies {
+        attested_author_in_txn(vault, txn, loser, &body)?
+    } else {
+        None
+    };
+    let Some(author) = author else {
         return Ok(None);
     };
     if vault
@@ -119,71 +124,72 @@ pub(super) fn copy_in_txn(
         now,
     };
     if signed {
-        // The Dreamer's signed copy, as before: its own declared source, and
-        // a refusal is the revert's error.
+        // The Dreamer's signed copy, as before: its own declared source, the
+        // default facet, and a refusal is the revert's error.
         return copy
-            .write_in_txn(vault, txn, &body, author, SourceLineage::of(source))
+            .write_in_txn(vault, txn, &body, author, SourceLineage::of(source), false)
             .map(Some);
     }
     let lineage = crate::batch::inherited_lineage(source, &body);
-    let mut attempt = vault.store.env.nested_write_txn(txn)?;
-    match copy.write_in_txn(vault, &mut attempt, &body, author, lineage) {
-        Ok(id) => {
-            attempt.commit()?;
-            Ok(Some(id))
-        }
-        Err(error) if gate_refuses(&error) => {
-            attempt.abort();
-            Ok(None)
-        }
-        Err(error) => {
-            attempt.abort();
-            Err(error)
-        }
-    }
+    unless_refused(crate::batch::savepoint_in_txn(vault, txn, |attempt| {
+        copy.write_in_txn(vault, attempt, &body, author, lineage, true)
+            .map(Some)
+    }))
 }
 
-/// The actor a fresh copy of the member `body` is written as. A signed
-/// member: the Dreamer, for its own. An unsigned member about an entity: the
-/// agent or engine actor its write envelope stamped. `None` for any other
-/// member: a person's claim is never written again in the person's name, and
-/// a claim about an edge has no subject index a standing copy is found by.
-fn copy_author(body: &ClaimBody, signed: bool) -> Result<Option<WriteActor>> {
-    let Some(author) = crate::memory::claim_author(body) else {
-        return Ok(None);
-    };
-    if signed {
-        let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?;
-        return Ok((author == dreamer).then(|| WriteActor::new(dreamer, EdgeActorClass::System)));
-    }
+/// The actor a fresh copy of the signed member `body` is written as: the
+/// Dreamer, for its own claim. `None` for another MACHINE's claim.
+fn dreamer_author(body: &ClaimBody) -> Result<Option<WriteActor>> {
+    let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?;
+    Ok((crate::memory::claim_author(body) == Some(dreamer))
+        .then(|| WriteActor::new(dreamer, EdgeActorClass::System)))
+}
+
+/// The actor a fresh copy of the unsigned member `loser` is written as: the
+/// writer the engine attested for that exact row
+/// ([`crate::batch::authenticated_claim_author_in_txn`]; evidence a raw or
+/// replicated put carried is no authorship), when it is an agent or an
+/// engine actor whose own row still stands and the member is about an
+/// entity. `None` for any other member: a person's claim is never written
+/// again in the person's name, and a claim about an edge has no subject
+/// index a standing copy is found by.
+fn attested_author_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    loser: EntityId,
+    body: &ClaimBody,
+) -> Result<Option<WriteActor>> {
     if !matches!(body.subject, ClaimSubject::Entity(_)) {
         return Ok(None);
     }
-    Ok(stamped_actor_class(body)
-        .filter(|class| matches!(class, EdgeActorClass::Agent | EdgeActorClass::System))
-        .map(|class| WriteActor::new(author, class)))
-}
-
-/// The actor class the write envelope stamped into `body`'s evidence.
-fn stamped_actor_class(body: &ClaimBody) -> Option<EdgeActorClass> {
-    let Value::Map(entries) = body.evidence.as_ref()? else {
-        return None;
+    let Some(writer) =
+        crate::batch::authenticated_claim_author_in_txn(&vault.store, txn, &loser, body)?
+    else {
+        return Ok(None);
     };
-    let mut classes = entries
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY));
-    let (_, class) = classes.next()?;
-    if classes.next().is_some() {
-        return None;
+    if !matches!(
+        writer.actor_class(),
+        EdgeActorClass::Agent | EdgeActorClass::System
+    ) || !crate::vault::live_entity_row_in_txn(&vault.store, txn, &writer.entity_ref())?
+        .is_live()
+    {
+        return Ok(None);
     }
-    EdgeActorClass::try_from_u8(u8::try_from(class.as_u64()?).ok()?)
+    // The writer alone: the authority state and the run its old write was
+    // bound to are not today's.
+    Ok(Some(WriteActor::new(
+        writer.entity_ref(),
+        writer.actor_class(),
+    )))
 }
 
 /// Whether a standing claim about `body`'s subject, written by `author`, is
-/// a revert's fresh copy of `loser` already: a second revert that reaches
-/// the same member (a batch's `supersede` item and then its `claim` item, or
-/// the same batch reverted again) writes no second copy. A member about an
-/// edge has no subject index, so none is found for it.
+/// a fresh copy of `loser` already: a second revert that reaches the same
+/// member (a batch's `supersede` item and then its `claim` item, or the same
+/// batch reverted again) writes no second copy. A copy that was refused, has
+/// gone stale or was closed stands for nothing, so the member may be copied
+/// again. A member about an edge has no subject index, so none is found for
+/// it.
 fn copy_stands_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -197,6 +203,8 @@ fn copy_stands_in_txn(
     Ok(vault
         .find_claim_for_subject_in_txn(txn, &subject, |_, peer| {
             (peer.lifecycle == ClaimLifecycleStatus::Active
+                && peer.approval != ClaimApprovalStatus::Rejected
+                && !peer.stale
                 && crate::memory::claim_author(peer) == Some(author)
                 && restores(peer, loser))
             .then_some(())
@@ -227,7 +235,9 @@ struct MemberCopy<'a> {
 }
 
 impl MemberCopy<'_> {
-    /// Writes the copy of `body` as `author` under `lineage`; its id.
+    /// Writes the copy of `body` as `author` under `lineage`; its id. With
+    /// `in_place`, the copy keeps the member's own facet and project stamps;
+    /// without, it is born where a write of today is.
     fn write_in_txn(
         &self,
         vault: &Vault,
@@ -235,8 +245,9 @@ impl MemberCopy<'_> {
         body: &ClaimBody,
         author: WriteActor,
         lineage: SourceLineage,
+        in_place: bool,
     ) -> Result<EntityId> {
-        let candidate = crate::dreamer_consolidation::persistence::on_axes_of(
+        let mut candidate = crate::dreamer_consolidation::persistence::on_axes_of(
             ClaimCandidate::new(
                 body.predicate.clone(),
                 body.subject,
@@ -247,6 +258,9 @@ impl MemberCopy<'_> {
             .with_validity(body.valid_from, None),
             body,
         );
+        if in_place {
+            candidate = candidate.with_scope_stamps(body.scope_facet, body.scope_project);
+        }
         let mut provenance = vec![
             (Value::from("surface"), Value::from(self.surface.surface)),
             (

@@ -197,17 +197,20 @@ impl Vault {
                 left.push((item.local.clone(), REVERT_LIFTS_RESTRICTION.to_owned()));
                 continue;
             }
-            let mut savepoint = self.store.env.nested_write_txn(txn)?;
-            match self.undo_item_in_txn(
-                &mut savepoint,
-                &record.actor,
-                reverter,
-                item,
-                now_ms,
-                &reverted_rows,
-            ) {
+            // The savepoint hands what its inverse wrote to this write's
+            // owner when it commits, so a reopened or copied claim reaches
+            // the live windows as any other write does.
+            match crate::batch::savepoint_in_txn(self, txn, |savepoint| {
+                self.undo_item_in_txn(
+                    savepoint,
+                    &record.actor,
+                    reverter,
+                    item,
+                    now_ms,
+                    &reverted_rows,
+                )
+            }) {
                 Ok(Some(copies)) => {
-                    savepoint.commit()?;
                     reverted_rows.extend(item.rows.iter().copied());
                     reverted.push(item.local.clone());
                     copied.extend(
@@ -217,14 +220,12 @@ impl Vault {
                     );
                 }
                 Ok(None) => {
-                    savepoint.abort();
                     left.push((item.local.clone(), REVERT_NO_INVERSE.to_owned()));
                 }
                 Err(error @ (Error::Storage(_) | Error::Io(_) | Error::MapFull)) => {
                     return Err(error);
                 }
                 Err(_) => {
-                    savepoint.abort();
                     left.push((item.local.clone(), REVERT_INVERSE_REFUSED.to_owned()));
                 }
             }

@@ -53,12 +53,18 @@ const CHANGE_REVERT: RevertSurface = RevertSurface {
     surface: "dreamer_change_revert",
     birth: "dreamer.change_revert",
     marker: None,
+    unsigned_copies: true,
+    edge_subjects: true,
 };
 
+/// A `supersede` item's inverse closes no row of its own, so the same item
+/// can be reverted again: it copies no member about an edge.
 const DERIVE_REVERT: RevertSurface = RevertSurface {
     surface: "derive_revert",
     birth: "derive.revert",
     marker: None,
+    unsigned_copies: true,
+    edge_subjects: false,
 };
 
 /// Stands `old` again after `new` superseded it through a derivation batch's
