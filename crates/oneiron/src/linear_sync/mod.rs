@@ -105,6 +105,8 @@ pub(crate) use self::mirror_event::{
     put_event_in, record_outbound, request_digest, task_edit_key,
 };
 pub use self::mirror_event::{LinearMirrorEvent, LinearMirrorRecord};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mirror_event::{delivery_key, mapping_key};
 pub use self::model::{
     LINEAR_ENGINE_AUTHORITATIVE_FIELDS, LINEAR_FIELD_ASSIGNEE_REF, LINEAR_FIELD_DESCRIPTION,
     LINEAR_FIELD_PRIORITY, LINEAR_FIELD_STATUS, LINEAR_FIELD_TITLE, LINEAR_MIRRORED_FIELDS,

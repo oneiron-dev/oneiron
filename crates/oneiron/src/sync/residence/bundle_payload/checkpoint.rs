@@ -109,15 +109,18 @@ pub(super) fn decode(reader: &mut Reader<'_>) -> Result<Option<CarriedCheckpoint
     }))
 }
 
-/// Adopts `carried`, the image the base section carries, before a kit
-/// restore imports the authority tail that stands on it, once `trust` fixes
-/// its pin ([`RECOVERY_CHECKPOINT_TRUST`]). The kit's root may become this
+/// Adopts `carried`, the image the base section carries, in `txn`, the kit
+/// restore's history import transaction, before the authority tail that
+/// stands on it imports there, once `trust` fixes its pin
+/// ([`RECOVERY_CHECKPOINT_TRUST`]); the import's judge then decides whether
+/// either commits (REVIEW-9488 P1 1). The kit's root may become this
 /// install's pin first ([`Vault::adopt_recovered_authority_checkpoint`]), so
 /// the kit must be one the restore's root door takes: verified, or confirmed
 /// by the owner, a fingerprint naming its own root. With no `trust` nothing is
 /// adopted and the tail imports alone, as a hydrated publisher's does.
-pub(super) fn adopt(
+pub(super) fn adopt_in_txn(
     vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
     vault_id: &[u8; 32],
     carried: Option<&CarriedCheckpoint>,
     trust: Option<RecoveryCheckpointTrust>,
@@ -146,10 +149,9 @@ pub(super) fn adopt(
         id: root.id,
         anchor_key: root.anchor_key,
     };
-    vault.adopt_recovered_authority_checkpoint(
-        &carried.pin,
-        &carried.image,
-        &carried.attestations,
+    vault.adopt_recovered_authority_checkpoint_in_txn(
+        txn,
+        (&carried.pin, &carried.image, &carried.attestations),
         fixed,
         kit_root,
     )?;
@@ -161,7 +163,9 @@ impl WindowManager {
     /// that adopted a checkpoint image: the image the base section carries is
     /// adopted first, once `checkpoint` names its pin, so the authority tail
     /// imports on it however little of the covered history the publisher
-    /// held (FIX 3583).
+    /// held (FIX 3583). A revocation of the kit's root authority key that
+    /// lands during the restore leaves the pin this adoption wrote, besides
+    /// the base windows ([`Self::restore_sealed_bundle_with_kit`]).
     #[expect(clippy::too_many_arguments)]
     pub fn restore_sealed_bundle_with_kit_checkpoint(
         self: &Arc<Self>,

@@ -1,6 +1,8 @@
 //! Core VAD value types: ranges, validation, and annotation records shared by every affect child.
 
 use serde::{Deserialize, Serialize};
+
+use crate::register::Register;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Vad {
     pub valence: f32,
@@ -71,19 +73,14 @@ impl Vad {
     }
 }
 /// Source that produced a turn/message VAD annotation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("vad.annotation.source")]
 pub enum VadAnnotationSource {
     ModelInference,
     UserSelfReport,
-}
-impl VadAnnotationSource {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ModelInference => "model_inference",
-            Self::UserSelfReport => "user_self_report",
-        }
-    }
 }
 /// How current a derived value is beside the source it was read from: the
 /// source changed since (`stale`), and a pass that derives it again is owed

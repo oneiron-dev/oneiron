@@ -179,6 +179,10 @@ pub(crate) fn land_kept_alternative_in_txn(
             .ok_or(Error::InvalidClaimBody(
                 "the kept alternative is missing inside its own write transaction",
             ))?;
+    // The kept alternative about a PERSON under a cleanup archive is a new
+    // mention of her: she is restored in the settlement's transaction
+    // (ARCH-0073 §6).
+    vault.restore_mentioned_subject_in_txn(txn, landed.subject)?;
     if landed.approval != keep_as.landed()
         || landed.predicate != probe.predicate
         || landed.source != Some(source)

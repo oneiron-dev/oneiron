@@ -2,7 +2,8 @@
 
 use super::super::{MemoriesRequest, core_engine_error, json_payload, non_empty_query};
 pub(crate) use super::builder_controls::*;
-use super::controls::CoreContextPackRequest;
+use super::controls::{CoreContextPackRequest, CoreInterlocutorControls};
+use super::interlocutor::RoomAudience;
 use super::media_query::embed_media_seeds;
 use super::response::{
     CoreContextPackResponse, CoreReactionSignal, context_pack_json_projection_config,
@@ -79,6 +80,8 @@ const CONTEXT_PACK_ROUTE_CONTROLS: &[&str] = &[
     "signals_person",
     "query_affect",
     "queryAffect",
+    "packet_id",
+    "packetId",
     "hydrate",
     "include_edges",
     "includeEdges",
@@ -232,6 +235,7 @@ pub(crate) async fn execute_context_pack(
         skill_reliability,
         candidate_limit,
         query_affect,
+        packet,
         ranking,
         time,
         signals,
@@ -365,6 +369,9 @@ pub(crate) async fn execute_context_pack(
     if let Some(vad) = query_affect {
         builder = builder.query_affect(vad);
     }
+    if let Some(summary) = packet {
+        builder = builder.rehydrate_from(summary);
+    }
     builder = ranking.applied(builder);
     builder = time.applied(builder);
     let (mut builder, retrieval_budget) = apply_context_pack_budget(
@@ -388,13 +395,29 @@ pub(crate) async fn execute_context_pack(
     // response, so the response can never describe a different clamp than
     // the one applied (design §11 rule 6). It carries the pack's home
     // (DEC-0006 #home-clearance).
+    // ARCH-0052 D5 rule 1 (ROOM-PACK-STRETCH-TIER-A = A): a pack bound to
+    // its room's stretch, whose every interlocutor is seated there, reads the
+    // stretch's own rows past Tier A; the clamp still judges them.
     let disclosure = resolve_core_disclosure_with_once(
         &server.vault,
         interlocutors.as_ref(),
         room.as_ref().map(|room| room.reader.is_some()),
         &once,
         home,
-    )?;
+    )?
+    .map(|ctx| match stretch.as_ref() {
+        Some(stretch)
+            if seats_every_interlocutor(
+                stretch,
+                room.as_ref(),
+                req.interlocutors.as_ref(),
+                auth,
+            ) =>
+        {
+            stretch.bind_disclosure(ctx)
+        }
+        _ => ctx,
+    });
     if let Some(ctx) = disclosure.as_ref() {
         builder = builder.disclosure_context(ctx.clone());
     }
@@ -490,8 +513,9 @@ pub(crate) async fn execute_context_pack(
 /// what that member's key reads, never more. Any other caller, and a stretch
 /// the reader cannot bind now (gone, closing, closed, a room they are not in,
 /// or, for anyone but the owner, a stretch entered alone), reads base alone,
-/// as a pack did before.
-fn context_pack_room<'v>(
+/// as a pack did before. MCP's `memory.context_pack` binds by this same rule
+/// (`mcp_gateway::memory_response`).
+pub(crate) fn context_pack_room<'v>(
     server: &'v SyncServer,
     auth: &CoreAuth,
 ) -> Result<Option<oneiron::off_record::RoomPackSession<'v>>, ApiError> {
@@ -511,6 +535,41 @@ fn context_pack_room<'v>(
         rooms.bind_pack_member(key, member)
     };
     bound.map_err(|error| core_engine_error("context-pack stretch bind failed", error))
+}
+
+/// Whether every interlocutor of a pack bound to `stretch` is seated in the
+/// stretch's room (ARCH-0052 D5 rule 1; ROOM-PACK-STRETCH-TIER-A = A, the
+/// lead 14 Nov 05:3x): the pack names that room as its conversation, its
+/// reader is the one the stretch is bound for, whom the bind found on the
+/// room's roster (the owner on their proof, or a member, a person or an
+/// agent, on their own live slip; ARCH-0052 #e5-read-union-open = B), and
+/// every party its clamp meets came from that roster. Where the room proves
+/// a reader of its own (the owner, or one of the vault's own agents), it is
+/// that same one. A person the room proves no reader for keeps every term
+/// the room's audience gives the clamp, their own included, so passing
+/// rule 1 widens no clearance and no scoped read. A live call's speaker the
+/// roster does not seat, a third party or voice session the request names,
+/// or a principal other than the reader is not seated there, so the
+/// stretch's rows stay Tier A.
+fn seats_every_interlocutor(
+    stretch: &oneiron::off_record::RoomPackSession<'_>,
+    room: Option<&RoomAudience>,
+    controls: Option<&CoreInterlocutorControls>,
+    auth: &CoreAuth,
+) -> bool {
+    let Some(room) = room else {
+        return false;
+    };
+    let reader = stretch.reader();
+    stretch.room() == Some(room.room)
+        && room.reader.is_none_or(|proven| proven == reader)
+        && !room.live.reads_unknown()
+        && controls.is_none_or(|controls| {
+            controls.third_parties.is_empty() && controls.voice_session_ref.is_none()
+        })
+        && auth
+            .principal_ref()
+            .is_none_or(|principal| oneiron::EntityId::from_hex(principal).ok() == Some(reader))
 }
 
 /// The person or agent a pack's caller is, on their own live slip, who may
@@ -652,19 +711,37 @@ fn read_reaction_signals(
     checkpoint()?;
     let page = paging.page(kept);
     checkpoint()?;
-    let signals = page
-        .signals
-        .into_iter()
-        .map(|signal| CoreReactionSignal {
+    // A signal names its reactor only to a reader who may read their PERSON
+    // row, judged as the signal itself was: a scoped read under its own
+    // admission and clamp, a raw feed off this device under the world judge.
+    // Another reader hears of the reaction with no `by` (Engine ANSWER
+    // REACTION-REACTOR-ID-SURFACES = A).
+    let mut signals = Vec::with_capacity(page.signals.len());
+    for signal in page.signals {
+        checkpoint()?;
+        let by = if scoped {
+            scoped_read
+                .reaction_signal_reactor_under(&signal, disclosure)
+                .map_err(|e| core_engine_error("reaction signal reactor scope failed", e))?
+        } else if let Some(destination) = &raw_destination {
+            server
+                .vault
+                .rows_may_leave_for(&[signal.by], destination)
+                .map_err(|e| core_engine_error("reaction signal reactor judge failed", e))?
+                .then_some(signal.by)
+        } else {
+            Some(signal.by)
+        };
+        signals.push(CoreReactionSignal {
             event: signal.event(),
             reaction: signal.reaction.to_hex(),
             message: signal.message.to_hex(),
-            by: signal.by.to_hex(),
+            by: by.map(|by| by.to_hex()),
             glyph: signal.glyph,
             occurred_at: signal.occurred_at,
             recorded_at: signal.recorded_at,
-        })
-        .collect();
+        });
+    }
     checkpoint()?;
     response.signals_next = page.next;
     response.signals = signals;

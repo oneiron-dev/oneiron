@@ -11,7 +11,9 @@ use crate::server::SyncServer;
 /// # Errors
 ///
 /// What the round returns: a storage or queue error (a failed job settles
-/// and does not fail the round).
+/// and does not fail the round, except a requested eval-authoring pass
+/// whose record stayed open: its lease lapses unsettled and the round
+/// returns the error).
 pub fn coach_host_round(server: &SyncServer) -> oneiron::Result<()> {
     crate::ai_host::coach_host::round_once(server)
 }

@@ -12,7 +12,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/asks.rs` | src | m | 11 crate-vis | — | Protocol 1.1 asks, the engine side: who answers, and what the receipt records |
-| `src/bin/oneiron-organ-probe.rs` | src | m | 11 crate-vis | — | A diagnostics organ for the host's own checks: the runtime's built-in verbs (`organ.touch`, `organ.echo`)… |
+| `src/bin/oneiron-organ-probe.rs` | src | m | 12 crate-vis | — | A diagnostics organ for the host's own checks: the runtime's built-in verbs (`organ.touch`, `organ.echo`)… |
+| `src/bin/oneiron-organ-probe/escape_calls.rs` | src | s | 3 crate-vis | — | The probe's single calls that check an organ's sandbox (Linux): each is made the way an organ reaching past… |
 | `src/budget.rs` | src | m | 1 struct · 1 fn · 35 crate-vis | BudgetConfig | One admission budget for every organ: threads, memory, in-flight calls |
 | `src/clock.rs` | src | s | 11 crate-vis | — | A call's time, which stops while the call waits for budget room (Engine ruling, 10-20; FIX 6196, 8020) |
 | `src/error.rs` | src | s | 2 enum | HostError, Unavailable | What can go wrong on the engine side of an organ call |
@@ -23,7 +24,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/host/producer.rs` | src | s | 6 crate-vis | — | The pre-dispatch producer and its one admitted call |
 | `src/host/shutdown.rs` | src | m | 1 struct · 8 fn · 11 crate-vis | MeshCancel | The mesh's stop, as the organ work it admitted sees it (FIX 4755, 4756) |
 | `src/host/sized.rs` | src | s | 3 struct · 5 fn · 8 crate-vis | CallMeasure, CallSize, LentRegion | A call its caller sizes from what it lends (Rule 5): a booking and a process grant that grow with the input… |
-| `src/image.rs` | src | m | 4 struct · 3 enum · 4 fn · 14 const | ImageEdit, ImageEditRefusal, ImageEdited, ImageOp, ImagePreview, ImagePreviewed, ResizeFilter | The image organ's host adapter (ARCH-0078 `#image-built`, L4-15): an edit of an image artifact, crops and… |
+| `src/image.rs` | src | m | 4 struct · 4 enum · 6 fn · 13 const | ImageEdit, ImageEditRefusal, ImageEdited, ImageFormat, ImageOp, ImagePreview, ImagePreviewed, ResizeFilter | The image organ's host adapter (ARCH-0078 `#image-built`, L4-15): an edit of an image artifact, crops and… |
 | `src/isolation.rs` | src | s | 1 struct · 2 enum | DescendantFence, NamespaceFact, OrganIsolation | What the kernel isolated an organ process with, as its start found it (`sandbox`): plain facts, read on the… |
 | `src/landing.rs` | src | m | 5 fn · 1 crate-vis | — | An organ's results onto the artifact family's one landing (ARCH-0078 "A proposal landing"): each export file… |
 | `src/lib.rs` | src | s | 3 mod · 19 re-export | — | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
@@ -47,7 +48,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sandbox/landlock.rs` | src | s | 1 crate-vis | — | The filesystem fence on Linux (FIX 7885, ARCH-0075): Landlock, ABI 3 or later |
 | `src/sandbox/scratch.rs` | src | s | 3 crate-vis | — | A third-party organ's scratch dir (FIX 7885): a fresh dir of its own under the system's temp dir, mode 0700… |
 | `src/sandbox/seatbelt.rs` | src | s | 2 crate-vis | — | The filesystem fence on macOS (FIX 7885, ARCH-0075): a third-party organ starts through Seatbelt's… |
-| `src/sandbox/syscall_filter.rs` | src | s | 3 crate-vis | — | The syscall filter on Linux (census L4-09, ARCH-0075 "Syscalls"): a seccomp deny-list that every organ… |
+| `src/sandbox/syscall_filter.rs` | src | m | 4 crate-vis | — | The syscall filter on Linux (ARCH-0075 "Syscalls", FIX [ORGAN-SECCOMP-ALLOW-LIST]): a seccomp allow-list… |
+| `src/sandbox/syscall_filter/lists.rs` | src | s | 13 crate-vis | — | The calls each organ's allow-list names (FIX [ORGAN-SECCOMP-ALLOW-LIST]) |
+| `src/sandbox/syscall_trace.rs` | src | s | 2 crate-vis | — | The syscall recorder, for a trace run only (`--cfg oneiron_test_support`, never a cargo feature; FIX… |
 | `src/seal.rs` | src | m | 5 struct · 1 enum · 1 trait · 5 fn · 9 const · 3 re-export | HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealSettings, SealTsa | The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]… |
 | `src/seal/binding.rs` | src | m | 10 crate-vis | — | The seal's binding (ARCH-0075 `#organ-host-design-seal-binding`) |
 | `src/seal/custody_keys.rs` | src | s | 1 struct · 2 fn | CustodySealKeys | A seal key held in secret custody (FIX 1297): its PKCS#8 private key is a custody record's value, named by… |
@@ -67,6 +70,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/host_e2e.rs` | test | m | — | — | The host against a real organ process (the probe), over real vault blobs |
 | `tests/host_fds.rs` | test | s | — | — | A stopped organ gives its descriptors back: hosts whose organ was unloaded, revoked or crashed hold no more… |
 | `tests/host_recycle.rs` | test | m | — | — | The organ code `internal` names a bug, and the host recycles the live process after three in a row… |
+| `tests/image_edit_max_ops.rs` | test | s | — | — | Restriction wave 13: the image edit op count is an owner key |
 | `tests/mesh_ask_carried.rs` | test | m | — | — | An organ's mesh ask and its answer past the transport's 1 MiB message (FIX 8023): a big ask is offered from… |
 | `tests/organ_fence.rs` | test | s | — | — | OF-060 F4: the engine never depends on an organ, and an organ never depends on the engine (ARCH-0075 section… |
-| `tests/organ_syscall_filter.rs` | test | s | — | — | The organ's syscall filter (census L4-09, ARCH-0075 "Syscalls"): an organ that calls ptrace dies by the… |
+| `tests/organ_first_party_fence.rs` | test | s | — | — | A first-party organ starts inside the filesystem fence where the host has one (FIX… |
+| `tests/organ_syscall_filter.rs` | test | m | — | — | The organ's syscall filter (census L4-09, ARCH-0075 "Syscalls", FIX [ORGAN-SECCOMP-ALLOW-LIST]): an organ… |

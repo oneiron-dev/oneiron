@@ -10,7 +10,7 @@
         "revision": "hooks01-fact-v1"
       },
       "licence": "Apache-2.0",
-      "sha256": "2ebcd46e06a145df81c8904808cbf069f2436ce6cdba259a6c8b080ae2382d78",
+      "sha256": "5173ce73370b71070a1188c5931e5c9780497325c219fe0664e88354dacb47bd",
       "expectedFacts": {
         "packPath": "PACK.md",
         "runtime": "engine-owned quickjs-hook.wasm; no external effects"
@@ -82,7 +82,7 @@
         "revision": "hooks01-fact-v1"
       },
       "licence": "Apache-2.0",
-      "sha256": "45a00f06274f930dea1368e4751086461ba9a2bd694a1b7abbb488b416a78d5b",
+      "sha256": "dd70999e12254930543f3d37efb26ec71b06f70ab2102e1aed82186dd9c43e22",
       "expectedFacts": {
         "matchingSequences": [
           1,

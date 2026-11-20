@@ -222,7 +222,7 @@ fn shown_request(
     let vault_id = crate::device_sync::enrolment_vault_id(vault, join)?;
     let request =
         vault.machine_enrolment_request(vault_id, vault.machine_encryption_key(vault_id)?)?;
-    let enrolment = serde_json::json!({
+    let mut enrolment = serde_json::json!({
         "vault_id": hex(&request.vault_id),
         "machine": request.machine.to_hex(),
         "machine_key": hex(&request.machine_key),
@@ -232,5 +232,11 @@ fn shown_request(
             .encode(&request.encryption_key.key),
         "machine_proof": hex(&request.machine_proof),
     });
+    // Only a restored install names its image (row
+    // RESTORED-COPIES-ENROL-EACH-OTHER), so every other request keeps its
+    // seven keys.
+    if let Some(image) = &request.restored_from {
+        enrolment["restored_from"] = serde_json::Value::from(hex(image));
+    }
     Ok((request.code().to_text(), enrolment))
 }

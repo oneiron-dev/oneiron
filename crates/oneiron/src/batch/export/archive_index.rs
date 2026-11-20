@@ -135,6 +135,31 @@ pub(crate) enum Tag {
     /// CONVERSATION id → (): a TURN no archived MESSAGE joins speaks in it,
     /// so a foreign archive's import marks it as one (FIX 15412).
     InlineSpeechConversation,
+    /// A `core.coreference.status` claim's subject link source, kind,
+    /// target, claim id → `[1]` when the claim's archived lifecycle is
+    /// active, else `[0]`: the status claims the archive carries for a
+    /// `same_as` link.
+    CoreferenceStatus,
+    /// Mapped subject edge source, kind, target → (): a link this vault held
+    /// with provenance of its own, whose archived cohort stayed archive data
+    /// (`provenance_import::restore`). The last edge pass keeps the link's
+    /// own provenance stamp and compares its base fields only.
+    OwnHistoryLink,
+    /// Mapped subject edge source, kind, target → (): a link that came back
+    /// bare, whose archived cohort stayed archive data because the gate would
+    /// pend it (`provenance_import::restore`, `ProvenanceAutoNotPermitted`).
+    /// The last edge pass compares its base fields only.
+    UnpermittedProvenanceLink,
+    /// () → the ref of the live standing grant that lets the Dreamer apply
+    /// its nightly `same_as` links on this vault, a NUL, then the owner
+    /// restore's receipt ref. Written once on the owner's restore, after its
+    /// archived standing grants are in, when such a grant is live
+    /// (`document_import::claim_pair_same_as`); absent on every other door.
+    NightlyLinkGrant,
+    /// Room or TURN id → (): an archived room this vault cannot seat, kept
+    /// out under `RoomNotSeatedHere`, or a TURN kept out with it
+    /// (`document_import::unseated_rooms`).
+    RoomNotSeatedHere,
 }
 
 /// The import's disk index: one LMDB database in the scratch environment,

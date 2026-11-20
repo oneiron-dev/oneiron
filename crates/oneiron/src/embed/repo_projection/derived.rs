@@ -27,6 +27,7 @@ mod worker;
 use std::collections::{BTreeMap, BTreeSet};
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::ContentHash;
 
 pub(crate) use self::storage::{
     RepoDerivedCopyState, RepoDerivedOwner, RepoDerivedReady, copy_in, delete_in_txn, pending_in,
@@ -413,7 +414,7 @@ fn own_words_marked(
         return Ok(false);
     };
     Ok(derived_text_words(&record.body)
-        .is_some_and(|text| marks.is_marked(blake3::hash(text.as_bytes()).as_bytes())))
+        .is_some_and(|text| marks.is_marked(ContentHash::of(text.as_bytes()).as_bytes())))
 }
 
 /// Whether record `id` is an ASSET_TEXT or SUMMARY `store` holds.

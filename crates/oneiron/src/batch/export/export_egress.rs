@@ -3,8 +3,11 @@ use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
 use crate::Vault;
+use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::registry::ENTITY_TYPE_PERSON;
+use crate::store::legal_hold::person_content_subjects;
 
 use super::checked_archive_manifest;
 use super::export_authority::{
@@ -40,7 +43,38 @@ use super::export_manifest::{
 /// use-limit (FIX 1496 S5): a use-limited row exports nowhere, same as an
 /// off-record row, and names nothing. Every caller holds the txn; no nested
 /// txn is opened here.
+///
+/// A row whose content is about a PERSON the door keeps out goes with that
+/// PERSON (Engine ANSWER WITHHELD-PERSON-CONTENT-RULE = A, 20 Nov; FIX
+/// WHOLE-VAULT-EXPORT-CARRIES-CONTENT-ABOUT-A-WITHHELD-PERSON): a
+/// PSYCH_PROFILE or PERSONA_SNAPSHOT_EXPORT whose subject it is, a FACET
+/// scenario mask of it, and a CLAIM whose subject, or either end of whose
+/// subject link, it is (`person_content_subjects`). Each is kept out and
+/// named nowhere, as the PERSON row is. Every other row that names the
+/// PERSON keeps travelling: there the id is an opaque reference (Q2 = C).
 pub fn whole_vault_export_excludes_entity_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    if egress_keeps_id_out_in_txn(store, txn, id)? {
+        return Ok(true);
+    }
+    let subjects = crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, id, |raw| {
+        Ok(person_content_subjects(raw))
+    })?
+    .unwrap_or_default();
+    for subject in &subjects {
+        if withheld_person_in_txn(store, txn, subject)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The door's question about `id` itself: a member of a live session
+/// overlay, or a record a customer hold use-limits.
+fn egress_keeps_id_out_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
@@ -49,6 +83,25 @@ pub fn whole_vault_export_excludes_entity_in_txn(
         return Ok(true);
     }
     Ok(crate::store::legal_hold::use_limit_in_txn(store, txn, id)?.is_some())
+}
+
+/// Whether the door keeps `subject` out by its own id and `subject` is a
+/// PERSON. A row with no stored header to type it (an overlay member has no
+/// base row) counts as one: the door keeps it out whatever it is.
+fn withheld_person_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+) -> Result<bool> {
+    if !egress_keeps_id_out_in_txn(store, txn, subject)? {
+        return Ok(false);
+    }
+    let entity_type =
+        crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, subject, |raw| {
+            Ok(EntityMetadataHeader::parse(raw).map(|header| header.entity_type))
+        })?
+        .flatten();
+    Ok(entity_type.is_none_or(|entity_type| entity_type == ENTITY_TYPE_PERSON))
 }
 
 /// THE EGRESS DOOR FOR RUN RESULT BODIES (OF-190 B++): why an export

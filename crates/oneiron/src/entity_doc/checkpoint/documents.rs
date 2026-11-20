@@ -26,6 +26,7 @@ use crate::ports::{DocumentSlot, DocumentUpdateKey, UpdateSeq};
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::loro::{self as shared, Atom, OpenedRow};
+use crate::store::checkpoint_payload::rows::descriptor::{AdapterTable, CapturedByAdapter};
 use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, RoundTripPolicy, RowLocator, RowPart,
     TypedRow, Unresolved,
@@ -45,6 +46,13 @@ const SNAPSHOTS: SideTable<DocumentSlot, Vec<u8>, Raw> =
     SideTable::new(&side_table::DOCUMENT_SNAPSHOT);
 const UPDATES: SideTable<DocumentUpdateKey, Vec<u8>, Raw> =
     SideTable::new(&side_table::DOCUMENT_UPDATE);
+
+/// The document snapshots, which the entity-document getter's own capture
+/// places slot by slot ([`capture`]).
+pub(super) const SNAPSHOT_TABLE: &dyn AdapterTable = &CapturedByAdapter(SNAPSHOTS);
+
+/// The document updates, placed with their slot's snapshot ([`capture`]).
+pub(super) const UPDATE_TABLE: &dyn AdapterTable = &CapturedByAdapter(UPDATES);
 /// Each head document a NOTE's text plane held: the note, then the head.
 const NOTE_HEAD_DOCS: SideTable<(EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::NOTE_HEAD_DOC);

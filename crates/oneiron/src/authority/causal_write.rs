@@ -68,7 +68,7 @@ pub(super) fn causal_actor_frontiers(
         let required = final_state
             .actor_revocation_hashes
             .get(key)
-            .cloned()
+            .map(|hashes| hashes.to_btree_set())
             .unwrap_or_default();
         let frontiers = states
             .iter()

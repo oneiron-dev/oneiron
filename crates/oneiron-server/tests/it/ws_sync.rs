@@ -51,6 +51,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
+use crate::engine_stack::run_on_engine_stack;
+
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -1837,101 +1839,113 @@ async fn run_sync_connection_from(
     events
 }
 
-#[tokio::test]
-async fn sync_connection_sends_holder_proof_on_upgrade() {
-    let dir = tempfile::tempdir().unwrap();
-    let (addr, server, handle) = spawn_server(
-        open_vault(dir.path()),
-        config_with_secret(Some("conn-secret")),
+#[test]
+fn sync_connection_sends_holder_proof_on_upgrade() {
+    run_on_engine_stack(
+        "sync_connection_sends_holder_proof_on_upgrade",
+        || async move {
+            let dir = tempfile::tempdir().unwrap();
+            let (addr, server, handle) = spawn_server(
+                open_vault(dir.path()),
+                config_with_secret(Some("conn-secret")),
+            )
+            .await;
+
+            // The host root is a logged slip, not a verbatim secret. A reconnect signs
+            // a new holder proof with the root's binding key.
+            let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"conn-secret").unwrap();
+            let slip = server.vault().ensure_host_root_slip(&issuer).unwrap();
+            let key = ed25519_dalek::SigningKey::from_bytes(&blake3::derive_key(
+                "oneiron/host-authority-signing/v2",
+                b"conn-secret",
+            ));
+            let credential = SyncTransportCredential::new(slip.to_token().unwrap(), key);
+            let events =
+                run_sync_connection_once(format!("ws://{addr}/ws"), "", Some(credential)).await;
+            assert!(
+                events
+                    .iter()
+                    .any(|e| matches!(e, SyncEvent::StatusChanged(SyncStatus::Synced))),
+                "client with a signed owner slip must reach Synced; events: {events:?}"
+            );
+
+            // Wrong token → the server rejects the upgrade (fail-closed); the client
+            // never syncs.
+            let events =
+                run_sync_connection_once(format!("ws://{addr}/ws"), "wrong-secret", None).await;
+            assert!(
+                !events
+                    .iter()
+                    .any(|e| matches!(e, SyncEvent::StatusChanged(SyncStatus::Synced))),
+                "client with a wrong auth_token must NOT reach Synced; events: {events:?}"
+            );
+            assert!(
+                events.iter().any(
+                    |e| matches!(e, SyncEvent::Error(msg) if msg.contains("Connection failed"))
+                ),
+                "client must surface the rejected connection; events: {events:?}"
+            );
+
+            handle.abort();
+        },
     )
-    .await;
-
-    // The host root is a logged slip, not a verbatim secret. A reconnect signs
-    // a new holder proof with the root's binding key.
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"conn-secret").unwrap();
-    let slip = server.vault().ensure_host_root_slip(&issuer).unwrap();
-    let key = ed25519_dalek::SigningKey::from_bytes(&blake3::derive_key(
-        "oneiron/host-authority-signing/v2",
-        b"conn-secret",
-    ));
-    let credential = SyncTransportCredential::new(slip.to_token().unwrap(), key);
-    let events = run_sync_connection_once(format!("ws://{addr}/ws"), "", Some(credential)).await;
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, SyncEvent::StatusChanged(SyncStatus::Synced))),
-        "client with a signed owner slip must reach Synced; events: {events:?}"
-    );
-
-    // Wrong token → the server rejects the upgrade (fail-closed); the client
-    // never syncs.
-    let events = run_sync_connection_once(format!("ws://{addr}/ws"), "wrong-secret", None).await;
-    assert!(
-        !events
-            .iter()
-            .any(|e| matches!(e, SyncEvent::StatusChanged(SyncStatus::Synced))),
-        "client with a wrong auth_token must NOT reach Synced; events: {events:?}"
-    );
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, SyncEvent::Error(msg) if msg.contains("Connection failed"))),
-        "client must surface the rejected connection; events: {events:?}"
-    );
-
-    handle.abort();
 }
 
 /// A client whose host clock ran a year ahead and was set back keeps its
 /// recording clock at the jumped time, but signs its upgrade on its wall
 /// clock, as every holder signs, so a server on the right time takes it.
-#[tokio::test]
-async fn a_client_whose_clock_ran_ahead_signs_its_upgrade_on_its_wall_clock() {
-    const YEAR: u64 = 365 * 24 * 60 * 60;
-    let dir = tempfile::tempdir().unwrap();
-    let (addr, server, handle) = spawn_server(
-        open_vault(dir.path()),
-        config_with_secret(Some("ahead-secret")),
-    )
-    .await;
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"ahead-secret").unwrap();
-    let slip = server.vault().ensure_host_root_slip(&issuer).unwrap();
-    let key = ed25519_dalek::SigningKey::from_bytes(&blake3::derive_key(
-        "oneiron/host-authority-signing/v2",
-        b"ahead-secret",
-    ));
-    let credential = SyncTransportCredential::new(slip.to_token().unwrap(), key);
+#[test]
+fn a_client_whose_clock_ran_ahead_signs_its_upgrade_on_its_wall_clock() {
+    run_on_engine_stack(
+        "a_client_whose_clock_ran_ahead_signs_its_upgrade_on_its_wall_clock",
+        || async move {
+            const YEAR: u64 = 365 * 24 * 60 * 60;
+            let dir = tempfile::tempdir().unwrap();
+            let (addr, server, handle) = spawn_server(
+                open_vault(dir.path()),
+                config_with_secret(Some("ahead-secret")),
+            )
+            .await;
+            let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"ahead-secret").unwrap();
+            let slip = server.vault().ensure_host_root_slip(&issuer).unwrap();
+            let key = ed25519_dalek::SigningKey::from_bytes(&blake3::derive_key(
+                "oneiron/host-authority-signing/v2",
+                b"ahead-secret",
+            ));
+            let credential = SyncTransportCredential::new(slip.to_token().unwrap(), key);
 
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let clock = oneiron::store::ports::ManualClock::new(now + YEAR);
-    let mut config = oneiron::VaultConfig::device();
-    config.store_clock = clock.bundle();
-    let client_dir = tempfile::tempdir().unwrap();
-    let client_vault = Arc::new(oneiron::Vault::open(client_dir.path(), config).unwrap());
-    assert!(client_vault.now_recorded_at() >= now + YEAR);
-    clock.set(now);
-    assert!(
-        client_vault.now_recorded_at() >= now + YEAR,
-        "the recording clock keeps the jumped time"
-    );
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let clock = oneiron::store::ports::ManualClock::new(now + YEAR);
+            let mut config = oneiron::VaultConfig::device();
+            config.store_clock = clock.bundle();
+            let client_dir = tempfile::tempdir().unwrap();
+            let client_vault = Arc::new(oneiron::Vault::open(client_dir.path(), config).unwrap());
+            assert!(client_vault.now_recorded_at() >= now + YEAR);
+            clock.set(now);
+            assert!(
+                client_vault.now_recorded_at() >= now + YEAR,
+                "the recording clock keeps the jumped time"
+            );
 
-    let events = run_sync_connection_from(
-        client_vault,
-        format!("ws://{addr}/ws"),
-        "",
-        Some(credential),
+            let events = run_sync_connection_from(
+                client_vault,
+                format!("ws://{addr}/ws"),
+                "",
+                Some(credential),
+            )
+            .await;
+            assert!(
+                events
+                    .iter()
+                    .any(|e| matches!(e, SyncEvent::StatusChanged(SyncStatus::Synced))),
+                "events: {events:?}"
+            );
+            handle.abort();
+        },
     )
-    .await;
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, SyncEvent::StatusChanged(SyncStatus::Synced))),
-        "events: {events:?}"
-    );
-    handle.abort();
 }
 
 #[tokio::test]

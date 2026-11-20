@@ -11,12 +11,12 @@ impl WindowManager {
         &self.documents
     }
 
-    pub(crate) fn compact_closed_document(
+    pub(crate) fn compact_document_for_sweep(
         &self,
         id: crate::EntityId,
         erased: bool,
     ) -> Result<bool> {
-        self.documents.compact_closed(id, erased)
+        self.documents.compact_for_sweep(id, erased)
     }
 
     pub(crate) fn notify_note(&self, id: crate::EntityId) {

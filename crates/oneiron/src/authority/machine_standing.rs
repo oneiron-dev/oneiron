@@ -3,11 +3,12 @@
 //! seam every world-privacy and grant travel site judges a carrier through
 //! (mesh contract §3, FIX 2998).
 //!
-//! Validity is pin-free: an owner act is judged on the roster view of its
-//! carrier's chains, the same on every install, before and after the owner
+//! Validity is pin-free: an owner act is judged on its carrier's roster
+//! chain alone, the same on every install, before and after the owner
 //! anchor ([`StandingView::Under`]). The settings this install reads are
-//! judged with this install's floors, holds and staleness
-//! ([`StandingView::Install`]), which only narrow. A chain held here admits
+//! judged with this install's floors, holds and staleness, and with the
+//! removals of the anchor it pins ([`StandingView::Install`]), which only
+//! narrow. A chain held here admits
 //! nothing and acknowledges nothing, but its restriction still lands (the
 //! Engine's held-chain ruling on the P2 port). A chain stale here is not live
 //! either, and never vetoes.
@@ -16,6 +17,8 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::Arc;
+
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
 
 use crate::entity_id::EntityId;
 
@@ -31,8 +34,9 @@ pub(super) struct Revision {
     /// The "yours" revision this one replaced, if the head it replaced said
     /// "yours".
     replaced_mark: Option<AuthorityEntryHash>,
-    /// The chain's revisions in this one's own past.
-    past: Arc<BTreeSet<AuthorityEntryHash>>,
+    /// The chain's revisions in this one's own past. A revision folded on
+    /// its chain's head shares this set with the head's (ROSTER-KEY-LOG-FLOOD).
+    past: PersistentSet<AuthorityEntryHash>,
     /// It is an owner say-so, an admitted answer or an anchor's mark: a
     /// concurrent one that says otherwise contests the chain's head (FIX
     /// 4610).
@@ -50,7 +54,7 @@ impl Revision {
     }
 
     /// The chain's revisions in this one's own past.
-    pub(super) fn past(&self) -> &BTreeSet<AuthorityEntryHash> {
+    pub(super) fn past(&self) -> &PersistentSet<AuthorityEntryHash> {
         &self.past
     }
 
@@ -74,7 +78,7 @@ impl Revision {
                 && right.owner_held
                 && left.replaced_mark == right.replaced_mark,
             replaced_mark: left.replaced_mark.min(right.replaced_mark),
-            past: Arc::new(left.past.intersection(&right.past).copied().collect()),
+            past: left.past.intersection(&right.past).copied().collect(),
             said: left.said && right.said,
             past_floor: left.past_floor || right.past_floor,
         })
@@ -87,11 +91,11 @@ pub(super) fn with_revision(
     head: &MachineRevision,
     owner_held: bool,
     restriction_only: bool,
-) -> BTreeMap<AuthorityEntryHash, Arc<Revision>> {
+) -> PersistentMap<AuthorityEntryHash, Arc<Revision>> {
     let mut revisions = chain
         .map(|chain| chain.revisions.clone())
         .unwrap_or_default();
-    let past = Arc::new(revisions.keys().copied().collect());
+    let past = chain.map_or_else(PersistentSet::new, revision_hashes);
     revisions.insert(
         head.entry,
         Arc::new(Revision {
@@ -110,17 +114,46 @@ pub(super) fn with_revision(
     revisions
 }
 
-/// Both chains' revisions; two copies of one revision meet.
+/// Every revision `chain` holds, as one set. When the head's own past and
+/// the head name exactly those revisions (a chain that grew one revision at
+/// a time), the set shares the head's past and adds one hash, so a chain of
+/// R revisions holds O(R log R) of pasts, not O(R^2) (ROSTER-KEY-LOG-FLOOD).
+/// Otherwise (a merge brought revisions the head never saw, or a proof's
+/// chain holds fewer) it is built from the keys. Both give the same set.
+fn revision_hashes(chain: &MachineChain) -> PersistentSet<AuthorityEntryHash> {
+    if let Some(head) = chain.revisions.get(&chain.head.entry) {
+        let mut hashes = head.past.clone();
+        hashes.insert(chain.head.entry);
+        if hashes.len() == chain.revisions.len()
+            && hashes.iter().all(|hash| chain.revisions.contains_key(hash))
+        {
+            return hashes;
+        }
+    }
+    chain.revisions.keys().copied().collect()
+}
+
+/// Both chains' revisions; two copies of one revision meet. A revision both
+/// already hold alike is not written again, so the merged map shares the
+/// left one's structure.
 pub(super) fn merge_revisions(
-    left: &BTreeMap<AuthorityEntryHash, Arc<Revision>>,
-    right: &BTreeMap<AuthorityEntryHash, Arc<Revision>>,
-) -> BTreeMap<AuthorityEntryHash, Arc<Revision>> {
+    left: &PersistentMap<AuthorityEntryHash, Arc<Revision>>,
+    right: &PersistentMap<AuthorityEntryHash, Arc<Revision>>,
+) -> PersistentMap<AuthorityEntryHash, Arc<Revision>> {
+    if left.ptr_eq(right) {
+        return left.clone();
+    }
     let mut revisions = left.clone();
     for (hash, revision) in right {
-        revisions
-            .entry(*hash)
-            .and_modify(|held| *held = Revision::meet(held, revision))
-            .or_insert_with(|| Arc::clone(revision));
+        match left.get(hash) {
+            Some(held) if Arc::ptr_eq(held, revision) => {}
+            Some(held) => {
+                revisions.insert(*hash, Revision::meet(held, revision));
+            }
+            None => {
+                revisions.insert(*hash, Arc::clone(revision));
+            }
+        }
     }
     revisions
 }
@@ -145,7 +178,7 @@ pub(super) fn held_revisions(state: &FoldState, out: &mut BTreeSet<AuthorityEntr
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub(super) struct Mark {
     pub(super) entry: AuthorityEntryHash,
-    pub(super) prior: Arc<BTreeSet<AuthorityEntryHash>>,
+    pub(super) prior: PersistentSet<AuthorityEntryHash>,
 }
 
 #[doc(hidden)]
@@ -188,6 +221,8 @@ type Views = BTreeMap<(EntityId, Kind), Option<Rc<FoldedMachine>>>;
 pub(super) struct Standing<'s> {
     state: &'s FoldState,
     claims: ClaimIndex<'s>,
+    /// The pin this install counts here, if any.
+    pin: Option<PinnedRoot>,
     local: MachineAdmitter,
     counted: InstallCounted<'s>,
     views: RefCell<Views>,
@@ -201,19 +236,21 @@ impl<'s> Standing<'s> {
         pin: Option<&PinnedRoot>,
         counted: InstallCounted<'s>,
     ) -> Self {
-        let local = pin
+        let pin = pin
             .filter(|pin| {
                 state
                     .root_anchors
                     .get(&pin.anchor_key)
                     .is_some_and(|ids| ids.contains(&pin.id))
             })
-            .map_or(MachineAdmitter::Roster, |pin| {
-                MachineAdmitter::Anchor(pin.anchor_key)
-            });
+            .copied();
+        let local = pin.map_or(MachineAdmitter::Roster, |pin| {
+            MachineAdmitter::Anchor(pin.anchor_key)
+        });
         Self {
             state,
             claims: ClaimIndex::new(state),
+            pin,
             local,
             counted,
             views: RefCell::default(),
@@ -273,15 +310,23 @@ impl<'s> Standing<'s> {
         self.trusted_key(id, StandingView::Install)
     }
 
-    /// Some chain admits `id`. Pin-free: it authorizes nothing.
-    pub(super) fn is_admitted(&self, id: EntityId) -> bool {
+    /// The roster's head of `id` is live: a machine linked to this vault, in
+    /// any role. Pin-free: it authorizes nothing. Every install shares this
+    /// reading, so an anchor's chain neither links nor removes `id` here;
+    /// whether `id` is "yours" is a writer's check under its own pin.
+    pub(super) fn is_linked(&self, id: EntityId) -> bool {
         self.view(id, Kind::Roster)
-            .is_some_and(|folded| folded.is_admitted())
+            .is_some_and(|folded| folded.roster.as_ref().is_some_and(MachineRevision::is_live))
     }
 
     /// The chains whose live head names `id` under `signer`, in any role,
     /// each with its mark: an owner act's signing chains (a world edit, a
-    /// grant travel choice; FIX 2998, mesh contract §3).
+    /// grant travel choice; FIX 2998, mesh contract §3). Only the roster's
+    /// chain admits a carrier ([`super::owner_act_signer_admits`]), so its
+    /// mark is the one every view reads. The chain of the anchor this
+    /// install pins is marked too, for the install view's race alone
+    /// ([`Self::marks_read`]); any other anchor's chain, a stranger's among
+    /// them, gives the removal race no reason to refuse an act.
     pub(super) fn live_signing_chains(
         &self,
         id: EntityId,
@@ -292,8 +337,10 @@ impl<'s> Standing<'s> {
         };
         folded
             .chains()
-            .filter(|(_, chain)| {
-                chain.is_live() && *signer == AuthorityKey::Ed25519(chain.profile.machine_key)
+            .filter(|(admitter, chain)| {
+                (*admitter == MachineAdmitter::Roster || *admitter == self.local)
+                    && chain.is_live()
+                    && *signer == AuthorityKey::Ed25519(chain.profile.machine_key)
             })
             .map(|(admitter, chain)| {
                 let prior = self
@@ -302,7 +349,7 @@ impl<'s> Standing<'s> {
                     .get(&id)
                     .and_then(|chains| chains.get(&admitter))
                     .and_then(|state| state.revisions.get(&chain.entry))
-                    .map(|revision| Arc::clone(&revision.past))
+                    .map(|revision| revision.past.clone())
                     .unwrap_or_default();
                 (
                     admitter,
@@ -321,16 +368,23 @@ impl<'s> Standing<'s> {
         self.local
     }
 
-    /// Some chain of `id` names `key`, live or not: an owner act's carrier
-    /// signed with that machine's install key at all (FIX 2998).
+    /// The roster's chain of `id` names `key`, live or not: an owner act's
+    /// carrier signed with that machine's install key at all (FIX 2998).
+    /// Every install shares the judges that read this, so an anchor's chain
+    /// names no key here: a stranger's fresh root marking `id` under its
+    /// own keys gives those keys no say (Fable pass 29).
     pub(super) fn names_key(&self, id: EntityId, key: &[u8; 32]) -> bool {
         self.view(id, Kind::Roster)
-            .is_some_and(|folded| folded.names_key(key))
+            .is_some_and(|folded| folded.roster_names_key(key))
     }
 
     /// [`super::owner_act_signer_admits`] for `id` and `key` under `view`:
-    /// pin-free in the roster view, with this install's holds and staleness
-    /// in the install view.
+    /// pin-free in a roster view, so validity reads the roster's head alone
+    /// on every install. The install view reads this install's holds and
+    /// staleness and passes the pin it counts, as the doors pass
+    /// `fold.pinned_root`: a removal in the pinned anchor's chain vetoes the
+    /// carrier here, which only narrows what this install reads (review
+    /// #9496 P1).
     pub(super) fn admits_owner_act_signer(
         &self,
         id: EntityId,
@@ -338,14 +392,26 @@ impl<'s> Standing<'s> {
         view: StandingView,
     ) -> bool {
         let (_, kind) = self.admitter_kind(view);
-        super::owner_act_signer_admits(self.view(id, kind).as_deref(), &self.state.roster, key)
+        let pin = match kind {
+            Kind::Roster => None,
+            Kind::Install => self.pin.as_ref(),
+        };
+        super::owner_act_signer_admits(self.view(id, kind).as_deref(), &self.state.roster, key, pin)
+    }
+
+    /// Whether the race under a view of `kind` reads `admitter`'s mark: a
+    /// roster view reads the roster's alone; the install view reads the
+    /// pinned anchor's too, whose removal vetoes the carrier there.
+    fn marks_read(&self, kind: Kind, admitter: &MachineAdmitter) -> bool {
+        *admitter == MachineAdmitter::Roster || (kind == Kind::Install && *admitter == self.local)
     }
 
     /// The removal race for an owner act under `view` (FIX 2998, mesh
     /// contract §4), a world edit and a grant travel choice alike. It passes
     /// while the act's carrier is still admitted there under the key that
-    /// signed it. Otherwise each chain that admitted it at the act's parents
-    /// (`marks`) and no longer does is a reason, and there must be one: its
+    /// signed it. Otherwise each chain the view reads that admitted it at the
+    /// act's parents (`marks`, [`Self::marks_read`]) and no longer does is a
+    /// reason, and there must be one: its
     /// head must be neither conflicted, held, stale nor unsettled, and every
     /// revision of the chain outside its mark's past that no longer names
     /// the key live (a removal, a new key) must have seen the act and,
@@ -371,7 +437,10 @@ impl<'s> Standing<'s> {
             return false;
         };
         let mut reasons = false;
-        for (admitter, mark) in marks {
+        for (admitter, mark) in marks
+            .iter()
+            .filter(|(admitter, _)| self.marks_read(kind, admitter))
+        {
             let Some(head) = folded.chain(admitter) else {
                 return false;
             };

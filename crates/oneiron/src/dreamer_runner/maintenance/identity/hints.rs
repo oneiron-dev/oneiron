@@ -78,20 +78,35 @@ pub(super) type SummedHint = (EntityId, IdentityHint, Vec<SourceAnchor>);
 /// The hints saved for a name, by the entity each named, in entity order:
 /// each the words of the contributions `admit` reads (every one without a
 /// reader), once each, in saved order. An entity none of whose
-/// contributions it reads has none.
+/// contributions it reads has none. With a `possessor`, the name is a role
+/// phrase of that one speaker ([`crate::tagging::possessor_in_txn`]), and
+/// only the contributions that speaker's mentions gave count: another
+/// speaker's "my manager" is another person (FIX
+/// LINKER-ROLE-PROVISIONAL-PER-SPEAKER).
 pub(super) fn hints_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    (kind, name): (u8, &str),
+    (kind, name, possessor): (u8, &str, Option<EntityId>),
     admit: Option<&Admit<'_, '_>>,
 ) -> Result<Vec<SummedHint>> {
     let mut summed = Vec::new();
-    for ((_, _, entity), stored) in HINTS.scan_from(store, txn, &hint_prefix(kind, name))? {
+    for ((_, _, entity), stored) in HINTS.scan_from(&vault.store, txn, &hint_prefix(kind, name))? {
         let mut hint: Option<IdentityHint> = None;
         let mut sources = Vec::new();
         for each in stored.sources {
             if let Some(admit) = admit
                 && !admit.reads_source(txn, &each.source.turn, &each.source.message)?
+            {
+                continue;
+            }
+            if possessor.is_some()
+                && crate::tagging::possessor_in_txn(
+                    vault,
+                    txn,
+                    kind,
+                    &each.name,
+                    &each.source.message,
+                )? != possessor
             {
                 continue;
             }
@@ -148,16 +163,16 @@ pub(super) fn pick(
     best.filter(|_| !tied).map(|(entity, _)| entity)
 }
 
-/// Every saved hint for a name, summed over all its contributions: the
-/// Dreamer's own pass, the effect doors' unsettled check and the Linker
-/// read them whole and return no hint text to a caller.
+/// Every saved hint for a name, summed over all its contributions (a role
+/// phrase's: its `possessor`'s, [`hints_in_txn`]): the Dreamer's own pass,
+/// the effect doors' unsettled check and the Linker read them whole and
+/// return no hint text to a caller.
 fn all_hints_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    kind: u8,
-    name: &str,
+    name: (u8, &str, Option<EntityId>),
 ) -> Result<BTreeMap<EntityId, IdentityHint>> {
-    Ok(hints_in_txn(&vault.store, txn, (kind, name), None)?
+    Ok(hints_in_txn(vault, txn, name, None)?
         .into_iter()
         .map(|(entity, hint, _)| (entity, hint))
         .collect())
@@ -170,7 +185,9 @@ pub(super) fn hinted_in_txn(
     txn: &heed::RoTxn<'_>,
     ask: &IdentityAsk,
 ) -> Result<Option<EntityId>> {
-    let hints = all_hints_in_txn(vault, txn, ask.kind, &ask.name)?;
+    let possessor =
+        crate::tagging::possessor_in_txn(vault, txn, ask.kind, &ask.name, &ask.message)?;
+    let hints = all_hints_in_txn(vault, txn, (ask.kind, &ask.name, possessor))?;
     Ok(pick(&hints, &ask.candidates, &ask.context))
 }
 
@@ -178,20 +195,19 @@ pub(super) fn hinted_in_txn(
 /// `start..end` of `text`, as the nightly re-check settles an ask: the
 /// candidate whose hint shares the most words with the mention's context;
 /// none on no shared word or a tie. The Linker reads it when it saves a
-/// turn, so a saved hint settles a mention live.
-#[allow(clippy::too_many_arguments)]
+/// turn, so a saved hint settles a mention live. A role phrase reads only
+/// its `possessor`'s hints ([`hints_in_txn`]).
 pub(crate) fn hinted_mention_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    kind: u8,
-    name: &str,
+    (kind, name, possessor): (u8, &str, Option<EntityId>),
     text: &str,
     start: usize,
     end: usize,
     candidates: &[EntityId],
 ) -> Result<Option<EntityId>> {
     let context = context_terms(text, start, end, name);
-    let hints = all_hints_in_txn(vault, txn, kind, name)?;
+    let hints = all_hints_in_txn(vault, txn, (kind, name, possessor))?;
     Ok(pick(&hints, candidates, &context))
 }
 
@@ -202,8 +218,7 @@ pub(crate) fn hinted_mention_scoped_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     read: Option<&crate::claim::ScopedRead<'_>>,
-    kind: u8,
-    name: &str,
+    (kind, name, possessor): (u8, &str, Option<EntityId>),
     text: &str,
     start: usize,
     end: usize,
@@ -214,7 +229,7 @@ pub(crate) fn hinted_mention_scoped_in_txn(
     };
     let admit = Admit::in_txn(read, txn)?;
     let mut hints = BTreeMap::new();
-    for (entity, hint, _) in hints_in_txn(&vault.store, txn, (kind, name), Some(&admit))? {
+    for (entity, hint, _) in hints_in_txn(vault, txn, (kind, name, possessor), Some(&admit))? {
         if candidates.contains(&entity)
             && super::admission::candidate_in_txn(vault, &admit, txn, &entity)?
         {
