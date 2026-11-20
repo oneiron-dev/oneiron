@@ -138,13 +138,14 @@ pub(crate) fn retained_envelope_source_table(value: &[u8]) -> Option<String> {
 }
 
 /// Whether the whole-vault export keeps record `id` out, as its record pass does: the egress door
-/// keeps it out (off the record, or use-limited by a customer hold that refused its privacy
-/// erase), or it is an epoch summary one of whose transitive sources the door keeps out, or whose
-/// epoch does not resolve (FIX 1496 S5).
-fn export_keeps_record_out(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    if super::export_egress::whole_vault_export_excludes_entity_in_txn(store, rtxn, id)? {
+/// keeps it out (off the record, use-limited by a customer hold that refused its privacy erase,
+/// or held back here), or it is an epoch summary one of whose transitive sources the door keeps
+/// out, or whose epoch does not resolve (FIX 1496 S5).
+fn export_keeps_record_out(vault: &crate::Vault, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    if super::export_egress::whole_vault_export_excludes_entity_in_txn(vault, rtxn, id)? {
         return Ok(true);
     }
+    let store = &vault.store;
     let summary_kept_out =
         crate::ports::EntityStoreRead::port_entity_with_raw(store, rtxn, id, |raw| {
             if EntityMetadataHeader::parse(raw)
@@ -161,7 +162,7 @@ fn export_keeps_record_out(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Re
                 |source, _| {
                     Ok(
                         !super::export_egress::whole_vault_export_excludes_entity_in_txn(
-                            store, rtxn, source,
+                            vault, rtxn, source,
                         )?,
                     )
                 },
@@ -180,7 +181,7 @@ fn export_keeps_record_out(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Re
 /// ([`super::snapshot_body::row_exported_in_txn`]), stays home with it (round 2 P1-1; Engine
 /// ANSWER RETAINED-ROOM-ROWS-WITHHELD Q1 = A).
 fn retained_row_withheld(
-    store: &Store,
+    vault: &crate::Vault,
     rtxn: &RoTxn<'_>,
     rule: Option<RetainedSubjectRule>,
     envelope: &ArchiveRetainedSideRow,
@@ -191,14 +192,14 @@ fn retained_row_withheld(
         return Ok(true);
     };
     for id in &records {
-        if export_keeps_record_out(store, rtxn, id)? {
+        if export_keeps_record_out(vault, rtxn, id)? {
             return Ok(true);
         }
     }
     let Some(room) = retained_row_room(&envelope.source_table, &envelope.source_key) else {
         return Ok(false);
     };
-    let exported = super::snapshot_body::row_exported_in_txn(store, rtxn, &room)?;
+    let exported = super::snapshot_body::row_exported_in_txn(&vault.store, rtxn, &room)?;
     Ok(!exported)
 }
 
@@ -210,9 +211,10 @@ fn retained_row_withheld(
 /// or names an entity it keeps out ([`note_ledger_envelope`]); a withheld inert copy goes alone.
 /// Collected into memory like the 41-family writer.
 pub(crate) fn collect_retained_side_rows_in_txn(
-    store: &Store,
+    vault: &crate::Vault,
     rtxn: &RoTxn<'_>,
 ) -> Result<Vec<SideRowBytes>> {
+    let store = &vault.store;
     let mut rows: BTreeMap<[u8; 32], SideRowBytes> = BTreeMap::new();
     let mut ledger_rooms: BTreeMap<[u8; 32], EntityId> = BTreeMap::new();
     let mut withheld_ledgers: BTreeSet<EntityId> = BTreeSet::new();
@@ -226,13 +228,13 @@ pub(crate) fn collect_retained_side_rows_in_txn(
                 source_value,
                 source_live: true,
             };
-            if retained_row_withheld(store, rtxn, rule, &envelope)? {
+            if retained_row_withheld(vault, rtxn, rule, &envelope)? {
                 withhold_room_ledger(&envelope, &mut withheld_ledgers);
                 continue;
             }
             let key = retained_side_row_key(&envelope);
             if !note_ledger_envelope(
-                store,
+                vault,
                 rtxn,
                 &envelope,
                 key,
@@ -260,13 +262,13 @@ pub(crate) fn collect_retained_side_rows_in_txn(
         }
         let envelope = RETAINED_SIDE_ROWS.decode_value(&value)?;
         let rule = retained_subject_rule(&envelope.source_table);
-        if retained_row_withheld(store, rtxn, rule, &envelope)? {
+        if retained_row_withheld(vault, rtxn, rule, &envelope)? {
             withhold_room_ledger(&envelope, &mut withheld_ledgers);
             continue;
         }
         let identity = retained_side_row_key(&envelope);
         if !note_ledger_envelope(
-            store,
+            vault,
             rtxn,
             &envelope,
             identity,

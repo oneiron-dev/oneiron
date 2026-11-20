@@ -392,7 +392,7 @@ impl Vault {
         {
             let (id, raw) = entry?;
             if only.is_some_and(|only| !only.contains(&id))
-                || whole_vault_export_excludes_entity_in_txn(&self.store, &rtxn, &id)?
+                || whole_vault_export_excludes_entity_in_txn(self, &rtxn, &id)?
             {
                 continue;
             }
@@ -462,7 +462,7 @@ impl Vault {
             };
             if let Some(root) = &part_root
                 && !operation_root_carried(
-                    &self.store,
+                    self,
                     &rtxn,
                     only,
                     scope == ExportScope::WholeVault,
@@ -483,9 +483,7 @@ impl Vault {
                 &raw[ENTITY_METADATA_HEADER_LEN..],
                 |source, _| {
                     Ok(!whole_vault_export_excludes_entity_in_txn(
-                        &self.store,
-                        &rtxn,
-                        source,
+                        self, &rtxn, source,
                     )?)
                 },
             )? == Some(false)
@@ -710,8 +708,7 @@ impl Vault {
             // writer.
             if scope == ExportScope::WholeVault && include_vault_wide {
                 for row in super::archive_retained_side_rows::collect_retained_side_rows_in_txn(
-                    &self.store,
-                    &rtxn,
+                    self, &rtxn,
                 )? {
                     writer.side_row(row)?;
                 }
@@ -972,7 +969,7 @@ fn archive_custody_secret(
 /// vault holds no row of is withheld by none of those, so its part is judged
 /// on its own row alone.
 fn operation_root_carried(
-    store: &crate::store::Store,
+    vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     only: Option<&BTreeSet<EntityId>>,
     whole_vault: bool,
@@ -981,10 +978,11 @@ fn operation_root_carried(
     owner_export: bool,
 ) -> Result<bool> {
     if only.is_some_and(|only| !only.contains(root))
-        || whole_vault_export_excludes_entity_in_txn(store, rtxn, root)?
+        || whole_vault_export_excludes_entity_in_txn(vault, rtxn, root)?
     {
         return Ok(false);
     }
+    let store = &vault.store;
     if crate::ports::EntityStoreRead::port_entity_record(store, rtxn, root)?.is_none() {
         return Ok(true);
     }
