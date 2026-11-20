@@ -727,9 +727,10 @@ impl Vault {
                 }),
             ) => {
                 let id = EntityId::now();
-                let def = actor::shape_agent_definition(agent_id, (*ceiling).into(), *enabled);
-                owner.revalidate(self)?;
-                self.put_agent_definition(&id, &def, occurred, now)?;
+                let author = owner.revalidate(self)?;
+                let def =
+                    actor::shape_agent_definition(agent_id, (*ceiling).into(), *enabled, &author);
+                self.create_agent_definition_as(owner, &id, &def, occurred, now)?;
                 sources.list(id);
                 Ok(id.to_hex())
             }
@@ -956,6 +957,35 @@ impl Vault {
         Ok(())
     }
 
+    /// The live FACET `person` wears under the name `name`, if any: the one
+    /// name rule [`Self::create_facet`] refuses a second facet by.
+    ///
+    /// # Errors
+    ///
+    /// A store failure.
+    pub(crate) fn worn_facet_named_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: &EntityId,
+        name: &str,
+    ) -> Result<Option<EntityId>> {
+        for mask in self.filtered_edge_peers(
+            txn,
+            EdgeDirection::Out,
+            person,
+            EdgeKind::HasFacet,
+            Some(ENTITY_TYPE_FACET),
+        )? {
+            if let LiveEntityRow::Live { body, .. } =
+                live_entity_row_in_txn(&self.store, txn, &mask)?
+                && facet_name(&body).as_deref() == Some(name)
+            {
+                return Ok(Some(mask));
+            }
+        }
+        Ok(None)
+    }
+
     /// Creates a facet named `name` that `person` wears, as `owner`: a mask
     /// that grants nothing (ARCH-0022), wired by its has_facet edge in the
     /// same writer. A live mask of that person already carrying the name
@@ -997,21 +1027,10 @@ impl Vault {
             ) {
                 return Err(invalid("a facet's wearer is a live person"));
             }
-            for mask in self.filtered_edge_peers(
-                txn,
-                EdgeDirection::Out,
-                &person,
-                EdgeKind::HasFacet,
-                Some(ENTITY_TYPE_FACET),
-            )? {
-                if let LiveEntityRow::Live { body, .. } =
-                    live_entity_row_in_txn(&self.store, txn, &mask)?
-                    && facet_name(&body).as_deref() == Some(name)
-                {
-                    return Err(invalid(
-                        "a live facet of that person already carries that name",
-                    ));
-                }
+            if self.worn_facet_named_in_txn(txn, &person, name)?.is_some() {
+                return Err(invalid(
+                    "a live facet of that person already carries that name",
+                ));
             }
             self.batch_in()
                 .put(

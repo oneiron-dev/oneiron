@@ -62,12 +62,14 @@ pub(super) fn apply_home_pick(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let op = OwnerChoiceOp {
         act: &pick.act,
         machine: pick.machine,
         choice: pick.node_id.as_ref(),
         context: HOME_PICK_REVISION_CONTEXT,
+        needs_proof_off_the_line,
         persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
@@ -216,7 +218,12 @@ impl Vault {
         let key = crate::identity::read_machine_signing_key_in_txn(self, &txn)?
             .ok_or_else(|| authority_refused(NO_CARRIER))?;
         let public_key = key.verifying_key().to_bytes();
-        if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+        if !super::owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(authority_refused(NO_CARRIER));
         }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
@@ -249,7 +256,7 @@ impl Vault {
                 node_id,
             }),
             now,
-            self.owner_proof_signer(&fold).as_deref(),
+            self.owner_proof_signer(&fold).as_ref(),
         )?;
         let act = authority_entry_hash(&entry)?;
         let at = TimeRange {

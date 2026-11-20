@@ -59,6 +59,8 @@ pub(crate) use self::receipts::carried::{
     CarriedReceipt, carried_receipts_in_txn, merge_carried_receipt_in_txn,
 };
 pub(crate) use self::receipts::{erase_receipt_actor_in_txn, receipt_actor_in_txn};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::receipts::{put_pins_erased_receipt_in_txn, put_pins_receipt_in_txn};
 
 const HEADS: SideTable<EntityId, TypedBodyHead, Named> =
     SideTable::new(&side_table::TYPED_BODY_HEAD);

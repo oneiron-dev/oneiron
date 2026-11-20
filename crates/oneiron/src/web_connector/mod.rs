@@ -8,8 +8,10 @@
 //! backend key. Every call leaves one [`WebConnectorUsage`] row: provider, tool,
 //! key source, latency and cost, never the query, the URL or the results. The
 //! result shapes are Afterglow's `search_web` tool's, so it can move in later.
+pub(crate) mod archive_restore;
 mod provider;
 mod setting;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 mod usage;
 

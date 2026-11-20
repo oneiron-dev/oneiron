@@ -208,6 +208,8 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
                             | "judge"
                             | "measure"
                             | "infra"
+                            | "code-bench-pack"
+                            | "code-bench"
                     )) =>
         {
             let path = rest.first().map_or(Path::new(""), |path| Path::new(path));
@@ -442,6 +444,12 @@ fn run_report(sub: &str, path: &Path) -> BeamResult<String> {
         "edit-path-pack" => Ok(serde_json::to_string_pretty(
             &super::edit_path::write_pack(path)?,
         )?),
+        "code-bench-pack" => Ok(serde_json::to_string_pretty(
+            &super::code_bench::write_pack(path)?,
+        )?),
+        "code-bench" => Ok(serde_json::to_string_pretty(&super::code_bench::grade(
+            path,
+        )?)?),
         _ => Ok(serde_json::to_string_pretty(&run_manifest_path(path)?)?),
     }
 }

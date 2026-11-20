@@ -2,6 +2,7 @@
 
 mod connector;
 mod continuation;
+mod host_cancel;
 mod import_claim;
 mod preflight;
 mod recurrence;
@@ -31,8 +32,8 @@ use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 pub(in crate::calendar) use connector::{
     ConnectorAdmissionSource, ConnectorScreen, admit_connector_event, connector_event_ref,
-    delete_connector_resource, preflight_connector_feed, sweep_connector_resource,
-    sweep_connector_uids,
+    defer_connector_cancel, delete_connector_resource, preflight_connector_feed,
+    repeat_connector_echo, sweep_connector_resource, sweep_connector_uids,
 };
 use continuation::OwedProperties;
 pub(super) use continuation::run_ics_property_continuation_admitting;
@@ -40,12 +41,14 @@ pub use continuation::{
     ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsPropertyContinuationPayload,
     run_ics_property_continuation,
 };
+use host_cancel::names_written_calendar;
 pub(crate) use import_claim::ensure_ics_import_actor;
 pub use import_claim::ics_import_actor_id;
 pub(in crate::calendar) use import_claim::{
     admit_calendar_import_claim, admit_calendar_import_claim_in_txn,
 };
 use import_claim::{admit_calendar_import_claim_screened, imported_screen};
+pub(crate) use recurrence::clear_absence_cancellation_in_txn;
 
 #[cfg(test)]
 use super::fetch::{IcsFeedFetcher, IcsFetchResponse};
@@ -132,7 +135,9 @@ impl PollAdmission<'_> {
                 }
                 self.apply_imported_cancel(event_ref, event)?;
             }
-            PassportDecision::SkipUnchanged { .. } => {}
+            PassportDecision::SkipUnchanged { event_ref } => {
+                self.repeat_imported_cancel(event_ref, event)?;
+            }
             PassportDecision::UpdateExisting { event_ref } => {
                 // The update verdict moves the EVENT, not just the passport
                 // head: occurred and name follow the drifted VEVENT, and
@@ -197,25 +202,40 @@ impl PollAdmission<'_> {
                 continue;
             }
             for (_, value) in &passports {
-                let reports = value.system == self.system
+                let omitted = value.system == self.system
                     && only_uids.is_none_or(|uids| uids.contains(value.uid.as_str()))
-                    && value.direction.is_inbound_bearing()
-                    && value.presence == CalendarPassportPresence::Live
                     && !present.contains(&(value.uid.as_str(), instance));
-                if !reports {
+                let flips = omitted
+                    && value.direction.is_inbound_bearing()
+                    && value.presence == CalendarPassportPresence::Live;
+                // A provider tombstone is this source's report of the UID
+                // cancelled, first seen now unless an earlier cancelled
+                // version or tombstone already dated it. An omission is no
+                // cancellation evidence and dates nothing, so a tombstone
+                // also dates a passport an omission already flipped absent.
+                // An Outbound passport of a calendar the EVENT was written
+                // to never flips, since it is no absence vote, but its
+                // tombstone is dated the same way.
+                let dates_cancel = omitted
+                    && absence_basis == CalendarStatusBasis::ImportedCancel
+                    && value.cancelled_since.is_none()
+                    && (value.direction.is_inbound_bearing()
+                        || names_written_calendar(self.system, value));
+                if !flips && !dates_cancel {
                     continue;
                 }
-                let mut absent = value.clone();
-                absent.presence = CalendarPassportPresence::Absent;
-                absent.last_seen_at = self.now;
+                let mut next = value.clone();
+                if flips {
+                    next.presence = CalendarPassportPresence::Absent;
+                    next.last_seen_at = self.now;
+                }
+                if dates_cancel {
+                    next.cancelled_since = Some(self.now);
+                }
                 // Absence carries no inbound content, so the screen body is
                 // empty — but the admission still crosses the hook and cites
                 // the complete feed that proved the omission.
-                self.admit_superseding_passport(
-                    event_ref,
-                    &absent,
-                    &CalendarInboundBody::default(),
-                )?;
+                self.admit_superseding_passport(event_ref, &next, &CalendarInboundBody::default())?;
             }
             if all_live_inbound_passports_absent(self.vault, &event_ref)? {
                 self.admit_absence_cancellation(event_ref, absence_basis)?;
@@ -301,17 +321,46 @@ impl PollAdmission<'_> {
     /// revised invite is queued. The echo of the slot the booking already
     /// sits at writes nothing, and a pending emergency delivery holds the
     /// move back. [`FeedMoveOutcome::NotBooking`] when the EVENT carries no
-    /// live booking, or when the VEVENT is a cancellation, which stays the
-    /// imported-cancel outcome: the caller then rewrites the EVENT as any
-    /// other.
+    /// booking, or one its own status cancelled: the caller then rewrites the
+    /// EVENT as any other. A booking a calendar's cancellation stands on keeps
+    /// its booked slot ([`FeedMoveOutcome::Unchanged`]), as below.
+    ///
+    /// A cancellation moves nothing and stays the imported-cancel outcome. A
+    /// booking's EVENT keeps its booked slot through it
+    /// ([`FeedMoveOutcome::Unchanged`]): the deposit's start rule and CAL-07
+    /// measure the cancellation against that slot, and a cancellation that
+    /// names no DTSTART would otherwise rewrite it to the undated sentinel
+    /// (review round 2 of #9233). Any other EVENT is rewritten as before.
+    ///
+    /// A live VEVENT's body is screened before a booking can move on it: the
+    /// admissions after the move screen the same body, so a screen that
+    /// refuses it fails the poll here, before the booking takes a slot,
+    /// ends an omission's cancellation or queues an invite on a version
+    /// that was never admitted (review round 2 of #9677). A screen that
+    /// passes here and fails on one of those admissions fails the pass after
+    /// the move; the next read of the feed admits the version, and the move,
+    /// already made, writes nothing again.
     fn move_booking(
         &self,
         event_ref: EntityId,
         event: &ParsedVEvent,
     ) -> Result<FeedMoveOutcome, CalendarError> {
-        if event.cancelled {
+        let is_booking = crate::booking::lifecycle::is_booking_event(self.vault, &event_ref)
+            .map_err(|error| CalendarError::IcsIngest {
+                reason: error.to_string(),
+            })?;
+        if !is_booking {
             return Ok(FeedMoveOutcome::NotBooking);
         }
+        if event.cancelled {
+            return Ok(FeedMoveOutcome::Unchanged);
+        }
+        screen_then_claim(
+            self.safeguard_enabled,
+            self.screener,
+            &screen_body(event),
+            |_| Ok(()),
+        )?;
         let slot = match (event.starts_at_utc, event.ends_at_utc) {
             (Some(start), Some(end)) => Some(TimeRange { start, end }),
             _ => None,
@@ -470,96 +519,19 @@ impl PollAdmission<'_> {
         Ok(())
     }
 
-    /// An explicit cancellation in the feed (`METHOD:CANCEL` or
-    /// `STATUS:CANCELLED`): write `calendar.status` cancelled with basis
-    /// `imported_cancel`, unless a live claim already says exactly that, and
-    /// carry it to CAL-07 as pre-start cancellation evidence. Never writes
-    /// `confirmed` — resurrection is not a v1 basis.
-    fn apply_imported_cancel(
-        &mut self,
-        event_ref: EntityId,
-        event: &ParsedVEvent,
-    ) -> Result<(), CalendarError> {
-        if !event.cancelled {
-            return Ok(());
-        }
-        let body = screen_body(event);
-        let source_record_id = self.source_record_id(event);
-        if let Some(status_ref) = self.admit_status_if_changed(
-            event_ref,
-            &body,
-            &source_record_id,
-            CalendarStatus::Cancelled,
-            CalendarStatusBasis::ImportedCancel,
-        )? {
-            self.record_cancel_outcome(event_ref, status_ref)?;
-        }
-        Ok(())
-    }
-
-    /// The multi-source law's conclusion: every live inbound passport
-    /// reports absence, so the EVENT reads cancelled with basis
-    /// `imported_absence` for an omission or `imported_cancel` for an explicit
-    /// provider tombstone. The EVENT row is never deleted. Only the explicit
-    /// tombstone is cancellation evidence for CAL-07; an omission writes the
-    /// status alone. The screen body is empty: absence carries no inbound
-    /// content to screen.
-    fn admit_absence_cancellation(
-        &mut self,
-        event_ref: EntityId,
-        basis: CalendarStatusBasis,
-    ) -> Result<(), CalendarError> {
-        let status_ref = self.admit_status_if_changed(
-            event_ref,
-            &CalendarInboundBody::default(),
-            if basis == CalendarStatusBasis::ImportedCancel {
-                "remote-delete"
-            } else {
-                "feed-absence"
-            },
-            CalendarStatus::Cancelled,
-            basis,
-        )?;
-        if let Some(status_ref) = status_ref
-            && basis == CalendarStatusBasis::ImportedCancel
-        {
-            self.record_cancel_outcome(event_ref, status_ref)?;
-        }
-        Ok(())
-    }
-
-    /// Carries one explicit imported cancellation into CAL-07 as
-    /// `CancelReceived` machine evidence citing the status claim that
-    /// recorded it. Seen before the EVENT's start it records
-    /// `cancelled_pre_start`; seen after, or on an EVENT with no anchored
-    /// start, it earns nothing. The engine observed the cancellation in the
-    /// bytes it fetched, so the outcome lands as `observed`.
-    fn record_cancel_outcome(
-        &self,
-        event_ref: EntityId,
-        status_ref: EntityId,
-    ) -> Result<(), CalendarError> {
-        let Some(header) = self.vault.read_entity_header(&event_ref)? else {
-            return Ok(());
-        };
-        if header.occurred_start == 0 && header.occurred_end == 0 {
-            return Ok(());
-        }
-        crate::calendar::outcome::record_machine_event_outcome(
-            self.vault,
-            event_ref,
-            header.occurred_start,
-            &crate::calendar::outcome::MachineOutcomeEvidence::CancelReceived {
-                evidence_ref: status_ref,
-                observed_at: self.now,
-            },
-            crate::claim::ClaimSource::Observed,
-        )?;
-        Ok(())
-    }
-
     /// Admits one `calendar.status` claim, superseding the prior live status
     /// claim, and skips when the live claim already carries the exact value.
+    /// An omission's cancellation (basis `imported_absence`) also skips over
+    /// an admitted cancellation of any other basis: an omission is the
+    /// weakest evidence, and a later live VEVENT ends it
+    /// ([`Self::clear_absence_cancellation`]), so replacing a provider's,
+    /// the booking's or the owner's cancellation with it would let that
+    /// VEVENT end the cancellation too (review round 1 of #9677). A status
+    /// that still waits on the owner (a flagged cancel the feed's standing
+    /// consent holds) is no admitted cancellation: booking reads skip it
+    /// ([`crate::claim::claim_surfaceable`]), so it does not block the
+    /// omission, and the omission is admitted beside it without superseding
+    /// it, so the owner's answer to it stays owed (review round 2 of #9677).
     /// Returns the new claim's id, or `None` when nothing was written.
     fn admit_status_if_changed(
         &mut self,
@@ -583,6 +555,14 @@ impl PollAdmission<'_> {
                 .map_err(|_| ingest("stored status claim did not decode"))?;
             if current.status == status && current.basis == basis {
                 return Ok(None);
+            }
+            if basis == CalendarStatusBasis::ImportedAbsence {
+                if !crate::claim::claim_surfaceable(&claim) {
+                    continue;
+                }
+                if current.status == status {
+                    return Ok(None);
+                }
             }
             prior_live = Some(claim_id);
         }
@@ -640,19 +620,36 @@ impl PollAdmission<'_> {
         event: &ParsedVEvent,
         presence: CalendarPassportPresence,
     ) -> Result<CalendarPassportValue, CalendarError> {
-        let direction = if self.preserve_direction {
-            crate::calendar::passport::live_passport_for(
-                self.vault,
-                &event_ref,
-                self.system,
-                &event.uid,
-            )?
-            .map_or(CalendarPassportDirection::Inbound, |(_, value)| {
-                value.direction
-            })
-        } else {
-            CalendarPassportDirection::Inbound
+        let prior = crate::calendar::passport::live_passport_for(
+            self.vault,
+            &event_ref,
+            self.system,
+            &event.uid,
+        )?
+        .map(|(_, value)| value);
+        let direction = match &prior {
+            Some(prior) if self.preserve_direction => prior.direction,
+            _ => CalendarPassportDirection::Inbound,
         };
+        // A cancelled version keeps the first sighting of the cancellation
+        // its source already reported: a newer SEQUENCE of a cancel seen
+        // before a booking's start is not a cancel first seen now. A
+        // cancelled version a pull held back unread while a cancelled write
+        // of the UID was in flight dates it too, once the write proved not
+        // to be the source's copy
+        // (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+        let cancelled_since = event.cancelled.then(|| {
+            prior
+                .as_ref()
+                .and_then(|prior| prior.cancelled_since.or(prior.deferred_cancel_seen_at))
+                .unwrap_or(self.now)
+        });
+        // A cancelled version of an EVENT the engine wrote to this calendar
+        // already cancelled is that write coming back (a provider that
+        // rewrites the stored resource), until the source shows the EVENT
+        // uncancelled.
+        let written_cancelled =
+            event.cancelled && prior.as_ref().is_some_and(|prior| prior.written_cancelled);
         Ok(CalendarPassportValue {
             system: self.system.to_owned(),
             uid: event.uid.clone(),
@@ -662,6 +659,9 @@ impl PollAdmission<'_> {
             direction,
             last_seen_at: self.now,
             presence,
+            cancelled_since,
+            written_cancelled,
+            deferred_cancel_seen_at: None,
         })
     }
 
@@ -768,11 +768,14 @@ impl VerdictFold {
     }
 }
 
+/// The verdict token a flagged screen records on each claim it admits.
+pub(super) const FLAGGED_VERDICT: &str = "flagged";
+
 fn verdict_token(verdict: &super::safeguard::CalendarScreenVerdict) -> &'static str {
     match verdict {
         super::safeguard::CalendarScreenVerdict::Skipped => "skipped",
         super::safeguard::CalendarScreenVerdict::Clear => "clear",
-        super::safeguard::CalendarScreenVerdict::Flagged { .. } => "flagged",
+        super::safeguard::CalendarScreenVerdict::Flagged { .. } => FLAGGED_VERDICT,
         super::safeguard::CalendarScreenVerdict::Indeterminate { .. } => "indeterminate",
     }
 }

@@ -74,6 +74,14 @@ pub(in crate::runtime_hooks) struct HookVerbRunRecord {
     /// it again only under the grant it was built under ([`Self::grant`]).
     #[serde(default)]
     pub(in crate::runtime_hooks) unattributed: bool,
+    /// Some of that content names no row this vault holds either: a host
+    /// verb's free text, a pack item whose refs did not resolve, or a read
+    /// result with a value outside a row object that names its held rows.
+    /// No screened reader reads its receipt ([`store::hook_run_read_rows`]).
+    /// `false` in a record saved before the field existed, which the screen
+    /// reads as before.
+    #[serde(default)]
+    pub(in crate::runtime_hooks) unnamed_content: bool,
     /// The digest of the grant the input was built under.
     #[serde(default)]
     pub(in crate::runtime_hooks) grant: String,

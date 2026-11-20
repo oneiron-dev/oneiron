@@ -23,6 +23,7 @@ fn config(host: oneiron::EntityId) -> EventTypeConfig {
         booking_window_secs: 7 * 86_400,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: host,
@@ -39,6 +40,7 @@ fn config(host: oneiron::EntityId) -> EventTypeConfig {
         }],
         flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 
@@ -55,8 +57,10 @@ fn publication(config: &EventTypeConfig, owner_display: &str) -> serde_json::Val
         event_types: vec![EventTypeCard {
             key: EventTypeKey("intro".to_owned()),
             title: "Intro".to_owned(),
+            deposit: None,
             duration_min: 30,
             description: "A first call".to_owned(),
+            allowed_durations_min: Vec::new(),
         }],
         constraint_field: ConstraintFieldConfig {
             enabled: false,
@@ -100,6 +104,32 @@ fn claim(predicate: &str, subject: oneiron::EntityId, value: serde_json::Value) 
     }
 }
 
+/// The four-axis `spec` `vault.claims.upsert` takes: `input` reshaped to the
+/// verb's closed `ScopedClaimInput` (base world, the vault's default facet,
+/// every relationship, the default project). A raw `ClaimInput` names
+/// `world_ref`, which the advertised schema closes out (`tool_args_invalid`).
+fn scoped_spec(vault: &oneiron::Vault, input: &ClaimInput) -> serde_json::Value {
+    json!({
+        "id": input.id.clone(),
+        "predicate": input.predicate.clone(),
+        "subject_ref": input.subject_ref.clone(),
+        "value": input.value.clone(),
+        "confidence": input.confidence,
+        "source": input.source.clone(),
+        "scope": {
+            "world_id": oneiron::claim::base_world_id().to_hex(),
+            "scope_facet_id": vault.default_facet().expect("default facet").to_hex(),
+            "scope_relationship_id": "all",
+            "scope_project_id": oneiron::claim::default_project_id().to_hex(),
+        },
+        "valid_from": input.valid_from,
+        "valid_to": input.valid_to,
+        "occurred_at": input.occurred_at,
+        "learned_at": input.learned_at,
+        "salience": input.salience,
+    })
+}
+
 async fn public_page_status(server: &Arc<SyncServer>, page: oneiron::EntityId) -> StatusCode {
     let request = Request::builder()
         .method("GET")
@@ -114,11 +144,11 @@ async fn public_page_status(server: &Arc<SyncServer>, page: oneiron::EntityId) -
         ))
         .body(Body::empty())
         .expect("request");
-    crate::build_app(Arc::clone(server))
-        .oneshot(request)
-        .await
-        .expect("response")
-        .status()
+    let app = crate::build_app(Arc::clone(server));
+    crate::test_engine_stack::on_engine_stack(async move {
+        app.oneshot(request).await.expect("response").status()
+    })
+    .await
 }
 
 /// The owner's own slip, attenuated to read and propose, under a `proposed`
@@ -129,15 +159,10 @@ async fn public_page_status(server: &Arc<SyncServer>, page: oneiron::EntityId) -
 #[tokio::test]
 async fn a_propose_only_slip_cannot_take_a_public_booking_page_offline() {
     let (_dir, server) = auth_test_server();
-    let owner = seeded_test_entity_id(0x0024_7101);
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let page = seeded_test_entity_id(0x0024_7102);
     let host = seeded_test_entity_id(0x0024_7103);
     for (id, kind, body) in [
-        (
-            owner,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            &b"page owner"[..],
-        ),
         (host, oneiron::registry::ENTITY_TYPE_PERSON, &b"host"[..]),
         (
             page,
@@ -244,7 +269,7 @@ async fn a_propose_only_slip_cannot_take_a_public_booking_page_offline() {
             oneiron::task_verb::sdk::AgentVerb::VaultClaimsUpsert.as_str(),
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "write_memory"),
-                json!({"arguments": {"spec": input}}),
+                json!({"arguments": {"spec": scoped_spec(&server.vault, input)}}),
             ),
         )
     };

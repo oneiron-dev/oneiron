@@ -20,6 +20,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use oneiron_persistent_collections::PersistentMap;
+
 use crate::entity_id::EntityId;
 
 use super::apply::{refused_revision, roster_chain};
@@ -67,13 +69,20 @@ impl SaySo {
 }
 
 impl FoldedMachine {
-    /// This machine's revision as a deciding surface shows the owner (C5):
-    /// the digest of its live chains' heads, the roster's and every
-    /// anchor's, zero for none. The writer compares an answer's `seen` with
-    /// it; replicas derive what an answer supersedes from its parents.
+    /// This machine's revision as a deciding surface shows the owner (C5) on
+    /// an install with `pin`: the digest of the heads it stands under there
+    /// ([`Self::standing_heads`]), the roster's and the pinned anchor's,
+    /// zero for none. Another anchor's mark never moves it (FIX
+    /// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES). The writer
+    /// compares an answer's `seen` with it; replicas derive what an answer
+    /// supersedes from its parents.
     #[must_use]
-    pub fn answer_revision(&self) -> [u8; 32] {
-        machine_answer_revision(self.chains().map(|(_, chain)| chain.entry))
+    pub fn answer_revision(&self, pin: Option<&PinnedRoot>) -> [u8; 32] {
+        machine_answer_revision(
+            self.standing_heads(pin)
+                .into_iter()
+                .map(|chain| chain.entry),
+        )
     }
 }
 
@@ -113,6 +122,14 @@ impl MachineRevision {
 /// or a forged entry; there is never a second. An answer that lands and is
 /// the owner's (proven, or carried by one of the owner's machines) ends the
 /// ask of every held answer about the machine that its parent state held.
+/// `needs_proof_off_the_line`: the answer lies outside a proving owner-key
+/// enrolment's line ([`super::super::owner_key_line`]), so a carrier that is
+/// not the owner's needs the proof whatever the parents hold.
+/// `proof_parents`: the parents as they were before a restored target's held
+/// chains were laid under `state` (row RESTORED-COPIES-ENROL-EACH-OTHER);
+/// whether the answer needs the proof is judged on them, so a held chain
+/// never makes its target read as already the owner's (REVIEW-9509 round 2
+/// P1). `None`: `state` is the parents'.
 pub(in crate::authority) fn apply_owner_answer(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -120,6 +137,7 @@ pub(in crate::authority) fn apply_owner_answer(
     hash: AuthorityEntryHash,
     (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    (needs_proof_off_the_line, proof_parents): (bool, Option<&FoldState>),
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let (Some(carrier), Some(act)) = (profile.carrier, profile.act) else {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
@@ -179,14 +197,24 @@ pub(in crate::authority) fn apply_owner_answer(
         })),
         say_so: Some(say_so),
     };
-    if proof.is_none()
-        && super::super::owner_proof::machine_answer_needs_proof(
+    // Outside a proving owner-key enrolment's line (row
+    // CARRIER-PROOF-OLD-PARENTS), a carrier that is not the owner's needs the
+    // proof as if the parents held that key.
+    let needs_proof = || match proof_parents {
+        Some(parents) => super::super::owner_proof::machine_answer_needs_proof(
+            parents,
+            profile,
+            carrier_is_mine,
+            Standing::new(parents, pin, counted).trusted_key(profile.machine, roster),
+        ),
+        None => super::super::owner_proof::machine_answer_needs_proof(
             state,
             profile,
             carrier_is_mine,
             target_key,
-        )
-    {
+        ),
+    };
+    if proof.is_none() && ((needs_proof_off_the_line && !carrier_is_mine) || needs_proof()) {
         super::super::owner_proof::hold_answer(state, hash, folded);
         return Ok(());
     }
@@ -241,11 +269,14 @@ pub(in crate::authority) fn apply_owner_answer(
     Ok(())
 }
 
-/// Whether an admitted answer still stands in `state`: its carrier is still
-/// admitted under the key that signed it, or every chain that admitted it at
-/// the act's parents and no longer does lost it only by revisions that saw
-/// the act (FIX 2998's removal race, mesh contract §4). Read off the raw
-/// chains, so judging one machine never folds another's answers. A role
+/// Whether an admitted answer still stands in `state`: its carrier's roster
+/// chain still names the key that signed it live, or that chain lost it at
+/// the act's parents only by revisions that saw the act (FIX 2998's removal
+/// race, mesh contract §4). The one carrier rule's reading
+/// (`owner_act_signer_admits`): an anchor's chain
+/// neither removes the carrier here nor keeps its answer standing (RULING
+/// FOREIGN-ANCHOR-ADMIT-SIDE-P1 = B; Astra T1 and T5 on #8673). Read off the
+/// raw chain, so judging one machine never folds another's answers. A role
 /// change between linked roles takes nothing away: only a removal or a new
 /// key does.
 pub(in crate::authority) fn act_stands(
@@ -253,40 +284,32 @@ pub(in crate::authority) fn act_stands(
     proof: &ActProof,
     act: &AuthorityEntryHash,
 ) -> bool {
-    let Some(chains) = state.machines.get(&proof.carrier) else {
+    let Some(chain) = state
+        .machines
+        .get(&proof.carrier)
+        .and_then(|chains| chains.get(&MachineAdmitter::Roster))
+    else {
         return false;
     };
-    let names_key = |chain: &MachineChain| {
-        !chain.head.removed && !chain.head.conflicted && chain.head.profile.machine_key == proof.key
-    };
-    if chains.values().all(|chain| !chain.head.removed) && chains.values().any(names_key) {
+    if !chain.head.removed && !chain.head.conflicted && chain.head.profile.machine_key == proof.key
+    {
         return true;
     }
-    let mut reasons = false;
-    for (admitter, mark) in &proof.marks {
-        let Some(chain) = chains.get(admitter) else {
-            return false;
-        };
-        if names_key(chain) {
-            continue;
-        }
-        reasons = true;
-        let mut takers = chain
-            .revisions
-            .iter()
-            .filter(|(hash, revision)| {
-                !mark.prior.contains(*hash)
-                    && (revision.profile().role == MachineRole::Removed
-                        || revision.profile().machine_key != proof.key)
-            })
-            .peekable();
-        let saw = takers.peek().is_some()
-            && takers.all(|(_, revision)| revision.profile().seen_world_edits.contains(act));
-        if chain.head.conflicted || !saw {
-            return false;
-        }
-    }
-    reasons
+    let Some(mark) = proof.marks.get(&MachineAdmitter::Roster) else {
+        return false;
+    };
+    let mut takers = chain
+        .revisions
+        .iter()
+        .filter(|(hash, revision)| {
+            !mark.prior.contains(*hash)
+                && (revision.profile().role == MachineRole::Removed
+                    || revision.profile().machine_key != proof.key)
+        })
+        .peekable();
+    let saw = takers.peek().is_some()
+        && takers.all(|(_, revision)| revision.profile().seen_world_edits.contains(act));
+    !chain.head.conflicted && saw
 }
 
 /// The heads of `T(X)` that count for the owner's say-so: each head another
@@ -323,7 +346,10 @@ pub(in crate::authority) fn effective_chains<'a>(
 /// (FIX 4610: two concurrent marks of one anchor as two answers do).
 pub(in crate::authority) fn say_so_contested(
     head: &MachineRevision,
-    revisions: &BTreeMap<AuthorityEntryHash, Arc<crate::authority::machine_standing::Revision>>,
+    revisions: &PersistentMap<
+        AuthorityEntryHash,
+        Arc<crate::authority::machine_standing::Revision>,
+    >,
 ) -> bool {
     if head.say_so.is_none() {
         return false;

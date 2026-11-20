@@ -44,7 +44,9 @@ async fn mcp_legacy_catalog_is_unknown_tool_on_both_endpoints() {
             )
             .await;
             // 0bf27d24b8f (#1564): a name under a stray root whose leaf is one
-            // served verb is refused with its correction, before any effect.
+            // served verb is refused with its correction, before any caller
+            // resolves (FIX 298), so with no scope to state; any other
+            // retired name stays unknown under the resolved credential.
             if *name == "oneiron.ask" {
                 assert_mcp_structured_error(&body, "wrong_root");
                 assert_eq!(
@@ -52,10 +54,14 @@ async fn mcp_legacy_catalog_is_unknown_tool_on_both_endpoints() {
                     json!("`oneiron.ask` is not an SDK verb; the verb is `ask`"),
                     "{name} on {path}: {body}"
                 );
+                assert!(
+                    body["error"]["data"].get("effective_scope").is_none(),
+                    "{name} on {path}: a pre-resolution refusal states no scope: {body:?}"
+                );
             } else {
                 assert_mcp_structured_error(&body, "unknown_tool");
+                assert_scoped_refusal(&body, &scope, &format!("{name} on {path}"));
             }
-            assert_scoped_refusal(&body, &scope, &format!("{name} on {path}"));
         }
     }
 
@@ -89,10 +95,10 @@ async fn mcp_actor_derived_errors_all_carry_effective_scope() {
             MCP_TOOL_FIRST_PATH,
             wide,
             "scope-args",
-            "board.expand",
+            "self.focus.refresh",
             mcp_merge_args(
                 mcp_endpoint_envelope(wide_actor, "read_board"),
-                json!({ "arguments": { "frame_epoch": 3 } }),
+                json!({ "arguments": { "key": "VERBS", "frame_epoch": 3 } }),
             ),
         ),
     )
@@ -134,7 +140,7 @@ async fn mcp_actor_derived_errors_all_carry_effective_scope() {
                 MCP_TOOL_FIRST_PATH,
                 wide,
                 id,
-                "board.expand",
+                "describe",
                 mcp_merge_args(mcp_endpoint_envelope(wide_actor, "read_board"), arguments),
             ),
         )
@@ -184,7 +190,7 @@ async fn mcp_actor_derived_errors_all_carry_effective_scope() {
             MCP_TOOL_FIRST_PATH,
             bound,
             "scope-unbound",
-            "board.refresh",
+            "self.focus.refresh",
             mcp_endpoint_envelope(bound_actor, "read_board"),
         ),
     )
@@ -204,7 +210,7 @@ async fn mcp_actor_derived_errors_all_carry_effective_scope() {
             MCP_TOOL_FIRST_PATH,
             narrow,
             "scope-stream",
-            "board.subscribe",
+            "self.focus.subscribe",
             mcp_merge_args(
                 mcp_scoped_envelope(narrow_actor, "read_board", &narrow_scope_value),
                 json!({ "arguments": { "scopes": ["memories"] } }),
@@ -403,7 +409,12 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
             "tasks.update",
             mcp_merge_args(
                 mcp_scoped_envelope(actor_ref, "ack_task", &facet_only_b),
-                json!({ "arguments": { "task_ref": owned.to_hex() } }),
+                json!({
+                    "arguments": {
+                        "task_ref": owned.to_hex(),
+                        "spec": { "task_ref": owned.to_hex() },
+                    },
+                }),
             ),
         ),
     )
@@ -575,7 +586,7 @@ async fn mcp_board_epoch_is_state_monotonic() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "epoch-expand",
-            "board.expand",
+            "describe",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor_ref, "read_board"),
                 json!({ "arguments": { "key": "VERBS", "frame_epoch": epoch } }),
@@ -595,7 +606,7 @@ async fn mcp_board_epoch_is_state_monotonic() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "epoch-stale",
-            "board.expand",
+            "describe",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor_ref, "read_board"),
                 json!({ "arguments": { "key": "VERBS", "frame_epoch": epoch + 1 } }),

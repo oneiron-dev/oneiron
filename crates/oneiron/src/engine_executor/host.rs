@@ -12,7 +12,10 @@ mod receipts;
 mod replay_context;
 mod reply;
 mod results;
+mod say_result;
 mod skill_delivery;
+#[cfg(oneiron_test_support)]
+mod spill_door;
 mod type_feedback;
 
 use super::cancel::StepCancellation;
@@ -23,7 +26,8 @@ use super::stack_floor::on_callable_stack;
 use super::store::{
     ByteCount, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_READ_ROOT,
     RESULT_REPLY_INLINE_BYTES, StreamedOutputs, bridge_result_output_path, is_result_output_path,
-    recoverable_output_path, result_handle_json, store_result_output_path, write_json,
+    record_only_output_path, recoverable_output_path, result_handle_json, store_result_output_path,
+    write_json,
 };
 use super::types::{
     CallableProgram, EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, JsCodeModeRuntime,
@@ -61,6 +65,8 @@ pub(super) use self::deadline_replay::DeadlineReplay;
 pub(super) use self::prompt::executor_turn_instruction;
 pub(crate) use self::prompt::{executor_declarations_block, executor_system_prompt};
 use self::results::recorded_output;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::spill_door::spill_before_record;
 pub(super) use self::type_feedback::{CallableChecks, PINNED_PROGRAM_STEP};
 
 pub(super) struct RecordingJsHost<'a, 's> {
@@ -140,6 +146,25 @@ pub(super) struct RecordingJsHost<'a, 's> {
     callable_depth: u32,
     /// The host projection already ran this outer call's verb hooks.
     admitted_skill_seq: Option<u64>,
+    /// Whether that outer call's verb hooks are live: its pre chain found
+    /// hooks on it, so its post chain may still run on the admitted
+    /// call's answer. The admitted entry (`skill_call`) carries it from
+    /// that pre chain; this host never re-reads the bindings for it, so
+    /// a binding toggled while the skill runs cannot split the outer
+    /// chain from this call.
+    admitted_outer_hooks_live: bool,
+    /// The whole answer of the admitted skill call above, when the outer
+    /// caller's post chain may still run on it: its bridge row spills the
+    /// real answer record-only and binds no name to it, and the admitted
+    /// entry (`skill_call`) returns this answer to that caller instead of
+    /// the recorded card. Taken by that entry after its one dispatch.
+    pub(super) admitted_skill_answer: Option<serde_json::Value>,
+    /// Whether the admitted call's answer was withheld where its bridge row
+    /// stores it: the side-row wall could not place a secret it holds, so
+    /// the row keeps the typed unavailable content and nothing of the
+    /// answer. The admitted entry then returns that content, never the
+    /// answer whole nor a hook's view of it.
+    pub(super) admitted_skill_withheld: bool,
     /// Each stored skill this host's callable calls read and loaded, and the
     /// rows of every result a read took from another run (`None` once one
     /// kept no set): what a callable's answer stands on, counted in
@@ -237,6 +262,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             summary_prompt_package: None,
             callable_depth: 0,
             admitted_skill_seq: None,
+            admitted_outer_hooks_live: false,
+            admitted_skill_answer: None,
+            admitted_skill_withheld: false,
             callable_rows: (Vec::new(), Some(Vec::new())),
             injection: None,
             program_callables: Vec::new(),
@@ -283,9 +311,12 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     }
 
     /// Only the credential-bound host projection sets this; nested calls
-    /// still enter their own verb hooks.
-    pub(super) fn with_admitted_skill_call(mut self, seq: u64) -> Self {
+    /// still enter their own verb hooks. `outer_hooks_live` is that
+    /// projection's own pre chain's state, carried by the entry that ran
+    /// it (see `admitted_outer_hooks_live`).
+    pub(super) fn with_admitted_skill_call(mut self, seq: u64, outer_hooks_live: bool) -> Self {
         self.admitted_skill_seq = Some(seq);
+        self.admitted_outer_hooks_live = outer_hooks_live;
         self
     }
 

@@ -8,7 +8,7 @@ use crate::tokenizer::PackTokenizer;
 
 impl ContextPackBuilder<'_> {
     pub(super) fn pack_replay_config(&self) -> Value {
-        json!({
+        let mut config = json!({
             "assembly": {
                 "hydrate": self.hydrate,
                 "skill_executor": self.pipeline.skill_executor_id(),
@@ -39,7 +39,29 @@ impl ContextPackBuilder<'_> {
                 },
                 self.tokenizer,
             ),
-        })
+        });
+        // A seeded pack replays with the same working set; an unseeded one
+        // records exactly what it recorded before the working set existed.
+        if !self.working_set.is_empty()
+            && let Some(assembly) = config.get_mut("assembly").and_then(Value::as_object_mut)
+        {
+            assembly.insert(
+                "working_set".to_owned(),
+                Value::from(
+                    self.working_set
+                        .iter()
+                        .map(crate::EntityId::to_hex)
+                        .collect::<Vec<_>>(),
+                ),
+            );
+        }
+        // A rehydrated pack replays from the same packet, judged afresh.
+        if let Some(summary) = self.rehydrate_from
+            && let Some(assembly) = config.get_mut("assembly").and_then(Value::as_object_mut)
+        {
+            assembly.insert("rehydrate_from".to_owned(), Value::from(summary.to_hex()));
+        }
+        config
     }
 }
 

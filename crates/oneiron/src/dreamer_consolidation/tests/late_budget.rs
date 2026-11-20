@@ -58,7 +58,7 @@ fn run_case(case: LateCall) -> Result<()> {
     let conversation = seed_session(&vault, 0x7a, 1);
     let turns = [
         seed_turn(&vault, &conversation, "user", "call me Owen", 10),
-        seed_turn(&vault, &conversation, "user", "or Alex", 11),
+        seed_turn(&vault, &conversation, "user", "or Alex Owen", 11),
     ];
     let watermark = read_watermark(&vault, DreamerConsolidationScope::Micro)?;
     let dirty = scan_dirty_turns(&vault, DreamerConsolidationScope::Micro, &watermark, 10)?;
@@ -78,7 +78,9 @@ fn run_case(case: LateCall) -> Result<()> {
         | crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Existing(row) => row.attempt.id,
     };
     let subject = EntityId::now();
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    let named =
+        super::super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, &named)?;
     let first_response = match case {
         LateCall::ExtractionOnly => extraction_response(&subject, &turns[0]),
         LateCall::ExtractionThenMerge
@@ -144,6 +146,7 @@ fn run_case(case: LateCall) -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let clock = std::sync::Arc::clone(&backend.clock);
     let deadline = WakePassDeadline::with_clock(
@@ -220,6 +223,7 @@ fn run_case(case: LateCall) -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let resumed = ready(driver.run_wake_pass(
         wake_input(node_id, 130),
@@ -358,6 +362,7 @@ fn wake_pins_retry_expansion_before_admission() -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline);
@@ -388,6 +393,7 @@ fn wake_pins_retry_expansion_before_admission() -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut driver = DreamerWakeDriver::new(&vault, "wake-next", deadline);
@@ -452,6 +458,7 @@ fn broken_retry_parks_without_poisoning_healthy_wake_work() -> Result<()> {
             now: 21,
         },
         30,
+        &[],
     )?;
     let retry = AttemptQueue::new(&vault)
         .list()?
@@ -509,6 +516,7 @@ fn broken_retry_parks_without_poisoning_healthy_wake_work() -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline);
@@ -585,6 +593,7 @@ fn manifest_retry_source_budget_truncates_and_holder_cannot_widen() -> Result<()
             now: 21,
         },
         30,
+        &[],
     )?;
     let retry = AttemptQueue::new(&vault)
         .list()?

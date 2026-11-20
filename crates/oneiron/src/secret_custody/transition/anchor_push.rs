@@ -18,7 +18,10 @@ use crate::error::{Error, Result};
 
 /// Whether this install may push with the owner's kit (CALLS
 /// CUSTODY_KIT_PUSH): it has no live machine profile in the vault, so it
-/// carries no owner act and holds for no request. Ordinary control never
+/// carries no owner act and holds for no request. Its profile is the heads
+/// it stands under here ([`crate::authority::FoldedMachine::standing_heads`]):
+/// another anchor's mark neither removes a live profile nor makes one (FIX
+/// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES). Ordinary control never
 /// reaches the seed (CALLS CUSTODY_ORDINARY_CONTROL_SEED).
 fn kit_push_allowed_in_txn(
     vault: &Vault,
@@ -31,8 +34,9 @@ fn kit_push_allowed_in_txn(
                 return Ok(true);
             };
             Ok(fold.machine(machine).is_none_or(|folded| {
-                folded.chains().any(|(_, chain)| chain.removed)
-                    || !folded.chains().any(|(_, chain)| chain.is_live())
+                let heads = folded.standing_heads(fold.pinned_root.as_ref());
+                heads.iter().any(|chain| chain.removed)
+                    || !heads.iter().any(|chain| chain.is_live())
             }))
         }
     }

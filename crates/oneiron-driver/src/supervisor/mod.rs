@@ -40,6 +40,7 @@ mod attachment;
 mod budget_ids;
 mod config;
 mod dreamer_jobs;
+mod extraction_decisions;
 mod factory;
 mod inference;
 mod inference_admission;
@@ -47,6 +48,7 @@ mod inference_device;
 mod inference_worker;
 mod pass;
 mod program_factory;
+mod psych_profile_decisions;
 mod retry;
 #[path = "loop.rs"]
 mod run;
@@ -59,7 +61,10 @@ pub use self::attachment::{
     AttachedPassFuture, LinkedShutdown, PassAttachment, PassAttachmentSource, WakePassFuture,
 };
 pub use self::config::{NowSeconds, RestartBackoffConfig, WakeSupervisorConfig};
-pub use self::dreamer_jobs::DreamerJobsExecutor;
+pub use self::dreamer_jobs::{ConflictSettleCursor, DreamerJobsExecutor};
+pub use self::extraction_decisions::{
+    ExtractionAttemptLender, ExtractionDecisionGate, ExtractionDecisionResources,
+};
 pub use self::factory::{
     ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan, WaveReadyDispatcher,
 };

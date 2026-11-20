@@ -31,6 +31,14 @@
 //! fence: C and the revocation stay valid, B is refused, and K stays
 //! revoked.
 //!
+//! The last case is Astra T1 with an actor revocation, root FIX-LIST
+//! [REVOKE-ACTOR-EQUAL-SEQUENCE-SIBLINGS]: a RevokeActor's proof follows the
+//! fold on two equal-sequence siblings too. Since #8660 a collision drops no
+//! row, so there a sequence floor drops the siblings: K's later row arrives
+//! first. Expected red on main, where the proof refused the siblings and K's
+//! binding stood again; green once every restriction's proof follows the
+//! fold.
+//!
 //! Expected (estimate, not run yet): all three red on main, where K is live
 //! again once B arrives; the second and third red at 8b22fd3d77166 (the
 //! first head of #8608); all green at the #7987 merge.
@@ -43,10 +51,10 @@ use std::time::Duration;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityConfirmAction,
-    AuthorityConfirmKind, AuthorityEntryHash, AuthorityFold, AuthorityFoldIssue, AuthorityKey,
-    AuthorityLogEntry, AuthorityObservationPolicy, AuthorityOp, AuthoritySignature,
-    AuthorityVaultId, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
+    AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, ActorBindingStatus,
+    AuthorityConfirmAction, AuthorityConfirmKind, AuthorityEntryHash, AuthorityFold,
+    AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityObservationPolicy, AuthorityOp,
+    AuthoritySignature, AuthorityVaultId, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
     MachineEnrolmentRequest, MachineOwnership, MachineRole, OwnerKeyEnrollment,
     authority_entry_hash, authority_transcript, machine_profile_proof_transcript,
@@ -119,6 +127,7 @@ fn admit_machine(rooted: &Rooted) -> EntityId {
         device_class: MachineDeviceClass::Computer,
         encryption_key,
         machine_proof,
+        restored_from: None,
     };
     let landing = rooted
         .vault
@@ -577,6 +586,112 @@ fn an_approval_by_a_key_revoked_beside_a_collision_expires_after_the_window() {
     assert!(
         !fold.valid_entries.contains(&hash_of(&approval)),
         "Q stays refused after the window; issues {:?}",
+        fold.issues
+    );
+}
+
+/// K's actor binding as the fold answers it, if K has one.
+fn binding_status(fold: &AuthorityFold, key: &AuthorityKey) -> Option<ActorBindingStatus> {
+    fold.actor_bindings.get(key).map(|binding| binding.status)
+}
+
+/// [REVOKE-ACTOR-EQUAL-SEQUENCE-SIBLINGS]: Astra T1 with RevokeActor in
+/// place of RevokeDevice, and a sequence floor in place of the collision.
+/// D = O2's binding of K as a human actor at O2's sequence 1 on P; X and
+/// Y = K's confirmations with their own ids at K's sequence 1 on P; the
+/// revocation = O2's RevokeActor of K's binding at O2's sequence 2 on
+/// [X, Y]; B = K's confirmation with a third id at K's sequence 2 on P.
+/// K's holder sends B here first, so on main X and Y arrive below K's
+/// floor of 2: the fold refuses them, and the revocation waits on them for
+/// good. Its own signed branch still proves it, so K's binding stays
+/// revoked whatever order the rows arrived in.
+#[test]
+fn an_actor_revocation_over_two_floor_refused_siblings_keeps_the_binding_revoked() {
+    let rooted = rooted();
+    let machine = admit_machine(&rooted);
+    let second_owner = SigningKey::from_bytes(&[0x52; 32]);
+    let bound = SigningKey::from_bytes(&[0x4B; 32]);
+    enrol_owner_key(&rooted, machine, &second_owner);
+    let enrolled = enrol_owner_key(&rooted, machine, &bound);
+    let binding = row_signed_by(
+        &rooted,
+        &second_owner,
+        1,
+        vec![enrolled],
+        AuthorityOp::BindActor {
+            authority_key: key_of(&bound),
+            actor_ref: EntityId::now(),
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+    );
+    let first = row_signed_by(
+        &rooted,
+        &bound,
+        1,
+        vec![enrolled],
+        confirmation([0x31; 32], [0x01; 16]),
+    );
+    let second = row_signed_by(
+        &rooted,
+        &bound,
+        1,
+        vec![enrolled],
+        confirmation([0x32; 32], [0x02; 16]),
+    );
+    let mut both = vec![hash_of(&first), hash_of(&second)];
+    both.sort();
+    let revocation = row_signed_by(
+        &rooted,
+        &second_owner,
+        2,
+        both,
+        AuthorityOp::RevokeActor {
+            authority_key: key_of(&bound),
+            epoch: 1,
+        },
+    );
+    let later = row_signed_by(
+        &rooted,
+        &bound,
+        2,
+        vec![enrolled],
+        confirmation([0x33; 32], [0x03; 16]),
+    );
+
+    // The setup alone: D binds K. A failure here is the test's setup, not
+    // the finding.
+    let bound_put = put(&rooted, &binding);
+    let fold = rooted.vault.authority_fold().expect("the fold");
+    assert_eq!(
+        binding_status(&fold, &key_of(&bound)),
+        Some(ActorBindingStatus::Active),
+        "setup: D binds K; put {bound_put}, issues {:?}",
+        fold.issues
+    );
+
+    // B first, then X and Y below K's floor, then the revocation.
+    let puts = [
+        put(&rooted, &later),
+        put(&rooted, &first),
+        put(&rooted, &second),
+        put(&rooted, &revocation),
+    ];
+    assert!(
+        puts.iter().all(|outcome| outcome == "stored"),
+        "setup: the door stores every row; puts {puts:?}"
+    );
+    // On main the arrival floor refuses X and Y and the revocation waits
+    // on them, so only its proof revokes K. Where no floor refuses a row
+    // (#8449's floor shape), the revocation folds itself. K stays revoked
+    // under either shape.
+    let fold = rooted.vault.authority_fold().expect("the fold");
+    let valid = [&later, &first, &second, &revocation]
+        .map(|row| fold.valid_entries.contains(&hash_of(row)));
+    assert_eq!(
+        binding_status(&fold, &key_of(&bound)),
+        Some(ActorBindingStatus::Revoked),
+        "K's two rows at one sequence must not void the revocation; B, X, Y, R valid {valid:?}, issues {:?}",
         fold.issues
     );
 }

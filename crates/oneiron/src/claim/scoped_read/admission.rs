@@ -2,6 +2,7 @@ use super::*;
 
 mod audience;
 mod room_ceiling;
+mod world_scope;
 
 impl crate::vault::Vault {
     #[must_use]
@@ -15,6 +16,7 @@ impl crate::vault::Vault {
             room_ceiling: Mutex::new(None),
             room_ceilings_built: AtomicUsize::new(0),
             session_view: None,
+            stretch: None,
             claim_status: ClaimReadStatus::Surfaceable,
             recall_authority: Mutex::new(None),
             room_peer: false,
@@ -22,6 +24,7 @@ impl crate::vault::Vault {
             records_cover: Default::default(),
             judged_at: None,
             read_filter: None,
+            receipts_include_live_grants: false,
         }
     }
 
@@ -47,6 +50,7 @@ impl crate::vault::Vault {
             // R22): a row it cannot place is absent for it, and the rest of
             // the room still reads (`ScopedRead::room_row_placed_in`).
             session_view: Some(view),
+            stretch: None,
             claim_status: ClaimReadStatus::Surfaceable,
             recall_authority: Mutex::new(None),
             room_peer: false,
@@ -54,7 +58,26 @@ impl crate::vault::Vault {
             records_cover: Default::default(),
             judged_at: None,
             read_filter: None,
+            receipts_include_live_grants: false,
         }
+    }
+
+    /// A fresh scoped read composed over a context pack's read of a live
+    /// stretch (ARCH-0052 #e5-read-union-open, ONE-1729), as
+    /// [`OwnedScopedRead::into_borrowed_in_room`] composes one: the union the
+    /// stretch can see, with the stretch's room carried for the rows it
+    /// staged. `None` for a stretch of another vault.
+    pub(crate) fn scoped_read_in_room<'a>(
+        &'a self,
+        actor_key: ScopedReadActorKey,
+        room: &'a crate::off_record::RoomPackRead<'a>,
+    ) -> Option<ScopedRead<'a>> {
+        if !room.is_of(self) {
+            return None;
+        }
+        let mut read = self.scoped_read_in_session(actor_key, &room.view);
+        read.stretch = room.stretch;
+        Some(read)
     }
 }
 
@@ -175,11 +198,11 @@ impl<'a> ScopedRead<'a> {
                 .is_some_and(|channel| claims.channels.contains(channel))
     }
 
-    /// The owner key's binding, re-verified in this read's own snapshot, so a
-    /// key minted before a revocation resolves no plan after it. A host
-    /// action's key also proves its root and owner again (FIX 2222): the
-    /// embedded owner skips the binding below, and a live root alone does not
-    /// show it still binds that owner.
+    /// The owner binding a key proves (`owner_binding_ref`), re-verified in
+    /// this read's own snapshot, so a key minted before a revocation resolves
+    /// no plan after it. A host action's key also proves its root and owner
+    /// again (FIX 2222): the embedded owner skips the binding below, and a live
+    /// root alone does not show it still binds that owner.
     pub(super) fn owner_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
         if let Some(action) = self.actor_key.host_action_guard() {
             action.holds_in(self.vault, txn)?;
@@ -195,7 +218,7 @@ impl<'a> ScopedRead<'a> {
                 )))
             });
         }
-        let Some(owner) = self.actor_key.vault_owner_ref() else {
+        let Some(owner) = self.actor_key.owner_binding_ref() else {
             return Ok(());
         };
         // A due Owner schedule's key (FIX 1259) proves its owner by the
@@ -218,7 +241,9 @@ impl<'a> ScopedRead<'a> {
         let human = crate::edge::EdgeActorClass::Human;
         crate::memory::verify_actor_binding_in_txn(self.vault, txn, owner, human)
             .and_then(|()| {
-                if crate::vault::embedded_owner_actor_id().ok() == Some(owner) {
+                if crate::vault::embedded_owner_actor_id().ok() == Some(owner)
+                    && crate::memory::embedded_owner_shortcut_holds_in_txn(self.vault, txn)?
+                {
                     Ok(())
                 } else {
                     crate::memory::verify_owner_actor_binding_in_txn(self.vault, txn, owner)
@@ -275,12 +300,41 @@ impl<'a> ScopedRead<'a> {
         {
             return Ok(false);
         }
+        // A key rebuilt from a saved lane carries that lane's credential with
+        // no proof (OF-506): it reads only while the credential still holds
+        // in this snapshot, as its rebuild judged it, so a key rebuilt while
+        // a grant stood and kept past the grant's withdrawal reads nothing
+        // (FIX OWN-DEVICE-GRANT-NOT-RECHECKED, review R1 of #8029).
+        for credential in &self.actor_key.saved_credentials {
+            if !credential.holds_in(self.vault, txn)? {
+                return Ok(false);
+            }
+        }
         let Some(proof) = &self.actor_key.proof else {
             return Ok(true);
         };
         let claims = proof.claims();
         let now = self.vault.instant_in_txn(txn)?.secs();
         if now < claims.issued_at || now >= claims.expires_at {
+            return Ok(false);
+        }
+        // A slip follows its holder's row (RULING DELETED-ACTOR-SLIP-AUTH =
+        // A): a key kept from a holder's verified slip reads nothing once
+        // that holder is deleted, as the slip's own doors refuse it then
+        // (Astra review of #8289, finding 1).
+        if crate::authority::slip_holder_is_deleted_in_txn(
+            &self.vault.store,
+            txn,
+            &claims.holder_ref,
+        )? {
+            return Ok(false);
+        }
+        // A grant-bound slip reads only while its grant stands in this
+        // snapshot, judged at each use as a fresh verification judges it
+        // (FIX OWN-DEVICE-GRANT-NOT-RECHECKED): withdrawing an own-device
+        // grant appends no slip revoke, so the fold alone still calls the
+        // slip live, and a key held past its verification would read on.
+        if claims.grant_ref.is_some() && !self.vault.slip_refs_stand_in_txn(txn, claims, now)? {
             return Ok(false);
         }
         if let Some(share) = &claims.share_ref {
@@ -494,27 +548,103 @@ impl ScopedRead<'_> {
         let Some(row) = self.entity_record_in(txn, id)? else {
             return Ok(ReadAdmission::OpaqueAbsent);
         };
+        let raw = row.encode();
         // Inside a room turn a withheld row may be another room's or a peer's
-        // private one; its count would say it exists, so it reads as absent.
+        // private one; its count would say it exists, so it reads as absent,
+        // and so does a row a room stretch staged that a member's own windows
+        // or a private thread keep from them.
         // A row outside the worlds the read asked for is not withheld by
         // policy; scope honesty names its world instead. A row in a world the
         // credential cannot read, or one a device-local world keeps from a
         // caller off this device, has no name and no count (DEC-0005), and
         // neither has a TASK outside the credential's worlds or facets, nor
-        // any row outside the facets it is limited to.
+        // any row outside the facets it is limited to, nor any row its
+        // channel or records caveat does not reach. A room's row or turn the
+        // room keeps from this reader is a missing row at every door (L9-52),
+        // and so is one whose room's say does not resolve here. A private
+        // thread's row counts only to a reader standing in that thread, a
+        // private CLAIM never to a relationship-gated reader, and a guest's
+        // only inside its grant's current scope in this snapshot.
         if self.actor_key.room_turn.is_none()
+            && self.credential_allows_row_in(txn, id)
+            && self.private_threads_readable_in(txn, id, &raw)?
+            && !self.relationship_private_claim_in(txn, id, &raw)?
+            && self.guest_bound_admits_in(txn, id, &raw)
+            && !self.stretch_staged_in(txn, id, &row)?
             && !self.outside_asked_worlds_in(txn, id, &row)?
             && !self.outside_credential_worlds_in(txn, id, &row)?
             && !self.device_withholds_in(txn, id, None)?
             && !self.outside_credential_task_position_in(txn, id, &row)?
             && !self.outside_credential_facets_in(txn, id, &row)?
             && crate::note::countable_read_suppression(row.entity_type, &row.body)
+            && matches!(
+                self.vault.room_structure_admitted_held_in(
+                    self,
+                    txn,
+                    id,
+                    &crate::conversation_dag::RoomVerdicts::default(),
+                ),
+                Ok(true)
+            )
             && crate::store::legal_hold::use_limit_in_txn(&self.vault.store, txn, id)?.is_none()
         {
             Ok(ReadAdmission::Suppressed)
         } else {
             Ok(ReadAdmission::OpaqueAbsent)
         }
+    }
+
+    /// Whether the stored row `raw` of `id` is a private CLAIM this reader's
+    /// relationship gate refuses. No membership, grant or support slip ever
+    /// reads a private CLAIM (`allows_at_snapshot`), so to a relationship-gated
+    /// reader it is a missing row and adds no count, as a private thread's row
+    /// does for a reader outside the thread (review round 2 of #9637).
+    fn relationship_private_claim_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        if !self.relationship_gated_in(txn)? {
+            return Ok(false);
+        }
+        let read = super::access_gate::relationship_read_keyed(
+            &self.store_read(),
+            txn,
+            id,
+            raw,
+            self.actor_key.unscoped_rows_open,
+        )?;
+        Ok(matches!(
+            read,
+            super::access_gate::RelationshipRead::Gated {
+                kind: crate::registry::ENTITY_TYPE_CLAIM,
+                private: true,
+                ..
+            }
+        ))
+    }
+
+    /// Whether `row` is one this member's read over a room stretch finds
+    /// staged under that stretch's shell; false for the owner's read and any
+    /// read over no room stretch.
+    fn stretch_staged_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        row: &EntityRecord,
+    ) -> Result<bool> {
+        let Some(stretch) = self.stretch.filter(|stretch| stretch.member().is_some()) else {
+            return Ok(false);
+        };
+        crate::conversation::hangs_under_in(
+            self.vault,
+            &self.store_read(),
+            txn,
+            *id,
+            &row.encode(),
+            stretch.shell(),
+        )
     }
 
     /// A code-memory payload projection counts only a readable, non-opaque row.
@@ -548,142 +678,6 @@ impl ScopedRead<'_> {
             )
         })();
         usize::from(readable.unwrap_or(false))
-    }
-
-    /// Whether this read's credential is live in `txn` and the worlds the
-    /// read asked for and its Scope both admit `world` (`None` is base
-    /// reality): the world ceilings every row it serves lies under, before
-    /// any manifest's say.
-    pub(crate) fn world_readable_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        world: Option<EntityId>,
-    ) -> Result<bool> {
-        let record = super::actor_key::record_world_scope(world);
-        if !record.is_narrowing_of(&self.actor_key.world_ceiling()) {
-            return Ok(false);
-        }
-        self.proof_live_in(txn)
-    }
-
-    fn outside_asked_worlds_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        id: &EntityId,
-        row: &EntityRecord,
-    ) -> Result<bool> {
-        let Some(ceiling) = self.actor_key.asked_world_ceiling() else {
-            return Ok(false);
-        };
-        Ok(self
-            .world_record_in(txn, id, row.entity_type, &row.body, &ceiling)?
-            .is_none_or(|record| !record.is_narrowing_of(&ceiling)))
-    }
-
-    /// Whether `row` of `id` is a TASK, or one of its authority facts, whose
-    /// birth stamp sits outside the worlds the read's verified credential
-    /// grants (ARCH-0067 §5, DEC-0005). One that cannot prove its position
-    /// counts as outside. Its facets are judged by the lane's one facet rule
-    /// (`outside_credential_facets_in`), owner exemption included, never
-    /// here.
-    fn outside_credential_task_position_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        id: &EntityId,
-        row: &EntityRecord,
-    ) -> Result<bool> {
-        use crate::federation::record_scope::task_inside_credential;
-        let Some(granted) = self.actor_key.authority_scope() else {
-            return Ok(false);
-        };
-        if row.entity_type != crate::registry::ENTITY_TYPE_TASK {
-            return Ok(false);
-        }
-        let worlds_only = super::actor_key::world_only(granted.worlds.clone());
-        let raw = row.encode();
-        let inside = match self.session_view {
-            Some(view) => task_inside_credential(view, txn, *id, &raw, &worlds_only)?,
-            None => task_inside_credential(&self.vault.store, txn, *id, &raw, &worlds_only)?,
-        };
-        Ok(!inside)
-    }
-
-    /// The world-only position of the stored row `id`, read in `txn` over
-    /// this read's own store (`record_scope::record_world_in`), as a read
-    /// under the world ceiling `ceiling` holds it: a NOTE at its world
-    /// witness there (FIX-LIST 9433). `None` where the row cannot prove one.
-    pub(super) fn world_record_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        id: &EntityId,
-        kind: u8,
-        data: &[u8],
-        ceiling: &oneiron_authority::federation::Scope,
-    ) -> Result<Option<oneiron_authority::federation::Scope>> {
-        use crate::federation::record_scope::note_world::world_record_held_at;
-        match self.session_view {
-            Some(view) => world_record_held_at(view, txn, *id, kind, data, ceiling),
-            None => world_record_held_at(&self.vault.store, txn, *id, kind, data, ceiling),
-        }
-    }
-
-    /// Whether the stored row `row` of `id` sits wholly outside the worlds
-    /// the read's verified credential grants: a claim at the position the
-    /// read door selects it; any other record where `record_world_in` places
-    /// it. A claim with no such position is judged by the other axes; a TASK
-    /// or epoch SUMMARY that cannot prove its world is outside.
-    fn outside_credential_worlds_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        id: &EntityId,
-        row: &EntityRecord,
-    ) -> Result<bool> {
-        let Some(granted) = self.actor_key.authority_scope() else {
-            return Ok(false);
-        };
-        if matches!(
-            granted.worlds,
-            oneiron_authority::federation::ScopeAxis::All
-        ) {
-            return Ok(false);
-        }
-        // A TASK and its authority facts, and an epoch SUMMARY, sit at their
-        // birth. Every other record that is not a claim is base reality,
-        // stamped or not: a row
-        // replayed with no stamp is no less outside a credential that cannot
-        // read base (Astra #1388b P2).
-        if row.entity_type != ENTITY_TYPE_CLAIM {
-            let ceiling = super::actor_key::world_only(granted.worlds.clone());
-            return Ok(self
-                .world_record_in(txn, id, row.entity_type, &row.body, &ceiling)?
-                .is_none_or(|record| !record.is_narrowing_of(&ceiling)));
-        }
-        // A claim with no decodable world names none, as a read that asked
-        // for worlds judges it.
-        if crate::claim::decode_claim_body(&row.body, true).is_err() {
-            return Ok(true);
-        }
-        // A room's own claim sits at the position its write staged beside
-        // it (WILL L11-01); every other claim at base's.
-        let record = match self.session_view {
-            Some(view) if view.read().room_holds(id)? => {
-                crate::federation::record_scope::disclosure_scope_for_stored_row(
-                    view,
-                    txn,
-                    *id,
-                    row.entity_type,
-                    &row.body,
-                )?
-            }
-            _ => crate::federation::record_scope::disclosure_scope_for_stored_row(
-                &self.vault.store,
-                txn,
-                *id,
-                row.entity_type,
-                &row.body,
-            )?,
-        };
-        Ok(record.is_some_and(|record| record.worlds.meet(&granted.worlds).is_bottom()))
     }
 
     pub(super) fn admit_entity_in(

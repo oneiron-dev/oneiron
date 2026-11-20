@@ -59,7 +59,8 @@ fn scoped_input(
                 .to_hex(),
             scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
             scope_project_id: default_project_id().to_hex(),
-        },
+        }
+        .into(),
         sensitivity,
         evidence_turn_refs: Vec::new(),
         valid_from: None,
@@ -231,6 +232,7 @@ fn owner_public_stamped_inferred_claim_parks_proposed() {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,

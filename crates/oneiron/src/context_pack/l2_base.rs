@@ -183,6 +183,7 @@ fn admitted_l2_evidence(
             && !super::retained_copies::clamp_admits(
                 clamp,
                 vault,
+                &pipeline.store_read(),
                 txn,
                 &id,
                 crate::registry::ENTITY_TYPE_CLAIM,
@@ -245,7 +246,10 @@ fn render_l2_rows_with_handles(
         let mut value = if secret {
             serde_json::Value::Null
         } else {
-            crate::serialize::null_credentials("val", &super::hydration::rmpv_to_json(&body.value))
+            crate::serialize::null_credentials(
+                "val",
+                &crate::serialize::msgpack_value_to_json(&body.value),
+            )
         };
         // Every L2 format shares the same cached, credential-safe projection.
         crate::serialize::scrub_provider_credential("val", &mut value);

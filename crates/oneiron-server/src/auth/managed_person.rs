@@ -40,7 +40,7 @@ use crate::server::SyncServer;
 /// inquiry edge he joins to his own seat later, objections and erase asks, his own record
 /// erase, the shared policy's proposal and answer, his trusted contacts and
 /// the workspace rows.
-pub(crate) const MANAGED_PERSON_DOORS: [&str; 45] = [
+pub(crate) const MANAGED_PERSON_DOORS: [&str; 46] = [
     "vault.members.invitations",
     "vault.shared.erase_asks",
     "vault.shared.receipt",
@@ -64,6 +64,7 @@ pub(crate) const MANAGED_PERSON_DOORS: [&str; 45] = [
     "vault.shared.propose_add_owner",
     "vault.shared.owner_change_wait.set",
     "vault.shared.execute",
+    "vault.shared.owner_key_move_plan",
     "vault.members.accept",
     "vault.members.accept_with_inquiry_edge",
     "vault.members.inquiry_edge.attach",
@@ -72,7 +73,7 @@ pub(crate) const MANAGED_PERSON_DOORS: [&str; 45] = [
     "vault.shared.withdraw_objection",
     "vault.shared.erase_ask",
     "vault.shared.close_erase_ask",
-    "vault.records.erase_preview",
+    "vault.owner_confirm.preview",
     "vault.records.erase_confirm",
     "vault.shared.policy.propose",
     "vault.shared.policy.answer",
