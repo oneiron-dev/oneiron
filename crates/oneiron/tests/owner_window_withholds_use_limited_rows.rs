@@ -1,5 +1,3 @@
-// Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
-#![allow(clippy::unwrap_used)]
 //! A row a refused privacy erase keeps for storage only leaves the owner's full window and the
 //! owner's text lane (Engine ANSWER SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B, 20 Nov 21:19; FIX
 //! USE-LIMIT-NOT-ASKED-BY-SERVING-DOORS (e)/(f)).
@@ -156,7 +154,11 @@ fn shared_then_kept() -> Shared {
     );
     sync_through_doors(&hub, &mut device);
     assert!(
-        device.vault.get_raw(&kept).unwrap().is_some(),
+        device
+            .vault
+            .get_raw(&kept)
+            .expect("FIXTURE: read the device row")
+            .is_some(),
         "FIXTURE: the device holds the row before the keep"
     );
 
@@ -175,10 +177,13 @@ fn deliver(hub: &TestNode, device: &mut TestNode) {
     let key = WindowKey::new(WINDOW);
     let device_vv = device.doc(WINDOW).oplog_vv().encode();
     match window::export_window_updates_since(&hub.vault, &key, hub.doc(WINDOW), &device_vv)
-        .unwrap()
+        .expect("the hub's export door answers")
     {
         WindowExport::Update(update) => {
-            device.doc(WINDOW).import(&update).unwrap();
+            device
+                .doc(WINDOW)
+                .import(&update)
+                .expect("the device lands the hub's update");
         }
         WindowExport::Replacement(snapshot) => {
             device.install_replacement(&snapshot);
@@ -215,7 +220,10 @@ fn a_kept_row_leaves_the_owner_window_and_the_device_holds_it_back() {
         "the hub's window no longer carries the kept row"
     );
     assert!(
-        hub.vault.legal_hold_use_limit(&kept).unwrap().is_some(),
+        hub.vault
+            .legal_hold_use_limit(&kept)
+            .expect("read the use limit")
+            .is_some(),
         "the hub keeps its stored copy under the use limit"
     );
     assert!(
@@ -230,13 +238,16 @@ fn a_kept_row_leaves_the_owner_window_and_the_device_holds_it_back() {
         withheld_marker(&device, &kept),
         "the device's window landed the withholding marker"
     );
-    let device_owner = device.vault.ensure_embedded_owner_actor().unwrap();
+    let device_owner = device
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("the device owner");
     assert!(
-        !source_audience_binding::reads(&device.vault, kept, &[device_owner]).unwrap(),
+        !source_audience_binding::reads(&device.vault, kept, &[device_owner]).expect("read walk"),
         "the kept row reads to no one on the device, its owner included"
     );
     assert!(
-        !source_audience_binding::travels(&device.vault, kept).unwrap(),
+        !source_audience_binding::travels(&device.vault, kept).expect("replication walk"),
         "the device's own packing never sends the kept row back, so a local edit stays local"
     );
     assert!(
@@ -244,7 +255,7 @@ fn a_kept_row_leaves_the_owner_window_and_the_device_holds_it_back() {
         "the other row rides as before"
     );
     assert!(
-        source_audience_binding::reads(&device.vault, other, &[device_owner]).unwrap(),
+        source_audience_binding::reads(&device.vault, other, &[device_owner]).expect("read walk"),
         "the other row reads on the device as before"
     );
 }
@@ -264,7 +275,7 @@ fn a_peer_behind_the_kept_row_takes_a_replacement_without_it() {
     assert!(
         matches!(
             window::export_window_updates_since(&hub.vault, &key, hub.doc(WINDOW), &nothing)
-                .unwrap(),
+                .expect("the hub's export door answers"),
             WindowExport::Replacement(_)
         ),
         "a peer that holds nothing of the window takes a history-free replacement"
@@ -275,7 +286,7 @@ fn a_peer_behind_the_kept_row_takes_a_replacement_without_it() {
     fresh.open_window(WINDOW);
     sync_through_doors(&hub, &mut fresh);
     assert!(
-        carries(&fresh, &other) && fresh.vault.get_raw(&other).unwrap().is_some(),
+        carries(&fresh, &other) && fresh.vault.get_raw(&other).expect("read").is_some(),
         "the fresh device holds the other row"
     );
     assert!(
@@ -283,7 +294,7 @@ fn a_peer_behind_the_kept_row_takes_a_replacement_without_it() {
         "the fresh device's window never carried the kept row"
     );
     assert!(
-        fresh.vault.get_raw(&kept).unwrap().is_none(),
+        fresh.vault.get_raw(&kept).expect("read").is_none(),
         "the fresh device holds no byte of the kept row"
     );
 }
