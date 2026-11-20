@@ -181,7 +181,7 @@ pub(in crate::live) fn plot_plan(
         gone.remove(0);
     }
     if !gone.is_empty() {
-        for index in assign.iter_mut() {
+        for index in &mut assign {
             let shift = gone.iter().filter(|&&at| at < *index).count();
             *index -= shift;
         }

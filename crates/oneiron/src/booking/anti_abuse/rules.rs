@@ -123,7 +123,9 @@ pub fn validate_rule_row(row: &BookingAntiAbuseRuleRow) -> Result<(), BookingErr
 /// [`BookingError::InvalidConstraint`] when any field is out of range.
 pub(super) fn validate_stored_rule_row(row: &BookingAntiAbuseRuleRow) -> Result<(), BookingError> {
     if row.row_id.is_empty() || row.row_id.len() > ROW_ID_MAX_LEN {
-        return Err(refused("booking anti-abuse row id must be 1-128 chars"));
+        return Err(refused(format!(
+            "booking anti-abuse row id must be 1-{ROW_ID_MAX_LEN} chars"
+        )));
     }
     if !row.row_id.bytes().all(|byte| {
         byte.is_ascii_lowercase()

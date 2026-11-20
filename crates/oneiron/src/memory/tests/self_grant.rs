@@ -30,11 +30,51 @@ fn id(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).unwrap()
 }
 
+/// Scoped reads are default-deny: `skill_fork` answers an unreadable parent
+/// as a missing one, so the forking stranger reads on an explicit `core:read`
+/// grant. The grants ride a second manifest so the vault's write policy stays
+/// in force (the `conversation/tests.rs` `permit_reads` shape).
+fn grant_fork_reads(vault: &crate::Vault, readers: &[EntityId]) {
+    let scope = crate::federation::scope_codec::encode_scope_value(
+        &crate::federation::scope_codec::read_preset(),
+    )
+    .expect("read preset encodes");
+    let grants = readers
+        .iter()
+        .map(|reader| {
+            Value::Map(vec![
+                (Value::from("actor_ref"), Value::from(reader.to_hex())),
+                (Value::from("effector"), Value::from("core:read")),
+                (Value::from("scope"), scope.clone()),
+                (Value::from("receipt_required"), Value::from(false)),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let policy = Value::Map(vec![
+        (Value::from("schema_version"), Value::from("1.2")),
+        (
+            Value::from("pack_id"),
+            Value::from("self-grant-fork-reader-test"),
+        ),
+        (Value::from("pack_version"), Value::from("1")),
+        (Value::from("min_engine_version"), Value::from("0.0.0")),
+        (Value::from("defaults"), Value::Map(vec![])),
+        (Value::from("rules"), Value::Array(vec![])),
+        (Value::from("actor_ceilings"), Value::Array(vec![])),
+        (Value::from("scoped_grants"), Value::Array(grants)),
+    ]);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &policy).expect("encode reader manifest");
+    crate::test_util::put_policy_manifest_bytes(vault, EntityId::now(), &data)
+        .expect("install reader manifest");
+}
+
 #[test]
 fn own_skill_save_edit_and_foreign_fork_preserve_authorship_and_admission() {
     let (_dir, vault) = open_vault();
     let resident = put_person(&vault, 0x21);
     let stranger = put_person(&vault, 0x22);
+    grant_fork_reads(&vault, &[stranger]);
     let memory = vault.memory(resident, EdgeActorClass::Agent);
     let saved = memory.skill_save(id(0x23), &skill(), None, 100).unwrap();
     assert_eq!(saved.author, resident);
@@ -90,6 +130,7 @@ fn foreign_claim_upsert_retract_and_same_id_put_cannot_erase_history() {
     let (_dir, vault) = open_vault();
     let author = put_person(&vault, 0x31);
     let subject = put_person(&vault, 0x32);
+    grant_reads(&vault, author);
     let mut first = claim_input(
         "profile.name",
         &subject,
@@ -159,6 +200,8 @@ fn runtime_supersede_trap_refuses_foreign_authored_head_before_receipts() {
     let author = put_person(&vault, 0x41);
     let attacker = put_person(&vault, 0x42);
     let subject = put_person(&vault, 0x43);
+    grant_reads(&vault, author);
+    grant_reads(&vault, attacker);
     for (actor, claim_id, value) in [
         (author, id(0x44), "original"),
         (attacker, id(0x45), "other"),
@@ -269,6 +312,8 @@ fn conflict(vault: &crate::Vault) -> ConflictFixture {
 fn conflict_bound_to(vault: &crate::Vault, owner: EntityId) -> ConflictFixture {
     let author = put_person(vault, 0x62);
     let subject = put_person(vault, 0x63);
+    grant_reads(vault, author);
+    grant_reads(vault, subject);
     root_vault_binding(vault, 0x64, owner, "human");
     let mut input = claim_input(
         "profile.reliability",
@@ -480,6 +525,7 @@ fn authored_source_save_update_and_fork_keep_real_files_atomic_and_candidate() {
     let (dir, vault) = open_vault();
     let resident = put_person(&vault, 0x21);
     let stranger = put_person(&vault, 0x22);
+    grant_fork_reads(&vault, &[stranger]);
     let id = EntityId::now();
     let fork = EntityId::now();
     let files = |version: &str| {

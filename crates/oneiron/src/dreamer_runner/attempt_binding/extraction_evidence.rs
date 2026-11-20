@@ -39,12 +39,12 @@ impl DreamerAttemptBinding {
         memory.prove_read_authority_in_txn(&txn)?;
         let reader_scope = extraction_reader_scope_in_txn(&memory, &txn, None)?;
         let checked = read.read_projected_in_txn(&txn, &[], None, |txn, _| {
-            let (branch, bound) = check_extraction_operands_in_txn(
+            let (branch, bound, bounds) = check_extraction_operands_in_txn(
                 &memory,
                 &read,
                 txn,
                 reader_scope.as_ref(),
-                self.lease.attempt(),
+                (self.lease.attempt(), self.destination_bound()),
                 &pack.candidates,
                 Some((&pack.listed, &pack.priors)),
             )?;
@@ -60,6 +60,7 @@ impl DreamerAttemptBinding {
                     turn_read,
                     txn,
                     operands: &pack.candidates,
+                    bounds: &bounds,
                 },
                 branch_subject,
             )

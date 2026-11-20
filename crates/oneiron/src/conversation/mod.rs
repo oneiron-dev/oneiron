@@ -22,7 +22,9 @@ mod visibility;
 
 pub use attendee::{ContainerAttendee, ContainerAttendeeEntry, ContainerAttendeeEvent};
 pub use body::{ConversationBody, ConversationKind, RoomPin, RoomPinPolicy, RoomRole};
-pub(crate) use body::{body_in, create_in_txn, fresh_id_in_txn, validate_put_in_txn};
+pub(crate) use body::{
+    body_in, create_in_txn, fresh_id_in_txn, new_room_needs_a_door_in_txn, validate_put_in_txn,
+};
 pub use chat_breakpoint::{
     ChatBreakpoint, ChatBreakpointRung, ChatBreakpointStale, ChatBreakpointUserTurn,
     chat_breakpoint, chat_breakpoint_stands, forget_chat_breakpoint,
@@ -40,6 +42,7 @@ pub(crate) use deletion::{
 };
 pub use live_speakers::{LiveSpeakerCall, RoomLiveSpeakerEntries};
 pub(crate) use live_speakers::{LiveSpeakers, RequiredSpeaker, required_live_speakers};
+pub(crate) use membership::membership_row_named_entities;
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub(crate) use membership_index::rebuild_membership_index_in_txn;
 #[cfg(oneiron_test_support)]
@@ -50,6 +53,8 @@ pub(crate) use pins::{PIN_UPDATES, body_without_room_pins, served_room_body};
 pub(crate) use preview::{LatestMessage, PreviewCandidates, snippet, turn_text};
 pub use privacy_erase::RoomPersonEraseOutcome;
 pub(crate) use roles::{RoomHost, room_host_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use roles::{person_delegates_roles_in, person_room_host_in_txn};
 pub(crate) use roles::{person_role_in, room_owners_in};
 pub use session::{SessionMode, SessionPresence};
 pub use speaker_handoff::{SpeakerHandoff, SpeakerHandoffBoundary, SpeakerHandoffReceipt};

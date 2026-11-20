@@ -141,30 +141,20 @@ pub(crate) fn erase_turn_program_actor_in_txn(
     actor: &EntityId,
 ) -> Result<()> {
     let scope = actor_scope_in_txn(vault, txn, actor)?;
-    // Each arming that decodes leaves its trigger index with it; when one does
-    // not decode, the actor's sweep below takes its index rows too, so no due
-    // row lingers past the erase.
-    let mut armed = Vec::new();
-    let mut undecodable = false;
-    for row in ARM.iter_raw_from(vault, &*txn, actor.as_bytes())? {
-        let (_, bytes) = row?;
-        match ARM.decode_value(&bytes) {
-            Ok(arming) => armed.push(arming),
-            Err(_) => undecodable = true,
-        }
-    }
-    for arming in &armed {
-        super::trigger::unindex_trigger_in_txn(vault, txn, arming)?;
-    }
-    if undecodable {
-        super::trigger::unindex_actor_triggers_in_txn(vault, txn, *actor)?;
-    }
+    // The actor's trigger index rows go with its armings, whether or not each
+    // arming decodes: each idle or feed row under its kind's tag, and the
+    // actor's timer row once, so no row lingers past the erase.
+    super::trigger::unindex_actor_triggers_in_txn(vault, txn, *actor)?;
     ARM.delete_from(vault, txn, actor.as_bytes())?;
     DISARMED.delete_from(vault, txn, actor.as_bytes())?;
     for key in &scope.wakes {
         WAKE.delete(vault, txn, key)?;
         super::index::unindex_wake_in_txn(vault, txn, *actor, *key)?;
     }
+    // And each mark and release kept for one of its wakes, with or without
+    // an owed wake here.
+    #[cfg(feature = "sync")]
+    super::retraction::erase_actor_in_txn(vault, txn, actor)?;
     scrub_actor_admission_instruments_in_txn(vault, txn, actor)?;
     scrub_actor_step_bodies_in_txn(vault, txn, actor).map(drop)
 }

@@ -41,9 +41,9 @@ use crate::secret::Secrets;
 use crate::stop::elapsed_ms;
 use crate::{
     BrowserDriver, BrowserEngine, BrowserError, EffectReceipt, EngineSwitchRecord, Observation,
-    PressMode, ScreenshotInput, ScreenshotTrigger, SwitchCarried, SwitchComponent,
-    SwitchEngineInput, SwitchEngineOutput, SwitchLoss, SwitchNotCarried, SwitchOutcome,
-    SwitchStage,
+    PressMode, ScreenshotInput, ScreenshotTrigger, SessionGuestPressure, SwitchCarried,
+    SwitchComponent, SwitchEngineInput, SwitchEngineOutput, SwitchLoss, SwitchNotCarried,
+    SwitchOutcome, SwitchStage,
 };
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap};
@@ -540,6 +540,7 @@ impl BrowserSession {
             carried: Vec::new(),
             not_carried: Vec::new(),
             outcome: SwitchOutcome::Unchanged,
+            source_guest_pressure: None,
         };
         if !switch_request_policy(record.from, record.to) {
             let (url, title) = self.driver.page_now().unwrap_or_default();
@@ -658,6 +659,12 @@ impl BrowserSession {
     ) -> SwitchEngineOutput {
         // A demonstration never runs on into the new guest (CUA E9a).
         self.recording_close(crate::DemonstrationStopCause::EngineSwitched);
+        // The source's pressure, read once more before it goes: its manifest
+        // goes with it, so only this record can name what it showed since
+        // the switch's entry read it.
+        self.record_pressure();
+        let pressure = self.manifest.guest_pressure.as_ref();
+        record.source_guest_pressure = pressure.map(SessionGuestPressure::from);
         let EngineGuest {
             driver,
             lease,

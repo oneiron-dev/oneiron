@@ -71,12 +71,16 @@ pub(super) async fn chat_turn(
             40_000,
         ))));
     let request = slip_credentials::bind_request(server, request);
-    let response = api_routes(Arc::clone(server))
-        .oneshot(request)
-        .await
-        .expect("route response");
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let server = Arc::clone(server);
+    let body = crate::test_engine_stack::on_engine_stack(async move {
+        let response = api_routes(server)
+            .oneshot(request)
+            .await
+            .expect("route response");
+        assert_eq!(response.status(), StatusCode::OK);
+        to_bytes(response.into_body(), usize::MAX).await.unwrap()
+    })
+    .await;
     let lines: Vec<Value> = body
         .split(|byte| *byte == b'\n')
         .filter(|line| !line.is_empty())

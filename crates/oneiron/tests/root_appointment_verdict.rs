@@ -19,6 +19,8 @@
 
 #![cfg(oneiron_test_support)]
 
+use std::collections::BTreeSet;
+
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::EntityId;
 use oneiron::authority::{
@@ -895,6 +897,80 @@ fn the_owner_gets_out_of_a_revocation_only_cycle() {
     assert!(!live(&fold, &key_of(&root_key)));
     assert!(!live(&fold, &key_of(&second)));
     assert!(!rootless(&fold));
+}
+
+/// A counted appointment keeps the crossed removals of its ancestry
+/// (REVIEW-9799 P1): its proof fold closed their fences in conflict and
+/// refused each for its signer, and the recovered fold keeps both facts,
+/// whole and resumed, so the owner's key changes list still names each
+/// removal (row OWNER-KEY-CHANGES-RING-CROSSING-UNLISTED).
+#[test]
+fn a_counted_appointment_keeps_the_crossed_removals_of_its_ancestry() {
+    let mut log = Log::new();
+    let second = signing(120);
+    let enrol = log.enrol_second_root(&second);
+    let root_key = log.root_key.clone();
+    let revokes_second = log.sign(
+        &root_key,
+        2,
+        vec![enrol],
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&second),
+        },
+    );
+    let revokes_first = log.sign(
+        &second,
+        1,
+        vec![enrol],
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&root_key),
+        },
+    );
+    let crossed = BTreeSet::from([revokes_second, revokes_first]);
+    let before = log.fold();
+    assert_eq!(
+        before.crossed_revocations, crossed,
+        "guard: the two removals cross before the appointment"
+    );
+    let successor = signing(121);
+    let appointment = log.appoint(
+        2,
+        vec![revokes_second, revokes_first, log.owner_root],
+        &successor,
+    );
+    let base_len = log.rows.len();
+    log.sign(
+        &successor,
+        1,
+        vec![appointment],
+        AuthorityOp::EnrollDevice {
+            device: device(key_of(&signing(122)), ROLE_AGENT),
+        },
+    );
+
+    let (whole, resumed) = whole_and_resumed_folds(&log.rows, base_len, Some(&log.pin), 0);
+
+    assert!(
+        whole.valid_entries.contains(&appointment),
+        "guard: the appointment counts: {:?}",
+        whole.issues
+    );
+    let resumed = resumed.expect("the agent's enrolment resumes from the base");
+    for (fold, name) in [(&whole, "whole"), (&resumed, "resumed")] {
+        assert_eq!(
+            fold.crossed_revocations, crossed,
+            "the {name} recovered fold keeps the crossed removals its proof fold closed"
+        );
+        for removal in &crossed {
+            assert!(
+                fold.issues
+                    .contains(&AuthorityFoldIssue::RetiredSigner(*removal)),
+                "the {name} recovered fold keeps each crossed removal's refusal for its signer: \
+                 {:?}",
+                fold.issues
+            );
+        }
+    }
 }
 
 /// A revocation and a handoff fence each other (the 20:11 ruling's cycle):

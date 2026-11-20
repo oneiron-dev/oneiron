@@ -929,3 +929,63 @@ fn an_admins_and_a_deputys_attempt_archive_delete_go_at_once_and_record_why() {
         );
     }
 }
+
+impl Org {
+    /// A NOTE the Steward writes about the subject, by its full hex ref.
+    fn steward_note(&self) -> String {
+        bind_host_actor(&self.vault, &self.issuer, self.steward, "human")
+            .expect("the host key bound to the Steward for its write");
+        let note = self
+            .vault
+            .memory(self.steward, EdgeActorClass::Human)
+            .author_take(TakeTarget::Subject(self.subject), "the Steward's take")
+            .expect("the Steward writes a NOTE")
+            .id_hex;
+        bind_host_owner(&self.vault, &self.issuer, self.owner).expect("the owner's binding again");
+        note
+    }
+}
+
+/// REVIEW-9839 P1 (round 2): a Steward's delete of its own NOTE goes at
+/// once as `own_item` and spends no check-in, so a `check_in_ref` it names
+/// is refused as a bad request and deletes nothing, at `vault.delete` and at
+/// `vault.archive.delete.confirm`. The approved check-in it named stays
+/// unspent for the delete it was asked for, which then runs and spends it.
+///
+/// At #9839's head before this fix (c9d20e5a899e) the own delete naming the
+/// check-in deletes the NOTE and leaves the check-in unspent.
+#[test]
+fn a_stewards_own_delete_refuses_a_named_check_in() {
+    let org = Org::new();
+    let other = org.member_note();
+    let ask = pending_id(org.delete(org.steward, &other, None));
+    org.owner_approves(&ask);
+
+    let own = org.steward_note();
+    let refused = org
+        .delete(org.steward, &own, Some(&ask))
+        .expect_err("the Steward's own delete spends no check-in");
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
+    assert!(
+        refused.message.contains("check_in_ref"),
+        "the refusal names the field: {refused:?}"
+    );
+    assert!(!org.deleted(&own), "the refused delete deletes nothing");
+
+    let archived = org.steward_note();
+    archive_as_cleanup(&org.vault, &EntityId::from_hex(&archived).expect("note id"))
+        .expect("the cleanup archives the Steward's NOTE");
+    let batch = org.confirm(org.steward, &[(&archived, Some(&ask))]);
+    assert_eq!(
+        archive_refusal(&batch, &archived).code,
+        MEMORY_CODE_BAD_REQUEST,
+        "the item for its own archived NOTE names no check-in"
+    );
+    assert!(!org.purged(&archived), "the refused item deletes nothing");
+    assert!(!org.spent(&ask), "neither refusal spent the check-in");
+
+    org.delete(org.steward, &other, Some(&ask))
+        .expect("the delete the check-in was asked for still runs");
+    assert!(org.deleted(&other), "the approved delete applied");
+    assert!(org.spent(&ask), "the delete it was asked for spent it");
+}

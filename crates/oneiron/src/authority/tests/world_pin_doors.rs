@@ -8,6 +8,7 @@ use super::support::ed_key;
 use super::world_key_doors::{enrol_own, key_records, kit_seed, own_request, set};
 use super::world_kit_gate::publish_root;
 use super::world_privacy::{stored_entries, world_row};
+use super::world_reissue::with_predecessor;
 use super::*;
 use crate::Vault;
 use crate::world_keys::{RecoveryRootSeed, RepinReport, Withheld};
@@ -26,6 +27,7 @@ fn pinned(vault: &Vault) -> Option<RecoveryRootId> {
 fn only_this_machines_own_call_moves_its_pin_or_anchors() {
     let host = host();
     enrol_own(&host);
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let seed = kit_seed(host.vault_id, prepared.seed());
     let root = prepared.seed().public(&host.vault_id).unwrap().id;
@@ -70,6 +72,7 @@ fn only_this_machines_own_call_moves_its_pin_or_anchors() {
 fn an_install_anchors_another_machine_only_with_its_pinned_roots_seed() {
     let host = host();
     enrol_own(&host);
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let first = prepared.seed().public(&host.vault_id).unwrap().id;
     host.vault
@@ -121,6 +124,7 @@ fn a_world_that_reads_everywhere_is_reported_and_never_wrapped_by_a_pin_door() {
         report.rewrapped.is_empty() && report.withheld == vec![(key, Withheld::NotPrivate)]
     };
 
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let seed = kit_seed(host.vault_id, prepared.seed());
     let activated = host

@@ -172,7 +172,7 @@ impl Vault {
     pub fn put_code_run_replay_record(&self, record: &CodeRunReplayRecord) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         let record = fence_replay_in_txn(self, &mut wtxn, Cow::Borrowed(record))?;
-        replay_rows::put(self, &mut wtxn, &record.run_id, &record)?;
+        replay_rows::put_fenced(self, &mut wtxn, &record)?;
         Ok(wtxn.commit()?)
     }
 
@@ -183,7 +183,7 @@ impl Vault {
         record: &CodeRunReplayRecord,
     ) -> Result<()> {
         let record = super::response_erase::fence_replay_in_txn(self, wtxn, Cow::Borrowed(record))?;
-        replay_rows::put(self, wtxn, &record.run_id, &record)?;
+        replay_rows::put_fenced(self, wtxn, &record)?;
         Ok(())
     }
 
@@ -292,7 +292,7 @@ impl Vault {
         let record = record.over_held(held.as_ref());
         // A record whose replies an erase took stays erased (FIX 5718).
         let record = fence_replay_in_txn(self, wtxn, record)?;
-        replay_rows::put(self, wtxn, &record.run_id, &record)?;
+        replay_rows::put_fenced(self, wtxn, &record)?;
         if let Some((key, count)) = next_heal_count {
             MODEL_HEAL_COUNTS.put(&self.store, wtxn, &key, &HealCount(count))?;
         }

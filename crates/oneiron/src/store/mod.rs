@@ -499,6 +499,8 @@ pub use key_custody::custody_container_path;
 #[cfg(oneiron_test_support)]
 pub(crate) use key_custody::custody_entry_reads_for_test;
 #[cfg(oneiron_test_support)]
+pub(crate) use key_custody::custody_policy_digest_for_test;
+#[cfg(oneiron_test_support)]
 pub(crate) use key_custody::drain_ack_digest_for_test;
 pub use key_custody::protocol as custody_protocol;
 pub use key_custody::sync_dir;
@@ -541,6 +543,8 @@ pub(crate) use root_directory::arm_after_root_entry_removed;
 
 #[cfg(unix)]
 pub use directory_exchange::{HeldEntry, exchange_held};
+#[cfg(unix)]
+pub(crate) use root_directory::make_vault_root_all;
 #[cfg(unix)]
 pub use root_directory::{
     SharedPath, refuse_shared_path, refuse_shared_vault_root, remove_held_directory, shared_path,

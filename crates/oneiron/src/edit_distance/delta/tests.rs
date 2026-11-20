@@ -874,6 +874,7 @@ fn amended_outcome_receipt(proposal: EntityId, amended: &[u8]) -> ReceiptRecord 
 fn an_unmeasurable_identity_amendment_projects_as_uncaptured() {
     let (_tmp, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    vault.prepare_install_signing().expect("install signing");
     let (proposal, survivor, source) = parked_merge_proposal(&vault);
 
     // Valid hex, undecodable body: an array header promising an element that
