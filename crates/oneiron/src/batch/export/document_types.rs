@@ -411,8 +411,12 @@ pub struct WholeVaultImportReceipt {
     /// (`TargetDefaultFacetKept`), a claim about a link the import did not
     /// bring back before it, an edge-provenance claim among them
     /// (`ClaimSubjectEdgeNotRestored`), a coreference share consent
-    /// (`CoreferenceConsentNotRestored`), and a claim about a row kept out
-    /// (`ClaimSubjectNotRestored`).
+    /// (`CoreferenceConsentNotRestored`), a claim about a row kept out
+    /// (`ClaimSubjectNotRestored`), and an edge-provenance claim the gate
+    /// would hold for review (`ProvenanceAutoNotPermitted`). One more entry
+    /// is no omitted row: a provenance claim this vault already holds open,
+    /// whose archived close the gate would hold, stays here as it was and is
+    /// named under `ProvenanceAutoNotPermitted` too.
     pub destination_omissions: Vec<ExportImportOmission>,
     /// Domain-owned identities (currently MODEL name/version) rebound locally.
     pub remapped_entities: std::collections::BTreeMap<String, String>,
