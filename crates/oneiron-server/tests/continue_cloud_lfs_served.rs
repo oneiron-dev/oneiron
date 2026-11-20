@@ -22,6 +22,20 @@
 //!   custody repo gains no ref. Before the fix the pack went and the landing
 //!   refused it, with no word of the missing object.
 //!
+//! Review round 1 of #9882 added four cases; before the fix each fails, as
+//! the base's push sends no object:
+//! - A local `refs/replace/` entry that reads the pointer's blob as a plain
+//!   file hides nothing: the push reads objects as stored, as the pack and
+//!   the custody repo's pre-receive do, so the object goes and the hand-off
+//!   lands.
+//! - A blob of pointer fields padded to 1024 bytes by an `ext-` line is no
+//!   pointer to git-lfs, so it lands as a plain file, its named object on
+//!   neither side.
+//! - An `lfs.storage` path that ends in a space is read byte for byte: the
+//!   object stored there goes and the hand-off lands.
+//! - An object path holding a FIFO stops the push before its pack, naming
+//!   the path, and is never opened to wait on a writer.
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --features oneiron/test-support --test
 //! continue_cloud_lfs_served`. Stock `git` (with `http-backend`) must be on
@@ -38,7 +52,7 @@ use ed25519_dalek::SigningKey;
 use engine_stack::on_engine_stack;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole};
 use oneiron::federation::Scope;
-use oneiron::origin::lfs::LfsOid;
+use oneiron::origin::lfs::{LFS_POINTER_SIZE_CUTOFF, LfsOid};
 use oneiron::origin::smart_http::{ORIGIN_REPO_DIR_SUFFIX, origin_serving_root};
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_server::config::SyncServerConfig;
@@ -244,6 +258,139 @@ fn an_object_on_neither_side_stops_the_push_before_its_pack() -> TestResult {
         assert!(
             error.contains("assets/model.bin") && error.contains("git lfs fetch"),
             "the error names the path and how to fetch the object: {error}"
+        );
+        assert_eq!(served.landed(), None, "the custody repo gains no ref");
+        assert!(
+            !served.vault.has_lfs_object(oid, size())?,
+            "the vault holds no object"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_local_replace_ref_of_the_pointer_blob_still_sends_its_object() -> TestResult {
+    on_engine_stack(|| async {
+        let served = Served::start().await?;
+        let work = tempfile::tempdir()?;
+        let oid = work_repo(work.path(), true)?;
+        // Locally, the pointer's blob reads as a plain file.
+        let pointer = git(
+            work.path(),
+            &["hash-object", "-w", "--", "assets/model.bin"],
+        );
+        std::fs::write(work.path().join("plain.txt"), "a plain file\n")?;
+        let stand_in = git(work.path(), &["hash-object", "-w", "--", "plain.txt"]);
+        std::fs::remove_file(work.path().join("plain.txt"))?;
+        git(
+            work.path(),
+            &["replace", pointer.as_str(), stand_in.as_str()],
+        );
+
+        let pushed = served.push(work.path()).await?;
+
+        let commit = pushed.map_err(|error| format!("the push fails: {error}"))?;
+        assert_eq!(
+            served.landed().as_deref(),
+            Some(commit.as_str()),
+            "the hand-off lands on its continue ref"
+        );
+        assert!(
+            served.vault.has_lfs_object(oid, size())?,
+            "the vault holds the work's Git-LFS object"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn pointer_fields_padded_to_the_cutoff_land_as_a_plain_file() -> TestResult {
+    on_engine_stack(|| async {
+        let served = Served::start().await?;
+        let work = tempfile::tempdir()?;
+        let oid = work_repo(work.path(), false)?;
+        let file = work.path().join("assets/model.bin");
+        let pointer = std::fs::read_to_string(&file)?;
+        let (version, fields) = pointer
+            .split_once('\n')
+            .ok_or("the pointer starts with its version line")?;
+        let ext = "ext-0-pad ";
+        let cutoff = usize::try_from(LFS_POINTER_SIZE_CUTOFF)?;
+        let pad = "x".repeat(cutoff - pointer.len() - ext.len() - 1);
+        let padded = format!("{version}\n{ext}{pad}\n{fields}");
+        assert_eq!(padded.len(), cutoff, "the blob is exactly the cutoff long");
+        std::fs::write(&file, padded)?;
+
+        let pushed = served.push(work.path()).await?;
+
+        let commit = pushed.map_err(|error| format!("the push fails: {error}"))?;
+        assert_eq!(
+            served.landed().as_deref(),
+            Some(commit.as_str()),
+            "the hand-off lands on its continue ref"
+        );
+        assert!(
+            !served.vault.has_lfs_object(oid, size())?,
+            "nothing asked for the object the blob names"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn an_lfs_storage_path_ending_in_a_space_is_read_as_written() -> TestResult {
+    on_engine_stack(|| async {
+        let served = Served::start().await?;
+        let work = tempfile::tempdir()?;
+        let oid = work_repo(work.path(), false)?;
+        git(work.path(), &["config", "lfs.storage", "media "]);
+        let hex = oid.to_hex();
+        let store = work
+            .path()
+            .join(".git/media /objects")
+            .join(&hex[..2])
+            .join(&hex[2..4]);
+        std::fs::create_dir_all(&store)?;
+        std::fs::write(store.join(&hex), OBJECT)?;
+
+        let pushed = served.push(work.path()).await?;
+
+        let commit = pushed.map_err(|error| format!("the push fails: {error}"))?;
+        assert_eq!(
+            served.landed().as_deref(),
+            Some(commit.as_str()),
+            "the hand-off lands on its continue ref"
+        );
+        assert!(
+            served.vault.has_lfs_object(oid, size())?,
+            "the vault holds the work's Git-LFS object"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_fifo_at_the_object_path_stops_the_push_before_its_pack() -> TestResult {
+    on_engine_stack(|| async {
+        let served = Served::start().await?;
+        let work = tempfile::tempdir()?;
+        let oid = work_repo(work.path(), false)?;
+        let hex = oid.to_hex();
+        let store = work
+            .path()
+            .join(".git/lfs/objects")
+            .join(&hex[..2])
+            .join(&hex[2..4]);
+        std::fs::create_dir_all(&store)?;
+        let made = Command::new("mkfifo").arg(store.join(&hex)).status()?;
+        assert!(made.success(), "mkfifo makes the FIFO");
+
+        let pushed = served.push(work.path()).await?;
+
+        let error = pushed.expect_err("the push fails");
+        assert!(
+            error.contains("assets/model.bin") && error.contains("not a regular file"),
+            "the error names the path and why its object cannot go: {error}"
         );
         assert_eq!(served.landed(), None, "the custody repo gains no ref");
         assert!(
