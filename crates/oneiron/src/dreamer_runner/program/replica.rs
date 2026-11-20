@@ -380,7 +380,13 @@ pub(crate) enum RowMerge {
 /// registration's intent order than the intent held here, an `Armed` row
 /// as the arming, a `Disarmed` row as the disarm this machine keeps. An
 /// earlier row changes nothing. A row of an actor erased here is refused,
-/// and so is a row whose key names an arming held here that does not ride.
+/// and so is a row whose key names an arming held here that a turn does
+/// not wake. A turn arming held here meets no such refusal, whether or not
+/// it rides: an `Armed` row that would not ride is refused before this
+/// ([`admit_arming_row`]), and a `Disarmed` row is that registration's
+/// disarm, made where it was held too (it rode there, or a checkpoint
+/// copied it), so it ends the copy here as well; refused, it would leave
+/// turns here waking a program its owner disarmed.
 pub(crate) fn merge_arming_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -395,7 +401,8 @@ pub(crate) fn merge_arming_row_in_txn(
         return Ok(RowMerge::Refused("names an actor erased here"));
     }
     let key = (row.actor(), row.registration());
-    // An arming that never rode is no carried row's to replace or end.
+    // A non-turn arming never rides and its disarm leaves no row, so no
+    // carried row is its to replace or end.
     if ARM
         .get(vault, &*txn, &key)?
         .is_some_and(|arming| !arming.trigger.is_turn())
