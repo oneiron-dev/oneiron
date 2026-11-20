@@ -81,20 +81,24 @@ pub struct FrontierJoin {
 impl FrontierJoin {
     /// A join has no field to judge alone beyond its scope's signer family;
     /// it names at least two parents, with no upper count (FIX 8527), and is
-    /// signed by one key alone: an install key or an owner anchor, Ed25519,
-    /// or in the host family a live owner roster key in either root suite, as
-    /// a ReRoot's signer may be a P-256 root (FIX 11993). The signature's own
-    /// check binds key and suite.
+    /// signed by one key: an install key, Ed25519, alone or beside one owner
+    /// key's proof ([`validate_carried_signers`]); alone an owner anchor,
+    /// Ed25519, or in the host family a live owner roster key in either root
+    /// suite, as a ReRoot's signer may be a P-256 root (FIX 11993). The
+    /// signature's own check binds key and suite.
     pub(super) fn validate_entry(&self, entry: &AuthorityLogEntry) -> Result<()> {
         if !self.scoped()
             || entry.parent_hashes.len() < 2
-            || !entry.cosigns.is_empty()
             || (self.family != FrontierJoinFamily::Host
                 && entry.signer.suite != AuthoritySignatureSuite::Ed25519)
         {
             return Err(invalid_authority());
         }
-        Ok(())
+        match self.family {
+            FrontierJoinFamily::Install(_) => validate_carried_signers(entry),
+            _ if !entry.cosigns.is_empty() => Err(invalid_authority()),
+            _ => Ok(()),
+        }
     }
 
     /// Whether `family` may join `scope`'s heads: the main log's in any

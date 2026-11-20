@@ -335,6 +335,16 @@ fn fold_merged_entry(
     ) {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
+    // A carried act whose own transition reads no proof may carry one owner
+    // key's proof beside its carrier's install signature, judged here once at
+    // the parent state (row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS): it
+    // moves no fold state, and buys only the owner reserve at an install the
+    // act did not come from ([`super::log_budget`]).
+    if super::owner_proof::proof_judged_at_merge(&entry.op)
+        && let Err(issue) = super::owner_proof::owner_proof_key(&state, entry, hash)
+    {
+        return EntryFold::Invalid(issue);
+    }
     // A frontier join stands for its parents' merge, signed by the key that
     // signs the act it leads to (FIX 7908): only its signer's sequence moves.
     if let AuthorityOp::FrontierJoin(join) = &entry.op {

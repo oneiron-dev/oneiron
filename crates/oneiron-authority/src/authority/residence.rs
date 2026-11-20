@@ -216,15 +216,13 @@ impl ResidenceResult {
         Ok(())
     }
 
-    /// Signed alone by an Ed25519 install key. Its directive's entry is a
-    /// parent or beneath one, so a result never precedes what it answers:
-    /// the fold judges which (FIX 5412), from the parent state's valid
-    /// directives where the entry is no parent.
+    /// Signed by an Ed25519 install key, the executor's, alone or beside one
+    /// owner key's proof ([`validate_carried_signers`]). Its directive's
+    /// entry is a parent or beneath one, so a result never precedes what it
+    /// answers: the fold judges which (FIX 5412), from the parent state's
+    /// valid directives where the entry is no parent.
     pub(super) fn validate_entry(&self, entry: &AuthorityLogEntry) -> Result<()> {
-        if entry.signer.suite != AuthoritySignatureSuite::Ed25519 || !entry.cosigns.is_empty() {
-            return Err(invalid_authority());
-        }
-        Ok(())
+        validate_carried_signers(entry)
     }
 }
 

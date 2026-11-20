@@ -65,6 +65,37 @@ pub(super) fn owner_proof_key(
     }
 }
 
+/// Whether `op` is a carried act whose own transition reads no owner proof,
+/// so the merge judges its one cosign by [`owner_proof_key`] before that
+/// transition runs (row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS; Engine
+/// ANSWER OWNER-RESERVE-CROSS-INSTALL-GAPS = A): owner work's request,
+/// result, cancel, import mark and permit piece, a residence result, world
+/// key wraps, an install's frontier join, a whole-vault export, a world's
+/// privacy, a grant's travel, an agent grant act and a membership execution.
+/// A kit push, its pieces and an anchor's or the host's join are signed
+/// alone by shape. The owner choices and machine answers read the proof in
+/// their own judges.
+pub(super) fn proof_judged_at_merge(op: &AuthorityOp) -> bool {
+    match op {
+        AuthorityOp::OwnerWorkRequest(request) => request.kit_root().is_none(),
+        AuthorityOp::CustodyPermitPiece(piece) => piece.carrier.is_some(),
+        AuthorityOp::FrontierJoin(join) => {
+            matches!(join.family, FrontierJoinFamily::Install(_))
+        }
+        AuthorityOp::OwnerWorkResult(_)
+        | AuthorityOp::OwnerWorkCancel(_)
+        | AuthorityOp::ExportSupplementImported(_)
+        | AuthorityOp::ResidenceResult(_)
+        | AuthorityOp::WorldKeyWraps(_)
+        | AuthorityOp::ExportAct(_)
+        | AuthorityOp::WorldPrivacy(_)
+        | AuthorityOp::GrantTravelSet(_)
+        | AuthorityOp::AgentGrantAct(_)
+        | AuthorityOp::MembershipExecution(_) => true,
+        _ => false,
+    }
+}
+
 /// Whether `key` is a key `state` trusts as the owner's: live on the roster
 /// with `ROLE_OWNER`, and not in the host's custody on a hosted fold. A
 /// revoked or retired key, an admin-only key and a managed host's custodial

@@ -204,8 +204,9 @@ impl WorldKeyWrapsRecord {
         sealed.len() == self.wraps.len() && sealed == self.permitted
     }
 
-    /// The entry the record rides: one Ed25519 signer and no cosign, and
-    /// every envelope's header made for exactly this record, its vault and its
+    /// The entry the record rides: one Ed25519 signer, alone or beside one
+    /// owner key's proof ([`validate_carried_signers`]), and every envelope's
+    /// header made for exactly this record, its vault and its
     /// list entry. No key derivation runs here. Its shape names no parent: the
     /// request must be in the entry's causal past, a parent or beneath one,
     /// which the fold judges before the record counts (CALLS "FIX 5464
@@ -214,9 +215,7 @@ impl WorldKeyWrapsRecord {
         let Some(vault_id) = entry.vault_id else {
             return Err(invalid_authority());
         };
-        if entry.signer.suite != AuthoritySignatureSuite::Ed25519 || !entry.cosigns.is_empty() {
-            return Err(invalid_authority());
-        }
+        validate_carried_signers(entry)?;
         let key_id = self.key.envelope_key_id();
         for (recipient, bytes) in &self.wraps {
             let envelope = Envelope::parse(bytes).map_err(|_| invalid_authority())?;
