@@ -185,7 +185,8 @@ impl SessionOverlay {
     /// The bytes the overlay retains now (FIX 10104): its published state,
     /// `segment`, a write's live segment, the states live snapshots read and
     /// the copies live promotion plans hold, each shared allocation once,
-    /// with `incoming`, the heap a copy about to be made will hold.
+    /// and the values the room keeps in its own custody (REVIEW-10003 round
+    /// 2), with `incoming`, the heap a copy about to be made will hold.
     pub(super) fn retained_with(&self, segment: Option<&TxnSegment>, incoming: usize) -> usize {
         let mut retained = Retained::default();
         retained.state(&self.state.load_full());
@@ -193,7 +194,10 @@ impl SessionOverlay {
             retained.segment(segment);
         }
         retained.held(&self.held.lock().unwrap_or_else(PoisonError::into_inner));
-        retained.bytes().saturating_add(incoming)
+        retained
+            .bytes()
+            .saturating_add(self.room_secret_bytes())
+            .saturating_add(incoming)
     }
 
     /// Moves a bound charge to what the overlay retains now: its published
