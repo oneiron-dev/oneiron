@@ -194,3 +194,13 @@ fn as_decoded(fold: &AuthorityFold) -> Result<AuthorityFold> {
     let bytes = rmp_serde::to_vec_named(fold).map_err(|_| invalid_authority())?;
     rmp_serde::from_slice(&bytes).map_err(|_| invalid_authority())
 }
+
+/// Whether the adopted-fold gate's covered-row check passes for `image`'s
+/// covered row summaries, over every signer (FIX
+/// [ADOPTED-FOLD-GATE-SIGNER-COST]): each signer's covered rows in each
+/// sequence scope form one chain. The check reads `image.rows` alone, so a
+/// test may replace them.
+#[must_use]
+pub fn covered_rows_unfloored(image: &AuthorityCheckpointV2) -> bool {
+    crate::authority::adopted_fold::covered_rows_unfloored_for_door(image)
+}
