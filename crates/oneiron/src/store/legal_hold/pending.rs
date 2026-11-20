@@ -104,6 +104,26 @@ pub(crate) fn set_pending_veto_act_in_txn(
     Ok(true)
 }
 
+/// Takes the `erase` act name off the waiting erase of `record`, as a crash
+/// between its confirm's writer and its act start leaves the row (FIX
+/// 10401). The act it named; `None` when no erase of `record` waits, or it
+/// names no act.
+#[cfg(oneiron_test_support)]
+pub(crate) fn take_pending_veto_act_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    record: &EntityId,
+) -> Result<Option<String>> {
+    let Some(mut pending) = pending_erase_in_txn(dbs, txn, record)? else {
+        return Ok(None);
+    };
+    let act = pending.veto_act.take();
+    if act.is_some() {
+        PENDING_ERASES.put(dbs, txn, record, &pending)?;
+    }
+    Ok(act)
+}
+
 /// The explicit lift-and-erase requests that wait with no `erase` act named
 /// (FIX 10401): each one whose act never started, as when the confirm's
 /// writer committed and its act start did not follow.
