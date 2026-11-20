@@ -8,6 +8,7 @@
 
 mod birth_watch;
 mod delivery;
+mod dropped_carriers;
 mod entity;
 mod message_writer;
 mod order;
@@ -25,6 +26,10 @@ pub(in crate::sync) use self::delivery::{
     Delivery, delivered_rows, note_delivered_in_txn, payload_rows, with_delivery,
 };
 
+pub(crate) use self::dropped_carriers::forget_dropped_carriers_in_txn;
+pub(in crate::sync) use self::dropped_carriers::{
+    carrier_dropped_in_txn, drops_changed_carrier_in_txn,
+};
 #[cfg(test)]
 pub(in crate::sync) use self::entity::ingest_entity_in_savepoint;
 pub(in crate::sync) use self::entity::{
