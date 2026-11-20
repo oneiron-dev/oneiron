@@ -344,14 +344,19 @@ impl RecordingJsHost<'_, '_> {
     }
 
     /// A callable skill's checked answer as the guest gets it: its JSON up
-    /// to the inline reply size, else its card, the answer copied whole from
-    /// the call's spool into a body of the run; only the large-answer copy
-    /// here streams in frames without reading into one value. With `whole`
-    /// (a verb-hook post chain is live for the call, its own or the admitted
-    /// outer caller's) the answer is read into one value at any size, so
-    /// that chain reads the body itself, never its card; `dispatch_call`
-    /// then stores it for the record as it stores every large answer, a
-    /// hook's view leaving it record-only ([`Shown::View`]).
+    /// to the inline reply size and nesting, else its card, the answer
+    /// copied whole from the call's spool into a body of the run; only the
+    /// stored-body copy here streams in frames without reading into one
+    /// value. An answer nesting past [`WHOLE_ANSWER_MAX_DEPTH`] is stored
+    /// that way at any size, so no value the host builds or drops follows
+    /// its depth (SKILL-ANSWER-DEEP-JSON-STACK-SAFE); the guest reads its
+    /// body as text. With `whole` (a verb-hook post chain is live for the
+    /// call, its own or the admitted outer caller's) the answer is read
+    /// into one value at any size, so that chain reads the body itself,
+    /// never its card; `dispatch_call` then stores it for the record as it
+    /// stores every large answer, a hook's view leaving it record-only
+    /// ([`Shown::View`]). A whole answer nesting past that depth is refused
+    /// with its cause.
     pub(super) fn skill_answer(
         &mut self,
         seq: u64,
@@ -359,10 +364,17 @@ impl RecordingJsHost<'_, '_> {
         whole: bool,
     ) -> Result<serde_json::Value> {
         if whole || answer.byte_len() <= RESULT_REPLY_INLINE_BYTES as u64 {
-            refuse_too_deep_answer(&mut answer, whole)?;
-            return serde_json::from_reader(std::io::BufReader::new(answer.reader()?)).map_err(
-                |_| Error::InvalidConfig("callable skill returned non-JSON output".to_owned()),
-            );
+            let nests_past = answer_nests_past_whole_depth(&mut answer)?;
+            if nests_past && whole {
+                return Err(Error::Refused(
+                    "the skill answer nests too deep for the live post hook to judge".to_owned(),
+                ));
+            }
+            if !nests_past {
+                return serde_json::from_reader(std::io::BufReader::new(answer.reader()?)).map_err(
+                    |_| Error::InvalidConfig("callable skill returned non-JSON output".to_owned()),
+                );
+            }
         }
         // The spool-to-body copy holds its bytes on the run's own share
         // (FIX 10674), as the answer check does; past the share the watch
@@ -1023,19 +1035,19 @@ pub(super) fn records_failed_effect(effect: SelfEffect) -> bool {
 /// (`serde_json` 1.0.151 `de.rs`, `remaining_depth: 128`, `check_recursion`
 /// failing at zero), so 127 nests. The spool check accepts any depth
 /// (`skill/call/json_tokens.rs` keeps its own stack); past this one the
-/// whole-answer parse below would fail a valid answer as non-JSON, so the
-/// call is refused with its cause instead, before any value is built.
+/// whole-answer parse would fail a valid answer as non-JSON, and a value
+/// built past it would be cloned, serialized and dropped by recursion
+/// that follows its depth on the host's stack. So no value is built:
+/// the answer is stored as a body (`RecordingJsHost::skill_answer`),
+/// or, when a live post chain must read it whole, refused with its cause.
 const WHOLE_ANSWER_MAX_DEPTH: u32 = 127;
 
-/// Refuses a spooled answer that nests past [`WHOLE_ANSWER_MAX_DEPTH`]:
-/// the whole-answer parse cannot read it, however valid its JSON. With a
-/// live post chain the hook never judges half an answer; without one the
-/// answer still says why it cannot be read whole. Reads the spool from its
-/// first byte and leaves it rewound, as it found it.
-fn refuse_too_deep_answer(
-    answer: &mut crate::skill::CallableSkillAnswer,
-    whole_for_hooks: bool,
-) -> Result<()> {
+/// Whether a spooled answer nests past [`WHOLE_ANSWER_MAX_DEPTH`]: the
+/// whole-answer parse cannot read it, however valid its JSON. Counts the
+/// nesting byte by byte, outside strings, so no depth limits the scan.
+/// Reads the spool from its first byte and leaves it rewound, as it found
+/// it.
+fn answer_nests_past_whole_depth(answer: &mut crate::skill::CallableSkillAnswer) -> Result<bool> {
     let reader = answer.reader()?;
     let mut depth: u32 = 0;
     let mut deepest: u32 = 0;
@@ -1064,12 +1076,7 @@ fn refuse_too_deep_answer(
                     depth = depth.saturating_add(1);
                     deepest = deepest.max(depth);
                     if deepest > WHOLE_ANSWER_MAX_DEPTH {
-                        let why = if whole_for_hooks {
-                            "the skill answer nests too deep for the live post hook to judge"
-                        } else {
-                            "the skill answer nests too deep to read whole"
-                        };
-                        return Err(Error::Refused(why.to_owned()));
+                        return Ok(true);
                     }
                 }
                 b'}' | b']' => depth = depth.saturating_sub(1),
@@ -1077,5 +1084,5 @@ fn refuse_too_deep_answer(
             }
         }
     }
-    Ok(())
+    Ok(false)
 }
