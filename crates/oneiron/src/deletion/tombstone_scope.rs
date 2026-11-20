@@ -9,7 +9,7 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::RelationshipRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -36,6 +36,15 @@ pub(crate) struct DeletedRecordScope {
     /// before the field existed has none, and its tombstone travels as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) relationship_read: Option<RelationshipRead>,
+    /// The type byte of the record's header, which a selector narrowed to
+    /// some bands judges a kept row by. The scope's band axis is the record's
+    /// disclosure position, which need not be its own type (a scoped touch
+    /// names CLAIM), so it cannot stand in for it
+    /// (SELECTOR-FACET-BAND-EXPORT-DROPS-BODYLESS-TOMBSTONES, REVIEW-10010
+    /// round 2). A capture written before the field existed has none, and its
+    /// tombstone stays off such a selector, as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) entity_type: Option<u8>,
 }
 
 /// One deleted record's captured scope. Key: hex32 (entity id).
@@ -103,6 +112,19 @@ pub(crate) fn capture_received_scope(vault: &Vault, id: &EntityId, raw_value: &[
     }
 }
 
+/// What `id` held when delete `request` took it. Only a row bound to that
+/// request answers.
+pub(crate) fn deleted_record_scope_in(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    request: &[u8; 16],
+) -> Result<Option<DeletedRecordScope>> {
+    Ok(TOMBSTONE_SCOPE
+        .get(store, txn, &HexId(*id))?
+        .filter(|row| row.request.as_ref() == Some(request)))
+}
+
 /// The scope `id` held when delete `request` took it. Only a row bound to that
 /// request answers.
 pub(crate) fn deleted_scope_in(
@@ -111,10 +133,7 @@ pub(crate) fn deleted_scope_in(
     id: &EntityId,
     request: &[u8; 16],
 ) -> Result<Option<Scope>> {
-    Ok(TOMBSTONE_SCOPE
-        .get(store, txn, &HexId(*id))?
-        .filter(|row| row.request.as_ref() == Some(request))
-        .map(|row| row.scope))
+    Ok(deleted_record_scope_in(store, txn, id, request)?.map(|row| row.scope))
 }
 
 /// The relationship read `id` held when delete `request` took it. Only a row
@@ -126,10 +145,7 @@ pub(crate) fn deleted_relationship_read_in(
     id: &EntityId,
     request: &[u8; 16],
 ) -> Result<Option<Option<RelationshipRead>>> {
-    Ok(TOMBSTONE_SCOPE
-        .get(store, txn, &HexId(*id))?
-        .filter(|row| row.request.as_ref() == Some(request))
-        .map(|row| row.relationship_read))
+    Ok(deleted_record_scope_in(store, txn, id, request)?.map(|row| row.relationship_read))
 }
 
 /// A live row's scope is written. With no live row (none, or a deleted
@@ -146,15 +162,23 @@ fn capture_in_txn(
     let live = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         .filter(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
     let captured = match live {
-        Some(raw) => crate::federation::record_scope::scope_for_blob(store, txn, *id, &raw)?
-            .map(|scope| (scope, live_relationship_read(store, txn, id, &raw))),
+        Some(raw) => {
+            crate::federation::record_scope::scope_for_blob(store, txn, *id, &raw)?.map(|scope| {
+                (
+                    scope,
+                    live_relationship_read(store, txn, id, &raw),
+                    EntityMetadataHeader::parse(&raw).map(|header| header.entity_type),
+                )
+            })
+        }
         None => None,
     };
     let row = match (captured, held) {
-        (Some((scope, relationship_read)), held) => DeletedRecordScope {
+        (Some((scope, relationship_read, entity_type)), held) => DeletedRecordScope {
             scope,
             request: request.copied().or(held.and_then(|row| row.request)),
             relationship_read: Some(relationship_read),
+            entity_type,
         },
         (None, Some(held)) => {
             if request.is_none() || request == held.request.as_ref() {
@@ -164,6 +188,7 @@ fn capture_in_txn(
                 scope: held.scope,
                 request: request.copied(),
                 relationship_read: held.relationship_read,
+                entity_type: held.entity_type,
             }
         }
         (None, None) => return Ok(()),

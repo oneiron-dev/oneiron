@@ -6,8 +6,8 @@
 //! delete captured lies in the worlds it selects (FOLLOWED-WORLD-TIER1-
 //! TOMBSTONE-IDS, blind review 2 of #9592): a hard delete took the row's
 //! carrier out of the window, so the selector keeps no row to judge. A
-//! selector narrowed to some bands takes one only where the type its delete
-//! captured lies in a band it selects
+//! selector narrowed to some bands takes one only where the row type its
+//! delete captured lies in a band it selects
 //! (SELECTOR-FACET-BAND-EXPORT-DROPS-BODYLESS-TOMBSTONES). A selector narrowed
 //! to some facets takes none: it keeps a row by the row's `FacetOf` edges,
 //! which the capture does not hold (SELECTOR-FACET-EXPORT-DROPS-BODYLESS-
@@ -21,7 +21,7 @@ use heed::RoTxn;
 use crate::Vault;
 use crate::access_grant::AccessContext;
 use crate::deletion::decode_tombstone_value;
-use crate::deletion::tombstone_scope::{deleted_relationship_read_in, deleted_scope_in};
+use crate::deletion::tombstone_scope::{deleted_record_scope_in, deleted_relationship_read_in};
 use crate::entity_id::EntityId;
 use crate::federation::{Scope, ScopeAxis, ScopeId, SelectorRange};
 
@@ -95,36 +95,33 @@ impl<'g> TombstoneExport<'g> {
         let Some(request) = decode_tombstone_value(value).request_id else {
             return UNPROVEN_TOMBSTONE_EXPORTED;
         };
-        match deleted_scope_in(&vault.store, txn, id, &request) {
-            Ok(Some(scope)) => {
-                self.selects(vault, &scope)
-                    && (self.unrestricted || self.grant.admits("read", &scope, &Scope::top()))
+        match deleted_record_scope_in(&vault.store, txn, id, &request) {
+            Ok(Some(captured)) => {
+                self.selects(vault, &captured.scope, captured.entity_type)
+                    && (self.unrestricted
+                        || self.grant.admits("read", &captured.scope, &Scope::top()))
             }
             Ok(None) | Err(_) => UNPROVEN_TOMBSTONE_EXPORTED,
         }
     }
 
-    /// Whether the captured position `scope` lies in what the selector
-    /// selects, judged as a kept row is: a world position in the selected
-    /// worlds or in base reality, which every such selector selects
-    /// (`SyncSelectorWorld`), and each captured type byte (a record scope's
-    /// band axis holds the row's type) in a selected band
-    /// ([`super::scope::selector_identity`]). A band axis that names no type
-    /// is no position on it.
-    fn selects(&self, vault: &Vault, scope: &Scope) -> bool {
+    /// Whether the captured position `scope` and row type `entity_type` lie in
+    /// what the selector selects, judged as a kept row is: a world position
+    /// in the selected worlds or in base reality, which every such selector
+    /// selects (`SyncSelectorWorld`), and the row's header type in a selected
+    /// band ([`super::scope::selector_identity`], as
+    /// [`super::scope::entity_selector_decision`] bands a kept row). The
+    /// scope's band axis is its disclosure position, not the row's type, so
+    /// it does not decide the band. A capture with no type is in no band.
+    fn selects(&self, vault: &Vault, scope: &Scope, entity_type: Option<u8>) -> bool {
         let worlds = self.worlds.is_none_or(|worlds| {
             scope.worlds == crate::federation::base_world_axis()
                 || scope.worlds.is_narrowing_of(worlds)
         });
-        let bands = self.bands.is_none_or(|bands| match &scope.bands {
-            ScopeAxis::Some(kinds) => {
-                !kinds.is_empty()
-                    && kinds.iter().all(|kind| {
-                        super::scope::selector_identity(vault, *kind)
-                            .is_some_and(|band| bands.contains(&band))
-                    })
-            }
-            ScopeAxis::All | ScopeAxis::Bottom => false,
+        let bands = self.bands.is_none_or(|bands| {
+            entity_type
+                .and_then(|kind| super::scope::selector_identity(vault, kind))
+                .is_some_and(|band| bands.contains(&band))
         });
         worlds && bands
     }
