@@ -24,7 +24,9 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
     config.map_size = 16 * 1024 * 1024;
     config.dimensions = 4;
     config.embedding_model = None;
-    crate::test_util::open_test_vault_with(config)
+    let (dir, vault) = crate::test_util::open_test_vault_with(config);
+    vault.prepare_install_signing().expect("install signing");
+    (dir, vault)
 }
 
 fn validate_through_chokepoint(body: &ClaimBody) -> Result<ClaimBody> {

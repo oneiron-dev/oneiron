@@ -43,6 +43,7 @@ use oneiron_model::llm::{
     BudgetThreshold, WorkCancel,
 };
 
+use super::build_boxed_future;
 use super::deadline::{
     DREAMER_WRAP_UP_NOTICE_PERCENT, WakeCancellation, WakePassDeadline, sync_wake_cancel,
 };
@@ -426,8 +427,8 @@ impl<'a> DreamerWakeDriver<'a> {
             // flag until the whole queue drained.
             yield_once().await;
             if let Some(stop) = boundary_stop(self, cancel) {
-                if let SettleFlow::FailPass(error) = self
-                    .flush_window(
+                if let SettleFlow::FailPass(error) = build_boxed_future(|| {
+                    self.flush_window(
                         &mut window,
                         &input,
                         exec,
@@ -436,7 +437,8 @@ impl<'a> DreamerWakeDriver<'a> {
                         &mut held_error,
                         &mut report,
                     )
-                    .await?
+                })
+                .await?
                 {
                     return Err(error);
                 }
@@ -561,8 +563,8 @@ impl<'a> DreamerWakeDriver<'a> {
             let mut admitted = match admitted {
                 Some(admitted) => admitted,
                 None => {
-                    if let SettleFlow::FailPass(error) = self
-                        .flush_window(
+                    if let SettleFlow::FailPass(error) = build_boxed_future(|| {
+                        self.flush_window(
                             &mut window,
                             &input,
                             exec,
@@ -571,7 +573,8 @@ impl<'a> DreamerWakeDriver<'a> {
                             &mut held_error,
                             &mut report,
                         )
-                        .await?
+                    })
+                    .await?
                     {
                         return Err(error);
                     }
@@ -653,8 +656,8 @@ impl<'a> DreamerWakeDriver<'a> {
                     spend_meter,
                 });
                 if window.len() >= partition_parallelism {
-                    if let SettleFlow::FailPass(error) = self
-                        .flush_window(
+                    if let SettleFlow::FailPass(error) = build_boxed_future(|| {
+                        self.flush_window(
                             &mut window,
                             &input,
                             exec,
@@ -663,7 +666,8 @@ impl<'a> DreamerWakeDriver<'a> {
                             &mut held_error,
                             &mut report,
                         )
-                        .await?
+                    })
+                    .await?
                     {
                         return Err(error);
                     }
@@ -674,8 +678,8 @@ impl<'a> DreamerWakeDriver<'a> {
             // failure ends the pass only after that admission is
             // released (parked resumable, reservation refunded), never
             // left leased behind the error (FIX 12487 round 1).
-            let flush_error = match self
-                .flush_window(
+            let flush_error = match build_boxed_future(|| {
+                self.flush_window(
                     &mut window,
                     &input,
                     exec,
@@ -684,7 +688,8 @@ impl<'a> DreamerWakeDriver<'a> {
                     &mut held_error,
                     &mut report,
                 )
-                .await
+            })
+            .await
             {
                 Ok(SettleFlow::FailPass(error)) => Some(error),
                 Ok(_) => None,
@@ -706,8 +711,8 @@ impl<'a> DreamerWakeDriver<'a> {
                 }
                 return Err(error);
             }
-            let dispatched = self
-                .dispatch_admitted(
+            let dispatched = build_boxed_future(|| {
+                self.dispatch_admitted(
                     Dispatch {
                         input: &input,
                         admitted: &admitted,
@@ -721,9 +726,10 @@ impl<'a> DreamerWakeDriver<'a> {
                     exec,
                     &mut report,
                 )
-                .await;
-            match self
-                .settle_attempt_outcome(
+            })
+            .await;
+            match build_boxed_future(|| {
+                self.settle_attempt_outcome(
                     &input,
                     &admitted,
                     &line,
@@ -734,7 +740,8 @@ impl<'a> DreamerWakeDriver<'a> {
                     &mut held_error,
                     &mut report,
                 )
-                .await?
+            })
+            .await?
             {
                 SettleFlow::Continue => {}
                 SettleFlow::Break(stop) => {

@@ -372,6 +372,7 @@ fn page_model(policy: &BookingConversionPolicy) -> BookingPageModel {
         },
         constraint: None,
         visitor_tz: "UTC".to_owned(),
+        duration_min: None,
     };
     let mask = slot_mask(
         &request,
@@ -391,6 +392,7 @@ fn page_model(policy: &BookingConversionPolicy) -> BookingPageModel {
                 deposit: None,
                 duration_min: 10,
                 description: "Fixture description".to_owned(),
+                allowed_durations_min: Vec::new(),
             }],
             constraint_field: ConstraintFieldConfig {
                 enabled: false,
@@ -526,6 +528,7 @@ impl SolverFixture {
             },
             constraint: None,
             visitor_tz: "UTC".to_owned(),
+            duration_min: None,
         })
         .expect("the fixture day solves")
     }
@@ -537,6 +540,7 @@ fn solver_config(flex_with_ordinary: bool) -> EventTypeConfig {
     EventTypeConfig {
         key: EventTypeKey("intro-call".to_owned()),
         duration_min: DEFAULT_INTRO_DURATION_MIN,
+        allowed_durations_min: Vec::new(),
         slot_step_min: 30,
         pre_buffer_min: 0,
         post_buffer_min: 0,
@@ -652,6 +656,7 @@ fn companion_config() -> EventTypeConfig {
     EventTypeConfig {
         key: EventTypeKey("friend-hangout".to_owned()),
         duration_min: 60,
+        allowed_durations_min: Vec::new(),
         slot_step_min: 60,
         pre_buffer_min: 0,
         post_buffer_min: 0,

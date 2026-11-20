@@ -8,13 +8,13 @@ use crate::outbound_intent_ledger::{
     OutboundToolDescriptor,
 };
 use crate::overlay_db::OverlayDb;
-use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
+use crate::test_util::{embedding_test_config, entity, open_test_vault_with_manifest};
 use crate::{EdgeKind, EntityId, TimeRange};
 
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
 
 fn fixture() -> (tempfile::TempDir, Arc<Vault>) {
-    let (dir, vault) = open_test_vault_with(embedding_test_config());
+    let (dir, vault) = open_test_vault_with_manifest(embedding_test_config());
     (dir, Arc::new(vault))
 }
 

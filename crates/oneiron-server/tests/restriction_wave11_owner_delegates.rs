@@ -45,13 +45,18 @@ use oneiron::campaign::compliance::{
 use oneiron::dispatch_byoa::{
     RUNNER_SEAT_QUOTAS_VERB, RUNNER_SEAT_TOP_UP_VERB, RUNNER_WORK_RESUME_VERB, RunnerSeat, SeatAuth,
 };
-use oneiron::dreamer_runner::PROGRAM_HOLD_RELEASE_VERB;
+use oneiron::dreamer_runner::{
+    PROGRAM_HOLD_RELEASE_VERB, ProgramHoldReleaseAction, ReleaseTurnProgramHoldRequest,
+    release_turn_program_hold_as_delegate,
+};
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingMode, SettingScope};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::run_doors::CANCEL_FORCE_VERB;
 use oneiron::task_verb::sdk::REPO_ANCHOR_BIND_VERB;
-use oneiron::test_doors::held_program::plant_held_turn_program_for_test;
+use oneiron::test_doors::held_program::{
+    plant_held_turn_program_for_test, plant_unbound_held_turn_program_for_test,
+};
 use oneiron::test_doors::live_task::plant_task_with_live_attempt_for_test;
 use oneiron::test_doors::spend::reserve_child_scope;
 use oneiron::test_doors::spent_seat::{plant_spent_seat_credit_for_test, topped_up_by_for_test};
@@ -322,6 +327,7 @@ fn set_row(vault: &Vault, key: &str, item: Option<&str>, scope: SettingScope, va
             why: None,
             check_in_ref: None,
             weight_runs: None,
+            surface: None,
         }],
         false,
     )
@@ -739,6 +745,226 @@ fn program_hold_release_stop_agent_row_on_stands() {
             .expect("the stored cancellation");
         assert_eq!(stored.grounds, Some(ForceCancelGrounds::OwnerDelegate));
         assert_eq!(stored.actor, agent_hex);
+    });
+}
+
+/// Program-hold Stop by a delegate on another agent's held program
+/// ([W11-DELEGATE-PROGRAM-HOLD-READ]): the row is on and the Grant lists the
+/// verb, but a program's rows read only for its waking actor or the owner.
+/// The door answers the NOT_FOUND a try no program stamped gets, and the try
+/// is not stopped.
+#[test]
+fn program_hold_release_of_a_program_the_delegate_does_not_read_is_not_found() {
+    run_on_engine_stack("w11-release-unread", || async {
+        let fixture = setup();
+        let agent = pair_agent(&fixture, "release-unread", [0xB3; 32]).await;
+        let waker = pair_agent(&fixture, "release-waker", [0xB4; 32]).await;
+        let agent_hex = agent.principal.to_hex();
+        let (attempt_hex, reason, parked_at) = plant_held_turn_program_for_test(
+            &fixture.vault,
+            waker.principal,
+            EdgeActorClass::Agent,
+        )
+        .expect("plant a held program");
+        let _grant = mint_grant(&fixture, &agent_hex, &[PROGRAM_HOLD_RELEASE_VERB]).await;
+        set_row(
+            &fixture.vault,
+            FORCE_CANCEL_KEY,
+            None,
+            SettingScope::Agent(agent.principal),
+            json!(true),
+        );
+
+        let (status, body) = agent_post(
+            &fixture,
+            &agent,
+            &format!("/v1/core/facade/{PROGRAM_HOLD_RELEASE_VERB}"),
+            json!({
+                "attempt": attempt_hex,
+                "reason": reason,
+                "parked_at": parked_at,
+                "action": "stop",
+            }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "another agent's program: {body}"
+        );
+
+        let attempt = AttemptId::from_bytes(
+            EntityId::from_hex(&attempt_hex)
+                .expect("attempt id")
+                .as_bytes(),
+        )
+        .expect("attempt id");
+        let record = AttemptQueue::new(&fixture.vault)
+            .get(attempt)
+            .expect("read the attempt")
+            .expect("the held attempt");
+        assert!(
+            record.cancel_state.cancellation.is_none(),
+            "the try is not stopped: {record:?}"
+        );
+        assert!(
+            !record.state.is_terminal(),
+            "the try stays open: {record:?}"
+        );
+    });
+}
+
+/// Program-hold Stop by a delegate on a try whose stamp names it but binds
+/// no admission ([W11-PROGRAM-HOLD-RELEASE-ADMISSION-BINDING]): a program
+/// reads only through the admission its stamp names, whose wake authority
+/// names the same actor and which queued a root try (`read::program_for`).
+/// With none, the program read finds no program. The row is on and the Grant
+/// lists the verb, yet the door answers the NOT_FOUND a try no program
+/// stamped gets, and the try is not stopped.
+#[test]
+fn program_hold_release_of_a_try_no_admission_binds_is_not_found() {
+    run_on_engine_stack("w11-release-unbound", || async {
+        let fixture = setup();
+        let agent = pair_agent(&fixture, "release-unbound", [0xB6; 32]).await;
+        let agent_hex = agent.principal.to_hex();
+        let (attempt_hex, reason, parked_at) = plant_unbound_held_turn_program_for_test(
+            &fixture.vault,
+            agent.principal,
+            EdgeActorClass::Agent,
+        )
+        .expect("plant a held try with no admission");
+        let _grant = mint_grant(&fixture, &agent_hex, &[PROGRAM_HOLD_RELEASE_VERB]).await;
+        set_row(
+            &fixture.vault,
+            FORCE_CANCEL_KEY,
+            None,
+            SettingScope::Agent(agent.principal),
+            json!(true),
+        );
+
+        let (status, body) = agent_post(
+            &fixture,
+            &agent,
+            &format!("/v1/core/facade/{PROGRAM_HOLD_RELEASE_VERB}"),
+            json!({
+                "attempt": attempt_hex,
+                "reason": reason,
+                "parked_at": parked_at,
+                "action": "stop",
+            }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "a try no admission binds: {body}"
+        );
+
+        let attempt = AttemptId::from_bytes(
+            EntityId::from_hex(&attempt_hex)
+                .expect("attempt id")
+                .as_bytes(),
+        )
+        .expect("attempt id");
+        let record = AttemptQueue::new(&fixture.vault)
+            .get(attempt)
+            .expect("read the attempt")
+            .expect("the held attempt");
+        assert!(
+            record.cancel_state.cancellation.is_none(),
+            "the try is not stopped: {record:?}"
+        );
+        assert!(
+            !record.state.is_terminal(),
+            "the try stays open: {record:?}"
+        );
+    });
+}
+
+/// Program-hold Stop on a credential revoked after the door checked it
+/// (REVIEW-9425 round 2 P1): the door checks the slip in its own snapshot
+/// and hands it to the blocking writer, so a revoke in between must refuse
+/// there. The writer gets the agent's verified credential, revoked first,
+/// for the agent's own held program: NOT_FOUND, and the try is not stopped.
+#[test]
+fn program_hold_release_on_a_credential_revoked_after_the_door_is_not_found() {
+    run_on_engine_stack("w11-release-revoked", || async {
+        let fixture = setup();
+        let agent = pair_agent(&fixture, "release-revoked", [0xB5; 32]).await;
+        let agent_hex = agent.principal.to_hex();
+        let (attempt_hex, reason, parked_at) = plant_held_turn_program_for_test(
+            &fixture.vault,
+            agent.principal,
+            EdgeActorClass::Agent,
+        )
+        .expect("plant a held program");
+        let _grant = mint_grant(&fixture, &agent_hex, &[PROGRAM_HOLD_RELEASE_VERB]).await;
+        set_row(
+            &fixture.vault,
+            FORCE_CANCEL_KEY,
+            None,
+            SettingScope::Agent(agent.principal),
+            json!(true),
+        );
+        let challenge: &[u8] = b"oneiron-request:w11-release-revoked";
+        let signature = agent
+            .holder
+            .sign(
+                &agent
+                    .slip
+                    .binding_transcript(challenge)
+                    .expect("agent binding transcript"),
+            )
+            .to_bytes();
+        let credential = fixture
+            .vault
+            .verify_capability_slip(
+                &fixture.issuer.public_key(),
+                &agent.slip,
+                challenge,
+                &signature,
+            )
+            .expect("the agent proves its credential");
+        fixture
+            .vault
+            .revoke_capability_slip(&fixture.issuer, agent.slip.claims.slip_id)
+            .expect("revoke the agent's credential");
+
+        let vault = Arc::clone(&fixture.vault);
+        let principal = agent.principal;
+        let request = ReleaseTurnProgramHoldRequest {
+            attempt: attempt_hex.clone(),
+            reason,
+            parked_at,
+            action: ProgramHoldReleaseAction::Stop,
+            note: None,
+        };
+        let refused = tokio::task::spawn_blocking(move || {
+            release_turn_program_hold_as_delegate(&vault, principal, Some(&credential), &request)
+        })
+        .await
+        .expect("the release task")
+        .expect_err("a revoked credential stops no try");
+        assert_eq!(refused.code, "NOT_FOUND", "{refused:?}");
+
+        let attempt = AttemptId::from_bytes(
+            EntityId::from_hex(&attempt_hex)
+                .expect("attempt id")
+                .as_bytes(),
+        )
+        .expect("attempt id");
+        let record = AttemptQueue::new(&fixture.vault)
+            .get(attempt)
+            .expect("read the attempt")
+            .expect("the held attempt");
+        assert!(
+            record.cancel_state.cancellation.is_none(),
+            "the try is not stopped: {record:?}"
+        );
+        assert!(
+            !record.state.is_terminal(),
+            "the try stays open: {record:?}"
+        );
     });
 }
 

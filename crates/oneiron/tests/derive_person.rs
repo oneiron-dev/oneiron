@@ -5,7 +5,9 @@
 //! keeps the name rule (a bounded span of the TURN's words), the speaker
 //! rule, the id (derived, never the caller's) and the mint door's refusal of
 //! a taken id. A batch revert archives the PERSON while no other row's
-//! claim names it, after taking back the batch's own claims about it.
+//! claim names it, after taking back the batch's own claims about it. The
+//! cleanup lists the empty PERSON only once no try of the run that minted it
+//! is pending (FIX CLEANUP-ARCHIVES-MINTED-PERSON-BETWEEN-TRIES).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -13,6 +15,7 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use oneiron::attempt_queue::{AttemptQueue, CompleteAttempt};
 use oneiron::memory::MEMORY_CODE_BAD_REQUEST;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::temporal::TimeRange;
@@ -166,8 +169,8 @@ fn a_person_named_in_a_turn_lands_with_its_receipt() {
         "the PERSON holds the name as the TURN spells it"
     );
     assert!(
-        cleanup_lists(&fixture.vault, person).expect("read"),
-        "it is the extraction mint's row: empty, the cleanup lists it"
+        !cleanup_lists(&fixture.vault, person).expect("read"),
+        "the run that minted it is live: the cleanup spares the empty row"
     );
     let receipts = derive_item_receipts(&fixture.vault, &person).expect("read");
     let [receipt] = receipts.as_slice() else {
@@ -183,6 +186,19 @@ fn a_person_named_in_a_turn_lands_with_its_receipt() {
         batches_of(&fixture.vault, fixture.agent).expect("read"),
         vec![id(&answer["batch"])],
         "the batch is recorded under the run's actor"
+    );
+    let leased = fixture.run.leased();
+    AttemptQueue::new(&fixture.vault)
+        .complete(CompleteAttempt {
+            id: leased.id,
+            lease_owner: "test-door".to_owned(),
+            attempt_count: leased.attempt_count,
+            now: leased.updated_at,
+        })
+        .expect("the run completes");
+    assert!(
+        cleanup_lists(&fixture.vault, person).expect("read"),
+        "it is the extraction mint's row: empty, and with its run ended the cleanup lists it"
     );
 }
 

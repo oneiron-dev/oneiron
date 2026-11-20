@@ -227,6 +227,10 @@ pub struct SyncServer {
     /// The `mcp_stdio` connector children every connector host this server
     /// builds sends through (row L8-27), stopped with the server.
     pub(crate) connector_stdio: Arc<crate::connector_call_host::stdio::ConnectorStdioRegistry>,
+    /// The GPU backends this server registered and the permits of the GPU
+    /// job chunks it runs (row L10-31), for the `vault.gpu.jobs.*` doors and
+    /// the GPU job worker.
+    pub(crate) gpu_jobs: Arc<crate::gpu_host::GpuJobHost>,
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
@@ -413,7 +417,7 @@ const _: fn(&SyncServer) = |server| {
         browser_readiness, desktop_guest, artifact_backend, desktop_seats, browser_seats,
         web_fetcher, memories_cursors, self_brief_sessions, deep_retrieval, model_slots,
         trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, embedding_line,
-        decision_read, decision_reads, decisions, hook_runtime, runner_fence,
+        decision_read, decision_reads, decisions, hook_runtime, runner_fence, gpu_jobs,
         #[cfg(feature = "mesh")] mesh_transport,
         builtin_handles,
         #[cfg(unix)] organs,

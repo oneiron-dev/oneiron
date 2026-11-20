@@ -204,6 +204,7 @@ Every paired slip carries a slip id, its identity. Two pairings of identical cla
     - `"encryption_key"`: base64 of 1600 bytes;
     - `"machine_proof"`: 128 hex.
   - The proof is the install key's signature over `b"oneiron/machine-profile/v1\0" || vault_id || machine || machine_key || device_class UTF-8 || 0x00 || suite (u16 BE) || encryption_key`.
+  - An install a restore made also sends `"restored_from"`: 64 hex, the checkpoint image it came from. Its proof then signs `b"oneiron/machine-profile/v2\0" || vault_id || machine || machine_key || device_class UTF-8 || 0x00 || suite (u16 BE) || encryption_key || restored_from`, and the vault counts it only once a machine already joined signs an entry after its enrolment.
   - **Pairing an already-held machine again.** Keep the enrolment request and also
     send top-level `"machine_possession"`: 128 hex, the install key's Ed25519
     signature over `b"oneiron/pairing-machine-possession/v1\0" || vault_id || machine || machine_key || BLAKE3(binding_transcript)`.

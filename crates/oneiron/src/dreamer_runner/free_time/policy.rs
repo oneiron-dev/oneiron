@@ -21,6 +21,7 @@ use crate::authority::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// What free time does for an agent the owner set no policy for. Canon is
 /// silent on it (ARCH-0005b #free-time): this build opens no cycle without
@@ -181,11 +182,25 @@ pub(crate) fn free_time_owns_reflection_in_txn(
 }
 
 /// BLAKE3 over a policy as JSON (`null` for none): the one a write
-/// replaces, or the one it leaves.
+/// replaces, or the one it leaves. It is stored as the next policy's `prior`
+/// and signed into the policy setting act, so it keeps its bytes (K,
+/// PLAN-UC-04 stage 6.2).
 fn policy_digest(policy: Option<&FreeTimePolicy>) -> Result<[u8; 32]> {
     let bytes = serde_json::to_vec(&policy)
         .map_err(|_| Error::InvariantViolation("free-time policy act encoding"))?;
-    Ok(*blake3::hash(&bytes).as_bytes())
+    Ok(
+        LegacyDigest::new(purposes::dreamer::FREE_TIME_POLICY_DIGEST)
+            .raw(&bytes)
+            .finish(),
+    )
+}
+
+/// A policy's digest, `None` for no policy.
+#[cfg(oneiron_test_support)]
+pub(crate) fn free_time_policy_digest_for_test(
+    policy: Option<&FreeTimePolicy>,
+) -> Result<[u8; 32]> {
+    policy_digest(policy)
 }
 
 /// Who sets or clears a policy, as the doors pass it (FIX 5660): the owner's

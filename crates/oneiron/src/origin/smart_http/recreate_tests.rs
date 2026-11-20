@@ -5,7 +5,7 @@
 use super::protected_ref_confirm::ProtectedRefPasses;
 use super::tests::{
     PublicationTestOrigin, advertise, advertised_refs, commit_file, git, landing_time,
-    pointer_file, seeded_repo, served_repo, temp_vault,
+    owner_admission_stamp, owner_principal, pointer_file, seeded_repo, served_repo, temp_vault,
 };
 use super::*;
 use crate::config::VaultConfig;
@@ -98,7 +98,7 @@ fn fetched(url: &str, name: &str) -> String {
 fn a_deleted_ref_pushed_again_at_its_tip_lands_and_settles() {
     let (vault_dir, vault) = temp_vault();
     let (source, repo_dir, first, _second) = served_repo(&vault);
-    let origin = PublicationTestOrigin::start(&vault, EntityId::now());
+    let origin = PublicationTestOrigin::start(&vault, owner_principal(&vault));
     let url = origin.url();
     let create = format!("{}:{TOPIC}", first.as_str());
     git(source.path(), &["push", &url, &create]);
@@ -149,7 +149,7 @@ fn a_deleted_ref_pushed_again_at_its_tip_lands_and_settles() {
 fn an_older_tip_pushed_again_after_a_deletion_is_advertised() {
     let (_vault_dir, vault) = temp_vault();
     let (source, repo_dir, first, second) = served_repo(&vault);
-    let origin = PublicationTestOrigin::start(&vault, EntityId::now());
+    let origin = PublicationTestOrigin::start(&vault, owner_principal(&vault));
     let url = origin.url();
     git(
         source.path(),
@@ -187,7 +187,7 @@ fn an_older_tip_pushed_again_after_a_deletion_is_advertised() {
 fn a_recreation_needing_less_than_its_owner_certified_lands() {
     let (_vault_dir, vault) = temp_vault();
     let (source, repo_dir, first, second) = served_repo(&vault);
-    let origin = PublicationTestOrigin::start(&vault, EntityId::now());
+    let origin = PublicationTestOrigin::start(&vault, owner_principal(&vault));
     let url = origin.url();
     let wire = GitWire::new(&vault).expect("git wire");
     let handle = wire
@@ -242,7 +242,7 @@ fn a_recreation_needing_less_than_its_owner_certified_lands() {
 fn a_deleted_ref_retires_its_slot_and_its_redriven_publication_is_advertised() {
     let (_vault_dir, vault) = temp_vault();
     let (source, repo_dir, first, _second) = served_repo(&vault);
-    let origin = PublicationTestOrigin::start(&vault, EntityId::now());
+    let origin = PublicationTestOrigin::start(&vault, owner_principal(&vault));
     let url = origin.url();
     let (handle, request) = engine_request(&vault, &repo_dir, &first, &first);
     let wire = GitWire::new(&vault).expect("git wire");
@@ -300,7 +300,7 @@ fn a_push_needing_more_than_a_prepared_owner_is_refused_before_the_ref_moves() {
     let owner = vault
         .prepare_origin_publication_for_test(&wire, &request)
         .expect("a Prepared owner of the move, certifying only the tip");
-    let origin = PublicationTestOrigin::start(&vault, EntityId::now());
+    let origin = PublicationTestOrigin::start(&vault, owner_principal(&vault));
     let pushed = std::process::Command::new("git")
         .current_dir(source.path())
         .args(["push", &origin.url(), &format!("{}:{TOPIC}", tip.as_str())])
@@ -347,11 +347,7 @@ fn an_applied_push_needing_more_than_its_owner_settles_uncertified() {
     assert_eq!(owner.record.status, OriginPublicationStatus::Published);
 
     // The push recreating the same move, already applied by the backend.
-    let stamp = DoorAdmissionStamp::from_principal(
-        EntityId::now(),
-        &EntityId::now().to_hex(),
-        crate::unix_seconds_now(),
-    );
+    let stamp = owner_admission_stamp(&vault, &root);
     vault
         .record_receive_pack_admission(&root, &stamp, DoorSeam::Landed)
         .expect("admission");
@@ -396,7 +392,7 @@ fn an_applied_push_needing_more_than_its_owner_settles_uncertified() {
 fn a_ref_recreated_beside_a_new_large_file_lands_on_its_earlier_publication() {
     let (_vault_dir, vault) = temp_vault();
     let (source, repo_dir, first, _second) = served_repo(&vault);
-    let origin = PublicationTestOrigin::start(&vault, EntityId::now());
+    let origin = PublicationTestOrigin::start(&vault, owner_principal(&vault));
     let url = origin.url();
     let create = format!("{}:{TOPIC}", first.as_str());
     git(source.path(), &["push", &url, &create]);
@@ -463,7 +459,7 @@ fn a_recreation_stopped_before_its_landing_keeps_its_publications_dependencies()
     let owner = vault
         .publish_origin_ref(&wire, request.clone())
         .expect("the engine publishes topic");
-    let origin = PublicationTestOrigin::start(&vault, EntityId::now());
+    let origin = PublicationTestOrigin::start(&vault, owner_principal(&vault));
     let url = origin.url();
     git(source.path(), &["push", &url, &format!(":{TOPIC}")]);
     vault

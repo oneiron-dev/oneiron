@@ -146,7 +146,7 @@ pub(crate) use layout_store::{
     board_layouts_in_txn, erase_board_layout_actor_in_txn, inherit_board_layout_in_txn,
 };
 pub use memories::{
-    CompanionAssembly, MEMORIES_SECTION_VERSION_V4, MemoriesBudget, MemoriesCursor,
+    CompanionAssembly, MEMORIES_SECTION_VERSION_V4, MemoriesBudget, MemoriesCursor, MemoriesCut,
     MemoriesSection, MemoryRow, MemorySlot, MemorySource,
 };
 pub use memories_projection::project_memories_section;

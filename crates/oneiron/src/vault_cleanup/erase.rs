@@ -1,8 +1,9 @@
 //! An erase reaches cleanup's own rows (FIX 7517).
 //!
-//! Three private rows name an entity by key and have no listing of their
-//! own: a record's kept mark, a PERSON's mint evidence and a TASK's
-//! archived-attempt index. Each goes by its exact key. The listings, every
+//! Four private rows name an entity by key and have no listing of their
+//! own: a record's kept mark, a PERSON's mint evidence, the lineage of the
+//! attempt that minted it and a TASK's archived-attempt index. Each goes by
+//! its exact key. The listings, every
 //! proposal, digest and run, keep every row and every slot: a slot naming the
 //! erased entity is left in its erased form, nil in its place, with no id,
 //! kind, hash or mark, so each list keeps its order and its count. A later
@@ -27,7 +28,7 @@ use rmpv::Value;
 use super::attempt_retention::erase_task_index_in_txn;
 use super::entity_rows::{self, Listing};
 use super::marks::{self, CleanupMark, Revision};
-use super::person_provenance::EXTRACTION_PERSON;
+use super::person_provenance::{EXTRACTION_LINEAGE, EXTRACTION_PERSON};
 use super::run_record::{KEY_REVERT, KEY_SNAPSHOT};
 use super::run_snapshot::{KEY_AFTER, KEY_BEFORE, KEY_ENTRIES, KEY_REVISION};
 use super::{
@@ -155,6 +156,7 @@ enum Slot {
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
     marks::delete_in_txn(store, txn, id.as_bytes())?;
     EXTRACTION_PERSON.delete(store, txn, id)?;
+    EXTRACTION_LINEAGE.delete(store, txn, id)?;
     erase_task_index_in_txn(store, txn, id)?;
     let named = id.as_bytes();
     let mut unreadable = Unreadable::default();

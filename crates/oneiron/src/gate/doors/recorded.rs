@@ -1,6 +1,6 @@
 //! Recorded claim decisions retained until transaction commit or selective denial rollback.
 
-use crate::gate::{GateDecision, GateMetrics, GateReasonCode};
+use crate::gate::{GateDecision, GateMetrics, GateOutcome, GateReasonCode};
 use crate::store::{GateDecisionId, GateDecisionRecord};
 
 pub(crate) struct RecordedClaimGateDecision {
@@ -34,6 +34,18 @@ impl RecordedClaimGateDecision {
             })
             .map(|code| code.as_str())
             .collect()
+    }
+
+    /// Whether this decision is the auto checker's hold alone: pending on
+    /// `gate.pending.checker` or `gate.pending.checker.unavailable` and no
+    /// other code, the hold a landing in the same transaction replays onto
+    /// its pending review (FIX 8752).
+    pub(crate) fn checker_hold(&self) -> bool {
+        self.decision.outcome() == GateOutcome::Pending
+            && matches!(
+                self.decision.reason_codes(),
+                [GateReasonCode::PendingChecker | GateReasonCode::PendingCheckerUnavailable]
+            )
     }
 
     pub(crate) fn record_metrics(&self, metrics: &GateMetrics) {

@@ -22,6 +22,8 @@ mod core_discover;
 mod dreamer_binding;
 mod dreamer_host_wording;
 mod dreamer_live;
+#[path = "../support/engine_stack.rs"]
+mod engine_stack;
 #[path = "../support/fake_llm.rs"]
 mod fake_llm;
 mod first_owner_bootstrap;
@@ -45,6 +47,8 @@ mod mcp_oracle;
 mod mcp_stdio_agent;
 mod notes_import;
 mod owner_backup;
+#[path = "../support/owner_only_file.rs"]
+mod owner_only_file;
 mod remote_pairing;
 // SIGTERM through `libc::kill` is Unix-only.
 #[cfg(unix)]

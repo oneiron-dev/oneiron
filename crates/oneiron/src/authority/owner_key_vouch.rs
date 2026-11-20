@@ -19,9 +19,11 @@
 //! ([`Vault::enrol_vouched_owner_signing_key`]): the ordinary `OwnerKeyEnroll`
 //! act, whose primary signer is the vouching key and whose carrier is this
 //! install. A managed host's custodial root proves nothing on a hosted vault
-//! (`AuthorityFold::proves_owner_acts`), so an install holding only that root
-//! vouches for nothing, and a co-owner's key never vouches a key into
-//! another owner.
+//! (`AuthorityFold::proves_owner_acts`), and an install under the Hosted
+//! posture offers no host root it holds, a self-host root a move or a reopen
+//! carried here included (`AuthorityFold::offers_owner_proof`), so an install
+//! holding only such a root vouches for nothing, and a co-owner's key never
+//! vouches a key into another owner.
 //!
 //! The request carries no secret: the proof of possession is public, the key
 //! never leaves its device. The proof has no nonce and no time, so it never
@@ -29,8 +31,6 @@
 //! key already on the roster is never enrolled again. A second answer to the
 //! same request answers the first enrollment's receipt, since two owner
 //! devices may answer one ask.
-
-use std::sync::Arc;
 
 use base64::Engine as _;
 use oneiron_base::msgpack_shape::{ShapeBudget, over_budget};
@@ -350,28 +350,51 @@ impl Vault {
     /// ([`Self::owner_vouch_signer_in_txn`]): it signs the `OwnerKeyEnroll`
     /// entry as its predecessor, and this install carries it
     /// ([`Vault::enrol_owner_signing_key_as`]). The request is checked and
-    /// the roster read once before the write: it names this vault, its key's
-    /// proof verifies for this owner, the install key of a live machine the
-    /// owner answered as theirs signed it, and its key is fresh. A key
-    /// already live on the roster for the request's machine answers its
+    /// the roster read once before the write: it names this vault, its label
+    /// keeps its rules, its key's proof verifies for this owner, the install
+    /// key of a live machine the owner answered as theirs signed it, and its
+    /// key is fresh. The holding machine is judged again on the fold of each
+    /// entry the vouching key signs, inside the enrollment's writer, so an
+    /// owner's answer that took the machine out of the owner's hands after
+    /// the read enrols nothing (FIX VOUCH-DOOR-ROLE-CHECK-OUTSIDE-WRITE). A
+    /// key already live on the roster for the request's machine answers its
     /// first enrollment's receipt, and nothing is written; so does a key a
     /// second answer to the same request enrolled while this one ran.
     ///
     /// # Errors
     /// [`RecordError::AuthorityRefused`] for an agent's act, a machine the
-    /// owner has not answered as theirs, an install that cannot carry the
-    /// act, or an enrollment the fold does not count;
+    /// owner has not answered as theirs (at the read, or on the fold of the
+    /// entry the key signs), an install that cannot carry the act, or an
+    /// enrollment the fold does not count;
     /// [`RecordError::OwnerKeyRequired`] when this install holds no key the
     /// vault trusts as this owner's (a managed host's custodial root and a
-    /// co-owner's key are none); [`RecordError::InvalidAuthorityLogBody`] for
-    /// a request that names another vault, a proof that does not verify, a
-    /// machine proof that is not the named machine's, or a key the roster
-    /// already names otherwise; an owner refusal when the proof is no longer
-    /// the vault's live owner.
+    /// co-owner's key are none, and a key that rests under a device PIN
+    /// counts only inside the window a right PIN opened); the signer's
+    /// refusal, for a key that stopped after it was picked;
+    /// [`RecordError::InvalidAuthorityLogBody`] for a request that names
+    /// another vault, a label over [`OWNER_KEY_VOUCH_LABEL_MAX`] bytes or
+    /// with a control or invisible format character, a proof that does not
+    /// verify, a machine proof that is not the named machine's, or a key the
+    /// roster already names otherwise; an owner refusal when the proof is no
+    /// longer the vault's live owner.
     pub fn enrol_vouched_owner_signing_key(
         &self,
         authority: &ActAuthority,
         request: &OwnerKeyVouchRequest,
+    ) -> Result<OwnerKeyEnrollmentReceipt> {
+        self.enrol_vouched_owner_signing_key_between(authority, request, || {})
+    }
+
+    /// [`Self::enrol_vouched_owner_signing_key`], with `between` run after
+    /// the door's read picked the vouching key and before the enrollment's
+    /// writer: the gap in which another writer can commit first (the test
+    /// door `test_doors::owner_key_vouch_between`). It does not run when the
+    /// read refuses or answers a first enrollment's receipt.
+    pub(crate) fn enrol_vouched_owner_signing_key_between(
+        &self,
+        authority: &ActAuthority,
+        request: &OwnerKeyVouchRequest,
+        between: impl FnOnce(),
     ) -> Result<OwnerKeyEnrollmentReceipt> {
         let owner = match authority {
             ActAuthority::Owner(owner, _) => owner,
@@ -384,6 +407,12 @@ impl Vault {
             let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
             if request.vault_id != vault_id {
                 return Err(not_valid(OTHER_VAULT));
+            }
+            // The decoders and the new device's door keep the label's rules;
+            // a request built in code reaches this door without either
+            // (FIX VOUCH-DOOR-LABEL-NOT-RECHECKED).
+            if !label_is_valid(&request.label) {
+                return Err(label_not_valid());
             }
             let challenge = owner_key_enrollment_challenge(
                 &vault_id,
@@ -411,13 +440,26 @@ impl Vault {
             self.owner_vouch_signer_in_txn(&txn, &fold, actor)?
                 .ok_or(Error::Record(RecordError::OwnerKeyRequired))?
         };
-        // The owner's presence is asked here, before the write and outside
-        // it (OPUS-SPLIT-5 PR 4, D5): everything the proof signs is known.
-        match self.enrol_owner_signing_key_as(
+        between();
+        // The caller's owner proof was revalidated in the read above; that
+        // read's fold picked the key and signs nothing. The key signs inside
+        // the enrollment's writer, through its own check, on the fold each
+        // entry is signed on (the writer hands it over) and with no
+        // transaction of its own: the write is open then. A key that stopped
+        // since the pick refuses there: one the roster revoked, one whose
+        // seed left its slot, one under a device PIN whose window ended. The
+        // holding machine is judged on that fold too, before the key signs:
+        // the writer itself asks only that the machine be live, in any role,
+        // so an owner's answer that made it a hosted or execution node after
+        // the read would still enrol the key.
+        match self.enrol_owner_signing_key_on_entry_fold_as(
             authority,
             request.enrollment(),
-            signer.root(),
-            |transcript| signer.sign_owner_proof(transcript),
+            signer.root.clone(),
+            |entry_fold, transcript| {
+                require_holding_machine(entry_fold, request)?;
+                signer.signer.sign_owner_proof(self, entry_fold, transcript)
+            },
         ) {
             // Another answer to the same request enrolled the key after this
             // one read the roster: its receipt answers this one too.
@@ -431,11 +473,18 @@ impl Vault {
     }
 
     /// The owner key this install holds that vouches for `actor`'s new key:
-    /// a key the fold trusts as the owner's, under this vault's posture
-    /// ([`AuthorityFold::proves_owner_acts`], the rule of
-    /// `Vault::owner_proof_signer`), that is `actor`'s own
-    /// ([`key_is_the_owners`]). A co-owner's key held on this install never
-    /// vouches a key into another owner.
+    /// a key this install may offer as the owner's proof, under this vault's
+    /// posture ([`AuthorityFold::offers_owner_proof`], the rule of
+    /// `Vault::owner_proof_signer`: never a host root under the Hosted
+    /// posture), that is `actor`'s own ([`key_is_the_owners`]), and that
+    /// proves at this moment ([`CheckpointRootSigner::proves_now`]). A
+    /// co-owner's key held on this install never vouches a key into another
+    /// owner. A key that does not prove now is passed over as if it were not
+    /// held: one the roster no longer lists live, one whose seed left its
+    /// slot, and one that rests under a device PIN outside the window a
+    /// right PIN opened (row OCS-OWNER-PIN). The door calls this inside its
+    /// read, so each signer is asked on `fold` and opens no transaction of
+    /// the vault.
     ///
     /// # Errors
     /// The store's, reading the enrolled keys.
@@ -444,13 +493,17 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         fold: &AuthorityFold,
         actor: EntityId,
-    ) -> Result<Option<Arc<dyn CheckpointRootSigner>>> {
+    ) -> Result<Option<HeldRootSigner>> {
         let hosted = self.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
         let enrolled = self.enrolled_owner_keys_in_txn(txn)?;
-        Ok(self.checkpoint_root_signers().into_iter().find(|signer| {
-            let key = signer.root();
-            fold.proves_owner_acts(&key, hosted) && key_is_the_owners(fold, &enrolled, &key, actor)
-        }))
+        Ok(self
+            .held_checkpoint_root_signers()
+            .into_iter()
+            .find(|held| {
+                fold.offers_owner_proof(&held.root, held.host_root, hosted)
+                    && key_is_the_owners(fold, &enrolled, &held.root, actor)
+                    && held.signer.proves_now(self, fold)
+            }))
     }
 
     /// The receipt of the enrollment that already put `request`'s key on
@@ -504,38 +557,51 @@ fn key_is_the_owners(
 }
 
 /// Refuses `request` unless the machine it names made it, as a machine the
-/// owner holds: the install key of a live profile of that machine signed
-/// [`OwnerKeyVouchRequest::machine_transcript`] (no chain of the machine
-/// removed, as the carrier rule reads a profile), and that profile's role is
-/// one the owner answered as theirs. Any one such chain of the machine, the
-/// roster's or an anchor's, is enough, as one admitting chain admits a
-/// machine ([`FoldedMachine::is_admitted`]): a live chain of another role
-/// beside it vetoes nothing. A hosted or execution node, or an install the
-/// owner has not answered, holds no owner key (ruling
-/// CARRIER-HOSTED-SERVER-OWNER-KEY = A).
+/// owner holds: the install key of a live head of that machine, one it
+/// stands under here ([`FoldedMachine::standing_heads`]: the roster's head
+/// and the pinned anchor's chain, never another anchor's), signed
+/// [`OwnerKeyVouchRequest::machine_transcript`], and that head's role is one
+/// the owner answered as theirs. Any one such head is enough: a roster head
+/// of another role beside the pinned anchor's owned one vetoes nothing
+/// (#8796 review P1). The roster's head of the machine must be live, as the
+/// fold judges the enrolment this vouch writes on the roster's chain alone
+/// ([`super::owner_key_enrollment::machine_is_live`]), and no head it stands
+/// under here may say removed. Another anchor's chain, a stranger's fresh
+/// root among them, neither admits the machine nor removes it here: any
+/// fresh key publishes a root and marks any machine in its own chain (FIXes
+/// FOREIGN-ANCHOR-MARK-BLOCKS-MACHINE-DOORS and
+/// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES). A hosted or
+/// execution node, or an install the owner has not answered, holds no owner
+/// key (ruling CARRIER-HOSTED-SERVER-OWNER-KEY = A).
 ///
 /// # Errors
-/// [`RecordError::InvalidAuthorityLogBody`] for a machine proof no live
-/// profile of the machine verifies; [`RecordError::AuthorityRefused`] for a
-/// machine the owner has not answered as theirs in any live profile whose
+/// [`RecordError::InvalidAuthorityLogBody`] for a machine with no live
+/// roster head, one a head it stands under here says removed, or a machine
+/// proof no live such head verifies; [`RecordError::AuthorityRefused`] for a
+/// machine the owner has not answered as theirs in any live such head whose
 /// install key verifies it.
-fn require_holding_machine(fold: &AuthorityFold, request: &OwnerKeyVouchRequest) -> Result<()> {
+pub(crate) fn require_holding_machine(
+    fold: &AuthorityFold,
+    request: &OwnerKeyVouchRequest,
+) -> Result<()> {
     let transcript = request.machine_transcript()?;
     let proof = ed25519_dalek::Signature::from_slice(&request.machine_proof)
         .map_err(|_| not_valid(MACHINE_PROOF_NOT_VALID))?;
-    let folded = fold
+    let pin = fold.pinned_root.as_ref();
+    let heads = fold
         .machine(request.machine)
-        .filter(|folded| folded.chains().all(|(_, chain)| !chain.removed))
+        .filter(|folded| super::owner_key_enrollment::machine_is_live_here(folded, pin))
+        .map(|folded| folded.standing_heads(pin))
         .ok_or_else(|| not_valid(MACHINE_PROOF_NOT_VALID))?;
     let mut verified = false;
-    for (_, chain) in folded.chains() {
-        let signed = chain.is_live()
-            && strong_ed25519_key(&chain.profile.machine_key)
+    for head in heads {
+        let signed = head.is_live()
+            && strong_ed25519_key(&head.profile.machine_key)
                 .is_ok_and(|key| key.verify_strict(&transcript, &proof).is_ok());
         if !signed {
             continue;
         }
-        if matches!(chain.profile.role, MachineRole::Owned(_)) {
+        if matches!(head.profile.role, MachineRole::Owned(_)) {
             return Ok(());
         }
         verified = true;

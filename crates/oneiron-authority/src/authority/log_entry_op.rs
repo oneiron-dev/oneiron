@@ -241,6 +241,12 @@ pub enum AuthorityOp {
     /// that anchor alone, with no cosign. A main-log entry; the fold judges
     /// its ancestry, and the install's pin decides whether it counts.
     RootAppointment(RootAppointment),
+    /// The owner's word that no other machine of the vault is left, which
+    /// joins one held enrolment of a machine born of a restore (row
+    /// RESTORED-COPIES-ENROL-EACH-OTHER). Signed by a key the vault trusts
+    /// as the owner's, alone, with no cosign and no carrier. A main-log
+    /// entry, so every machine the owner admits folds it.
+    RestoredMachineJoin(RestoredMachineJoin),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -315,6 +321,7 @@ impl AuthorityLogEntry {
             AuthorityOp::DeviceSuccession(succession) => succession.validate_entry(self)?,
             AuthorityOp::FullCopyMark(mark) => mark.validate_entry(self)?,
             AuthorityOp::RootAppointment(appointment) => appointment.validate_entry(self)?,
+            AuthorityOp::RestoredMachineJoin(join) => join.validate_entry(self)?,
             _ => {}
         }
         self.signer.validate()?;
@@ -335,6 +342,23 @@ impl AuthorityLogEntry {
     /// Public so `oneiron`'s authority code calls it across the crate line.
     pub fn signer_key(&self) -> &AuthorityKey {
         &self.signer.public_key
+    }
+
+    /// The signers of an act's entry its carrier signs: one Ed25519 install
+    /// key, the carrier's, alone or beside one cosign, which `oneiron`'s fold
+    /// takes only as a live owner key's proof (row
+    /// OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS; Engine ANSWER
+    /// OWNER-RESERVE-CROSS-INSTALL-GAPS = A). The one shape rule of every
+    /// carried op that once refused any cosign: owner work's request,
+    /// result, cancel, import mark and permit piece, a residence result,
+    /// world key wraps and an install's frontier join. Their owner-anchored
+    /// forms, a kit push, its permit pieces and an anchor's join, stay
+    /// signed alone.
+    pub(super) fn validate_carried_signers(&self) -> Result<()> {
+        if self.signer.suite != AuthoritySignatureSuite::Ed25519 || self.cosigns.len() > 1 {
+            return Err(invalid_authority());
+        }
+        Ok(())
     }
 }
 
@@ -573,6 +597,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::DeviceSuccession(succession) => succession.validate(),
         AuthorityOp::MembershipExecution(record) => record.validate(),
         AuthorityOp::RootAppointment(appointment) => appointment.validate(),
+        AuthorityOp::RestoredMachineJoin(join) => join.validate(),
     }
 }
 

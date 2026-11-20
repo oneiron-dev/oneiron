@@ -3,15 +3,16 @@
 //! staging for the asking node to get in pieces, and a big answer is staged
 //! the same way, so neither rides as one oversized transport message.
 //!
-//! On main both ride as one message (`Forward::ask` sends the whole encoded
-//! ask, `client::answer` the whole encoded answer) and the transport refuses
-//! them, so the organ reads a `failed` refusal. The pair below refuses a
-//! message over 1 MiB exactly as the real transport does, so the first two
-//! tests fail on main and pass with the fix. The third pins the small case:
-//! one message each way, no staging exchange.
+//! Without the fix both ride as one message (`Forward::ask` sends the whole
+//! encoded ask, `client::answer` the whole encoded answer) and the transport
+//! refuses them, so the organ reads a `failed` refusal. The pair below
+//! refuses a message over 1 MiB exactly as the real transport does, so the
+//! first two tests fail without the fix and pass with it. The third pins the
+//! small case: one message each way, no staging exchange.
 #![cfg(unix)]
 
 use std::collections::VecDeque;
+use std::pin::pin;
 use std::sync::{
     Arc, LazyLock, Mutex, PoisonError,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -135,34 +136,64 @@ fn functional(receipt: &CallReceipt) -> Vec<&AskReceipt> {
 }
 
 /// What one in-memory connection pair shares: whether it is closed, and the
-/// bell its ends wait on.
+/// bell only the close rings. A stream's arrival rings its own inbox's bell,
+/// so a waiter never reads an arrival as the close.
 struct Link {
     closed: AtomicBool,
-    bell: Notify,
+    closing: Notify,
 }
 
 impl Link {
     fn new() -> Self {
         Self {
             closed: AtomicBool::new(false),
-            bell: Notify::new(),
+            closing: Notify::new(),
         }
     }
 
     fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
-        self.bell.notify_waiters();
+        self.closing.notify_waiters();
     }
 
     fn is_closed(&self) -> bool {
         self.closed.load(Ordering::SeqCst)
     }
+
+    /// Ends once the pair is closed. The waiter registers before it reads
+    /// the flag: `notify_waiters` keeps no permit for a later waiter, so a
+    /// close between the read and the wait would otherwise go unseen.
+    async fn closed(&self) {
+        let mut closing = pin!(self.closing.notified());
+        closing.as_mut().enable();
+        if self.is_closed() {
+            return;
+        }
+        closing.await;
+    }
+}
+
+/// The streams one end has not accepted yet, and the bell that rings when
+/// the other end opens one. The bell keeps a permit when no accept waits, so
+/// an arrival between the queue read and the wait still wakes it.
+struct Inbox {
+    streams: Mutex<VecDeque<FakeStream>>,
+    arrived: Notify,
+}
+
+impl Inbox {
+    fn new() -> Self {
+        Self {
+            streams: Mutex::new(VecDeque::new()),
+            arrived: Notify::new(),
+        }
+    }
 }
 
 /// The streams the pair's ends opened for each other, each way.
 struct Pair {
-    a_in: Mutex<VecDeque<FakeStream>>,
-    b_in: Mutex<VecDeque<FakeStream>>,
+    a_in: Inbox,
+    b_in: Inbox,
     link: Arc<Link>,
 }
 
@@ -214,9 +245,12 @@ impl MeshStream for FakeStream {
             let Some(rx) = self.rx.take() else {
                 return Err(MeshError::Io("the stream already received".into()));
             };
+            // As the real transport: a message sent before the close still
+            // arrives.
             tokio::select! {
+                biased;
                 received = rx => received.map_err(|_| MeshError::Io("the stream broke".into())),
-                () = self.link.bell.notified() => Err(MeshError::Io("the connection closed".into())),
+                () = self.link.closed() => Err(MeshError::Io("the connection closed".into())),
             }
         })
     }
@@ -238,14 +272,14 @@ enum Side {
 }
 
 impl FakeConn {
-    fn inbox(&self) -> &Mutex<VecDeque<FakeStream>> {
+    fn inbox(&self) -> &Inbox {
         match self.own {
             Side::Asking => &self.pair.a_in,
             Side::Serving => &self.pair.b_in,
         }
     }
 
-    fn peer_inbox(&self) -> &Mutex<VecDeque<FakeStream>> {
+    fn peer_inbox(&self) -> &Inbox {
         match self.own {
             Side::Asking => &self.pair.b_in,
             Side::Serving => &self.pair.a_in,
@@ -254,17 +288,20 @@ impl FakeConn {
 
     fn take_incoming(&self) -> Option<FakeStream> {
         self.inbox()
+            .streams
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .pop_front()
     }
 
     fn push_incoming(&self, stream: FakeStream) {
-        self.peer_inbox()
+        let inbox = self.peer_inbox();
+        inbox
+            .streams
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push_back(stream);
-        self.pair.link.bell.notify_one();
+        inbox.arrived.notify_one();
     }
 
     async fn accept(&self) -> Result<FakeStream, MeshError> {
@@ -276,7 +313,10 @@ impl FakeConn {
                 self.accepted.fetch_add(1, Ordering::SeqCst);
                 return Ok(stream);
             }
-            self.pair.link.bell.notified().await;
+            tokio::select! {
+                () = self.inbox().arrived.notified() => {}
+                () = self.pair.link.closed() => {}
+            }
         }
     }
 }
@@ -337,8 +377,8 @@ impl MeshTransport for FakeTransport {
     fn dial(&self, machine: MachineId, alpn: &[u8]) -> MeshFuture<'_, Box<dyn MeshConnection>> {
         let link = Arc::new(Link::new());
         let pair = Arc::new(Pair {
-            a_in: Mutex::new(VecDeque::new()),
-            b_in: Mutex::new(VecDeque::new()),
+            a_in: Inbox::new(),
+            b_in: Inbox::new(),
             link: Arc::clone(&link),
         });
         let serving = FakeConn {

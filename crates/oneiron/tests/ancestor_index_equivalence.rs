@@ -14,7 +14,10 @@
 //! - chains whose rows claim parents the log lacks;
 //! - hand-built claim cycles and self parents (a row on a cycle is its own
 //!   ancestor, as before);
-//! - pair limits just under, at and over each log's pairs.
+//! - pair limits just under, at and over each log's pairs;
+//! - the marked pass (PR 3, `AncestorIndex::marks`): whether each row, each
+//!   claimed parent and each probe hash has a probe hash among its
+//!   ancestors, against the set index's intersection.
 //!
 //! Each test prints one `EQUIV` line. Green on the head only: the door is
 //! new (the index it tests is a rewrite, exact by construction).
@@ -131,6 +134,7 @@ fn assert_ancestry_eq(
         runs.meets_probe, sets.meets_probe,
         "{label}, {limit}: probe"
     );
+    assert_eq!(runs.marked, sets.marked, "{label}, {limit}: marked pass");
     assert_eq!(runs.pairs, sets.pairs, "{label}, {limit}: pairs");
     assert_eq!(
         runs.counted_pairs, sets.counted_pairs,

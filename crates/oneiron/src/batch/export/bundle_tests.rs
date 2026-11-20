@@ -90,19 +90,16 @@ fn seed_portable_agent(source: &Vault, agent_id: EntityId) -> Result<(EntityId, 
     generated_agent.human_authored = false;
     source.put_agent_definition(&agent_id, &generated_agent, time(), 130)?;
     let selected = EntityId::now();
-    source.put_claim(
-        &selected,
-        &ClaimBody::new(
-            "preference.format",
-            ClaimSubject::Entity(agent_id),
-            Value::from("brief"),
-            0.7,
-            ClaimApprovalStatus::Approved,
-            ClaimLifecycleStatus::Active,
-        )?,
-        time(),
-        130,
+    let mut body = ClaimBody::new(
+        "preference.format",
+        ClaimSubject::Entity(agent_id),
+        Value::from("brief"),
+        0.7,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
     )?;
+    crate::test_util::stamp_vault_default_facet(source, &mut body);
+    source.put_claim(&selected, &body, time(), 130)?;
     Ok((skill, selected))
 }
 
@@ -519,20 +516,17 @@ fn fork_hash_matches_unchanged_parent_with_selected_knowledge() -> Result<()> {
         130,
     )?;
     let claim = EntityId::now();
-    vault.put_claim(
-        &claim,
-        &ClaimBody::new(
-            "test.source_note",
-            ClaimSubject::Entity(parent),
-            Value::from("Selected parent knowledge"),
-            1.0,
-            ClaimApprovalStatus::Approved,
-            ClaimLifecycleStatus::Active,
-        )
-        .unwrap(),
-        time(),
-        130,
-    )?;
+    let mut body = ClaimBody::new(
+        "test.source_note",
+        ClaimSubject::Entity(parent),
+        Value::from("Selected parent knowledge"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
+    vault.put_claim(&claim, &body, time(), 130)?;
     let before = vault.export_whole_vault(false)?;
     let before = vault.read_whole_vault_archive(before.bytes())?;
     let claim_row = before

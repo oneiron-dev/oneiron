@@ -98,6 +98,7 @@ mod deck_creation_doors;
 mod default_facet_doors;
 mod device_succession_doors;
 mod disclosure_doors;
+mod display_edit_doors;
 mod dispatch {
     include!(concat!(env!("OUT_DIR"), "/dispatch.rs"));
 }
@@ -157,6 +158,7 @@ mod linear_doors;
 mod live_run_doors;
 mod live_voice_doors;
 mod live_voice_settlement;
+mod machine_name_doors;
 mod mail_pack_doors;
 pub(crate) use mail_pack_doors::install_mail_host;
 mod merge_queue_checker_doors;

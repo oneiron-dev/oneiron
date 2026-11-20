@@ -619,6 +619,23 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         Ok(())
     }
 
+    /// Reads `projection` as the side-row wall will store it, writing
+    /// nothing (FIX FENCE-ERASED-FORM-THROUGH-WALL): the bytes of a row of
+    /// this table with the parts the wall does not read taken out, and
+    /// `decodes` the table's reading of a masked copy with those parts put
+    /// back. `None` when the wall changes nothing.
+    pub(crate) fn admit_projection(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut RwTxn<'_>,
+        key: &K,
+        projection: &[u8],
+        decodes: impl Fn(&[u8]) -> bool,
+    ) -> Result<Option<Vec<u8>>> {
+        self.decl
+            .admit(dbs, txn, &self.key_bytes(key), projection, decodes)
+    }
+
     /// Deletes one row; `true` when a row was present.
     pub(crate) fn delete(
         &self,

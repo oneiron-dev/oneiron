@@ -219,12 +219,13 @@ impl PipelineBuilder<'_> {
                     claim_gate.fresh(inputs.authority_filter.include_stale);
                 let mut scan_metadata = EntityMetadataCache::default();
                 let retry_metadata = inputs.scan_metadata(self, metadata_cache, &mut scan_metadata);
+                let retry_filters = self.bounded_result_filters(inputs.filter_config);
                 let mut retry_exact_posting_matches_scope = |id: &EntityId| {
                     pipeline_candidate_matches_filters_and_gate(
                         &self.read,
                         rtxn,
                         id,
-                        inputs.filter_config,
+                        retry_filters,
                         retry_metadata,
                         &mut retry_prefix_probe_claim_gate,
                     )
@@ -332,12 +333,13 @@ impl PipelineBuilder<'_> {
             prefix_probe_claim_gate.fresh(inputs.filter_config.authority_filter.include_stale);
         let mut scan_metadata = EntityMetadataCache::default();
         let stage_metadata = inputs.scan_metadata(self, metadata_cache, &mut scan_metadata);
+        let result_filters = self.bounded_result_filters(inputs.filter_config);
         let mut exact_posting_matches_scope = |id: &EntityId| {
             pipeline_candidate_matches_filters_and_gate(
                 &self.read,
                 rtxn,
                 id,
-                inputs.filter_config,
+                result_filters,
                 stage_metadata,
                 &mut prefix_probe_claim_gate,
             )
@@ -445,7 +447,9 @@ impl PipelineBuilder<'_> {
     /// bound does ([`turn_fold::rows_holding_distinct_turns`]): several
     /// messages of one turn are one result, so they cannot crowd the next
     /// turn out. Like the unwidened read, it looks no further than
-    /// `PER_SCAN_CAP_FACTOR` times the bound.
+    /// `PER_SCAN_CAP_FACTOR` times the bound. The cut takes the call's
+    /// `made_by` slice; the fold's turn count judges each TURN by the run's
+    /// shared scope, as the fold itself does.
     fn truncate_widened_text_results(
         &self,
         rows: &mut Vec<ScoredEntity>,
@@ -465,7 +469,7 @@ impl PipelineBuilder<'_> {
             &self.read,
             rtxn,
             kept,
-            filter_config,
+            self.bounded_result_filters(filter_config),
             metadata_cache,
             claim_gate,
         )?;

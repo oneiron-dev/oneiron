@@ -44,6 +44,7 @@ fn agent_authored_v1_library_skill_imports_through_hub_one_at_pinned_ref() -> Re
     let commit = git(&["rev-parse", "HEAD"]);
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let hub_id = default_skill_hub_id()?;
     assert_eq!(
         vault.skill_hub_record(&hub_id)?.sync_policy,

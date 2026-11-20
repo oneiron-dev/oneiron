@@ -64,25 +64,27 @@ fn identity(vault: &Vault, seed: u8, actor: EntityId, channel: &str, address: &s
 
 fn attendee(vault: &Vault, seed: u8, event_ref: EntityId, who: &str) {
     let claim_id = crate::test_util::entity(seed);
+    let mut body = ClaimBody::new(
+        PREDICATE_CALENDAR_ATTENDEE,
+        ClaimSubject::Entity(event_ref),
+        rmpv::Value::Map(vec![
+            (rmpv::Value::from("who"), rmpv::Value::from(who)),
+            (
+                rmpv::Value::from("role"),
+                rmpv::Value::from("REQ-PARTICIPANT"),
+            ),
+            (rmpv::Value::from("partstat"), rmpv::Value::from("ACCEPTED")),
+        ]),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    crate::test_util::stamp_vault_default_facet(vault, &mut body);
     vault
         .put_claim(
             &claim_id,
-            &ClaimBody::new(
-                PREDICATE_CALENDAR_ATTENDEE,
-                ClaimSubject::Entity(event_ref),
-                rmpv::Value::Map(vec![
-                    (rmpv::Value::from("who"), rmpv::Value::from(who)),
-                    (
-                        rmpv::Value::from("role"),
-                        rmpv::Value::from("REQ-PARTICIPANT"),
-                    ),
-                    (rmpv::Value::from("partstat"), rmpv::Value::from("ACCEPTED")),
-                ]),
-                1.0,
-                ClaimApprovalStatus::Approved,
-                ClaimLifecycleStatus::Active,
-            )
-            .unwrap(),
+            &body,
             TimeRange {
                 start: NOW,
                 end: NOW,

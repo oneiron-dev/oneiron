@@ -25,6 +25,21 @@ pub fn settle_identity_asks_of_turn(
     )
 }
 
+/// Settles every open identity ask whose mention is in `turn` as `chosen`
+/// at `now` (seconds), as the Dreamer settles one a saved hint or its
+/// decision picks, with its receipt and the inverse the owner's revert
+/// reads; returns each settled ask's key.
+pub fn settle_identity_asks_of_turn_as_dreamer(
+    vault: &Vault,
+    turn: &EntityId,
+    chosen: EntityId,
+    now: u64,
+) -> Result<Vec<[u8; 32]>> {
+    crate::dreamer_runner::maintenance::identity::settle_asks_of_turn_as_dreamer_for_test(
+        vault, turn, chosen, now,
+    )
+}
+
 /// Stamps every open identity ask kept separate at `now` (seconds), as a
 /// nightly decision that abstains leaves it; returns how many.
 pub fn keep_identity_asks_separate(vault: &Vault, now: u64) -> Result<usize> {

@@ -11,8 +11,10 @@
 //! An ask is read when its mention's turn and message are, and, when it
 //! names a provisional entity of its own, every span naming that entity is
 //! (a settle on another candidate reaches them all). Each candidate is read
-//! on its own: a stored entity by its row, a cold provisional one through a
-//! live span naming it in its origin turn. A hint counts only the
+//! on its own: a stored entity by its row, through its cleanup archive
+//! (ARCH-0055 section 10: "The archive stays visible to the resolver"; a
+//! settle on it restores it), a cold provisional one through a live span
+//! naming it in its origin turn. A hint counts only the
 //! contributions whose mention the lane reads. An ask the lane does not
 //! read looks absent; a candidate it does not read is no option. The stored
 //! ask stays whole: a settle compares against it and acts on it.
@@ -97,6 +99,15 @@ impl<'r, 'v> Admit<'r, 'v> {
             .is_ref_readable_with_policy_in(txn, &self.policy, id)
     }
 
+    /// Whether the lane reads the stored entity `id` in `txn` through its
+    /// cleanup archive: only the archive is lifted, and every other gate of
+    /// the lane, a removal and a legal-hold use limit included, judges it as
+    /// [`Self::reads`] does.
+    fn reads_through_archive(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        self.read
+            .is_ref_readable_through_archive_with_policy_in(txn, &self.policy, id)
+    }
+
     /// Whether the lane reads a mention: its turn and its message.
     pub(super) fn reads_source(
         &self,
@@ -131,17 +142,46 @@ impl AdmittedIdentityAsk {
     }
 }
 
-/// Whether `admit` reads candidate `id`: a stored entity by its own row, a
-/// cold provisional one, which has none, through a span naming it in its
-/// origin turn.
+/// Whether `admit` reads candidate `id` as an option a settle may take: a
+/// stored entity by its own row, archived or not, as the resolver that
+/// named it sees the archive (the settle restores it); a cold provisional
+/// one, which has none, through a span naming it in its origin turn.
 pub(super) fn candidate_in_txn(
     vault: &Vault,
     admit: &Admit<'_, '_>,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
+    entity_in_txn(vault, admit, txn, id, true)
+}
+
+/// Whether `admit` reads the one entity `id` a saved link names, as it
+/// stands: a stored entity by its plain row read, so an archived one is
+/// refused, since an answer that settles nothing restores nothing; a cold
+/// provisional one through a span naming it in its origin turn.
+pub(super) fn linked_in_txn(
+    vault: &Vault,
+    admit: &Admit<'_, '_>,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    entity_in_txn(vault, admit, txn, id, false)
+}
+
+/// [`candidate_in_txn`] (`through_archive`) or [`linked_in_txn`].
+fn entity_in_txn(
+    vault: &Vault,
+    admit: &Admit<'_, '_>,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    through_archive: bool,
+) -> Result<bool> {
     let Some(entity) = crate::tagging::provisional_in_txn(&vault.store, txn, id)? else {
-        return admit.reads(txn, id);
+        return if through_archive {
+            admit.reads_through_archive(txn, id)
+        } else {
+            admit.reads(txn, id)
+        };
     };
     for (turn, mention) in vault.mentions_naming_in_txn(txn, id)? {
         if turn == entity.origin && admit.reads_source(txn, &turn, &mention.message)? {

@@ -75,6 +75,11 @@ pub(super) struct Recovered {
     /// The handoffs the proof folds closed inside the counted lines: they keep
     /// that status, and the fold never settles them again (E3).
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// The revocations the proof folds closed in a conflict inside the
+    /// counted lines, each with the refusal its proof fold gave it: the fold
+    /// keeps both, as it keeps the closed handoffs, so the owner's key
+    /// changes list still names them (REVIEW-9799 P1).
+    pub(super) crossed_revocations: BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
 }
 
 /// A counted appointment's fence: every key a row of its ancestry names as a
@@ -90,7 +95,9 @@ pub(super) struct AppointmentFence {
 
 impl Recovered {
     /// How the row `hash` folds when a counted appointment's line holds it:
-    /// its proof fold's state, or a refusal. None for every other row.
+    /// its proof fold's state, or a refusal: a crossed revocation's own
+    /// refusal there, any other row's `InvalidAncestry`. None for every other
+    /// row.
     pub(super) fn entry_fold(&self, hash: &AuthorityEntryHash) -> Option<EntryFold> {
         if let Some(world) = self.worlds.get(hash) {
             return Some(EntryFold::Ready(world.clone()));
@@ -99,7 +106,12 @@ impl Recovered {
         Some(
             match proof.and_then(|index| self.proofs[index].states.get(hash)) {
                 Some(state) => EntryFold::Ready(state.clone()),
-                None => EntryFold::Invalid(AuthorityFoldIssue::InvalidAncestry(*hash)),
+                None => EntryFold::Invalid(
+                    self.crossed_revocations
+                        .get(hash)
+                        .cloned()
+                        .unwrap_or(AuthorityFoldIssue::InvalidAncestry(*hash)),
+                ),
             },
         )
     }
@@ -159,6 +171,15 @@ impl Recovered {
         for row in &ancestry {
             self.rows
                 .insert(*row, parts.states.contains_key(row).then_some(index));
+            // As `rows`, the row keeps what this proof fold gave it.
+            match parts.crossed_revocations.get(row) {
+                Some(issue) => {
+                    self.crossed_revocations.insert(*row, issue.clone());
+                }
+                None => {
+                    self.crossed_revocations.remove(row);
+                }
+            }
         }
         let mut world = parts.merged.clone();
         super::op_apply::apply_op(&mut world, &entry.op, hash, entry.signer_key());
