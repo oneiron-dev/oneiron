@@ -182,8 +182,10 @@ pub(super) fn import_claim_gate_decisions_for_scores(
 /// Whether the call's `made_by` predicate admits `id` (Rule A, OF-466): a
 /// row's stamped birth names its class; a row with none falls back to its
 /// claim's source, which `claim_class` reads only then. Unknown never
-/// matches. The post-blend filter and the sound match's cut both ask here,
-/// so a row the call drops sets no cut it then leaves (review #8107).
+/// matches. The post-blend filter, the sound match's cut and the bounded
+/// channels' admission ([`pipeline_candidate_matches_filters_and_gate`] under
+/// a config's `made_by`) all ask here, so a row the call drops sets no cut it
+/// then leaves (review #8107) and takes no place in a bounded fetch.
 pub(super) fn made_by_admits(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
@@ -800,14 +802,28 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
         return Ok(false);
     }
 
-    pipeline_candidate_matches_relationship_filter(
+    if !pipeline_candidate_matches_relationship_filter(
         store,
         rtxn,
         id,
         meta.entity_type,
         filters.relationship_filter,
         metadata_cache,
-    )
+    )? {
+        return Ok(false);
+    }
+    // The call's made_by slice, last: every refusal above keeps its own
+    // bookkeeping, and a slice refusal adds none, since it is the caller's
+    // selection, not a read refusal. An unborn claim's class is its admitted
+    // body's source, which the gate above just decoded into this check's
+    // `claim_gate` (its own cache under a candidate filter).
+    made_by_admits(store, rtxn, id, filters.made_by, || {
+        Ok(claim_gate
+            .decisions
+            .get(id)
+            .and_then(Option::as_ref)
+            .and_then(|body| body.made_by_class()))
+    })
 }
 
 /// The candidate-scan twin of [`apply_facet_filter`], with the same

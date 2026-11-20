@@ -43,6 +43,7 @@ impl PipelineBuilder<'_> {
         if let Some(error) = Error::invalid_vector_component(query) {
             return Err(error);
         }
+        let filters = self.bounded_result_filters(filters);
         let narrowed = self.has_codebase_scope_filter()
             || self.has_strict_text_scope_filter()
             || filters.corpus_scope != &CorpusScope::All
@@ -156,6 +157,7 @@ impl PipelineBuilder<'_> {
         metadata_cache: &mut EntityMetadataCache,
         claim_gate: &mut ClaimStatusGateCache,
     ) -> Result<Vec<ScoredEntity>> {
+        let filters = self.bounded_result_filters(filters);
         let mut scoped_config = config.clone();
         scoped_config.widened = Some(scoped_temporal_channel_limit(
             &self.read,
@@ -226,6 +228,23 @@ impl PipelineBuilder<'_> {
             (metadata_cache, claim_gate),
         )?;
         Ok(scores)
+    }
+
+    /// `filters` for a bounded result channel's own admission and cut
+    /// (vector and HyDE vector, text, temporal): the call's `made_by` slice
+    /// joins the scope, so a row it drops takes no place in the fetch. A
+    /// slice counts as a strict scope ([`Self::has_strict_text_scope_filter`]),
+    /// so these channels widen their window and cut it to the slice. The
+    /// run's shared config keeps every slice for the reads that judge rows
+    /// other than results.
+    pub(super) fn bounded_result_filters<'f>(
+        &self,
+        filters: PipelineFilterConfig<'f>,
+    ) -> PipelineFilterConfig<'f> {
+        PipelineFilterConfig {
+            made_by: self.made_by,
+            ..filters
+        }
     }
 
     fn truncate_corpus_channel(
@@ -308,5 +327,6 @@ impl PipelineBuilder<'_> {
             || matches!(self.relationship_filter, Some((_, RelMode::Filter)))
             || self.world_scope != WorldScope::All
             || self.corpus_scope != CorpusScope::All
+            || self.made_by != crate::provenance::made_by::MadeByPredicate::All
     }
 }
