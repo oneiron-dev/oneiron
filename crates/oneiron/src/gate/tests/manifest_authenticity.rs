@@ -119,6 +119,7 @@ fn replicated_class_wide_cap_narrows_every_bound_actor_in_either_manifest_order(
             )?;
         }
         // FIX 8780: an untrusted pack is a proposal; it never narrows
+        // R42: 0x83 has no actor-bound Generated row, so default-deny refuses (ceiling.rs:608-609).
         assert!(
             crate::gate::resolution::check_claim_source_trust(
                 &public,
@@ -126,7 +127,7 @@ fn replicated_class_wide_cap_narrows_every_bound_actor_in_either_manifest_order(
                 &policy,
                 None,
             )
-            .is_ok()
+            .is_err()
         );
     }
     Ok(())
