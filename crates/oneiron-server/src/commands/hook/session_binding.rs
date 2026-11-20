@@ -13,8 +13,14 @@
 //!   takes, as before;
 //! - `hosted-<16 hex digits>`: a hosted vault, the file naming its origin
 //!   and vault id, never its credential;
-//! - `unknown`: a resumed or compacted session's start that found no record
-//!   of the session, so the vault its earlier turns came from is not known.
+//! - `unknown`: a start that goes on from earlier turns whose vault is not
+//!   known, or not one: a resumed or compacted session's start that found no
+//!   record of the session, or a fork's ([`EarlierTurns::CopiedFrom`]) of a
+//!   session that recorded nothing, or more than one binding.
+//!
+//! A fork's log begins with a copy of the turns of the session it was forked
+//! from, so the first start that records the fork records that session's
+//! binding first: its one file, or `unknown`.
 //!
 //! A log holds every turn of its session, so a session whose folder holds
 //! more than one file has a log that mixes vaults: no hand-over sends it
@@ -95,6 +101,20 @@ impl HostedBinding {
     }
 }
 
+/// The turns a session's start goes on from, which its log holds before the
+/// start's own.
+pub(super) enum EarlierTurns {
+    /// None: a new session.
+    None,
+    /// The session's own (a resume or a compaction), or turns the start
+    /// cannot tell the session of: the vault an earlier start of the session
+    /// recorded, if any did.
+    Own,
+    /// A copy of the turns of the session named (a Codex fork): the vault
+    /// that session's starts recorded.
+    CopiedFrom(String),
+}
+
 /// What the starts of a session bound, as its hand-over reads it.
 pub(super) enum SessionBinding {
     /// A pin, a local vault or no vault, at every start: the local queue's.
@@ -120,24 +140,34 @@ const fn folder(host: HookHost) -> &'static str {
 
 /// Records that a start of `host`'s session `session` bound the hosted
 /// vault `hosted`, or, with `None`, a pin, a local vault or no vault.
-/// `resumed` says the start goes on from turns that ran before it (a resume
-/// or a compaction); when no earlier start of the session recorded
-/// anything, that their vault is not known is recorded first, and a start
-/// that cannot record that records nothing.
-pub(super) fn record(host: HookHost, session: &str, hosted: Option<&HostedVault>, resumed: bool) {
+/// `earlier` names the turns the start goes on from; when no earlier start
+/// of the session recorded anything, their vault is recorded first: for a
+/// fork, the one binding the session it was forked from recorded, else
+/// that it is not known. A start that cannot record that records nothing.
+pub(super) fn record(
+    host: HookHost,
+    session: &str,
+    hosted: Option<&HostedVault>,
+    earlier: &EarlierTurns,
+) {
     let Some(folder) = session_folder(host, session) else {
         return;
     };
-    if resumed && !recorded(&folder) && add(&folder, UNKNOWN, b"").is_err() {
+    let before = match earlier {
+        EarlierTurns::None => Ok(()),
+        _ if recorded(&folder) => Ok(()),
+        EarlierTurns::CopiedFrom(parent) => match bound(host, parent) {
+            Some(SessionBinding::Local) => add(&folder, LOCAL, b""),
+            Some(SessionBinding::Hosted(binding)) => add_hosted(&folder, &binding),
+            Some(SessionBinding::Mixed) | None => add(&folder, UNKNOWN, b""),
+        },
+        EarlierTurns::Own => add(&folder, UNKNOWN, b""),
+    };
+    if before.is_err() {
         return;
     }
     let _ = match hosted {
-        Some(vault) => {
-            let binding = HostedBinding::of(vault);
-            serde_json::to_vec(&binding)
-                .map_err(anyhow::Error::from)
-                .and_then(|body| add(&folder, &binding.file_name(), &body))
-        }
+        Some(vault) => add_hosted(&folder, &HostedBinding::of(vault)),
         None => add(&folder, LOCAL, b""),
     };
     remove_old(&folder);
@@ -239,6 +269,13 @@ fn add(folder: &Path, name: &str, body: &[u8]) -> anyhow::Result<()> {
         anyhow::bail!("write {}: {error}", folder.join(name).display());
     }
     Ok(())
+}
+
+/// Adds the file of the hosted vault `binding` names to the session folder
+/// `folder`.
+fn add_hosted(folder: &Path, binding: &HostedBinding) -> anyhow::Result<()> {
+    let body = serde_json::to_vec(binding)?;
+    add(folder, &binding.file_name(), &body)
 }
 
 /// Removes the folders of sessions other than the one at `own` whose files
