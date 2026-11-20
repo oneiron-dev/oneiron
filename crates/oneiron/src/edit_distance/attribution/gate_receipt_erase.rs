@@ -18,11 +18,14 @@
 //! `project_amendment_lessons` pass retracts, and `project_amendment_reliability`
 //! withdraws the amended outcome, as after a withdrawal.
 //!
-//! The receipt's unclear row stays with the unclear ledger: an erase of the
-//! claim drops it, notes and the proposals that copied them included,
-//! through its derived-row eraser, because its context names the measured
-//! claim as a source (FIX 7824). A withdrawal of a note waiting in a label
-//! proposal needs the vault's custody write, which these writers do not hold.
+//! The receipt's unclear row is not dropped here: withdrawing it takes a note
+//! waiting in a label proposal with it, which needs the vault's custody
+//! write, and these writers hold only the store. An erase of the claim drops
+//! it, notes and the proposals that copied them included, through its
+//! derived-row eraser, because its context names the measured claim as a
+//! source (FIX 7824). The writers that erase no claim (the retention sweep,
+//! the owner's discard of a world copy) withdraw it with their vault
+//! (`skill_attribution::delete_gate_receipt_unclear_in_txn`).
 
 use heed::RwTxn;
 
