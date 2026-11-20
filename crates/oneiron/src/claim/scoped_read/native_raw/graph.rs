@@ -109,7 +109,7 @@ impl NativeRawRead<'_> {
             root,
             max_depth,
             None,
-            |_| Ok::<_, Error>(Some(())),
+            |_, _| Ok::<_, Error>(Some(())),
             |_, nodes| {
                 let mut rows: Vec<_> = nodes
                     .unwrap_or_default()

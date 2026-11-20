@@ -92,39 +92,56 @@ impl ScopedRead<'_> {
     }
 
     /// Edges and both endpoints share one authority snapshot and a mandatory receipt.
+    ///
+    /// The receipt reports the key's live Grants, whatever this lane's own
+    /// setting (FIX-LIST SCOPED-READ-UNKNOWN-AUTHORITY-CALLERS): the centre
+    /// and its peers take them, so the receipt says what admitted its edges,
+    /// as `vault.neighbors` does. Its callers read the edges and attach the
+    /// receipt; none caps unjudged content by it. A key A never stands for
+    /// (the owner's, a slip-backed key such as the legacy edges route's, a
+    /// key with a Scope) reports exactly as before.
     pub fn edges_out(&self, id: &EntityId) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
-        self.edges_out_of(id, None)
+        let txn = self.grant_read_txn()?;
+        self.edges_out_reporting_in_txn(&txn, id, None, true)
     }
 
     /// [`Self::edges_out`] of one `kind`: an edge of another kind is neither
-    /// read nor counted as withheld.
+    /// read nor counted as withheld. Its receipt reports as this lane does.
     pub(crate) fn edges_out_of_kind(
         &self,
         id: &EntityId,
         kind: EdgeKind,
     ) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
-        self.edges_out_of(id, Some(kind))
-    }
-
-    fn edges_out_of(
-        &self,
-        id: &EntityId,
-        kind: Option<EdgeKind>,
-    ) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
         let txn = self.grant_read_txn()?;
-        self.edges_out_of_in_txn(&txn, id, kind)
+        self.edges_out_of_in_txn(&txn, id, Some(kind))
     }
 
     /// The scoped outbound edge projection in the caller's snapshot: the
     /// center must be retrievable (a TURN only with every MESSAGE readable).
+    /// Its receipt reports as this lane does.
     pub(crate) fn edges_out_of_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         kind: Option<EdgeKind>,
     ) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
+        self.edges_out_reporting_in_txn(txn, id, kind, self.receipts_include_live_grants)
+    }
+
+    /// [`Self::edges_out_of_in_txn`], its receipt reporting the key's live
+    /// Grants when `report_live_grants` ([`Self::receipt_reporting_in`]).
+    fn edges_out_reporting_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: Option<EdgeKind>,
+        report_live_grants: bool,
+    ) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        let admitted = self.admitted_edges_in(
+        // The centre and its peers take the authority this txn holds, as a
+        // point read does (FIX 7462): a live Grant of this key admits them.
+        let held = self.held_for(None);
+        let admitted = self.admitted_edges_held_in(
             txn,
             &policy,
             &filter,
@@ -134,6 +151,7 @@ impl ScopedRead<'_> {
             usize::MAX,
             usize::MAX,
             false,
+            &held,
         )?;
         // A withheld centre or peer counts; an opaque one never does.
         let suppressed = admitted.source.suppression() + admitted.suppressed;
@@ -146,7 +164,15 @@ impl ScopedRead<'_> {
         });
         Ok(ScopedReadResult {
             value,
-            receipt: self.receipt_in(txn, None, &policy, &filter, suppressed, None),
+            receipt: self.receipt_reporting_in(
+                txn,
+                None,
+                &policy,
+                &filter,
+                suppressed,
+                Some(&held),
+                report_live_grants,
+            ),
         })
     }
 
