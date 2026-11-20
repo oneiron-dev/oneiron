@@ -189,24 +189,53 @@ fn apply_remote_change(
                 .events
                 .first()
                 .ok_or_else(|| ingest_error("remote resource has no event"))?;
+            let source = pull_source_record_id(provider, seat, &primary.uid);
             // A cancelled version of a member a write of this UID still in
             // flight writes cancelled may be that write coming back before
             // its settlement marks the member's passport, and would read as a
             // host cancel that refunds the deposit. The resource stays owed
-            // and unread, as an omission a write in flight holds back does
-            // (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+            // and unread, as an omission a write in flight holds back does,
+            // and each cancelled member's passport keeps this first sighting,
+            // which dates the cancellation if the write proves not to be the
+            // stored copy (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
             let in_flight = cancelled_members_in_flight(vault, operation, &primary.uid)?;
             if !in_flight.is_empty() {
+                let mut cancelled = Vec::new();
                 for parsed in feed.events.iter().filter(|parsed| parsed.cancelled) {
-                    if crate::calendar::ingest::connector_event_ref(vault, parsed)?
-                        .is_some_and(|member| in_flight.contains(&member))
+                    if let Some(member) =
+                        crate::calendar::ingest::connector_event_ref(vault, parsed)?
                     {
-                        counters.owed_cancelled_versions += 1;
-                        return Ok(());
+                        cancelled.push((member, parsed));
                     }
                 }
+                if cancelled
+                    .iter()
+                    .any(|(member, _)| in_flight.contains(member))
+                {
+                    for (member, parsed) in cancelled {
+                        if let Some((_, passport)) =
+                            live_passport_for(vault, &member, system, &parsed.uid)?
+                        {
+                            crate::calendar::ingest::defer_connector_cancel(
+                                vault,
+                                system,
+                                ConnectorAdmissionSource {
+                                    record: source.as_str(),
+                                    source_version: None,
+                                    screen,
+                                    source: None,
+                                },
+                                member,
+                                &passport,
+                                parsed,
+                                now,
+                            )?;
+                        }
+                    }
+                    counters.owed_cancelled_versions += 1;
+                    return Ok(());
+                }
             }
-            let source = pull_source_record_id(provider, seat, &primary.uid);
             // Archived before any semantic write, once the bytes are known to
             // parse: a later write renders over exactly this copy.
             let archived = super::resource::archive_remote_source(
@@ -546,16 +575,17 @@ fn enqueue_next_sync(
 
 /// Refreshes the local view of one remote object after a precondition failure.
 /// Best-effort by design: the mismatch verdict is what the caller must see, and
-/// a reconciliation pull that itself fails must not mask it.
+/// a reconciliation pull that itself fails must not mask it. Returns the last
+/// copy of the object the pull read, if any.
 pub(super) fn reconcile_remote_object(
     vault: &Vault,
     operation: &CalendarConnectorOperation,
     transport: &dyn CalendarRemoteTransport,
     uid: &str,
     now: u64,
-) {
+) -> Option<RemoteCalendarObject> {
     if operation.revalidate(vault).is_err() {
-        return;
+        return None;
     }
     let seat = &operation.registration().seat;
     let Ok(batch) = transport.pull(
@@ -563,8 +593,9 @@ pub(super) fn reconcile_remote_object(
         &seat.config.calendar_ref,
         seat.cursor.as_deref(),
     ) else {
-        return;
+        return None;
     };
+    let mut read = None;
     for change in &batch.changes {
         let RemoteCalendarChange::Upsert(object) = change else {
             continue;
@@ -608,7 +639,9 @@ pub(super) fn reconcile_remote_object(
             },
             None,
         );
+        read = Some(object.clone());
     }
+    read
 }
 
 /// The EVENT's stored occurrence from the parsed times.

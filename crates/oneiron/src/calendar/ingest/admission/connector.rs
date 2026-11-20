@@ -151,6 +151,34 @@ pub(in crate::calendar) fn repeat_connector_echo<'a>(
     admission.repeat_imported_cancel(event_ref, event)
 }
 
+/// A cancelled version of `event` a pull held back unread, since a cancelled
+/// write of its member to this calendar is still in flight and the version
+/// may be that write coming back
+/// (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS). `passport`, the
+/// source's live passport, keeps this first sighting as
+/// `deferred_cancel_seen_at`, unless it already dates a cancellation or a
+/// held sighting. A write that settles, or proves to be the stored copy,
+/// drops it; when the write was refused and the copy is not its own, the
+/// next pull admits the version as the source's cancellation, dated by this
+/// sighting rather than by that later read.
+pub(in crate::calendar) fn defer_connector_cancel<'a>(
+    vault: &'a Vault,
+    system: &'a str,
+    source: ConnectorAdmissionSource<'a>,
+    event_ref: EntityId,
+    passport: &CalendarPassportValue,
+    event: &ParsedVEvent,
+    now: u64,
+) -> Result<(), CalendarError> {
+    if passport.cancelled_since.is_some() || passport.deferred_cancel_seen_at.is_some() {
+        return Ok(());
+    }
+    let mut admission = connector_admission(vault, system, source, now);
+    let mut next = passport.clone();
+    next.deferred_cancel_seen_at = Some(now);
+    admission.admit_superseding_passport(event_ref, &next, &screen_body(event))
+}
+
 /// A live passport a tombstone dated, whose calendar shows the uncancelled
 /// EVENT again at the same version, drops that date: the host took the
 /// deletion back, so it can no longer date a host cancel that another

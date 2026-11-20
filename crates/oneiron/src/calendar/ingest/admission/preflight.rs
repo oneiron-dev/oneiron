@@ -22,6 +22,7 @@ impl PollAdmission<'_> {
             presence: CalendarPassportPresence::Live,
             cancelled_since: None,
             written_cancelled: false,
+            deferred_cancel_seen_at: None,
         };
         validate_calendar_claim_value(
             PREDICATE_CALENDAR_PASSPORT,

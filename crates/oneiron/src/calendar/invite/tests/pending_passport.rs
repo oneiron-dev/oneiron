@@ -23,6 +23,7 @@ fn passport(vault: &Vault, seed: u8, event_ref: EntityId, approval: ClaimApprova
         presence: CalendarPassportPresence::Live,
         cancelled_since: None,
         written_cancelled: false,
+        deferred_cancel_seen_at: None,
     };
     let mut body = ClaimBody::new(
         PREDICATE_CALENDAR_PASSPORT,

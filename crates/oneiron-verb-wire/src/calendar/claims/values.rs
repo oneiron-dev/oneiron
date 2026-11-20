@@ -123,4 +123,13 @@ pub struct CalendarPassportValue {
     /// moves no deposit money.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub written_cancelled: bool,
+    /// When a pull of this source first held back a cancelled version of the
+    /// UID while a cancelled write of it was in flight, unread, since that
+    /// version may be the write itself coming back. Absent once a version of
+    /// the UID is admitted or a write settles. When the write turns out not
+    /// to be the source's copy, the next admitted cancelled version is the
+    /// source's own, and `cancelled_since` is dated by this sighting, not by
+    /// that later read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deferred_cancel_seen_at: Option<u64>,
 }

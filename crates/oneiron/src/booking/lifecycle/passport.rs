@@ -33,6 +33,7 @@ fn outbound_passport_value(
         presence: CalendarPassportPresence::Live,
         cancelled_since: None,
         written_cancelled: false,
+        deferred_cancel_seen_at: None,
     }
 }
 

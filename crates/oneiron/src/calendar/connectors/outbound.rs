@@ -17,8 +17,8 @@ use super::door::CalendarConnectorOperation;
 use super::inbound::{admit_screened_in_txn, reconcile_remote_object};
 use super::literal::{self, LiteralCarrier, LiteralKind, LiteralValues};
 use super::remote::{
-    CalendarRemoteTransport, RemoteWriteReceipt, RemoteWriteRequest, ics_content_hash, local_uid,
-    render_owner_vevent, shared_uid,
+    CalendarRemoteTransport, RemoteCalendarObject, RemoteWriteReceipt, RemoteWriteRequest,
+    ics_content_hash, local_uid, render_owner_vevent, shared_uid,
 };
 use super::seat::{CalendarConnectorError, CalendarConnectorSeatState};
 
@@ -294,7 +294,7 @@ pub fn write_calendar_event(
                     ics,
                 };
                 let receipt = issue_prepared_upsert(
-                    vault, operation, transport, &uid, now, &mut row, &request,
+                    vault, operation, transport, &uid, now, &mut row, &request, true,
                 )?;
                 return finish_remote_applied_write(
                     vault, operation, transport, event_ref, &mut row, receipt, now,
@@ -391,8 +391,9 @@ pub fn write_calendar_event(
         sequence,
         ics,
     };
-    let receipt =
-        issue_prepared_upsert(vault, operation, transport, &uid, now, &mut row, &request)?;
+    let receipt = issue_prepared_upsert(
+        vault, operation, transport, &uid, now, &mut row, &request, false,
+    )?;
     finish_remote_applied_write(
         vault, operation, transport, event_ref, &mut row, receipt, now,
     )
@@ -434,6 +435,13 @@ fn ensure_outbox_matches(
     Ok(())
 }
 
+/// Sends one prepared upsert. `replay` says an earlier call of this staged
+/// row may have reached the provider (the row was found prepared), so a
+/// precondition failure may be that call's own stored copy.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the replay flag joins the seven inputs every send takes"
+)]
 fn issue_prepared_upsert(
     vault: &Vault,
     operation: &CalendarConnectorOperation,
@@ -442,6 +450,7 @@ fn issue_prepared_upsert(
     now: u64,
     row: &mut CalendarWriteOutboxRow,
     request: &RemoteWriteRequest,
+    replay: bool,
 ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
     let seat = &operation.registration().seat;
     operation.revalidate(vault)?;
@@ -453,12 +462,23 @@ fn issue_prepared_upsert(
                 expected,
                 actual,
             }) => {
-                row.state = CalendarWriteOutboxState::ReconcileRequired;
-                row.updated_at = now;
-                write_outbox_row(vault, operation, row, None)?;
                 // Reconciliation reads the current remote state so a caller can
                 // intentionally rebase. Blind retries remain blocked on this row.
-                reconcile_remote_object(vault, operation, transport, uid, now);
+                let stored = reconcile_remote_object(vault, operation, transport, uid, now);
+                // The row leaves flight in the admission turn, after a
+                // replay's stored copy, when it is this write's own, marked
+                // the passports it cancels: no pull admits that copy
+                // unmarked in between
+                // (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+                {
+                    let _turn = crate::calendar::ingest::admission_turn(vault)?;
+                    if replay && let Some(stored) = stored.as_ref() {
+                        mark_stored_cancelled_write(vault, operation, transport, row, stored, now)?;
+                    }
+                    row.state = CalendarWriteOutboxState::ReconcileRequired;
+                    row.updated_at = now;
+                    write_outbox_row(vault, operation, row, None)?;
+                }
                 return Err(CalendarConnectorError::EtagMismatch {
                     href,
                     expected,
@@ -570,27 +590,42 @@ fn finish_remote_applied_write_in_txn(
 ) -> Result<Option<LiteralCarrier>, CalendarConnectorError> {
     // The exact RemoteApplied carrier guards every publication below. Cursor,
     // claims, index and final outbox CAS share this writer or all roll back.
-    let source_blob_ref =
-        read_remote_object_in_txn(vault, txn, &row.system, &row.calendar_ref, &row.uid)?
-            .and_then(|prior| prior.source_blob_ref);
-    if !write_remote_object_in_txn(
-        vault,
-        txn,
-        operation,
-        &CalendarRemoteObjectRow {
-            system: row.system.clone(),
-            calendar_ref: row.calendar_ref.clone(),
-            uid: row.uid.clone(),
-            href: Some(receipt.href.clone()),
-            etag: receipt.etag.clone(),
-            last_sequence: receipt.sequence,
-            content_hash: row.content_hash,
-            last_seen_at: now,
-            source_blob_ref,
-            carrier: None,
-        },
-        Some(row),
-    )? {
+    let prior_remote =
+        read_remote_object_in_txn(vault, txn, &row.system, &row.calendar_ref, &row.uid)?;
+    // A write with cancelled members holds back the seat's cancelled
+    // versions of them while in flight, so no pull admits its own copy
+    // before it settles. A version a pull admitted meanwhile at the write's
+    // SEQUENCE or above is then the seat's newer state (a host who restored
+    // the booking): the late receipt replaces neither that remote row nor the
+    // passports it admitted (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+    let holds_back = !row.cancelled_members.is_empty();
+    let newer_remote = holds_back
+        && prior_remote
+            .as_ref()
+            .is_some_and(|prior| prior.last_sequence >= receipt.sequence);
+    let settles = if newer_remote {
+        outbox_settles_in_txn(vault, txn, row)?
+    } else {
+        write_remote_object_in_txn(
+            vault,
+            txn,
+            operation,
+            &CalendarRemoteObjectRow {
+                system: row.system.clone(),
+                calendar_ref: row.calendar_ref.clone(),
+                uid: row.uid.clone(),
+                href: Some(receipt.href.clone()),
+                etag: receipt.etag.clone(),
+                last_sequence: receipt.sequence,
+                content_hash: row.content_hash,
+                last_seen_at: now,
+                source_blob_ref: prior_remote.and_then(|prior| prior.source_blob_ref),
+                carrier: None,
+            },
+            Some(row),
+        )?
+    };
+    if !settles {
         return Ok(None);
     }
 
@@ -618,6 +653,16 @@ fn finish_remote_applied_write_in_txn(
     let zone_prefix = crate::calendar::ingest::property_claims::source_prefix(&row.system);
     let zone_record = format!("{zone_prefix}{source_record_id}");
     for &(member, content_hash) in &row.component_hashes {
+        // Direction remains approval-blind, while the UID-index gate below
+        // still requires an admitted passport for a non-local UID.
+        let current = live_passport_for_in_txn(vault, txn, &member, &row.system, &row.uid)?;
+        if holds_back
+            && current.as_ref().is_some_and(|(_, value)| {
+                value.source.is_some() && value.last_sequence >= receipt.sequence
+            })
+        {
+            continue;
+        }
         if super::resource::all_day_in_txn(vault, txn, &member)? {
             crate::calendar::ingest::property_claims::reconcile_zone_in_txn(
                 vault,
@@ -640,9 +685,6 @@ fn finish_remote_applied_write_in_txn(
                 },
             )?;
         }
-        // Direction remains approval-blind, while the UID-index gate below
-        // still requires an admitted passport for a non-local UID.
-        let current = live_passport_for_in_txn(vault, txn, &member, &row.system, &row.uid)?;
         let direction = if current
             .as_ref()
             .is_some_and(|(_, value)| value.direction.is_inbound_bearing())
@@ -653,15 +695,12 @@ fn finish_remote_applied_write_in_txn(
         };
         // A member written cancelled marks its passport, so the seat's later
         // cancelled versions of it (a provider that rewrites the stored
-        // resource) read as this write, not a host cancel. A cancellation the
-        // seat reported itself before this write stays its own and keeps its
-        // first report's date across every later write; one the seat only
-        // reported back from an earlier marked write keeps the mark.
+        // resource) read as this write, not a host cancel
+        // ([`written_cancel_marks`]). A cancellation date the seat's passport
+        // already holds is kept across the write.
         let written = row.cancelled_members.contains(&member);
-        let prior_cancel = current
-            .as_ref()
-            .and_then(|(_, value)| value.cancelled_since.map(|_| value.written_cancelled));
-        let written_cancelled = written && prior_cancel.is_none_or(|marked| marked);
+        let written_cancelled =
+            written && written_cancel_marks(current.as_ref().map(|(_, value)| value));
         let cancelled_since = current
             .as_ref()
             .and_then(|(_, value)| value.cancelled_since)
@@ -677,6 +716,7 @@ fn finish_remote_applied_write_in_txn(
             presence: CalendarPassportPresence::Live,
             cancelled_since,
             written_cancelled,
+            deferred_cancel_seen_at: None,
         };
         let already_applied = current.as_ref().is_some_and(|(_, value)| {
             value.last_sequence == next.last_sequence
@@ -684,6 +724,7 @@ fn finish_remote_applied_write_in_txn(
                 && value.direction == next.direction
                 && value.presence == next.presence
                 && value.written_cancelled == next.written_cancelled
+                && value.deferred_cancel_seen_at == next.deferred_cancel_seen_at
         });
         if !already_applied {
             let new_id = admit_screened_in_txn(
@@ -713,6 +754,111 @@ fn finish_remote_applied_write_in_txn(
     Ok(write_outbox_row_in_txn(
         vault, txn, operation, &committed, None,
     )?)
+}
+
+/// Whether the settled write of a member cancelled marks its passport
+/// `written_cancelled`, given the seat's passport before it
+/// (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS). It does, unless that
+/// passport records a cancellation the seat reported itself while the
+/// booking was written to it: an unmarked `cancelled_since` on an Outbound or
+/// TwoWay passport, a host cancel that already moved the deposit, which
+/// stays the seat's own. A cancellation the seat reported while it only held
+/// the booking Inbound moved no money, and one it reported back from an
+/// earlier marked write is this engine's own: both take the mark.
+fn written_cancel_marks(prior: Option<&CalendarPassportValue>) -> bool {
+    !prior.is_some_and(|prior| {
+        prior.cancelled_since.is_some()
+            && !prior.written_cancelled
+            && matches!(
+                prior.direction,
+                CalendarPassportDirection::Outbound | CalendarPassportDirection::TwoWay
+            )
+    })
+}
+
+/// A replayed write of members cancelled that the provider refused on its
+/// precondition may be the write itself, stored on an earlier call whose
+/// answer was lost: the precondition then fails on the ETag the stored copy
+/// took. That copy is this write's when it holds exactly the staged members,
+/// each at the staged SEQUENCE or above (a provider that rewrites a stored
+/// copy keeps or raises it) and cancelled exactly where the write cancelled
+/// it. Each such member's passport is then marked as the write's receipt
+/// would mark it ([`written_cancel_marks`]), so the seat's later report of
+/// the copy reads as this write and moves no deposit money; its held
+/// sighting, the copy coming back, goes. A copy that differs is another
+/// writer's, and nothing is marked
+/// (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+///
+/// The caller holds the vault's calendar admission turn, so no pull admits
+/// the copy between this mark and the outbox leaving flight.
+fn mark_stored_cancelled_write(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+    transport: &dyn CalendarRemoteTransport,
+    row: &CalendarWriteOutboxRow,
+    stored: &RemoteCalendarObject,
+    now: u64,
+) -> Result<(), CalendarConnectorError> {
+    if row.cancelled_members.is_empty() {
+        return Ok(());
+    }
+    let Ok(feed) = super::remote::parse_remote_resource(stored) else {
+        return Ok(());
+    };
+    if feed.events.len() != row.component_hashes.len() {
+        return Ok(());
+    }
+    for parsed in &feed.events {
+        let Some(member) = crate::calendar::ingest::connector_event_ref(vault, parsed)? else {
+            return Ok(());
+        };
+        if parsed.sequence < row.sequence
+            || !row
+                .component_hashes
+                .iter()
+                .any(|(staged, _)| *staged == member)
+            || parsed.cancelled != row.cancelled_members.contains(&member)
+        {
+            return Ok(());
+        }
+    }
+    let source_record_id = write_source_record_id(
+        transport.provider_key(),
+        &operation.registration().seat,
+        &row.uid,
+    );
+    vault.try_with_write_txn_grouped(|txn| {
+        for member in &row.cancelled_members {
+            let Some((_, current)) =
+                live_passport_for_in_txn(vault, txn, member, &row.system, &row.uid)?
+            else {
+                continue;
+            };
+            if !written_cancel_marks(Some(&current))
+                || (current.written_cancelled && current.deferred_cancel_seen_at.is_none())
+            {
+                continue;
+            }
+            let next = CalendarPassportValue {
+                last_seen_at: now,
+                written_cancelled: true,
+                deferred_cancel_seen_at: None,
+                ..current
+            };
+            let new_id = admit_screened_in_txn(
+                vault,
+                txn,
+                *member,
+                &CalendarInboundBody::default(),
+                &source_record_id,
+                PREDICATE_CALENDAR_PASSPORT,
+                encode_passport_value(&next),
+                now,
+            )?;
+            revise_passport_in_txn(vault, txn, member, &row.system, &row.uid, &new_id, now)?;
+        }
+        Ok::<(), CalendarConnectorError>(())
+    })
 }
 
 /// The stored form of a write-outbox row. `EntityId` and `[u8; 32]` travel as
@@ -1160,14 +1306,10 @@ fn write_remote_object_in_txn(
         &row.uid,
     );
     let row_digest = cursor_digest(row)?;
-    if let Some(outbox) = settlement {
-        let current = OUTBOX.get(&vault.store, txn, &OutboxKey(outbox.outbox_id))?;
-        let held = outbox.carrier.as_ref().ok_or_else(literal::invalid)?;
-        if current.as_ref().is_none_or(|current| {
-            current.state != CalendarWriteOutboxState::RemoteApplied || current.carrier != *held
-        }) {
-            return Ok(false);
-        }
+    if let Some(outbox) = settlement
+        && !outbox_settles_in_txn(vault, txn, outbox)?
+    {
+        return Ok(false);
     }
     let prior = REMOTE_OBJECT.get(&vault.store, txn, &RemoteObjectKey(key))?;
     let instance = vault.store.clock.ulid()?;
@@ -1204,6 +1346,20 @@ fn write_remote_object_in_txn(
         prior.carrier.retire(vault, txn, LiteralKind::Cursor)?;
     }
     Ok(true)
+}
+
+/// Whether `outbox` is still the stored remote-applied row its settlement
+/// read: the exact carrier, so a stale settlement publishes nothing.
+fn outbox_settles_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    outbox: &CalendarWriteOutboxRow,
+) -> crate::Result<bool> {
+    let current = OUTBOX.get(&vault.store, txn, &OutboxKey(outbox.outbox_id))?;
+    let held = outbox.carrier.as_ref().ok_or_else(literal::invalid)?;
+    Ok(current.as_ref().is_some_and(|current| {
+        current.state == CalendarWriteOutboxState::RemoteApplied && current.carrier == *held
+    }))
 }
 
 /// Matches a provider removal only within this authenticated installed seat.
