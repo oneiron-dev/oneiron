@@ -16,6 +16,7 @@
 use super::claim_source_is_machine_minted;
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::claim::ClaimSubject;
 use crate::deletion::TombstoneReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -137,12 +138,13 @@ impl Vault {
     /// bears a cleanup-archive marker: the same record through the cleanup's
     /// restore door ([`Self::restore_archived_in_txn`]), never a second one
     /// (ARCH-0073 §6, ARCH-0055 §10; FIX
-    /// NATIVE-CLAIM-LANDS-ON-ARCHIVED-PERSON). Two callers, both the
+    /// NATIVE-CLAIM-LANDS-ON-ARCHIVED-PERSON). Its callers are all the
     /// Dreamer's: its person mint, when
     /// [`Self::put_attempt_minted_person_in_txn`] wrote nothing for the id a
-    /// declaration derives, and its promotion writer, for the entity subject
-    /// of a claim it writes. A derivation's person item never calls it: that
-    /// item stays refused for an archived id.
+    /// declaration derives, and each of its claim writers, for the entity
+    /// subject of a claim it writes, through
+    /// [`Self::restore_mentioned_subject_in_txn`]. A derivation's person item
+    /// never calls it: that item stays refused for an archived id.
     ///
     /// Returns `false` without writing when `id` bears no marker with the
     /// cleanup-archive reason, when no row is stored for it, when the stored
@@ -185,6 +187,32 @@ impl Vault {
         }
         self.restore_archived_in_txn(wtxn, id)?;
         Ok(true)
+    }
+
+    /// Restores the PERSON a claim the Dreamer writes is about, as
+    /// [`Self::restore_mentioned_person_in_txn`] does, when the claim's
+    /// `subject` is an entity; an edge subject restores nothing. A claim
+    /// about a PERSON under a cleanup archive is a new mention of that
+    /// person, so every claim writer of the Dreamer calls this in the
+    /// claim's own transaction, after the claim is written: the promotion
+    /// writer, the open-conflict marker, a recipe's output, a settlement's
+    /// answer and the alternative it keeps, a revert's copy, the nightly
+    /// merge, the curator's stand-copy, a tournament's winner, a maintenance
+    /// finding (a stewardship reach-out) and a durable step's `dreamer.step`
+    /// claim (FIX DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON).
+    ///
+    /// # Errors
+    ///
+    /// [`Self::restore_mentioned_person_in_txn`]'s.
+    pub(crate) fn restore_mentioned_subject_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        subject: ClaimSubject,
+    ) -> Result<bool> {
+        match subject {
+            ClaimSubject::Entity(id) => self.restore_mentioned_person_in_txn(wtxn, &id),
+            ClaimSubject::Edge { .. } => Ok(false),
+        }
     }
 }
 

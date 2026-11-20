@@ -826,6 +826,10 @@ fn stand_copy_in_txn(
         )
         .made_by(&copy, birth)
         .apply(txn)?;
+    // The copy stands the target's claim again: about a PERSON under a
+    // cleanup archive, it restores her in the revert's transaction
+    // (ARCH-0073 §6).
+    vault.restore_mentioned_subject_in_txn(txn, body.subject)?;
     if stale {
         demote_in_place_in_txn(
             vault,

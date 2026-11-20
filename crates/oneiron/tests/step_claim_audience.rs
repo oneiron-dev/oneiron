@@ -3,6 +3,14 @@
 //! relationship files a claim inside that relationship, which a member
 //! outside it does not read. On main the claim was stamped `rel: all`.
 //!
+//! A second test (built with `--cfg oneiron_test_support`, for its archive
+//! door) checks a step whose context subject is a PERSON the vault cleanup
+//! archived (ARCH-0073 §6; FIX DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON,
+//! review round 1 of #9767): the owner-gone fence lets the step finish, and
+//! its `dreamer.step` claim, a new mention of her, restores her. Two more
+//! (review round 2 of #9767) check the other Dreamer runtime records about
+//! her: a trap's anchor and its transition, and a job's started milestone.
+//!
 //! Runs on public paths: `cargo test -p oneiron --all-features --test
 //! step_claim_audience`. On the testkit: a copy of the empty fixture vault,
 //! and a scripted model that answers each prompt by its digest.
@@ -233,4 +241,256 @@ fn a_step_claim_from_a_relationship_bound_call_stays_inside_the_relationship() {
         None
     );
     backend.finish();
+}
+
+/// ARCH-0073 §6, "a re-mention restores the archived record" (FIX
+/// DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON, review round 1 of #9767): the vault
+/// cleanup archives the PERSON a durable step names as its context subject. The owner-gone fence
+/// lets an archived owner through, so the step finishes and files its `dreamer.step` claim about
+/// her; that claim is a new mention of her, and its own write restores her.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_step_claim_about_an_archived_person_restores_her() {
+    let copy = FixtureVault::empty(&fixture_cache!())
+        .expect("the empty fixture")
+        .copy()
+        .expect("a private copy");
+    let vault = copy.open().expect("vault");
+    let actor = person(&vault);
+    let subject = person(&vault);
+    oneiron::test_doors::cleanup_archive::archive_as_cleanup(&vault, &subject)
+        .expect("FIXTURE: the cleanup archives her");
+    assert!(
+        vault
+            .archived_entity(&subject)
+            .expect("archive read")
+            .is_some(),
+        "FIXTURE: the cleanup's archive marker stands on her"
+    );
+    let attempt = match DreamerRunnerStore::new(&vault)
+        .enqueue(EnqueueDreamerAttempt {
+            attempt_type: "step-archived-person-test".to_owned(),
+            input: rmpv::Value::from("input"),
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: Some("run-test".to_owned()),
+            now: 10,
+        })
+        .expect("attempt")
+    {
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => status.attempt.id,
+        other => panic!("unexpected enqueue outcome: {other:?}"),
+    };
+    let ctx = DurableStepContext {
+        vault: &vault,
+        attempt_id: attempt,
+        run_id: Some("run-test".to_owned()),
+        envelope_actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        subject,
+        deadline: None,
+        now_ms: 10_000,
+        spend_scope: None,
+        wake_pass_bound: false,
+    };
+    let guard =
+        BudgetGuard::with_reserve_units("step-test", 10_000, 500, BudgetExhaustionPolicy::Suspend);
+    let words = request(Scope::default(), "words about her");
+    let backend = ScriptedBackend::new(vec![
+        Step::text(
+            "about-her",
+            ScriptedBackend::digest_of(&words),
+            "an answer about her",
+        )
+        .buffered()
+        .usage(100, 50),
+    ])
+    .expect("the script");
+    let before = step_claims(&vault);
+    assert!(
+        matches!(
+            block_on(call_as_step(&ctx, &backend, &guard, words)).expect("the step"),
+            StepOutcome::Finished { .. }
+        ),
+        "FIXTURE: the step finishes"
+    );
+    let filed: Vec<EntityId> = step_claims(&vault).difference(&before).copied().collect();
+    assert_eq!(
+        filed.len(),
+        1,
+        "FIXTURE: the step files one claim about her"
+    );
+    assert!(
+        vault
+            .archived_entity(&subject)
+            .expect("archive read")
+            .is_none(),
+        "the step claim is a new mention of her: it restored her, and she bears no archive marker"
+    );
+    backend.finish();
+}
+
+/// One generic Dreamer attempt, queued, by id.
+#[cfg(oneiron_test_support)]
+fn enqueued_attempt(vault: &Vault, attempt_type: &str) -> oneiron::attempt_queue::AttemptId {
+    match DreamerRunnerStore::new(vault)
+        .enqueue(EnqueueDreamerAttempt {
+            attempt_type: attempt_type.to_owned(),
+            input: rmpv::Value::from("input"),
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: Some("run-test".to_owned()),
+            now: 10,
+        })
+        .expect("attempt")
+    {
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => status.attempt.id,
+        other => panic!("unexpected enqueue outcome: {other:?}"),
+    }
+}
+
+/// Whether `id` bears the vault cleanup's archive marker.
+#[cfg(oneiron_test_support)]
+fn archived(vault: &Vault, id: &EntityId) -> bool {
+    vault.archived_entity(id).expect("archive read").is_some()
+}
+
+/// ARCH-0073 §6, "a re-mention restores the archived record" (FIX
+/// DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON, review round 2 of #9767): a Dreamer trap
+/// about a PERSON the vault cleanup archived. Its `created` anchor is a new mention of her and
+/// restores her in its own write. Archived again, she is restored again by the trap's `waiting`
+/// transition, the second writer of a trap record.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_trap_about_an_archived_person_restores_her() {
+    let copy = FixtureVault::empty(&fixture_cache!())
+        .expect("the empty fixture")
+        .copy()
+        .expect("a private copy");
+    let vault = copy.open().expect("vault");
+    let actor = person(&vault);
+    let subject = person(&vault);
+    oneiron::test_doors::cleanup_archive::archive_as_cleanup(&vault, &subject)
+        .expect("FIXTURE: the cleanup archives her");
+    assert!(
+        archived(&vault, &subject),
+        "FIXTURE: the cleanup's archive marker stands on her"
+    );
+    let ctx = DurableStepContext {
+        vault: &vault,
+        attempt_id: enqueued_attempt(&vault, "trap-archived-person-test"),
+        run_id: Some("run-test".to_owned()),
+        envelope_actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        subject,
+        deadline: None,
+        now_ms: 10_000,
+        spend_scope: None,
+        wake_pass_bound: false,
+    };
+    let trap = oneiron::llm::open_trap(
+        &vault,
+        &ctx,
+        oneiron::llm::DreamerTrapKind::Consent,
+        [7; 32],
+        "a wait about her",
+    )
+    .expect("the trap opens");
+    assert!(
+        !archived(&vault, &subject),
+        "the trap's anchor is a new mention of her: it restored her, and she bears no archive marker"
+    );
+    oneiron::test_doors::cleanup_archive::archive_as_cleanup(&vault, &subject)
+        .expect("FIXTURE: the cleanup archives her again");
+    assert!(
+        archived(&vault, &subject),
+        "FIXTURE: the cleanup's archive marker stands on her again"
+    );
+    assert!(
+        matches!(
+            oneiron::llm::register_wait(&vault, &trap, 10_001).expect("the trap waits"),
+            oneiron::llm::DreamerTrapState::Waiting
+        ),
+        "FIXTURE: the trap moves from created to waiting"
+    );
+    assert!(
+        !archived(&vault, &subject),
+        "the waiting transition is a new mention of her: it restored her again"
+    );
+}
+
+/// ARCH-0073 §6, "a re-mention restores the archived record" (FIX
+/// DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON, review round 2 of #9767): a Dreamer job's
+/// started milestone, co-committed with its attempt's admission, names a PERSON the vault cleanup
+/// archived. The milestone is a new mention of her, and its own write restores her.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_milestone_about_an_archived_person_restores_her() {
+    use oneiron::dreamer_runner::{
+        AdmitDreamerAttempt, DREAMER_RUNNER_ATTEMPT_KIND, DreamerAdmissionOutcome,
+        DreamerMilestoneClaim, DreamerMilestoneKind,
+    };
+    let copy = FixtureVault::empty(&fixture_cache!())
+        .expect("the empty fixture")
+        .copy()
+        .expect("a private copy");
+    let vault = copy.open().expect("vault");
+    let actor = person(&vault);
+    let subject = person(&vault);
+    oneiron::test_doors::cleanup_archive::archive_as_cleanup(&vault, &subject)
+        .expect("FIXTURE: the cleanup archives her");
+    assert!(
+        archived(&vault, &subject),
+        "FIXTURE: the cleanup's archive marker stands on her"
+    );
+    let attempt = enqueued_attempt(&vault, "milestone-archived-person-test");
+    let job_id: String = attempt
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    // The Dreamer's runtime envelope, as its step and trap records carry it.
+    let envelope = oneiron::WriteEnvelope::new(
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        oneiron::claim::ClaimSource::Generated,
+        oneiron::WriteProvenance::new(rmpv::Value::Map(vec![
+            (
+                rmpv::Value::from("surface"),
+                rmpv::Value::from(DREAMER_RUNNER_ATTEMPT_KIND),
+            ),
+            (rmpv::Value::from("job_id"), rmpv::Value::from(job_id)),
+        ]))
+        .expect("the provenance"),
+        oneiron::claim::ClaimApprovalStatus::Proposed,
+    );
+    let claim_id = EntityId::now();
+    let admitted = DreamerRunnerStore::new(&vault)
+        .admit_next(AdmitDreamerAttempt {
+            lease_owner: "dreamer-worker".to_owned(),
+            now: 20,
+            budget_id: "wake".to_owned(),
+            budget_total_units: 10,
+            reserve_units: 4,
+            started_milestone: Some(DreamerMilestoneClaim {
+                claim_id,
+                subject,
+                kind: DreamerMilestoneKind::Started,
+                envelope,
+                occurred: TimeRange { start: 20, end: 20 },
+                learned_at: 20,
+            }),
+        })
+        .expect("the admission");
+    assert!(
+        matches!(admitted, DreamerAdmissionOutcome::Admitted(_)),
+        "FIXTURE: the attempt is admitted: {admitted:?}"
+    );
+    assert!(
+        vault.get_claim(&claim_id).expect("claim read").is_some(),
+        "FIXTURE: the started milestone lands with the admission"
+    );
+    assert!(
+        !archived(&vault, &subject),
+        "the milestone is a new mention of her: it restored her, and she bears no archive marker"
+    );
 }

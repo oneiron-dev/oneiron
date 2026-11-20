@@ -4,6 +4,8 @@
 //! Two bound attempts park the one judge set native assembly forms: a
 //! candidate against an unequal stored head, and two sibling candidates.
 //! Each marker is then read back as the Dreamer reads its open conflicts.
+//! A marker about a PERSON the vault cleanup archived restores her (FIX
+//! DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON).
 #![cfg(oneiron_test_support)]
 
 #[path = "extraction_verdict/support.rs"]
@@ -13,6 +15,7 @@ use oneiron::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use oneiron::dreamer_consolidation::selection::SelectionConfig;
+use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
 use oneiron::test_doors::extraction_inputs::{
     enqueue_admitted_extraction_attempt, witness_extraction_turns,
 };
@@ -317,5 +320,65 @@ fn native_parks_two_sibling_candidates_with_no_head() -> ExtractionVerdictTestRe
         Vec::<String>::new()
     );
     assert_eq!(hex_ids_at(&conflict.body.value, "candidates"), members);
+    Ok(())
+}
+
+/// ARCH-0073 §6, "a re-mention restores the archived record" (FIX
+/// DREAMER-DIRECT-CLAIM-WRITERS-LAND-ON-ARCHIVED-PERSON): two sibling candidates about a
+/// PERSON under the vault cleanup's archive marker park their open marker on her, and the
+/// marker's own write restores her, as the promotion writer's claim does.
+#[test]
+fn native_marker_about_an_archived_person_restores_her() -> ExtractionVerdictTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = open_vault(&dir)?;
+    let subject = EntityId::now();
+    seed_named_person(&vault, &subject, "owen", vault.now_recorded_at())?;
+    archive_as_cleanup(&vault, &subject)?;
+    assert!(
+        vault.archived_entity(&subject)?.is_some(),
+        "the cleanup's archive marker stands on her"
+    );
+    let witnessed = witness_extraction_turns(
+        &vault,
+        &["owen chooses green tea", "owen chooses black coffee"],
+    )?;
+    let (attempt_id, admitted) =
+        enqueue_admitted_extraction_attempt(&vault, &witnessed.turns, QUEUE_NOW)?;
+    let attempt = extraction_attempt_hex(attempt_id);
+    let binding = bind_extraction(&vault, &admitted)?;
+    let page = read_bound_extraction_page(&binding, &attempt)?;
+    let turns = page_turns_with_versions(&page);
+    assert_eq!(turns.len(), 2, "the page serves both witnessed turns");
+    let operands = vec![
+        extraction_candidate(
+            &subject.to_hex(),
+            FOOD,
+            json!("green tea"),
+            &turns[0].0,
+            turns[0].1.clone(),
+        ),
+        extraction_candidate(
+            &subject.to_hex(),
+            FOOD,
+            json!("black coffee"),
+            &turns[1].0,
+            turns[1].1.clone(),
+        ),
+    ];
+
+    let parked = park_native_open_conflict(&vault, &attempt, pass_clock_ms(&vault), &operands)?;
+    assert_eq!(
+        parked_members(&parked)?.len(),
+        2,
+        "both candidates are in the one set"
+    );
+    assert!(
+        vault.archived_entity(&subject)?.is_none(),
+        "the marker is a new mention of her: it restored her, and she bears no archive marker"
+    );
+    let open = vault
+        .memory(dreamer(&vault)?, EdgeActorClass::System)
+        .open_conflicts(None, Some(subject), usize::MAX)?;
+    assert_eq!(open.len(), 1, "the marker about her stands");
     Ok(())
 }
