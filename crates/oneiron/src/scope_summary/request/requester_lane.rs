@@ -14,6 +14,8 @@
 //! Round 2 of #9583 and #9590: the evidence a plan reads judges each
 //! MESSAGE whose words go to the model under the same rebuilt lane, every
 //! re-declaration keeps the lane, and no narrowed lane declares an Arc.
+//! Round 1 of #9683: so does each row an edited predecessor's text was
+//! written from.
 
 use rmpv::Value;
 
@@ -169,29 +171,34 @@ pub(super) fn require_sources_in_declared_lane(
 }
 
 /// `evidence`, read for `plan`, once the lane its declaration froze, rebuilt
-/// in `txn` over its requester's base read, reads each MESSAGE whose words
-/// the evidence gives the model (FIX SUMMARY-PLAN-JUDGES-TURNS-NOT-MESSAGES).
-/// The plan judged the TURNs; a TURN's MESSAGE is gated apart from it (a
-/// relationship grant, a records caveat), and the Dreamer reads it on its
-/// own lane. Composition, landing and reuse each read the evidence through
-/// here. A principal declaration adds nothing.
+/// in `txn` over its requester's base read, reads each row whose words the
+/// evidence gives the model beyond the TURNs the plan judged: each MESSAGE
+/// (FIX SUMMARY-PLAN-JUDGES-TURNS-NOT-MESSAGES), and each row an edited
+/// predecessor's text was written from (review P1 of #9683). A TURN's
+/// MESSAGE is gated apart from it (a relationship grant, a records caveat),
+/// an edit may name any row its editor read, and the Dreamer reads both on
+/// its own lane. Composition, landing and reuse each read the evidence
+/// through here. A principal declaration adds nothing.
 ///
 /// # Errors
-/// A MESSAGE the rebuilt lane does not read, a declaration whose frozen
-/// lane or read basis does not decode, and a store, fold or clock failure
-/// judging one.
+/// A row the rebuilt lane does not read, a declaration whose frozen lane or
+/// read basis does not decode, an editor source whose id does not decode,
+/// and a store, fold or clock failure judging one.
 pub(super) fn evidence_in_declared_lane(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     plan: &ScopeSummaryPlan,
     evidence: ScopeSummaryEvidence,
 ) -> Result<ScopeSummaryEvidence> {
-    if evidence.messages.is_empty() {
+    let mut rows: Vec<EntityId> = evidence.messages.iter().map(|message| message.id).collect();
+    for source in &evidence.editor_sources {
+        rows.push(EntityId::from_hex(&source.id)?);
+    }
+    if rows.is_empty() {
         return Ok(evidence);
     }
-    let messages: Vec<EntityId> = evidence.messages.iter().map(|message| message.id).collect();
     let input = derivation::decode(&plan.input)?;
-    require_sources_in_declared_lane(vault, txn, &input, plan.requester, &messages)?;
+    require_sources_in_declared_lane(vault, txn, &input, plan.requester, &rows)?;
     Ok(evidence)
 }
 
