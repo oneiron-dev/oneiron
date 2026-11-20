@@ -100,7 +100,7 @@ impl Vault {
 
     /// [`Vault::put_claim_in_txn`] whose EdgeRef subject the live Owners
     /// read at `edge_subject_status`. The owner's whole-vault restore of a
-    /// proven CLAIM-pair link reads its status claim's subject at
+    /// proven CLAIM-pair link reads the subject of each claim about it at
     /// [`ClaimReadStatus::Recorded`]: the link's two restored CLAIMs come
     /// back proposed, as every imported claim does
     /// (`batch::export::document_import::claim_pair_same_as`). Every other

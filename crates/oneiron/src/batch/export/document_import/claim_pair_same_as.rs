@@ -121,14 +121,15 @@ pub(super) fn claim_pair_proof(
 
 /// The mode the live Owners read archived claim `claim`'s EdgeRef subject at
 /// when this import puts it, read in `txn`: [`ClaimReadStatus::Recorded`] on
-/// the owner's restore for a `core.coreference.status` claim on a `same_as`
-/// link between two CLAIMs that [`claim_pair_proof`] proves, since the
-/// link's two restored CLAIMs come back proposed, as every imported claim
-/// does, and the Surfaceable mode admits no proposed claim (FIX
-/// OWNER-RESTORE-OF-GRANTED-CLAIM-PAIR-LINK-ABORTS: the put refused the
-/// restored link as `EntityNotFound` and the whole restore aborted);
-/// [`ClaimReadStatus::Surfaceable`] for every other claim and door. The put
-/// still reads the exact live link and both its ends.
+/// the owner's restore for a claim about a `same_as` link between two CLAIMs
+/// that [`claim_pair_proof`] proves (its `core.coreference.status` claim, or
+/// any other claim the source holds about it), since the link's two restored
+/// CLAIMs come back proposed, as every imported claim does, and the
+/// Surfaceable mode admits no proposed claim (FIX
+/// OWNER-RESTORE-OF-GRANTED-CLAIM-PAIR-LINK-ABORTS, REVIEW-9744 P1: the put
+/// refused the restored link as `EntityNotFound` and the whole restore
+/// aborted); [`ClaimReadStatus::Surfaceable`] for every other claim and door.
+/// The put still reads the exact live link and both its ends.
 pub(super) fn claim_edge_subject_read_status(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -137,7 +138,6 @@ pub(super) fn claim_edge_subject_read_status(
     claim: &ClaimBody,
 ) -> Result<ClaimReadStatus> {
     if owner_restore
-        && claim.predicate == crate::claim::PREDICATE_COREFERENCE_STATUS
         && let ClaimSubject::Edge {
             source,
             kind: EdgeKind::SameAs,
