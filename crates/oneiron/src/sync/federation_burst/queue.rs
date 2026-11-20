@@ -81,6 +81,21 @@ fn prefix(peer: BurstPeer<'_>) -> Result<Vec<u8>> {
     Ok(prefix)
 }
 
+/// The tag a retained batch's identity hashes for its kind. An own device's
+/// update is one batch whichever socket sent it: the same bytes for the same
+/// window, from a residence socket or a full-window one, share one id, so a
+/// receipt one of them settled answers the other (an update its owner
+/// rejected stays rejected), and a held row answers both as held. The row
+/// keeps the kind it arrived with, which its replay judges by (#9691 review).
+fn identity_tag(kind: WorkKind) -> u8 {
+    match kind {
+        WorkKind::Selector => 0,
+        WorkKind::MemberUpdate => 1,
+        WorkKind::GuestUpdate => 2,
+        WorkKind::DeviceUpdate | WorkKind::DeviceResidenceUpdate => 3,
+    }
+}
+
 /// Every own device with retained work, as its connection proved it.
 pub(super) fn retained_device_peers(vault: &Vault) -> Result<Vec<DevicePeer>> {
     let txn = vault.store.env.read_txn()?;
@@ -164,13 +179,7 @@ impl DeferredWork {
         hash.update(&peer.digest());
         hash.update(ContentHash::of(&selector).as_bytes());
         hash.update(key.as_str().as_bytes());
-        hash.update(&[match kind {
-            WorkKind::Selector => 0,
-            WorkKind::MemberUpdate => 1,
-            WorkKind::GuestUpdate => 2,
-            WorkKind::DeviceUpdate => 3,
-            WorkKind::DeviceResidenceUpdate => 4,
-        }]);
+        hash.update(&[identity_tag(kind)]);
         hash.update(payload);
         Ok((hash.finish().into_bytes(), selector))
     }
@@ -233,7 +242,7 @@ impl DeferredWork {
             || saved.peer != self.peer
             || saved.selector != self.selector
             || saved.window != self.window
-            || saved.kind != self.kind
+            || identity_tag(saved.kind) != identity_tag(self.kind)
             || saved.payload != self.payload
         {
             return Err(corrupt());
