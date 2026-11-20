@@ -562,7 +562,12 @@ impl Vault {
     /// refuses, as the spent invitation does); the answer is then the
     /// original receipt, read back from the invitee's own notice of it, and
     /// the same counter, from the Connect's exact repeat, which writes
-    /// nothing.
+    /// nothing. A seat accepted without an offer, whose edge `edge` attached
+    /// later, answers the same (review round 2 of #8372): the retry answers
+    /// the seat as it stands, its acceptance and its one inquiry edge, and
+    /// both are true whichever door joined the edge. Telling the two apart
+    /// would keep a pact id per accepted invitee, a row every erase of that
+    /// person must then reach, for no state a member could act on.
     fn repeat_inquiry_join_acceptance(
         &self,
         invitee: &AuthenticatedOwner,

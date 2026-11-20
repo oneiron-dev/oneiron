@@ -49,7 +49,7 @@ struct Held {
 impl Vault {
     /// What this vault holds from `peer_vault_id`, read for `owner` in one
     /// read: each world with the records a delivery from that vault landed
-    /// and this vault still holds, and each world a pact with that vault
+    /// and this vault still holds there, and each world a pact with that vault
     /// registered, whether or not a record is left in it. A world with
     /// neither is left out. It reads delivery facts, not today's grants,
     /// and deletes nothing.
@@ -69,10 +69,19 @@ impl Vault {
         let base = crate::claim::base_world_id();
         let mut worlds = BTreeMap::<EntityId, Held>::new();
         for delivered in delivery_history_from_vault_in_txn(&self.store, &txn, peer_vault_id)? {
-            let held = worlds.entry(delivered.world.unwrap_or(base)).or_default();
+            let world = delivered.world.unwrap_or(base);
+            let held = worlds.entry(world).or_default();
             held.pacts.insert(delivered.delivering_pact);
             let record = delivered.source_ref;
-            if ports::EntityStoreRead::port_entity_present(&self.store, &txn, &record)?
+            // A record can land again under its id in another world (an
+            // inquiry's copy re-sent over a new edge overwrites the first):
+            // only the world the live row now names holds it. A row that
+            // proves no single world stays where it landed.
+            let in_world = self
+                .record_world_in_txn(&txn, &record)?
+                .is_none_or(|current| current.unwrap_or(base) == world);
+            if in_world
+                && ports::EntityStoreRead::port_entity_present(&self.store, &txn, &record)?
                 && !ports::removed_in_txn(&self.store, &txn, &record)?
             {
                 held.records.insert(record);
