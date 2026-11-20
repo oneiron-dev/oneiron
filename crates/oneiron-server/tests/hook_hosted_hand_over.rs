@@ -52,13 +52,18 @@ const SUBAGENT: &str = "agent-a1b2c3";
 const WORKFLOW_SUBAGENT: &str = "agent-d4e5f6";
 /// What a server's `GET /.well-known/oneiron` answers, for a probe.
 const DESCRIPTOR: &str = r#"{"protocol":"oneiron-pairing","slip_version":2,"binding":"ed25519","pairing_endpoint":"/v1/core/pairing/redeem"}"#;
+/// The most bytes one frame of the owner's socket carries: the app RPC
+/// payload cap (8 MiB), written out so this test builds on the PR's base.
+const OWNER_FRAME_BYTES: usize = 8 * 1024 * 1024;
 /// The conversation the stand-in answers the import with.
 const CONVERSATION: &str = "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0";
 
 /// The bridge and import a hook runs, stood in by a script that writes its
 /// arguments to `@RECORD@/argv` and, as `oneiron mcp`, answers the
 /// handshake and each import, and writes each `tools/call` it was sent to
-/// `@RECORD@/call-<id>` and the last to `@RECORD@/call`.
+/// `@RECORD@/call-<id>` and the last to `@RECORD@/call`. Its one answer
+/// reads as an import's and as a staged part's that landed one (FIX
+/// HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER).
 const STAND_IN: &str = r#"#!/bin/sh
 printf '%s\n' "$@" > '@RECORD@/argv'
 [ "$1" = mcp ] || exit 0
@@ -70,7 +75,7 @@ while read -r line; do
     id=$((id + 1))
     printf '%s\n' "$line" > "@RECORD@/call-$id"
     printf '%s\n' "$line" > '@RECORD@/call'
-    printf '{"jsonrpc":"2.0","id":%s,"result":{"structuredContent":{"output":{"conversation":"@CONVERSATION@","conversations":[]}}}}\n' "$id"
+    printf '{"jsonrpc":"2.0","id":%s,"result":{"structuredContent":{"output":{"conversation":"@CONVERSATION@","conversations":[],"upload":"stand-in","staged":0,"imported":{"conversation":"@CONVERSATION@","conversations":[]}}}}}\n' "$id"
 done
 "#;
 
@@ -335,6 +340,24 @@ impl Bench {
         let call: Value = serde_json::from_str(&self.recorded(name)).expect("one JSON-RPC call");
         assert_eq!(call["params"]["name"], "vault.imports.hook_transcript");
         call["params"]["arguments"]["arguments"]["spec"].clone()
+    }
+
+    /// Each `vault.imports.hook_transcript_part` call the stand-in was sent,
+    /// from `call-2` on, in order: its line's length and its spec.
+    fn parts(&self) -> Vec<(usize, Value)> {
+        (2..)
+            .map(|id| self.path("record").join(format!("call-{id}")))
+            .take_while(|path| path.exists())
+            .map(|path| {
+                let line = std::fs::read_to_string(path).expect("the stand-in's record");
+                let call: Value = serde_json::from_str(&line).expect("one JSON-RPC call");
+                assert_eq!(call["params"]["name"], "vault.imports.hook_transcript_part");
+                (
+                    line.trim_end().len(),
+                    call["params"]["arguments"]["arguments"]["spec"].clone(),
+                )
+            })
+            .collect()
     }
 }
 
@@ -883,7 +906,10 @@ fn a_hand_over_sends_only_the_log_of_its_own_session() {
 fn a_hand_over_sends_only_calls_the_sign_ins_carrier_takes() {
     // Review round 2, continue_command.rs:441: the owner's calls go over the
     // vault's socket alone, whose frame is about 8 MiB. A session log whose
-    // encoding is longer is not sent at all: no bridge starts.
+    // encoding is longer goes in parts (FIX
+    // HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER): each call within the frame, in
+    // order under one upload, the last one marked to land the request. On
+    // the PR's base no bridge starts and nothing is sent.
     let long_log = |bench: &Bench| {
         let log = bench.session_log();
         std::fs::write(&log, noisy_turn(9 * 1024 * 1024, 7)).expect("test fixture");
@@ -905,10 +931,37 @@ fn a_hand_over_sends_only_calls_the_sign_ins_carrier_takes() {
         &[],
         &claude_code_stop(&log),
     );
+    let parts = bench.parts();
     assert!(
-        bench.ran_nothing(),
-        "a log too long for the owner's socket was sent: {:?}",
-        bench.recorded("argv")
+        parts.len() >= 2,
+        "a log too long for one call over the owner's socket goes in parts: {} calls",
+        parts.len()
+    );
+    let mut text = String::new();
+    for (index, (line, part)) in parts.iter().enumerate() {
+        assert!(
+            *line <= OWNER_FRAME_BYTES,
+            "part {index} fits the owner's socket frame: {line} bytes"
+        );
+        assert_eq!(part["upload"], parts[0].1["upload"], "one upload");
+        assert_eq!(
+            part["offset"].as_u64(),
+            Some(text.len() as u64),
+            "part {index} starts where the parts before it end"
+        );
+        assert_eq!(
+            part["last"].as_bool(),
+            Some(index + 1 == parts.len()),
+            "only the last part lands the request"
+        );
+        text.push_str(part["text"].as_str().expect("a part's text"));
+    }
+    let request: Value = serde_json::from_str(&text).expect("the parts make one request");
+    assert_eq!(request["session"], SESSION);
+    assert_eq!(
+        inflated(&request["transcript_gzip_base64"]),
+        std::fs::read(&log).expect("the session log"),
+        "the parts carry the whole log"
     );
 
     // A slip's calls go over HTTP past the socket's frame: the same log goes

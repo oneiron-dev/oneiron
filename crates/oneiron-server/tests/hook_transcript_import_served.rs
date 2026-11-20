@@ -823,3 +823,284 @@ fn another_sources_subagent_logs_a_path_for_its_session_or_an_unread_source_are_
         }
     });
 }
+
+/// The part verb (FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER), by name, so this
+/// test builds on the PR's base, where it has no route.
+const PART_VERB: &str = "vault.imports.hook_transcript_part";
+
+/// The most bytes one frame of the owner's socket carries: the app RPC
+/// payload cap (8 MiB), written out so this test builds on the PR's base.
+const OWNER_FRAME_BYTES: usize = 8 * 1024 * 1024;
+
+/// The id the owner's uploads go under: 32 lowercase hex digits.
+const UPLOAD: &str = "0123456789abcdef0123456789abcdef";
+
+/// `len` characters gzip barely shrinks: a base64 rendering of a xorshift
+/// stream from `seed`, so a log's encoded length is about its own.
+fn noise(len: usize, seed: u64) -> String {
+    let mut state = seed | 1;
+    let mut bytes = Vec::with_capacity(len);
+    while bytes.len() * 4 / 3 < len + 8 {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        bytes.extend_from_slice(&state.to_le_bytes());
+    }
+    let mut text = base64::engine::general_purpose::STANDARD.encode(bytes);
+    text.truncate(len);
+    text
+}
+
+/// The fixture session's log with one more user turn, saying `len`
+/// characters of [`noise`]: a log whose request one call over the owner's
+/// socket cannot carry.
+fn long_session_log(len: usize) -> String {
+    let turn = json!({
+        "parentUuid": null,
+        "isSidechain": false,
+        "userType": "external",
+        "cwd": "/Users/ana/code/garden-planner",
+        "sessionId": SESSION,
+        "version": "2.1.0",
+        "type": "user",
+        "uuid": "c1000000-0000-4000-8000-0000000000ff",
+        "timestamp": "2026-09-20T09:00:00.000Z",
+        "message": {"role": "user", "content": noise(len, 7)},
+    });
+    format!("{SESSION_LOG}{turn}\n")
+}
+
+/// How many messages the Claude Code reader keeps of the session's own
+/// conversation in `log`, read as the local import reads it.
+fn kept_in(log: &str) -> usize {
+    HistorySource::ClaudeCode
+        .decode(
+            log,
+            &HistoryFile {
+                stem: SESSION.to_owned(),
+                parent: None,
+            },
+        )
+        .expect("decode the session log")
+        .iter()
+        .find(|conversation| conversation.native_id == SESSION)
+        .expect("the session's own conversation")
+        .messages
+        .len()
+}
+
+/// One part of [`UPLOAD`]: `text`, at `offset` in the request's JSON text,
+/// `last` when it ends the request.
+async fn stage(
+    fixture: &Fixture,
+    token: &str,
+    binding: String,
+    offset: usize,
+    text: &str,
+    last: bool,
+) -> (StatusCode, Value) {
+    post(
+        fixture,
+        &format!("/v1/core/facade/{PART_VERB}"),
+        token,
+        binding,
+        json!({"upload": UPLOAD, "offset": offset, "text": text, "last": last}),
+    )
+    .await
+}
+
+/// Case 7 (FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER): a request too long for
+/// one call over the owner's socket goes in parts under one upload. Nothing
+/// lands before the last part, which lands the request as one call lands
+/// it and answers with that call's answer; the upload then ends. On the
+/// PR's base the first part answers 404 (no route).
+#[test]
+fn a_request_too_long_for_the_owners_socket_lands_in_parts() {
+    run_on_engine_stack("hook-transcript-staged", || async {
+        let (fixture, _agent) = setup().await;
+        let owner_token = fixture.owner_token.clone();
+        let log = long_session_log(9 * 1024 * 1024);
+        let request = json!({
+            "session": SESSION,
+            "transcript_gzip_base64": gzip_base64(log.as_bytes()),
+        })
+        .to_string();
+        assert!(
+            request.len() > OWNER_FRAME_BYTES,
+            "precondition: one call over the owner's socket cannot carry the request"
+        );
+        let cut = request.len() / 2;
+
+        let (status, body) = stage(
+            &fixture,
+            &owner_token,
+            owner_binding(&fixture),
+            0,
+            &request[..cut],
+            false,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "the first part: {body}");
+        assert_eq!(body["upload"], UPLOAD, "{body}");
+        assert_eq!(body["staged"].as_u64(), Some(cut as u64), "{body}");
+        assert!(body.get("imported").is_none_or(Value::is_null), "{body}");
+        assert_eq!(ledger(&fixture), 0, "nothing lands before the last part");
+
+        let (status, body) = stage(
+            &fixture,
+            &owner_token,
+            owner_binding(&fixture),
+            cut,
+            &request[cut..],
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "the last part: {body}");
+        assert_eq!(
+            body["staged"].as_u64(),
+            Some(request.len() as u64),
+            "{body}"
+        );
+        let imported = &body["imported"];
+        let session = entry(imported, SESSION);
+        assert_eq!(
+            session["new"].as_u64(),
+            Some(kept_in(&log) as u64),
+            "the whole session's log landed: {body}"
+        );
+        assert_eq!(
+            session["conversation"], imported["conversation"],
+            "the answer names the session's own CONVERSATION: {body}"
+        );
+        assert_eq!(total(imported, "refused"), 0, "{body}");
+        assert_eq!(
+            ledger(&fixture) as u64,
+            total(imported, "new"),
+            "the ledger holds what landed"
+        );
+
+        let (_, body) = stage(
+            &fixture,
+            &owner_token,
+            owner_binding(&fixture),
+            request.len(),
+            "x",
+            true,
+        )
+        .await;
+        assert!(
+            body.to_string().contains("no hook transcript upload"),
+            "the upload ended with its last part: {body}"
+        );
+    });
+}
+
+/// Case 8 (FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER): only the owner stages,
+/// each part where the upload ends. An agent whose Grant names
+/// `vault.imports.hook_transcript` is refused the part verb (its calls ride
+/// HTTP whole). A part that does not start where the upload ends is
+/// refused and leaves the upload as it was, so the right part still lands
+/// it. A part naming no open upload, and staged text that is not the
+/// import's input, are refused, and nothing more lands. On the PR's base
+/// each call answers 404 (no route).
+#[test]
+fn only_the_owner_stages_and_each_part_starts_where_the_upload_ends() {
+    run_on_engine_stack("hook-transcript-staged-refusals", || async {
+        let (fixture, agent) = setup().await;
+        mint_import_grant(&fixture, &agent.principal.to_hex()).await;
+        let request = session_body().to_string();
+        let cut = request.len() / 2;
+
+        let (status, body) = stage(
+            &fixture,
+            &agent.token,
+            agent_binding(&fixture, &agent),
+            0,
+            &request[..cut],
+            false,
+        )
+        .await;
+        assert!(
+            status.is_client_error() && status != StatusCode::NOT_FOUND,
+            "an agent's part is refused 4xx, not 404: {status} {body}"
+        );
+
+        let owner_token = fixture.owner_token.clone();
+        let (status, body) = stage(
+            &fixture,
+            &owner_token,
+            owner_binding(&fixture),
+            0,
+            &request[..cut],
+            false,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "the owner's first part: {body}");
+        let (status, body) = stage(
+            &fixture,
+            &owner_token,
+            owner_binding(&fixture),
+            cut + 1,
+            &request[cut + 1..],
+            true,
+        )
+        .await;
+        assert!(
+            status.is_client_error() && status != StatusCode::NOT_FOUND,
+            "a part out of place is refused 4xx, not 404: {status} {body}"
+        );
+        assert!(
+            body.to_string().contains("does not start where"),
+            "the refusal names the place: {body}"
+        );
+        assert_eq!(ledger(&fixture), 0, "nothing landed");
+
+        let (status, body) = stage(
+            &fixture,
+            &owner_token,
+            owner_binding(&fixture),
+            cut,
+            &request[cut..],
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "the right part lands it: {body}");
+        assert!(total(&body["imported"], "new") > 0, "{body}");
+        let landed = ledger(&fixture);
+        assert_eq!(landed as u64, total(&body["imported"], "new"));
+
+        let (_, body) = stage(
+            &fixture,
+            &owner_token,
+            owner_binding(&fixture),
+            cut,
+            &request[cut..],
+            true,
+        )
+        .await;
+        assert!(
+            body.to_string().contains("no hook transcript upload"),
+            "a part naming no open upload is refused: {body}"
+        );
+
+        let (status, body) = stage(
+            &fixture,
+            &owner_token,
+            owner_binding(&fixture),
+            0,
+            r#"{"session": 7}"#,
+            true,
+        )
+        .await;
+        assert!(
+            status.is_client_error() && status != StatusCode::NOT_FOUND,
+            "staged text that is not the import's input is refused 4xx, not 404: {status} {body}"
+        );
+        assert!(
+            body.to_string()
+                .contains("is not vault.imports.hook_transcript's input"),
+            "{body}"
+        );
+        assert_eq!(ledger(&fixture), landed, "nothing more landed");
+    });
+}
