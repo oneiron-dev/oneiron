@@ -4,7 +4,6 @@
 
 use super::batch::{DerivedPersonAbout, DerivedPsychProfile, ItemRef};
 use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn, refusal_receipt_in_txn};
-use crate::claim::ScopedRead;
 use crate::dreamer_consolidation::{about_facts_in, publish_person_about_in_txn};
 use crate::error::{Error, RecordError, Result};
 use crate::gate::{DeriveCapability, derive_verdict_in_txn};
@@ -211,7 +210,7 @@ pub(super) fn stage_profile_in_txn(
 fn cited_profile_sources_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    read: &ScopedRead<'_>,
+    read: &crate::claim::ScopedRead<'_>,
     item: &DerivedPsychProfile,
 ) -> Result<std::result::Result<Vec<PsychProfileSource>, &'static str>> {
     let key = PsychProfileKey {
