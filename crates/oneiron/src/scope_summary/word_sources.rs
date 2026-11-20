@@ -22,9 +22,8 @@ pub(crate) enum WordSources {
 /// The word sources of the stored revision `raw` of `id`: an epoch summary,
 /// a scope summary, a TURN that copies one, a claim whose merge header names
 /// one, a `conversation.summary` claim's typed coverage, a native conflict
-/// pair's two claims, the MESSAGE an owner's stated intent cites, the
-/// finding and subject a Dreamer finding's notice points at, or the records
-/// a psych profile's typed sources name.
+/// pair's two claims, the MESSAGE an owner's stated intent cites, or the
+/// finding and subject a Dreamer finding's notice points at.
 pub(crate) fn word_sources_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
