@@ -21,6 +21,15 @@
 //! not compile on main today. The feed is a scripted ICS fetcher, as in
 //! `tests/it/calendar_ics_ingest_adapter.rs`. Only public paths, so main plus
 //! this file builds for the red run.
+//!
+//! The scripted feed polls outside the installed-feed door, so every claim it
+//! imports lands Proposed, and a booking reads only surfaceable heads. The
+//! host's installed feed runs under the owner's standing consent (CAL-02),
+//! which lands its imports Approved. So where a test needs the feed's
+//! cancellation to count, the fixture's owner approves the feed's own
+//! `calendar.status` imports after each poll (FIX
+//! BK-CANCELLED-ELSEWHERE-PROOF-RED-ON-MAIN: without it, the omission never
+//! made the booking read cancelled, at the head or at any red pin).
 #![cfg(feature = "test-support")]
 
 use std::sync::Mutex;
@@ -35,6 +44,7 @@ use oneiron::booking::{
     SlotOracle, SolveRequest, SolveResult, VaultActiveHoldSource, WeeklyWallWindow,
     enqueue_booking_verb, run_booking_lifecycle_once,
 };
+use oneiron::calendar::claims::PREDICATE_CALENDAR_STATUS;
 use oneiron::calendar::ingest::{
     IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse, run_ics_feed_poll,
     run_ics_feed_poll_with_screener,
@@ -48,8 +58,8 @@ use oneiron::outbound::{
 };
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::{
-    CalendarSel, DreamerHomeNodeCandidate, DreamerRunnerStore, EntityId, TimeRange, Vault,
-    VaultConfig,
+    CalendarSel, ClaimApprovalStatus, ClaimLifecycleStatus, DreamerHomeNodeCandidate,
+    DreamerRunnerStore, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
 };
 
 /// Monday 2 March 2026, 00:00 UTC.
@@ -92,6 +102,7 @@ struct Fixture {
     vault: Vault,
     page: EntityId,
     booker: EntityId,
+    owner: EntityId,
 }
 
 impl Fixture {
@@ -106,6 +117,11 @@ impl Fixture {
         vault
             .provision_engine_machine_identities(&issuer)
             .expect("engine machine identities");
+        // The vault's owner, bound under the host root, approves the feed's
+        // imports as an installed feed's standing consent does.
+        let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+        oneiron::test_support::bind_host_owner(&vault, &issuer, owner)
+            .expect("bind the owner under the host root");
         vault
             .put_entity(
                 &test_id(ACTOR_SEED),
@@ -143,6 +159,7 @@ impl Fixture {
             vault,
             page,
             booker,
+            owner,
         }
     }
 
@@ -232,6 +249,33 @@ impl Fixture {
             7,
         )
         .map(|_| ())
+    }
+
+    /// The owner approves every proposed `calendar.status` import on
+    /// `event`, as the standing consent to an installed feed lands it (CAL-02):
+    /// a booking reads only surfaceable heads, so a status the feed imported
+    /// counts once it is approved.
+    fn approve_feed_status(&self, event: &EntityId) {
+        let owner = WriteActor::new(self.owner, EdgeActorClass::Human);
+        for id in self
+            .vault
+            .claims_for_subject(event)
+            .expect("claims on the EVENT")
+        {
+            let body = self
+                .vault
+                .get_claim(&id)
+                .expect("read claim")
+                .expect("claim");
+            if body.predicate == PREDICATE_CALENDAR_STATUS
+                && body.approval == ClaimApprovalStatus::Proposed
+                && body.lifecycle == ClaimLifecycleStatus::Active
+            {
+                self.vault
+                    .approve_machine_claim_as(id, owner)
+                    .expect("the owner approves the feed's status import");
+            }
+        }
     }
 
     /// The booking's outbound passport SEQUENCE: its one live head of the
@@ -647,9 +691,11 @@ fn a_booking_the_feed_left_out_moves_as_a_booking_when_it_returns_at_another_slo
         end: MONDAY + 16 * 3_600 + u64::from(DEFAULT_INTRO_DURATION_MIN) * 60,
     };
 
-    // The host's complete feed leaves the booking out. A token reschedule
-    // refuses it as cancelled before it reads the target slot.
+    // The host's complete feed leaves the booking out, and the owner's
+    // consent lands the omission's cancellation. A token reschedule refuses
+    // it as cancelled before it reads the target slot.
     fixture.poll_host_feed(&[], "v2", NOW + 120);
+    fixture.approve_feed_status(&event);
     let refused = fixture.run(
         BookingVerbRequest::Reschedule(RescheduleSpec {
             token: booked.reschedule_token.clone(),
@@ -723,7 +769,8 @@ fn a_booking_the_feed_cancelled_then_left_out_stays_cancelled_when_it_returns_at
         end: MONDAY + 16 * 3_600 + u64::from(DEFAULT_INTRO_DURATION_MIN) * 60,
     };
 
-    // The host's feed cancels the booking, then leaves it out.
+    // The host's feed cancels the booking, then leaves it out; the owner's
+    // consent lands what each poll imported.
     fixture.poll_host_feed_body(
         cancelled_feed(&[FeedEvent {
             uid: &booked.calendar.uid,
@@ -734,7 +781,9 @@ fn a_booking_the_feed_cancelled_then_left_out_stays_cancelled_when_it_returns_at
         "v2",
         NOW + 120,
     );
+    fixture.approve_feed_status(&event);
     fixture.poll_host_feed(&[], "v3", NOW + 150);
+    fixture.approve_feed_status(&event);
 
     // The host's feed carries it again, live and moved to 16:00.
     fixture.poll_host_feed(
@@ -804,8 +853,10 @@ fn a_returning_booking_the_screen_refuses_stays_cancelled_at_its_booked_slot() {
         end: MONDAY + 16 * 3_600 + u64::from(DEFAULT_INTRO_DURATION_MIN) * 60,
     };
 
-    // The host's complete feed leaves the booking out.
+    // The host's complete feed leaves the booking out, and the owner's
+    // consent lands the omission's cancellation.
     fixture.poll_host_feed(&[], "v2", NOW + 120);
+    fixture.approve_feed_status(&event);
 
     // The host's feed carries it again, moved to 16:00, in a body the screen
     // refuses.
