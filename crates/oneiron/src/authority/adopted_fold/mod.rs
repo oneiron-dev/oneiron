@@ -790,3 +790,6 @@ fn covered_past(
 fn is_main(entry: &AuthorityLogEntry) -> bool {
     super::world_privacy::side_world(&entry.op).is_none()
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use covered_floors::covered_rows_unfloored_for_door;

@@ -419,3 +419,10 @@ impl CoveredFloors {
         identical.then_some(NoVouchPast::Identical)
     }
 }
+
+/// [`covered_rows_unfloored`] over every signer, for the adopted-fold door
+/// (FIX [ADOPTED-FOLD-GATE-SIGNER-COST]).
+#[cfg(oneiron_test_support)]
+pub(crate) fn covered_rows_unfloored_for_door(image: &AuthorityCheckpointV2) -> bool {
+    covered_rows_unfloored(image, |_| true)
+}

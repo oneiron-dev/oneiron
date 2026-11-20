@@ -7,8 +7,8 @@
 //! `--cfg oneiron_test_support`; never API.
 
 pub use crate::authority::adopted_door::{
-    AdoptedFoldComparison, ImageGradeFold, PastImage, fold_past_overflow_prefix_image,
-    fold_past_prefix_image,
+    AdoptedFoldComparison, ImageGradeFold, PastImage, covered_rows_unfloored,
+    fold_past_overflow_prefix_image, fold_past_prefix_image,
 };
 
 /// Records `root` as the root this install awaits for the root request signed
