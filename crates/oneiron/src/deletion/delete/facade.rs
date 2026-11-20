@@ -371,7 +371,8 @@ impl Vault {
     /// and the reservation sends the delete to the confirmed door. So does a delete by anyone the
     /// owner rule of [`Vault::revoke_share`] does not admit for every share (an agent may stop
     /// only a share it issued), and a proof-free delete, which names no actor to revoke as. A
-    /// revoke stands if a later phase of the delete fails, as the confirmed door's does.
+    /// revoke stands if a later phase of the delete fails, as the confirmed door's does; each
+    /// revoke's writer reads the delete's authority again first.
     fn retract_brief_shares_unconfirmed(
         &self,
         id: &EntityId,
@@ -400,8 +401,14 @@ impl Vault {
             reverify_deletion_authority_before_publication(Some(gate), &txn)?;
             shares
         };
+        // Each retraction reads the delete's authority again in its own
+        // writer: a check that changed since the read above (an honour
+        // setting's answer the owner replaced) stops it before the grant
+        // changes (review round 2 of #9902).
         for (share_id, _) in shares {
-            self.revoke_share(&share_id, &actor, now)?;
+            self.revoke_share_checked(&share_id, &actor, now, |txn| {
+                reverify_deletion_authority_before_publication(Some(gate), txn)
+            })?;
         }
         Ok(())
     }
