@@ -167,6 +167,12 @@ pub enum OwnerActKind {
     /// DESIGN pass 15e "Joined", RULING RESTORED-COPIES-JOIN-SCOPE = A). Its
     /// `seen` is over the one enrolment it joins.
     RestoredMachineJoin,
+    /// An agent's start of a continued outside session under its live Grant
+    /// naming the verb (Engine ruling Sat 14 Nov 20:57, L10-17-WHO = B:
+    /// "The owner may start a continue, and so may an outside agent whose
+    /// grant names vault.runners.continue. The grant is checked live at each
+    /// call."). No record carries it.
+    RunnerContinue,
 }
 
 impl OwnerActKind {
@@ -197,6 +203,7 @@ impl OwnerActKind {
             Self::DeviceSuccession => "device_succession",
             Self::ModelBindingPropose => "model_binding_propose",
             Self::RestoredMachineJoin => "restored_machine_join",
+            Self::RunnerContinue => "runner_continue",
         }
     }
 
@@ -227,6 +234,7 @@ impl OwnerActKind {
             "device_succession" => Self::DeviceSuccession,
             "model_binding_propose" => Self::ModelBindingPropose,
             "restored_machine_join" => Self::RestoredMachineJoin,
+            "runner_continue" => Self::RunnerContinue,
             _ => return None,
         })
     }
