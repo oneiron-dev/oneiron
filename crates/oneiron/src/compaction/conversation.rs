@@ -85,6 +85,12 @@ pub enum ConversationCompactionUnavailable {
     /// do not fit one summary or the backend's input beside it (FIX 9837):
     /// a pin is never dropped, so the log stays raw.
     PinsDoNotFit,
+    /// The first turn past the hot tail does not fit the writer's input
+    /// beside its reply even alone (FIX-LIST
+    /// COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS): a window holds whole
+    /// turns only, and that turn heads every later window, so the log stays
+    /// raw while the writer's room stays the same.
+    TurnPastInputRoom,
 }
 
 impl ConversationCompactionUnavailable {
@@ -101,6 +107,7 @@ impl ConversationCompactionUnavailable {
             Self::Unmetered => "unmetered",
             Self::Pending(_) => "pending",
             Self::PinsDoNotFit => "pins_do_not_fit",
+            Self::TurnPastInputRoom => "turn_past_input_room",
         }
     }
 }
@@ -182,7 +189,7 @@ pub fn seal_conversation_flight<'a>(
     let Some(window) = window_within(whole, budget, room) else {
         driver.backend().end_flight();
         driver.abandon();
-        return Err(Why::NoWindow);
+        return Err(Why::TurnPastInputRoom);
     };
     // The agent's own pins the window holds word for word are mandatory
     // (FIX 9837): the window keeps the whole turns whose pins fit with them.
@@ -255,7 +262,8 @@ pub fn seal_conversation_flight<'a>(
 /// The longest run of `window`'s first turns whose rendered input fits
 /// `room` beside a reply of `budget`, with those turns' own sources and
 /// spans: all of it when it fits whole or nothing bounds it. `None` when not
-/// even its first turn fits. The rest waits for a later flight.
+/// even its first turn fits: no later flight takes that turn on the same
+/// room. Otherwise the rest waits for a later flight.
 fn window_within(window: &ChatLogWindow, budget: u64, room: Option<u64>) -> Option<ChatLogWindow> {
     let turn_start = window.messages.first()?.turn;
     let fits = |turns: usize| {
