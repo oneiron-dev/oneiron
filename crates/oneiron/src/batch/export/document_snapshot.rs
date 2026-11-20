@@ -524,13 +524,9 @@ impl Vault {
                 // with the skill only when the carrier passes the filter every
                 // listed row passes, and the carrier is then a source.
                 let carrier = self.export_hub_package_carrier_in_txn(&rtxn, &id, &record)?;
-                if let Some(barred) = carrier_admitted(
-                    &self.store,
-                    &rtxn,
-                    &device_only,
-                    carrier.as_ref(),
-                    owner_export,
-                )? {
+                if let Some(barred) =
+                    carrier_admitted(self, &rtxn, &device_only, carrier.as_ref(), owner_export)?
+                {
                     barred_carried.extend(barred);
                     sources.extend(carrier);
                     skill_package = Some(package);
@@ -579,7 +575,7 @@ impl Vault {
                     &id,
                     |carrier| {
                         let admitted = carrier_admitted(
-                            &self.store,
+                            self,
                             &rtxn,
                             &device_only,
                             Some(carrier),
@@ -675,7 +671,7 @@ impl Vault {
         // archive leaves here stays here, as that row does.
         if scope == ExportScope::WholeVault {
             super::epoch_floors::write_epoch_floors_in_txn(
-                &self.store,
+                self,
                 &rtxn,
                 &device_only,
                 owner_export,
@@ -998,12 +994,15 @@ fn operation_root_carried(
 
 /// Whether the export's filter admits `carrier`, a row another row's section
 /// is folded from (SCAN C022): the filter every listed row passes, judged on
-/// the carrier's own row ([`barred_worlds_carried`]), and a carrier under a
-/// use limit withheld. `None` when it is withheld, else the barred worlds the
+/// the carrier's own row ([`barred_worlds_carried`]), and a carrier the
+/// whole-vault egress door keeps out (a use limit, a held-back lineage, a
+/// session overlay, a withheld PERSON it is about) withheld, so its bytes
+/// never ship inside the section it would fold into (REVIEW-9874 P1 2).
+/// `None` when it is withheld, else the barred worlds the
 /// owner's own export carries it in spite of. No carrier is withheld when
 /// none was read.
 fn carrier_admitted(
-    store: &crate::store::Store,
+    vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     device_only: &BTreeSet<EntityId>,
     carrier: Option<&EntityId>,
@@ -1012,10 +1011,10 @@ fn carrier_admitted(
     let Some(carrier) = carrier else {
         return Ok(Some(BTreeSet::new()));
     };
-    if crate::store::legal_hold::use_limit_in_txn(store, rtxn, carrier)?.is_some() {
+    if whole_vault_export_excludes_entity_in_txn(vault, rtxn, carrier)? {
         return Ok(None);
     }
-    barred_worlds_carried(store, rtxn, device_only, carrier, None, owner_export)
+    barred_worlds_carried(&vault.store, rtxn, device_only, carrier, None, owner_export)
 }
 
 /// Whether the export's world filter admits `id` toward `barred`, every world

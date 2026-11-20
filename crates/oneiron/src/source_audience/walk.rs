@@ -110,6 +110,12 @@ fn word_sources(
     {
         every.extend(covers);
     }
+    // A reply TURN or a merge header carries a summary's words: the summary
+    // is one more word source, as the disclosure walk takes it, so a held
+    // summary holds the copy too (REVIEW-9874 P1 1).
+    if let Ok(Some(summary)) = crate::scope_summary::carried_summary(bytes) {
+        every.push(summary);
+    }
     let mut supports = Vec::new();
     if header.entity_type == ENTITY_TYPE_CLAIM {
         if let Ok(claim) = crate::claim::decode_claim_body(body, true) {
