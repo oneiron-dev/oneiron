@@ -1758,8 +1758,11 @@ fn federated_import_seam_denial_preserves_open_durable_window() {
     );
 }
 
+/// An unpacted member grant writes no delivery ledger row, so no tombstone
+/// it sends is proven delivered: each is dropped, and the update is not
+/// refused for it (CROSS-VAULT-DELETE-NEVER-ADMITTED = A).
 #[test]
-fn federated_import_seam_rejects_tombstone_updates_until_delete_admission() {
+fn federated_import_seam_drops_a_tombstone_no_pact_delivered() {
     let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let (mut client, _rx) = test_federated_client(&manager);
@@ -1767,24 +1770,27 @@ fn federated_import_seam_rejects_tombstone_updates_until_delete_admission() {
     let tombstoned = test_entity_id(0x91);
     let update = federated_tombstone_update(&tombstoned);
 
-    assert_matches!(
-        client.import_federated_window_update(key, &update, FederationAdmissionRole::Member),
-        Err(TransportError::InvalidPayload(_))
-    );
+    let result =
+        client.import_federated_window_update(key, &update, FederationAdmissionRole::Member);
     assert!(
-        client.window(key).is_none(),
-        "tombstone-only federated bytes must not open or import a live window"
+        !matches!(result, Err(TransportError::InvalidPayload(_))),
+        "a dropped tombstone must not refuse the whole update: {result:?}"
     );
     assert!(
         vault
             .get_raw(&tombstoned)
             .expect("read tombstoned id")
             .is_none(),
-        "rejected federated tombstone must not materialize delete effects"
+        "a dropped federated tombstone must not materialize delete effects"
     );
     assert!(
-        sync_state_values_with_prefix(&vault, &format!("u:w:{key}:")).is_empty(),
-        "rejected federated tombstone bytes must not be persisted"
+        client.window(key).is_none_or(|window| {
+            !crate::sync::loro_support::tombstone_map_contains_id(
+                &window.doc.get_map("tombstones"),
+                &tombstoned,
+            )
+        }),
+        "a dropped federated tombstone must not reach the live window"
     );
 }
 
