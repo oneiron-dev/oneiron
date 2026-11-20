@@ -200,7 +200,7 @@ pub(crate) fn linear_log_blend(inputs: &[RetrievalBlendInput]) -> Vec<ScoredEnti
     linear_log_blend_with_weights(inputs, RetrievalBlendWeights::bootstrap())
 }
 
-/// Both faces of one linear-log blend.
+/// Both faces of one linear-log blend, and its score components.
 pub struct LinearLogBlendScores {
     /// The run's fused scores: `exp(log_blend)` times each candidate's
     /// read-side access factor, sorted descending.
@@ -211,9 +211,15 @@ pub struct LinearLogBlendScores {
     /// one entity another entity's decay, and never squares a factor the
     /// receiving entity already carries.
     pub base_scores: Vec<ScoredEntity>,
+    /// Per-candidate rank and z-score of each blend signal that varies
+    /// across the inputs, for the retrieval trace and telemetry: from the
+    /// same normalized columns as the scores.
+    pub components: HashMap<EntityId, Vec<RetrievalScoreComponent>>,
 }
 
-/// Blends `inputs` under `weights`; returns the applied and the pre-access-factor faces.
+/// Blends `inputs` under `weights`; returns the applied and the
+/// pre-access-factor faces and the score components, all from one pass over
+/// the normalized signal columns.
 pub fn linear_log_blend_scores_with_weights(
     inputs: &[RetrievalBlendInput],
     weights: RetrievalBlendWeights,
@@ -242,6 +248,7 @@ pub fn linear_log_blend_scores_with_weights(
     LinearLogBlendScores {
         scores: narrow_scores_desc(scores),
         base_scores: narrow_scores_desc(base_scores),
+        components: blend_score_components(&inputs, columns),
     }
 }
 
@@ -290,12 +297,11 @@ pub(crate) fn linear_log_blend_with_weights(
 }
 
 /// Per-candidate rank and z-score of each blend signal that varies across `inputs`, for the
-/// retrieval trace.
-pub fn retrieval_blend_score_components(
+/// retrieval trace: from the blend's own canonical inputs and columns.
+fn blend_score_components(
     inputs: &[RetrievalBlendInput],
+    columns: NormalizedBlendColumns,
 ) -> HashMap<EntityId, Vec<RetrievalScoreComponent>> {
-    let inputs = canonical_blend_inputs(inputs);
-    let columns = normalized_blend_columns(&inputs);
     let signals = [
         (RetrievalSignal::Recency, columns.recency),
         (RetrievalSignal::Salience, columns.salience),
@@ -308,7 +314,7 @@ pub fn retrieval_blend_score_components(
         if values.iter().all(|value| value.to_bits() == 0) {
             continue;
         }
-        let ranks = component_ranks(&inputs, &values);
+        let ranks = component_ranks(inputs, &values);
         for (index, input) in inputs.iter().enumerate() {
             components
                 .entry(input.id)

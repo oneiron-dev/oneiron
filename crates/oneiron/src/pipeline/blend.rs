@@ -194,7 +194,6 @@ pub(super) fn blended_retrieval_scores(
         )?;
     }
 
-    let blend_components = fusion::retrieval_blend_score_components(&inputs);
     let access_factors = if applies {
         inputs
             .iter()
@@ -213,7 +212,7 @@ pub(super) fn blended_retrieval_scores(
             .collect(),
         access_factors,
         cosine_ghosts_dampened: dampened,
-        components: blend_components,
+        components: blended.components,
     })
 }
 
