@@ -405,8 +405,8 @@ fn transcript_message_ids(
 /// Binding-scoped company read by id: the companion opens her room turn on the
 /// bound talk and reads the talk's own row and its MESSAGE rows through it
 /// (ANSWER L7-05-BINDING-READ = A). No grant involved. Hydrate refuses the
-/// whole read when one row is withheld. Recall through the binding is FIX
-/// [WORK-TALK-BINDING-RECALL-FLOOR].
+/// whole read when one row is withheld. Recall through the binding:
+/// `the_companion_recalls_the_work_talk_through_her_room_turn_and_no_other_room`.
 fn companion_turn_message_texts(
     fixture: &Fixture,
     companion: EntityId,
@@ -1050,6 +1050,110 @@ fn a_work_talk_field_without_its_registration_admits_no_writer() -> TestResult {
             .iter()
             .all(|edge| edge.kind != EdgeKind::ChildOf)
     );
+    Ok(())
+}
+
+/// The words a TURN or MESSAGE item of `pack` carries: its own text and the
+/// text of every MESSAGE it cites.
+fn recalled_talk_texts(pack: &oneiron::memory::MemoryPack) -> Vec<String> {
+    pack.items
+        .iter()
+        .filter(|item| matches!(item.kind.as_str(), "TURN" | "MESSAGE"))
+        .flat_map(|item| {
+            std::iter::once(item.value_text.clone()).chain(
+                item.cited_messages
+                    .iter()
+                    .map(|message| message.value_text.clone()),
+            )
+        })
+        .collect()
+}
+
+// FIX [WORK-TALK-BINDING-RECALL-FLOOR]: the grantless companion recalls the bound
+// talk through her room turn, its rows only; her plain lane still recalls none.
+#[test]
+fn the_companion_recalls_the_work_talk_through_her_room_turn_and_no_other_room() -> TestResult {
+    let fixture = setup()?;
+    install_one_vault(&fixture, json!({ "version": 1, "mode": "on" }))??;
+    let (yuki, _, companion_actor, outcome) =
+        onboard_yuki_bring(&fixture, "work-talk-recall-yuki")?;
+    let talk = conversation_of(&open_via_verb(&member_memory(&fixture, yuki)?)?)?;
+    let at = fixture.vault.now_recorded_at();
+    let member_text = "quarterly numbers look off, check the March invoice";
+    witness_text(
+        &fixture
+            .vault
+            .memory(outcome.actor_ref, EdgeActorClass::Agent),
+        &talk,
+        WitnessAuthor::User,
+        member_text,
+        at,
+    )?;
+    let companion_text = "on it: pulling the March invoice and flagging the mismatch";
+    witness_text(
+        &fixture.vault.memory(companion_actor, EdgeActorClass::Agent),
+        &talk,
+        WitnessAuthor::Companion,
+        companion_text,
+        at,
+    )?;
+    // The same words in a conversation no binding names.
+    let decoy = "March invoice harbor lease decoy";
+    witness_text(
+        &fixture.vault.memory(fixture.owner, EdgeActorClass::Human),
+        &fresh_id(),
+        WitnessAuthor::User,
+        decoy,
+        at,
+    )?;
+    assert!(
+        company_recall_finds(&fixture, "March invoice", decoy)?,
+        "the owner's recall finds the decoy, so its absence below is the floor's"
+    );
+
+    let turn = fixture
+        .vault
+        .memory(companion_actor, EdgeActorClass::Agent)
+        .for_room_turn(talk)?;
+    let pack = turn.recall(
+        "March invoice",
+        Effort::Light,
+        &RecallScope::default(),
+        10,
+        None,
+        None,
+    )?;
+    let texts = recalled_talk_texts(&pack);
+    for said in [member_text, companion_text] {
+        assert!(
+            texts.iter().any(|text| text.contains(said)),
+            "the companion's room-turn recall finds {said:?}: {texts:?}"
+        );
+    }
+    assert!(
+        !texts.iter().any(|text| text.contains("harbor lease")),
+        "an unbound conversation's MESSAGE reads through the work-talk floor: {texts:?}"
+    );
+
+    // Off the turn the binding lifts nothing: an empty pack or a refusal.
+    if let Ok(plain) = fixture
+        .vault
+        .memory(companion_actor, EdgeActorClass::Agent)
+        .recall(
+            "March invoice",
+            Effort::Light,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+    {
+        let texts = recalled_talk_texts(&plain);
+        assert!(
+            texts.is_empty(),
+            "the companion's plain lane recalls a talk row: {texts:?}"
+        );
+    }
     Ok(())
 }
 
