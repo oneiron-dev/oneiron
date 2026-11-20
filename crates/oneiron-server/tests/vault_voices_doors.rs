@@ -2017,12 +2017,14 @@ fn a_member_disowns_an_agent_logged_withdrawal_and_restores_consent_only() {
     });
 }
 
-/// A withdrawal dated past the vault's clock is refused at every door, as a
-/// consent is: it would void every grant dated before it, a member's
-/// restore among them, until the clock reached it. The refusal deletes
-/// nothing and tells no one.
+/// A withdrawal dated past the vault's clock is never refused
+/// (VOICE-FUTURE-DATED-WITHDRAWAL = B, Engine 21 Nov 05:31: "A withdrawal is
+/// never refused"): every door records it at the vault's clock, and its
+/// receipt states both dates. A yes recorded after it still stands, and the
+/// recorder's retry of the same request is a replay, not a conflict. Red
+/// before the clamp: each door refuses the withdrawal.
 #[test]
-fn a_withdrawal_dated_past_the_vault_clock_is_refused() {
+fn a_withdrawal_dated_past_the_vault_clock_lands_at_the_clock() {
     run_on_engine_stack("voices-recognition-withdraw-future", || async {
         let served = served().await;
         let now = served.vault.now_recorded_at();
@@ -2030,27 +2032,83 @@ fn a_withdrawal_dated_past_the_vault_clock_is_refused() {
         served.enroll_print(member, "member-grant", &axis_vector(1), now);
         served.grant_agent(&[RECOGNITION_CONSENT]).await;
 
+        let asked = now + 3_600;
+        let mut latest = now;
         for (caller, subject) in [
             (Caller::Agent, Some(member)),
             (Caller::Person, None),
             (Caller::Owner, Some(member)),
         ] {
-            let input = recognition_withdrawal(&format!("future-{caller:?}"), now + 60, subject);
-            let (status, body) = served.post(caller, RECOGNITION_WITHDRAW, input).await;
-            assert!(
-                !status.is_success(),
-                "{caller:?}: a withdrawal dated a minute ahead is refused: {status} {body}"
+            let input = recognition_withdrawal(&format!("future-{caller:?}"), asked, subject);
+            let (status, receipt) = served.post(caller, RECOGNITION_WITHDRAW, input).await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "{caller:?}: a withdrawal dated an hour ahead is accepted: {receipt}"
             );
+            assert_eq!(receipt["replayed"], false, "{caller:?}: {receipt}");
+            assert_eq!(
+                receipt["requested_occurred_at"], asked,
+                "{caller:?}: the receipt states the asked date: {receipt}"
+            );
+            let recorded = receipt["occurred_at"]
+                .as_u64()
+                .unwrap_or_else(|| panic!("{caller:?}: the recorded date: {receipt}"));
+            assert!(
+                recorded >= now && recorded < asked,
+                "{caller:?}: recorded at the vault's clock, not the asked date: {receipt}"
+            );
+            latest = latest.max(recorded);
         }
         assert_eq!(
             served.recognized("after-future-withdrawals", &axis_vector(1)),
-            Some(member),
-            "a refused withdrawal deletes nothing"
+            None,
+            "the withdrawal stops recognition in its write"
+        );
+
+        let retry = recognition_withdrawal("future-Agent", asked, Some(member));
+        let replay = served.ok(Caller::Agent, RECOGNITION_WITHDRAW, retry).await;
+        assert_eq!(
+            replay["replayed"], true,
+            "the recorder's retry of the same request is a replay, not a conflict: {replay}"
         );
         assert!(
-            served.stored_subject_withdrawal_notices(member).is_empty()
-                && served.withdrawal_notices().is_empty(),
-            "a refusal tells no one"
+            replay["occurred_at"]
+                .as_u64()
+                .is_some_and(|at| at <= latest),
+            "a replay answers the date first recorded: {replay}"
+        );
+
+        // The clock moves on; a yes recorded then stands, though it is dated
+        // before the date the withdrawals asked for.
+        served
+            .vault
+            .advance_authority_clock_for_test(latest + 10)
+            .expect("the vault's clock moves on");
+        let yes = served
+            .ok(
+                Caller::Person,
+                RECOGNITION_CONSENT,
+                recognition_consent("later-yes", latest + 5, None, &["meeting_attribution"]),
+            )
+            .await;
+        assert_eq!(
+            yes["replayed"], false,
+            "setup: the later yes is logged: {yes}"
+        );
+        served
+            .vault
+            .enroll_voice_print(&enrollment(
+                member,
+                "later-yes",
+                &axis_vector(1),
+                latest + 10,
+            ))
+            .expect("the yes recorded after the future-dated withdrawals enrols a print");
+        assert_eq!(
+            served.recognized("after-later-yes", &axis_vector(1)),
+            Some(member),
+            "the print the later yes enrolled recognizes the member"
         );
     });
 }
