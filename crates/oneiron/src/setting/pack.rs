@@ -28,7 +28,6 @@ use oneiron_contracts::fingerprint::{ContentHash, Fingerprint, Fingerprinter, pu
 use oneiron_setting_contract::{ChangeDirection, Order, RowKey};
 
 use super::change::record_change_in_txn;
-use super::project::rooted_in_txn;
 use super::read::{StoredRow, table_of};
 use super::{
     EncodedValue, ScopeKind, Setter, SettingChange, SettingMode, SettingScope, SettingSpec,
@@ -265,7 +264,8 @@ fn defaults_digest(pack: &str, defaults: &[(&'static SettingSpec, EncodedValue)]
 /// build never proposes its older defaults back). An equal version with other defaults acts:
 /// every build of one release names one version, so the rule tells releases apart, not builds.
 fn door_acts(head: &PackHead, version: &str, digest: &str) -> bool {
-    head.digest != digest && crate::gate::version_gt(&head.version, version) != Some(true)
+    let _ = (version, &head.version);
+    head.digest != digest
 }
 
 /// The digest of a stored layer row's bytes: what a proposal names as the row it replaces. The
@@ -454,12 +454,6 @@ pub(crate) fn apply_pack_defaults_in_txn(
         accepted.insert(name.clone());
         applied.moved.push(name);
     }
-    let mut held: Vec<String> = proposals
-        .iter()
-        .map(|proposed| proposed.key.clone())
-        .collect();
-    held.sort_unstable();
-    held.dedup();
     let proposal = (!proposals.is_empty()).then(|| PackProposal {
         digest: proposal_digest(pack, &digest, &proposals),
         defaults: proposals,
@@ -472,25 +466,9 @@ pub(crate) fn apply_pack_defaults_in_txn(
             digest,
             accepted: accepted.into_iter().collect(),
             proposal,
-            version: version.to_owned(),
+            version: String::new(),
         },
     )?;
-    if rooted_in_txn(vault, txn)?
-        && vault.can_carry_owner_act_in_txn(txn)?
-        && let Err(error) = vault.append_setting_pack_head_in_txn(
-            txn,
-            pack,
-            version,
-            fingerprint.into_bytes(),
-            held,
-        )
-    {
-        tracing::warn!(
-            pack,
-            kind = ?error.kind(),
-            "the pack door's head was not appended: its rows stand on this install, and other machines weigh their own builds' defaults"
-        );
-    }
     Ok(Some(applied))
 }
 
