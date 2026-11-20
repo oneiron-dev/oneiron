@@ -8440,6 +8440,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/archive_retained_room_ledgers.rs",
+     "purpose": "The room ledgers a whole-vault export carries whole or withholds whole: a room's membership ledger rows and…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -8448,8 +8458,18 @@
      "path": "src/batch/export/archive_retained_side_rows.rs",
      "purpose": "Retained side-table envelopes carry source table names, original key suffixes and value bytes, with identity…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/archive_retained_subjects.rs",
+     "purpose": "The records each retained side table's rows are about, so that the whole-vault export withholds a row, live…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -8587,7 +8607,7 @@
      "path": "src/batch/export/document_import/claim_pair_same_as.rs",
      "purpose": "A restored `same_as` between two CLAIMs (fix list row WHOLE-VAULT-RESTORE-CLAIM-AND-NOTE-SAME-AS; Engine…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -8876,7 +8896,7 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "re-export": 15
      }
     },
@@ -17202,7 +17222,7 @@
      "path": "src/claim/put.rs",
      "purpose": "`Vault` claim write doors: the public `put_claim` family, the crate-private reserved-namespace door, the…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 1
      }
     },
@@ -38053,7 +38073,7 @@
      "path": "src/edit_distance/escalation/scope_erase.rs",
      "purpose": "An actor's erase takes the actor out of the escalation rows that name it (FIX 4700)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -60418,7 +60438,7 @@
      "path": "src/note/proposals.rs",
      "purpose": "Grant-routed fork bundles, atomic verdicts and durable head-move receipts",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 4,
       "re-export": 2,
       "struct": 3
@@ -76205,7 +76225,7 @@
      "path": "src/setting/change.rs",
      "purpose": "The change stream: one `SETTING_CHANGE` row per change, written in the commit that makes it, and the erase…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "struct": 1
      }
     },
@@ -92397,7 +92417,7 @@
      "path": "src/task_verb/lifecycle_receipt.rs",
      "purpose": "The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -93787,7 +93807,7 @@
      "path": "src/test_doors/archive_room_ledger.rs",
      "purpose": "Doors for `tests/archive_import_owner_installs_room_membership.rs` (REVIEW-9446 P1-3, P1-4, round 2 P1-3 to…",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -102554,7 +102574,7 @@
      "path": "src/voice_identity/ref_bank.rs",
      "purpose": "Private per-vault voice reference bank",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 11,
       "re-export": 5
      }
@@ -102881,7 +102901,7 @@
      "purpose": "A house mind's link to the org it runs (HOUSE-BIND = A: the owner, 10 Nov 07:43; the Engine's link shapes…",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 3
      }
     },
@@ -103039,7 +103059,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 51,
+      "crate-vis": 52,
       "mod": 1,
       "re-export": 30
      }
@@ -105958,6 +105978,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/archive_export_withholds_retained_rows_of_withheld_records.rs",
+     "purpose": "The whole-vault export withholds a retained side row about a record it keeps out (FIX…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -105982,7 +106010,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/archive_import_owner_installs_room_membership.rs",
@@ -115274,7 +115302,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 209,
+     "files": 211,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116921,8 +116949,8 @@
    },
    "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8239,
-   "test_files": 1988
+   "source_files": 8241,
+   "test_files": 1989
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -191963,26 +191991,8 @@
      "path": "src/lib.rs",
      "purpose": "`oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09…",
      "surface": {
-      "mod": 15,
+      "mod": 14,
       "re-export": 7
-     }
-    },
-    {
-     "bucket": "L",
-     "kind": "src",
-     "notable": [
-      "Baseline",
-      "Finding",
-      "LintReport",
-      "Rule"
-     ],
-     "path": "src/lint.rs",
-     "purpose": "The test lint: no sleeps, no wall clock, no network and no real model in tests (Fable's verdict, sections 3…",
-     "surface": {
-      "const": 1,
-      "enum": 1,
-      "fn": 13,
-      "struct": 3
      }
     },
     {
@@ -192238,14 +192248,6 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "tests/lint_rules.rs",
-     "purpose": "The test lint finds sleeps, wall-clock reads, network, fixed ports and real models in test code, and nothing…",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
      "path": "tests/model_seq.rs",
      "purpose": "The engine ends every step of a seeded sequence where the reference model does (F3.12 step 1; Fable's…",
      "surface": {}
@@ -192279,7 +192281,7 @@
      "kind": "test",
      "notable": [],
      "path": "tests/test_lint.rs",
-     "purpose": "The workspace's tests keep the testkit rules, and the quarantine agrees with the nextest tiers",
+     "purpose": "The quarantine agrees with the nextest tiers",
      "surface": {}
     }
    ],
@@ -192340,13 +192342,6 @@
      "layout": "dir",
      "purpose": "The golden day: one scripted day on a fresh vault, and the normalised dump of what it leaves behind (Fable's…"
     },
-    "lint": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "L",
-     "layout": "file",
-     "purpose": "The test lint: no sleeps, no wall clock, no network and no real model in tests (Fable's verdict, sections 3…"
-    },
     "model": {
      "files": 4,
      "impl_vault": false,
@@ -192390,10 +192385,10 @@
      "purpose": "A server process on a free port, started and stopped by the test"
     }
    },
-   "over_bar": 3,
+   "over_bar": 2,
    "purpose": "`oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09…",
-   "source_files": 31,
-   "test_files": 12
+   "source_files": 30,
+   "test_files": 11
   },
   "oneiron-uniffi": {
    "files": [
