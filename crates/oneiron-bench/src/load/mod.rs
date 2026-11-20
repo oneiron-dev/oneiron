@@ -72,6 +72,8 @@ struct Plan {
     server_env: Vec<(String, String)>,
     signal_cells: Vec<(String, String)>,
     skip: Vec<String>,
+    /// The narrowed PPR walk's hub cap the owner sets before ingest; `None`: the default.
+    hub_cap: Option<u32>,
 }
 
 const USAGE: &str = "usage: oneiron-bench load run --server <oneiron-server> --work <dir> --out <file.json>\n\
@@ -80,7 +82,7 @@ const USAGE: &str = "usage: oneiron-bench load run --server <oneiron-server> --w
   [--dimensions 1024] [--grades call,light,medium] [--call-deadline-ms N] [--cell-requests 200]\n\
   [--cell-seconds 60] [--drain-settle-seconds 35] [--server-env KEY=VALUE]...\n\
   [--signal-cell CELL:SIGNAL]...\n\
-  [--skip mixed,fairness,agent-memory,restart]\n\
+  [--skip mixed,fairness,agent-memory,restart] [--hub-cap N]\n\
 or:    oneiron-bench load dream --server <oneiron-server> --work <dir> --corpus <turns.jsonl> --out <file.json> --model-base-url <url> --model <slug> --model-key-file <path> [flags]\n\
 or:    oneiron-bench load startup --server <oneiron-server> --work <dir> --out <file.json>\n\
   [--label TEXT] [--repeat 3] [--server-env KEY=VALUE]...\n\
@@ -124,6 +126,7 @@ fn parse(args: &[String]) -> Result<Plan, String> {
         server_env: Vec::new(),
         signal_cells: Vec::new(),
         skip: Vec::new(),
+        hub_cap: None,
     };
     let mut call_deadline = None;
     let mut it = args.iter();
@@ -172,6 +175,15 @@ fn parse(args: &[String]) -> Result<Plan, String> {
                 plan.signal_cells.push((cell.to_owned(), signal.to_owned()));
             }
             "--skip" => plan.skip = value.split(',').map(str::to_owned).collect(),
+            "--hub-cap" => {
+                plan.hub_cap = Some(
+                    value
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|cap| *cap > 0)
+                        .ok_or_else(|| format!("--hub-cap: `{value}` is not a positive u32"))?,
+                );
+            }
             _ => return Err(format!("unknown flag {flag}")),
         }
     }
@@ -185,6 +197,36 @@ fn parse(args: &[String]) -> Result<Plan, String> {
         return Err("--server, --work and --out are required".into());
     }
     Ok(plan)
+}
+
+/// Starts the server and has the owner set the narrowed PPR walk's hub cap
+/// (`retrieval.ppr.narrowed_hub_fanout_cap`) through `vault.settings.set`,
+/// over the owner's first pairing link, before any record is ingested.
+fn start_with_hub_cap(plan: &Plan, vault: &Vault, cap: u32) -> Result<Running, String> {
+    let port = server::free_port()?;
+    let link = vault.bootstrap_owner(&plan.server, &format!("http://127.0.0.1:{port}"))?;
+    let server = Running::start_on(
+        &plan.server,
+        vault,
+        &plan.server_env,
+        "serve.log",
+        "warn",
+        port,
+    )?;
+    let (origin, credential, _) = oneiron_remote::OneironClient::pair(&link)
+        .map_err(|e| format!("redeem the owner pairing link: {e}"))?;
+    let owner = oneiron_remote::OneironClient::connect(&origin, &credential)
+        .map_err(|e| format!("connect the owner client: {e}"))?;
+    let input = json!({
+        "key": "retrieval.ppr.narrowed_hub_fanout_cap",
+        "scope": {"kind": "vault"},
+        "value": cap,
+    });
+    let outcome = owner
+        .call_json("vault.settings.set", &input.to_string())
+        .map_err(|e| format!("the owner sets the hub cap {cap}: {e}"))?;
+    say(&format!("hub cap {cap} set by the owner: {outcome}"));
+    Ok(server)
 }
 
 const LINUX_ONLY: &str =
@@ -289,7 +331,7 @@ fn plan_echo(plan: &Plan) -> serde_json::Value {
         "drain_settle_seconds": plan.drain_settle_seconds,
         // Names only: values (often credentials) stay in the spawned server's environment.
         "server_env": plan.server_env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
-        "signal_cells": plan.signal_cells, "skip": plan.skip,
+        "signal_cells": plan.signal_cells, "skip": plan.skip, "hub_cap": plan.hub_cap,
     })
 }
 
@@ -369,7 +411,11 @@ fn one_run(plan: &Plan, records: usize, vectors: bool) -> Result<Run, String> {
         "minted {agent_count} agents in {:.1} s",
         run.mint_seconds
     ));
-    let server = Running::start(&plan.server, &vault, &plan.server_env, "serve.log", "warn")?;
+    let server = match plan.hub_cap {
+        Some(cap) => start_with_hub_cap(plan, &vault, cap)?,
+        None => Running::start(&plan.server, &vault, &plan.server_env, "serve.log", "warn")?,
+    };
+    run.hub_cap = plan.hub_cap;
     run.startup_empty = startup_of(&server);
     let http = Agent::http()?;
     run.clock_skew_secs = Agent::new(&http, &server.base, &credentials[0], 0)?.clock_skew()?;
