@@ -34,7 +34,11 @@
 //! third guards the mint's refusal. The fourth (review P1 of #9931) guards
 //! the row put: a replicated scope-summary body that names no document is
 //! as minted, so its text is never blank. Main's decode refused one; the
-//! first fix head, 90064fa2b41, stored it.
+//! first fix head, 90064fa2b41, stored it. The fifth (review round 2 of
+//! #9931) lands the summary as a record: its reply carries the text the
+//! summary was generated with, and still binds to its signed landing once
+//! the owner has blanked the summary. Red on main and at f68cdcf921b, where
+//! the landing check compared the reply with the summary's text now.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test summary_blank_text_reads_empty`.
@@ -59,9 +63,9 @@ use oneiron::sync::documents::EntityDocument;
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::replay::{ReplicatedEntity, replay_entity};
 use oneiron::sync::transport::{decode_document, document_sub_tags};
-use oneiron::test_doors::scope_summary::mint_born_scope_summary;
+use oneiron::test_doors::scope_summary::{apply_raw_landing_reply_edges, mint_born_scope_summary};
 use oneiron::test_support::{bind_host_owner, provision_engine_machines};
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
+use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use oneiron_testkit::door;
 use serde_json::{Value, json};
 
@@ -581,6 +585,84 @@ fn a_replicated_scope_summary_with_no_document_is_refused_a_blank_text() -> Test
         vault.get(&blank)?.is_none(),
         "the refused blank-text summary {} is not stored",
         blank.to_hex()
+    );
+    Ok(())
+}
+
+/// The owner in person replaces `seeded`'s whole summary text with nothing
+/// through the public edit door, as the first case does; the edit merges
+/// at once.
+fn owner_blanks_the_summary(vault: &Vault, seeded: &Seeded) -> TestResult {
+    let owner = owner_in_person(vault, seeded.owner);
+    let before = owner_reads(
+        &owner,
+        seeded,
+        vec![SummarySpan {
+            start: 0,
+            end: TEXT.chars().count(),
+        }],
+        "FIXTURE: before the owner's edit",
+    );
+    let whole = before
+        .anchors
+        .into_iter()
+        .next()
+        .ok_or("FIXTURE: an anchor over the summary's whole text")?;
+    let edited = owner.edit_summary(&SummaryEditRequest {
+        summary_ref: seeded.summary.to_hex(),
+        base: before.frontier,
+        edits: vec![SummaryEdit::ReplaceQuotedSpan {
+            span: whole,
+            text: String::new(),
+        }],
+    });
+    assert_eq!(
+        vault.entity_text(&seeded.summary)?,
+        "",
+        "FIXTURE: the owner's edit merged, and the summary's text is empty (the door answered {:?})",
+        edited.as_ref().err()
+    );
+    Ok(())
+}
+
+/// The owner's summary lands as a record: the landing writer's reply TURN
+/// carries the text the summary was generated with. Each staging of the
+/// reply's edges binds it to its signed landing again
+/// (`conversation_dag/admission.rs` `guard_landing_reply_edges`), and a
+/// replay of the reply does the same. After the owner blanks the summary the
+/// reply still binds: its words are the text the summary was generated with,
+/// not the text it holds now (review round 2 of #9931). Staging the same
+/// edges before the blank is the control.
+#[test]
+fn a_landed_reply_still_binds_to_its_landing_after_the_owner_blanks_the_summary() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (vault, _issuer, seeded) = seed(dir.path())?;
+    let [asking, _step] = seeded.trunk;
+    let landed = vault.land_header(
+        &seeded.summary,
+        &asking,
+        WriteActor::new(seeded.owner, EdgeActorClass::Human),
+        true,
+    )?;
+    let reply = landed
+        .record
+        .ok_or("FIXTURE: the summary as a record lands a reply TURN")?;
+    apply_raw_landing_reply_edges(&vault, &reply, seeded.conversation, None, Some(asking))
+        .unwrap_or_else(|error| {
+            panic!("FIXTURE: the landed reply's own edges stage again before the blank: {error:?}")
+        });
+    owner_blanks_the_summary(&vault, &seeded)?;
+    apply_raw_landing_reply_edges(&vault, &reply, seeded.conversation, None, Some(asking))
+        .unwrap_or_else(|error| {
+            panic!(
+                "the landed reply {} is refused by its signed landing after the owner blanked SUMMARY {}: {error:?}",
+                reply.to_hex(),
+                seeded.summary.to_hex()
+            )
+        });
+    assert!(
+        vault.edge_exists(&reply, EdgeKind::RepliesTo, &asking)?,
+        "the landed reply still answers the turn its summary landed on"
     );
     Ok(())
 }
