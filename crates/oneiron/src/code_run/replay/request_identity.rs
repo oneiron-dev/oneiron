@@ -35,6 +35,14 @@
 //! erased form names no word a fenced put's wall did not already read there
 //! (blind review round 1 of #9528): each record is a bare handle, which the
 //! wall reads as the handle of a record custody knows and leaves as it is.
+//!
+//! Such an erase reads its stand-in identity with custody too (FIX
+//! FENCE-ERASE-STAND-IN-DIGESTS-RAW-VALUE): each value base custody holds
+//! reads as the stand-in, as the handle the wall places for it does. A put
+//! fence erases a record before the wall reads it, so its request may hold
+//! a passphrase custody holds as written; its stand-in identity is still
+//! the one a scrub of the stored row keeps, and no digest of the value as
+//! written is kept, which a guess could be tested against.
 
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -51,6 +59,7 @@ use super::CodeRunBridgeCall;
 use crate::Result;
 use crate::batch::secret_scan::{
     MapOrder, admission_form, custody_record_form, custody_records_named, held_row_meets,
+    known_nested_form,
 };
 use crate::code_run::RESPONSE_ERASED;
 use crate::store::known_value_index::KnownValues;
@@ -163,10 +172,13 @@ impl<'a> ErasedRequest<'a> {
     /// wall admitted the row in a scope that decides with custody (FIX
     /// REPLAY-COMPARE-KNOWN-MATCHER), so `offered` meets that identity in
     /// either form. Its admission form first, as the identity of a row
-    /// erased while it held a value as written (a row stored before that
-    /// value entered custody) was taken; then, once that misses, with each
-    /// value base custody holds now as the stand-in too, as the identity of
-    /// a row erased while it held that value's handle was taken.
+    /// erased with no custody read in reach while it held a value as
+    /// written (a row stored before that value entered custody) was taken;
+    /// then, once that misses, with each value base custody holds now as
+    /// the stand-in too, and inside a body of its own as its handle
+    /// ([`custody_stand_in_digest`]), as the identity of a row erased while
+    /// it held that value's handle, or by an erase that read custody, was
+    /// taken (FIX FENCE-ERASE-STAND-IN-DIGESTS-RAW-VALUE).
     ///
     /// # Errors
     ///
@@ -187,7 +199,7 @@ impl<'a> ErasedRequest<'a> {
                 return Ok(true);
             }
             Ok(match known.get()? {
-                Some(known) => canonical_digest(request, Some(known))? == self.identity,
+                Some(known) => custody_stand_in_digest(request, known)? == self.identity,
                 None => false,
             })
         };
@@ -486,7 +498,7 @@ fn identity_part(effect: SelfEffect, request: &Value) -> Cow<'_, Value> {
 /// names a record base custody knows, read through `custody`, the stand-in
 /// identity, the custody identity and the records, in one array.
 fn erased_value(effect: SelfEffect, request: &Value, custody: &CompareKnown<'_>) -> Result<Value> {
-    let stand_in = Value::Binary(live_identity(effect, request)?.to_vec());
+    let stand_in = Value::Binary(stand_in_identity(effect, request, custody)?.to_vec());
     let identity = match custody_identity(effect, request, custody)? {
         Some(parts) => Value::Array(std::iter::once(stand_in).chain(parts).collect()),
         None => stand_in,
@@ -501,6 +513,38 @@ fn erased_value(effect: SelfEffect, request: &Value, custody: &CompareKnown<'_>)
         catalog_verb(effect, request).map(|verb| (ERASED_REQUEST_KEYS[4], Value::from(verb))),
     );
     Ok(request_map(fields))
+}
+
+/// The stand-in identity the erased form of the live `request` a call of
+/// `effect` made keeps: the digest of its [`identity_part`] in its admission
+/// form, read, when a custody read is in reach through `custody`, with each
+/// value base custody holds as the stand-in too (FIX
+/// FENCE-ERASE-STAND-IN-DIGESTS-RAW-VALUE). A put fence erases a request
+/// before the side-row wall reads it, so a value custody holds that no
+/// shape rule reads (a passphrase) is still written there: read with
+/// custody it digests as the handle the wall would place, as a scrub of the
+/// stored row digests it, and never as written, also inside a body of its
+/// own ([`custody_stand_in_digest`]). With no custody read in reach, its
+/// [`live_identity`].
+fn stand_in_identity(
+    effect: SelfEffect,
+    request: &Value,
+    custody: &CompareKnown<'_>,
+) -> Result<[u8; 32]> {
+    match custody.get()? {
+        Some(known) => custody_stand_in_digest(&identity_part(effect, request), known),
+        None => live_identity(effect, request),
+    }
+}
+
+/// The digest of `request` in its admission form read with `known`, the
+/// values base custody holds: each of them as the stand-in, and each inside
+/// a member that carries a body of its own as its record's handle, as the
+/// wall places it there (blind review round 1 of #9692). A put fence's
+/// request held such a value as written, and the scrub's stored row holds
+/// the handle, so both digest the same here.
+fn custody_stand_in_digest(request: &Value, known: Arc<KnownValues>) -> Result<[u8; 32]> {
+    canonical_digest(&known_nested_form(request, known.clone())?, Some(known))
 }
 
 /// The custody identity the erased form of the live `request` a call of

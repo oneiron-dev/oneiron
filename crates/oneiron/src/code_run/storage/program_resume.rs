@@ -10,6 +10,8 @@
 //! record's rows, the write receipts and the program's steps hold those. A
 //! restarter reads the head and its pages, never the record whole.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -261,6 +263,17 @@ fn put_resume_in_txn(
     let kept = previous.as_ref().map_or(0, |head| {
         head.applied.min(applied).min(commit.injected) / PROGRAM_RESUME_PAGE_CALLS
     });
+    // Each request digest a page lists is its row's as this writer stored
+    // it, past the put fence and the side-row wall (blind review round 1 of
+    // #9692): the commit read its calls off the rows before the wall, where
+    // a passphrase custody holds is still written as given, and a row the
+    // fence erased keeps its stand-in identity, never the live one.
+    let held = super::replay_rows::held(&vault.store, &*txn, &run)?;
+    let stored: BTreeMap<u64, &CodeRunBridgeCall> = held
+        .iter()
+        .flat_map(|held| &held.bridge_calls)
+        .map(|row| (row.seq, row))
+        .collect();
     for page in kept..pages {
         let start = usize::try_from(page * PROGRAM_RESUME_PAGE_CALLS)
             .map_err(|_| Error::ArithmeticOverflow("program resume page"))?;
@@ -268,7 +281,18 @@ fn put_resume_in_txn(
             .calls
             .len()
             .min(start.saturating_add(PROGRAM_RESUME_PAGE_CALLS as usize));
-        let calls = commit.calls[start..end].to_vec();
+        let calls = commit.calls[start..end]
+            .iter()
+            .map(|call| -> Result<ProgramResumeCall> {
+                let row = stored.get(&call.row).ok_or(Error::CorruptedIndex(
+                    "a program resume call names a row its record does not hold",
+                ))?;
+                Ok(ProgramResumeCall {
+                    request_digest: row.request_identity()?,
+                    ..*call
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
         RESUME.put(
             vault,
             txn,
@@ -457,4 +481,45 @@ impl Vault {
         }
         Ok(None)
     }
+}
+
+/// Puts `record`, the replay record of `actor`'s run `run`, in the vault's
+/// own writer, and joins there a pinned entry's resume checkpoint listing
+/// each of its calls, read off its rows before the put, as a checkpoint's
+/// commit does: the door of `test_doors::erased_request_identity`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_record_with_resume_listing_its_calls(
+    vault: &Vault,
+    record: &CodeRunReplayRecord,
+    run: EntityId,
+    actor: EntityId,
+) -> Result<()> {
+    let calls = record
+        .bridge_calls
+        .iter()
+        .map(|row| program_resume_call(row, None))
+        .collect::<Result<Vec<_>>>()?;
+    let commit = ProgramResumeCommit {
+        attempt: [0; 16],
+        skill: EntityId::now(),
+        content_hash: String::new(),
+        contract_digest: [0; 32],
+        entry_start: 0,
+        calls,
+        injected: 0,
+        wait: None,
+        at: 1,
+        preparation: None,
+    };
+    let mut wtxn = vault.store.env.write_txn()?;
+    super::response_owners::stamp_response_owner_in_txn(
+        vault,
+        &mut wtxn,
+        record.run_id,
+        run,
+        actor,
+    )?;
+    vault.put_code_run_replay_record_in_txn(&mut wtxn, record)?;
+    join_program_resume_in_txn(vault, &mut wtxn, record, &commit);
+    Ok(wtxn.commit()?)
 }
