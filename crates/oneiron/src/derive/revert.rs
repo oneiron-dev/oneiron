@@ -124,8 +124,9 @@ impl Vault {
     /// inverse here, or one whose inverse refuses is left standing and
     /// listed. A claim an undone item had replaced that does not reopen
     /// stands again as a fresh copy, which the receipt names; the copy of a
-    /// claim this batch itself landed is taken back with that claim's item
-    /// and named nowhere. The revert keeps its own receipt.
+    /// claim or of a settlement's answer this batch itself landed is taken
+    /// back with the item that landed it and named nowhere. The revert keeps
+    /// its own receipt.
     ///
     /// # Errors
     ///
@@ -198,20 +199,24 @@ impl Vault {
             }
             // A claim this batch landed and a later item of it replaced
             // stands, if at all, as the fresh copy an inverse above wrote.
-            // The claim's own inverse takes that copy back in its place, so
-            // the revert leaves nothing of a claim the batch itself wrote
-            // (review round 1 of #10048).
-            let stand_in = (item.kind == "claim")
+            // The inverse of the item that landed it takes that copy back in
+            // its place, so the revert leaves nothing of a claim the batch
+            // itself wrote: a claim item's claim (review round 1 of #10048),
+            // and a settlement's answer, whose copy is reverted as the
+            // settlement it answers (review round 2). The item's other rows
+            // stay as recorded.
+            let stand_in = matches!(item.kind.as_str(), "claim" | "settle")
                 .then(|| item.rows.first().and_then(|row| stand_ins.get(row)))
                 .flatten()
                 .copied();
             let stood;
             let judged = match stand_in {
                 Some(copy) => {
-                    stood = ItemRecord {
-                        rows: vec![copy],
-                        ..item.clone()
-                    };
+                    let mut with_copy = item.clone();
+                    if let Some(first) = with_copy.rows.first_mut() {
+                        *first = copy;
+                    }
+                    stood = with_copy;
                     &stood
                 }
                 None => item,

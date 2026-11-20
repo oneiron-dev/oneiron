@@ -7,7 +7,9 @@
 //! names the copy. A copy the Gate refuses leaves the claim closed and the
 //! `supersede` item listed as left. The copy of a claim the batch itself
 //! landed is taken back with that claim's item, and a copy reads only where
-//! the claim it restores reads (review round 1 of #10048).
+//! the claim it restores reads (review round 1 of #10048). The copy of a
+//! settlement's answer the batch itself replaced is taken back with the
+//! `settle` item, as the settlement it answers (review round 2).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -23,8 +25,8 @@ use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derive::{
-    Claim, Committed, Derived, Named, Supersede, commit, commit_claims, define_auto_agent,
-    grant_derive_rows,
+    Claim, Committed, Derived, Named, Settle, Settlement, Supersede, commit, commit_claims,
+    define_auto_agent, grant_derive_rows, open_conflict,
 };
 use oneiron::test_doors::source_audience::land_source_bound_artifact;
 use oneiron::test_doors::source_audience_binding::reads;
@@ -508,6 +510,106 @@ fn a_claim_the_batch_itself_replaced_stands_under_no_id_after_the_revert() {
         standing.is_empty(),
         "the revert leaves no claim of the batch standing: {standing:?}"
     );
+}
+
+/// Review round 2 of #10048: one batch settles a conflict and replaces its own answer by a
+/// stored claim. The `supersede` item's inverse stands the answer again as a fresh copy; the
+/// `settle` item's inverse reverts the settlement by that copy, so no answer of the batch
+/// stands and the member the settlement had closed stands again.
+#[test]
+fn a_settlement_answer_the_batch_itself_replaced_stands_under_no_id_after_the_revert() {
+    let fixture = fixture();
+    let dreamer = WriteActor::new(fixture.dreamer, EdgeActorClass::System);
+    let flat_white = fixture.landed(
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-flat-white",
+        "flat_white",
+        "preference.coffee",
+    );
+    let cortado = fixture.landed(
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-cortado",
+        "cortado",
+        "preference.coffee",
+    );
+    let note = fixture.landed(
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-note",
+        "note",
+        "profile.note",
+    );
+    let marker = open_conflict(&fixture.vault, cortado, flat_white).expect("an open conflict");
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-settle-and-replace",
+        &[
+            Derived::Settle(Settle {
+                local: "settle",
+                marker: Named::Stored(marker),
+                settlement: Settlement::Keep(Named::Stored(cortado)),
+            }),
+            Derived::Supersede(Supersede {
+                local: "replace_answer",
+                new: Named::Stored(note),
+                old: Named::Local("settle"),
+            }),
+        ],
+    )
+    .expect("the batch commits");
+    assert!(
+        committed.items.iter().all(|item| item.landed),
+        "FIXTURE: the settlement and the supersession of its answer land: {:?}",
+        committed.items
+    );
+    let answer = committed.items[0].rows[0];
+    assert_eq!(
+        fixture.body(answer).predicate,
+        "core.conflict.resolved",
+        "FIXTURE: the settle item's first row is its answer"
+    );
+    assert_eq!(fixture.lifecycle(answer), "superseded");
+    assert_eq!(fixture.lifecycle(flat_white), "superseded");
+    assert_eq!(fixture.lifecycle(cortado), "active");
+
+    let receipt = fixture
+        .vault
+        .derive_revert(dreamer, None, committed.batch)
+        .expect("the Dreamer reverts its own batch");
+    assert_eq!(
+        receipt.reverted,
+        vec!["replace_answer".to_owned(), "settle".to_owned()]
+    );
+    assert!(receipt.left.is_empty(), "{:?}", receipt.left);
+    // The copy that stood in for the answer went with the `settle` item. The receipt names
+    // the copy of the member the settlement had closed, and no other.
+    let [(item, replaced, copy)] = receipt.copied.as_slice() else {
+        panic!("one fresh copy: {:?}", receipt.copied);
+    };
+    assert_eq!((item.as_str(), *replaced), ("settle", flat_white));
+    assert_copy_of(&fixture, *copy, flat_white);
+    assert_eq!(fixture.standing_copies(flat_white), vec![*copy]);
+    assert!(fixture.standing_copies(answer).is_empty());
+    let answers: Vec<EntityId> = fixture
+        .vault
+        .claims_for_subject(&fixture.person)
+        .expect("the person's claims")
+        .into_iter()
+        .filter(|id| {
+            let body = fixture.body(*id);
+            body.lifecycle.as_str() == "active" && body.predicate == "core.conflict.resolved"
+        })
+        .collect();
+    assert!(
+        answers.is_empty(),
+        "the revert leaves no answer of the batch standing: {answers:?}"
+    );
+    assert_eq!(fixture.lifecycle(cortado), "active");
+    assert_eq!(fixture.lifecycle(note), "active");
 }
 
 #[test]
