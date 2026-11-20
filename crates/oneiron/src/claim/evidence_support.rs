@@ -29,8 +29,10 @@ enum SlotSupport {
 }
 
 /// A derived claim with typed TURN citations is readable while at least one
-/// cited turn remains live. This is a read-time test: sync can deliver a claim
-/// after the deletion that erased its source. Ordinary claims have no such
+/// cited turn remains live. A cited CLAIM the owner retracted is not live
+/// (`retracted_claim`); a superseded one is. This is a read-time test: sync
+/// can deliver a claim after the deletion that erased its source, or before
+/// the retraction of the claim it cites. Ordinary claims have no such
 /// evidence obligation, and claim history remains available through get_claim.
 /// A stamped successor of a raw claim keeps that claim's obligation: the
 /// evidence it carries is read as the raw claim's own. A stamped claim's
@@ -61,9 +63,12 @@ pub(crate) fn has_live_support_in_txn(
     }
     for (refs, turns_only) in cited {
         for id in refs {
-            if let crate::vault::LiveEntityRow::Live { entity_type, .. } =
-                crate::vault::live_entity_row_in_txn(store, txn, &id)?
+            if let crate::vault::LiveEntityRow::Live {
+                entity_type,
+                body: row,
+            } = crate::vault::live_entity_row_in_txn(store, txn, &id)?
                 && (!turns_only || entity_type == crate::registry::ENTITY_TYPE_TURN)
+                && !retracted_claim(entity_type, &row)
             {
                 return Ok(true);
             }
@@ -178,4 +183,16 @@ fn candidate_support(evidence: &Value) -> SlotSupport {
         Ok(_) => SlotSupport::Unasked,
         Err(_) => SlotSupport::Malformed,
     }
+}
+
+/// Whether a live row of `entity_type` holding `body` is a retracted CLAIM,
+/// which supports nothing: a retraction says the claim was wrong (Engine
+/// ANSWER DERIVED-CLAIM-RETRACTED-SOURCE-SUPPORT = A; canon ARCH-0004
+/// hydration). A superseded claim still supports, because a newer version
+/// replaced it and no one refuted it. A body that does not decode is read as
+/// before this rule, by its row alone.
+fn retracted_claim(entity_type: u8, body: &[u8]) -> bool {
+    entity_type == crate::registry::ENTITY_TYPE_CLAIM
+        && super::decode_claim_body(body, true)
+            .is_ok_and(|claim| claim.lifecycle == super::ClaimLifecycleStatus::Retracted)
 }
