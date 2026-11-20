@@ -6,8 +6,8 @@ Serves HTTP/1.0 on the Unix socket <socket>. GET /health answers ok; POST
 /v1/rerank scores each document by how many of the query's words it holds,
 and names the request's model, or "stub-reranker" when it names none; any
 other request answers 404. Each request is appended to <request log> as one
-JSON line: its method, path and JSON body. Standard library only; it serves
-until it is signalled.
+JSON line: its method, path, Authorization header (null when it has none)
+and JSON body. Standard library only; it serves until it is signalled.
 """
 import json
 import os
@@ -27,7 +27,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def record(self, body):
         with open(LOG, "a", encoding="utf-8") as log:
-            line = {"method": self.command, "path": self.path, "body": body}
+            line = {
+                "method": self.command,
+                "path": self.path,
+                "authorization": self.headers.get("Authorization"),
+                "body": body,
+            }
             log.write(json.dumps(line) + "\n")
 
     def answer(self, status, payload):

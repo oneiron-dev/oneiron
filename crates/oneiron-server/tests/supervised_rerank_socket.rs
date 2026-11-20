@@ -10,10 +10,13 @@
 //! - A socket whose peer is not the launch's supervised child gets no
 //!   request: the call fails before any byte of it leaves. The same socket,
 //!   recorded with its own child, is answered.
+//! - The provider's bearer credential (`key_env`) goes with each batch on
+//!   the socket, as its HTTP client sends it on its base URL.
 //! - A loopback HTTP reranker has no on-device view.
 //! - Config refuses `listen = "unix"` on a provider any other role names,
-//!   on a reranker model no such row serves, on an EXL3 row and on an
-//!   external row.
+//!   on a reranker model no such row serves, on an EXL3 row, on an
+//!   external row, and beside a managed row on its provider that listens
+//!   over TCP.
 //!
 //! The stub (`tests/fixtures/stub_rerank_uds.py`, standard-library Python)
 //! stands in for llama-server: it is started in a supervisor's custody by
@@ -207,8 +210,13 @@ fn scores(answer: &LlmResponse) -> Vec<f32> {
 
 /// The runtime of [`socket_config`] in a process that launches workers.
 fn socket_runtime(dir: &Path) -> ModelRuntime {
+    runtime_of(&socket_config(dir))
+}
+
+/// The runtime of `config` in a process that launches workers.
+fn runtime_of(config: &str) -> ModelRuntime {
     permit_worker_launch();
-    let config = ModelsConfig::from_toml(&socket_config(dir), None)
+    let config = ModelsConfig::from_toml(config, None)
         .expect("a listen = \"unix\" reranker row is valid config");
     ModelRuntime::build(Some(&config), HostingPrivacyPosture::SelfHostLocal)
 }
@@ -287,6 +295,39 @@ async fn a_socket_whose_peer_is_not_the_launch_child_is_sent_nothing() {
     assert_eq!(rerank_posts(&other_log).len(), 1);
     child.stop().await;
     other.stop().await;
+}
+
+/// A llama-server started with the provider's key refuses a request
+/// without it, so each batch on the socket carries the provider's bearer
+/// credential, as its HTTP client does on its base URL. `key_env = "HOME"`
+/// names a variable every test process has.
+#[tokio::test]
+async fn a_socket_reranker_sends_its_providers_bearer_on_the_socket() {
+    let _turn = HOST_TURN.lock().await;
+    let dir = tempfile::tempdir().expect("dir");
+    let keyed = socket_config(dir.path())
+        .replace("timeout_secs = 20", "timeout_secs = 20\nkey_env = \"HOME\"");
+    let runtime = runtime_of(&keyed);
+    let socket = dir.path().join("stub.sock");
+    let log = dir.path().join("stub.log");
+    let stub = start_stub(&socket, &log).await;
+    assert!(record_socket_launch(WORKER, &socket, &stub));
+    let (view, _) = reranker_on_device_view(&runtime).expect("the on-device view");
+
+    let answer = rerank_on(&runtime, &view, "keyed-rerank")
+        .await
+        .expect("the rerank call is answered on the worker's socket");
+    assert_eq!(scores(&answer), SCORES);
+
+    let home = std::env::var("HOME").expect("HOME is set");
+    let posts = rerank_posts(&log);
+    assert_eq!(posts.len(), 1, "one batch went to /v1/rerank: {posts:?}");
+    assert_eq!(
+        posts[0]["authorization"],
+        format!("Bearer {home}"),
+        "the provider's bearer credential went with the batch"
+    );
+    stub.stop().await;
 }
 
 #[tokio::test]
@@ -371,5 +412,17 @@ listen = "unix"
 "#
         ),
         ".listen: an external worker is the operator's",
+    );
+    // A managed row on the same provider that listens over TCP would bind
+    // its base_url, though no ladder names its model.
+    let unix_row = &base[base.find(&format!("[workers.{WORKER}]")).expect("the row")..];
+    let tcp_row = unix_row
+        .replace(&format!("[workers.{WORKER}]"), "[workers.chat-tcp]")
+        .replace("house-rerank:stub-reranker", "house-rerank:stub-chat")
+        .replace("listen = \"unix\"\n", "")
+        .replace("rt\"", "rt-chat\"");
+    refused(
+        format!("{base}\n{tcp_row}"),
+        "so a managed row on it listens on one too",
     );
 }
