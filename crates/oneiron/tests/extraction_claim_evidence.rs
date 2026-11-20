@@ -13,13 +13,17 @@ use oneiron::claim::{
 };
 use oneiron::dreamer_runner::DreamerAttemptBinding;
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryResult};
+use oneiron::test_doors::derive::grant_derive_rows;
 use oneiron::test_doors::extraction_inputs::{
     enqueue_admitted_extraction_attempt, witness_extraction_turns,
 };
 use oneiron::test_doors::extraction_verdict::dreamer_extraction_verdict_source_version;
 use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
 use oneiron::test_doors::untangle_regressions::seed_named_person;
-use oneiron::{EntityId, TimeRange, Vault};
+use oneiron::{
+    ClaimCandidate, EdgeActorClass, EntityId, TimeRange, Vault, WriteActor, WriteEnvelope,
+    WriteProvenance,
+};
 use rmpv::Value as RmpValue;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -53,7 +57,11 @@ fn open_claim_vault(
     Ok((vault, subject))
 }
 
-/// Lands a separate public, active food preference with Auto approval on the default facet.
+/// Lands a separate active food preference with Auto approval.
+///
+/// A stated head is a plain public put on the default facet. A generated head lands
+/// attributed, under the subject's actor-bound permit: the write gate pends an unattributed
+/// generated put at Auto on source trust. The permit rewrite starts from the shipped policy.
 fn land_food_claim(
     vault: &Vault,
     subject: EntityId,
@@ -61,6 +69,35 @@ fn land_food_claim(
     source: ClaimSource,
 ) -> ExtractionVerdictTestResult<EntityId> {
     let id = EntityId::now();
+    if source == ClaimSource::Generated {
+        grant_derive_rows(vault, &[subject])?;
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(subject, EdgeActorClass::Human),
+            ClaimSource::Generated,
+            WriteProvenance::new(RmpValue::from("generated-head-fixture"))?,
+            ClaimApprovalStatus::Auto,
+        );
+        let now = vault.now_recorded_at();
+        vault
+            .batch()
+            .claim_candidate(
+                &id,
+                ClaimCandidate::new(
+                    FOOD,
+                    ClaimSubject::Entity(subject),
+                    RmpValue::from(value),
+                    1.0,
+                ),
+                &envelope,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )
+            .commit()?;
+        return Ok(id);
+    }
     let mut body = ClaimBody::new(
         FOOD,
         ClaimSubject::Entity(subject),
@@ -367,6 +404,14 @@ fn a_generated_head_is_refused_as_claim_evidence() -> ExtractionVerdictTestResul
     let dir = tempfile::tempdir()?;
     let (vault, subject) = open_claim_vault(&dir)?;
     let head = land_food_claim(&vault, subject, "green tea", ClaimSource::Generated)?;
+    assert_eq!(
+        vault
+            .get_claim(&head)?
+            .expect("The fixture head is stored.")
+            .source,
+        Some(ClaimSource::Generated),
+        "The fixture head is generated.",
+    );
     let observations = Observations::start(&vault)?;
     let pin = claim_pin(&vault, head)?;
     let candidate = observations.turn_candidate(subject, "jasmine");
