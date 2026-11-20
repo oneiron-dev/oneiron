@@ -224,13 +224,12 @@ impl SyncClient {
         let delivery = self.pact_delivery(peer.grant())?;
         // Validate before retaining bytes. Malformed rows never become durable
         // deferred work, and they cannot reach an observed Loro document.
-        let sender = (peer.principal(), standing);
         let admitted = match admit_peer_window_update_as(
             &self.vault,
             &key,
             update,
             role,
-            sender,
+            (peer.principal(), standing),
             delivery.as_ref(),
             peer.grant(),
         ) {

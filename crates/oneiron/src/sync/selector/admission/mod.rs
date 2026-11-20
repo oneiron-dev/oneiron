@@ -264,7 +264,7 @@ fn staged_lane(receipt_id: &[u8; 32]) -> String {
 /// its row, a new part when none does, and every other is dropped; anywhere
 /// else, one refuses the whole update.
 #[cfg(feature = "sync")]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn admit_window_update(
     vault: &Vault,
     key: &WindowKey,
