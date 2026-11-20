@@ -210,7 +210,8 @@ impl Memory<'_> {
                     .vault()
                     .task_authority_facts_in(&*wtxn, task_ref)?
                     .cancelled
-                && task_body_unsettled_in(self.vault(), &*wtxn, task_ref)?
+                && crate::task_verb::wire_decode::task_verb_body_in(self.vault(), &*wtxn, task_ref)?
+                    .is_some_and(|body| body.terminal().is_none())
             {
                 cancel_task_in_txn(self.vault(), wtxn, task_ref, self.actor(), now)?;
                 return Ok((true, Some(RunTreeStatus::Cancelled), false));
@@ -237,24 +238,5 @@ impl Memory<'_> {
             preserved_terminal_status.or(Some(RunTreeStatus::Cancelled)),
             false,
         ))
-    }
-}
-
-/// Whether `task_ref`'s body leaves it open to the cancel of a TASK with no
-/// local attempt: a typed body with no terminal. A body no reader decodes
-/// carries no terminal anyone can read, and with no attempt nothing else
-/// settles it, as the dismissal fence reads such a body
-/// (`task_settled_at_in`), so the owner's allowed cancel of it records its
-/// Cancelled fact rather than refusing with the decode error (F15). Any
-/// other read fault still refuses.
-fn task_body_unsettled_in(
-    vault: &crate::Vault,
-    rtxn: &heed::RoTxn<'_>,
-    task_ref: EntityId,
-) -> crate::error::Result<bool> {
-    match crate::task_verb::wire_decode::task_verb_body_in(vault, rtxn, task_ref) {
-        Ok(body) => Ok(body.is_some_and(|body| body.terminal().is_none())),
-        Err(Error::Record(crate::error::RecordError::InvalidTaskBody(_))) => Ok(true),
-        Err(error) => Err(error),
     }
 }
