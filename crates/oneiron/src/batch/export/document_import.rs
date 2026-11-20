@@ -358,13 +358,19 @@ impl Vault {
         let projects = map_project_root(self, &wtxn, &mut archive)?;
         omit_project_revisions(self, &mut archive)?;
         // ARCHIVE-IMPORT-ACTORLESS-SEATED-ROOM = B: every door but the owner's
-        // restore keeps an archived room it cannot seat as archive data, and
-        // every room the import keeps out keeps its speech out with it
-        // (`unseated_rooms`).
+        // restore keeps an archived room it cannot seat as archive data; the
+        // owner's restore keeps out a room whose archived ledger seat would
+        // not stand here (REVIEW-9446); and every room the import keeps out
+        // keeps its speech out with it (`unseated_rooms`).
         let mut room_omissions = if owner.is_none() {
             unseated_rooms::omit_rooms_not_seated_here(self, &wtxn, &mut archive)?
         } else {
-            Vec::new()
+            unseated_rooms::omit_rooms_owner_restore_cannot_seat(
+                self,
+                &wtxn,
+                &mut archive,
+                secrets,
+            )?
         };
         room_omissions.extend(unseated_rooms::omit_speech_of_omitted_rooms(&mut archive)?);
         // Each runtime pack row maps onto this vault's pack handles; the
@@ -595,6 +601,24 @@ impl Vault {
                     )?,
                 )?
             };
+            // The owner's restore puts a room after the PERSON records of its archived roster:
+            // the room guard requires each member to be a PERSON row here.
+            if permit.is_some()
+                && row.entity_type == ENTITY_TYPE_CONVERSATION
+                && let Ok(body) = crate::conversation::ConversationBody::from_bytes(
+                    &row.body.to_bytes_in_with(&archive.files, secrets)?,
+                )
+            {
+                for member in body.member_ids {
+                    if archive
+                        .entity_at(&member)?
+                        .is_some_and(|at| at.entity_type == crate::registry::ENTITY_TYPE_PERSON)
+                        && !waits_on.contains(&member)
+                    {
+                        waits_on.push(member);
+                    }
+                }
+            }
             // Blind-review P1b (REVIEW-4389): an EVENT/TURN born under a
             // non-default facet waits on its archived facet row, so the
             // facet's put lands first and the masked initial put below finds
@@ -682,6 +706,12 @@ impl Vault {
                 receipt_ref,
             )?;
         }
+        if let Some(permit) = permit.as_ref() {
+            side_refresh.prelanded_rooms =
+                crate::conversation::archive_restore::preland_room_ledgers_in_txn(
+                    self, &mut wtxn, permit, &archive, secrets,
+                )?;
+        }
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
         // Each round queues what waits on no pending id, then restores it.
@@ -756,6 +786,11 @@ impl Vault {
                 }
             }
         }
+        crate::conversation::archive_restore::remove_orphaned_prelanded_rooms_in_txn(
+            self,
+            &mut wtxn,
+            &mut side_refresh.prelanded_rooms,
+        )?;
         let mut agents = archive.spool.rows(ArchiveRecordKind::AgentPack);
         while let Some((_, bundle)) = agents.next_parsed::<AgentForkBinding>(&archive.spool)? {
             let id = parse_id(&bundle.entity_id)?;
