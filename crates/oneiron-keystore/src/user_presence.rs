@@ -96,7 +96,9 @@ pub enum PresenceError {
     /// The screen is locked, or it locked (or the user signed out) after
     /// the prompt showed and before its answer was taken. No act is
     /// confirmed on a locked device; an answer from before a lock does not
-    /// count and opens no window: the act asks again.
+    /// count and opens no window: the act asks again. A user's session that
+    /// is off the screen answers this too, at the lock reading and at the
+    /// prompt alike, and never [`Self::NoPrompt`].
     #[error("the screen is locked, or it locked while the confirm prompt was up")]
     ScreenLocked,
     /// This device asks for its device PIN and no confirm holds: the host
