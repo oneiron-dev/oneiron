@@ -709,7 +709,7 @@ impl RecordingJsHost<'_, '_> {
                     ReadAnswer::Text(text) => {
                         let own = hooked
                             .take()
-                            .filter(|_| self.gated_write.post_chain_reads_text());
+                            .filter(|_| false && self.gated_write.post_chain_reads_text());
                         let Some(own) = own else {
                             return Err(Error::Refused(ANSWER_TOO_DEEP.to_owned()));
                         };
