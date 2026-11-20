@@ -363,9 +363,13 @@ pub fn run_extraction_verdict_native_pack(
     }
     let mut members = Vec::with_capacity(pack.candidates.len());
     for candidate in &pack.candidates {
-        if candidate.rel.is_some() || candidate.topic.is_some() || candidate.corrects.is_some() {
+        if candidate.rel.is_some()
+            || candidate.topic.is_some()
+            || candidate.corrects.is_some()
+            || !candidate.claim_evidence.is_empty()
+        {
             return Err(Error::InvalidConfig(
-                "the parity fixture candidates carry no relationship, topic or corrected claim"
+                "the parity fixture candidates carry no relationship, topic, corrected claim or claim evidence"
                     .into(),
             ));
         }

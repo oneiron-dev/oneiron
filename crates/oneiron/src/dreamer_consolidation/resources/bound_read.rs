@@ -123,6 +123,34 @@ impl BoundBranchRead {
         self.priors.get(&id)
     }
 
+    /// The listed head `claim` a candidate may cite as evidence, under the
+    /// widest rule one native extraction call applies: the rebuilt listing
+    /// shows it, the branch holds it as a prior head, this scope grants its
+    /// pinned version read, and it may corroborate (GATE-11 refuses a
+    /// generated-origin head). A native call labels only the claims of its
+    /// own listing page. The page a lent candidate came from is not known
+    /// here, so the whole listing is the bound.
+    pub(crate) fn cited_head(&self, claim: EntityId) -> Result<&PriorHead> {
+        if !self.neighbourhood.shows(claim) {
+            return Err(invalid_consolidation(
+                "extracted evidence names an unlisted claim",
+            ));
+        }
+        let head = self
+            .priors
+            .get(&claim)
+            .ok_or_else(|| invalid_consolidation("unadmitted branch claim evidence"))?;
+        if !self.scope.allows_read(&self.pins().source_version(&claim)?) {
+            return Err(invalid_consolidation(
+                "extracted evidence crossed its child slice",
+            ));
+        }
+        if !crate::claim::claim_evidence_admissible(&head.body) {
+            return Err(invalid_consolidation("generated claim cannot corroborate"));
+        }
+        Ok(head)
+    }
+
     /// The listed claims about `subject` a candidate read under `scope` may
     /// be asked to correct, in native listing order: held as prior heads,
     /// and exactly read- and writable in `scope`. Each row is its id with

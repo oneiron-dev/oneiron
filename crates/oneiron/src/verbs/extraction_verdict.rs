@@ -5,8 +5,9 @@
 //! operand, derives each candidate identifier with the native deterministic identifier, and
 //! rebuilds the pack questions with the native builders before any model is asked. The pack
 //! carries typed bounded candidate operands, listed and prior claim pins, question keys
-//! with canonical options, and earlier answers for a final round. Nothing here asks a model
-//! or writes a row.
+//! with canonical options, and earlier answers for a final round. An operand cites the
+//! served turns it quotes and, as the native reply may, the listed claims it rests on, each
+//! with the version the job read. Nothing here asks a model or writes a row.
 //!
 //! Wire forms keep the job from deriving what only the engine knows. An option that names
 //! a candidate is written `candidate:<index into candidates>`; the engine maps each alias
@@ -115,6 +116,13 @@ pub struct CandidateOperand {
     pub corrects: Option<String>,
     /// The source turns this candidate cites, each with its served pin.
     pub evidence: Vec<TurnEvidence>,
+    /// The listed claims this candidate cites as evidence, each with the version the job
+    /// read. The engine rechecks every pin under the job actor's own read at verdict time
+    /// and admits only a head the rebuilt listing shows that may corroborate. A candidate
+    /// that cites a listed claim and carries its predicate and value restates it, so the
+    /// correction read never asks about that pair, as the native read never asks it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub claim_evidence: Vec<PinnedClaim>,
 }
 
 /// One source turn a candidate cites: the turn reference with the version the job read,
@@ -131,8 +139,8 @@ pub struct TurnEvidence {
     pub span: Option<EvidenceRange>,
 }
 
-/// One listed or prior claim pin: the claim reference with the version the job read.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// One listed, prior or cited claim pin: the claim reference with the version the job read.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PinnedClaim {
     /// The claim as 32 lowercase hexadecimal digits.
