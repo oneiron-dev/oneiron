@@ -215,6 +215,19 @@ impl PreparedWake {
         Self::prepare_matching(vault, scope, caller_scope, None, Some(attempt), None)
     }
 
+    /// [`Self::prepare_one`] with its listings read for `destination_bound`,
+    /// as a driven pass reads them for the bound its executors stated: the
+    /// native side of a lent-read parity test.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn prepare_one_for_bound(
+        vault: &Vault,
+        scope: crate::dreamer_runner::DreamerConsolidationScope,
+        attempt: AttemptId,
+        destination_bound: Option<&ReadDestination>,
+    ) -> Result<Self> {
+        Self::prepare_matching(vault, scope, None, destination_bound, Some(attempt), None)
+    }
+
     fn prepare_matching(
         vault: &Vault,
         scope: crate::dreamer_runner::DreamerConsolidationScope,

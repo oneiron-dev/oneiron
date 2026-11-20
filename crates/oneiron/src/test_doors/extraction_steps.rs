@@ -22,6 +22,7 @@ use crate::error::{Error, Result};
 use crate::llm::decision::{DecisionBandPolicy, DecisionLadder, TypedDecision};
 use crate::llm::model_step::ModelStepReceipt;
 use crate::memory::MemoryResult;
+use crate::settings::ReadDestination;
 use crate::vault::Vault;
 use crate::{LlmBackend, LlmRequest};
 
@@ -54,6 +55,14 @@ impl ExtractionStepFixture {
     /// Stops lending the extraction step; receipts still answer without a loan.
     pub fn lend_nothing(&self) {
         self.lend.store(false, Ordering::SeqCst);
+    }
+
+    /// States `bound` as the destination bound of the pass that lends this fixture's resources.
+    ///
+    /// The step lender answers it from then on, and so does a verdict lender built on the wrapped
+    /// fixture. `None`, the start, states no bound.
+    pub fn set_destination_bound(&self, bound: Option<ReadDestination>) {
+        self.verdict.set_destination_bound(bound);
     }
 
     /// Stores `material` as this wake's admitted host material, lent to each later step lend.
@@ -130,6 +139,11 @@ impl DreamerDecisionLender for FixtureStepLender {
         })
         .map(Some)
     }
+
+    /// Answers the destination bound the test stated on the fixture.
+    fn destination_bound(&self) -> Option<ReadDestination> {
+        self.fixture.verdict.destination_bound()
+    }
 }
 
 /// Lends the fixture's extraction step resources to `binding` for its step calls.
@@ -168,8 +182,30 @@ pub fn native_extraction_slice_transcripts(
     turns: &[EntityId],
     material: &[String],
 ) -> MemoryResult<Vec<NativeExtractionSlice>> {
+    native_extraction_slice_transcripts_for_bound(vault, attempt, turns, material, None)
+}
+
+/// [`native_extraction_slice_transcripts`] with the wake's listings read for `destination_bound`,
+/// as a driven pass reads them for the bound its executors stated; `None` states no bound.
+///
+/// A lent step whose lender states the same bound must render the same bytes.
+///
+/// # Errors
+///
+/// As [`native_extraction_slice_transcripts`].
+pub fn native_extraction_slice_transcripts_for_bound(
+    vault: &Vault,
+    attempt: AttemptId,
+    turns: &[EntityId],
+    material: &[String],
+    destination_bound: Option<&ReadDestination>,
+) -> MemoryResult<Vec<NativeExtractionSlice>> {
     let slices = crate::dreamer_consolidation::extraction_step::native_slice_transcripts_for_test(
-        vault, attempt, turns, material,
+        vault,
+        attempt,
+        turns,
+        material,
+        destination_bound,
     )?;
     Ok(slices
         .into_iter()
