@@ -2,15 +2,17 @@
 //! ROOM-CLAIM-HELD-AFTER-SPEECH-STANDING-ENDS, Engine ROOM-CLAIM-TAKEOVER =
 //! A, 21 Nov 03:04; REVIEW-9956 P1-2): a turn's claim row as another machine
 //! of the vault carries it, merged as the room-fact import merges it; the
-//! claim the vault holds for a turn, as its room-fact mirror reads it; and
-//! an actor's erase from the room turns it spoke. Compiled only under
+//! claim the vault holds for a turn, as its room-fact mirror reads it; an
+//! answer another machine carries with its turn's claims, settled as the
+//! room-fact import settles a turn's responses (REVIEW-9956 round 2); and an
+//! actor's erase from the room turns it spoke. Compiled only under
 //! `--cfg oneiron_test_support`; never API.
 
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::workspace_roster::{
-    RoomClaimReceipt, RoomSideRow, erase_turn_actor_in_txn, merge_replicated_side_row_in_txn,
-    replicated_side_rows_in,
+    RoomClaimReceipt, RoomSideRow, erase_turn_actor_in_txn, merge_replicated_responses_in_txn,
+    merge_replicated_side_row_in_txn, replicated_side_rows_in,
 };
 use crate::{EntityId, Vault};
 
@@ -23,6 +25,35 @@ pub fn merge_replicated_claim(vault: &Vault, claim: &RoomClaimReceipt) -> Result
     };
     let mut wtxn = vault.store.env.write_txn()?;
     let merge = merge_replicated_side_row_in_txn(vault, &mut wtxn, &row)?;
+    wtxn.commit()?;
+    Ok(format!("{merge:?}"))
+}
+
+/// Merges another machine's answer to `parent` in `room`: `actor`'s turn
+/// `response`, spoken at `at`, carried with `claims`, the claim rows of
+/// `parent` that machine's window holds. Returns the merge's outcome by its
+/// name.
+pub fn merge_replicated_answer(
+    vault: &Vault,
+    room: EntityId,
+    parent: EntityId,
+    response: EntityId,
+    actor: EntityId,
+    at: u64,
+    claims: &[RoomClaimReceipt],
+) -> Result<String> {
+    let mut rows = vec![RoomSideRow::Response {
+        room,
+        parent,
+        response,
+        actor,
+        at,
+    }];
+    rows.extend(claims.iter().map(|claim| RoomSideRow::Claim {
+        claim: claim.clone(),
+    }));
+    let mut wtxn = vault.store.env.write_txn()?;
+    let merge = merge_replicated_responses_in_txn(vault, &mut wtxn, parent, &rows)?;
     wtxn.commit()?;
     Ok(format!("{merge:?}"))
 }
