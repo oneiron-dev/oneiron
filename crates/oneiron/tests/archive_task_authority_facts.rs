@@ -40,6 +40,9 @@
 //!   `the_owners_restore_leaves_an_unlinked_cancel_untwinned` (blind review round 2 P1,
 //!   REVIEW-9981): red at b1fd9b5cb634 (the adoption twins the cancel, the twin carries the
 //!   link its row lacks, and the task reads cancelled); green on the head.
+//! - `an_owners_archive_holding_a_cancel_learned_at_another_time_restores` (blind review
+//!   round 2 P1, REVIEW-10008): red at 0b364c5173ef (the import fails whole: "archived task
+//!   authority fact times"); green on the head.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test archive_task_authority_facts`.
 #![cfg(oneiron_test_support)]
@@ -994,4 +997,82 @@ fn the_owners_restore_leaves_an_unlinked_cancel_untwinned() -> TestResult {
         panic!("the owner's whole archive holding an unlinked cancel must restore: {error:?}");
     }
     assert_restored_open(&dest, &source)
+}
+
+/// Blind review round 2 P1 (REVIEW-10008): replay takes a fact row's times apart from its
+/// body, so an own device can send a well-formed cancel whose row was learned a tick after
+/// the fact's own time, and its vault exports the row so. The owner's restore of that archive
+/// into a vault that does not hold the row lands it at the times the archive holds, counts it
+/// and twins it, instead of refusing the whole import on its times.
+#[test]
+fn an_owners_archive_holding_a_cancel_learned_at_another_time_restores() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let source = Vault::open(directory.path(), VaultConfig::default())?;
+    let (task, fact) = owned_task(&source)?;
+    let owner = source.ensure_embedded_owner_actor()?;
+    let cancel = EntityId::now();
+    let at = source.now_recorded_at();
+    let learned_at = at + 1;
+    let body = unsigned_fact_body((task, TaskAuthorityFactKind::Cancelled, owner, at));
+    replay_entity(
+        &source,
+        ReplicatedEntity {
+            id: cancel,
+            entity_type: ENTITY_TYPE_TASK,
+            occurred: TimeRange { start: at, end: at },
+            learned_at,
+            row_version: 0,
+            body: &body,
+        },
+        ImportTier::OwnDevice,
+    )?;
+    source
+        .batch()
+        .edge(&cancel, EdgeKind::ScopedTo, &task, SCOPED_TO_WEIGHT)
+        .commit()?;
+    let archive = source.export_whole_vault(true)?.bytes().to_vec();
+
+    let (_dest_directory, dest) =
+        open_rooted_destination(b"archive task facts cancel learned at another time")?;
+    let proof = owner_proof(&dest)?;
+    if let Err(error) = dest.import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &proof)
+    {
+        panic!(
+            "the owner's whole archive holding a cancel learned at another time must restore: \
+             {error:?}"
+        );
+    }
+    let landed = dest
+        .get_raw(&cancel)?
+        .expect("the cancel row lands as the archive holds it");
+    let header = EntityMetadataHeader::parse(&landed).expect("the landed row's header");
+    assert_eq!(
+        (
+            header.occurred_start,
+            header.occurred_end,
+            header.learned_at
+        ),
+        (at, at, learned_at),
+        "the cancel row keeps the times the archive holds"
+    );
+    assert_eq!(&landed[ENTITY_METADATA_HEADER_LEN..], &body[..]);
+    let restored = authority_facts(&dest, task)?;
+    assert!(
+        restored.contains(&fact) && restored.contains(&cancel),
+        "the Owner fact and the cancel come back at their archived ids, linked"
+    );
+    assert_eq!(
+        restored.len(),
+        4,
+        "the Owner fact and the cancel, and a signed twin of each"
+    );
+    let state = dest
+        .task_authority_state(task)?
+        .expect("the restored Owner fact counts on the restored vault");
+    assert_eq!(state.owner_ref, owner);
+    assert!(
+        state.cancelled,
+        "the owner's restore counts the cancel as his own write"
+    );
+    Ok(())
 }

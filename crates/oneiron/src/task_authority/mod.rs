@@ -1691,8 +1691,12 @@ impl Vault {
     /// keep the facts). The fact lands at its archived id with its archived body, byte for
     /// byte, born at `birth_facet`, its archived birth; its `ScopedTo` link to its TASK comes
     /// back with the archive's other links. The body must read as a fact under the current
-    /// schema, and the row's times must be the fact's own, as its door writes them; any
-    /// other refuses the import.
+    /// schema; any other refuses the import. The row keeps the times the archive holds,
+    /// whatever they are: replay takes a row's times apart from its body, so an own device
+    /// can send a well-formed fact at times other than its own, and its vault exports the
+    /// row so. The fold reads a fact's time from its body alone. A restore does not fail on
+    /// a row the source vault held (blind review P1 rounds 1 and 2, REVIEW-9981; round 2,
+    /// REVIEW-10008).
     ///
     /// The owner's restore counts the fact as a local write (ASK
     /// OWNER-RESTORE-TASK-FACT-COUNT, option A): it enters this install's written-here
@@ -1701,11 +1705,9 @@ impl Vault {
     /// judges it as any fact: maker derive, actor rule and owner fork. A fact whose maker
     /// does not derive its task's id ([`TaskAuthorityFact::commits_to_its_task`]), such as
     /// a peer's second Owner fact the vault held beside the true one, lands as the archive
-    /// holds it and no more, times included: replay takes a row's times apart from its
-    /// body, and no door of this install could have written the fact, so its times are not
-    /// checked, it is no local write and it gets no twin. The fold skips it here as it did
-    /// where it came from. A restore does not fail on a row the source vault held and
-    /// skipped (blind review P1 rounds 1 and 2, REVIEW-9981).
+    /// holds it and no more: no door of this install could have written the fact, so it is
+    /// no local write and it gets no twin. The fold skips it here as it did where it came
+    /// from.
     pub(crate) fn restore_archived_task_fact_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -1716,18 +1718,11 @@ impl Vault {
         birth_facet: Option<EntityId>,
     ) -> Result<()> {
         let carried = decode_carried_task_authority_fact_body(body)?;
-        let derived = carried.fact.commits_to_its_task();
-        let at = carried.fact.occurred_at;
-        if derived && (occurred.start != at || occurred.end != at || learned_at != at) {
-            return Err(Error::Record(RecordError::InvalidTaskBody(
-                "archived task authority fact times",
-            )));
-        }
         self.batch_in()
             .mask(birth_facet)
             .put_task_fact_with_times(fact_ref, body, occurred, learned_at)
             .apply(wtxn)?;
-        if !derived {
+        if !carried.fact.commits_to_its_task() {
             return Ok(());
         }
         fact_proof::record_written_fact_in_txn(&self.store, wtxn, fact_ref, body)

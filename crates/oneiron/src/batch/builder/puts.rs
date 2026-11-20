@@ -479,8 +479,7 @@ impl BatchBuilder<'_> {
     }
 
     /// [`Self::put_task_fact`] at row times other than the fact's own: the
-    /// owner's restore of an archived row whose fact no door of this install
-    /// could have written, at the times the archive holds.
+    /// owner's restore of an archived fact row, at the times the archive holds.
     pub(crate) fn put_task_fact_with_times(
         mut self,
         id: &EntityId,
