@@ -276,23 +276,29 @@ pub(super) fn apply_setting_copy(
 }
 
 /// The target of the row a copy's name names: a pack's row of a key is read from the pack's
-/// head (stage 7c-3b), so it names the pack's target ([`setting_pack_target`]); any other row its
-/// own ([`setting_slot_target`]).
+/// head (stage 7c-3b), so it names the pack's target ([`setting_pack_target`]), and its row under
+/// one of the pack's tables names an owner's yes to that table (stage 7c-3d), so the table's
+/// target ([`setting_pack_accept_target`]); any other row its own ([`setting_slot_target`]).
 ///
 /// # Errors
-/// As [`setting_slot_target`].
+/// As [`setting_slot_target`]; [`invalid_authority`] for a pack's row whose item spells no table.
 fn copy_name_target(slot: &RowKey) -> Result<EntityId> {
-    match &slot.scope {
-        SettingScope::Pack(pack) => setting_pack_target(pack),
+    match (&slot.scope, &slot.item) {
+        (SettingScope::Pack(pack), None) => setting_pack_target(pack),
+        (SettingScope::Pack(pack), Some(_)) => match birth_yes_table(slot) {
+            Some(table) => setting_pack_accept_target(pack, &table),
+            None => Err(invalid_authority()),
+        },
         _ => setting_slot_target(slot),
     }
 }
 
 /// Whether a birth's names (stage 7c-3b; DESIGN 1.6, `born`) are its source's heads in `state`,
 /// the fold before the entry: its vault names are every live act of the source key's vault value
-/// row, and each pack name is a live head act of its pack. Which key is the source, the shape
-/// check pins (one key, [`SettingCopyRow::is_birth`]), and each machine's projection checks it is
-/// the one the born key's `born` names.
+/// row, each pack name is a live head act of its pack, and each name of an owner's yes is a live
+/// act of its table's target (stage 7c-3d; [`copy_name_target`]). Which key is the source, the
+/// shape check pins (one key, [`SettingCopyRow::is_birth`]), and each machine's projection checks
+/// it is the one the born key's `born` names.
 fn birth_names_source_heads(state: &FoldState, row: &SettingCopyRow) -> Result<bool> {
     let Some(first) = row.names.first() else {
         return Ok(false);
@@ -309,11 +315,10 @@ fn birth_names_source_heads(state: &FoldState, row: &SettingCopyRow) -> Result<b
             SettingScope::Vault => {
                 vault_named.insert(name.act);
             }
-            SettingScope::Pack(pack) => {
-                let pack_target = setting_pack_target(pack)?;
+            SettingScope::Pack(_) => {
                 if !state
                     .policy_settings
-                    .live_choices(pack_target)
+                    .live_choices(copy_name_target(&name.slot)?)
                     .any(|live| live == name.act)
                 {
                     return Ok(false);

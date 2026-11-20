@@ -27,6 +27,12 @@
 //! head act of a pack whose layer holds it, by that pack's row of the key. Whether those were the
 //! source's heads, the fold judges; whether the key it copies is the one `born` names, each
 //! machine's projection.
+//!
+//! Beside a pack's head act, a birth may name an owner's yes to one of that pack's tables (stage
+//! 7c-3d): the yes whose landing gave the source key's row of the pack on the creator. Its name's
+//! row is that pack's row of the key under the table, the table's digest as the row's item
+//! ([`birth_yes_table`]). A reader counts a yes the birth names, and no other: a yes the birth did
+//! not see is a later change of the default, which does not move it.
 
 use std::collections::BTreeSet;
 
@@ -122,7 +128,9 @@ impl SettingCopyRow {
     }
 
     /// A birth's shape ([`Self::validate`]): no item, the empty revision, and names on one other
-    /// catalogue key's item-less value rows, at the vault or a pack, each once.
+    /// catalogue key's value rows, at the vault or a pack, each once: item-less, but for a pack's
+    /// row under one of its tables, which names an owner's yes to that table (stage 7c-3d;
+    /// [`birth_yes_table`]) of a pack whose head the birth names too.
     fn validate_birth(&self) -> Result<()> {
         let source = &self.names[0].slot.name;
         if self.slot.item.is_some()
@@ -134,15 +142,31 @@ impl SettingCopyRow {
             return Err(invalid_authority());
         }
         let mut named = BTreeSet::new();
+        let mut headed = BTreeSet::new();
+        let mut yes_packs = BTreeSet::new();
         for name in &self.names {
+            let item_ok = match (&name.slot.scope, &name.slot.item) {
+                (_, None) => true,
+                (SettingScope::Pack(pack), Some(_)) => {
+                    yes_packs.insert(pack);
+                    birth_yes_table(&name.slot).is_some()
+                }
+                _ => false,
+            };
             if name.slot.name != *source
-                || name.slot.item.is_some()
+                || !item_ok
                 || name.slot.mode != SettingMode::Value
                 || !matches!(name.slot.scope, SettingScope::Vault | SettingScope::Pack(_))
                 || !named.insert(name)
             {
                 return Err(invalid_authority());
             }
+            if let (SettingScope::Pack(pack), None) = (&name.slot.scope, &name.slot.item) {
+                headed.insert(pack);
+            }
+        }
+        if !yes_packs.is_subset(&headed) {
+            return Err(invalid_authority());
         }
         Ok(())
     }
@@ -175,6 +199,33 @@ impl SettingCopy {
             }
         }
         Ok(None)
+    }
+}
+
+/// The table a birth's name of an owner's yes names (stage 7c-3d; module doc): the digest its
+/// row's item spells in 64 lowercase hex digits, at a pack's scope. `None` for any other row.
+#[must_use]
+pub fn birth_yes_table(slot: &RowKey) -> Option<[u8; 32]> {
+    if !matches!(slot.scope, SettingScope::Pack(_)) {
+        return None;
+    }
+    let item = slot.item.as_deref()?.as_bytes();
+    if item.len() != 64 {
+        return None;
+    }
+    let mut digest = [0_u8; 32];
+    for (byte, pair) in digest.iter_mut().zip(item.chunks_exact(2)) {
+        *byte = (lower_hex_digit(pair[0])? << 4) | lower_hex_digit(pair[1])?;
+    }
+    Some(digest)
+}
+
+/// The value of one lowercase hex digit.
+fn lower_hex_digit(digit: u8) -> Option<u8> {
+    match digit {
+        b'0'..=b'9' => Some(digit - b'0'),
+        b'a'..=b'f' => Some(digit - b'a' + 10),
+        _ => None,
     }
 }
 

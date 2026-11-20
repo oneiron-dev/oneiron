@@ -77,8 +77,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use oneiron_authority::authority::{
-    ActSurface, AuthorityEntryHash, OwnerActKind, PolicySetting, SettingCopyName,
-    setting_pack_target, setting_slot_target, setting_value_digest,
+    ActSurface, AuthorityEntryHash, OwnerActKind, PolicySetting, SettingCopyName, birth_yes_table,
+    setting_pack_accept_target, setting_pack_target, setting_slot_target, setting_value_digest,
 };
 use oneiron_contracts::fingerprint::{Fingerprinter, purposes};
 use oneiron_setting_contract::{ChangeStanding, Order, RowKey, SettingStanding};
@@ -88,7 +88,7 @@ use super::beside::{
 };
 use super::born::is_born_value_slot;
 use super::change::{record_change_in_txn, record_receipt_in_txn, record_signed_entry_in_txn};
-use super::pack::{fold_layer, layer_default_in_txn, project_pack_in_txn, proved_pack_row_in_txn};
+use super::pack::{birth_pack_row_in_txn, fold_layer, layer_default_in_txn, project_pack_in_txn};
 use super::read::{StoredRow, table_of};
 use super::{
     EncodedValue, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, SettingSync,
@@ -630,10 +630,11 @@ fn copy_meet_in_txn(
 /// beside a bound, the value is their meet with the default its pack names give, still explicit;
 /// with no pack name it reads as one this install cannot read. Where the vault names give no
 /// bound, its pack names give the value ([`pack_name_value_in_txn`]), met as the layer meets
-/// them, seeded. A pack name whose table this install does not prove leaves the row as it is for
-/// now ([`Inert::ForNow`]: the born thing reads strictest, pending, until a pass proves it), and
-/// on a row a copy names reads as one this install cannot read. `None` when no name gives a
-/// bound. A value the born key does not decode is unreadable.
+/// them, seeded: each pack's head name, read before every owner's yes the birth does not name
+/// beside it (stage 7c-3d). A pack name whose table this install does not prove leaves the row
+/// as it is for now ([`Inert::ForNow`]: the born thing reads strictest, pending, until a pass
+/// proves it), and on a row a copy names reads as one this install cannot read. `None` when no
+/// name gives a bound. A value the born key does not decode is unreadable.
 fn birth_value_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -663,12 +664,16 @@ fn birth_value_in_txn(
             Ok((explicit, _)) => explicit,
             Err(short) => return Ok(Err(short)),
         };
-    let mut rows = Vec::with_capacity(at_packs.len());
-    for name in &at_packs {
+    let (yeses, heads): (Vec<SettingCopyName>, Vec<SettingCopyName>) = at_packs
+        .into_iter()
+        .partition(|name| name.slot.item.is_some());
+    let mut rows = Vec::with_capacity(heads.len());
+    for name in &heads {
         let SettingScope::Pack(pack) = &name.slot.scope else {
             return Ok(Err(Short::Unreadable));
         };
-        let value = match pack_name_value_in_txn(vault, txn, name_counts, source, pack, name.act)? {
+        let named = (name_counts, yeses.as_slice());
+        let value = match pack_name_value_in_txn(vault, txn, named, source, pack, name.act)? {
             Some(Some(value)) => value,
             Some(None) => match source.kind.strictest_value()? {
                 Some(strictest) => strictest,
@@ -693,15 +698,16 @@ fn birth_value_in_txn(
 
 /// What a birth's name of `pack`'s head act `act` gives a row of `source` here (stage 7c-3b):
 /// where the head counts in full here and names the table this install's own head of the pack
-/// names, this install's row of `source` in that pack ([`proved_pack_row_in_txn`]), the record
-/// of what it accepted from that table. `Some(None)` where this install refused the head, holds
-/// no full count of it, holds no head of the pack under it, or its row is gone: the name reads
-/// as one this install cannot read. `None` where the head names a table this install's head does
-/// not: the table is not proved here.
+/// names, this install's row of `source` in that pack, the record of what it accepted from that
+/// table, before each owner's yes the birth did not see ([`birth_pack_row_in_txn`]; stage 7c-3d):
+/// the birth names the yeses it saw among `yeses` ([`birth_names_yes_in_txn`]). `Some(None)` where
+/// this install refused the head, holds no full count of it, holds no head of the pack under it,
+/// or its row is gone: the name reads as one this install cannot read. `None` where the head names
+/// a table this install's head does not: the table is not proved here.
 fn pack_name_value_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    name_counts: &NameCounts,
+    (name_counts, yeses): (&NameCounts, &[SettingCopyName]),
     source: &SettingSpec,
     pack: &str,
     act: AuthorityEntryHash,
@@ -718,7 +724,58 @@ fn pack_name_value_in_txn(
     let Some(head) = head.filter(|head| full && head.pack == pack) else {
         return Ok(Some(None));
     };
-    proved_pack_row_in_txn(&vault.store, txn, pack, &head.digest, source)
+    birth_pack_row_in_txn(&vault.store, txn, (pack, &head.digest), source, |table| {
+        birth_names_yes_in_txn(vault, txn, (name_counts, yeses), (source, pack), table)
+    })
+}
+
+/// Whether a birth names, among `yeses`, an owner's yes to `pack`'s table `table` (hex) that
+/// accepts `source` and counts in full here (stage 7c-3d): a yes it saw, whose landing of the key
+/// it reads. A yes this install refused, does not count in full, or does not hold is none.
+///
+/// # Errors
+///
+/// A target that does not encode; storage errors.
+fn birth_names_yes_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    (name_counts, yeses): (&NameCounts, &[SettingCopyName]),
+    (source, pack): (&SettingSpec, &str),
+    table: &str,
+) -> Result<bool> {
+    for yes in yeses {
+        let SettingScope::Pack(at) = &yes.slot.scope else {
+            continue;
+        };
+        let Some(digest) = birth_yes_table(&yes.slot) else {
+            continue;
+        };
+        if at != pack
+            || oneiron_hex::encode(&digest) != table
+            || vault.policy_setting_act_refused_in_txn(txn, yes.act)?
+        {
+            continue;
+        }
+        let target = setting_pack_accept_target(pack, &digest)?;
+        let full = name_counts
+            .get(&target)
+            .and_then(|counts| counts.get(&yes.act))
+            .is_some_and(|named| named.count == ChoiceCount::Full);
+        let accepts = vault
+            .setting_slot_head_in_txn(txn, target, yes.act)?
+            .pack
+            .is_some_and(|head| {
+                head.pack == pack
+                    && head.digest == digest
+                    && head
+                        .accept
+                        .is_some_and(|accept| accept.accepted.iter().any(|key| key == source.name))
+            });
+        if full && accepts {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// What the entry `name` names gives the row it names, under `spec`, by what it counts for on
