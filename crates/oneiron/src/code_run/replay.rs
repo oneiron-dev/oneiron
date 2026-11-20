@@ -23,7 +23,7 @@ pub use self::bridge::CodeRunBridgeCall;
 pub use self::checkpoint::CodeRunStepCheckpoint;
 pub use self::cursor::CodeRunReplayCursor;
 pub use self::pending_step::PendingCodeStep;
-pub(super) use self::request_identity::ErasedRequest;
+pub(super) use self::request_identity::{ErasedRequest, erased_identity_field};
 
 pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 3;
 #[doc(hidden)]

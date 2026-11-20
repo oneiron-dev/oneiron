@@ -781,6 +781,7 @@ fn node_profile(
         seen_world_edits: BTreeSet::new(),
         carrier: carried.as_ref().map(|(carrier, _)| *carrier),
         act: carried.map(|(_, act)| act),
+        restored_from: None,
     }
 }
 
@@ -1996,6 +1997,7 @@ impl ServedVault {
             OriginResidence::LocalVault,
             self.install(),
             false,
+            None,
         )
     }
 
@@ -2138,6 +2140,7 @@ impl ServedVault {
             device_class: profile.device_class,
             encryption_key: profile.encryption_key,
             machine_proof: profile.machine_proof,
+            restored_from: None,
         }
     }
 

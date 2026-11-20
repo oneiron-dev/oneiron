@@ -568,7 +568,7 @@ fn a_bounded_temporal_channel_trims_its_spanners_in_amortized_time() -> Result<(
     // 50,000 rows outgrow the canonical 16 MiB map.
     let mut vault_config = crate::test_util::embedding_test_config();
     vault_config.map_size = 256 * 1024 * 1024;
-    let (_dir, vault) = crate::test_util::open_test_vault_with(vault_config);
+    let (_dir, vault) = crate::test_util::open_test_vault_with_manifest(vault_config);
     let anchor = crate::unix_seconds_now() - 30 * 86_400;
     let row = |n: usize| {
         let mut bytes = [0x5c; 16];
@@ -709,7 +709,7 @@ fn temporal_scans_read_past_their_threshold_rows_and_check_once() -> Result<()> 
     use crate::scan_check::EngineScan;
 
     let (_dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        crate::test_util::open_test_vault_with_manifest(crate::test_util::embedding_test_config());
     let scans = [
         EngineScan::TemporalSpannerRows,
         EngineScan::OccurredRangeRows,

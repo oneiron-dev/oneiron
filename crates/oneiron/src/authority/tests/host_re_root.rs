@@ -84,10 +84,14 @@ fn a_re_rooted_vault_keeps_engine_claims_and_writers_under_the_new_secret_only()
         .unwrap();
     assert!(readable(&vault, kept) && readable(&vault, retracted));
 
+    let engine_writer_count = vault.engine_machine_actors().unwrap().len();
     let next = HostSlipIssuer::from_secret(b"successor self-host root").unwrap();
     let moved = vault.re_root_host(&old, &next).unwrap();
     assert_eq!(moved.vault_id, vault_id);
-    assert_eq!(moved.writers_enrolled, 6, "every engine writer was live");
+    assert_eq!(
+        moved.writers_enrolled, engine_writer_count,
+        "every engine writer was live"
+    );
     assert_eq!((moved.histories_carried, moved.histories_left), (2, 0));
     assert_eq!(vault.authority_fold().unwrap().vault_id, Some(vault_id));
 
@@ -205,6 +209,8 @@ fn a_replica_reads_a_history_the_move_carried() {
     let handoff =
         crate::claim::history_projection::trusted_machine_handoff(&vault.store, &txn, target)
             .unwrap();
+    let rows =
+        crate::claim::history_projection::machine_history_rows(&vault.store, &txn, target).unwrap();
     drop(txn);
     let vault_id = handoff.vault_id;
     let signer = next.public_key();
@@ -214,6 +220,7 @@ fn a_replica_reads_a_history_the_move_carried() {
         expected_signer: &signer,
         scope: &handoff.scope,
         previous_handoff_hash: handoff.previous_handoff_hash,
+        previous_heads: rows.previous_heads(),
         challenge: &handoff.challenge,
     };
     replica
@@ -232,6 +239,7 @@ fn a_replica_reads_a_history_the_move_carried() {
                     end: header.occurred_end,
                 },
                 header.learned_at,
+                None,
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )
             .commit()

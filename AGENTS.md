@@ -136,12 +136,16 @@ unchanged.
 
 ## Ratchets
 
-`scripts/ratchet/check.sh` counts eight metrics over non-test code against
-`scripts/ratchet/baseline.json`: files at or over 800 lines, `#[allow(` attributes, print macros,
+`scripts/ratchet/check.sh` counts thirteen metrics against `scripts/ratchet/baseline.json`.
+Eight count non-test code: files at or over 800 lines, `#[allow(` attributes, print macros,
 process-global mutable statics, the keyspace census, raw core writes, hand-started hashes
 (`raw_hasher_starts`) and lists of names spelled by hand (`hand_name_tables`; a new list of names
-is declared once as a Register, `#[derive(Register)]` in `oneiron_contracts::register`). It skips
-`tests/` directories, `tests.rs`, `*_tests.rs` and `tests_*.rs`.
+is declared once as a Register, `#[derive(Register)]` in `oneiron_contracts::register`). They skip
+`tests/` directories, `tests.rs`, `*_tests.rs` and `tests_*.rs`. Five count test code, one per
+rule of `scripts/ratchet/test_lint.py` (`test_lint_*`): sleeps, wall-clock reads, URLs to real
+hosts, fixed loopback ports and real models. A test waits on a barrier, a channel or the
+`oneiron_testkit` fake clock, binds port 0 and uses its scripted provider; a line that must break a
+rule carries `testkit-lint: allow(<rule>) <reason>`.
 `scripts/ratchet/root-surface-check.sh` pins the `oneiron` crate root to the names in
 `scripts/ratchet/root-surface.txt`. Both run in `ratchet.yml` after a push to `main`; neither
 blocks a merge. The merge pipeline also counts both for each change before it lands. When a

@@ -242,7 +242,9 @@ impl Caller {
 
 /// The two MCP routes, behind the same binding door and telemetry the API
 /// mounts them behind, with the same methods: GET and DELETE answer 405
-/// (FIX 4902).
+/// (FIX 4902), and the same body bound: `limits.request_body_bytes`, a
+/// body past it refused naming the row. Without it a socket call's body
+/// would stop at axum's default 2 MiB, under what the HTTP route reads.
 fn mcp_routes(server: Arc<SyncServer>) -> Router {
     Router::new()
         .route(
@@ -257,6 +259,11 @@ fn mcp_routes(server: Arc<SyncServer>) -> Router {
                 .get(crate::api::mcp_method_not_allowed)
                 .delete(crate::api::mcp_method_not_allowed),
         )
+        .layer(crate::api::request_floor::request_floor_layer(&server))
+        .layer(axum::middleware::from_fn_with_state(
+            server.clone(),
+            crate::api::request_floor::name_request_floor,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             server.clone(),
             crate::wire_telemetry::observe_http,

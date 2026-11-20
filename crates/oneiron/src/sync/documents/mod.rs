@@ -23,8 +23,6 @@ pub use destination::{
 };
 pub(crate) use entity::retire_journal_in_txn;
 pub(crate) mod storage;
-// FIX [LIBTEST-QUARANTINE-SYNC-DOCUMENTS-TESTS]: the lib test target's type check fails here (27 errors: E0061 x23, E0599 x4); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -196,10 +194,28 @@ impl DocumentRegistry {
         id: EntityId,
         selector: &super::selector::SyncSelector,
     ) -> Result<()> {
+        self.subscribe_entity_with(id, selector, |_| Ok(()))
+    }
+
+    /// [`Self::subscribe_entity`], with `also` written in the subscription
+    /// row's own transaction: both land, or neither does.
+    pub(crate) fn subscribe_entity_with(
+        &self,
+        id: EntityId,
+        selector: &super::selector::SyncSelector,
+        also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
         let bytes = super::selector::encode_sync_selector(selector)?;
         // FIX 10872: a marked source held here crosses only as its copy
         // stream, so its subscription and request go under its copy id.
         let stream = self.copy_stream(id)?;
+        // The request is built before the subscription row is written: a
+        // document whose request cannot be built leaves no row for every
+        // reconnect's `request_frames` to fail on.
+        let frame = match stream {
+            Some(stream) => self.copy_request_frame(stream, selector)?,
+            None => self.request_frame(id, selector)?,
+        };
         self.vault.with_write_txn_grouped(|txn| {
             match stream {
                 Some(stream) => {
@@ -212,12 +228,8 @@ impl DocumentRegistry {
                     DS_E.put(&self.vault.store, txn, &HexId(id), &bytes)?;
                 }
             }
-            Ok(())
+            also(txn)
         })?;
-        let frame = match stream {
-            Some(stream) => self.copy_request_frame(stream, selector)?,
-            None => self.request_frame(id, selector)?,
-        };
         let _ = self.notices.send(frame);
         Ok(())
     }
@@ -394,16 +406,35 @@ impl DocumentRegistry {
         self.line.waiting()
     }
 
-    pub(crate) fn compact_closed(&self, id: EntityId, erased: bool) -> Result<bool> {
+    /// Compacts `id`'s document for the erasure sweep; `false` when it waits
+    /// for the next pass. The registry stays locked throughout, so no opener
+    /// makes the document resident meanwhile. A resident document is
+    /// compacted too, under its writer lock (HELD-ENTITY-DOCUMENT-DEFERRED,
+    /// ARCH-0038 #housekeeping-sla-open): it holds no Loro copy, and each of
+    /// its writers reads the durable text inside its own transaction, so the
+    /// compaction leaves nothing stale for a writer to persist over. A
+    /// compaction that keeps the document keeps its whole history, text and
+    /// version vector, so its editor and its peers see no change; one that
+    /// erases it takes a row hard-deleted here, which no reader or writer of
+    /// the document admits, or a withdrawn generation. Only a resident
+    /// document whose writer is busy waits: the next pass compacts it.
+    pub(crate) fn compact_for_sweep(&self, id: EntityId, erased: bool) -> Result<bool> {
         let residents = self
             .residents
             .lock()
             .map_err(|_| Error::InvariantViolation("document registry poisoned"))?;
-        if residents.get(&id).is_some_and(|v| v.strong_count() > 0) {
-            return Ok(false);
-        }
+        let resident = residents.get(&id).and_then(Weak::upgrade);
+        let _writer = match &resident {
+            Some(document) => match document.writer.try_lock() {
+                Ok(writer) => Some(writer),
+                Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err(Error::InvariantViolation("entity document poisoned"));
+                }
+            },
+            None => None,
+        };
         storage::compact(&self.vault, id, erased)?;
-        drop(residents);
         Ok(true)
     }
 }

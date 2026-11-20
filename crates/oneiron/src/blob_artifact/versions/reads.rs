@@ -6,6 +6,7 @@
 //! room step's response reads through the room's view by the same code.
 
 use heed::RoTxn;
+use oneiron_contracts::fingerprint::ContentHash;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -403,7 +404,7 @@ pub struct BlobBytes<'t> {
 impl<'t> BlobBytes<'t> {
     fn masked_copy(copy: Vec<u8>) -> Self {
         Self {
-            hash: *blake3::hash(&copy).as_bytes(),
+            hash: *ContentHash::of(&copy).as_bytes(),
             bytes: std::borrow::Cow::Owned(copy),
             masked: true,
         }
@@ -436,7 +437,7 @@ impl<'t> BlobBytes<'t> {
     /// [`Error::CorruptedIndex`] when the stored bytes no longer hash to the
     /// version's content hash.
     pub fn verified(self) -> Result<std::borrow::Cow<'t, [u8]>> {
-        if self.masked || blake3::hash(&self.bytes).as_bytes() == &self.hash {
+        if self.masked || ContentHash::of(&self.bytes).as_bytes() == &self.hash {
             Ok(self.bytes)
         } else {
             Err(Error::CorruptedIndex("blob content hash"))

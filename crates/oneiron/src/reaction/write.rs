@@ -134,18 +134,6 @@ fn first_party_envelope(actor: WriteActor) -> Result<WriteEnvelope> {
     ))
 }
 
-/// The lexical document of a reaction: its glyph and the reactor's name. It
-/// copies nothing from the reacted record, so erasing the record never
-/// depends on finding every reaction to scrub its text.
-fn indexed_text(vault: &Vault, txn: &heed::RoTxn<'_>, value: &ReactionValue) -> Result<String> {
-    let mut text = value.glyph.clone();
-    if let Some(name) = super::read::person_name_in(vault, txn, value.by)? {
-        text.push(' ');
-        text.push_str(&name);
-    }
-    Ok(text)
-}
-
 /// Writes one reaction claim about `message` and proves its reactor is in the
 /// room audience at the reaction's own time, in the caller's transaction. A
 /// MACHINE envelope is signed with the signer the host retained for it.
@@ -167,7 +155,6 @@ pub(super) fn write_reaction_in_txn(
     )
     .with_salience(REACTION_SALIENCE);
     vault.sign_retained_machine_claim_in_txn(txn, &id, &candidate, &mut envelope)?;
-    let text = indexed_text(vault, txn, value)?;
     vault
         .batch_in()
         .claim_candidate(
@@ -180,7 +167,12 @@ pub(super) fn write_reaction_in_txn(
             },
             learned_at,
         )
-        .text(&id, &[("val", text.as_str())])
+        // The lexical document is the glyph alone. The reactor's name would let
+        // a reader admitted to this claim find it by a PERSON row it may not
+        // read, and a rename or a PERSON erase never rewrites it (Engine ANSWER
+        // REACTION-TEXT-REACTOR-NAME-INDEX = A). Nothing of the reacted record
+        // is copied, so erasing the record never depends on scrubbing reactions.
+        .text(&id, &[("val", value.glyph.as_str())])
         .apply(txn)?;
     // One audience rule governs writes and reads: the reactor must be able to
     // read the message and be in the room at the reaction's occurrence time.

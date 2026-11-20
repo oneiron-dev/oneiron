@@ -104,12 +104,14 @@ pub(super) struct CheckpointSafety {
     pub(super) frontier_ancestry: BTreeMap<AuthorityEntryHash, (u64, u64)>,
     /// Fork and slip: the restrictive facts proved on their own branches
     /// (actor revocations, slip withdrawals and burns, machine removals),
-    /// the retired keys, the closed handoffs, whether a handoff is
-    /// unsettled, the settlement's issues, the parents no folded row is, and
+    /// the retired keys and their handoff and appointment subset, the closed
+    /// handoffs, whether a handoff is unsettled, the settlement's issues,
+    /// the parents no folded row is, and
     /// the accepted roster marks before custody is judged: an owner-held
     /// signer or an admitted owner answer (`MarkProof`).
     pub(super) revoke_facts: RevokeFacts,
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
+    pub(super) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     pub(super) unsettled: bool,
     pub(super) issues: Vec<AuthorityFoldIssue>,
@@ -449,11 +451,23 @@ impl AuthorityCheckpointV2 {
         if !aggregate.fold.valid_entries.iter().all(covered)
             || !safety.uncounted.iter().all(covered)
             || !safety.closed_handoffs.iter().all(covered)
+            || safety.handoff_or_appointment_retired_keys
+                != aggregate.fold.handoff_or_appointment_retired_keys
+            || !safety
+                .handoff_or_appointment_retired_keys
+                .is_subset(&safety.retired_keys)
+            || !aggregate
+                .fold
+                .handoff_or_appointment_retired_keys
+                .is_subset(&aggregate.fold.retired_keys)
             || !safety
                 .frontier_ancestry
                 .keys()
                 .all(|hash| self.per_parent.contains_key(hash))
-            || safety.nonce_provenance != aggregate.merged.critical_write_confirm_nonce_provenance
+            || safety.nonce_provenance
+                != crate::authority::fold_state::to_btree_set_map(
+                    &aggregate.merged.critical_write_confirm_nonce_provenance,
+                )
         {
             return Err(refused("checkpoint image safety indexes"));
         }
@@ -619,20 +633,13 @@ impl Vault {
             .filter(|hash| !named.contains(*hash))
             .copied()
             .collect();
-        // A local floor is an anti-rollback receipt: an image never carries
-        // what one decided. It decides no roster row (`changes_roster`).
-        let observations = authority_local_observations_in_txn(store, txn, &entries)?;
-        if entries.iter().zip(&covered).any(|(entry, hash)| {
-            observations
-                .sequence_floors
-                .get(hash)
-                .is_some_and(|floor| entry.seq < *floor)
-                && !super::entry_transition::changes_roster(&entry.op)
-        }) {
-            return Err(refused(
-                "a local sequence floor decides a covered authority row",
-            ));
-        }
+        // Each covered row's floor comes from the covered rows themselves
+        // (`rows_floor`), so the image carries a verdict every install
+        // reaches; no install's arrival order decides one (FIX
+        // [CHECKPOINT-RAW-FLOOR-CLEARED-ROW]). A later row that would move a
+        // covered row's floor sends an adopter to the whole history
+        // (`adopted_fold`).
+        let observations = authority_local_observations_in_txn(store, txn)?;
         let peers = crate::federation::admitted_peer_consent_roots_in_txn(self, txn)?;
         let pin = super::pinned_root::read_pinned_root_in_txn(store, txn)?;
         let capture = super::fold_resume::FoldCapture::for_checkpoint(frontier.clone());

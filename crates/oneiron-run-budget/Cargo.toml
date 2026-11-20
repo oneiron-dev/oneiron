@@ -13,5 +13,8 @@ schemars = "=0.8.22"
 serde = { workspace = true }
 thiserror = { workspace = true }
 
+[dev-dependencies]
+serde_json = { workspace = true }
+
 [lints]
 workspace = true

@@ -122,6 +122,7 @@ pub(in crate::pipeline) fn retrieval_trace_stage_record(
     scores: &[ScoredEntity],
     components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     blend_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    rerank_components: Option<&HashMap<EntityId, Vec<RetrievalScoreComponent>>>,
     access_factors: &HashMap<EntityId, f32>,
     limit: usize,
 ) -> RetrievalTraceStageRecord {
@@ -131,6 +132,7 @@ pub(in crate::pipeline) fn retrieval_trace_stage_record(
             scores,
             components,
             blend_components,
+            rerank_components,
             access_factors,
             limit,
         ),
@@ -141,12 +143,14 @@ pub(in crate::pipeline) fn telemetry_score_breakdown(
     scores: &[ScoredEntity],
     components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     blend_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    rerank_components: Option<&HashMap<EntityId, Vec<RetrievalScoreComponent>>>,
     access_factors: &HashMap<EntityId, f32>,
 ) -> Vec<RetrievalScoreBreakdown> {
     retrieval_score_breakdown(
         scores,
         components,
         blend_components,
+        rerank_components,
         access_factors,
         scores.len(),
     )
@@ -154,6 +158,10 @@ pub(in crate::pipeline) fn telemetry_score_breakdown(
 
 /// One breakdown row per candidate: its components, its final score, and
 /// the read-side decay factor that produced that score.
+///
+/// A row's components are its channel components, then its blend
+/// components, then its rerank components when a rerank stage ran (the
+/// pinned merge order: no dedup, no re-sort).
 ///
 /// `access_factors` is the applied-multiplier map of the run's single
 /// decay-applying blend. A caller at a pre-fusion stage passes an EMPTY
@@ -168,6 +176,7 @@ fn retrieval_score_breakdown(
     scores: &[ScoredEntity],
     components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     blend_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    rerank_components: Option<&HashMap<EntityId, Vec<RetrievalScoreComponent>>>,
     access_factors: &HashMap<EntityId, f32>,
     limit: usize,
 ) -> Vec<RetrievalScoreBreakdown> {
@@ -179,6 +188,11 @@ fn retrieval_score_breakdown(
             let mut score_components = components.get(&scored.id).cloned().unwrap_or_default();
             if let Some(blend_components) = blend_components.get(&scored.id) {
                 score_components.extend_from_slice(blend_components);
+            }
+            if let Some(rerank_components) =
+                rerank_components.and_then(|rerank_components| rerank_components.get(&scored.id))
+            {
+                score_components.extend_from_slice(rerank_components);
             }
             RetrievalScoreBreakdown {
                 result_id: *scored.id.as_bytes(),
