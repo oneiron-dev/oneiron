@@ -513,9 +513,10 @@ impl Vault {
     /// body) while a `Predicted` directive under `parent` names it: empty when it holds none, and
     /// then it never stands. It stands while the prediction the machine adopts under `parent`
     /// ([`live_prediction_in_txn`]) names it. Another home's prediction that follows this home's
-    /// last push in the signed log unseats it whatever its date, and one dated after it that
-    /// neither follows it nor is followed by it does too, so this home pushes again: its next
-    /// push follows both (REVIEW-9781).
+    /// last push in the signed log unseats it whatever its date, and so does one that neither
+    /// follows it nor is followed by it but outranks it (it follows more of the predictions, or as
+    /// many and is dated after it), so this home pushes again: its next push follows both
+    /// (REVIEW-9781).
     fn previous_predicted_set(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -623,11 +624,14 @@ fn prediction_digest_under(
 
 /// The prediction `machine` adopts under `parent` among `states`, read in `txn` (FIX
 /// PREDICTED-FUTURE-DATED-BLOCKS-LATER, REVIEW-9781): of the predictions under `parent` that no
-/// other one follows (no other's signed authority row descends from its own), the latest by
-/// `(issued_at, id)`. A prediction that follows another replaces it whatever their dates, and
-/// dates order only predictions neither of which follows the other, so the answer is the same in
-/// whatever order the predictions arrived. The machine applies only this one, and a home's own
-/// set stands there only while this one names it.
+/// other one follows (no other's signed authority row descends from its own), the one that
+/// follows the most of the others, then the latest by `(issued_at, id)`. A prediction that follows
+/// another outranks it whatever their dates, since it follows that one and all that one follows.
+/// A prediction's rank depends only on what it follows, which no later row changes, so the answer
+/// is the same in whatever order the predictions arrived, and one outranked once is never adopted
+/// later: a machine that refused it never finds it named again (REVIEW-9781 round 2). Dates order
+/// only predictions that follow as many of the others. The machine applies only this one, and a
+/// home's own set stands there only while this one names it.
 ///
 /// # Errors
 ///
@@ -644,9 +648,12 @@ pub(crate) fn live_prediction_in_txn<'a>(
         .filter(|state| prediction_digest_under(state, machine, parent).is_some())
         .collect();
     let rows: Vec<[u8; 32]> = predictions.iter().map(|state| state.entry).collect();
-    let followed = crate::authority::followed_authority_rows(&vault.store, txn, &rows)?;
+    let heads = crate::authority::authority_heads_with_ancestor_counts(&vault.store, txn, &rows)?;
     Ok(predictions
         .into_iter()
-        .filter(|state| !followed.contains(&state.entry))
-        .max_by_key(|state| (state.directive.issued_at, state.directive.id)))
+        .filter_map(|state| heads.get(&state.entry).map(|ancestors| (*ancestors, state)))
+        .max_by_key(|(ancestors, state)| {
+            (*ancestors, state.directive.issued_at, state.directive.id)
+        })
+        .map(|(_, state)| state))
 }

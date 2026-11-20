@@ -62,9 +62,10 @@ fn applied(
 /// it (Engine ruling PLAN-SIGNER A), read in `txn`. `pending` is newest when it is the prediction
 /// the machine adopts under `parent` ([`live_prediction_in_txn`]): one that follows it in the
 /// signed log replaces it whatever their dates, and of two predictions neither of which follows
-/// the other, the later dated replaces the earlier, in whichever order they arrived. One under
-/// another parent applies nowhere and replaces nothing (FIX PREDICTED-FUTURE-DATED-BLOCKS-LATER,
-/// REVIEW-9781).
+/// the other, the one that follows more of the others replaces the other, then the later dated,
+/// in whichever order they arrived. One refused here is never adopted later, so its result stays
+/// true. One under another parent applies nowhere and replaces nothing (FIX
+/// PREDICTED-FUTURE-DATED-BLOCKS-LATER, REVIEW-9781).
 fn check_prediction_parent(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

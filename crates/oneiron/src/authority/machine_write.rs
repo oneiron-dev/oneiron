@@ -679,19 +679,19 @@ fn stored_authority_parents_by_hash(
     Ok(by_hash)
 }
 
-/// The rows of `rows` that another row of `rows` descends from through the rows' signed parent
-/// hashes, as [`machine_history_authority_descends`] judges one pair, with the log read once and
-/// walked once. A row that does not stand here is never one, and no walk starts from it; a walk
-/// that reaches a row whose parents this vault cannot read ends that path only: descent is shown
-/// only through parents it reads. No advisory timestamp or signed date takes part.
-pub(crate) fn followed_authority_rows(
+/// The rows of `rows` that no other row of `rows` descends from, each with how many rows of `rows`
+/// it descends from, through the rows' signed parent hashes as
+/// [`machine_history_authority_descends`] judges one pair, with the log read once. A row that does
+/// not stand here descends from none and none descends from it; a walk that reaches a row whose
+/// parents this vault cannot read ends that path only: descent is shown only through parents it
+/// reads. No advisory timestamp or signed date takes part.
+pub(crate) fn authority_heads_with_ancestor_counts(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     rows: &[[u8; 32]],
-) -> Result<std::collections::BTreeSet<[u8; 32]>> {
-    let mut followed = std::collections::BTreeSet::new();
+) -> Result<std::collections::BTreeMap<[u8; 32], usize>> {
     if rows.len() < 2 {
-        return Ok(followed);
+        return Ok(rows.iter().map(|row| (*row, 0)).collect());
     }
     let adopted = super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?;
     let image = adopted
@@ -710,27 +710,46 @@ pub(crate) fn followed_authority_rows(
     };
     let standing: std::collections::BTreeSet<[u8; 32]> =
         rows.iter().copied().filter(stands).collect();
-    let mut stack = Vec::new();
-    for row in &standing {
-        if let Some(start) = parents(row) {
-            stack.extend_from_slice(start);
+    // The standing rows of `rows` that a row of `from` descends from: every hash one walk over the
+    // union of their ancestors reaches is an ancestor of one of them.
+    let ancestors_among = |from: &[[u8; 32]]| {
+        let mut stack = Vec::new();
+        for row in from {
+            if let Some(start) = parents(row) {
+                stack.extend_from_slice(start);
+            }
         }
-    }
-    // Every hash the walk reaches is an ancestor of a standing row, so one walk over the union
-    // marks each row another one descends from.
-    let mut seen = std::collections::BTreeSet::new();
-    while let Some(hash) = stack.pop() {
-        if !seen.insert(hash) {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut reached = std::collections::BTreeSet::new();
+        while let Some(hash) = stack.pop() {
+            if !seen.insert(hash) {
+                continue;
+            }
+            if standing.contains(&hash) {
+                reached.insert(hash);
+            }
+            if let Some(next) = parents(&hash) {
+                stack.extend_from_slice(next);
+            }
+        }
+        reached
+    };
+    let starts: Vec<[u8; 32]> = standing.iter().copied().collect();
+    let followed = ancestors_among(&starts);
+    let mut heads = std::collections::BTreeMap::new();
+    for row in rows {
+        if followed.contains(row) {
             continue;
         }
-        if standing.contains(&hash) {
-            followed.insert(hash);
-        }
-        if let Some(next) = parents(&hash) {
-            stack.extend(next.iter().copied());
-        }
+        // A head's own walk: what it descends from, which no row that comes later changes.
+        let ancestors = if standing.contains(row) {
+            ancestors_among(std::slice::from_ref(row)).len()
+        } else {
+            0
+        };
+        heads.insert(*row, ancestors);
     }
-    Ok(followed)
+    Ok(heads)
 }
 
 /// Whether a covered row this vault does not store stands as an endpoint of
