@@ -198,6 +198,7 @@ pub fn seal_conversation_flight<'a>(
         budget,
         room,
         policy.floor_tokens,
+        |ceiling| driver.backend().input_token_limit(ceiling),
     );
     let (window, mut pins, pieces) = match sized {
         Ok(sized) => sized,
@@ -276,13 +277,15 @@ pub fn seal_conversation_flight<'a>(
 /// it holds, which are mandatory (FIX 9837): the longest run of whole turns
 /// that fits with its pins; or, when not even the first turn fits alone,
 /// that turn alone, read in pieces whose summaries clear the gate's `floor`
-/// (FIX-LIST COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS).
+/// (FIX-LIST COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS), each piece
+/// sized on the writer's room beside its own summary, `piece_room`.
 fn sized_window(
     whole: &ChatLogWindow,
     profile: &[String],
     budget: u64,
     room: Option<u64>,
     floor: u64,
+    piece_room: impl Fn(u64) -> Option<u64>,
 ) -> Result<
     (ChatLogWindow, Vec<String>, Option<pieces::TurnPieces>),
     ConversationCompactionUnavailable,
@@ -299,7 +302,9 @@ fn sized_window(
         return Err(Why::PinsDoNotFit);
     }
     room.zip(turn.messages.first())
-        .and_then(|(room, message)| pieces::TurnPieces::plan(message, &pins, budget, room, floor))
+        .and_then(|(room, message)| {
+            pieces::TurnPieces::plan(message, &pins, budget, room, floor, piece_room)
+        })
         .map(|plan| (turn, pins, Some(plan)))
         .ok_or(Why::TurnPastInputRoom)
 }

@@ -18,7 +18,15 @@
 //! every home part they wore still reads at the revision its words were read
 //! at, and the entry's receipt takes what they read as its own, so the
 //! landing fence, the summary's withdrawal dependencies and its check
-//! material's erasure reach it (#10050 review, round 1).
+//! material's erasure reach it (#10050 review, round 1). The entry request
+//! names those rows among its sources before it is sent, so the send's
+//! freshness guard reads them and every entry try's filed step derives from
+//! them (#10050 review, round 2).
+//!
+//! Each piece is sized on the writer's room beside its own reply, its
+//! summary's ceiling, and the entry on the room beside the turn's reply: a
+//! writer whose replies share its context leaves a piece more room than the
+//! entry (#10050 review, round 2).
 
 use std::fmt::Write as _;
 use std::ops::Range;
@@ -52,49 +60,46 @@ pub(super) struct TurnPieces {
     /// The tokens of the turn's whole window text, as its cut marker names
     /// them.
     total_tokens: u64,
-    /// The writer's input room the plan was sized on.
+    /// The writer's input room beside the entry's reply: the entry and the
+    /// head it falls back to each fit it.
     room: u64,
 }
 
 impl TurnPieces {
     /// The plan for `message`, a turn whose text alone does not fit `room`
-    /// beside a reply of `budget`, with the whole turn's `pins`. `None` when
-    /// no plan fits: the room holds no piece beside its marker, the piece
-    /// summaries cannot fit one entry at the gate's `floor` or above it, or
-    /// no head fits beside its cut marker and the pins.
+    /// beside a reply of `budget`, with the whole turn's `pins`; the writer
+    /// holds `piece_room(ceiling)` beside a reply of `ceiling`. Each piece
+    /// summary's ceiling is the largest from the gate's `floor` to `budget`
+    /// at which every piece, sized on the room beside that ceiling, leaves
+    /// its summary room in the entry. `None` when no plan fits: no ceiling
+    /// from `floor` up leaves a piece room beside its marker and every
+    /// summary room in one entry, or no head fits beside its cut marker and
+    /// the pins.
     pub(super) fn plan(
         message: &CompactionWindowMessage,
         pins: &[String],
         budget: u64,
         room: u64,
         floor: u64,
+        piece_room: impl Fn(u64) -> Option<u64>,
     ) -> Option<Self> {
         let text = message.content.as_str();
+        let pieces_at = |ceiling: u64| {
+            let ranges = cut(message, ceiling, piece_room(ceiling)?)?;
+            let pieces = u64::try_from(ranges.len()).ok()?;
+            let unwritten: Vec<(Range<usize>, String)> = ranges
+                .iter()
+                .map(|range| (range.clone(), String::new()))
+                .collect();
+            let overhead = input_tokens(message, entry_text(text.len(), &unwritten), pins, budget);
+            // A tenth is kept back for each summary's escapes inside the entry.
+            let share = (room.checked_sub(overhead)? / 10 * 9).checked_div(pieces)?;
+            (ceiling <= share).then_some(ranges)
+        };
+        let (piece_budget, ranges) = largest_ceiling(floor, budget, pieces_at)?;
         let reach = usize::try_from(room)
             .ok()?
             .saturating_mul(BYTES_PER_TOKEN_BOUND);
-        let mut ranges = Vec::new();
-        let mut start = 0;
-        while start < text.len() {
-            let limit = start.saturating_add(reach).min(text.len());
-            let end = longest_fit(text, start, limit, |end| {
-                input_tokens(message, piece_text(text, &(start..end)), &[], budget) <= room
-            })?;
-            ranges.push(start..end);
-            start = end;
-        }
-        let pieces = u64::try_from(ranges.len()).ok()?;
-        let unwritten: Vec<(Range<usize>, String)> = ranges
-            .iter()
-            .map(|range| (range.clone(), String::new()))
-            .collect();
-        let overhead = input_tokens(message, entry_text(text.len(), &unwritten), pins, budget);
-        // A tenth is kept back for each summary's escapes inside the entry.
-        let piece_budget = budget.min((room.checked_sub(overhead)? / 10 * 9).checked_div(pieces)?);
-        // The gate accepts a summary of exactly `floor` tokens.
-        if piece_budget < floor {
-            return None;
-        }
         let total_tokens = count_context_pack_tokens(text) as u64;
         let head_end = longest_fit(text, 0, reach.min(text.len()), |end| {
             input_tokens(
@@ -187,6 +192,19 @@ impl PieceInputs {
         Ok(true)
     }
 
+    /// Every row the pieces read beside the turn's bytes: each worn home
+    /// part's and each live-fork prefix row, in order, once.
+    fn rows(&self) -> Vec<EntityId> {
+        let mut rows: Vec<EntityId> = Vec::new();
+        let home = self.home.iter().filter_map(|(_, part)| part.row);
+        for row in home.chain(self.prefix_sources.iter().copied()) {
+            if !rows.contains(&row) {
+                rows.push(row);
+            }
+        }
+        rows
+    }
+
     /// Adds what the pieces read to `execution`, the entry pass's record,
     /// beside its own home and prefix rows: the entry's words carry theirs.
     pub(super) fn carry_into(&self, execution: &mut CompactionExecution) {
@@ -206,11 +224,12 @@ impl PieceInputs {
 /// The turn's entry request for `sealed`, a flight over one turn read in
 /// pieces by `plan`: one pass per piece on `backend`, each judged by
 /// `policy`, then `sealed` re-sealed with the piece summaries as the turn's
-/// text, with what those piece passes read. A piece pass that does not end
-/// accepted, an entry that does not fit the plan's room beside the pins, or
-/// a home part a piece pass wore that no longer reads at its revision
-/// re-seals it with the turn's head and the cut instead, and nothing the
-/// pieces read rides it. Every pass's paid calls are filed as `job`'s steps.
+/// text and the rows those piece passes read among its sources, with what
+/// they read. A piece pass that does not end accepted, an entry that does
+/// not fit the plan's room beside the pins, or a home part a piece pass wore
+/// that no longer reads at its revision re-seals it with the turn's head and
+/// the cut instead, and nothing the pieces read rides it. Every pass's paid
+/// calls are filed as `job`'s steps.
 ///
 /// # Errors
 ///
@@ -276,7 +295,64 @@ pub(super) fn entry_request(
             (head, PieceInputs::default())
         }
     };
-    Ok((driver.reseal_window_texts(vec![content])?, worn))
+    // The rows the piece summaries were read from are the entry's sources
+    // before it is sent (#10050 review, round 2).
+    let request = driver.reseal_window_texts(vec![content], &worn.rows())?;
+    Ok((request, worn))
+}
+
+/// `message`'s text cut in order into byte ranges that each fit
+/// `piece_room` beside its marker and a reply of `ceiling`; `None` when the
+/// room holds no byte past a range's start beside its marker.
+fn cut(
+    message: &CompactionWindowMessage,
+    ceiling: u64,
+    piece_room: u64,
+) -> Option<Vec<Range<usize>>> {
+    let text = message.content.as_str();
+    let reach = usize::try_from(piece_room)
+        .ok()?
+        .saturating_mul(BYTES_PER_TOKEN_BOUND);
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    while start < text.len() {
+        let limit = start.saturating_add(reach).min(text.len());
+        let end = longest_fit(text, start, limit, |end| {
+            input_tokens(message, piece_text(text, &(start..end)), &[], ceiling) <= piece_room
+        })?;
+        ranges.push(start..end);
+        start = end;
+    }
+    Some(ranges)
+}
+
+/// The largest ceiling from `floor` to `budget` at which `pieces_at` cuts a
+/// plan, with its ranges. A lower ceiling leaves each piece more room, so no
+/// more pieces and no larger an entry: the ceilings that cut one run from
+/// `floor` up to the largest, which a search over halves finds. `budget` is
+/// tried first, as it fits whenever the writer's room is ample.
+fn largest_ceiling(
+    floor: u64,
+    budget: u64,
+    pieces_at: impl Fn(u64) -> Option<Vec<Range<usize>>>,
+) -> Option<(u64, Vec<Range<usize>>)> {
+    if floor > budget {
+        return None;
+    }
+    if let Some(ranges) = pieces_at(budget) {
+        return Some((budget, ranges));
+    }
+    // `best` cuts a plan, `over` does not.
+    let mut best = (floor, pieces_at(floor)?);
+    let mut over = budget;
+    while over - best.0 > 1 {
+        let mid = best.0 + (over - best.0) / 2;
+        match pieces_at(mid) {
+            Some(ranges) => best = (mid, ranges),
+            None => over = mid,
+        }
+    }
+    Some(best)
 }
 
 /// The rendered input of one request over `message` with `content` as its

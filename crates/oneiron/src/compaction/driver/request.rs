@@ -446,12 +446,15 @@ impl CompactionDriver {
     /// The flight's sealed request with each window message's text replaced
     /// by `texts`, in order (FIX-LIST
     /// COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS: a turn read in pieces
-    /// is judged on its entry). Every other field, the job identity, the
-    /// watermark, the turns and the sources included, stays the one sealed,
-    /// and the result is the request the flight now lands.
+    /// is judged on its entry), and each row of `read_from` the new texts
+    /// were also read from added to its sources (#10050 review, round 2).
+    /// Every other field, the job identity, the watermark and the turns
+    /// included, stays the one sealed, and the result is the request the
+    /// flight now lands.
     pub(in crate::compaction) fn reseal_window_texts(
         &mut self,
         texts: Vec<String>,
+        read_from: &[EntityId],
     ) -> Result<CompactionRequest> {
         let CompactionState::Compacting {
             request: Some(request),
@@ -470,6 +473,11 @@ impl CompactionDriver {
         for (message, content) in request.window.iter_mut().zip(texts) {
             message.tokens = crate::count_context_pack_tokens(&content) as u64;
             message.content = content;
+        }
+        for row in read_from {
+            if !request.sources.contains(row) {
+                request.sources.push(*row);
+            }
         }
         Ok((**request).clone())
     }
