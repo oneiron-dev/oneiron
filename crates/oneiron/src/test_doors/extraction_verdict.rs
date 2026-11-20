@@ -7,6 +7,7 @@
 //! Its native door reads one pack through the native wrapper without running a pass.
 
 mod lender;
+mod sourced_route;
 
 pub use lender::{
     ExtractionVerdictFixture, ExtractionVerdictNativePack, ExtractionVerdictPassResources,

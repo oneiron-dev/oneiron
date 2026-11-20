@@ -297,6 +297,8 @@ pub(crate) struct StepRecord {
     /// The shown range of each cited TURN, in request order; `None` for a record that keeps
     /// none.
     pub(crate) ranges: Option<Vec<StepInputRange>>,
+    /// Every row the step's call was read from; `None` for a record that keeps none.
+    pub(crate) sources: Option<Vec<EntityId>>,
     /// The listed entities of the step's native slice; `None` for a record that keeps none.
     pub(crate) slice: Option<Vec<EntityId>>,
 }
@@ -412,6 +414,7 @@ pub(crate) fn request_hash_step_record_in_txn(
         versions: decoded.input_versions.unwrap_or_default(),
         labels: decoded.input_labels,
         ranges: decoded.input_ranges,
+        sources: decoded.input_sources,
         slice: decoded.input_slice,
     })
 }
