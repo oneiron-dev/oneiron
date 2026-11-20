@@ -34,6 +34,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod chunks;
+#[cfg(oneiron_test_support)]
+pub(crate) mod doors;
 pub(super) mod narrative_labels;
 mod write;
 pub(super) use super::call_labels::subject_label;
