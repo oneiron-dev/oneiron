@@ -34,8 +34,8 @@ use super::act_class::ActClass;
 use super::chain::{NoAgentVerdict, VerifiedChain};
 use super::mode::CheckInMode;
 use super::pending::{
-    OpenPendingCheckIn, consume_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn,
-    pending_check_in_in_txn,
+    OpenPendingCheckIn, check_pending_check_in_spendable_in_txn, consume_pending_check_in_in_txn,
+    open_keyed_pending_check_in_in_txn, pending_check_in_in_txn,
 };
 use super::policy::CheckInScope;
 use super::resolve::{CheckInRequest, ResolvedMode, WaitReason, resolve_mode};
@@ -360,12 +360,43 @@ pub(crate) fn spend_applied_check_in_in_txn(
     effect_digest: &[u8; 32],
     now: u64,
 ) -> Result<EntityId> {
+    let asker = applied_check_in_asker_in_txn(vault, txn, id, verb, act)?;
+    consume_pending_check_in_in_txn(vault, txn, id, effect_digest, now)?;
+    Ok(asker)
+}
+
+/// The asker of `id`, read in `txn`, when it is an ask for `verb`'s `act`.
+fn applied_check_in_asker_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    verb: &str,
+    act: ActClass,
+) -> Result<EntityId> {
     let row = pending_check_in_in_txn(&vault.store, txn, id)?.ok_or(Error::EntityNotFound)?;
     if row.verb != verb || row.act != act {
         return Err(refuse("the check-in is another act's ask"));
     }
-    consume_pending_check_in_in_txn(vault, txn, id, effect_digest, now)?;
     Ok(row.asker)
+}
+
+/// Checks in `txn`, writing nothing, that [`owner_act_decision_in_txn`]
+/// would spend `applied` for an act of class `act` now: for an Owner's act
+/// whose spend lands in a later writer of its own (the record erase's
+/// linearizing write), so a check-in it could not spend refuses it before
+/// its first write.
+///
+/// # Errors
+///
+/// As [`spend_applied_check_in_in_txn`].
+pub(crate) fn check_applied_check_in_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    applied: &AppliedCheckIn<'_>,
+    act: ActClass,
+) -> Result<()> {
+    applied_check_in_asker_in_txn(vault, txn, &applied.id, applied.verb, act)?;
+    check_pending_check_in_spendable_in_txn(&vault.store, txn, &applied.id, &applied.effect_digest)
 }
 
 /// Another asker's approved check-in an Owner applies to their own act on a
