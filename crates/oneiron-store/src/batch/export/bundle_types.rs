@@ -86,6 +86,14 @@ pub enum ImportOmissionReason {
     /// this list): the claim door reads its subject live, so the claim stays
     /// archive data too.
     ClaimSubjectNotRestored,
+    /// An edge-provenance claim whose restore the gate would pend: the
+    /// import restores it as an Imported Auto claim of its annotator, which
+    /// a policy manifest with no Imported Auto row for that annotator holds
+    /// for review (the shipped manifest has none). Only the owner's own
+    /// restore carries a permit for it, so through any other door the claim
+    /// stays archive data with the rest of its link's provenance history,
+    /// and the link comes back bare.
+    ProvenanceAutoNotPermitted,
 }
 
 /// Foundations not stored as vault-owned source. Never fabricate PACK.md/code.

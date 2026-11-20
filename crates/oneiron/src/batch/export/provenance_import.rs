@@ -14,14 +14,16 @@ use super::archive_index::{
 use super::document_import::{
     archived_edge_skipped, import_edge, matches_row, parse_id, stamp_archived_birth,
 };
-use super::{ArchiveRecordKind, ExportEdge, ExportEntity};
+use super::{
+    ArchiveRecordKind, ExportEdge, ExportEntity, ImportOmissionReason, OwnerArchiveRestorePermit,
+};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject, decode_claim_body};
 use crate::{
     Vault,
     entity_id::EntityId,
-    error::{Error, Result},
+    error::{Error, GateError, Result},
     serialize::{ExportBody, ExportSecrets},
 };
 use source_close::{SourceClose, closed_at_source};
@@ -236,20 +238,26 @@ pub(super) struct CohortRestore {
     /// The rows already here, a held row the archive carries closed and this
     /// restore closed through the writer among them.
     pub(super) unchanged: usize,
-    /// The rows it kept as archive data, since their subject link did not
-    /// come back, or is a `same_as` this vault already held
-    /// (`ClaimSubjectEdgeNotRestored`).
-    pub(super) kept_out: Vec<EntityId>,
+    /// The rows it kept as archive data, each with its reason: their subject
+    /// link did not come back, or is a `same_as` this vault already held
+    /// (`ClaimSubjectEdgeNotRestored`); or the gate would pend them
+    /// (`ProvenanceAutoNotPermitted`).
+    pub(super) kept_out: Vec<(EntityId, ImportOmissionReason)>,
 }
 /// Restores the cohort queued under `key`, its subject edge first.
 /// Comparisons re-serialize under the archive's `secrets`, so writer and
 /// reader agree.
+///
+/// `permit` is the owner's restore permit when the import is that restore:
+/// the cohort's rows are gated under it (Engine ANSWER
+/// PROVENANCE-RESTORE-UNDER-TRUSTED-MANIFEST = A, 20 Nov 09:26).
 pub(super) fn restore<R: Read + Seek>(
     key: EntityId,
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     archive: &mut IndexedArchive<'_, R>,
     secrets: ExportSecrets,
+    permit: Option<&OwnerArchiveRestorePermit>,
 ) -> Result<CohortRestore> {
     let subject = archive
         .index
@@ -303,7 +311,16 @@ pub(super) fn restore<R: Read + Seek>(
                 && holds_own_history(vault, txn, &subject, &rows)?
             {
                 archive.index.put(Tag::OwnHistoryLink, &subject, &[])?;
-                return keep_cohort_out(key, vault, txn, archive, &rows, secrets, true);
+                return keep_cohort_out(
+                    key,
+                    vault,
+                    txn,
+                    archive,
+                    &rows,
+                    secrets,
+                    true,
+                    ImportOmissionReason::ClaimSubjectEdgeNotRestored,
+                );
             }
             if !archived_edge_skipped(archive, &edge)? {
                 stage_edge(vault, txn, &edge, &archive.index)?;
@@ -334,7 +351,16 @@ pub(super) fn restore<R: Read + Seek>(
                 .is_none()
             {
                 let own_history = holds_own_history(vault, txn, &subject, &rows)?;
-                return keep_cohort_out(key, vault, txn, archive, &rows, secrets, own_history);
+                return keep_cohort_out(
+                    key,
+                    vault,
+                    txn,
+                    archive,
+                    &rows,
+                    secrets,
+                    own_history,
+                    ImportOmissionReason::ClaimSubjectEdgeNotRestored,
+                );
             }
             false
         }
@@ -361,7 +387,16 @@ pub(super) fn restore<R: Read + Seek>(
     // edge pass compares its base fields only (REVIEW-9652 P1).
     if holds_own_history(vault, txn, &subject, &rows)? {
         archive.index.put(Tag::OwnHistoryLink, &subject, &[])?;
-        return keep_cohort_out(key, vault, txn, archive, &rows, secrets, true);
+        return keep_cohort_out(
+            key,
+            vault,
+            txn,
+            archive,
+            &rows,
+            secrets,
+            true,
+            ImportOmissionReason::ClaimSubjectEdgeNotRestored,
+        );
     }
     let new_ids = rows
         .iter()
@@ -404,7 +439,28 @@ pub(super) fn restore<R: Read + Seek>(
         }
         None => false,
     };
-    let (inserted, unchanged) = restore_cohort(vault, txn, &rows, cut, secrets)?;
+    // The gate judges each restored row as an Imported Auto claim of its
+    // annotator. A vault whose trusted manifest has no Imported Auto row (the
+    // shipped one) pends it, so only the owner's restore, which carries its
+    // one-restore permit into the writer, brings the cohort back (Engine
+    // ANSWER PROVENANCE-RESTORE-UNDER-TRUSTED-MANIFEST = A, 20 Nov 09:26). A
+    // cohort the gate pends stays archive data (`ProvenanceAutoNotPermitted`)
+    // and the import goes on: one archived row never aborts it. The savepoint
+    // drops what the cohort wrote before a later row pended, and the link
+    // stays as it came back, so the last edge pass compares its base fields
+    // only.
+    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+    let restored = match restore_cohort(vault, &mut savepoint, &rows, cut, secrets, permit) {
+        Ok(counts) => {
+            savepoint.commit()?;
+            Some(counts)
+        }
+        Err(error) if gate_pends(&error) => {
+            drop(savepoint);
+            None
+        }
+        Err(error) => return Err(error),
+    };
     if let Some((source, kind, target)) = cut_subject
         && !preserve_subject_edge
         && crate::ports::EdgeStoreRead::port_edge_get(&vault.store, txn, &source, kind, &target)?
@@ -415,6 +471,21 @@ pub(super) fn restore<R: Read + Seek>(
             .delete_edge(&source, kind, &target)
             .apply(txn)?;
     }
+    let Some((inserted, unchanged)) = restored else {
+        archive
+            .index
+            .put(Tag::UnpermittedProvenanceLink, &subject, &[])?;
+        return keep_cohort_out(
+            key,
+            vault,
+            txn,
+            archive,
+            &rows,
+            secrets,
+            false,
+            ImportOmissionReason::ProvenanceAutoNotPermitted,
+        );
+    };
     if inserted != new_ids.len() {
         return Err(Error::InvariantViolation("provenance import count drift"));
     }
@@ -521,6 +592,7 @@ fn closed_here(
 /// may have closed a row this vault took from an earlier archive, so a held
 /// row is also left as it is when it is the archived row as such a close
 /// leaves it ([`closed_here`]).
+#[expect(clippy::too_many_arguments)]
 fn keep_cohort_out<R: Read + Seek>(
     key: EntityId,
     vault: &Vault,
@@ -529,6 +601,7 @@ fn keep_cohort_out<R: Read + Seek>(
     rows: &[(ExportEntity, EntityId, ClaimBody)],
     secrets: ExportSecrets,
     own_history: bool,
+    reason: ImportOmissionReason,
 ) -> Result<CohortRestore> {
     let mut unchanged = 0;
     let mut kept_out = Vec::new();
@@ -552,7 +625,7 @@ fn keep_cohort_out<R: Read + Seek>(
             }
             None => {
                 archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
-                kept_out.push(*id);
+                kept_out.push((*id, reason));
             }
         }
     }
@@ -572,6 +645,7 @@ fn restore_cohort(
     rows: &[(ExportEntity, EntityId, ClaimBody)],
     cut: bool,
     secrets: ExportSecrets,
+    permit: Option<&OwnerArchiveRestorePermit>,
 ) -> Result<(usize, usize)> {
     let mut inserted = 0;
     let mut unchanged = 0;
@@ -651,7 +725,14 @@ fn restore_cohort(
             };
             if closer_present && prior_live {
                 if let Some((prior, _, _)) = previous {
-                    vault.close_restored_tied_prior_in_txn(txn, &prior, id, row.learned_at, cut)?;
+                    vault.close_restored_tied_prior_in_txn(
+                        txn,
+                        &prior,
+                        id,
+                        row.learned_at,
+                        cut,
+                        permit,
+                    )?;
                 }
                 previous = None;
             } else if !prior_live {
@@ -666,7 +747,8 @@ fn restore_cohort(
             // comparison below holds the result to the archived row.
             match source_close {
                 Some(SourceClose::Retracted(close_at)) => {
-                    vault.retract_edge_provenance_in_txn(txn, id, close_at, cut)?;
+                    vault
+                        .retract_restored_edge_provenance_in_txn(txn, id, close_at, cut, permit)?;
                 }
                 Some(SourceClose::Superseded) => {
                     previous = Some((*id, row.learned_at, ClaimLifecycleStatus::Superseded));
@@ -691,6 +773,7 @@ fn restore_cohort(
             row.learned_at,
             explicit_prior.as_ref(),
             cut,
+            permit,
         )?;
         inserted += 1;
         previous = Some((*id, row.learned_at, body.lifecycle));
@@ -710,6 +793,20 @@ fn restore_cohort(
         }
     }
     Ok((inserted, unchanged))
+}
+/// Whether `error` is the gate pending a write rather than refusing it: the
+/// claim write gate's pending outcome, or the source trust check's refusal of
+/// an Auto claim its source has no row for.
+fn gate_pends(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Gate(
+            GateError::GateWriteRejected {
+                outcome: "pending",
+                ..
+            } | GateError::SourceNotTrustedForAuto { .. }
+        )
+    )
 }
 pub(super) fn stage_edge(
     vault: &Vault,

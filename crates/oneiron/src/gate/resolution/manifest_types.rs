@@ -416,6 +416,30 @@ impl PolicyManifestResolution {
         self
     }
 
+    /// [`Self::with_owner_archive_restore_permit`] for the edge provenance
+    /// writer of that same restore (Engine ANSWER
+    /// PROVENANCE-RESTORE-UNDER-TRUSTED-MANIFEST = A, 20 Nov 09:26). The gate
+    /// judges an edge provenance claim as its annotator's, so the restore's
+    /// Imported Auto row binds `annotator`, the archived row's own, for the
+    /// write of that row only. Only the in-memory copy changes.
+    pub(crate) fn with_owner_archive_restore_permit_for_annotator(
+        mut self,
+        _permit: &OwnerArchiveRestorePermit,
+        annotator: crate::EntityId,
+    ) -> Self {
+        self.source_trust.bind_actor_row(
+            ClaimSource::Imported,
+            SourceTrustRow {
+                max_auto_sensitivity: Some(UNSTAMPED_CLAIM_SENSITIVITY_BAND),
+                receipted: true,
+                warned: true,
+                actor_ref: Some(annotator),
+                auto_checker: None,
+            },
+        );
+        self
+    }
+
     /// A malformed policy cannot authorize use of failed model output.
     pub(crate) fn dreamer_failure_decision(
         &self,

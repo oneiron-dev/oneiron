@@ -144,6 +144,11 @@ pub(crate) enum Tag {
     /// (`provenance_import::restore`). The last edge pass keeps the link's
     /// own provenance stamp and compares its base fields only.
     OwnHistoryLink,
+    /// Mapped subject edge source, kind, target → (): a link that came back
+    /// bare, whose archived cohort stayed archive data because the gate would
+    /// pend it (`provenance_import::restore`, `ProvenanceAutoNotPermitted`).
+    /// The last edge pass compares its base fields only.
+    UnpermittedProvenanceLink,
 }
 
 /// The import's disk index: one LMDB database in the scratch environment,

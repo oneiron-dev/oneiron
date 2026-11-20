@@ -669,13 +669,14 @@ impl Vault {
                             &mut wtxn,
                             &mut archive,
                             secrets,
+                            permit.as_ref(),
                         )?;
-                        destination_omissions.extend(cohort.kept_out.iter().map(|id| {
-                            ExportImportOmission {
+                        destination_omissions.extend(cohort.kept_out.iter().map(
+                            |&(id, reason)| ExportImportOmission {
                                 entity_id: id.to_hex(),
-                                reason: ImportOmissionReason::ClaimSubjectEdgeNotRestored,
-                            }
-                        }));
+                                reason,
+                            },
+                        ));
                         (
                             cohort.inserted.into_iter().collect::<Vec<_>>(),
                             cohort.unchanged,
@@ -2317,12 +2318,14 @@ fn import_edge_with_seeds(
         // A link this vault held with provenance of its own keeps its own
         // stamp, since its archived cohort stayed archive data
         // (`provenance_import::restore`, REVIEW-9652 P1): only its base
-        // fields compare.
-        let own_history =
-            inserted.contains(Tag::OwnHistoryLink, &edge_key(&source, edge.kind, &target))?;
+        // fields compare. So do they for a link whose archived cohort the
+        // gate pended (`ProvenanceAutoNotPermitted`): it came back bare.
+        let link_key = edge_key(&source, edge.kind, &target);
+        let base_fields_only = inserted.contains(Tag::OwnHistoryLink, &link_key)?
+            || inserted.contains(Tag::UnpermittedProvenanceLink, &link_key)?;
         let same_body = existing.weight == edge.weight
             && existing.vad.map(|v| [v.valence, v.arousal, v.dominance]) == edge.vad
-            && (own_history
+            && (base_fields_only
                 || existing
                     .provenance
                     .map(|p| [p.confirmation_status as u8, p.actor_class as u8])
