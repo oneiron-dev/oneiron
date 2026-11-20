@@ -24,6 +24,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use oneiron_authority::authority::AuthorityEntryHash;
 use oneiron_contracts::fingerprint::{ContentHash, Fingerprint, Fingerprinter, purposes};
 use oneiron_setting_contract::{ChangeDirection, Order, RowKey};
 
@@ -171,7 +172,10 @@ fn layer_rows_in_txn(
 
 /// The value the layer's readable rows read: on a key whose rows meet, their meet; on any other
 /// key, the engine pack's row, else the first.
-fn fold_layer(spec: &SettingSpec, rows: &[(String, EncodedValue)]) -> Option<EncodedValue> {
+pub(super) fn fold_layer(
+    spec: &SettingSpec,
+    rows: &[(String, EncodedValue)],
+) -> Option<EncodedValue> {
     if spec.reads_met() {
         rows.iter()
             .map(|(_, value)| value.clone())
@@ -191,6 +195,121 @@ fn head_in_txn(
     pack: &str,
 ) -> Result<Option<PackHead>> {
     HEADS.get(dbs, txn, &pack.as_bytes().to_vec())
+}
+
+/// The packs whose layer holds a row of `spec` here, readable or not: the packs a birth of a key
+/// `born` from `spec` names (stage 7c-3b).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn packs_holding_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    spec: &SettingSpec,
+) -> Result<Vec<String>> {
+    Ok(layer_rows_in_txn(dbs, txn, spec)?
+        .into_iter()
+        .map(|(pack, _)| pack)
+        .collect())
+}
+
+/// The live head act of `pack` that names the table this install's own head names (stage
+/// 7c-3b): what a birth names for a default the pack gives. Where none is live (the door last
+/// acted before the vault had a root, or another machine's head with other defaults replaced
+/// it), this install's head is appended in `txn` first, when the vault has a root and this
+/// install can carry. `None` where the door never ran for the pack here, its head predates
+/// versions, or the append fails (logged).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn pack_head_act_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    pack: &str,
+) -> Result<Option<AuthorityEntryHash>> {
+    let Some(head) = head_in_txn(&vault.store, txn, pack)? else {
+        return Ok(None);
+    };
+    let Some(digest) = oneiron_hex::decode::<32>(&head.digest) else {
+        return Ok(None);
+    };
+    if let Some((hash, _)) = vault
+        .setting_pack_heads_in_txn(txn, pack)?
+        .into_iter()
+        .find(|(_, live)| live.digest == digest)
+    {
+        return Ok(Some(hash));
+    }
+    if head.version.is_empty()
+        || !rooted_in_txn(vault, txn)?
+        || !vault.can_carry_owner_act_in_txn(txn)?
+    {
+        return Ok(None);
+    }
+    let mut held: Vec<String> = head
+        .proposal
+        .iter()
+        .flat_map(|proposal| {
+            proposal
+                .defaults
+                .iter()
+                .map(|proposed| proposed.key.clone())
+        })
+        .collect();
+    held.sort_unstable();
+    held.dedup();
+    match vault.append_setting_pack_head_in_txn(txn, pack, &head.version, digest, held) {
+        Ok(hash) => Ok(Some(hash)),
+        Err(error) => {
+            tracing::warn!(
+                pack,
+                kind = ?error.kind(),
+                "a birth found no head act of the pack and appended none: its born rows stand on this install"
+            );
+            Ok(None)
+        }
+    }
+}
+
+/// `spec`'s row in `pack`'s layer here, where this install's head of `pack` names the table
+/// `digest` (stage 7c-3b): a birth's copy that names a head of that table reads as this
+/// install's own row of the key, the record of what it accepted from that table, a held key's
+/// earlier value included. `None` where the door never ran for the pack here or its head names
+/// another table: the table is not proved here. `Some(None)` where the row is gone or does not
+/// decode.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn proved_pack_row_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    pack: &str,
+    digest: &[u8; 32],
+    spec: &SettingSpec,
+) -> Result<Option<Option<EncodedValue>>> {
+    let proved = head_in_txn(dbs, txn, pack)?
+        .and_then(|head| oneiron_hex::decode::<32>(&head.digest))
+        .is_some_and(|ours| ours == *digest);
+    if !proved {
+        return Ok(None);
+    }
+    let key = RowKey {
+        name: spec.name.to_owned(),
+        item: None,
+        mode: SettingMode::Value,
+        scope: SettingScope::Pack(pack.to_owned()),
+    }
+    .encode();
+    Ok(Some(
+        table_of(spec)
+            .get_bytes(dbs, txn, &key)?
+            .and_then(|bytes| rmp_serde::from_slice::<StoredRow>(&bytes).ok())
+            .map(|row| row.value)
+            .filter(|value| spec.kind.decodes(value)),
+    ))
 }
 
 /// The read's default for `spec`: what the vault accepted from its packs. A key a head names

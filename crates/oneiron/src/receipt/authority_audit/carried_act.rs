@@ -51,16 +51,26 @@ pub(super) fn classify_export(
     )
 }
 
-/// The class, op name and fields of one move's setting copy.
+/// The class, op name and fields of one setting copy: a move's carried rows, or a project's
+/// born rows (stage 7c-3b).
 pub(super) fn classify_setting_copy(
     copy: &SettingCopy,
 ) -> (AuthorityAuditEventKind, &'static str, OpFields) {
     let names: usize = copy.rows.iter().map(|row| row.names.len()).sum();
+    let born = copy.rows.iter().filter(|row| row.is_birth()).count();
+    let detail = if born == 0 {
+        format!("{} carried rows, {names} acts", copy.rows.len())
+    } else {
+        format!(
+            "{} carried rows, {born} born rows, {names} acts",
+            copy.rows.len() - born
+        )
+    };
     (
         AuthorityAuditEventKind::Other,
         "setting_copy",
         OpFields {
-            detail: Some(format!("{} carried rows, {names} acts", copy.rows.len())),
+            detail: Some(detail),
             subject_ref: Some(copy.machine.to_hex()),
             ..OpFields::default()
         },

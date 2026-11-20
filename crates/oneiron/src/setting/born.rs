@@ -7,13 +7,24 @@
 //!
 //! The row is a copy of the source key's value in force at the vault when the thing is created. A
 //! copy of a pack's default is seeded (`StoredRow::seeded`), so a read it decides says
-//! [`SettingSource::Seeded`]; a copy of a row someone set is explicit. The row is this install's: no
-//! act names it yet, so another machine reads a born thing it did not create as strictest, pending,
-//! until the birth's copy travels (stage 7c-3, with the pack head). Every creation door of a
+//! [`SettingSource::Seeded`]; a copy of a row someone set is explicit. Every creation door of a
 //! project writes it, so a born key's narrowest kind is a project.
+//!
+//! The birth travels as one engine copy (stage 7c-3b; DESIGN 1.6, "A copy carries no value"): on
+//! a vault with a root whose install can carry, the door also appends one `SettingCopy` whose rows
+//! are the project's born rows, each naming the source key's heads (the live acts of its vault
+//! value row, and the head act of each pack whose layer holds it). Every machine's fold checks
+//! that the copy is the first act on its row and names the source's heads; every machine reads it
+//! as the named acts read there ([`super::project`]). Without a root, or where no pack holds the
+//! source or one that does has no head act to name (a birth naming part of the layer would read
+//! looser than the layer's meet), the row stays this install's, and another machine reads the
+//! project strictest, pending.
 
+use oneiron_authority::authority::{SettingCopyName, setting_slot_target};
 use oneiron_setting_contract::RowKey;
 
+use super::pack::{pack_head_act_in_txn, packs_holding_in_txn};
+use super::project::{project_target_in_txn, rooted_in_txn};
 use super::read::{Loaded, StoredRow, chain_of, in_force_in_txn, table_of};
 use super::{
     ScopeKind, Setter, SettingMode, SettingScope, SettingSource, SettingSpec, catalogue, spec_named,
@@ -61,9 +72,10 @@ pub(super) fn missing_born_row(
 /// nothing, so the project reads the strictest value, pending: the catalogue holds every born
 /// key's source to a strictest value (`tests/setting_born_pending.rs`), so its read comes back
 /// unreadable and never fails the creation. The row is the thing's start, no move: like a pack's
-/// first default it writes no change row. Every door that creates a project on this install calls
-/// it: the project write door, a subproject, an owner's project, a card's mint, a thread's
-/// conversion and the vault's root. Returns how many rows it wrote.
+/// first default it writes no change row. On a vault with a root, the rows travel as one birth
+/// copy appended in the same write ([`append_birth_in_txn`]). Every door that creates a project
+/// on this install calls it: the project write door, a subproject, an owner's project, a card's
+/// mint, a thread's conversion and the vault's root. Returns how many rows it wrote.
 ///
 /// # Errors
 ///
@@ -73,7 +85,8 @@ pub(crate) fn write_born_rows_in_txn(
     txn: &mut heed::RwTxn<'_>,
     project: EntityId,
 ) -> Result<usize> {
-    let mut written = 0;
+    let mut written = Vec::new();
+    let mut set_at = None;
     for spec in catalogue() {
         let Some(born) = spec.born else {
             continue;
@@ -105,18 +118,129 @@ pub(crate) fn write_born_rows_in_txn(
         if matches!(read, SettingSource::Unreadable(_)) || !spec.kind.decodes(&value) {
             continue;
         }
+        let at = match set_at {
+            Some(at) => at,
+            None => *set_at.insert(crate::ports::recorded_at_in_txn(&vault.store, txn)?),
+        };
         let row = StoredRow {
             value,
             by: None,
             setter: Setter::Engine { ask: None },
-            set_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
+            set_at: at,
             change: 0,
             weight_runs: None,
             local: None,
             seeded: matches!(read, SettingSource::Default | SettingSource::Seeded(_)),
         };
         table.put(&vault.store, txn, &key, &row)?;
-        written += 1;
+        written.push((spec, source));
     }
-    Ok(written)
+    if let Some(at) = set_at {
+        append_birth_in_txn(vault, txn, project, &written, at)?;
+    }
+    Ok(written.len())
+}
+
+/// Appends the birth of `project`'s rows `born` (each a born key with its source) as one engine
+/// copy, and projects each row from the fold, in the creation's write `txn`, at `now` (stage
+/// 7c-3b; module doc). A row names the live acts of its source's vault value row and the head act
+/// of each pack whose layer holds the source ([`pack_head_act_in_txn`], which appends this
+/// install's head where none of its table is live). A row stays this install's alone where no
+/// pack holds its source, or one that does has no head act to name ([`pack_names_in_txn`]). Best
+/// effort, as a move's copy: without a root or a carrier nothing is appended, and whatever stops
+/// the append is logged and rolled back alone, so a creation never fails for its copy.
+///
+/// # Errors
+///
+/// Storage errors.
+fn append_birth_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    project: EntityId,
+    born: &[(&'static SettingSpec, &'static SettingSpec)],
+    now: u64,
+) -> Result<()> {
+    if !rooted_in_txn(vault, txn)? || !vault.can_carry_owner_act_in_txn(txn)? {
+        return Ok(());
+    }
+    let mut rows = Vec::with_capacity(born.len());
+    for (spec, source) in born {
+        let Some(packs) = pack_names_in_txn(vault, txn, source)? else {
+            tracing::warn!(
+                key = spec.name,
+                "a born row cannot name each pack that holds its source: it stands here alone"
+            );
+            continue;
+        };
+        let vault_row = source_row(source, SettingScope::Vault);
+        let mut names: Vec<SettingCopyName> = vault
+            .setting_slot_live_in_txn(txn, setting_slot_target(&vault_row)?)?
+            .into_iter()
+            .map(|act| SettingCopyName {
+                slot: vault_row.clone(),
+                act,
+            })
+            .collect();
+        names.extend(packs);
+        let slot = RowKey {
+            name: spec.name.to_owned(),
+            item: None,
+            mode: SettingMode::Value,
+            scope: SettingScope::Project(project),
+        };
+        rows.push((slot, names));
+    }
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let targets = rows
+        .iter()
+        .map(|(slot, _)| setting_slot_target(slot))
+        .collect::<std::result::Result<Vec<EntityId>, _>>()?;
+    if let Err(error) = vault.append_setting_copy_in_txn(txn, rows) {
+        tracing::warn!(
+            %error,
+            "a project's born rows stand on this install alone: no copy of its birth was appended"
+        );
+        return Ok(());
+    }
+    for target in targets {
+        project_target_in_txn(vault, txn, target, now)?;
+    }
+    Ok(())
+}
+
+/// The head act of each pack whose layer holds `source`, as a birth names them
+/// ([`pack_head_act_in_txn`]). `None` where none holds it, or where one that holds it has no head
+/// act to name: a birth naming part of the layer would read its meet, looser than the layer's.
+///
+/// # Errors
+///
+/// Storage errors.
+fn pack_names_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    source: &SettingSpec,
+) -> Result<Option<Vec<SettingCopyName>>> {
+    let mut names = Vec::new();
+    for pack in packs_holding_in_txn(&vault.store, txn, source)? {
+        let Some(act) = pack_head_act_in_txn(vault, txn, &pack)? else {
+            return Ok(None);
+        };
+        names.push(SettingCopyName {
+            slot: source_row(source, SettingScope::Pack(pack)),
+            act,
+        });
+    }
+    Ok((!names.is_empty()).then_some(names))
+}
+
+/// The item-less value row of `source` at `scope`: a row a birth names.
+fn source_row(source: &SettingSpec, scope: SettingScope) -> RowKey {
+    RowKey {
+        name: source.name.to_owned(),
+        item: None,
+        mode: SettingMode::Value,
+        scope,
+    }
 }
