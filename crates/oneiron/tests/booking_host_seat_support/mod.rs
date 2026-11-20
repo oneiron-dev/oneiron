@@ -273,7 +273,13 @@ impl Seat {
         changes: &[SeatChange],
         now: u64,
     ) -> Result<CalendarSyncOutcome, CalendarConnectorError> {
-        let changes = changes
+        let changes = self.remote_changes(vault, changes);
+        self.run_pull(vault, changes, now)
+    }
+
+    /// The wire form of each scripted change, as the seat's pull answers it.
+    fn remote_changes(&self, vault: &Vault, changes: &[SeatChange]) -> Vec<RemoteCalendarChange> {
+        changes
             .iter()
             .map(|change| match change {
                 SeatChange::Upsert {
@@ -325,8 +331,7 @@ impl Seat {
                     }
                 }
             })
-            .collect();
-        self.run_pull(vault, changes, now)
+            .collect()
     }
 
     /// Pulls back the seat's own last write of one booking byte for byte, as
@@ -354,6 +359,18 @@ impl Seat {
         sequence: u32,
         now: u64,
     ) -> Result<CalendarSyncOutcome, CalendarConnectorError> {
+        let rewrite = self.rewritten_own_write(receipt, sequence, now);
+        self.run_pull(vault, vec![RemoteCalendarChange::Upsert(rewrite)], now)
+    }
+
+    /// The seat's own last write of one booking as a provider that rewrites
+    /// the stored resource holds it (see [`Self::pull_rewritten_own_write`]).
+    fn rewritten_own_write(
+        &self,
+        receipt: &RemoteWriteReceipt,
+        sequence: u32,
+        now: u64,
+    ) -> RemoteCalendarObject {
         let written =
             String::from_utf8(self.last_write_ics(&receipt.uid)).expect("written ICS is UTF-8");
         let mut rewritten = String::new();
@@ -376,7 +393,123 @@ impl Seat {
             rewrite.content_hash, receipt.content_hash,
             "the provider's rewrite is a new version of the written resource"
         );
-        self.run_pull(vault, vec![RemoteCalendarChange::Upsert(rewrite)], now)
+        rewrite
+    }
+
+    /// Writes one booking EVENT to the seat's calendar, which stores it, but
+    /// before its answer is settled the host restores the booking live in
+    /// that calendar at the next SEQUENCE, at `start`..`end` under the href of
+    /// `live`, and a pull at `restore_now` reads that restore: the settlement
+    /// comes after a newer version of the resource was read.
+    pub(crate) fn write_settled_after_restore(
+        &self,
+        vault: &Vault,
+        event_ref: EntityId,
+        live: &RemoteWriteReceipt,
+        slot: (u64, u64),
+        restore_now: u64,
+        now: u64,
+    ) -> RemoteWriteReceipt {
+        let wire = RestoreBeforeAnswer {
+            seat: self,
+            vault,
+            live,
+            slot,
+            restore_now,
+        };
+        write_calendar_event(vault, &self.operation(vault), &wire, event_ref, now)
+            .expect("write the booking to the seat")
+    }
+
+    /// Writes one booking EVENT to the seat's calendar, but the request never
+    /// reaches the provider, which stores nothing: the write stays prepared
+    /// until a later write sends it again.
+    pub(crate) fn write_unsent(&self, vault: &Vault, event_ref: EntityId, now: u64) {
+        *self
+            .transport
+            .drop_next_request
+            .lock()
+            .expect("send switch") = true;
+        let unsent = write_calendar_event(
+            vault,
+            &self.operation(vault),
+            &self.transport,
+            event_ref,
+            now,
+        );
+        assert!(
+            matches!(unsent, Err(CalendarConnectorError::Transport { .. })),
+            "the write whose request never arrived fails: {unsent:?}"
+        );
+    }
+
+    /// Sends the seat's prepared write of one booking again, and the provider
+    /// refuses it on its precondition: the stored resource no longer carries
+    /// the ETag the write expects, since the provider stored the earlier
+    /// call's request, whose answer was lost, and rewrote it at `sequence`.
+    /// The write's reconciliation reads that stored copy.
+    pub(crate) fn replay_refused_over_rewritten_own_write(
+        &self,
+        vault: &Vault,
+        event_ref: EntityId,
+        receipt: &RemoteWriteReceipt,
+        sequence: u32,
+        now: u64,
+    ) {
+        let stored = self.rewritten_own_write(receipt, sequence, now);
+        self.replay_refused(vault, event_ref, RemoteCalendarChange::Upsert(stored), now);
+    }
+
+    /// Sends the seat's prepared write of one booking again, and the provider
+    /// refuses it on its precondition: another writer changed the stored
+    /// resource to `stored`, which the write's reconciliation reads.
+    pub(crate) fn replay_refused_over(
+        &self,
+        vault: &Vault,
+        event_ref: EntityId,
+        stored: &SeatChange,
+        now: u64,
+    ) {
+        let stored = self
+            .remote_changes(vault, std::slice::from_ref(stored))
+            .pop()
+            .expect("the stored resource");
+        self.replay_refused(vault, event_ref, stored, now);
+    }
+
+    /// Sends the prepared write again under a refused precondition, with
+    /// `stored` scripted as the reconciliation pull's answer.
+    fn replay_refused(
+        &self,
+        vault: &Vault,
+        event_ref: EntityId,
+        stored: RemoteCalendarChange,
+        now: u64,
+    ) {
+        self.transport
+            .batches
+            .lock()
+            .expect("scripted batches")
+            .push_back(RemoteSyncBatch {
+                next_cursor: None,
+                changes: vec![stored],
+            });
+        *self
+            .transport
+            .refuse_next_precondition
+            .lock()
+            .expect("precondition switch") = true;
+        let refused = write_calendar_event(
+            vault,
+            &self.operation(vault),
+            &self.transport,
+            event_ref,
+            now,
+        );
+        assert!(
+            matches!(refused, Err(CalendarConnectorError::EtagMismatch { .. })),
+            "the replayed write is refused on its precondition: {refused:?}"
+        );
     }
 
     /// The ICS of the seat's last write of `uid`.
@@ -440,12 +573,17 @@ impl Seat {
 /// `DeleteEventAfterUpsert` does (smoke :509): `pull` pops one scripted
 /// batch (an empty batch when none is left), `upsert` records the request
 /// and answers an honest receipt, or, once `lose_next_answer` is set, a
-/// transport failure after it stored the request, and `delete` is unused.
+/// transport failure after it stored the request; once `drop_next_request`
+/// is set, a transport failure before it stores anything, and once
+/// `refuse_next_precondition` is set, a precondition failure that stores
+/// nothing. `delete` is unused.
 #[derive(Default)]
 struct ScriptedSeatTransport {
     batches: Mutex<VecDeque<RemoteSyncBatch>>,
     writes: Mutex<Vec<RemoteWriteRequest>>,
     lose_next_answer: Mutex<bool>,
+    drop_next_request: Mutex<bool>,
+    refuse_next_precondition: Mutex<bool>,
 }
 
 impl CalendarRemoteTransport for ScriptedSeatTransport {
@@ -476,6 +614,28 @@ impl CalendarRemoteTransport for ScriptedSeatTransport {
         calendar_ref: &str,
         request: &RemoteWriteRequest,
     ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        if std::mem::take(&mut *self.drop_next_request.lock().expect("send switch")) {
+            return Err(CalendarConnectorError::Transport {
+                provider: CALDAV_PROVIDER_KEY,
+                operation: "upsert",
+                detail: "the request never reached the provider".to_owned(),
+            });
+        }
+        if std::mem::take(
+            &mut *self
+                .refuse_next_precondition
+                .lock()
+                .expect("precondition switch"),
+        ) {
+            return Err(CalendarConnectorError::EtagMismatch {
+                href: request
+                    .href
+                    .clone()
+                    .unwrap_or_else(|| format!("/{calendar_ref}/{}.ics", request.uid)),
+                expected: request.expected_etag.clone(),
+                actual: Some(format!("{}-stored-elsewhere", request.uid)),
+            });
+        }
         self.writes
             .lock()
             .expect("written requests")
@@ -492,6 +652,71 @@ impl CalendarRemoteTransport for ScriptedSeatTransport {
             Some(&format!("{}-write-1", request.uid)),
             request,
         ))
+    }
+
+    fn delete(
+        &self,
+        _secret_ref: &str,
+        _calendar_ref: &str,
+        _href: &str,
+        _expected_etag: Option<&str>,
+        _uid: &str,
+        _sequence: u32,
+    ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        panic!("delete is not used by the host-seat fixture")
+    }
+}
+
+/// The seat's scripted wire, whose upsert, once the provider stored the
+/// request, runs a pull of the host's live restore of the booking at the
+/// next SEQUENCE before the answer returns.
+struct RestoreBeforeAnswer<'a> {
+    seat: &'a Seat,
+    vault: &'a Vault,
+    live: &'a RemoteWriteReceipt,
+    slot: (u64, u64),
+    restore_now: u64,
+}
+
+impl CalendarRemoteTransport for RestoreBeforeAnswer<'_> {
+    fn provider_key(&self) -> &'static str {
+        self.seat.transport.provider_key()
+    }
+
+    fn pull(
+        &self,
+        secret_ref: &str,
+        calendar_ref: &str,
+        cursor: Option<&str>,
+    ) -> Result<RemoteSyncBatch, CalendarConnectorError> {
+        self.seat.transport.pull(secret_ref, calendar_ref, cursor)
+    }
+
+    fn upsert(
+        &self,
+        secret_ref: &str,
+        calendar_ref: &str,
+        request: &RemoteWriteRequest,
+    ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        let receipt = self
+            .seat
+            .transport
+            .upsert(secret_ref, calendar_ref, request)?;
+        let (start, end) = self.slot;
+        self.seat
+            .pull(
+                self.vault,
+                &[SeatChange::upsert(
+                    self.live,
+                    start,
+                    end,
+                    request.sequence + 1,
+                    false,
+                )],
+                self.restore_now,
+            )
+            .expect("the pull of the host's restore");
+        Ok(receipt)
     }
 
     fn delete(
