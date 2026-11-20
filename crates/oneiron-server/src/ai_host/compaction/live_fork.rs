@@ -25,7 +25,7 @@ use std::time::Instant;
 use oneiron::EntityId;
 use oneiron::code_run::{
     CacheBoundary, CompactionHome, LiveCompactionFork, LiveForkRung, compaction_home_budget,
-    live_prefix_withdrawn, mark_cache_boundary,
+    mark_cache_boundary, source_rows_withdrawn,
 };
 use oneiron::compaction::{
     CompactionCheck, CompactionHomeRef, CompactionRefusal, CompactionRequest,
@@ -94,7 +94,7 @@ pub(super) fn bind_live_compaction_fork(
     };
     // The prefix was rendered when its call went out: a row erased since
     // would be sent again in it.
-    if live_prefix_withdrawn(&route.vault, &prefix_sources) {
+    if source_rows_withdrawn(&route.vault, &prefix_sources) {
         return unbound(SelfCompactionUnavailable::LiveForkStale);
     }
     let Ok(call) = admission.admit_live(live.clone()) else {

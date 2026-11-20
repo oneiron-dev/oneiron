@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use oneiron::agent_dispatch::AgentDispatcher;
-use oneiron::code_run::LiveCompactionFork;
+use oneiron::code_run::{LiveCompactionFork, source_rows_withdrawn};
 use oneiron::compaction::{
     CompactionBackend, CompactionCheck, CompactionOff, CompactionProduct, CompactionRefusal,
     CompactionRequest, CompactionSuppression, CompactionTierClass, compaction_reply_schema,
@@ -232,7 +232,11 @@ impl ServedCompactionBackend {
     /// the run's meter with a permit of its own, and booked. `None` only for
     /// a [`Dispatch::Live`] call `while_warm`, when anything stopped it
     /// before it went out, a cold prefix included: nothing was sent, and
-    /// the flight's cheap writer runs instead (FIX 6029).
+    /// the flight's cheap writer runs instead (FIX 6029). A call whose text
+    /// was read from a row deleted since (`sources`, the window's rows and a
+    /// live fork's prefix's, and the home's) is never sent: it is asked
+    /// before the call is dispatched and again before each rung, retry and
+    /// wait for an offer back (FIX-LIST ERASE-SERVED-KV-CACHE-OUTLIVES-SOURCE).
     pub(super) fn send<D>(
         &self,
         started: Instant,
@@ -253,6 +257,27 @@ impl ServedCompactionBackend {
                 Err(_) if dispatch.while_warm() => return Ok(None),
                 Err(refusal) => return Err(refusal.into()),
             };
+        // The rows the call's text was read from, when the host read it
+        // from them (FIX 9463): a row deleted since would reach the provider,
+        // and its prompt cache, again in it.
+        let read_from = union_source_rows([sources, home_rows]);
+        let fresh = || {
+            read_from
+                .as_deref()
+                .is_none_or(|rows| !source_rows_withdrawn(&self.vault, rows))
+        };
+        if !fresh() {
+            // Under `auto` the flight's cheap writer asks the same of its
+            // own window (FIX 6029).
+            if dispatch.while_warm() {
+                return Ok(None);
+            }
+            return Err(refused(
+                CompactionSuppression::TurnScoped { check: None },
+                "a row the call was read from was deleted since; nothing was sent".to_owned(),
+            )
+            .into());
+        }
         // Admit on the original generation before sending. The owned ticket
         // also settles zero if unwinding drops this call before a response.
         let generation = match &self.meter {
@@ -283,7 +308,7 @@ impl ServedCompactionBackend {
                     ..Default::default()
                 },
             })
-            .sourced(union_source_rows([sources, home_rows]));
+            .sourced(read_from.clone());
         // A chat turn that keeps no model-call record keeps none for its
         // flight's calls: their runs name no rows, so no run receipt names
         // the retained window's worlds (census L5-25; Astra delta 2).
@@ -322,14 +347,17 @@ impl ServedCompactionBackend {
         let reply = match dispatch {
             Dispatch::Walk => self
                 .handle
-                .block_on(call.ladder.generate(&run, call.request, None))
+                .block_on(call.ladder.generate_while(&run, call.request, None, &fresh))
                 .map(Some),
             Dispatch::Exact
             | Dispatch::Live {
                 while_warm: false, ..
             } => self
                 .handle
-                .block_on(call.ladder.generate_exact(&run, call.request, None))
+                .block_on(
+                    call.ladder
+                        .generate_exact_while(&run, call.request, None, &fresh),
+                )
                 .map(Some),
             Dispatch::Live {
                 fork,
@@ -340,6 +368,7 @@ impl ServedCompactionBackend {
                 call.request,
                 fork.rung(),
                 fork.request(),
+                &fresh,
             )),
         };
         if let Some(live) = &live

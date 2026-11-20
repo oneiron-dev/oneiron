@@ -258,27 +258,33 @@ impl LiveCompactionFork {
     }
 
     /// Whether a row the captured request was read from is deleted in
-    /// `vault` now ([`live_prefix_withdrawn`]): the fork is then stale, and
+    /// `vault` now ([`source_rows_withdrawn`]): the fork is then stale, and
     /// a call of its flight sends nothing of it.
     #[must_use]
     pub fn prefix_withdrawn(&self, vault: &Vault) -> bool {
-        live_prefix_withdrawn(vault, &self.prefix_sources)
+        source_rows_withdrawn(vault, &self.prefix_sources)
     }
 }
 
-/// `live_prefix_withdrawn` (FIX-LIST ERASE-SERVED-KV-CACHE-OUTLIVES-SOURCE):
-/// whether any of `sources`, the rows a live request was read from, is
-/// deleted in `vault` now, erased or deleted, hard or soft, as
-/// [`Vault::is_deleted_shell`] reads each. The request was rendered before
-/// that delete and still holds the row's words, and a provider's prompt
-/// cache, keyed by those bytes, would be warmed with them again by a resend:
-/// a live fork read from such a row is stale. A row that cannot be read
-/// counts as deleted.
+/// `source_rows_withdrawn` (FIX-LIST ERASE-SERVED-KV-CACHE-OUTLIVES-SOURCE):
+/// whether any of `sources`, the rows a model call's text was read from (a
+/// live fork's prefix, a compaction window, a home), is deleted in `vault`
+/// now, erased or deleted, hard or soft, as [`Vault::is_deleted_shell`]
+/// reads each. The text was rendered before that delete and still holds the
+/// row's words, and a provider's prompt cache, keyed by those bytes, would
+/// be warmed with them again by a send: such a call is stale. A row that
+/// cannot be read counts as deleted. One read transaction answers for all.
 #[must_use]
-pub fn live_prefix_withdrawn(vault: &Vault, sources: &[EntityId]) -> bool {
+pub fn source_rows_withdrawn(vault: &Vault, sources: &[EntityId]) -> bool {
+    if sources.is_empty() {
+        return false;
+    }
+    let Ok(txn) = vault.store.env.read_txn() else {
+        return true;
+    };
     sources
         .iter()
-        .any(|source| vault.is_deleted_shell(source).unwrap_or(true))
+        .any(|source| vault.is_deleted_shell_in_txn(&txn, source).unwrap_or(true))
 }
 
 /// A live fork its run's driver admitted (FIX 4465 C): the one Frontier-tier
