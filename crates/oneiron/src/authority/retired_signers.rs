@@ -222,7 +222,10 @@ impl Retirements {
 
     /// The revocations whose fences closed in a conflict: a closed fence of
     /// another member holds a signer of each, or of a row below it, so the
-    /// fold refused it, and its own fence ended its key all the same.
+    /// fold refuses it (as `RetiredSigner` when that fence holds its own
+    /// signer, as `InvalidAncestry` when it holds only a signer of a row
+    /// below), and its own fence ended its key all the same. The owner's key
+    /// changes list names only the first kind (`owner_key_changes`).
     pub(super) fn crossed_revocations(&self) -> BTreeSet<AuthorityEntryHash> {
         self.fences
             .iter()
