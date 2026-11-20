@@ -66,22 +66,14 @@ pub(crate) fn due_by_in_txn(
     let Some(prior) = ROWS.get(store, txn, &key)? else {
         return Ok(());
     };
-    let row = if prior.started_at.is_some() {
-        if prior.pulled_to.is_some_and(|pulled| pulled <= at) {
-            return Ok(());
-        }
-        ScheduleRow {
-            pulled_to: Some(at),
-            ..prior.clone()
-        }
-    } else {
-        if prior.failures > 0 || prior.due_at() <= at {
-            return Ok(());
-        }
-        ScheduleRow {
-            next_due_at: at,
-            ..prior.clone()
-        }
+    // Red evidence (not for merge): the door as it was before review round 2 of #9300 (P1): a job
+    // with a run in flight keeps its due time and the pull is dropped.
+    if prior.failures > 0 || prior.started_at.is_some() || prior.due_at() <= at {
+        return Ok(());
+    }
+    let row = ScheduleRow {
+        next_due_at: at,
+        ..prior.clone()
     };
     store_row_in_txn(store, txn, &key, Some(&prior), Some(&row))
 }
