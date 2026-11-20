@@ -75,19 +75,22 @@ pub(super) fn settles_deposits_here(
 }
 
 /// Whether this node admits a new deposit checkout, by the home-move fence: not while it
-/// drains its booking rows toward a move, nor once it froze them. The visitor starts the
-/// checkout on the new home.
+/// drains its booking rows toward a move, nor once it froze them, nor while it waits for the
+/// move that carries them here. The visitor starts the checkout on the new home once it holds
+/// them: a destination that opened one first would store the payment the old home opened under
+/// the same provider key as a second row, and that row would refuse the carried one.
 #[cfg(feature = "sync")]
 pub(super) fn admits_deposits_here(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<bool, BookingError> {
-    crate::sync::home_handoff::takes_home_write_in_txn(
+    Ok(crate::sync::home_handoff::takes_home_write_in_txn(
         vault,
         txn,
         crate::sync::home_handoff::HomeWrite::Admit,
     )
-    .map_err(|error| engine_failure("home move fence read", error))
+    .map_err(|error| engine_failure("home move fence read", error))?
+        && !awaits_carried_deposits(vault, txn)?)
 }
 
 /// Without the home handoff no move ever drains a node.
@@ -98,6 +101,49 @@ pub(super) fn admits_deposits_here(
 ) -> Result<bool, BookingError> {
     Ok(true)
 }
+
+/// Whether this node waits for a home move that carries its deposits here
+/// (`sync::home_handoff::awaits_incoming_move_in_txn`): a payment it does not know may be one
+/// that move carries.
+#[cfg(feature = "sync")]
+pub(super) fn awaits_carried_deposits(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<bool, BookingError> {
+    crate::sync::home_handoff::awaits_incoming_move_in_txn(vault, txn)
+        .map_err(|error| engine_failure("home move state read", error))
+}
+
+/// Without the home handoff no move ever carries a deposit.
+#[cfg(not(feature = "sync"))]
+pub(super) fn awaits_carried_deposits(
+    _vault: &Vault,
+    _txn: &heed::RoTxn<'_>,
+) -> Result<bool, BookingError> {
+    Ok(false)
+}
+
+/// Whether this node opens a deposit checkout now, asked before the server
+/// creates the provider's payment: a node that drains its booking rows
+/// toward a home move, froze them, or waits for the move that carries them
+/// here opens none (FIX [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]), and
+/// [`begin_deposit_checkout`](super::begin_deposit_checkout) asks the same
+/// again in its writer.
+///
+/// # Errors
+///
+/// [`BookingError::InvalidConstraint`] where this node opens no checkout
+/// now; [`BookingError::SlotOracle`] on a store failure.
+pub fn check_deposit_checkout_admitted(vault: &Vault) -> Result<(), BookingError> {
+    if !admits_deposits_here(vault, &read_txn(vault)?)? {
+        return Err(refused(CHECKOUT_MOVING));
+    }
+    Ok(())
+}
+
+/// The refusal of a checkout on a node a home move is leaving or reaching.
+pub(super) const CHECKOUT_MOVING: &str =
+    "this node is moving its booking rows to a new home: the checkout starts there";
 
 /// One provider move a deposit owes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,7 +214,9 @@ impl DepositProviderFailure {
 pub trait DepositSettlementPort {
     /// Asks the provider for one move, and answers the amount it moved, in
     /// the currency's smallest unit: the amount the payment now has
-    /// captured for a capture (also when an earlier capture already stood);
+    /// captured for a capture (also when an earlier capture already stood),
+    /// or 0 when the payment stands cancelled at the provider, so nothing can
+    /// be captured;
     /// the amount refunded for a refund, once the provider has finished it;
     /// for a void, 0, or the amount the payment had already captured when a
     /// capture stood before the void (a capture whose reply was lost), which
@@ -208,6 +256,15 @@ enum SettlePlan {
         /// move.
         refunded_before: u64,
     },
+}
+
+/// One provider answer to record: the move asked, what the provider moved,
+/// and what was refunded before it when the move was planned.
+#[derive(Clone, Copy)]
+struct SettledMove {
+    movement: DepositSettleMove,
+    moved: u64,
+    refunded_before: u64,
 }
 
 /// Decides one deposit's next move in a writer. An open deposit whose
@@ -273,6 +330,16 @@ fn plan_settle(vault: &Vault, key: &[u8; 32], now_utc: u64) -> Result<SettlePlan
 /// refunded before it; when the owner's return came while it was owed, the
 /// balance of the capture is owed next, queued in the same commit.
 ///
+/// A capture that captured nothing found the payment cancelled at the provider
+/// (a cancellation whose event this node never applied): the deposit stands
+/// voided.
+///
+/// A refund records only against the refund it was planned for: what was
+/// refunded before it, `refunded_before`, must still be what the deposit
+/// says. A home move that went away and came back while the call ran can
+/// leave the deposit owing a later refund, after more was refunded; the old
+/// call's answer is not that refund's, and the queued row asks that one.
+///
 /// A node that froze its booking rows for a home move while the call ran
 /// records nothing: the new home holds the deposit as it stood at the freeze,
 /// owes this same move, and asks it under the same idempotency key, which the
@@ -280,10 +347,14 @@ fn plan_settle(vault: &Vault, key: &[u8; 32], now_utc: u64) -> Result<SettlePlan
 fn record_settled(
     vault: &Vault,
     key: &[u8; 32],
-    movement: DepositSettleMove,
-    moved: u64,
+    planned: SettledMove,
     now_utc: u64,
 ) -> Result<(), BookingError> {
+    let SettledMove {
+        movement,
+        moved,
+        refunded_before,
+    } = planned;
     booking_writer(vault, |wtxn| {
         if !settles_deposits_here(vault, &*wtxn)? {
             return Ok(());
@@ -295,6 +366,10 @@ fn record_settled(
             return Ok(());
         };
         let next = match (row.state, movement) {
+            (DepositState::CaptureDue { .. }, DepositSettleMove::Capture { .. }) if moved == 0 => {
+                row.captured_minor = Some(0);
+                DepositState::Voided
+            }
             (
                 DepositState::CaptureDue { amount_minor: owed },
                 DepositSettleMove::Capture { .. },
@@ -320,7 +395,9 @@ fn record_settled(
                 }
             }
             (DepositState::VoidDue, DepositSettleMove::Void) => DepositState::Voided,
-            (DepositState::RefundDue { .. }, DepositSettleMove::Refund { .. }) => {
+            (DepositState::RefundDue { .. }, DepositSettleMove::Refund { .. })
+                if row.refunded_minor == refunded_before =>
+            {
                 let refunded = row.refunded_minor.saturating_add(moved);
                 let balance_owed = std::mem::take(&mut row.balance_owed_after_refund);
                 match row.captured_minor {
@@ -336,7 +413,8 @@ fn record_settled(
                 }
             }
             // The deposit moved on while the call ran (a provider
-            // cancellation); its own row settles what is left.
+            // cancellation, a refund recorded on another home); its own row
+            // settles what is left.
             _ => return Ok(()),
         };
         let refund_owed = matches!(next, DepositState::RefundDue { .. });
@@ -398,7 +476,16 @@ fn settle_deposit_key<P: DepositSettlementPort>(
         idempotency_key: &idempotency_key,
     }) {
         Ok(moved) => {
-            record_settled(vault, key, movement, moved, now_utc)?;
+            record_settled(
+                vault,
+                key,
+                SettledMove {
+                    movement,
+                    moved,
+                    refunded_before,
+                },
+                now_utc,
+            )?;
             Ok(DepositSettleStep::Moved(movement))
         }
         Err(failure) => Ok(DepositSettleStep::Failed(failure)),

@@ -74,3 +74,26 @@ pub(crate) fn takes_home_write_in_txn(
         Err(error) => Err(error),
     }
 }
+
+/// FIX [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]: whether this node's election named it the
+/// target of a move from another node that has not landed here: no adoption answered it and no
+/// record says it carried nothing. The rows that move carries are not here yet, so a domain
+/// that keys its rows by a provider's id (a deposit's payment) refuses to open one, or to
+/// answer an unknown one, until they are: the guard ([`guard_in_txn`]) lets such a node write.
+pub(crate) fn awaits_incoming_move_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+) -> Result<bool> {
+    let head = store::head_in_txn(dbs, txn)?;
+    let node = crate::identity::read_client_id_from(dbs, txn)?;
+    Ok(match (head.request, node) {
+        (
+            Some(store::MoveRequest {
+                from: Some(from),
+                to: Some(to),
+            }),
+            Some(node),
+        ) => to == node && from != node && head.incomplete.is_none(),
+        _ => false,
+    })
+}

@@ -56,9 +56,11 @@ pub(crate) use self::refund::{refund_booking_deposit_as_owner, refund_deposit_on
 pub use self::settle::{
     BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, DepositProviderFailure,
     DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
-    run_booking_deposit_settlement, settle_booking_deposit,
+    check_deposit_checkout_admitted, run_booking_deposit_settlement, settle_booking_deposit,
 };
-use self::settle::{admits_deposits_here, settles_deposits_here};
+use self::settle::{
+    CHECKOUT_MOVING, admits_deposits_here, awaits_carried_deposits, settles_deposits_here,
+};
 
 /// The checkout window a deposit's lease opens: the hold lives this long
 /// while the visitor pays ("~15min", ARCH-0062:225). A checkout started
@@ -275,9 +277,7 @@ pub fn begin_deposit_checkout(
     let session_hash = session_digest(&start.session_key);
     booking_writer(vault, |wtxn| {
         if !admits_deposits_here(vault, &*wtxn)? {
-            return Err(refused(
-                "this node is moving its booking rows to a new home: the checkout starts there",
-            ));
+            return Err(refused(CHECKOUT_MOVING));
         }
         let config = crate::booking::config::load_event_type_config_in_txn(
             vault,
@@ -449,6 +449,11 @@ pub enum DepositProviderEventOutcome {
     /// The authorized amount or currency is not the deposit's terms; the
     /// deposit stays unauthorized, and its window's end voids it.
     TermsMismatch,
+    /// This node cannot apply it now, and nothing changed: it froze its
+    /// booking rows for a home move, so the new home holds the deposit, or
+    /// it waits for the move that carries its deposits here and knows no
+    /// deposit of this payment yet. The provider must deliver it again.
+    Deferred,
 }
 
 /// Applies one verified provider event to its deposit, once.
@@ -457,6 +462,12 @@ pub enum DepositProviderEventOutcome {
 /// currency. A refusal keeps the deposit, and the hold that waits on it,
 /// open for a retry on the same payment. A cancellation closes any deposit
 /// not yet captured.
+///
+/// During a home move it answers [`DepositProviderEventOutcome::Deferred`]
+/// and writes nothing, on the old home once it froze its booking rows and on
+/// the new home for a payment it does not know before the move lands (FIX
+/// [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]): the event is then applied
+/// where the deposit lands, never acknowledged as no deposit's.
 ///
 /// # Errors
 ///
@@ -473,6 +484,9 @@ pub fn record_deposit_provider_event(
     let key = deposit_key(&event.payment_id);
     let event_key = provider_event_key(&event.event_id);
     booking_writer(vault, |wtxn| {
+        if !settles_deposits_here(vault, &*wtxn)? {
+            return Ok(DepositProviderEventOutcome::Deferred);
+        }
         if DEPOSIT_PROVIDER_EVENT
             .get(&vault.store, &*wtxn, &event_key)
             .map_err(|error| engine_failure("meta read", error))?
@@ -484,7 +498,11 @@ pub fn record_deposit_provider_event(
             .get(&vault.store, &*wtxn, &key)
             .map_err(|error| engine_failure("meta read", error))?
         else {
-            return Ok(DepositProviderEventOutcome::UnknownPayment);
+            return Ok(if awaits_carried_deposits(vault, &*wtxn)? {
+                DepositProviderEventOutcome::Deferred
+            } else {
+                DepositProviderEventOutcome::UnknownPayment
+            });
         };
         DEPOSIT_PROVIDER_EVENT
             .put(

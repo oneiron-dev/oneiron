@@ -1,7 +1,7 @@
 //! The public verb door and the home-node consumer turn: enqueue, checkout
 //! lease, and one claimed attempt run to a receipt.
 
-use super::storage::{booking_writer, decode_row, encode_row, engine_failure};
+use super::storage::{booking_writer, decode_row, encode_row, engine_failure, read_txn, refused};
 use super::token::{
     OpaqueCheckoutLeaseToken, SessionKey, lease_digest, mint_raw_token, read_hold_row,
     session_digest, token_page_ref,
@@ -140,6 +140,7 @@ pub fn issue_checkout_lease(
         deposit_key: None,
     };
     booking_writer(vault, |wtxn| {
+        refuse_frozen_booking_rows_in_txn(vault, &*wtxn)?;
         CHECKOUT_LEASE
             .put(&vault.store, wtxn, &lease_digest(&lease), &row)
             .map_err(|error| engine_failure("meta write", error))
@@ -358,21 +359,44 @@ fn home_node_refusal(
 /// none since. Its election can name it home again before the move that carries them back
 /// lands; until then its rows are the old home's history, and a transition on them would
 /// write what the lineage already moved past.
-#[cfg(feature = "sync")]
 fn froze_booking_rows(vault: &Vault) -> Result<bool, BookingError> {
-    let txn = vault
-        .store
-        .env
-        .read_txn()
-        .map_err(|error| engine_failure("read transaction", error))?;
-    crate::sync::home_handoff::froze_home_state_in_txn(vault, &txn)
+    froze_booking_rows_in_txn(vault, &read_txn(vault)?)
+}
+
+/// [`froze_booking_rows`] in a caller's transaction.
+#[cfg(feature = "sync")]
+pub(super) fn froze_booking_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<bool, BookingError> {
+    crate::sync::home_handoff::froze_home_state_in_txn(vault, txn)
         .map_err(|error| engine_failure("home move state read", error))
 }
 
 /// Without the home handoff no move ever freezes booking rows.
 #[cfg(not(feature = "sync"))]
-fn froze_booking_rows(_vault: &Vault) -> Result<bool, BookingError> {
+pub(super) fn froze_booking_rows_in_txn(
+    _vault: &Vault,
+    _txn: &heed::RoTxn<'_>,
+) -> Result<bool, BookingError> {
     Ok(false)
+}
+
+/// The booking writers' own fence, asked first in the writer that mutates: a node that froze
+/// its booking rows for a home move writes none of them. The door's read before the claim is
+/// not enough, since the freeze can commit between that read and the writer; LMDB's one
+/// writer orders the two, so the freeze either committed before this writer opened, and this
+/// refuses, or it waits for this writer, and its export carries what this one wrote.
+pub(super) fn refuse_frozen_booking_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(), BookingError> {
+    if froze_booking_rows_in_txn(vault, txn)? {
+        return Err(refused(
+            "this node froze its booking rows for a home move: the new home holds them",
+        ));
+    }
+    Ok(())
 }
 
 /// Runs one claimed attempt to a receipt and finalizes its row.

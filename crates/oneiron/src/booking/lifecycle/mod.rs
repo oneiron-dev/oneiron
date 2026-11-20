@@ -88,8 +88,8 @@ pub use self::deposit::{
     DepositProviderEventKind, DepositProviderEventOutcome, DepositProviderFailure,
     DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
     DepositState, begin_deposit_checkout, booking_deposit_for_event, booking_deposit_for_payment,
-    booking_deposit_for_session_hold, record_deposit_provider_event,
-    run_booking_deposit_settlement, settle_booking_deposit,
+    booking_deposit_for_session_hold, check_deposit_checkout_admitted,
+    record_deposit_provider_event, run_booking_deposit_settlement, settle_booking_deposit,
 };
 pub(crate) use self::deposit::{refund_booking_deposit_as_owner, refund_deposit_on_host_cancel};
 pub use self::door::{
