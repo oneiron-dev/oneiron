@@ -450,8 +450,13 @@ fn admit(
     }
     // ONE-1881: a terminal receipt takes its own writer-locked door BEFORE the generic
     // delete-wins and exact-byte shortcuts; the door refuses every tombstone naming it and
-    // neutralizes its `dt:` poison in this transaction.
+    // neutralizes its `dt:` poison in this transaction. A changed receipt at the id of a
+    // use-limited or restricted record is dropped first, as below: the door's shared put would
+    // refuse it as absent, which the window reads as a local failure (REVIEW-9881 round 1).
     if header.entity_type == ENTITY_TYPE_RECEIPT_RECORD {
+        if super::drops_changed_carrier_in_txn(vault, wtxn, &id, blob)? {
+            return Ok(EntityStep::Skip);
+        }
         let wrote = crate::sync::receipt_ingest::ingest_in_txn(
             vault,
             wtxn,
@@ -579,8 +584,12 @@ fn admit(
     // A record a refused privacy erase kept (C6) or a cooperative review restricts takes no
     // change from a peer, as it takes none from a named write here (OF-470 C6): a carrier a
     // device sent before the limit reached it is dropped, and the kept copy stays as it is. The
-    // put door would refuse it as absent, which the window reads as a local failure.
-    if vault.store.use_restricted_in_txn(wtxn, &id)?.is_some() {
+    // put door would refuse it as absent, which the window reads as a local failure. A dropped
+    // carrier stays dropped once the limit lifts: the window still carries it, and a later
+    // rematerialization would put it over the kept copy (REVIEW-9881 round 1).
+    if super::drops_changed_carrier_in_txn(vault, wtxn, &id, blob)?
+        || vault.store.use_restricted_in_txn(wtxn, &id)?.is_some()
+    {
         return Ok(EntityStep::Skip);
     }
     // KS-5: a pad reference whose pad is not here waits, pending, for its carrier.
