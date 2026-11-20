@@ -168,7 +168,7 @@ impl ServedCompactionBackend {
     /// the house call's purpose, class and tier, and keeps the live
     /// request's route, effort, scope and reply format, so the prefix's wire
     /// is the live call's. Its tools are sent, never run.
-    fn fork_request(
+    pub(super) fn fork_request(
         &self,
         fork: &LiveCompactionFork,
         request: &CompactionRequest,
