@@ -352,6 +352,13 @@ pub const CONNECT_GUEST_ACTOR: &[u8] = b"oneiron/connect-guest-actor/v1";
 /// and a counter (u64 little-endian) from 0; the first id in the foreign range
 /// is the one.
 pub const FOREIGN_WORLD: &[u8] = b"oneiron.federation.foreign-world.v1";
+/// The company's WORLD of a member seat's inquiry edge, written when the
+/// seat is accepted (`inquiry::edge`, L7-04). Parts: the company vault's id
+/// and the Connect pact's id (32 bytes each), and a counter (u64
+/// little-endian) from 0; the first id outside the received-foreign range is
+/// the one. The member's host names it in its offer before the company
+/// writes it.
+pub const INQUIRY_JOIN_WORLD: &[u8] = b"oneiron/inquiry-join-world/v1";
 
 /// One statement of a copied inquiry answer, as the company vault lands it
 /// (`inquiry::landing`, INQUIRE-1 PR 6). Parts: the inquiry's id, the id of
@@ -491,7 +498,7 @@ pub const RESIDENT_MESSAGE_ASK: &[u8] = b"oneiron.agent_dispatch.resident_messag
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 74] = [
+pub(crate) const ALL: [&[u8]; 75] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -555,6 +562,7 @@ pub(crate) const ALL: [&[u8]; 74] = [
     AGENT_PACK_TRAVEL,
     CONNECT_GUEST_ACTOR,
     FOREIGN_WORLD,
+    INQUIRY_JOIN_WORLD,
     INQUIRY_COPY_CLAIM,
     ASSET_BODY_FILE,
     ASSET_BODY_HELD,

@@ -262,7 +262,18 @@ pub(crate) enum DoorClaim {
 /// `valid_until` (Engine ruling INQUIRE-SHAPE Q6). A kept reply would send
 /// them again past both, on a replay that runs no send and no eviction. A
 /// re-send of the inquiry's id gets its current answer instead (Q2).
-const UNKEPT_REPLY_VERBS: [&str; 1] = ["vault.inquire"];
+/// The inquiry edge's join (L7-04) answers the Connect half that carries the
+/// pact's scope opening key, which only the pact's custody holds: a kept
+/// reply would write it to this vault's invocation state. A same-id retry of
+/// one of those runs the verb again: the accept and the attach answer their
+/// exact repeat with the same counter and write nothing, and a prepare offers
+/// its unbound edge again under a fresh pact.
+const UNKEPT_REPLY_VERBS: [&str; 4] = [
+    "vault.inquire",
+    "vault.inquiry.edge.prepare_join",
+    "vault.members.accept_with_inquiry_edge",
+    "vault.members.inquiry_edge.attach",
+];
 
 /// Whether an invocation claim keeps `verb`'s answer for a later request
 /// naming the same invocation: false only for [`UNKEPT_REPLY_VERBS`].

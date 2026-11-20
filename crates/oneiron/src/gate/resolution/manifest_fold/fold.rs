@@ -239,6 +239,17 @@ pub(super) fn fold_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
+                // One erase-request reply row per vault, as the inquiry row:
+                // two different rows have no deterministic reply, so the
+                // policy fails closed and the vault reads `ask`, marked
+                // unreadable.
+                if let Some(policy) = decoded.erase_request_reply_policy {
+                    match &resolution.erase_request_reply_policy {
+                        None => resolution.erase_request_reply_policy = Some(policy),
+                        Some(existing) if *existing == policy => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
+                }
                 // Every valid row carries its version's pinned membership, so
                 // the newest version among trusted packs is the floor.
                 if let Some(floor) = decoded.catastrophe_floor
