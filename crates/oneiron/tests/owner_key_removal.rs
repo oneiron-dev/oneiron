@@ -29,23 +29,26 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use base64::Engine as _;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityAttestation,
-    AuthorityEntryHash, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
-    AuthorityTier, AuthorityVaultId, CheckpointPolicyView, DeviceAuthority, EnrolledOwnerKeyKind,
-    HostSlipIssuer, LastDeviceKeyConfirmation, MACHINE_ENCRYPTION_KEY_LEN,
+    AuthorityEntryHash, AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityOp,
+    AuthoritySignature, AuthorityTier, AuthorityVaultId, CheckpointPolicyView, DeviceAuthority,
+    EnrolledOwnerKeyKind, HostSlipIssuer, LastDeviceKeyConfirmation, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
     MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRemoval, MachineRole,
-    OwnerAct, OwnerActKind, OwnerKeyChangeKind, OwnerKeyEnrollment, OwnerKeyRemoval, ROLE_OWNER,
-    authority_entry_hash, authority_log_entity_id_from_hash, authority_transcript,
-    decode_authority_log_entry_body, machine_profile_proof_transcript,
+    OwnerAct, OwnerActKind, OwnerKeyChangeKind, OwnerKeyEnrollment, OwnerKeyRemoval,
+    OwnerPasskeyEnrollment, ROLE_OWNER, authority_entry_hash, authority_log_entity_id_from_hash,
+    authority_transcript, decode_authority_log_entry_body, machine_profile_proof_transcript,
+    webauthn_assertion_envelope, webauthn_challenge,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
 use oneiron::recovery::{
     KitIssue, KitSecretKind, PassphraseCost, PieceHome, issue_recovery_root_kit, restore_kit,
 };
+use oneiron::test_doors::host_root_row_signature::sign_authority_row_as_host_root;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::owner_key_release::release_owner_keys;
 use oneiron::world_keys::RecoveryRootSeed;
@@ -55,6 +58,9 @@ use oneiron_authority::authority::{
     RECOVERY_AUTHORITY_POSSESSION_KIND, owner_key_enrollment_target,
     recovery_authority_enrollment_challenge,
 };
+use p256::ecdsa::signature::Signer as _;
+use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
+use sha2::{Digest as _, Sha256};
 
 /// The seed of the second machine's machine key.
 const JOINING_SEED: u8 = 68;
@@ -103,6 +109,7 @@ fn node_profile(
         seen_world_edits: BTreeSet::new(),
         carrier: carried.as_ref().map(|(carrier, _)| *carrier),
         act: carried.map(|(_, act)| act),
+        restored_from: None,
     }
 }
 
@@ -181,6 +188,7 @@ impl RemovalVault {
             device_class: profile.device_class,
             encryption_key: profile.encryption_key,
             machine_proof: profile.machine_proof,
+            restored_from: None,
         }
     }
 
@@ -363,15 +371,6 @@ impl RemovalVault {
             .expect("the owner enrols the root's authority key");
         receipt.public_key
     }
-}
-
-/// What a choice door answers where the vault holds an owner key and this
-/// install holds none: the owner-key refusal.
-fn assert_owner_key_refusal<T: std::fmt::Debug>(answer: oneiron::Result<T>) {
-    assert!(
-        matches!(answer, Err(Error::Record(RecordError::OwnerKeyRequired))),
-        "the door refuses for the owner's key: {answer:?}"
-    );
 }
 
 #[test]
@@ -582,9 +581,14 @@ fn removing_the_last_device_key_asks_first() {
             .live,
         "the last device key ends (AUTH-5 PR b)"
     );
-    let rows = removal_vault.stored_rows();
-    assert_owner_key_refusal(removal_vault.clear_checkpoint_policy());
-    removal_vault.assert_nothing_stored_since(rows);
+    // No owner key on a device remains. The ratchet that would keep asking
+    // for one (AUTH-5 LAST-OWNER-KEY = B) is held for a recovery path
+    // (FIX-LIST LAST-OWNER-KEY-RECOVERY-GAP), so the vault takes the host's
+    // word for the owner's change again, as before his first key; the
+    // ratchet's PR turns this into the owner-key refusal.
+    removal_vault
+        .clear_checkpoint_policy()
+        .expect("with no owner key on a device, the host's word carries the owner's change");
 }
 
 #[test]
@@ -875,6 +879,7 @@ impl RemovalVault {
             device_class: profile.device_class,
             encryption_key: profile.encryption_key,
             machine_proof: profile.machine_proof,
+            restored_from: None,
         }
     }
 
@@ -2152,4 +2157,510 @@ fn a_removals_rows_are_marked_for_the_live_mirror() {
         .expect("the changes list shows the key's removal")
         .entry;
     removal_vault.assert_marked_for_the_live_mirror(&revocation, "the machine door's revocation");
+}
+
+// REVIEW-9584 passkey fixture helpers, copied from passkey_owner_key.rs.
+
+/// User present and user verified; copied from passkey_owner_key.rs.
+const FLAGS_PRESENT_VERIFIED: u8 = 0x05;
+/// The passkey's credential id; copied from passkey_owner_key.rs.
+const CREDENTIAL_ID: &[u8] = b"passkey-credential-0001";
+/// The passkey's origin; copied from passkey_owner_key.rs.
+const ORIGIN: &str = "https://oneiron.test";
+
+/// A software passkey, copied from passkey_owner_key.rs.
+fn passkey() -> P256SigningKey {
+    P256SigningKey::from_slice(&[0x5A; 32]).expect("a P-256 scalar")
+}
+
+/// The uncompressed SEC1 point, copied from passkey_owner_key.rs.
+fn passkey_public_key() -> Vec<u8> {
+    passkey()
+        .verifying_key()
+        .to_encoded_point(false)
+        .as_bytes()
+        .to_vec()
+}
+
+/// The compressed roster key, copied from passkey_owner_key.rs.
+fn passkey_roster_key() -> AuthorityKey {
+    AuthorityKey::P256(
+        passkey()
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .to_vec(),
+    )
+}
+
+/// Browser assertion fields, copied from passkey_owner_key.rs.
+struct Assertion {
+    authenticator_data: Vec<u8>,
+    client_data_json: Vec<u8>,
+    signature: Vec<u8>,
+}
+
+/// A browser assertion over the challenge, copied from passkey_owner_key.rs.
+fn assert_by(key: &P256SigningKey, challenge: &[u8], flags: u8, origin: &str) -> Assertion {
+    let mut authenticator_data = Sha256::digest(b"oneiron.test").to_vec();
+    authenticator_data.push(flags);
+    authenticator_data.extend_from_slice(&[0; 4]);
+    let client_data_json = format!(
+        r#"{{"type":"webauthn.get","challenge":"{}","origin":"{origin}","crossOrigin":false}}"#,
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(challenge)
+    )
+    .into_bytes();
+    let mut signed = authenticator_data.clone();
+    signed.extend_from_slice(&Sha256::digest(&client_data_json));
+    let signature: P256Signature = key.sign(&signed);
+    Assertion {
+        authenticator_data,
+        client_data_json,
+        signature: signature.to_der().as_bytes().to_vec(),
+    }
+}
+
+/// The enrollment input, copied from passkey_owner_key.rs.
+fn passkey_enrollment(assertion: Assertion) -> OwnerPasskeyEnrollment {
+    OwnerPasskeyEnrollment {
+        credential_id: CREDENTIAL_ID.to_vec(),
+        public_key: passkey_public_key(),
+        authenticator_data: assertion.authenticator_data,
+        client_data_json: assertion.client_data_json,
+        signature: assertion.signature,
+    }
+}
+
+/// A transcript's WebAuthn signature, copied from passkey_owner_key.rs.
+fn passkey_signs(transcript: &[u8], flags: u8) -> Vec<u8> {
+    let assertion = assert_by(&passkey(), &webauthn_challenge(transcript), flags, ORIGIN);
+    webauthn_assertion_envelope(
+        &assertion.authenticator_data,
+        &assertion.client_data_json,
+        &assertion.signature,
+    )
+    .expect("an envelope")
+}
+
+/// Host-predecessor passkey enrollment, copied from passkey_owner_key.rs
+/// and adapted to RemovalVault's authenticated owner.
+fn enrol_passkey(removal_vault: &RemovalVault) {
+    let authority = ActAuthority::Owner(removal_vault.owner.clone(), ActSurface::ThisInstall);
+    let challenge = removal_vault
+        .vault
+        .owner_passkey_enrollment_challenge_as(&authority, &passkey_public_key())
+        .expect("the passkey's enrollment challenge");
+    removal_vault
+        .vault
+        .enrol_owner_passkey_as_host(
+            &authority,
+            &passkey_enrollment(assert_by(
+                &passkey(),
+                &challenge,
+                FLAGS_PRESENT_VERIFIED,
+                ORIGIN,
+            )),
+            &removal_vault.issuer,
+        )
+        .expect("the owner enrols his passkey");
+}
+
+/// A device's possession proof, copied from passkey_owner_key.rs and
+/// adapted to RemovalVault's authenticated owner.
+fn keyed_enrollment(
+    removal_vault: &RemovalVault,
+    machine: EntityId,
+    device: &SigningKey,
+) -> OwnerKeyEnrollment {
+    let public_key = device.verifying_key().to_bytes();
+    let authority = ActAuthority::Owner(removal_vault.owner.clone(), ActSurface::ThisInstall);
+    let challenge = removal_vault
+        .vault
+        .owner_key_enrollment_challenge_as(&authority, machine, &public_key)
+        .expect("the device key's challenge");
+    OwnerKeyEnrollment {
+        machine,
+        public_key,
+        proof: device.sign(&challenge).to_bytes().to_vec(),
+    }
+}
+// End of the helpers copied from passkey_owner_key.rs.
+
+impl RemovalVault {
+    /// A second machine with an Ed25519 owner key vouched for only by the
+    /// passkey: it is live, but no device key has confirmed its owner proof.
+    fn enrol_passkey_vouched_key_on_second_machine(&self) -> (EntityId, [u8; 32]) {
+        enrol_passkey(self);
+        let machine = self.enrol_machine_with([0x76; 16], JOINING_SEED);
+        let device = signing(0x6B);
+        let public_key = device.verifying_key().to_bytes();
+        self.vault
+            .enrol_owner_signing_key_as(
+                &ActAuthority::Owner(self.owner.clone(), ActSurface::ThisInstall),
+                keyed_enrollment(self, machine, &device),
+                passkey_roster_key(),
+                |transcript| Ok(passkey_signs(transcript, FLAGS_PRESENT_VERIFIED)),
+            )
+            .expect("the passkey vouches for the second machine's key");
+        let enrolled = self
+            .vault
+            .enrolled_owner_keys()
+            .expect("enrolled owner keys")
+            .into_iter()
+            .find(|enrolled| enrolled.public_key == public_key)
+            .expect("the passkey-vouched key is enrolled");
+        assert!(enrolled.live, "guard: the passkey-vouched key is live");
+        assert!(
+            enrolled.device_machines.contains(&machine),
+            "guard: the enrollment names the second machine"
+        );
+        (machine, public_key)
+    }
+}
+
+/// A machine removal ends even an owner key vouched for only by a passkey
+/// when this install holds an unrestricted owner signer (REVIEW-9584 P1 1).
+#[test]
+fn removing_a_machine_ends_its_passkey_vouched_owner_key() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let (machine, public_key) = removal_vault.enrol_passkey_vouched_key_on_second_machine();
+    let removal = removal_vault
+        .vault
+        .remove_machine(
+            &removal_vault.owner,
+            ActSurface::ThisInstall,
+            machine,
+            None,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("the owner removes the passkey-vouched key's machine");
+    let receipt = match removal {
+        MachineRemoval::Written(receipt) => receipt,
+        MachineRemoval::LastDeviceKey(remaining) => {
+            panic!("this install's key remains, so no ask: {remaining:?}")
+        }
+    };
+    assert!(receipt.landing.held().is_none(), "the removal stands");
+    assert_eq!(
+        receipt.ended_keys,
+        vec![public_key],
+        "the machine removal ends the passkey-vouched owner key"
+    );
+    assert!(
+        receipt.live_keys.is_empty(),
+        "no key of this machine stays live"
+    );
+    assert!(
+        !removal_vault
+            .vault
+            .enrolled_owner_keys()
+            .expect("enrolled owner keys")
+            .iter()
+            .find(|enrolled| enrolled.public_key == public_key)
+            .expect("the passkey-vouched key is enrolled")
+            .live,
+        "the passkey-vouched key is no longer live"
+    );
+}
+
+/// The key door requires an owner proof from the signer, not from the
+/// passkey-vouched key it is removing (REVIEW-9584 P1 1).
+#[test]
+fn the_key_door_removes_a_passkey_vouched_owner_key() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let (_, public_key) = removal_vault.enrol_passkey_vouched_key_on_second_machine();
+    let removal = removal_vault
+        .vault
+        .remove_owner_key(
+            &removal_vault.owner,
+            public_key,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("the key door removes the live passkey-vouched owner key");
+    match removal {
+        OwnerKeyRemoval::Removed { ended, .. } => assert_eq!(ended.public_key, public_key),
+        OwnerKeyRemoval::LastDeviceKey(remaining) => {
+            panic!("this install's key remains, so no ask: {remaining:?}")
+        }
+    }
+    assert!(
+        !removal_vault
+            .vault
+            .enrolled_owner_keys()
+            .expect("enrolled owner keys")
+            .iter()
+            .find(|enrolled| enrolled.public_key == public_key)
+            .expect("the passkey-vouched key is enrolled")
+            .live,
+        "the key door ended the passkey-vouched key"
+    );
+}
+
+/// The answer door marks both the machine removal and the owner-key
+/// revocation for the already-live mirror (REVIEW-9584 P1 3).
+#[test]
+fn a_removal_through_the_answer_door_marks_its_rows_for_the_live_mirror() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let (machine_b, second_key) = removal_vault.enrol_second_machine_and_key(&signing(73));
+    let landing = removal_vault
+        .vault
+        .set_machine_role(
+            &removal_vault.owner,
+            ActSurface::ThisInstall,
+            machine_b,
+            MachineRole::Removed,
+            None,
+        )
+        .expect("the owner removes the second machine through the answer door");
+    assert!(landing.held().is_none(), "the removal stands");
+    let removed = landing
+        .machine()
+        .and_then(|machine| machine.roster.as_ref())
+        .expect("the removal stands on the roster's chain")
+        .entry;
+    let revocation = removal_vault
+        .vault
+        .owner_key_changes(&removal_vault.owner)
+        .expect("the owner reads the key changes")
+        .into_iter()
+        .find(|change| {
+            change.change == OwnerKeyChangeKind::Removed && change.public_key == second_key
+        })
+        .expect("the changes list shows the second key's removal")
+        .entry;
+    removal_vault.assert_marked_for_the_live_mirror(&removed, "the answer door's removal");
+    removal_vault.assert_marked_for_the_live_mirror(&revocation, "the answer door's revocation");
+}
+
+/// Confirming a held removal marks the owner-key revocation it writes for
+/// the already-live mirror (REVIEW-9584 P1 3).
+#[test]
+fn a_confirmed_held_removal_marks_its_revocation_for_the_live_mirror() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let (machine_b, second_key) = removal_vault.enrol_second_machine_and_key(&signing(73));
+    release_owner_keys(&removal_vault.vault);
+    let removal = removal_vault
+        .vault
+        .remove_machine(
+            &removal_vault.owner,
+            ActSurface::ThisInstall,
+            machine_b,
+            None,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("the unproven removal is stored and held");
+    let held = match removal {
+        MachineRemoval::Written(receipt) => {
+            assert!(receipt.ended_keys.is_empty(), "a held removal ends no key");
+            assert_eq!(
+                receipt.live_keys,
+                vec![second_key],
+                "the held key stays live"
+            );
+            receipt
+                .landing
+                .held()
+                .expect("the removal is held for owner proof")
+        }
+        MachineRemoval::LastDeviceKey(remaining) => {
+            panic!("without a held signer no key ends and no question is needed: {remaining:?}")
+        }
+    };
+    assert!(
+        removal_vault
+            .vault
+            .held_machine_answers(&removal_vault.owner)
+            .expect("held answers")
+            .answers
+            .iter()
+            .any(|answer| answer.entry == held),
+        "the held removal is listed"
+    );
+    // The key is still in the keystore and live on the roster: hold it again.
+    removal_vault.enrol_owner_key();
+    let confirmed = removal_vault
+        .vault
+        .confirm_held_machine_answers(
+            &removal_vault.owner,
+            ActSurface::ThisInstall,
+            &[held],
+            &std::collections::BTreeMap::new(),
+        )
+        .expect("the confirm stands on the install holding the owner key");
+    assert_eq!(
+        confirmed.removed,
+        vec![machine_b],
+        "the confirm removes the machine"
+    );
+    assert!(confirmed.listing.answers.is_empty(), "no answer stays held");
+    let revocation = removal_vault
+        .vault
+        .owner_key_changes(&removal_vault.owner)
+        .expect("the owner reads the key changes")
+        .into_iter()
+        .find(|change| {
+            change.change == OwnerKeyChangeKind::Removed && change.public_key == second_key
+        })
+        .expect("the confirmed removal ended the second key")
+        .entry;
+    removal_vault
+        .assert_marked_for_the_live_mirror(&revocation, "the confirmed held removal's revocation");
+}
+
+impl RemovalVault {
+    /// A handoff on `parents`, signed by the hosted vault's custodial root:
+    /// that root may hand on a hosted vault while an unstamped device may not.
+    /// Like sibling_revoke_row, builds and hashes the row without storing it.
+    fn sibling_reroot_row_as_host(
+        &self,
+        parents: Vec<AuthorityEntryHash>,
+        sequence: u64,
+        successor: [u8; 32],
+        timestamp: u64,
+    ) -> (AuthorityLogEntry, AuthorityEntryHash) {
+        let vault_id = self
+            .vault
+            .authority_fold()
+            .expect("authority fold")
+            .vault_id
+            .expect("the vault is rooted");
+        let host_key = self.issuer.public_key();
+        let mut entry = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(vault_id),
+            seq: sequence,
+            parent_hashes: parents,
+            op: AuthorityOp::ReRoot {
+                new_device: DeviceAuthority {
+                    key: AuthorityKey::Ed25519(successor),
+                    transport_key_binding: [7; 32],
+                    attestation: AuthorityAttestation {
+                        kind: "SoftwareArgon2id".to_owned(),
+                        evidence: vec![1, 2, 3],
+                    },
+                    tier: AuthorityTier::Software,
+                    roles: ROLE_OWNER,
+                },
+            },
+            signer: AuthoritySignature {
+                suite: host_key.suite(),
+                public_key: host_key,
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: timestamp,
+        };
+        sign_authority_row_as_host_root(&self.issuer, &mut entry)
+            .expect("the permitted host root signs the handoff");
+        let handoff = authority_entry_hash(&entry).expect("the handoff's hash");
+        (entry, handoff)
+    }
+}
+
+/// A removal fenced by a sibling handoff ended nothing: the handoff, not
+/// that refused removal, ended the target key (REVIEW-9584 P1 4).
+#[test]
+fn a_removal_a_sibling_handoff_fenced_is_not_in_the_changes_list() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let first_key = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys")
+        .into_iter()
+        .find(|enrolled| enrolled.live)
+        .expect("this install's key is live")
+        .public_key;
+    let (_, second_key) = removal_vault.enrol_second_machine_and_key(&signing(72));
+    let parents = removal_vault.authority_heads();
+    assert!(
+        !parents.is_empty(),
+        "the sibling branches have their common past"
+    );
+    let removal = removal_vault
+        .vault
+        .remove_owner_key(
+            &removal_vault.owner,
+            second_key,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("branch one removes the second key");
+    let ended = match removal {
+        OwnerKeyRemoval::Removed { ended, .. } => ended,
+        OwnerKeyRemoval::LastDeviceKey(remaining) => {
+            panic!("the first key remains, so no ask: {remaining:?}")
+        }
+    };
+    assert_eq!(ended.public_key, second_key);
+    assert_eq!(ended.signed_by, AuthorityKey::Ed25519(first_key));
+    assert!(
+        removal_vault
+            .vault
+            .authority_fold()
+            .expect("authority fold")
+            .valid_entries
+            .contains(&ended.entry),
+        "guard: the removal counted before the sibling handoff arrived"
+    );
+
+    // The hosted vault's root is a permitted third signer. The handoff's
+    // parents never saw the removal, so its fence holds both device keys.
+    let successor = signing(35).verifying_key().to_bytes();
+    let sequence = removal_vault.next_sequence_for(&removal_vault.issuer.public_key());
+    let now = now_seconds();
+    let (entry, handoff) =
+        removal_vault.sibling_reroot_row_as_host(parents, sequence, successor, now);
+    removal_vault
+        .vault
+        .put_authority_log_entry(
+            &entry,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .expect("the sibling handoff by the host root lands");
+    let fold = removal_vault
+        .vault
+        .authority_fold()
+        .expect("authority fold");
+    assert!(
+        fold.valid_entries.contains(&handoff),
+        "guard: the sibling handoff counts: {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&ended.entry),
+        "guard: the sibling handoff fenced the removal"
+    );
+    assert!(
+        fold.issues
+            .contains(&AuthorityFoldIssue::RetiredSigner(ended.entry)),
+        "guard: the removal's signer was fenced: {:?}",
+        fold.issues
+    );
+    assert!(
+        !removal_vault
+            .vault
+            .enrolled_owner_keys()
+            .expect("enrolled owner keys")
+            .iter()
+            .find(|enrolled| enrolled.public_key == second_key)
+            .expect("the second key is enrolled")
+            .live,
+        "guard: the handoff ended the second key although the removal no longer counts"
+    );
+    let changes = removal_vault
+        .vault
+        .owner_key_changes(&removal_vault.owner)
+        .expect("the owner reads the key changes");
+    assert!(
+        changes.iter().all(|change| change.entry != ended.entry),
+        "a removal fenced by a sibling handoff lists neither Removed nor RemovedByEndedKey: {changes:?}"
+    );
 }
