@@ -282,6 +282,8 @@ pub mod recall_gate_judgements;
 pub mod removal_import_passes;
 pub mod repeated_key_lib_rows;
 pub mod replay_rows;
+#[cfg(feature = "sync")]
+pub mod replicated_authority_batch;
 pub mod reply_attachments;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;
